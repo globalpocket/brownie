@@ -354,12 +354,17 @@ normalized ids:
 `task_id` is required for MCP tools so Runtime can resolve task-pinned
 `ModeResolved` policy and MCP catalog provenance. Runtime returns
 `Completed`, `Denied`, or `Failed` in the existing `ToolExecuteResult` shape.
-Completed MCP output is bounded to fingerprints, status, content item count,
-server id, tool name, server/config identity fingerprint, protocol version, and
-catalog provenance. Runtime must not return raw MCP server command
-configuration, credentials, environment values, secret headers, unbounded
-schemas, prompts, provider responses, absolute paths, or arbitrary server text
-as authority evidence.
+Completed MCP output includes bounded metadata and, for supported text content,
+bounded untrusted result context. The metadata includes server id, tool name,
+protocol version, server/config identity fingerprint, result fingerprint,
+request fingerprint, `is_error`, content item count, materialized content item
+count, text char counts, hard limits, and truncation evidence. Text content is
+bounded by item count, per-item chars, and total chars. Unsupported, binary, or
+resource-like content is reduced to bounded metadata or rejected before prompt
+materialization. Runtime must not return raw MCP server command configuration,
+credentials, environment values, secret headers, raw JSON-RPC responses,
+unbounded schemas, prompts, provider responses, absolute paths, canonical paths,
+raw file content, or arbitrary server text as authority evidence.
 
 Denied results include unknown task/server/tool, missing `mcp_tool_access`,
 tool outside the Mode Pack allow-list, missing structured server config, or
@@ -371,12 +376,18 @@ server process before returning. See `mcp-client-spec-v0.md`.
 For admitted tasks, `tool.intent.parse` may include `task_id`. When present,
 Runtime resolves the task-pinned `ModeResolved` policy and MCP catalog evidence,
 adds those dynamic MCP tools to the same intent evaluator used for built-in
-tools, and applies `RuntimePermissionGate` before returning summaries. The
-response remains bounded: it may expose tool id, action, decision, request
-reason, and input summary, but never raw tool input, raw schema text, server
-configuration, credentials, absolute paths, environment values, provider
-response text, or MCP response content. MCP tools outside the task-pinned
-catalog are rejected as unknown tools.
+tools, and applies `RuntimePermissionGate` before returning summaries. During
+normal `task.run`, an approved MCP intent enters the same controlled execution
+path as other task-scoped tools. After `tools/call` succeeds, the next agent
+step receives the bounded result context as untrusted tool data below runtime
+safety policy and Mode Pack policy. If the process exits after the MCP call but
+before that second-pass model step, retry/resume uses the persisted bounded
+result context and request fingerprint instead of unconditionally re-running
+the MCP tool. The response remains bounded: intent summaries may expose tool
+id, action, decision, request reason, and input summary, but never raw tool
+input, raw schema text, server configuration, credentials, absolute paths,
+environment values, raw provider response text, or raw MCP JSON-RPC response.
+MCP tools outside the task-pinned catalog are rejected as unknown tools.
 
 The built-in tool registry requires `ReadWorkspace`; after that primary tool
 permission passes, the runtime checks `RuntimeAction::IndexCodebase` before it
@@ -1569,12 +1580,12 @@ prompt/provider/file/command/output/environment/path exposure.
 `headless.run.drive` can also admit the first step of one headless development
 journey when the caller supplies `expected_start_session_sequence=0` and a
 bounded `journey_admission` object. The admission contains a bounded
-`journey_id`, `authorize_journey_start=true`, and a task-start envelope with the
-normal objective fields already accepted by `task.start`. The runtime validates
-the admission before side effects, rejects malformed ids, missing authorization,
-raw or unknown task-start fields, invalid drive budgets, conflicting replay, and
-mixed explicit Mode Pack route targets, then delegates initial task creation to
-the existing `task.start` authority.
+`journey_id`, optional bounded `admission_id`, `authorize_journey_start=true`,
+and a task-start envelope with the normal objective fields already accepted by
+`task.start`. The runtime validates the admission before side effects, rejects
+malformed ids, missing authorization, raw or unknown task-start fields, invalid
+drive budgets, conflicting replay, and mixed explicit Mode Pack route targets,
+then delegates initial task creation to the existing `task.start` authority.
 
 After task admission, the runtime derives the journey's start progress
 checkpoint, drives the new task through existing `headless.run.advance` behavior
@@ -1584,10 +1595,45 @@ limited to journey/session/drive/task/run handles, start/post progress
 fingerprints and aggregate sequences, completion closure status, next action,
 replay flag, and a deterministic journey fingerprint. Replaying the same
 `journey_id` with matching session, drive, and task-start fingerprint returns
-the committed journey evidence without creating another task or drive. This is
-not a scheduler, generic workflow engine, automatic apply/recovery/provider/
-Mode Pack/parent-join step, shell/git/network/service expansion, VSIX policy
-decision, or raw prompt/provider/file/content/output/environment/path exposure.
+the committed journey evidence without creating another task or drive.
+
+When `admission_id` is present, it is the runtime-owned idempotency key for the
+initial objective admission. The runtime derives a sanitized material
+fingerprint from admission id, journey/session/drive ids, task-start
+fingerprint, objective-context fingerprint when present, product-continuation
+source when present, active Mode Pack activation fingerprint, and workspace-root
+fingerprint. The fingerprint is persisted in `HeadlessObjectiveAdmissionCheckpoint`
+together with journey/session/drive/task/run ids and the journey fingerprint.
+The checkpoint does not persist raw objective text, raw prompts, provider
+responses, raw Mode Pack material, file content, credentials, environment
+values, absolute paths, or canonical paths.
+
+Same-`admission_id` admission is linearized through an admission-specific
+exclusive boundary followed by durable recheck. The lock is not authority; the
+durable objective admission checkpoint and reservation are authority. If two
+processes submit the same admission concurrently, at most one root task/run/
+journey is created. Matching retries replay or reconcile the existing
+task/run/journey. Changed objective, journey id, session id, drive id, workspace
+root, objective context, product-continuation source, or active Mode Pack
+material conflicts with the persisted reservation/checkpoint and fails closed
+without creating a second root task.
+
+Crash recovery is defined at the durable admission boundaries. If process death
+occurs after task/run persistence but before the journey checkpoint, retry may
+reconcile the task by its runtime-stored recovery identity, then write the
+missing journey and objective-admission checkpoints. If process death occurs
+after journey checkpoint persistence but before objective-admission checkpoint
+persistence, retry validates the reservation and journey checkpoint, backfills
+the objective-admission checkpoint, and continues. If process death occurs after
+objective-admission checkpoint persistence but before `HeadlessJourneyStarted`
+ledger evidence, retry appends the missing bounded event once and continues.
+Each recovery path preserves the original task/run/journey identity and fails
+closed on conflicting material.
+
+This is not a scheduler, generic workflow engine, automatic apply/recovery/
+provider/Mode Pack/parent-join step, shell/git/network/service expansion, VSIX
+policy decision, or raw prompt/provider/file/content/output/environment/path
+exposure.
 
 ## M50.1.1 headless run recovery probe
 
@@ -1601,8 +1647,13 @@ states: `persisted`, `not_persisted`, or `unknown`.
 When the matching journey checkpoint exists and its task objective fingerprint
 matches, the result returns bounded task/run/journey handles, the journey
 fingerprint, and a persisted-identity recommendation for the existing scoped
-resume contract. New journey admission also stores the bounded recovery
-identity in the durable task record before the journey checkpoint is written.
+resume contract. The scoped resume contract binds all four runtime identifiers:
+`session_id`, `journey_id`, `task_id`, and `run_id`. A subsequent
+`headless.continue_once` or CLI-projected `brownie resume` with that scope must
+revalidate the exact journey checkpoint and task/run identity before selecting a
+task, and it must not drift to a newer or older journey in the same workspace.
+New journey admission also stores the bounded recovery identity in the durable
+task record before the journey checkpoint is written.
 When no matching journey checkpoint exists, the runtime must inspect durable
 task records before returning `not_persisted`. If exactly one task record
 contains a matching recovery identity, the result is `persisted` with bounded

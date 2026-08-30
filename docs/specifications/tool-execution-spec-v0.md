@@ -103,9 +103,14 @@ persist raw selected paths or raw selected file content.
 
 ## Ledger behavior
 
-The store defines future task-scoped event kinds: `ToolExecutionRequested`, `ToolExecutionPermissionChecked`, `ToolExecutionCompleted`, `ToolExecutionDenied`, and `ToolExecutionFailed`.
+The store defines task-scoped event kinds: `ToolExecutionRequested`,
+`ToolExecutionPermissionChecked`, `ToolExecutionCompleted`,
+`ToolExecutionDenied`, and `ToolExecutionFailed`.
 
-Standalone `tool.execute` does not write run ledger events in Phase 1.7 because it is not attached to a task/run. A future task-scoped execution path may use these event kinds when automatic execution is introduced.
+Standalone `tool.execute` does not write run ledger events in Phase 1.7 because
+it is not attached to a task/run. Task-scoped execution during `task.run` uses
+these event kinds for controlled workspace reads, fixed verification tools, and
+task-pinned MCP tools.
 
 ## MCP tools
 
@@ -122,7 +127,13 @@ fingerprints. `tools/call` is attempted only after those checks pass.
 
 MCP stdio server launch is runtime-owned and request-scoped in this phase. MCP
 server descriptions, schemas, command names, response text, and AgentModes prose
-cannot grant permission or widen tool routing authority. See
+cannot grant permission or widen tool routing authority. Successful MCP tool
+results may contribute bounded text result context to the next agent step as
+untrusted data, with result fingerprints, request fingerprints, item counts,
+text limits, and truncation evidence. Raw JSON-RPC responses, server
+configuration, credentials, environment values, secret headers, raw schemas,
+prompts, provider responses, absolute paths, canonical paths, and raw file
+content are not ledger authority or prompt authority. See
 `mcp-client-spec-v0.md`.
 
 ## Phase 1.8 task-scoped read-only execution

@@ -203,6 +203,7 @@ fn execute_mcp_tool_for_record(
     tool_id: String,
     input: Value,
 ) -> anyhow::Result<ToolExecuteResult> {
+    let request_fingerprint = mcp_tool_execution_request_fingerprint(&tool_id, &input);
     let Some((server_id, tool_name)) = mcp_client::split_normalized_tool_id(&tool_id) else {
         return Ok(ToolExecuteResult {
             tool_id,
@@ -258,7 +259,7 @@ fn execute_mcp_tool_for_record(
             tool_id,
             status: ToolExecuteStatus::Completed,
             output: json!({
-                "mcp": output,
+                "mcp": with_mcp_request_fingerprint(output, &request_fingerprint),
                 "catalog_provenance": {
                     "server_id": catalog_entry.server_id,
                     "tool_name": catalog_entry.tool_name,
@@ -1058,11 +1059,24 @@ fn append_approved_mcp_tool_execution(
     policy: &CompiledModePolicy,
     decision: ToolIntentDecision,
 ) -> anyhow::Result<()> {
+    let request_fingerprint =
+        mcp_tool_execution_request_fingerprint(&decision.tool_id, &decision.input);
+    if completed_mcp_tool_execution_for_request(
+        store,
+        record,
+        &decision.tool_id,
+        &request_fingerprint,
+    )?
+    .is_some()
+    {
+        return Ok(());
+    }
     store.tasks().append_task_event_with_payload(
         record,
         LedgerEventKind::ToolExecutionRequested,
         Some(json!({
             "tool_id": decision.tool_id,
+            "request_fingerprint": request_fingerprint,
             "input_summary": summarize_intent_input(&decision.input),
         })),
     )?;
@@ -1090,6 +1104,7 @@ fn append_approved_mcp_tool_execution(
             "reason": permission.reason,
             "server_id": server_id,
             "tool_name": tool_name,
+            "request_fingerprint": request_fingerprint,
         })),
     )?;
     if !permission.allowed {
@@ -1117,6 +1132,29 @@ fn append_approved_mcp_tool_execution(
         Some(tool_execute_result_ledger_payload(&result)),
     )?;
     Ok(())
+}
+
+fn completed_mcp_tool_execution_for_request(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+    tool_id: &str,
+    request_fingerprint: &str,
+) -> anyhow::Result<Option<Value>> {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    Ok(events
+        .iter()
+        .rev()
+        .filter(|event| event.kind == LedgerEventKind::ToolExecutionCompleted)
+        .filter_map(|event| event.payload.as_ref())
+        .find(|payload| {
+            payload.get("tool_id").and_then(Value::as_str) == Some(tool_id)
+                && payload
+                    .get("mcp")
+                    .and_then(|mcp| mcp.get("request_fingerprint"))
+                    .and_then(Value::as_str)
+                    == Some(request_fingerprint)
+        })
+        .cloned())
 }
 
 pub(super) fn append_controlled_tool_execution_denied(
@@ -3374,10 +3412,17 @@ pub(super) fn tool_execute_result_ledger_payload(result: &ToolExecuteResult) -> 
             "tool_name",
             "protocol_version",
             "server_config_identity_fingerprint",
+            "request_fingerprint",
             "result_fingerprint",
             "is_error",
             "content_item_count",
+            "materialized_content_item_count",
             "content_truncated",
+            "text_chars",
+            "materialized_text_chars",
+            "max_content_items",
+            "max_text_item_chars",
+            "max_total_text_chars",
         ] {
             if let Some(value) = mcp.get(key) {
                 mcp_payload.insert(key.to_string(), value.clone());
@@ -3414,6 +3459,41 @@ pub(super) fn tool_execute_result_ledger_payload(result: &ToolExecuteResult) -> 
         );
     }
     Value::Object(payload)
+}
+
+fn with_mcp_request_fingerprint(mut output: Value, request_fingerprint: &str) -> Value {
+    if let Some(object) = output.as_object_mut() {
+        object.insert(
+            "request_fingerprint".to_string(),
+            json!(request_fingerprint),
+        );
+    }
+    output
+}
+
+fn mcp_tool_execution_request_fingerprint(tool_id: &str, input: &Value) -> String {
+    let seed = json!({
+        "version": "mcp_tool_execution_request_v1",
+        "tool_id": tool_id,
+        "input": canonical_json_value(input),
+    });
+    format!("sha256:{}", hex_sha256(seed.to_string().as_bytes()))
+}
+
+fn canonical_json_value(value: &Value) -> Value {
+    match value {
+        Value::Object(object) => {
+            let mut sorted = serde_json::Map::new();
+            let mut keys = object.keys().collect::<Vec<_>>();
+            keys.sort();
+            for key in keys {
+                sorted.insert(key.clone(), canonical_json_value(&object[key]));
+            }
+            Value::Object(sorted)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonical_json_value).collect()),
+        other => other.clone(),
+    }
 }
 
 pub(super) fn append_tool_plan_events(

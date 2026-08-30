@@ -692,6 +692,9 @@ fn format_tool_execution_summary(events: &[LedgerEvent]) -> Vec<String> {
             let status = payload.get("status")?.as_str()?;
             match event.kind {
                 LedgerEventKind::ToolExecutionCompleted => {
+                    if let Some(mcp) = payload.get("mcp") {
+                        return format_mcp_tool_execution_summary(tool_id, status, mcp);
+                    }
                     let bytes_read = payload.get("bytes_read").and_then(|value| value.as_u64());
                     let truncated = payload.get("truncated").and_then(|value| value.as_bool());
                     Some(format!(
@@ -715,6 +718,89 @@ fn format_tool_execution_summary(events: &[LedgerEvent]) -> Vec<String> {
             }
         })
         .collect()
+}
+
+fn format_mcp_tool_execution_summary(
+    tool_id: &str,
+    status: &str,
+    mcp: &serde_json::Value,
+) -> Option<String> {
+    let result_fingerprint = mcp.get("result_fingerprint")?.as_str()?;
+    let is_error = mcp
+        .get("is_error")
+        .and_then(|value| value.as_bool())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "<unknown>".to_string());
+    let content_item_count = mcp
+        .get("content_item_count")
+        .and_then(|value| value.as_u64())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "<unknown>".to_string());
+    let materialized_content_item_count = mcp
+        .get("materialized_content_item_count")
+        .and_then(|value| value.as_u64())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "<unknown>".to_string());
+    let content_truncated = mcp
+        .get("content_truncated")
+        .and_then(|value| value.as_bool())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "<unknown>".to_string());
+    let text_chars = mcp
+        .get("text_chars")
+        .and_then(|value| value.as_u64())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "<unknown>".to_string());
+    let materialized_text_chars = mcp
+        .get("materialized_text_chars")
+        .and_then(|value| value.as_u64())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "<unknown>".to_string());
+    let mut lines = vec![format!(
+        "{tool_id}: {status} result_fingerprint={result_fingerprint} is_error={is_error} content_item_count={content_item_count} materialized_content_item_count={materialized_content_item_count} text_chars={text_chars} materialized_text_chars={materialized_text_chars} content_truncated={content_truncated}"
+    )];
+    let content_items = mcp
+        .get("content_items")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(format_mcp_result_context_item)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !content_items.is_empty() {
+        lines.push("untrusted_mcp_result_context:".to_string());
+        lines.extend(content_items.into_iter().map(|item| format!("  {item}")));
+    }
+    Some(lines.join("\n"))
+}
+
+fn format_mcp_result_context_item(item: &serde_json::Value) -> Option<String> {
+    let index = item.get("index").and_then(|value| value.as_u64())?;
+    let item_type = item.get("type")?.as_str()?;
+    if item_type == "text" {
+        let text = item.get("text")?.as_str()?;
+        let text_chars = item
+            .get("text_chars")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0);
+        let materialized_text_chars = item
+            .get("materialized_text_chars")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0);
+        let truncated = item
+            .get("truncated")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        Some(format!(
+            "- index={index} type=text text_chars={text_chars} materialized_text_chars={materialized_text_chars} truncated={truncated} text={text}"
+        ))
+    } else {
+        Some(format!(
+            "- index={index} type={item_type} unsupported=true text=<not_materialized>"
+        ))
+    }
 }
 
 fn format_subtask_orchestration_summary(events: &[LedgerEvent]) -> Vec<String> {
@@ -2115,6 +2201,58 @@ mod tests {
         assert!(prompt.messages[1]
             .content
             .contains("- workspace.read: Completed bytes_read=123 truncated=false"));
+    }
+
+    #[test]
+    fn context_materializer_includes_bounded_untrusted_mcp_result_context() {
+        let input = ContextMaterializerInput {
+            task: task_record(),
+            ledger_events: vec![LedgerEvent {
+                event_id: "event_1".into(),
+                task_id: "task_1".into(),
+                run_id: "run_1".into(),
+                kind: LedgerEventKind::ToolExecutionCompleted,
+                timestamp: "2026-01-01T00:00:00Z".into(),
+                payload: Some(serde_json::json!({
+                    "tool_id": "mcp.github.search_code",
+                    "status": "Completed",
+                    "mcp": {
+                        "request_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "result_fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "is_error": false,
+                        "content_item_count": 1,
+                        "materialized_content_item_count": 1,
+                        "text_chars": 17,
+                        "materialized_text_chars": 17,
+                        "content_truncated": false,
+                        "content_items": [{
+                            "index": 0,
+                            "type": "text",
+                            "text": "MCP_RESULT_7f91c2",
+                            "text_chars": 17,
+                            "materialized_text_chars": 17,
+                            "truncated": false
+                        }]
+                    }
+                })),
+            }],
+            child_completion_summaries: vec![],
+            selected_index_context: None,
+            verification_recovery_context: None,
+            context_budget: None,
+        };
+
+        let materialized = ContextMaterializer::materialize(input);
+        assert_eq!(materialized.tool_execution_summary.len(), 1);
+        let prompt = PromptBuilder::build(materialized);
+        assert!(prompt.messages[1]
+            .content
+            .contains("untrusted_mcp_result_context"));
+        assert!(prompt.messages[1].content.contains("MCP_RESULT_7f91c2"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("result_fingerprint=sha256:"));
+        assert!(!prompt.messages[1].content.contains(r#""jsonrpc":"2.0""#));
     }
 
     #[test]

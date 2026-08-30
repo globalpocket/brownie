@@ -19,6 +19,9 @@ const MAX_MCP_SCHEMA_BYTES: usize = 16_384;
 const MAX_MCP_DESCRIPTION_CHARS: usize = 1_000;
 const MAX_MCP_SCHEMA_SUMMARY_FIELDS: usize = 32;
 const MAX_MCP_SCHEMA_TYPE_CHARS: usize = 32;
+const MAX_MCP_RESULT_CONTEXT_ITEMS: usize = 8;
+const MAX_MCP_RESULT_TEXT_ITEM_CHARS: usize = 2_048;
+const MAX_MCP_RESULT_TEXT_TOTAL_CHARS: usize = 8_192;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpToolCatalogEntry {
@@ -188,6 +191,13 @@ pub fn call_tool(
         .get("result")
         .cloned()
         .context("MCP tools/call missing result")?;
+    let content_item_count = result
+        .get("content")
+        .and_then(Value::as_array)
+        .map(|items| items.len())
+        .unwrap_or(0);
+    let (content_items, content_truncated, text_chars, materialized_text_chars) =
+        bounded_result_context_items(&result);
     Ok(json!({
         "server_id": config.server_id,
         "tool_name": tool_name,
@@ -195,8 +205,77 @@ pub fn call_tool(
         "server_config_identity_fingerprint": config.config_identity_fingerprint,
         "result_fingerprint": fingerprint_json(&result),
         "is_error": result.get("isError").and_then(Value::as_bool).unwrap_or(false),
-        "content_items": result.get("content").and_then(Value::as_array).map(|items| items.len()).unwrap_or(0),
+        "content_item_count": content_item_count,
+        "materialized_content_item_count": content_items.len(),
+        "content_truncated": content_truncated,
+        "text_chars": text_chars,
+        "materialized_text_chars": materialized_text_chars,
+        "max_content_items": MAX_MCP_RESULT_CONTEXT_ITEMS,
+        "max_text_item_chars": MAX_MCP_RESULT_TEXT_ITEM_CHARS,
+        "max_total_text_chars": MAX_MCP_RESULT_TEXT_TOTAL_CHARS,
+        "content_items": content_items,
     }))
+}
+
+fn bounded_result_context_items(result: &Value) -> (Vec<Value>, bool, usize, usize) {
+    let Some(content) = result.get("content").and_then(Value::as_array) else {
+        return (Vec::new(), false, 0, 0);
+    };
+    let mut items = Vec::new();
+    let mut text_chars = 0usize;
+    let mut materialized_text_chars = 0usize;
+    let mut content_truncated = content.len() > MAX_MCP_RESULT_CONTEXT_ITEMS;
+    for (index, item) in content
+        .iter()
+        .take(MAX_MCP_RESULT_CONTEXT_ITEMS)
+        .enumerate()
+    {
+        let item_type = item
+            .get("type")
+            .and_then(Value::as_str)
+            .filter(|value| {
+                !value.is_empty()
+                    && value.chars().count() <= MAX_MCP_SCHEMA_TYPE_CHARS
+                    && value
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+            })
+            .unwrap_or("unknown");
+        if item_type == "text" {
+            let text = item.get("text").and_then(Value::as_str).unwrap_or_default();
+            let item_text_chars = text.chars().count();
+            text_chars = text_chars.saturating_add(item_text_chars);
+            let remaining_total =
+                MAX_MCP_RESULT_TEXT_TOTAL_CHARS.saturating_sub(materialized_text_chars);
+            let allowed_chars = remaining_total.min(MAX_MCP_RESULT_TEXT_ITEM_CHARS);
+            let bounded_text = text.chars().take(allowed_chars).collect::<String>();
+            let bounded_chars = bounded_text.chars().count();
+            materialized_text_chars = materialized_text_chars.saturating_add(bounded_chars);
+            let truncated = bounded_chars < item_text_chars;
+            content_truncated |= truncated;
+            items.push(json!({
+                "index": index,
+                "type": "text",
+                "text": bounded_text,
+                "text_chars": item_text_chars,
+                "materialized_text_chars": bounded_chars,
+                "truncated": truncated,
+            }));
+        } else {
+            content_truncated = true;
+            items.push(json!({
+                "index": index,
+                "type": item_type,
+                "unsupported": true,
+            }));
+        }
+    }
+    (
+        items,
+        content_truncated,
+        text_chars,
+        materialized_text_chars,
+    )
 }
 
 fn stdio_request(config: &ModePackMcpServerConfig, request: Value) -> Result<Value> {

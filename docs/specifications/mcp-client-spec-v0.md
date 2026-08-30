@@ -19,12 +19,16 @@ installation, and permission inference from server text.
 
 ## Architecture
 
-The only supported first-phase path is:
+The only supported first-phase catalog path is:
 
 `MCP server -> Rust MCP client -> tools/list -> validation -> bounded catalog -> PromptBuilder -> LLM`
 
-`tools/call` follows the same runtime-owned boundary. The normalized Brownie
-tool id is:
+`tools/call` follows the same runtime-owned controlled execution boundary. The
+normal autonomous path is:
+
+`LLM response -> brownie-tool-intent parse -> task-pinned MCP tool definition -> RuntimePermissionGate::UseMcpTool -> structured server/tool allow-list -> task-pinned catalog validation -> runtime-private server config resolution -> MCP tools/call -> bounded ToolExecutionCompleted/ToolExecutionFailed evidence -> bounded untrusted tool-result context -> next agent step`
+
+The normalized Brownie tool id is:
 
 `mcp.<server_id>.<tool_name>`
 
@@ -98,12 +102,15 @@ An MCP tool call is authorized only when all of these are true:
 MCP descriptions, schemas, server responses, command names, and AgentModes
 prose are never authority sources.
 
-Server configuration resolution is runtime-owned and tied to the active Mode
-Pack snapshot selected at task admission. Tool execution must not re-read the
-workspace `.brownie/modepack.json` as authority for an already admitted task.
-If the current active snapshot no longer matches the task's pinned activation
-fingerprint, MCP execution fails closed instead of silently widening or changing
-authority.
+Server configuration resolution is runtime-owned and tied to the Mode Pack
+activation snapshot selected at task admission. Runtime archives the
+secret-bearing server configuration in a private activation snapshot store keyed
+by activation fingerprint. Tool execution must not re-read the workspace
+`.brownie/modepack.json` or the current active snapshot as authority for an
+already admitted task. If another Mode Pack is later activated, the task still
+resolves MCP configuration from its pinned activation snapshot. If that private
+snapshot is missing or does not contain the pinned server/tool authority, MCP
+execution fails closed; it never falls back to a different activation.
 
 ## Task-Pinned Provenance
 
@@ -127,6 +134,36 @@ below runtime safety invariants, Mode Pack permission policy, and mode
 instructions. Fingerprints remain the provenance anchor; schema text and MCP
 descriptions never become authority.
 
+## Bounded Tool Result Context
+
+Successful `tools/call` results may materialize bounded MCP text content for the
+next normal agent step. This context is untrusted tool data below runtime safety
+policy, task-pinned Mode Pack policy, and mode instructions. It can inform the
+model's answer, but it cannot grant permissions, add tools, change server
+allow-lists, activate Mode Packs, mutate workspace scope, or override recovery
+and completion policy.
+
+The v0 result-context contract is intentionally narrow:
+
+- text content items may be included after deterministic bounding;
+- content item count, materialized item count, total text chars, materialized
+  text chars, per-item and total limits, truncation flags, `isError`, and the
+  result fingerprint are recorded as bounded evidence;
+- unsupported, binary, resource, image, audio, or blob-like items are reduced to
+  bounded metadata or fail closed before prompt materialization;
+- raw JSON-RPC responses, raw schemas, raw prompts, raw provider responses,
+  credentials, environment values, secret headers, absolute or canonical paths,
+  and raw file content are not persisted in the ledger and are not exposed as
+  authority.
+
+The runtime keeps enough bounded, sanitized result context in durable
+task-scoped evidence to replay a completed MCP call. If Brownie crashes after
+`tools/call` succeeds but before the second-pass model request, resume must use
+the persisted bounded result context and request fingerprint instead of
+unconditionally re-running the MCP tool. A repeated request with matching
+task/tool/input fingerprint reuses the completed evidence; mismatched or absent
+evidence follows the normal permission and execution path or fails closed.
+
 ## Failure And Replay
 
 `tools/list` and `tools/call` failures are bounded runtime tool failures. They
@@ -136,6 +173,9 @@ entry still matches the task-pinned catalog fingerprint evidence.
 
 The first-phase stdio lifecycle is request-scoped. Timeout, protocol failure,
 EOF, malformed response, or oversized response paths terminate the MCP child
-process before returning a bounded failure. Brownie does not add a scheduler,
-background polling loop, permanent MCP process, recursive self-spawn, or a
-second permission system.
+process before returning a bounded failure. Stdio response size is enforced while
+reading, not after a full line is allocated; oversized no-newline responses fail
+closed without storing or logging the full response, and the reader thread and
+child process tree are reclaimed. Brownie does not add a scheduler, background
+polling loop, permanent MCP process, recursive self-spawn, or a second
+permission system.
