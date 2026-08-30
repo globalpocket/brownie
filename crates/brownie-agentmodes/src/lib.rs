@@ -129,6 +129,7 @@ pub enum RuntimeAction {
     SpawnSubtask,
     IndexCodebase,
     UseMcpTool,
+    UseGitCapability,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -237,6 +238,7 @@ impl RuntimePermissionGate {
             RuntimeAction::SpawnSubtask => policy.permissions.can_spawn_subtasks,
             RuntimeAction::IndexCodebase => policy.permissions.codebase_index,
             RuntimeAction::UseMcpTool => policy.permissions.mcp_tool_access,
+            RuntimeAction::UseGitCapability => policy.permissions.process_exec,
         };
         let reason = permission_reason(policy, &action, allowed);
         PermissionDecision {
@@ -325,6 +327,7 @@ fn permission_reason(policy: &CompiledModePolicy, action: &RuntimeAction, allowe
         RuntimeAction::SpawnSubtask => "subtask spawning",
         RuntimeAction::IndexCodebase => "codebase indexing",
         RuntimeAction::UseMcpTool => "MCP tool execution",
+        RuntimeAction::UseGitCapability => "Git capability execution",
     };
     if allowed {
         format!("Mode {} allows {capability}.", policy.mode_id)
