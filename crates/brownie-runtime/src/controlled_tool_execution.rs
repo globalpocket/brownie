@@ -971,6 +971,8 @@ pub(super) fn handle_approved_workspace_intents(
                 | VERIFICATION_CARGO_FMT_CHECK_TOOL_ID
                 | VERIFICATION_CARGO_CHECK_TOOL_ID
                 | VERIFICATION_CARGO_TEST_TOOL_ID
+                | GIT_STATUS_TOOL_ID
+                | GIT_DIFF_TOOL_ID
         );
         let mcp_execution_tool = mcp_client::split_normalized_tool_id(&decision.tool_id).is_some();
         if !decision.allowed {
@@ -3374,6 +3376,11 @@ pub(super) fn tool_execution_ledger_payload(result: &brownie_tools::ToolExecutio
         "process_tree_kill_attempted",
         "process_tree_kill_succeeded",
         "process_tree_kill_reason",
+        "operation",
+        "line_count",
+        "captured_bytes",
+        "output_truncated",
+        "raw_diff_redacted",
     ] {
         if let Some(value) = result.output.get(key) {
             payload.insert(key.to_string(), value.clone());

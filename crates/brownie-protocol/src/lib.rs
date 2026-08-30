@@ -651,6 +651,7 @@ pub enum RuntimeActionName {
     SpawnSubtask,
     IndexCodebase,
     UseMcpTool,
+    UseGitCapability,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

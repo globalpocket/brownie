@@ -24,9 +24,13 @@ pub const SUBTASK_SPAWN_TOOL_ID: &str = "subtask.spawn";
 pub const VERIFICATION_CARGO_FMT_CHECK_TOOL_ID: &str = "verification.cargo_fmt_check";
 pub const VERIFICATION_CARGO_CHECK_TOOL_ID: &str = "verification.cargo_check";
 pub const VERIFICATION_CARGO_TEST_TOOL_ID: &str = "verification.cargo_test";
+pub const GIT_STATUS_TOOL_ID: &str = "git.status";
+pub const GIT_DIFF_TOOL_ID: &str = "git.diff";
 pub const MAX_WORKSPACE_READ_BYTES: usize = 65_536;
 pub const DEFAULT_VERIFICATION_TIMEOUT_MS: u64 = 30_000;
 pub const MAX_VERIFICATION_CAPTURE_BYTES: usize = 65_536;
+pub const MAX_GIT_CAPTURE_BYTES: usize = 32_768;
+pub const MAX_GIT_SUMMARY_LINES: usize = 40;
 pub const MAX_BOUNDED_CARGO_DIAGNOSTICS: usize = 5;
 const VERIFICATION_CAPTURE_JOIN_TIMEOUT_MS: u64 = 1_000;
 const MAX_BOUNDED_CARGO_DIAGNOSTIC_PATH_CHARS: usize = 240;
@@ -93,6 +97,8 @@ impl BuiltinToolRegistry {
             verification_cargo_fmt_check_tool(),
             verification_cargo_check_tool(),
             verification_cargo_test_tool(),
+            git_status_tool(),
+            git_diff_tool(),
             tool("process.exec", "Process Exec", "Dry-run definition for process execution requests; no commands are executed in Phase 1.6.", RuntimeAction::ExecuteProcess),
             subtask_spawn_tool(),
             tool("network.access", "Network Access", "Dry-run definition for network access requests.", RuntimeAction::AccessNetwork),
@@ -260,6 +266,8 @@ impl ToolExecutor {
             VERIFICATION_CARGO_TEST_TOOL_ID => {
                 VerificationCommandExecutor::cargo_test(workspace_root, &request.input)
             }
+            GIT_STATUS_TOOL_ID => GitCommandExecutor::status(workspace_root, &request.input),
+            GIT_DIFF_TOOL_ID => GitCommandExecutor::diff_summary(workspace_root, &request.input),
             _ => Ok(ToolExecutionResult {
                 tool_id: request.tool_id,
                 status: ToolExecutionStatus::Denied,
@@ -299,6 +307,124 @@ impl ToolExecutor {
         };
         WorkspaceReadExecutor::read(workspace_root, path, MAX_WORKSPACE_READ_BYTES)
     }
+}
+
+pub struct GitCommandExecutor;
+
+impl GitCommandExecutor {
+    pub fn status(workspace_root: &Path, input: &Value) -> anyhow::Result<ToolExecutionResult> {
+        if let Err(reason) = preflight_git_status_input(input) {
+            return Ok(ToolExecutionResult {
+                tool_id: GIT_STATUS_TOOL_ID.to_string(),
+                status: ToolExecutionStatus::Failed,
+                output: json!({ "reason": reason }),
+            });
+        }
+        execute_bounded_git(
+            workspace_root,
+            GIT_STATUS_TOOL_ID,
+            &["status", "--short", "--branch", "--untracked-files=normal"],
+            "status",
+        )
+    }
+
+    pub fn diff_summary(
+        workspace_root: &Path,
+        input: &Value,
+    ) -> anyhow::Result<ToolExecutionResult> {
+        if let Err(reason) = preflight_git_diff_input(input) {
+            return Ok(ToolExecutionResult {
+                tool_id: GIT_DIFF_TOOL_ID.to_string(),
+                status: ToolExecutionStatus::Failed,
+                output: json!({ "reason": reason }),
+            });
+        }
+        execute_bounded_git(
+            workspace_root,
+            GIT_DIFF_TOOL_ID,
+            &["diff", "--stat", "--summary", "--find-renames", "--"],
+            "diff_summary",
+        )
+    }
+}
+
+fn execute_bounded_git(
+    workspace_root: &Path,
+    tool_id: &str,
+    args: &[&str],
+    operation: &str,
+) -> anyhow::Result<ToolExecutionResult> {
+    let root = workspace_root
+        .canonicalize()
+        .context("workspace root is unavailable")?;
+    let repo = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .output()
+        .context("failed to inspect git repository")?;
+    if !repo.status.success() {
+        return Ok(ToolExecutionResult {
+            tool_id: tool_id.to_string(),
+            status: ToolExecutionStatus::Denied,
+            output: json!({ "reason": "Git capability requires a workspace repository." }),
+        });
+    }
+    let repo_root = String::from_utf8_lossy(&repo.stdout).trim().to_string();
+    let repo_root = Path::new(&repo_root)
+        .canonicalize()
+        .context("failed to validate git repository root")?;
+    if repo_root != root {
+        return Ok(ToolExecutionResult {
+            tool_id: tool_id.to_string(),
+            status: ToolExecutionStatus::Denied,
+            output: json!({ "reason": "Git capability is scoped to the admitted workspace repository." }),
+        });
+    }
+
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .output()
+        .context("failed to execute bounded git capability")?;
+    let combined = [output.stdout.as_slice(), output.stderr.as_slice()].concat();
+    let truncated = combined.len() > MAX_GIT_CAPTURE_BYTES;
+    let captured = &combined[..combined.len().min(MAX_GIT_CAPTURE_BYTES)];
+    let text = String::from_utf8_lossy(captured);
+    let total_line_count = text.lines().count();
+    let summary_lines = text
+        .lines()
+        .take(MAX_GIT_SUMMARY_LINES)
+        .map(sanitize_git_summary_line)
+        .collect::<Vec<_>>();
+    Ok(ToolExecutionResult {
+        tool_id: tool_id.to_string(),
+        status: if output.status.success() {
+            ToolExecutionStatus::Completed
+        } else {
+            ToolExecutionStatus::Failed
+        },
+        output: json!({
+            "operation": operation,
+            "exit_status": output.status.code(),
+            "summary_lines": summary_lines,
+            "line_count": total_line_count,
+            "captured_bytes": captured.len(),
+            "output_truncated": truncated || total_line_count > MAX_GIT_SUMMARY_LINES,
+            "raw_diff_redacted": true,
+            "process_launched": true,
+        }),
+    })
+}
+
+fn sanitize_git_summary_line(line: &str) -> String {
+    line.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(240)
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1290,6 +1416,26 @@ fn verification_cargo_test_tool() -> ToolDefinition {
     }
 }
 
+fn git_status_tool() -> ToolDefinition {
+    ToolDefinition {
+        tool_id: GIT_STATUS_TOOL_ID.to_string(),
+        display_name: "Git Status".to_string(),
+        description: "Controlled bounded Git status for the admitted workspace repository. Callers cannot supply argv, cwd, environment, stdin, shell, remote, or path input.".to_string(),
+        required_action: RuntimeAction::UseGitCapability,
+        input_schema: ToolInputSchema { fields: Vec::new() },
+    }
+}
+
+fn git_diff_tool() -> ToolDefinition {
+    ToolDefinition {
+        tool_id: GIT_DIFF_TOOL_ID.to_string(),
+        display_name: "Git Diff Summary".to_string(),
+        description: "Controlled bounded Git diff summary for the admitted workspace repository. Raw diffs and file contents are not returned. Callers cannot supply argv, cwd, environment, stdin, shell, remote, or path input.".to_string(),
+        required_action: RuntimeAction::UseGitCapability,
+        input_schema: ToolInputSchema { fields: Vec::new() },
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ToolIntentParserConfig {
     pub max_blocks: usize,
@@ -1852,6 +1998,18 @@ impl ToolIntentParser {
                     continue;
                 }
             }
+            if tool_id_value == GIT_STATUS_TOOL_ID {
+                if let Err(reason) = preflight_git_status_input(&input) {
+                    rejected.push(rejection(Some(tool_id_value), reason, "invalid_input"));
+                    continue;
+                }
+            }
+            if tool_id_value == GIT_DIFF_TOOL_ID {
+                if let Err(reason) = preflight_git_diff_input(&input) {
+                    rejected.push(rejection(Some(tool_id_value), reason, "invalid_input"));
+                    continue;
+                }
+            }
             requests.push(AssistantToolRequest {
                 tool_id: tool_id_value,
                 reason: reason_value,
@@ -2168,6 +2326,36 @@ fn preflight_verification_cargo_test_input(input: &Value) -> Result<(), &'static
     Ok(())
 }
 
+fn preflight_git_status_input(input: &Value) -> Result<(), &'static str> {
+    preflight_git_input(input, "git.status")
+}
+
+fn preflight_git_diff_input(input: &Value) -> Result<(), &'static str> {
+    preflight_git_input(input, "git.diff")
+}
+
+fn preflight_git_input(input: &Value, tool_id: &str) -> Result<(), &'static str> {
+    let Some(object) = input.as_object() else {
+        return Err("git capability input must be an object.");
+    };
+    for key in object.keys() {
+        match key.as_str() {
+            "command" | "argv" | "args" | "cwd" | "env" | "stdin" | "shell" | "timeout"
+            | "timeout_ms" | "remote" | "path" | "paths" | "branch" | "ref" | "revision" => {
+                return Err("git capability does not accept command, argv, cwd, env, stdin, shell, timeout, remote, path, branch, ref, or revision input.");
+            }
+            _ => {
+                return Err(match tool_id {
+                    "git.status" => "git.status does not accept input fields in this phase.",
+                    "git.diff" => "git.diff does not accept input fields in this phase.",
+                    _ => "git capability does not accept unknown input fields.",
+                })
+            }
+        }
+    }
+    Ok(())
+}
+
 fn extract_fenced_blocks(content: &str) -> Vec<&str> {
     let marker = "```brownie-tool-intent";
     let mut blocks = Vec::new();
@@ -2395,6 +2583,8 @@ mod tests {
                 "verification.cargo_fmt_check",
                 "verification.cargo_check",
                 "verification.cargo_test",
+                "git.status",
+                "git.diff",
                 "process.exec",
                 "subtask.spawn",
                 "network.access",
@@ -3394,5 +3584,109 @@ mod tests {
         assert!(!serialized.contains("stderr"));
         assert!(!serialized.contains("sh"));
         assert!(!serialized.contains("sleep"));
+    }
+
+    #[test]
+    fn git_status_and_diff_are_bounded_dedicated_capabilities() {
+        let temp = git_repository("git-status-diff");
+        fs::write(temp.path().join("README.md"), "# Changed\n").expect("write changed readme");
+        fs::write(temp.path().join("notes.md"), "new note\n").expect("write note");
+
+        let status = ToolExecutor::execute_controlled(
+            temp.path(),
+            ToolExecutionRequest {
+                tool_id: GIT_STATUS_TOOL_ID.to_string(),
+                input: json!({}),
+            },
+        )
+        .expect("git status");
+        assert_eq!(status.status, ToolExecutionStatus::Completed);
+        assert_eq!(status.output["operation"], "status");
+        assert_eq!(status.output["raw_diff_redacted"], true);
+        let status_json = status.output.to_string();
+        assert!(status_json.contains("README.md"));
+        assert!(!status_json.contains(temp.path().to_string_lossy().as_ref()));
+
+        let diff = ToolExecutor::execute_controlled(
+            temp.path(),
+            ToolExecutionRequest {
+                tool_id: GIT_DIFF_TOOL_ID.to_string(),
+                input: json!({}),
+            },
+        )
+        .expect("git diff");
+        assert_eq!(diff.status, ToolExecutionStatus::Completed);
+        assert_eq!(diff.output["operation"], "diff_summary");
+        assert_eq!(diff.output["raw_diff_redacted"], true);
+        let diff_json = diff.output.to_string();
+        assert!(diff_json.contains("README.md"));
+        assert!(!diff_json.contains("# Changed"));
+        assert!(!diff_json.contains(temp.path().to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn git_intents_require_dedicated_runtime_action_and_reject_shell_inputs() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"git.status\",\"reason\":\"Inspect local repo state.\",\"input\":{}},{\"tool_id\":\"git.diff\",\"reason\":\"Inspect bounded diff summary.\",\"input\":{}}]}\n```",
+        );
+        assert_eq!(parsed.requests.len(), 2);
+        assert!(parsed.rejected.is_empty());
+        let policy = BuiltinModeRegistry::get("implementer").expect("policy");
+        let evaluation = ToolIntentEvaluator::evaluate(&policy, parsed);
+        assert!(evaluation.items.iter().all(|item| {
+            item.required_action == RuntimeAction::UseGitCapability && item.allowed
+        }));
+
+        let rejected = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"git.status\",\"reason\":\"Try shell escape.\",\"input\":{\"command\":\"git status\",\"cwd\":\"/tmp\"}}]}\n```",
+        );
+        assert!(rejected.requests.is_empty());
+        assert_eq!(rejected.rejected[0].code, "invalid_input");
+    }
+
+    fn git_repository(name: &str) -> tempfile::TempDir {
+        let temp = tempfile::Builder::new()
+            .prefix(name)
+            .tempdir()
+            .expect("temp git repo");
+        let status = Command::new("git")
+            .args(["init"])
+            .current_dir(temp.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("git init");
+        assert!(status.success());
+        for (key, value) in [
+            ("user.email", "brownie-tools-test@example.invalid"),
+            ("user.name", "Brownie Tools Test"),
+        ] {
+            let status = Command::new("git")
+                .args(["config", key, value])
+                .current_dir(temp.path())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .expect("git config");
+            assert!(status.success());
+        }
+        fs::write(temp.path().join("README.md"), "# Initial\n").expect("write readme");
+        let status = Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(temp.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("git add");
+        assert!(status.success());
+        let status = Command::new("git")
+            .args(["commit", "-qm", "init"])
+            .current_dir(temp.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("git commit");
+        assert!(status.success());
+        temp
     }
 }

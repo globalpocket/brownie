@@ -304,10 +304,10 @@ use brownie_tools::{
     ToolIntentEvaluator, ToolIntentParser, ToolPlanDecision, ToolPlanEvaluator, ToolPlanner,
     ToolPlanningInput, WorkspacePatchOperation, WorkspaceReadExecutor,
     CODEBASE_INDEX_SELECTION_READ_TOOL_ID, DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS,
-    DEFAULT_PROPOSAL_PREVIEW_CHARS, MAX_BOUNDED_CARGO_DIAGNOSTICS, MAX_SUBTASK_SPAWN_GOAL_CHARS,
-    MAX_WORKSPACE_READ_BYTES, SUBTASK_SPAWN_TOOL_ID, VERIFICATION_CARGO_CHECK_TOOL_ID,
-    VERIFICATION_CARGO_FMT_CHECK_TOOL_ID, VERIFICATION_CARGO_TEST_TOOL_ID, WORKSPACE_READ_TOOL_ID,
-    WORKSPACE_WRITE_TOOL_ID,
+    DEFAULT_PROPOSAL_PREVIEW_CHARS, GIT_DIFF_TOOL_ID, GIT_STATUS_TOOL_ID,
+    MAX_BOUNDED_CARGO_DIAGNOSTICS, MAX_SUBTASK_SPAWN_GOAL_CHARS, MAX_WORKSPACE_READ_BYTES,
+    SUBTASK_SPAWN_TOOL_ID, VERIFICATION_CARGO_CHECK_TOOL_ID, VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
+    VERIFICATION_CARGO_TEST_TOOL_ID, WORKSPACE_READ_TOOL_ID, WORKSPACE_WRITE_TOOL_ID,
 };
 use codebase_index::*;
 use controlled_tool_execution::*;
@@ -13709,6 +13709,7 @@ fn runtime_action_from_name(action: &RuntimeActionName) -> RuntimeAction {
         RuntimeActionName::SpawnSubtask => RuntimeAction::SpawnSubtask,
         RuntimeActionName::IndexCodebase => RuntimeAction::IndexCodebase,
         RuntimeActionName::UseMcpTool => RuntimeAction::UseMcpTool,
+        RuntimeActionName::UseGitCapability => RuntimeAction::UseGitCapability,
     }
 }
 
@@ -13723,6 +13724,7 @@ fn runtime_action_name(action: &RuntimeAction) -> RuntimeActionName {
         RuntimeAction::SpawnSubtask => RuntimeActionName::SpawnSubtask,
         RuntimeAction::IndexCodebase => RuntimeActionName::IndexCodebase,
         RuntimeAction::UseMcpTool => RuntimeActionName::UseMcpTool,
+        RuntimeAction::UseGitCapability => RuntimeActionName::UseGitCapability,
     }
 }
 
@@ -17433,6 +17435,102 @@ mod tests {
         assert!(!serialized.contains("RUSTFLAGS"));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn approved_git_status_intent_executes_through_controlled_evidence() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let init = std::process::Command::new("git")
+            .arg("-C")
+            .arg(temp.path())
+            .arg("init")
+            .output()
+            .expect("git init");
+        assert!(
+            init.status.success(),
+            "git init failed: {}",
+            String::from_utf8_lossy(&init.stderr)
+        );
+        std::fs::write(temp.path().join("README.md"), "# Brownie\n").expect("readme");
+
+        let store = BrownieStore::new(temp.path());
+        let task = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Inspect git status".into(),
+                mode_id: Some("verifier".into()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start task");
+        let policy = BuiltinModeRegistry::get("verifier").expect("verifier policy");
+        let assistant_content = "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"git.status\",\"reason\":\"Inspect bounded local status.\",\"input\":{}}]}\n```";
+
+        append_tool_intent_events(&store, &task, &policy, assistant_content)
+            .expect("append git intent");
+        handle_approved_workspace_intents(&store, &task, &policy, assistant_content)
+            .expect("execute git intent");
+
+        let events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("events");
+        assert!(events.iter().any(|event| {
+            event.kind == LedgerEventKind::ToolIntentApproved
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("tool_id"))
+                    .and_then(Value::as_str)
+                    == Some(GIT_STATUS_TOOL_ID)
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("required_action"))
+                    .and_then(Value::as_str)
+                    == Some("UseGitCapability")
+        }));
+        assert!(events.iter().any(|event| {
+            event.kind == LedgerEventKind::ToolExecutionPermissionChecked
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("required_action"))
+                    .and_then(Value::as_str)
+                    == Some("UseGitCapability")
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("allowed"))
+                    .and_then(Value::as_bool)
+                    == Some(true)
+        }));
+        let completed = events
+            .iter()
+            .find(|event| {
+                event.kind == LedgerEventKind::ToolExecutionCompleted
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| payload.get("tool_id"))
+                        .and_then(Value::as_str)
+                        == Some(GIT_STATUS_TOOL_ID)
+            })
+            .and_then(|event| event.payload.as_ref())
+            .expect("git status completed payload");
+        assert_eq!(completed["operation"], "status");
+        assert_eq!(completed["status"], "Completed");
+        assert_eq!(completed["process_launched"], true);
+        assert_eq!(completed["raw_diff_redacted"], true);
+        assert!(completed["line_count"].as_u64().expect("line count") >= 1);
+        let serialized = serde_json::to_string(&events).expect("serialize events");
+        assert!(!serialized.contains(temp.path().to_string_lossy().as_ref()));
+        assert!(!serialized.contains("git status --short"));
+        assert!(!serialized.contains("command"));
     }
 
     fn assert_cargo_check_honest_safety_metadata(output: &Value) {
@@ -58896,7 +58994,7 @@ mod tests {
             .as_array()
             .expect("tools")
             .clone();
-        assert_eq!(tools.len(), 11);
+        assert_eq!(tools.len(), 13);
         assert!(tools.iter().any(|tool| tool["tool_id"] == "workspace.read"));
         assert!(tools
             .iter()
@@ -58910,6 +59008,10 @@ mod tests {
         assert!(tools
             .iter()
             .any(|tool| tool["tool_id"] == "verification.cargo_test"));
+        assert!(tools
+            .iter()
+            .any(|tool| tool["tool_id"] == GIT_STATUS_TOOL_ID));
+        assert!(tools.iter().any(|tool| tool["tool_id"] == GIT_DIFF_TOOL_ID));
     }
 
     #[test]
