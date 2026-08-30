@@ -172,6 +172,7 @@ fn append_apply_write_permission_check(
     store: &BrownieStore,
     task: &TaskRecord,
     apply_result: &mut WorkspacePatchApplyResultSummary,
+    path: Option<&str>,
 ) -> Result<bool, String> {
     let policy = match resolve_apply_write_policy(store, task) {
         Ok(policy) => policy,
@@ -210,7 +211,10 @@ fn append_apply_write_permission_check(
             return Ok(false);
         }
     };
-    let decision = RuntimePermissionGate::check(&policy, RuntimeAction::WriteWorkspace);
+    let decision = path.map_or_else(
+        || RuntimePermissionGate::check(&policy, RuntimeAction::WriteWorkspace),
+        |path| RuntimePermissionGate::check_workspace_write_path(&policy, path),
+    );
     let status = if decision.allowed { "Pass" } else { "Fail" };
     apply_result.checklist.push(apply_result_check(
         "apply_time_write_workspace_permission",
@@ -227,6 +231,8 @@ fn append_apply_write_permission_check(
         "operation": apply_result.operation,
         "mode_id": policy.mode_id,
         "required_action": "WriteWorkspace",
+        "path": path,
+        "workspace_write_scope_count": policy.workspace_write_scopes.len(),
         "allowed": decision.allowed,
         "reason": decision.reason,
     });
@@ -2448,7 +2454,7 @@ fn apply_replace_file_transaction_recovery(
         "Pass",
         None,
     ));
-    if !append_apply_write_permission_check(store, &task, &mut apply_result)? {
+    if !append_apply_write_permission_check(store, &task, &mut apply_result, None)? {
         apply_result.transaction_status = Some("Denied".to_string());
         apply_result.transaction_recovery_status = Some("Denied".to_string());
         return record_apply_result(
@@ -2756,6 +2762,22 @@ fn apply_replace_file_transaction_recovery(
                 )
             }
         };
+        if !append_apply_write_permission_check(
+            store,
+            &task,
+            &mut apply_result,
+            Some(&proposal.path),
+        )? {
+            apply_result.transaction_status = Some("Denied".to_string());
+            apply_result.transaction_recovery_status = Some("Denied".to_string());
+            return record_apply_result(
+                store,
+                &task,
+                &params.run_id,
+                &proposal_id_for_result,
+                apply_result,
+            );
+        }
         for seen_path in seen_paths.iter() {
             if seen_path == &proposal.path
                 || seen_path.starts_with(&format!("{}/", proposal.path))
@@ -3085,7 +3107,7 @@ fn apply_create_file_transaction_recovery(
         "Pass",
         None,
     ));
-    if !append_apply_write_permission_check(store, &task, &mut apply_result)? {
+    if !append_apply_write_permission_check(store, &task, &mut apply_result, None)? {
         apply_result.transaction_status = Some("Denied".to_string());
         apply_result.transaction_recovery_status = Some("Denied".to_string());
         return record_apply_result(
@@ -3400,6 +3422,22 @@ fn apply_create_file_transaction_recovery(
                 )
             }
         };
+        if !append_apply_write_permission_check(
+            store,
+            &task,
+            &mut apply_result,
+            Some(&proposal.path),
+        )? {
+            apply_result.transaction_status = Some("Denied".to_string());
+            apply_result.transaction_recovery_status = Some("Denied".to_string());
+            return record_apply_result(
+                store,
+                &task,
+                &params.run_id,
+                &proposal_id_for_result,
+                apply_result,
+            );
+        }
         for seen_path in seen_paths.iter() {
             if seen_path == &proposal.path
                 || seen_path.starts_with(&format!("{}/", proposal.path))
@@ -3716,7 +3754,7 @@ fn apply_delete_file_transaction_recovery(
         "Pass",
         None,
     ));
-    if !append_apply_write_permission_check(store, &task, &mut apply_result)? {
+    if !append_apply_write_permission_check(store, &task, &mut apply_result, None)? {
         apply_result.transaction_status = Some("Denied".to_string());
         apply_result.transaction_recovery_status = Some("Denied".to_string());
         return record_apply_result(
@@ -4045,6 +4083,22 @@ fn apply_delete_file_transaction_recovery(
                 )
             }
         };
+        if !append_apply_write_permission_check(
+            store,
+            &task,
+            &mut apply_result,
+            Some(&proposal.path),
+        )? {
+            apply_result.transaction_status = Some("Denied".to_string());
+            apply_result.transaction_recovery_status = Some("Denied".to_string());
+            return record_apply_result(
+                store,
+                &task,
+                &params.run_id,
+                &proposal_id_for_result,
+                apply_result,
+            );
+        }
         for seen_path in seen_paths.iter() {
             if seen_path == &proposal.path
                 || seen_path.starts_with(&format!("{}/", proposal.path))
@@ -4279,7 +4333,7 @@ fn apply_replace_file_transaction(
         "Pass",
         None,
     ));
-    if !append_apply_write_permission_check(store, &task, &mut apply_result)? {
+    if !append_apply_write_permission_check(store, &task, &mut apply_result, None)? {
         apply_result.transaction_status = Some("Denied".to_string());
         return record_apply_result(
             store,
@@ -4470,6 +4524,21 @@ fn apply_replace_file_transaction(
             Ok(path) => path,
             Err(reason) => return deny_item(apply_result, "transaction_target_path_safe", reason),
         };
+        if !append_apply_write_permission_check(
+            store,
+            &task,
+            &mut apply_result,
+            Some(&proposal.path),
+        )? {
+            apply_result.transaction_status = Some("Denied".to_string());
+            return record_apply_result(
+                store,
+                &task,
+                &params.run_id,
+                &proposal_id_for_result,
+                apply_result,
+            );
+        }
         for seen_path in seen_paths.iter() {
             if seen_path == &proposal.path
                 || seen_path.starts_with(&format!("{}/", proposal.path))
@@ -4783,7 +4852,7 @@ fn apply_create_file_transaction(
         "Pass",
         None,
     ));
-    if !append_apply_write_permission_check(store, &task, &mut apply_result)? {
+    if !append_apply_write_permission_check(store, &task, &mut apply_result, None)? {
         apply_result.transaction_status = Some("Denied".to_string());
         return record_apply_result(
             store,
@@ -4939,6 +5008,22 @@ fn apply_create_file_transaction(
             Ok(path) => path,
             Err(reason) => return deny(apply_result, "transaction_target_path_safe", reason),
         };
+        if !append_apply_write_permission_check(
+            store,
+            &task,
+            &mut apply_result,
+            Some(&proposal.path),
+        )? {
+            apply_result.transaction_status = Some("Denied".to_string());
+            return record_apply_result(
+                store,
+                &task,
+                &params.run_id,
+                &proposal_id_for_result,
+                apply_result,
+            )
+            .map(|(_, result)| (first_proposal, result));
+        }
         for seen_path in seen_paths.iter() {
             if seen_path == &proposal.path
                 || seen_path.starts_with(&format!("{}/", proposal.path))
@@ -5238,7 +5323,7 @@ fn apply_delete_file_transaction(
         "Pass",
         None,
     ));
-    if !append_apply_write_permission_check(store, &task, &mut apply_result)? {
+    if !append_apply_write_permission_check(store, &task, &mut apply_result, None)? {
         apply_result.transaction_status = Some("Denied".to_string());
         return record_apply_result(
             store,
@@ -5406,6 +5491,22 @@ fn apply_delete_file_transaction(
             Ok(path) => path,
             Err(reason) => return deny(apply_result, "transaction_target_path_safe", reason),
         };
+        if !append_apply_write_permission_check(
+            store,
+            &task,
+            &mut apply_result,
+            Some(&proposal.path),
+        )? {
+            apply_result.transaction_status = Some("Denied".to_string());
+            return record_apply_result(
+                store,
+                &task,
+                &params.run_id,
+                &proposal_id_for_result,
+                apply_result,
+            )
+            .map(|(_, result)| (first_proposal, result));
+        }
         for seen_path in seen_paths.iter() {
             if seen_path == &proposal.path
                 || seen_path.starts_with(&format!("{}/", proposal.path))
@@ -5717,7 +5818,8 @@ pub(super) fn apply_proposal(
         "Pass",
         None,
     ));
-    if !append_apply_write_permission_check(store, &task, &mut apply_result)? {
+    if !append_apply_write_permission_check(store, &task, &mut apply_result, Some(&proposal.path))?
+    {
         return record_apply_result(
             store,
             &task,

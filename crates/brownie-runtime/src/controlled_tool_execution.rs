@@ -972,7 +972,7 @@ pub(super) fn handle_approved_workspace_intents(
             if is_verification_recovery_task && verification_recovery_proposal_seen {
                 continue;
             }
-            append_workspace_patch_proposal(store, record, &decision)?;
+            append_workspace_patch_proposal(store, record, policy, &decision)?;
             if is_verification_recovery_task {
                 verification_recovery_proposal_seen = true;
             }

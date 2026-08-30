@@ -13,7 +13,7 @@ Rejected paths include empty paths, absolute paths, parent traversal, and protec
 
 Proposal generation is gated by `WriteWorkspace`. If the active runtime policy denies `WriteWorkspace`, the runtime records the normal denied tool-intent event and does not create a proposal.
 
-M8.2 keeps recovery repair proposals inside the same permission boundary. An admitted verification recovery task may create at most one recovery-scoped `WorkspacePatchProposed` event during explicit `task.run`, and only when the recovery task has current source verifier-failure provenance and the `workspace.write` intent is approved by `WriteWorkspace`. The proposal remains non-mutating: review, approval, preflight, and a later explicit `proposal.apply` authorization are still required before any workspace file can change.
+M8.2 keeps recovery repair proposals inside the same permission boundary. An admitted verification recovery task may create at most one recovery-scoped `WorkspacePatchProposed` event during explicit `task.run`, and only when the recovery task has current source verifier-failure provenance and the `workspace.write` intent is approved by `WriteWorkspace` for the concrete path under any compiled `workspace_write_scopes`. The proposal remains non-mutating: review, approval, preflight, and a later explicit `proposal.apply` authorization are still required before any workspace file can change.
 
 M15.1 adds apply-time revalidation to the side-effecting `proposal.apply`
 authority. A single-file apply, multi-file transaction apply, or transaction
@@ -206,7 +206,7 @@ The runtime appends `WorkspacePatchApplyDryRunChecked` with summary-only metadat
 
 ## M6.1 controlled replace-file apply
 
-`proposal.apply` accepts an existing `Approved` and `Valid` `replace_file` proposal, a caller-provided `expected_target_sha256`, request-only `replacement_content`, and explicit `authorize = true`. It is the only path that may mutate workspace files. `workspace.write`, approval, preflight, readiness, capability inspection, dry-run, history, audit, review, queue, diagnostics, report, digest, and wrapper endpoints remain non-mutating.
+`proposal.apply` accepts an existing `Approved` and `Valid` `replace_file` proposal, a caller-provided `expected_target_sha256`, request-only `replacement_content`, and explicit `authorize = true`. Before mutation it rechecks the proposal path against the source run's durable compiled mode policy, including `workspace_write_scopes`; an approval cannot expand the runtime write scope. It is the only path that may mutate workspace files. `workspace.write`, approval, preflight, readiness, capability inspection, dry-run, history, audit, review, queue, diagnostics, report, digest, and wrapper endpoints remain non-mutating.
 
 The M6.1 replace scope is one file per apply, workspace-relative paths only, existing regular UTF-8 targets only, protected paths denied, symlinks denied, parent traversal denied, expected target hash required, approved proposal required, and approval must be current and unconsumed. It does not create files, delete files, mutate directories, rename between arbitrary paths, run multi-file transactions, execute shell/git/tests, access network resources, control services, or apply automatically without explicit authorization.
 
