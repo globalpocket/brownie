@@ -119,6 +119,26 @@ MCP tools use the same `tool.execute` boundary with normalized ids of the form
 execution requires `task_id` so Runtime can use the task-pinned `ModeResolved`
 policy and MCP catalog provenance admitted for that task.
 
+## MP-7 Git tools
+
+MP-7 adds dedicated runtime-owned Git controlled tools instead of allowing
+generic shell Git execution. `git.status` and `git.diff` run fixed bounded
+inspection commands in the admitted workspace repository and return sanitized
+summary metadata only.
+
+`git.commit` creates a local commit from already staged changes in the admitted
+workspace repository. Its input is limited to a bounded `message` string; callers
+cannot provide argv, cwd, environment, stdin, shell, timeout, remote, path,
+branch, ref, revision, push, PR, or branch deletion fields. Runtime records the
+message fingerprint and commit id, not the raw message. Raw diffs, raw file
+content, raw command strings, environment values, absolute paths, canonical
+paths, credentials, and secrets must not be stored in ledger evidence.
+
+Successful commit execution writes a Brownie commit-intent trailer into the Git
+commit message so retry after a lost response can recognize the latest matching
+commit and return replay evidence without creating a duplicate commit. This is
+local repository mutation only; remote Git operations remain out of scope.
+
 Runtime denies MCP execution when the task is unknown, the mode lacks
 `UseMcpTool`/`mcp_tool_access`, the server/tool pair is absent from the compiled
 Mode Pack allow-list, the structured server configuration is missing, or the

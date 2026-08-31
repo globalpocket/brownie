@@ -973,6 +973,7 @@ pub(super) fn handle_approved_workspace_intents(
                 | VERIFICATION_CARGO_TEST_TOOL_ID
                 | GIT_STATUS_TOOL_ID
                 | GIT_DIFF_TOOL_ID
+                | GIT_COMMIT_TOOL_ID
         );
         let mcp_execution_tool = mcp_client::split_normalized_tool_id(&decision.tool_id).is_some();
         if !decision.allowed {
@@ -3381,6 +3382,10 @@ pub(super) fn tool_execution_ledger_payload(result: &brownie_tools::ToolExecutio
         "captured_bytes",
         "output_truncated",
         "raw_diff_redacted",
+        "raw_message_redacted",
+        "message_fingerprint",
+        "commit_id",
+        "replayed",
     ] {
         if let Some(value) = result.output.get(key) {
             payload.insert(key.to_string(), value.clone());

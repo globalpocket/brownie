@@ -304,7 +304,7 @@ use brownie_tools::{
     ToolIntentEvaluator, ToolIntentParser, ToolPlanDecision, ToolPlanEvaluator, ToolPlanner,
     ToolPlanningInput, WorkspacePatchOperation, WorkspaceReadExecutor,
     CODEBASE_INDEX_SELECTION_READ_TOOL_ID, DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS,
-    DEFAULT_PROPOSAL_PREVIEW_CHARS, GIT_DIFF_TOOL_ID, GIT_STATUS_TOOL_ID,
+    DEFAULT_PROPOSAL_PREVIEW_CHARS, GIT_COMMIT_TOOL_ID, GIT_DIFF_TOOL_ID, GIT_STATUS_TOOL_ID,
     MAX_BOUNDED_CARGO_DIAGNOSTICS, MAX_SUBTASK_SPAWN_GOAL_CHARS, MAX_WORKSPACE_READ_BYTES,
     SUBTASK_SPAWN_TOOL_ID, VERIFICATION_CARGO_CHECK_TOOL_ID, VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
     VERIFICATION_CARGO_TEST_TOOL_ID, WORKSPACE_READ_TOOL_ID, WORKSPACE_WRITE_TOOL_ID,
@@ -17530,6 +17530,111 @@ mod tests {
         let serialized = serde_json::to_string(&events).expect("serialize events");
         assert!(!serialized.contains(temp.path().to_string_lossy().as_ref()));
         assert!(!serialized.contains("git status --short"));
+        assert!(!serialized.contains("command"));
+    }
+
+    #[test]
+    fn approved_git_commit_intent_executes_with_sanitized_replay_evidence() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let init = std::process::Command::new("git")
+            .arg("-C")
+            .arg(temp.path())
+            .arg("init")
+            .output()
+            .expect("git init");
+        assert!(
+            init.status.success(),
+            "git init failed: {}",
+            String::from_utf8_lossy(&init.stderr)
+        );
+        for (key, value) in [
+            ("user.email", "brownie@example.invalid"),
+            ("user.name", "Brownie Test"),
+        ] {
+            let config = std::process::Command::new("git")
+                .arg("-C")
+                .arg(temp.path())
+                .args(["config", key, value])
+                .status()
+                .expect("git config");
+            assert!(config.success());
+        }
+        std::fs::write(temp.path().join("README.md"), "# Brownie\n").expect("readme");
+        let add = std::process::Command::new("git")
+            .arg("-C")
+            .arg(temp.path())
+            .args(["add", "README.md"])
+            .status()
+            .expect("git add");
+        assert!(add.success());
+
+        let store = BrownieStore::new(temp.path());
+        let task = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Commit staged change".into(),
+                mode_id: Some("implementer".into()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start task");
+        let policy = BuiltinModeRegistry::get("implementer").expect("implementer policy");
+        let assistant_content = "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"git.commit\",\"reason\":\"Commit bounded staged changes.\",\"input\":{\"message\":\"Commit staged README update\"}}]}\n```";
+
+        append_tool_intent_events(&store, &task, &policy, assistant_content)
+            .expect("append git intent");
+        handle_approved_workspace_intents(&store, &task, &policy, assistant_content)
+            .expect("execute git commit intent");
+        handle_approved_workspace_intents(&store, &task, &policy, assistant_content)
+            .expect("replay git commit intent");
+
+        let count = std::process::Command::new("git")
+            .arg("-C")
+            .arg(temp.path())
+            .args(["rev-list", "--count", "HEAD"])
+            .output()
+            .expect("git rev-list");
+        assert_eq!(String::from_utf8_lossy(&count.stdout).trim(), "1");
+
+        let events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("events");
+        let completed = events
+            .iter()
+            .filter(|event| {
+                event.kind == LedgerEventKind::ToolExecutionCompleted
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| payload.get("tool_id"))
+                        .and_then(Value::as_str)
+                        == Some(GIT_COMMIT_TOOL_ID)
+            })
+            .filter_map(|event| event.payload.as_ref())
+            .collect::<Vec<_>>();
+        assert_eq!(completed.len(), 2);
+        assert_eq!(completed[0]["operation"], "commit");
+        assert_eq!(completed[0]["status"], "Completed");
+        assert_eq!(completed[0]["raw_diff_redacted"], true);
+        assert_eq!(completed[0]["raw_message_redacted"], true);
+        assert_eq!(completed[0]["process_launched"], true);
+        assert_eq!(completed[0]["replayed"], false);
+        assert_eq!(completed[1]["commit_id"], completed[0]["commit_id"]);
+        assert_eq!(completed[1]["process_launched"], false);
+        assert_eq!(completed[1]["replayed"], true);
+        assert!(completed[0]["message_fingerprint"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("sha256:")));
+        let serialized = serde_json::to_string(&events).expect("serialize events");
+        assert!(!serialized.contains(temp.path().to_string_lossy().as_ref()));
+        assert!(!serialized.contains("Commit staged README update"));
+        assert!(!serialized.contains("# Brownie"));
+        assert!(!serialized.contains("git commit"));
         assert!(!serialized.contains("command"));
     }
 
@@ -58994,7 +59099,7 @@ mod tests {
             .as_array()
             .expect("tools")
             .clone();
-        assert_eq!(tools.len(), 13);
+        assert_eq!(tools.len(), 14);
         assert!(tools.iter().any(|tool| tool["tool_id"] == "workspace.read"));
         assert!(tools
             .iter()
@@ -59012,6 +59117,9 @@ mod tests {
             .iter()
             .any(|tool| tool["tool_id"] == GIT_STATUS_TOOL_ID));
         assert!(tools.iter().any(|tool| tool["tool_id"] == GIT_DIFF_TOOL_ID));
+        assert!(tools
+            .iter()
+            .any(|tool| tool["tool_id"] == GIT_COMMIT_TOOL_ID));
     }
 
     #[test]
