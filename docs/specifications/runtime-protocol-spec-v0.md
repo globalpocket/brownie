@@ -389,6 +389,57 @@ input, raw schema text, server configuration, credentials, absolute paths,
 environment values, raw provider response text, or raw MCP JSON-RPC response.
 MCP tools outside the task-pinned catalog are rejected as unknown tools.
 
+## `tool.execute` with Git tools
+
+Git tools are invoked through the existing `tool.execute` JSON-RPC method using
+fixed controlled ids:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 15,
+  "method": "tool.execute",
+  "params": {
+    "task_id": "task_<uuid>",
+    "mode_id": "reviewer",
+    "tool_id": "git.status",
+    "input": {}
+  }
+}
+```
+
+`git.status`, `git.diff`, and `git.commit` require
+`RuntimePermissionGate::UseGitCapability` at point of use. They are not a
+generic Git, shell, process, remote, branch, PR, or patch-apply transport.
+Runtime resolves the admitted workspace repository and rejects requests that
+try to supply argv, cwd, environment, stdin, shell, timeout, path, branch, ref,
+revision, remote, push, PR, or arbitrary command fields. `git.commit` is
+limited to an already-staged local commit with a bounded message and durable
+commit-intent replay evidence.
+
+Completed `git.status` and `git.diff` output includes a nested `git` object with
+operation, result fingerprint, summary line counts, materialized summary line
+counts, bounded `summary_lines`, hard limits, truncation evidence, and explicit
+raw diff, raw file content, and absolute-path redaction evidence. The same
+bounded object may be materialized into the next agent step as
+`untrusted_git_result_context`. It is model-visible tool data only; it is below
+runtime safety policy and Mode Pack permission policy and cannot grant
+authority, widen `workspace_write_scopes`, select additional Git operations, or
+alter completion gates.
+
+Git process execution uses fixed argv, null stdin, bounded in-flight aggregate
+stdout/stderr capture, hardened prompt/helper-disabled environment, timeout,
+process-tree termination where supported, child reaping, and reader-thread join
+tracking. Timeout and oversize paths return `Failed` or bounded failed output
+with lifecycle evidence such as `output_oversized`, `timed_out`,
+`process_tree_timeout_supported`, `process_tree_kill_attempted`,
+`process_tree_kill_succeeded`, `process_tree_kill_reason`,
+`reader_thread_joined`, `git_environment_hardened`,
+`git_prompts_disabled`, and `git_optional_locks_disabled`. Ledger and RPC
+evidence must not include raw stdout/stderr, raw diffs, raw file content, raw
+commit message text, command strings, argv, environment values, credentials,
+absolute paths, canonical paths, prompts, provider responses, or secrets.
+
 The built-in tool registry requires `ReadWorkspace`; after that primary tool
 permission passes, the runtime checks `RuntimeAction::IndexCodebase` before it
 reads `.brownie/codebase-index/current.json`, query ledger evidence, or file

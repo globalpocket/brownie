@@ -124,7 +124,33 @@ policy and MCP catalog provenance admitted for that task.
 MP-7 adds dedicated runtime-owned Git controlled tools instead of allowing
 generic shell Git execution. `git.status` and `git.diff` run fixed bounded
 inspection commands in the admitted workspace repository and return sanitized
-summary metadata only.
+summary metadata plus bounded untrusted Git result context only.
+
+`git.status` and `git.diff` do not accept caller-supplied argv, cwd,
+environment, stdin, shell, timeout, path, branch, ref, revision, remote, push,
+or PR fields. The runtime resolves the admitted workspace repository, rejects
+non-repositories fail-closed, and launches only the fixed inspection command for
+the requested controlled capability. Their successful result contains a nested
+`git` block with operation, result fingerprint, summary line counts,
+materialized summary line counts, bounded summary lines, maximum line and item
+limits, truncation evidence, and explicit evidence that raw diffs, raw file
+content, and absolute paths were redacted. That nested block may be materialized
+for the next agent step as `untrusted_git_result_context`; it is tool data below
+runtime safety policy and Mode Pack permission policy and never grants
+authority.
+
+Git inspection process execution is bounded while output is being read. The
+runtime starts the child with null stdin and a hardened Git environment that
+disables prompts, askpass helpers, pager behavior, optional locks, system/global
+config, and caller environment inheritance except the minimum executable lookup
+needed to launch Git. Stdout and stderr are captured with a shared aggregate
+byte ceiling. Timeout and oversize paths fail closed, attempt process-tree
+termination where supported, reap the child, join reader threads, and store only
+bounded lifecycle metadata such as timeout/oversize booleans, process-tree kill
+attempt evidence, reader-thread join evidence, hardened-environment evidence,
+and duration. Raw stdout, stderr, command strings, argv, environment values,
+absolute paths, canonical paths, credentials, secrets, raw diffs, and raw file
+content are not persisted.
 
 `git.commit` creates a local commit from already staged changes in the admitted
 workspace repository. Its input is limited to a bounded `message` string; callers

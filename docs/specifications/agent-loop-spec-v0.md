@@ -75,6 +75,17 @@ M7.2 allows the agent loop to request the fixed `verification.cargo_check` verif
 
 M29.1 allows the agent loop to request the fixed `verification.cargo_test` verifier for Rust test verification goals when the active mode has `ExecuteProcess`. The runtime executes it through the same controlled tool path as standalone `tool.execute`, requires `Cargo.toml` and `Cargo.lock`, runs only `cargo test --workspace --all-targets --locked --offline`, uses an isolated target directory outside the workspace, sets Cargo dependency-fetch offline mode, and records only bounded `ToolExecution*` evidence. Metadata must honestly report `cargo_dependency_fetch_offline=true`, `os_network_isolated=false`, `compile_time_code_sandboxed=false`, `test_code_executed=true` for launched runs, and `trusted_workspace_required=true`.
 
+MP-7.1 allows the agent loop to request fixed `git.status` and `git.diff`
+inspection tools when the active mode has `UseGitCapability`. These are
+controlled Git capabilities, not generic process execution. The second-pass
+prompt may receive bounded `untrusted_git_result_context` containing sanitized
+summary lines, fingerprints, counts, truncation evidence, redaction evidence,
+and process-lifecycle safety metadata. Raw diffs, raw file content, command
+strings, argv, provider responses, environment values, credentials, absolute
+paths, and canonical paths must not enter ledger or prompt materialization.
+This context cannot grant permissions, widen scopes, request new Git authority,
+or bypass runtime completion gates.
+
 M30.1 makes failed launched `verification.cargo_test` evidence actionable for recovery without exposing raw test output. Failed cargo-test tool evidence may include at most five bounded diagnostics with hashed test names and optional sanitized panic locations. The failed verification completion gate and verification recovery provenance carry those diagnostics through existing task and recovery surfaces, so a headless recovery task can choose a next read or repair direction without raw stdout/stderr, rendered panic messages, assertion values, source snippets, raw test names, commands, environment, absolute paths, canonical paths, or file content.
 
 M31.1 allows a current admitted verification recovery `task.run` request to include `verification_recovery_context_read` for exactly one diagnostic from the task's current recovery provenance. The runtime requires explicit authorization, source task/run IDs, expected failure fingerprint, a bounded diagnostic index, a bounded excerpt budget, current recovery provenance, `ReadWorkspace`, and a safe existing regular UTF-8 workspace file before reading. The excerpt is prompt-only in-memory context; ledger and RPC evidence expose only hashes, diagnostic metadata, line range, byte count, truncation, redaction, replay state, and next action. It does not add a new RPC, generic workspace read, report, history, inspection, codebase query, shell/git/network/service execution, workspace mutation, or raw prompt/file/output exposure.

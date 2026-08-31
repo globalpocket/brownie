@@ -3381,7 +3381,14 @@ pub(super) fn tool_execution_ledger_payload(result: &brownie_tools::ToolExecutio
         "line_count",
         "captured_bytes",
         "output_truncated",
+        "output_oversized",
+        "reader_thread_joined",
+        "git_environment_hardened",
+        "git_prompts_disabled",
+        "git_optional_locks_disabled",
         "raw_diff_redacted",
+        "raw_file_content_redacted",
+        "absolute_paths_redacted",
         "raw_message_redacted",
         "message_fingerprint",
         "commit_id",
@@ -3396,6 +3403,39 @@ pub(super) fn tool_execution_ledger_payload(result: &brownie_tools::ToolExecutio
         if !diagnostics.is_empty() {
             payload.insert("bounded_cargo_diagnostics".to_string(), json!(diagnostics));
         }
+    }
+    if let Some(git) = result.output.get("git").and_then(Value::as_object) {
+        let mut git_payload = serde_json::Map::new();
+        for key in [
+            "operation",
+            "result_fingerprint",
+            "summary_line_count",
+            "materialized_summary_line_count",
+            "output_truncated",
+            "max_summary_lines",
+            "max_summary_line_chars",
+            "raw_diff_redacted",
+            "raw_file_content_redacted",
+            "absolute_paths_redacted",
+        ] {
+            if let Some(value) = git.get(key) {
+                git_payload.insert(key.to_string(), value.clone());
+            }
+        }
+        if let Some(lines) = git.get("summary_lines").and_then(Value::as_array) {
+            let bounded_lines = lines
+                .iter()
+                .filter_map(Value::as_str)
+                .take(MAX_GIT_SUMMARY_LINES)
+                .map(|line| {
+                    line.chars()
+                        .take(MAX_GIT_SUMMARY_LINE_CHARS)
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>();
+            git_payload.insert("summary_lines".to_string(), json!(bounded_lines));
+        }
+        payload.insert("git".to_string(), Value::Object(git_payload));
     }
     if let Some(reason) = result.output.get("reason") {
         payload.insert("reason".to_string(), reason.clone());

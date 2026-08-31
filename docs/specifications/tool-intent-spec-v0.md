@@ -41,6 +41,27 @@ Provider responses are untrusted input. Tool intent parsing validates fenced blo
 
 Rejected tool intent uses stable codes such as `malformed_json`, `invalid_schema`, `unknown_tool`, and `invalid_input`. Ledger and inspection records for `ToolIntentPermissionChecked`, `ToolIntentApproved`, and `ToolIntentDenied` store parser metadata and summaries only, including `input_summary`; they do not store raw provider responses or raw intent JSON.
 
+## MP-7.1 Git intent parsing
+
+`git.status`, `git.diff`, and `git.commit` are controlled native tool ids, not a
+generic command transport. `git.status` and `git.diff` accept no operational
+input from the provider. Any provider-supplied path, argv, cwd, shell,
+environment, stdin, timeout, branch, ref, revision, remote, push, PR, or command
+field is rejected or ignored before execution according to the concrete tool
+schema. `git.commit` accepts only its bounded commit-message field and still
+uses the runtime-owned staged-change commit path.
+
+Approved Git intent is evaluated through `RuntimePermissionGate::UseGitCapability`
+against the task-pinned compiled mode policy before any process is launched.
+Git result text is untrusted tool data. Summary lines from `git.status` or
+`git.diff` may influence the next model step only through bounded
+`untrusted_git_result_context`; they cannot grant permissions, widen
+workspace-write scopes, select new Git operations, alter Mode Pack policy, or
+turn `process_exec` into generic shell authority. Intent, ledger, and inspection
+summaries must not store raw provider responses, raw intent JSON, raw Git
+stdout/stderr, raw diffs, raw file content, raw argv, command strings,
+environment values, credentials, absolute paths, or canonical paths.
+
 ## Phase 3.0 workspace.write dry-run proposals
 
 `workspace.write` supports only `replace_file` input for Phase 3.0. The parser preflights `path`, `operation`, and `content`, and invalid input is rejected with `code = "invalid_input"` without returning raw content. Approved intents remain dry-run and produce patch proposals only; the runtime does not write files or apply patches.
