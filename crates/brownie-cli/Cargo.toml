@@ -13,6 +13,9 @@ serde_json.workspace = true
 sha2.workspace = true
 uuid.workspace = true
 
+[dev-dependencies]
+brownie-agentmodes = { path = "../brownie-agentmodes" }
+
 [lib]
 path = "src/lib.rs"
 

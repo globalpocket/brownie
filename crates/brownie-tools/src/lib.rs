@@ -1,5 +1,7 @@
 //! Runtime tool abstraction crate.
 
+#[cfg(test)]
+use std::cell::RefCell;
 use std::ffi::OsString;
 use std::fs;
 use std::io::Read;
@@ -43,6 +45,12 @@ const GIT_CAPTURE_JOIN_TIMEOUT_MS: u64 = 1_000;
 const MAX_BOUNDED_CARGO_DIAGNOSTIC_PATH_CHARS: usize = 240;
 const MAX_BOUNDED_CARGO_DIAGNOSTIC_CODE_CHARS: usize = 32;
 pub const DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 20_000;
+
+#[cfg(test)]
+thread_local! {
+    static TEST_GIT_PROGRAM_OVERRIDE: RefCell<Option<OsString>> = RefCell::new(None);
+    static TEST_GIT_TIMEOUT_OVERRIDE: RefCell<Option<Duration>> = RefCell::new(None);
+}
 pub const MIN_WORKSPACE_WRITE_CONTENT_CHARS: usize = 100;
 pub const MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 200_000;
 pub const DEFAULT_PROPOSAL_PREVIEW_CHARS: usize = 2_000;
@@ -633,6 +641,10 @@ fn terminate_git_process_tree(child: &mut Child) -> (bool, &'static str) {
 
 fn git_program() -> OsString {
     #[cfg(test)]
+    if let Some(program) = TEST_GIT_PROGRAM_OVERRIDE.with(|program| program.borrow().clone()) {
+        return program;
+    }
+    #[cfg(test)]
     if let Some(program) = std::env::var_os("BROWNIE_TEST_GIT_PROGRAM") {
         return program;
     }
@@ -640,6 +652,10 @@ fn git_program() -> OsString {
 }
 
 fn git_timeout() -> Duration {
+    #[cfg(test)]
+    if let Some(timeout) = TEST_GIT_TIMEOUT_OVERRIDE.with(|timeout| *timeout.borrow()) {
+        return timeout;
+    }
     #[cfg(test)]
     if let Some(timeout_ms) = std::env::var_os("BROWNIE_TEST_GIT_TIMEOUT_MS")
         .and_then(|value| value.to_str().and_then(|value| value.parse::<u64>().ok()))
@@ -4220,16 +4236,17 @@ mod tests {
     #[cfg(unix)]
     struct TestGitEnvGuard {
         previous_program: Option<OsString>,
-        previous_timeout: Option<OsString>,
+        previous_timeout: Option<Duration>,
     }
 
     #[cfg(unix)]
     impl TestGitEnvGuard {
         fn set(program: &Path, timeout_ms: u64) -> Self {
-            let previous_program = std::env::var_os("BROWNIE_TEST_GIT_PROGRAM");
-            let previous_timeout = std::env::var_os("BROWNIE_TEST_GIT_TIMEOUT_MS");
-            std::env::set_var("BROWNIE_TEST_GIT_PROGRAM", program);
-            std::env::set_var("BROWNIE_TEST_GIT_TIMEOUT_MS", timeout_ms.to_string());
+            let previous_program = TEST_GIT_PROGRAM_OVERRIDE
+                .with(|override_value| override_value.replace(Some(program.as_os_str().into())));
+            let previous_timeout = TEST_GIT_TIMEOUT_OVERRIDE.with(|override_value| {
+                override_value.replace(Some(Duration::from_millis(timeout_ms)))
+            });
             Self {
                 previous_program,
                 previous_timeout,
@@ -4240,51 +4257,57 @@ mod tests {
     #[cfg(unix)]
     impl Drop for TestGitEnvGuard {
         fn drop(&mut self) {
-            if let Some(value) = self.previous_program.take() {
-                std::env::set_var("BROWNIE_TEST_GIT_PROGRAM", value);
-            } else {
-                std::env::remove_var("BROWNIE_TEST_GIT_PROGRAM");
-            }
-            if let Some(value) = self.previous_timeout.take() {
-                std::env::set_var("BROWNIE_TEST_GIT_TIMEOUT_MS", value);
-            } else {
-                std::env::remove_var("BROWNIE_TEST_GIT_TIMEOUT_MS");
-            }
+            TEST_GIT_PROGRAM_OVERRIDE
+                .with(|override_value| override_value.replace(self.previous_program.take()));
+            TEST_GIT_TIMEOUT_OVERRIDE
+                .with(|override_value| override_value.replace(self.previous_timeout.take()));
         }
     }
 
     #[cfg(unix)]
     fn write_fake_git(root: &Path, scenario: &str) -> PathBuf {
         let script = root.join(format!("fake-git-{scenario}.sh"));
+        let canonical_root = root.canonicalize().expect("canonical fake git root");
+        let oversize_pid = root.join("git-oversize.pid");
+        let timeout_pid = root.join("git-timeout.pid");
+        let oversized_payload = "x".repeat(MAX_GIT_CAPTURE_BYTES + 4096);
+        let scenario_body = match scenario {
+            "oversized_no_newline" => format!(
+                r#"  printf '%s\n' "$$" > "{oversize_pid}"
+  printf '%s' "{oversized_payload}"
+  sleep 5
+  exit 0
+"#,
+                oversize_pid = oversize_pid.display(),
+                oversized_payload = oversized_payload,
+            ),
+            "timeout" => format!(
+                r#"  printf '%s\n' "$$" > "{timeout_pid}"
+  sleep 5
+  exit 0
+"#,
+                timeout_pid = timeout_pid.display(),
+            ),
+            _ => panic!("unknown fake git scenario: {scenario}"),
+        };
         fs::write(
             &script,
             format!(
                 r#"#!/bin/sh
 if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
-  pwd
+  printf '%s\n' "{canonical_root}"
   exit 0
 fi
 if [ "$1" = "status" ]; then
-  case "{scenario}" in
-    oversized_no_newline)
-      printf '%s\n' "$$" > git-oversize.pid
-      i=0
-      while [ "$i" -lt 700 ]; do
-        printf 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
-        i=$((i + 1))
-      done
-      sleep 5
-      exit 0
-      ;;
-    timeout)
-      printf '%s\n' "$$" > git-timeout.pid
-      sleep 5
-      exit 0
-      ;;
-  esac
+{scenario_body}fi
+if [ "$1" = "diff" ]; then
+  printf '%s\n' ' README.md | 2 +-'
+  exit 0
 fi
 printf '%s\n' '?? normal.txt'
-"#
+"#,
+                canonical_root = canonical_root.display(),
+                scenario_body = scenario_body,
             ),
         )
         .expect("fake git script");
@@ -4362,7 +4385,8 @@ printf '%s\n' '?? normal.txt'
             for attempt in 0..2 {
                 let temp = tempfile::tempdir().expect("tempdir");
                 let fake_git = write_fake_git(temp.path(), scenario);
-                let _guard = TestGitEnvGuard::set(&fake_git, 500);
+                let timeout_ms = if scenario == "timeout" { 1_500 } else { 1_000 };
+                let _guard = TestGitEnvGuard::set(&fake_git, timeout_ms);
 
                 let result = GitCommandExecutor::status(temp.path(), &json!({}))
                     .unwrap_or_else(|error| panic!("{scenario} attempt {attempt}: {error}"));
