@@ -52,6 +52,18 @@ file content, raw commit message text, command strings, environment values,
 absolute paths, canonical paths, credentials, or secrets. Replays of the same
 commit intent must not create duplicate commits.
 
+MP-7.1 clarifies that `UseGitCapability` is narrower than generic process
+execution. A mode with `process_exec` can pass this gate only for the runtime's
+fixed Git capability ids and only after task/workspace provenance establishes
+the admitted repository. The gate does not authorize caller-supplied commands,
+argv, cwd, environment, stdin, shell, timeouts, remotes, branches, refs, pushes,
+PRs, service control, destructive operations, network access, or workspace
+write mutation. `git.status` and `git.diff` outputs may become bounded
+`untrusted_git_result_context` for the next agent step, but that context is
+below runtime and Mode Pack policy and cannot create or widen authority.
+Timeout, oversize, and process-lifecycle evidence is safety telemetry only; it
+does not substitute for durable permission checks.
+
 ## JSON-RPC
 
 `permission.check` accepts a built-in `mode_id` and action name, resolves the mode through the built-in registry, and returns an allowed/denied decision with a human-readable reason. Unknown modes return JSON-RPC `-32602`.

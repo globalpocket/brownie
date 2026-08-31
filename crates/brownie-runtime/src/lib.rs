@@ -305,8 +305,9 @@ use brownie_tools::{
     ToolPlanningInput, WorkspacePatchOperation, WorkspaceReadExecutor,
     CODEBASE_INDEX_SELECTION_READ_TOOL_ID, DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS,
     DEFAULT_PROPOSAL_PREVIEW_CHARS, GIT_COMMIT_TOOL_ID, GIT_DIFF_TOOL_ID, GIT_STATUS_TOOL_ID,
-    MAX_BOUNDED_CARGO_DIAGNOSTICS, MAX_SUBTASK_SPAWN_GOAL_CHARS, MAX_WORKSPACE_READ_BYTES,
-    SUBTASK_SPAWN_TOOL_ID, VERIFICATION_CARGO_CHECK_TOOL_ID, VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
+    MAX_BOUNDED_CARGO_DIAGNOSTICS, MAX_GIT_SUMMARY_LINES, MAX_GIT_SUMMARY_LINE_CHARS,
+    MAX_SUBTASK_SPAWN_GOAL_CHARS, MAX_WORKSPACE_READ_BYTES, SUBTASK_SPAWN_TOOL_ID,
+    VERIFICATION_CARGO_CHECK_TOOL_ID, VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
     VERIFICATION_CARGO_TEST_TOOL_ID, WORKSPACE_READ_TOOL_ID, WORKSPACE_WRITE_TOOL_ID,
 };
 use codebase_index::*;
@@ -61915,6 +61916,107 @@ content-length: {}
             })
             .count();
         assert_eq!(completed_count, 1);
+    }
+
+    #[test]
+    fn task_run_agent_loop_materializes_git_status_context_for_second_pass() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().expect("temp dir");
+        let init = std::process::Command::new("git")
+            .arg("-C")
+            .arg(temp.path())
+            .arg("init")
+            .output()
+            .expect("git init");
+        assert!(
+            init.status.success(),
+            "git init failed: {}",
+            String::from_utf8_lossy(&init.stderr)
+        );
+        std::fs::write(temp.path().join("README.md"), "# Brownie\n").expect("readme");
+        std::fs::write(
+            temp.path().join("MP7_RESULT_91c7.rs"),
+            "RAW_MP7_FILE_CONTENT_SHOULD_NOT_APPEAR\n",
+        )
+        .expect("sentinel file");
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "fake");
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use git status result context to identify the unknown changed file","mode_id":"verifier"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id");
+        let run_id = start["run_id"].as_str().expect("run id");
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        if run.error.is_some() {
+            panic!("run error: {:?}", run.error);
+        }
+        assert_eq!(run.result.unwrap()["status"], json!("Completed"));
+
+        let events = BrownieStore::new(temp.path())
+            .tasks()
+            .read_ledger_events(run_id)
+            .expect("events");
+        let completed_payloads = events
+            .iter()
+            .filter(|event| {
+                event.kind == LedgerEventKind::ToolExecutionCompleted
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| payload.get("tool_id"))
+                        == Some(&json!(GIT_STATUS_TOOL_ID))
+            })
+            .map(|event| event.payload.as_ref().expect("payload"))
+            .collect::<Vec<_>>();
+        assert_eq!(completed_payloads.len(), 1);
+        let completed = completed_payloads[0];
+        assert_eq!(completed["status"], json!("Completed"));
+        assert!(completed["git"]["result_fingerprint"]
+            .as_str()
+            .expect("git result fingerprint")
+            .starts_with("sha256:"));
+        let summary_lines = completed["git"]["summary_lines"]
+            .as_array()
+            .expect("git summary lines");
+        assert!(summary_lines.iter().any(|line| {
+            line.as_str()
+                .is_some_and(|line| line.contains("MP7_RESULT_91c7.rs"))
+        }));
+        assert_eq!(completed["git"]["raw_diff_redacted"], json!(true));
+        assert_eq!(completed["git"]["raw_file_content_redacted"], json!(true));
+        assert_eq!(completed["git"]["absolute_paths_redacted"], json!(true));
+
+        let second_pass_prompt = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SecondPassPromptBuilt)
+            .and_then(|event| event.payload.as_ref())
+            .expect("second-pass prompt payload");
+        let second_pass_prompt_json =
+            serde_json::to_string(second_pass_prompt).expect("second-pass prompt json");
+        assert!(second_pass_prompt_json.contains("untrusted_git_result_context"));
+        assert!(second_pass_prompt_json.contains("MP7_RESULT_91c7.rs"));
+        assert!(!second_pass_prompt_json.contains("RAW_MP7_FILE_CONTENT_SHOULD_NOT_APPEAR"));
+        assert!(!second_pass_prompt_json.contains(temp.path().to_string_lossy().as_ref()));
+
+        assert!(events.iter().any(|event| {
+            event.kind == LedgerEventKind::SecondPassLlmResponseReceived
+                && serde_json::to_string(event.payload.as_ref().expect("payload"))
+                    .expect("payload json")
+                    .contains("MP7_RESULT_91c7.rs")
+        }));
+        let ledger_json = serde_json::to_string(&events).expect("ledger json");
+        assert!(!ledger_json.contains("RAW_MP7_FILE_CONTENT_SHOULD_NOT_APPEAR"));
+        assert!(!ledger_json.contains("git status --short"));
+        assert!(!serde_json::to_string(completed)
+            .expect("completed payload json")
+            .contains("command"));
     }
 
     #[test]

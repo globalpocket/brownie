@@ -6,8 +6,10 @@ use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -32,9 +34,12 @@ pub const DEFAULT_VERIFICATION_TIMEOUT_MS: u64 = 30_000;
 pub const MAX_VERIFICATION_CAPTURE_BYTES: usize = 65_536;
 pub const MAX_GIT_CAPTURE_BYTES: usize = 32_768;
 pub const MAX_GIT_SUMMARY_LINES: usize = 40;
+pub const MAX_GIT_SUMMARY_LINE_CHARS: usize = 240;
+pub const DEFAULT_GIT_TIMEOUT_MS: u64 = 5_000;
 pub const MAX_GIT_COMMIT_MESSAGE_CHARS: usize = 2_000;
 pub const MAX_BOUNDED_CARGO_DIAGNOSTICS: usize = 5;
 const VERIFICATION_CAPTURE_JOIN_TIMEOUT_MS: u64 = 1_000;
+const GIT_CAPTURE_JOIN_TIMEOUT_MS: u64 = 1_000;
 const MAX_BOUNDED_CARGO_DIAGNOSTIC_PATH_CHARS: usize = 240;
 const MAX_BOUNDED_CARGO_DIAGNOSTIC_CODE_CHARS: usize = 32;
 pub const DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 20_000;
@@ -375,20 +380,47 @@ fn execute_bounded_git(
     let root = workspace_root
         .canonicalize()
         .context("workspace root is unavailable")?;
-    let repo = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .current_dir(&root)
-        .stdin(Stdio::null())
-        .output()
+    let repo = run_bounded_git_process(&root, &["rev-parse", "--show-toplevel"], git_timeout())
         .context("failed to inspect git repository")?;
-    if !repo.status.success() {
+    if repo.timed_out || repo.output_oversized {
+        return Ok(ToolExecutionResult {
+            tool_id: tool_id.to_string(),
+            status: ToolExecutionStatus::Failed,
+            output: json!({
+                "reason": if repo.timed_out {
+                    "Git repository inspection timed out."
+                } else {
+                    "Git repository inspection exceeded byte limit."
+                },
+                "operation": operation,
+                "process_launched": true,
+                "timed_out": repo.timed_out,
+                "output_oversized": repo.output_oversized,
+                "duration_ms": repo.duration_ms,
+                "process_tree_timeout_supported": process_tree_timeout_supported(),
+                "process_tree_kill_attempted": repo.process_tree_kill_attempted,
+                "process_tree_kill_succeeded": repo.process_tree_kill_succeeded,
+                "process_tree_kill_reason": repo.process_tree_kill_reason,
+                "reader_thread_joined": repo.reader_thread_joined,
+                "git_environment_hardened": true,
+                "git_prompts_disabled": true,
+                "git_optional_locks_disabled": true,
+                "raw_diff_redacted": true,
+                "raw_file_content_redacted": true,
+                "absolute_paths_redacted": true,
+            }),
+        });
+    }
+    if repo.exit_code != Some(0) {
         return Ok(ToolExecutionResult {
             tool_id: tool_id.to_string(),
             status: ToolExecutionStatus::Denied,
             output: json!({ "reason": "Git capability requires a workspace repository." }),
         });
     }
-    let repo_root = String::from_utf8_lossy(&repo.stdout).trim().to_string();
+    let repo_root = String::from_utf8_lossy(&repo.combined_capture.content)
+        .trim()
+        .to_string();
     let repo_root = Path::new(&repo_root)
         .canonicalize()
         .context("failed to validate git repository root")?;
@@ -400,40 +432,241 @@ fn execute_bounded_git(
         });
     }
 
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(&root)
-        .stdin(Stdio::null())
-        .output()
+    let output = run_bounded_git_process(&root, args, git_timeout())
         .context("failed to execute bounded git capability")?;
-    let combined = [output.stdout.as_slice(), output.stderr.as_slice()].concat();
-    let truncated = combined.len() > MAX_GIT_CAPTURE_BYTES;
-    let captured = &combined[..combined.len().min(MAX_GIT_CAPTURE_BYTES)];
-    let text = String::from_utf8_lossy(captured);
+    let text = String::from_utf8_lossy(&output.combined_capture.content);
     let total_line_count = text.lines().count();
     let summary_lines = text
         .lines()
         .take(MAX_GIT_SUMMARY_LINES)
         .map(sanitize_git_summary_line)
         .collect::<Vec<_>>();
-    Ok(ToolExecutionResult {
+    let result_fingerprint = sha256_fingerprint(summary_lines.join("\n").as_bytes());
+    let failed_closed_reason = if output.timed_out {
+        Some("git capability timed out.")
+    } else if output.output_oversized {
+        Some("git output exceeded byte limit.")
+    } else {
+        None
+    };
+    let mut result = ToolExecutionResult {
         tool_id: tool_id.to_string(),
-        status: if output.status.success() {
+        status: if failed_closed_reason.is_some() {
+            ToolExecutionStatus::Failed
+        } else if output.exit_code == Some(0) {
             ToolExecutionStatus::Completed
         } else {
             ToolExecutionStatus::Failed
         },
         output: json!({
             "operation": operation,
-            "exit_status": output.status.code(),
+            "exit_status": output.exit_code,
             "summary_lines": summary_lines,
+            "git": {
+                "operation": operation,
+                "result_fingerprint": result_fingerprint,
+                "summary_line_count": total_line_count,
+                "materialized_summary_line_count": summary_lines.len(),
+                "summary_lines": summary_lines,
+                "output_truncated": output.combined_capture.truncated || output.output_oversized || total_line_count > MAX_GIT_SUMMARY_LINES,
+                "max_summary_lines": MAX_GIT_SUMMARY_LINES,
+                "max_summary_line_chars": MAX_GIT_SUMMARY_LINE_CHARS,
+                "raw_diff_redacted": true,
+                "raw_file_content_redacted": true,
+                "absolute_paths_redacted": true,
+            },
             "line_count": total_line_count,
-            "captured_bytes": captured.len(),
-            "output_truncated": truncated || total_line_count > MAX_GIT_SUMMARY_LINES,
+            "captured_bytes": output.combined_capture.bytes,
+            "output_truncated": output.combined_capture.truncated || output.output_oversized || total_line_count > MAX_GIT_SUMMARY_LINES,
+            "output_oversized": output.output_oversized,
+            "timed_out": output.timed_out,
+            "duration_ms": output.duration_ms,
+            "process_tree_timeout_supported": process_tree_timeout_supported(),
+            "process_tree_kill_attempted": output.process_tree_kill_attempted,
+            "process_tree_kill_succeeded": output.process_tree_kill_succeeded,
+            "process_tree_kill_reason": output.process_tree_kill_reason,
+            "reader_thread_joined": output.reader_thread_joined,
+            "git_environment_hardened": true,
+            "git_prompts_disabled": true,
+            "git_optional_locks_disabled": true,
             "raw_diff_redacted": true,
+            "raw_file_content_redacted": true,
+            "absolute_paths_redacted": true,
             "process_launched": true,
         }),
+    };
+    if let Some(reason) = failed_closed_reason {
+        result.output["reason"] = json!(reason);
+    }
+    Ok(result)
+}
+
+struct GitProcessResult {
+    exit_code: Option<i32>,
+    timed_out: bool,
+    output_oversized: bool,
+    duration_ms: u64,
+    combined_capture: ProcessCapture,
+    process_tree_kill_attempted: bool,
+    process_tree_kill_succeeded: bool,
+    process_tree_kill_reason: &'static str,
+    reader_thread_joined: bool,
+}
+
+fn run_bounded_git_process(
+    root: &Path,
+    args: &[&str],
+    timeout: Duration,
+) -> anyhow::Result<GitProcessResult> {
+    let start = Instant::now();
+    let total_bytes = Arc::new(AtomicUsize::new(0));
+    let output_oversized = Arc::new(AtomicBool::new(false));
+    let mut command = Command::new(git_program());
+    command
+        .args(args)
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    configure_process_tree_timeout(&mut command);
+    configure_hardened_git_environment(&mut command);
+
+    let mut child = command.spawn()?;
+    let stdout_handle = child.stdout.take().map(|stdout| {
+        capture_pipe_async_bounded(
+            stdout,
+            MAX_GIT_CAPTURE_BYTES,
+            Arc::clone(&total_bytes),
+            Arc::clone(&output_oversized),
+        )
+    });
+    let stderr_handle = child.stderr.take().map(|stderr| {
+        capture_pipe_async_bounded(
+            stderr,
+            MAX_GIT_CAPTURE_BYTES,
+            Arc::clone(&total_bytes),
+            Arc::clone(&output_oversized),
+        )
+    });
+
+    let mut timed_out = false;
+    let mut process_tree_kill_attempted = false;
+    let mut process_tree_kill_succeeded = false;
+    let mut process_tree_kill_reason = "not_timed_out";
+    let exit_code = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if output_oversized.load(Ordering::SeqCst) {
+                    process_tree_kill_succeeded = true;
+                    process_tree_kill_reason = "process_tree_already_exited";
+                }
+                break status.code();
+            }
+            Ok(None) if output_oversized.load(Ordering::SeqCst) => {
+                process_tree_kill_attempted = true;
+                let (succeeded, reason) = terminate_git_process_tree(&mut child);
+                process_tree_kill_succeeded = succeeded;
+                process_tree_kill_reason = reason;
+                break None;
+            }
+            Ok(None) if start.elapsed() >= timeout => {
+                timed_out = true;
+                process_tree_kill_attempted = true;
+                let (succeeded, reason) = terminate_git_process_tree(&mut child);
+                process_tree_kill_succeeded = succeeded;
+                process_tree_kill_reason = reason;
+                break None;
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(10)),
+            Err(_) => {
+                process_tree_kill_attempted = true;
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+
+    let (stdout_capture, stdout_joined) = join_capture_with_status(stdout_handle);
+    let (stderr_capture, stderr_joined) = join_capture_with_status(stderr_handle);
+    let mut combined = stdout_capture.content;
+    let remaining = MAX_GIT_CAPTURE_BYTES.saturating_sub(combined.len());
+    combined
+        .extend_from_slice(&stderr_capture.content[..stderr_capture.content.len().min(remaining)]);
+    let duration_ms = start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+
+    Ok(GitProcessResult {
+        exit_code,
+        timed_out,
+        output_oversized: output_oversized.load(Ordering::SeqCst),
+        duration_ms,
+        combined_capture: ProcessCapture {
+            bytes: total_bytes
+                .load(Ordering::SeqCst)
+                .min(MAX_GIT_CAPTURE_BYTES),
+            truncated: stdout_capture.truncated
+                || stderr_capture.truncated
+                || output_oversized.load(Ordering::SeqCst),
+            content: combined,
+        },
+        process_tree_kill_attempted,
+        process_tree_kill_succeeded,
+        process_tree_kill_reason,
+        reader_thread_joined: stdout_joined && stderr_joined,
     })
+}
+
+fn terminate_git_process_tree(child: &mut Child) -> (bool, &'static str) {
+    let (succeeded, reason) = terminate_process_tree(child.id());
+    if succeeded {
+        let _ = child.wait();
+        return (true, reason);
+    }
+    let fallback_killed = child.kill().is_ok();
+    let waited = child.wait().is_ok();
+    if fallback_killed || waited {
+        (true, "process_tree_kill_fallback")
+    } else {
+        (false, reason)
+    }
+}
+
+fn git_program() -> OsString {
+    #[cfg(test)]
+    if let Some(program) = std::env::var_os("BROWNIE_TEST_GIT_PROGRAM") {
+        return program;
+    }
+    OsString::from("git")
+}
+
+fn git_timeout() -> Duration {
+    #[cfg(test)]
+    if let Some(timeout_ms) = std::env::var_os("BROWNIE_TEST_GIT_TIMEOUT_MS")
+        .and_then(|value| value.to_str().and_then(|value| value.parse::<u64>().ok()))
+    {
+        return Duration::from_millis(timeout_ms);
+    }
+    Duration::from_millis(DEFAULT_GIT_TIMEOUT_MS)
+}
+
+fn configure_hardened_git_environment(command: &mut Command) {
+    let path = std::env::var_os("PATH");
+    command.env_clear();
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
+    command
+        .env("HOME", "/nonexistent")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ASKPASS", "/bin/false")
+        .env("SSH_ASKPASS", "/bin/false")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_PAGER", "cat")
+        .env("PAGER", "cat")
+        .env("LC_ALL", "C");
 }
 
 fn sanitize_git_summary_line(line: &str) -> String {
@@ -441,7 +674,7 @@ fn sanitize_git_summary_line(line: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
         .chars()
-        .take(240)
+        .take(MAX_GIT_SUMMARY_LINE_CHARS)
         .collect()
 }
 
@@ -994,6 +1227,27 @@ where
     ProcessCaptureHandle { receiver }
 }
 
+fn capture_pipe_async_bounded<R>(
+    reader: R,
+    max_bytes: usize,
+    total_bytes: Arc<AtomicUsize>,
+    output_oversized: Arc<AtomicBool>,
+) -> ProcessCaptureHandle
+where
+    R: Read + Send + 'static,
+{
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = sender.send(capture_pipe_bounded(
+            reader,
+            max_bytes,
+            total_bytes,
+            output_oversized,
+        ));
+    });
+    ProcessCaptureHandle { receiver }
+}
+
 fn capture_pipe<R: Read>(mut reader: R) -> ProcessCapture {
     let mut total = 0usize;
     let mut truncated = false;
@@ -1028,6 +1282,47 @@ fn capture_pipe<R: Read>(mut reader: R) -> ProcessCapture {
     }
 }
 
+fn capture_pipe_bounded<R: Read>(
+    mut reader: R,
+    max_bytes: usize,
+    total_bytes: Arc<AtomicUsize>,
+    output_oversized: Arc<AtomicBool>,
+) -> ProcessCapture {
+    let mut truncated = false;
+    let mut content = Vec::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        let Ok(read) = reader.read(&mut buffer) else {
+            break;
+        };
+        if read == 0 {
+            break;
+        }
+        let previous = total_bytes.fetch_add(read, Ordering::SeqCst);
+        let next_total = previous.saturating_add(read);
+        let remaining = max_bytes.saturating_sub(previous.min(max_bytes));
+        if remaining > 0 {
+            let retained = remaining.min(read);
+            content.extend_from_slice(&buffer[..retained]);
+            if retained < read {
+                truncated = true;
+            }
+        } else {
+            truncated = true;
+        }
+        if next_total > max_bytes {
+            truncated = true;
+            output_oversized.store(true, Ordering::SeqCst);
+            break;
+        }
+    }
+    ProcessCapture {
+        bytes: total_bytes.load(Ordering::SeqCst).min(max_bytes),
+        truncated,
+        content,
+    }
+}
+
 fn join_capture(handle: Option<ProcessCaptureHandle>) -> ProcessCapture {
     handle
         .and_then(|handle| {
@@ -1037,6 +1332,18 @@ fn join_capture(handle: Option<ProcessCaptureHandle>) -> ProcessCapture {
                 .ok()
         })
         .unwrap_or_else(ProcessCapture::empty)
+}
+
+fn join_capture_with_status(handle: Option<ProcessCaptureHandle>) -> (ProcessCapture, bool) {
+    handle
+        .map(|handle| {
+            handle
+                .receiver
+                .recv_timeout(Duration::from_millis(GIT_CAPTURE_JOIN_TIMEOUT_MS))
+                .map(|capture| (capture, true))
+                .unwrap_or_else(|_| (ProcessCapture::empty(), false))
+        })
+        .unwrap_or_else(|| (ProcessCapture::empty(), true))
 }
 
 #[cfg(unix)]
@@ -3803,12 +4110,14 @@ mod tests {
         assert!(!serialized.contains("sleep"));
     }
 
+    static GIT_TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn git_status_diff_and_commit_are_bounded_dedicated_capabilities() {
+        let _lock = GIT_TEST_ENV_LOCK.lock().expect("git test env lock");
         let temp = git_repository("git-status-diff");
         fs::write(temp.path().join("README.md"), "# Changed\n").expect("write changed readme");
         fs::write(temp.path().join("notes.md"), "new note\n").expect("write note");
-
         let status = ToolExecutor::execute_controlled(
             temp.path(),
             ToolExecutionRequest {
@@ -3906,6 +4215,185 @@ mod tests {
         );
         assert!(rejected_message.requests.is_empty());
         assert_eq!(rejected_message.rejected[0].code, "invalid_input");
+    }
+
+    #[cfg(unix)]
+    struct TestGitEnvGuard {
+        previous_program: Option<OsString>,
+        previous_timeout: Option<OsString>,
+    }
+
+    #[cfg(unix)]
+    impl TestGitEnvGuard {
+        fn set(program: &Path, timeout_ms: u64) -> Self {
+            let previous_program = std::env::var_os("BROWNIE_TEST_GIT_PROGRAM");
+            let previous_timeout = std::env::var_os("BROWNIE_TEST_GIT_TIMEOUT_MS");
+            std::env::set_var("BROWNIE_TEST_GIT_PROGRAM", program);
+            std::env::set_var("BROWNIE_TEST_GIT_TIMEOUT_MS", timeout_ms.to_string());
+            Self {
+                previous_program,
+                previous_timeout,
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for TestGitEnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous_program.take() {
+                std::env::set_var("BROWNIE_TEST_GIT_PROGRAM", value);
+            } else {
+                std::env::remove_var("BROWNIE_TEST_GIT_PROGRAM");
+            }
+            if let Some(value) = self.previous_timeout.take() {
+                std::env::set_var("BROWNIE_TEST_GIT_TIMEOUT_MS", value);
+            } else {
+                std::env::remove_var("BROWNIE_TEST_GIT_TIMEOUT_MS");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn write_fake_git(root: &Path, scenario: &str) -> PathBuf {
+        let script = root.join(format!("fake-git-{scenario}.sh"));
+        fs::write(
+            &script,
+            format!(
+                r#"#!/bin/sh
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  pwd
+  exit 0
+fi
+if [ "$1" = "status" ]; then
+  case "{scenario}" in
+    oversized_no_newline)
+      printf '%s\n' "$$" > git-oversize.pid
+      i=0
+      while [ "$i" -lt 700 ]; do
+        printf 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+        i=$((i + 1))
+      done
+      sleep 5
+      exit 0
+      ;;
+    timeout)
+      printf '%s\n' "$$" > git-timeout.pid
+      sleep 5
+      exit 0
+      ;;
+  esac
+fi
+printf '%s\n' '?? normal.txt'
+"#
+            ),
+        )
+        .expect("fake git script");
+        let mut permissions = fs::metadata(&script).expect("metadata").permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        fs::set_permissions(&script, permissions).expect("chmod fake git");
+        script
+    }
+
+    #[cfg(unix)]
+    fn process_exists(pid: u32) -> bool {
+        unsafe extern "C" {
+            fn kill(pid: i32, sig: i32) -> i32;
+        }
+        unsafe { kill(pid as i32, 0) == 0 }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_status_oversized_no_newline_output_fails_closed_and_cleans_up_process() {
+        let _lock = GIT_TEST_ENV_LOCK.lock().expect("git test env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let fake_git = write_fake_git(temp.path(), "oversized_no_newline");
+        let _guard = TestGitEnvGuard::set(&fake_git, 1_000);
+
+        let start = Instant::now();
+        let result = GitCommandExecutor::status(temp.path(), &json!({})).expect("git status");
+
+        assert!(start.elapsed() < Duration::from_millis(1_500));
+        assert_eq!(result.status, ToolExecutionStatus::Failed);
+        assert_eq!(result.output["operation"], "status");
+        assert_eq!(result.output["output_oversized"], true);
+        assert_eq!(result.output["timed_out"], false);
+        assert_eq!(result.output["process_tree_kill_succeeded"], true);
+        let kill_reason = result.output["process_tree_kill_reason"]
+            .as_str()
+            .expect("kill reason");
+        assert!(
+            kill_reason == "process_tree_kill_signaled"
+                || kill_reason == "process_tree_kill_fallback"
+                || kill_reason == "process_tree_already_exited"
+        );
+        assert_eq!(result.output["reader_thread_joined"], true);
+        assert_eq!(result.output["git_environment_hardened"], true);
+        assert_eq!(result.output["git_prompts_disabled"], true);
+        assert_eq!(result.output["git_optional_locks_disabled"], true);
+        assert!(result.output["captured_bytes"].as_u64().unwrap() <= MAX_GIT_CAPTURE_BYTES as u64);
+        assert!(
+            result.output["git"]["summary_lines"]
+                .as_array()
+                .expect("summary lines")
+                .len()
+                <= MAX_GIT_SUMMARY_LINES
+        );
+        let pid = fs::read_to_string(temp.path().join("git-oversize.pid"))
+            .expect("pid")
+            .trim()
+            .parse::<u32>()
+            .expect("pid number");
+        assert!(
+            !process_exists(pid),
+            "oversized fake git process remained alive"
+        );
+        let serialized = result.output.to_string();
+        assert!(!serialized.contains("fake-git"));
+        assert!(!serialized.contains("BROWNIE_TEST_GIT_PROGRAM"));
+        assert!(!serialized.contains("command"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_status_repeated_timeout_and_oversize_do_not_accumulate_processes_or_threads() {
+        let _lock = GIT_TEST_ENV_LOCK.lock().expect("git test env lock");
+        for scenario in ["timeout", "oversized_no_newline"] {
+            for attempt in 0..2 {
+                let temp = tempfile::tempdir().expect("tempdir");
+                let fake_git = write_fake_git(temp.path(), scenario);
+                let _guard = TestGitEnvGuard::set(&fake_git, 500);
+
+                let result = GitCommandExecutor::status(temp.path(), &json!({}))
+                    .unwrap_or_else(|error| panic!("{scenario} attempt {attempt}: {error}"));
+
+                assert_eq!(result.status, ToolExecutionStatus::Failed);
+                assert_eq!(result.output["process_tree_kill_succeeded"], true);
+                assert_eq!(result.output["reader_thread_joined"], true);
+                let pid_file = if scenario == "timeout" {
+                    "git-timeout.pid"
+                } else {
+                    "git-oversize.pid"
+                };
+                let pid = fs::read_to_string(temp.path().join(pid_file))
+                    .unwrap_or_else(|error| {
+                        panic!("{scenario} attempt {attempt}: missing pid file: {error}")
+                    })
+                    .trim()
+                    .parse::<u32>()
+                    .expect("pid number");
+                assert!(
+                    !process_exists(pid),
+                    "{scenario} attempt {attempt}: fake git process {pid} remained alive"
+                );
+                if scenario == "timeout" {
+                    assert_eq!(result.output["timed_out"], true);
+                    assert_eq!(result.output["output_oversized"], false);
+                } else {
+                    assert_eq!(result.output["output_oversized"], true);
+                }
+            }
+        }
     }
 
     fn git_repository(name: &str) -> tempfile::TempDir {

@@ -692,6 +692,9 @@ fn format_tool_execution_summary(events: &[LedgerEvent]) -> Vec<String> {
             let status = payload.get("status")?.as_str()?;
             match event.kind {
                 LedgerEventKind::ToolExecutionCompleted => {
+                    if let Some(git) = payload.get("git") {
+                        return format_git_tool_execution_summary(tool_id, status, git);
+                    }
                     if let Some(mcp) = payload.get("mcp") {
                         return format_mcp_tool_execution_summary(tool_id, status, mcp);
                     }
@@ -772,6 +775,56 @@ fn format_mcp_tool_execution_summary(
     if !content_items.is_empty() {
         lines.push("untrusted_mcp_result_context:".to_string());
         lines.extend(content_items.into_iter().map(|item| format!("  {item}")));
+    }
+    Some(lines.join("\n"))
+}
+
+fn format_git_tool_execution_summary(
+    tool_id: &str,
+    status: &str,
+    git: &serde_json::Value,
+) -> Option<String> {
+    let result_fingerprint = git.get("result_fingerprint")?.as_str()?;
+    let operation = git
+        .get("operation")
+        .and_then(|value| value.as_str())
+        .unwrap_or("<unknown>");
+    let summary_line_count = git
+        .get("summary_line_count")
+        .and_then(|value| value.as_u64())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "<unknown>".to_string());
+    let materialized_summary_line_count = git
+        .get("materialized_summary_line_count")
+        .and_then(|value| value.as_u64())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "<unknown>".to_string());
+    let output_truncated = git
+        .get("output_truncated")
+        .and_then(|value| value.as_bool())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "<unknown>".to_string());
+    let mut lines = vec![format!(
+        "{tool_id}: {status} operation={operation} result_fingerprint={result_fingerprint} summary_line_count={summary_line_count} materialized_summary_line_count={materialized_summary_line_count} output_truncated={output_truncated}"
+    )];
+    let summary_lines = git
+        .get("summary_lines")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .enumerate()
+                .filter_map(|(index, value)| {
+                    value
+                        .as_str()
+                        .map(|text| format!("- line_index={index} text={text}"))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !summary_lines.is_empty() {
+        lines.push("untrusted_git_result_context:".to_string());
+        lines.extend(summary_lines.into_iter().map(|item| format!("  {item}")));
     }
     Some(lines.join("\n"))
 }

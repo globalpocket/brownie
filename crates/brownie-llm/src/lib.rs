@@ -373,6 +373,32 @@ impl FakeLlm {
             };
         }
         if prompt.contains("tool execution:")
+            && (prompt.contains("git.status") || prompt.contains("git.diff"))
+            && prompt.contains("completed")
+        {
+            if prompt_text.contains("MP7_RESULT_91c7.rs") {
+                return LlmResponse {
+                    content:
+                        "Fake LLM final response after using Git result context: MP7_RESULT_91c7.rs."
+                            .to_string(),
+                };
+            }
+            let intent = serde_json::json!({
+                "tool_requests": [{
+                    "tool_id": "git.status",
+                    "reason": "Git result context did not contain the required bounded status token.",
+                    "input": {}
+                }]
+            });
+            return LlmResponse {
+                content: format!(
+                    "Fake LLM missing Git result context with {} messages.\n\n```brownie-tool-intent\n{}\n```",
+                    request.messages.len(),
+                    serde_json::to_string_pretty(&intent).expect("fake intent serializes")
+                ),
+            };
+        }
+        if prompt.contains("tool execution:")
             && prompt.contains("workspace.read")
             && (prompt.contains("completed") || prompt.contains("bytes_read="))
         {
@@ -438,6 +464,14 @@ impl FakeLlm {
                 "Need to run the controlled cargo fmt verifier.",
             ));
         }
+        if contains_any(
+            &request_signal,
+            &["git status", "git inspection", "git result context"],
+        ) {
+            requests.push(("git.status", "Need bounded Git status context."));
+        } else if contains_any(&request_signal, &["git diff"]) {
+            requests.push(("git.diff", "Need bounded Git diff context."));
+        }
         if prompt.contains("orchestrator") {
             requests.push((
                 "subtask.spawn",
@@ -457,6 +491,8 @@ impl FakeLlm {
                     } else {
                         serde_json::json!({ "tool_id": tool_id, "reason": reason, "input": { "path": "README.md", "operation": "replace_file", "content": "new README content" } })
                     }
+                } else if tool_id == "git.status" || tool_id == "git.diff" {
+                    serde_json::json!({ "tool_id": tool_id, "reason": reason, "input": {} })
                 } else {
                     serde_json::json!({ "tool_id": tool_id, "reason": reason })
                 }
