@@ -15,6 +15,8 @@ Phase 1.4 introduces the runtime permission gate foundation. The gate is a runti
 - `SpawnSubtask` — controlled by `can_spawn_subtasks`.
 - `IndexCodebase` — controlled by `codebase_index`.
 - `UseMcpTool` — controlled by `mcp_tool_access` plus structured MCP allow-list provenance.
+- `UseGitCapability` — controlled by `process_exec` in the compiled mode
+  policy, but exposed only through runtime-owned bounded Git capabilities.
 
 The `read_only` field is informational for summaries. Individual capabilities are authoritative for gate decisions. Prompt text, role definitions, and completion rules cannot grant permissions that are not present in the compiled mode policy.
 
@@ -38,6 +40,17 @@ proposal admission, and `proposal.apply` repeats the check against the
 task-pinned proposal path before mutation. Approval and preflight evidence do
 not grant permission; they only satisfy additional apply gates after
 `RuntimePermissionGate` allows the scoped write.
+
+MP-7 adds dedicated runtime-owned Git capability execution. `git.status`,
+`git.diff`, and `git.commit` require `UseGitCapability` at point of use and
+must stay scoped to the admitted workspace repository. `git.commit` accepts only
+a bounded commit message and creates a commit from already staged changes; argv,
+cwd, environment, stdin, shell, remote, path, branch, ref, revision, push,
+remote mutation, branch deletion, and PR creation remain outside this
+capability. Ledger evidence is summary-only and must not persist raw diffs, raw
+file content, raw commit message text, command strings, environment values,
+absolute paths, canonical paths, credentials, or secrets. Replays of the same
+commit intent must not create duplicate commits.
 
 ## JSON-RPC
 

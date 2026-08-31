@@ -26,11 +26,13 @@ pub const VERIFICATION_CARGO_CHECK_TOOL_ID: &str = "verification.cargo_check";
 pub const VERIFICATION_CARGO_TEST_TOOL_ID: &str = "verification.cargo_test";
 pub const GIT_STATUS_TOOL_ID: &str = "git.status";
 pub const GIT_DIFF_TOOL_ID: &str = "git.diff";
+pub const GIT_COMMIT_TOOL_ID: &str = "git.commit";
 pub const MAX_WORKSPACE_READ_BYTES: usize = 65_536;
 pub const DEFAULT_VERIFICATION_TIMEOUT_MS: u64 = 30_000;
 pub const MAX_VERIFICATION_CAPTURE_BYTES: usize = 65_536;
 pub const MAX_GIT_CAPTURE_BYTES: usize = 32_768;
 pub const MAX_GIT_SUMMARY_LINES: usize = 40;
+pub const MAX_GIT_COMMIT_MESSAGE_CHARS: usize = 2_000;
 pub const MAX_BOUNDED_CARGO_DIAGNOSTICS: usize = 5;
 const VERIFICATION_CAPTURE_JOIN_TIMEOUT_MS: u64 = 1_000;
 const MAX_BOUNDED_CARGO_DIAGNOSTIC_PATH_CHARS: usize = 240;
@@ -99,6 +101,7 @@ impl BuiltinToolRegistry {
             verification_cargo_test_tool(),
             git_status_tool(),
             git_diff_tool(),
+            git_commit_tool(),
             tool("process.exec", "Process Exec", "Dry-run definition for process execution requests; no commands are executed in Phase 1.6.", RuntimeAction::ExecuteProcess),
             subtask_spawn_tool(),
             tool("network.access", "Network Access", "Dry-run definition for network access requests.", RuntimeAction::AccessNetwork),
@@ -268,6 +271,7 @@ impl ToolExecutor {
             }
             GIT_STATUS_TOOL_ID => GitCommandExecutor::status(workspace_root, &request.input),
             GIT_DIFF_TOOL_ID => GitCommandExecutor::diff_summary(workspace_root, &request.input),
+            GIT_COMMIT_TOOL_ID => GitCommandExecutor::commit(workspace_root, &request.input),
             _ => Ok(ToolExecutionResult {
                 tool_id: request.tool_id,
                 status: ToolExecutionStatus::Denied,
@@ -345,6 +349,20 @@ impl GitCommandExecutor {
             &["diff", "--stat", "--summary", "--find-renames", "--"],
             "diff_summary",
         )
+    }
+
+    pub fn commit(workspace_root: &Path, input: &Value) -> anyhow::Result<ToolExecutionResult> {
+        let message = match preflight_git_commit_input(input) {
+            Ok(message) => message,
+            Err(reason) => {
+                return Ok(ToolExecutionResult {
+                    tool_id: GIT_COMMIT_TOOL_ID.to_string(),
+                    status: ToolExecutionStatus::Failed,
+                    output: json!({ "reason": reason }),
+                });
+            }
+        };
+        execute_bounded_git_commit(workspace_root, &message)
     }
 }
 
@@ -425,6 +443,149 @@ fn sanitize_git_summary_line(line: &str) -> String {
         .chars()
         .take(240)
         .collect()
+}
+
+fn execute_bounded_git_commit(
+    workspace_root: &Path,
+    message: &str,
+) -> anyhow::Result<ToolExecutionResult> {
+    let root = workspace_root
+        .canonicalize()
+        .context("workspace root is unavailable")?;
+    let repo = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .output()
+        .context("failed to inspect git repository")?;
+    if !repo.status.success() {
+        return Ok(ToolExecutionResult {
+            tool_id: GIT_COMMIT_TOOL_ID.to_string(),
+            status: ToolExecutionStatus::Denied,
+            output: json!({ "reason": "Git capability requires a workspace repository." }),
+        });
+    }
+    let repo_root = String::from_utf8_lossy(&repo.stdout).trim().to_string();
+    let repo_root = Path::new(&repo_root)
+        .canonicalize()
+        .context("failed to validate git repository root")?;
+    if repo_root != root {
+        return Ok(ToolExecutionResult {
+            tool_id: GIT_COMMIT_TOOL_ID.to_string(),
+            status: ToolExecutionStatus::Denied,
+            output: json!({ "reason": "Git capability is scoped to the admitted workspace repository." }),
+        });
+    }
+
+    let message_fingerprint = sha256_fingerprint(message.as_bytes());
+    let intent_trailer = format!("Brownie-Commit-Intent: {message_fingerprint}");
+    if let Some(commit_id) = latest_commit_for_intent(&root, &intent_trailer)? {
+        return Ok(ToolExecutionResult {
+            tool_id: GIT_COMMIT_TOOL_ID.to_string(),
+            status: ToolExecutionStatus::Completed,
+            output: json!({
+                "operation": "commit",
+                "commit_id": commit_id,
+                "message_fingerprint": message_fingerprint,
+                "replayed": true,
+                "process_launched": false,
+                "raw_diff_redacted": true,
+                "raw_message_redacted": true,
+            }),
+        });
+    }
+
+    let staged = Command::new("git")
+        .args(["diff", "--cached", "--quiet", "--"])
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .status()
+        .context("failed to inspect staged git changes")?;
+    if staged.success() {
+        return Ok(ToolExecutionResult {
+            tool_id: GIT_COMMIT_TOOL_ID.to_string(),
+            status: ToolExecutionStatus::Failed,
+            output: json!({
+                "reason": "git.commit requires staged changes from prior authorized workspace mutation.",
+                "operation": "commit",
+                "process_launched": false,
+                "raw_diff_redacted": true,
+                "raw_message_redacted": true,
+            }),
+        });
+    }
+
+    let commit_message = format!("{message}\n\n{intent_trailer}\n");
+    let output = Command::new("git")
+        .args(["commit", "--no-gpg-sign", "-m", &commit_message])
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .output()
+        .context("failed to execute bounded git commit capability")?;
+    if !output.status.success() {
+        return Ok(ToolExecutionResult {
+            tool_id: GIT_COMMIT_TOOL_ID.to_string(),
+            status: ToolExecutionStatus::Failed,
+            output: json!({
+                "reason": "git commit failed.",
+                "operation": "commit",
+                "exit_status": output.status.code(),
+                "process_launched": true,
+                "raw_diff_redacted": true,
+                "raw_message_redacted": true,
+            }),
+        });
+    }
+    let commit_id = Command::new("git")
+        .args(["rev-parse", "--verify", "HEAD"])
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .output()
+        .context("failed to inspect created git commit")?;
+    let commit_id = String::from_utf8_lossy(&commit_id.stdout)
+        .trim()
+        .to_string();
+    Ok(ToolExecutionResult {
+        tool_id: GIT_COMMIT_TOOL_ID.to_string(),
+        status: ToolExecutionStatus::Completed,
+        output: json!({
+            "operation": "commit",
+            "commit_id": commit_id,
+            "message_fingerprint": message_fingerprint,
+            "replayed": false,
+            "process_launched": true,
+            "raw_diff_redacted": true,
+            "raw_message_redacted": true,
+        }),
+    })
+}
+
+fn latest_commit_for_intent(root: &Path, intent_trailer: &str) -> anyhow::Result<Option<String>> {
+    let output = Command::new("git")
+        .args(["log", "-1", "--format=%H%n%B"])
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .output()
+        .context("failed to inspect latest git commit")?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut lines = text.lines();
+    let Some(commit_id) = lines.next() else {
+        return Ok(None);
+    };
+    if lines.any(|line| line.trim() == intent_trailer) {
+        Ok(Some(commit_id.to_string()))
+    } else {
+        Ok(None)
+    }
+}
+
+fn sha256_fingerprint(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("sha256:{:x}", hasher.finalize())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1436,6 +1597,22 @@ fn git_diff_tool() -> ToolDefinition {
     }
 }
 
+fn git_commit_tool() -> ToolDefinition {
+    ToolDefinition {
+        tool_id: GIT_COMMIT_TOOL_ID.to_string(),
+        display_name: "Git Commit".to_string(),
+        description: "Controlled bounded Git commit for already staged changes in the admitted workspace repository. Callers provide only a bounded message; argv, cwd, environment, stdin, shell, remote, path, branch, and ref input are rejected.".to_string(),
+        required_action: RuntimeAction::UseGitCapability,
+        input_schema: ToolInputSchema {
+            fields: vec![ToolInputField {
+                name: "message".to_string(),
+                required: true,
+                description: "Bounded commit message. The runtime records only its fingerprint in ledger evidence.".to_string(),
+            }],
+        },
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ToolIntentParserConfig {
     pub max_blocks: usize,
@@ -2010,6 +2187,12 @@ impl ToolIntentParser {
                     continue;
                 }
             }
+            if tool_id_value == GIT_COMMIT_TOOL_ID {
+                if let Err(reason) = preflight_git_commit_input(&input) {
+                    rejected.push(rejection(Some(tool_id_value), reason, "invalid_input"));
+                    continue;
+                }
+            }
             requests.push(AssistantToolRequest {
                 tool_id: tool_id_value,
                 reason: reason_value,
@@ -2334,6 +2517,39 @@ fn preflight_git_diff_input(input: &Value) -> Result<(), &'static str> {
     preflight_git_input(input, "git.diff")
 }
 
+fn preflight_git_commit_input(input: &Value) -> Result<String, &'static str> {
+    let Some(object) = input.as_object() else {
+        return Err("git capability input must be an object.");
+    };
+    for key in object.keys() {
+        match key.as_str() {
+            "message" => {}
+            "command" | "argv" | "args" | "cwd" | "env" | "stdin" | "shell" | "timeout"
+            | "timeout_ms" | "remote" | "path" | "paths" | "branch" | "ref" | "revision" => {
+                return Err("git capability does not accept command, argv, cwd, env, stdin, shell, timeout, remote, path, branch, ref, or revision input.");
+            }
+            _ => return Err("git.commit does not accept unknown input fields."),
+        }
+    }
+    let Some(message) = object.get("message").and_then(Value::as_str) else {
+        return Err("git.commit input.message must be a string.");
+    };
+    let message = message.trim();
+    if message.is_empty() {
+        return Err("git.commit input.message must not be empty.");
+    }
+    if message.chars().count() > MAX_GIT_COMMIT_MESSAGE_CHARS {
+        return Err("git.commit input.message exceeds the maximum length.");
+    }
+    if message
+        .chars()
+        .any(|ch| ch.is_control() && ch != '\n' && ch != '\t')
+    {
+        return Err("git.commit input.message contains unsupported control characters.");
+    }
+    Ok(message.to_string())
+}
+
 fn preflight_git_input(input: &Value, tool_id: &str) -> Result<(), &'static str> {
     let Some(object) = input.as_object() else {
         return Err("git capability input must be an object.");
@@ -2585,6 +2801,7 @@ mod tests {
                 "verification.cargo_test",
                 "git.status",
                 "git.diff",
+                "git.commit",
                 "process.exec",
                 "subtask.spawn",
                 "network.access",
@@ -3587,7 +3804,7 @@ mod tests {
     }
 
     #[test]
-    fn git_status_and_diff_are_bounded_dedicated_capabilities() {
+    fn git_status_diff_and_commit_are_bounded_dedicated_capabilities() {
         let temp = git_repository("git-status-diff");
         fs::write(temp.path().join("README.md"), "# Changed\n").expect("write changed readme");
         fs::write(temp.path().join("notes.md"), "new note\n").expect("write note");
@@ -3622,14 +3839,55 @@ mod tests {
         assert!(diff_json.contains("README.md"));
         assert!(!diff_json.contains("# Changed"));
         assert!(!diff_json.contains(temp.path().to_string_lossy().as_ref()));
+
+        let add = Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(temp.path())
+            .status()
+            .expect("git add");
+        assert!(add.success());
+        let commit = ToolExecutor::execute_controlled(
+            temp.path(),
+            ToolExecutionRequest {
+                tool_id: GIT_COMMIT_TOOL_ID.to_string(),
+                input: json!({"message":"Update README from bounded git capability"}),
+            },
+        )
+        .expect("git commit");
+        assert_eq!(commit.status, ToolExecutionStatus::Completed);
+        assert_eq!(commit.output["operation"], "commit");
+        assert_eq!(commit.output["raw_diff_redacted"], true);
+        assert_eq!(commit.output["raw_message_redacted"], true);
+        assert_eq!(commit.output["process_launched"], true);
+        assert!(commit.output["commit_id"].as_str().is_some());
+        assert!(commit.output["message_fingerprint"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("sha256:")));
+        let commit_json = commit.output.to_string();
+        assert!(!commit_json.contains("Update README from bounded git capability"));
+        assert!(!commit_json.contains("# Changed"));
+        assert!(!commit_json.contains(temp.path().to_string_lossy().as_ref()));
+
+        let replay = ToolExecutor::execute_controlled(
+            temp.path(),
+            ToolExecutionRequest {
+                tool_id: GIT_COMMIT_TOOL_ID.to_string(),
+                input: json!({"message":"Update README from bounded git capability"}),
+            },
+        )
+        .expect("git commit replay");
+        assert_eq!(replay.status, ToolExecutionStatus::Completed);
+        assert_eq!(replay.output["commit_id"], commit.output["commit_id"]);
+        assert_eq!(replay.output["replayed"], true);
+        assert_eq!(replay.output["process_launched"], false);
     }
 
     #[test]
     fn git_intents_require_dedicated_runtime_action_and_reject_shell_inputs() {
         let parsed = ToolIntentParser::parse_assistant_content(
-            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"git.status\",\"reason\":\"Inspect local repo state.\",\"input\":{}},{\"tool_id\":\"git.diff\",\"reason\":\"Inspect bounded diff summary.\",\"input\":{}}]}\n```",
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"git.status\",\"reason\":\"Inspect local repo state.\",\"input\":{}},{\"tool_id\":\"git.diff\",\"reason\":\"Inspect bounded diff summary.\",\"input\":{}},{\"tool_id\":\"git.commit\",\"reason\":\"Commit staged changes.\",\"input\":{\"message\":\"Bounded commit message\"}}]}\n```",
         );
-        assert_eq!(parsed.requests.len(), 2);
+        assert_eq!(parsed.requests.len(), 3);
         assert!(parsed.rejected.is_empty());
         let policy = BuiltinModeRegistry::get("implementer").expect("policy");
         let evaluation = ToolIntentEvaluator::evaluate(&policy, parsed);
@@ -3642,6 +3900,12 @@ mod tests {
         );
         assert!(rejected.requests.is_empty());
         assert_eq!(rejected.rejected[0].code, "invalid_input");
+
+        let rejected_message = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"git.commit\",\"reason\":\"Try raw command.\",\"input\":{\"message\":\"x\",\"argv\":[\"commit\"]}}]}\n```",
+        );
+        assert!(rejected_message.requests.is_empty());
+        assert_eq!(rejected_message.rejected[0].code, "invalid_input");
     }
 
     fn git_repository(name: &str) -> tempfile::TempDir {
