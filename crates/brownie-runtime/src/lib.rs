@@ -34829,6 +34829,440 @@ mod tests {
     }
 
     #[test]
+    fn current_agentmodes_coding_journey_uses_real_entrypoint_policy_not_builtin_fallback() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        let Some(fixture) = write_current_agentmodes_modepack_if_available(temp.path()) else {
+            return;
+        };
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "fake");
+
+        let activated = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"modepack.activate","params":{"authorize":true}}"#,
+        )
+        .result
+        .expect("activation result");
+        assert_eq!(activated["snapshot"]["modepack_name"], "current-agentmodes");
+        assert_eq!(activated["snapshot"]["default_entrypoint"], "orchestrator");
+        let activation_fingerprint = activated["snapshot"]["activation_fingerprint"]
+            .as_str()
+            .expect("activation fingerprint")
+            .to_string();
+        std::fs::remove_file(temp.path().join(".brownie/modepack.json"))
+            .expect("remove live modepack");
+
+        let request = r#"{"jsonrpc":"2.0","id":2,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp8.agentmodes.coding","drive_id":"mp8.agentmodes.coding.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"journey_admission":{"journey_id":"mp8.agentmodes.coding.journey","authorize_journey_start":true,"admission_id":"mp8.agentmodes.coding.admission","task_start":{"goal":"Implement README update through real AgentModes entrypoint policy"}}}}"#;
+        let result = parse_line(request)
+            .result
+            .expect("AgentModes coding journey result");
+
+        assert_eq!(result["status"], "task_executed");
+        let task_id = result["journey"]["task_id"].as_str().expect("task id");
+        let run_id = result["journey"]["run_id"].as_str().expect("run id");
+        let task = store
+            .tasks()
+            .get_task(task_id)
+            .expect("get task")
+            .expect("task");
+        assert_eq!(task.mode_id.as_deref(), Some("orchestrator"));
+        assert_ne!(task.mode_id.as_deref(), Some("implementer"));
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).expect("readme"),
+            "original README"
+        );
+
+        let events = store.tasks().read_ledger_events(run_id).expect("events");
+        let mode_payload = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ModeResolved)
+            .and_then(|event| event.payload.as_ref())
+            .expect("mode resolved payload");
+        assert_eq!(mode_payload["mode_id"], "orchestrator");
+        assert_eq!(
+            mode_payload["external_modepack_task_provenance"]["activation_fingerprint"],
+            activation_fingerprint
+        );
+        assert_eq!(mode_payload["permissions"]["workspace_write"], json!(false));
+        assert_eq!(
+            mode_payload["permissions"]["can_spawn_subtasks"],
+            json!(false)
+        );
+        assert_eq!(mode_payload["allowed_handoff_targets"], Value::Null);
+        assert!(mode_payload["prompt_sections"]
+            .as_array()
+            .is_some_and(|sections| !sections.is_empty()));
+        let artifacts = mode_payload["external_modepack_task_provenance"]
+            ["global_policy_artifacts"]
+            .as_array()
+            .expect("task-pinned artifact catalog");
+        assert_eq!(
+            artifacts
+                .iter()
+                .filter(|artifact| artifact["category"] == "skill")
+                .count(),
+            fixture.skill_count
+        );
+
+        assert!(events.iter().any(|event| {
+            event.kind == LedgerEventKind::ToolIntentDenied
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("tool_id"))
+                    == Some(&json!("workspace.write"))
+        }));
+        assert!(events.iter().any(|event| {
+            event.kind == LedgerEventKind::ToolIntentDenied
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("tool_id"))
+                    == Some(&json!("subtask.spawn"))
+        }));
+        assert!(!events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed));
+
+        let replay = parse_line(request)
+            .result
+            .expect("AgentModes coding journey replay");
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["journey"]["replayed"], true);
+        assert_eq!(replay["journey"]["task_id"], result["journey"]["task_id"]);
+        assert_eq!(replay["journey"]["run_id"], result["journey"]["run_id"]);
+        assert_eq!(store.tasks().list_tasks().expect("tasks").len(), 1);
+
+        let ledger_json = serde_json::to_string(&events).expect("ledger json");
+        assert!(!ledger_json.contains(fixture.source_root.to_string_lossy().as_ref()));
+        assert!(!ledger_json.contains("raw_prompt"));
+        assert!(!ledger_json.contains("provider_response"));
+        assert!(!ledger_json.contains("BROWNIE_LLM"));
+        assert!(!ledger_json.contains(temp.path().to_string_lossy().as_ref()));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        std::env::remove_var("BROWNIE_LLM_PROVIDER");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn current_agentmodes_write_mode_uses_runtime_owned_proposal_apply_verification_route() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        let Some(fixture) = write_current_agentmodes_modepack_if_available(temp.path()) else {
+            return;
+        };
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "fake");
+
+        commit_trusted_workspace_modepack_snapshot(&store);
+        let active = store
+            .read_active_modepack_snapshot()
+            .expect("active snapshot")
+            .expect("active snapshot");
+        let activation_fingerprint = active.summary.activation_fingerprint.clone();
+        let write_mode_id = ["verified-integrator", "code", "documenter"]
+            .into_iter()
+            .find_map(|mode_id| {
+                let policy = active
+                    .policies
+                    .iter()
+                    .find(|policy| policy.mode_id == mode_id)?;
+                if policy
+                    .permissions
+                    .get("workspace_write")
+                    .and_then(Value::as_bool)
+                    != Some(true)
+                {
+                    return None;
+                }
+                let compiled = resolve_workspace_mode_policy(&store, &policy.mode_id)
+                    .ok()
+                    .flatten()?;
+                RuntimePermissionGate::check_workspace_write_path(&compiled, "README.md")
+                    .allowed
+                    .then(|| policy.mode_id.clone())
+            })
+            .expect("current AgentModes coding edit mode with README write scope");
+        assert_ne!(write_mode_id, "implementer");
+        std::fs::remove_file(temp.path().join(".brownie/modepack.json"))
+            .expect("remove live modepack");
+
+        let drive_request = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "mp8.agentmodes.edit",
+                "drive_id": "mp8.agentmodes.edit.drive",
+                "expected_start_session_sequence": 0,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "journey_admission": {
+                    "journey_id": "mp8.agentmodes.edit.journey",
+                    "authorize_journey_start": true,
+                    "admission_id": "mp8.agentmodes.edit.admission",
+                    "task_start": {
+                        "goal": "Implement README update through a real AgentModes workspace edit role",
+                        "mode_id": write_mode_id
+                    }
+                }
+            }
+        });
+        let drive = parse_line(&drive_request.to_string())
+            .result
+            .expect("AgentModes edit drive result");
+        assert_eq!(drive["status"], "task_executed");
+        assert_eq!(drive["stop_reason"], "objective_proposal_candidate_ready");
+        assert_eq!(
+            drive["next_route"]["kind"],
+            "review_and_authorize_objective_proposal"
+        );
+        let candidate = &drive["objective_proposal_candidate"];
+        assert_eq!(candidate["status"], "ready_for_review");
+        assert_eq!(candidate["operation"], "replace_file");
+        assert_eq!(candidate["validation_status"], "Valid");
+        assert_eq!(candidate["approval_status"], "Pending");
+        assert!(candidate.get("content").is_none());
+        assert!(candidate.get("diff").is_none());
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).expect("readme"),
+            "original README"
+        );
+
+        let task_id = candidate["task_id"].as_str().expect("task id");
+        let run_id = candidate["run_id"].as_str().expect("run id").to_string();
+        let task = store
+            .tasks()
+            .get_task(task_id)
+            .expect("get task")
+            .expect("task");
+        assert_eq!(task.mode_id.as_deref(), Some(write_mode_id.as_str()));
+        let events = store.tasks().read_ledger_events(&run_id).expect("events");
+        let mode_payload = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ModeResolved)
+            .and_then(|event| event.payload.as_ref())
+            .expect("mode resolved payload");
+        assert_eq!(mode_payload["mode_id"], write_mode_id);
+        assert_eq!(
+            mode_payload["external_modepack_task_provenance"]["activation_fingerprint"],
+            activation_fingerprint
+        );
+        assert_eq!(mode_payload["permissions"]["workspace_write"], json!(true));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+                .count(),
+            1
+        );
+
+        let progress = drive["post_progress"].as_object().expect("post progress");
+        let authorization_target = json!({
+            "authorize_objective_proposal_preflight": true,
+            "journey_id": candidate["journey_id"],
+            "session_id": candidate["session_id"],
+            "source_drive_id": candidate["drive_id"],
+            "expected_journey_fingerprint": drive["journey"]["journey_fingerprint"],
+            "expected_candidate_fingerprint": candidate["candidate_fingerprint"],
+            "expected_objective_context_fingerprint": candidate["objective_context_fingerprint"],
+            "expected_selected_context_fingerprint": candidate["selected_context_fingerprint"],
+            "expected_task_id": candidate["task_id"],
+            "expected_run_id": candidate["run_id"],
+            "expected_proposal_id": candidate["proposal_id"],
+            "expected_source_event_id": candidate["source_event_id"],
+            "expected_source_event_kind": candidate["source_event_kind"],
+            "expected_operation": candidate["operation"],
+            "expected_path_fingerprint": candidate["path_fingerprint"],
+            "expected_validation_status": candidate["validation_status"],
+            "expected_approval_status": candidate["approval_status"],
+            "authorization_token_fingerprint": format!("sha256:{}", "8".repeat(64)),
+        });
+        let authorization_request = json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "headless.continue_once",
+            "params": {
+                "authorize": true,
+                "continuation_id": "mp8.agentmodes.edit.auth",
+                "expected_progress_fingerprint": progress["progress_fingerprint"],
+                "expected_aggregate_sequence": progress["aggregate_sequence"],
+                "objective_proposal_authorization_preflight_target": authorization_target
+            }
+        });
+        let authorized = parse_line(&authorization_request.to_string())
+            .result
+            .expect("authorization result");
+        let authorization_result = &authorized["objective_proposal_authorization_preflight_result"];
+        assert_eq!(authorization_result["status"], "authorized_preflight_ready");
+        assert_eq!(
+            authorized["next_route"]["kind"],
+            "apply_authorized_objective_proposal_explicitly"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).expect("readme"),
+            "original README"
+        );
+
+        let expected_hash = authorization_result["preflight_snapshot"]["file_sha256"]
+            .as_str()
+            .expect("preflight file hash")
+            .to_string();
+        let apply_target = json!({
+            "authorize_objective_proposal_apply": true,
+            "authorization_preflight_continuation_id": "mp8.agentmodes.edit.auth",
+            "expected_authorization_preflight_decision_id": authorized["decision_id"],
+            "journey_id": authorization_result["journey_id"],
+            "session_id": authorization_result["session_id"],
+            "source_drive_id": authorization_result["source_drive_id"],
+            "expected_journey_fingerprint": drive["journey"]["journey_fingerprint"],
+            "expected_candidate_fingerprint": authorization_result["candidate_fingerprint"],
+            "expected_objective_context_fingerprint": authorization_result["objective_context_fingerprint"],
+            "expected_selected_context_fingerprint": authorization_result["selected_context_fingerprint"],
+            "expected_task_id": authorization_result["task_id"],
+            "expected_run_id": authorization_result["run_id"],
+            "expected_proposal_id": authorization_result["proposal_id"],
+            "expected_source_event_id": authorization_result["source_event_id"],
+            "expected_source_event_kind": authorization_result["source_event_kind"],
+            "expected_operation": authorization_result["operation"],
+            "expected_path_fingerprint": authorization_result["path_fingerprint"],
+            "expected_validation_status": authorization_result["validation_status"],
+            "expected_approval_status": authorization_result["approval_status"],
+            "expected_authorization_preflight_fingerprint": authorization_result["authorization_preflight_fingerprint"],
+            "expected_preflight_snapshot_id": authorization_result["preflight_snapshot"]["snapshot_id"],
+            "expected_apply_plan_id": authorization_result["apply_plan"]["plan_id"],
+            "expected_target_sha256": expected_hash,
+            "replacement_content": "new README content"
+        });
+        let apply_request = json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "headless.continue_once",
+            "params": {
+                "authorize": true,
+                "continuation_id": "mp8.agentmodes.edit.apply",
+                "expected_progress_fingerprint": authorized["post_progress_fingerprint"],
+                "expected_aggregate_sequence": authorized["post_aggregate_sequence"],
+                "objective_proposal_apply_target": apply_target
+            }
+        });
+        let applied = parse_line(&apply_request.to_string())
+            .result
+            .expect("apply result");
+        assert_eq!(
+            applied["proposal_apply_result"]["apply_result"]["apply_status"],
+            "Applied"
+        );
+        assert_eq!(
+            applied["proposal_apply_result"]["apply_result"]["applied"],
+            true
+        );
+        assert_eq!(
+            applied["next_route"]["kind"],
+            "verify_objective_apply_explicitly"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).expect("readme"),
+            "new README content"
+        );
+        let apply_id = applied["proposal_apply_result"]["apply_result"]["apply_id"]
+            .as_str()
+            .expect("apply id")
+            .to_string();
+        let apply_checkpoint = store
+            .read_headless_objective_proposal_apply_checkpoint("mp8.agentmodes.edit.apply")
+            .expect("read apply checkpoint")
+            .expect("apply checkpoint");
+        let post_write_sha256 = apply_checkpoint
+            .result
+            .apply_result
+            .post_write_sha256
+            .clone()
+            .expect("post write hash");
+        let replayed_apply = parse_line(&apply_request.to_string())
+            .result
+            .expect("apply replay");
+        assert_eq!(replayed_apply["replayed"], true);
+
+        let verify_target = json!({
+            "authorize_objective_apply_verification": true,
+            "objective_apply_continuation_id": "mp8.agentmodes.edit.apply",
+            "expected_objective_apply_decision_id": applied["decision_id"],
+            "journey_id": authorization_result["journey_id"],
+            "session_id": authorization_result["session_id"],
+            "source_drive_id": authorization_result["source_drive_id"],
+            "expected_task_id": authorization_result["task_id"],
+            "expected_run_id": authorization_result["run_id"],
+            "expected_proposal_id": authorization_result["proposal_id"],
+            "expected_apply_id": apply_id,
+            "expected_operation": "replace_file",
+            "expected_apply_status": "Applied",
+            "expected_authorization_consumed": true,
+            "expected_path_fingerprint": authorization_result["path_fingerprint"],
+            "expected_apply_fingerprint": apply_checkpoint.apply_fingerprint,
+            "expected_post_write_sha256": post_write_sha256
+        });
+        let verify_request = json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "headless.continue_once",
+            "params": {
+                "authorize": true,
+                "continuation_id": "mp8.agentmodes.edit.verify",
+                "expected_progress_fingerprint": applied["post_progress_fingerprint"],
+                "expected_aggregate_sequence": applied["post_aggregate_sequence"],
+                "objective_apply_verification_target": verify_target
+            }
+        });
+        let verified = parse_line(&verify_request.to_string())
+            .result
+            .expect("verify result");
+        assert_eq!(
+            verified["objective_apply_verification_result"]["verification_status"],
+            "verified"
+        );
+        assert_eq!(
+            verified["next_route"]["kind"],
+            "accept_objective_completion_explicitly"
+        );
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&run_id)
+                .expect("events")
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::WorkspacePatchApplyResultRecorded)
+                .count(),
+            1
+        );
+
+        let ledger_json =
+            serde_json::to_string(&store.tasks().read_ledger_events(&run_id).expect("events"))
+                .expect("ledger json");
+        for forbidden in [
+            fixture.source_root.to_string_lossy().as_ref(),
+            "raw_prompt",
+            "provider_response",
+            "BROWNIE_LLM",
+            temp.path().to_string_lossy().as_ref(),
+        ] {
+            assert!(!ledger_json.contains(forbidden));
+        }
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        std::env::remove_var("BROWNIE_LLM_PROVIDER");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
     fn current_agentmodes_orchestrator_explicit_small_budget_fails_before_provider_request() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_llm_env_for_test();

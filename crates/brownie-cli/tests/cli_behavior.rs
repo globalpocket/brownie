@@ -12,6 +12,7 @@ use std::os::unix::fs::PermissionsExt;
 
 static RUNTIME_BUILD_COUNTER: AtomicUsize = AtomicUsize::new(0);
 static RUNTIME_BUILD_LOCK: Mutex<()> = Mutex::new(());
+static CURRENT_AGENTMODES_CHECKOUT_LOCK: Mutex<()> = Mutex::new(());
 const READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS: &str = "10000";
 
 fn brownie() -> &'static str {
@@ -2373,6 +2374,108 @@ fn installed_run_executes_primary_development_path_from_arbitrary_repository() {
 }
 
 #[test]
+fn installed_json_run_uses_real_agentmodes_active_snapshot_from_arbitrary_repository() {
+    let (installed, prefix) =
+        install_real_cli_with_sibling_runtime("installed-agentmodes-entrypoint");
+    let runtime = installed_runtime_from_prefix(&prefix);
+    let repository = ordinary_git_repository("installed-agentmodes-entrypoint-repo");
+    let Some(agentmodes) = write_current_agentmodes_modepack_if_available(&repository) else {
+        fs::remove_dir_all(repository).unwrap();
+        fs::remove_dir_all(prefix).unwrap();
+        return;
+    };
+
+    let activated = invoke_runtime_json(
+        &runtime,
+        &repository,
+        &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"modepack.activate","params":{"authorize":true}}),
+        &[],
+    );
+    assert_eq!(activated["result"]["activated"], true);
+    assert_eq!(
+        activated["result"]["snapshot"]["modepack_name"],
+        "current-agentmodes"
+    );
+    assert_eq!(
+        activated["result"]["snapshot"]["source_path"],
+        ".brownie/modepack.json"
+    );
+    assert!(activated["result"]["snapshot"]["mode_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|mode| mode == "orchestrator"));
+    let activation_fingerprint = activated["result"]["snapshot"]["activation_fingerprint"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    fs::remove_file(repository.join(".brownie/modepack.json")).unwrap();
+    let objective = "Implement README update through real AgentModes CLI entrypoint";
+    let output = Command::new(&installed)
+        .args(["--json", "run", objective])
+        .current_dir(&repository)
+        .env_remove("BROWNIE_RUNTIME_PATH")
+        .env_remove("BROWNIE_WORKSPACE_ROOT")
+        .env("BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS", "30000")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "installed run failed: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["command"], "run");
+    assert_eq!(payload["run"]["status"], "no_eligible_task");
+    assert_eq!(
+        fs::read_to_string(repository.join("README.md")).unwrap(),
+        "# Ordinary repository\n"
+    );
+    assert!(!stdout.contains(repository.to_string_lossy().as_ref()));
+    assert!(!stdout.contains(prefix.to_string_lossy().as_ref()));
+    assert!(!stdout.contains(agentmodes.source_root.to_string_lossy().as_ref()));
+    assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
+    assert!(!stdout.contains("BROWNIE_WORKSPACE_ROOT"));
+
+    let tasks = invoke_runtime_json(
+        &runtime,
+        &repository,
+        &serde_json::json!({"jsonrpc":"2.0","id":2,"method":"task.list"}),
+        &[],
+    );
+    let task = single_task_by_goal(&tasks, objective);
+    assert_eq!(task["mode_id"], "orchestrator");
+    let run_id = task["run_id"].as_str().expect("run id");
+    let ledger = fs::read_to_string(
+        repository
+            .join(".brownie/runs")
+            .join(run_id)
+            .join("ledger.jsonl"),
+    )
+    .expect("ledger");
+    assert!(ledger.contains("ModeResolved"));
+    assert!(ledger.contains("external_modepack_task_provenance"));
+    assert!(ledger.contains("current-agentmodes"));
+    assert!(ledger.contains(&activation_fingerprint));
+    assert!(ledger.contains("\"mode_id\":\"orchestrator\""));
+    assert!(ledger.contains("ToolIntentDenied"));
+    assert!(ledger.contains("\"tool_id\":\"workspace.write\""));
+    assert!(!ledger.contains(agentmodes.source_root.to_string_lossy().as_ref()));
+    assert!(!ledger.contains("raw_prompt"));
+    assert!(!ledger.contains("provider_response"));
+    assert!(!ledger.contains("BROWNIE_LLM"));
+    assert!(!ledger.contains(repository.to_string_lossy().as_ref()));
+
+    fs::remove_dir_all(repository).unwrap();
+    fs::remove_dir_all(prefix).unwrap();
+}
+
+#[test]
 fn installed_resume_continues_persisted_cli_journey_after_lost_response() {
     let (installed, prefix) = install_real_cli_with_sibling_runtime("installed-resume-loss");
     let runtime = installed_runtime_from_prefix(&prefix);
@@ -3161,6 +3264,201 @@ fn installed_runtime_from_prefix(prefix: &Path) -> PathBuf {
     prefix
         .join("bin")
         .join(format!("brownie-runtime{}", std::env::consts::EXE_SUFFIX))
+}
+
+struct CurrentAgentModesCliFixture {
+    source_root: PathBuf,
+}
+
+fn write_current_agentmodes_modepack_if_available(
+    workspace_root: &Path,
+) -> Option<CurrentAgentModesCliFixture> {
+    let source_root = current_agentmodes_root_for_test()?;
+    let baseline = brownie_agentmodes::CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+    let modepack = brownie_agentmodes::compile_agentmodes_modepack_from_root(
+        &source_root,
+        brownie_agentmodes::AgentModesCompileOptions {
+            modepack_name: Some("current-agentmodes".to_string()),
+            delegation_coordinators: vec![
+                "orchestrator".to_string(),
+                "workflow-orchestrator".to_string(),
+                "epoch-orchestrator".to_string(),
+            ],
+            ..brownie_agentmodes::AgentModesCompileOptions::default()
+        },
+    )
+    .expect("compile current AgentModes mode pack");
+    assert_eq!(modepack.modes.len(), baseline.expected_compiled_mode_count);
+    assert_eq!(
+        policy_artifact_category_count(&modepack.global_policy_artifacts, "rule"),
+        baseline.expected_rule_count
+    );
+    assert_eq!(
+        policy_artifact_category_count(&modepack.global_policy_artifacts, "skill"),
+        baseline.expected_skill_count
+    );
+    assert_eq!(
+        policy_artifact_category_count(&modepack.global_policy_artifacts, "command"),
+        baseline.expected_command_count
+    );
+    assert_eq!(
+        policy_artifact_category_count(&modepack.global_policy_artifacts, "contract"),
+        baseline.expected_contract_count
+    );
+    assert!(modepack
+        .modes
+        .iter()
+        .any(|mode| mode.mode_id == "orchestrator"));
+    let modepack_dir = workspace_root.join(".brownie");
+    fs::create_dir_all(&modepack_dir).unwrap();
+    fs::write(
+        modepack_dir.join("modepack.json"),
+        serde_json::to_string_pretty(&modepack).expect("serialize current AgentModes mode pack"),
+    )
+    .unwrap();
+    Some(CurrentAgentModesCliFixture { source_root })
+}
+
+fn current_agentmodes_required_for_test() -> bool {
+    let baseline = brownie_agentmodes::CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+    truthy_env(baseline.required_env) || truthy_env("CI")
+}
+
+fn truthy_env(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
+}
+
+fn current_agentmodes_root_for_test() -> Option<PathBuf> {
+    let baseline = brownie_agentmodes::CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+    if let Some(root) = std::env::var_os(baseline.root_env).map(PathBuf::from) {
+        assert_current_agentmodes_root_for_test(&root);
+        return Some(root);
+    }
+
+    if current_agentmodes_required_for_test() {
+        let _guard = CURRENT_AGENTMODES_CHECKOUT_LOCK
+            .lock()
+            .expect("AgentModes compatibility checkout lock");
+        let root = current_agentmodes_managed_checkout_for_test("brownie-cli");
+        prepare_current_agentmodes_checkout_for_test(&root);
+        assert_current_agentmodes_root_for_test(&root);
+        return Some(root);
+    }
+
+    let root = PathBuf::from("/Users/satoshitanaka/Documents/AgentModes");
+    if !root.join("modes").is_dir()
+        || current_agentmodes_revision(&root).as_deref() != Some(baseline.revision)
+    {
+        return None;
+    }
+    Some(root)
+}
+
+fn assert_current_agentmodes_root_for_test(root: &Path) {
+    let baseline = brownie_agentmodes::CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+    assert!(
+        root.join("modes").is_dir(),
+        "{} must point to a checked-out {} repository",
+        baseline.root_env,
+        baseline.repository
+    );
+    assert_eq!(
+        current_agentmodes_revision(root).as_deref(),
+        Some(baseline.revision),
+        "AgentModes compatibility baseline revision drifted"
+    );
+    assert!(
+        root.join("skills/tdd-quality-gate/SKILL.md").is_file(),
+        "AgentModes compatibility baseline must include recursive SKILL.md artifacts"
+    );
+}
+
+fn current_agentmodes_managed_checkout_for_test(namespace: &str) -> PathBuf {
+    let baseline = brownie_agentmodes::CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+    std::env::temp_dir()
+        .join("brownie-agentmodes-compat")
+        .join(format!(
+            "{}-{}-{}",
+            namespace,
+            std::process::id(),
+            baseline.revision
+        ))
+}
+
+fn prepare_current_agentmodes_checkout_for_test(root: &Path) {
+    let baseline = brownie_agentmodes::CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+    if current_agentmodes_revision(root).as_deref() == Some(baseline.revision)
+        && root.join("skills/tdd-quality-gate/SKILL.md").is_file()
+    {
+        return;
+    }
+    if root.exists() {
+        fs::remove_dir_all(root).expect("remove stale AgentModes compatibility checkout");
+    }
+    fs::create_dir_all(root.parent().expect("AgentModes checkout parent"))
+        .expect("create AgentModes compatibility checkout parent");
+    let repository_url = format!("https://github.com/{}.git", baseline.repository);
+    assert_git_status_for_test(
+        Command::new("git")
+            .arg("clone")
+            .arg("--no-checkout")
+            .arg(&repository_url)
+            .arg(root),
+        "clone AgentModes compatibility baseline",
+    );
+    assert_git_status_for_test(
+        Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .arg("fetch")
+            .arg("--depth")
+            .arg("1")
+            .arg("origin")
+            .arg(baseline.revision),
+        "fetch AgentModes compatibility baseline revision",
+    );
+    assert_git_status_for_test(
+        Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .arg("checkout")
+            .arg("--detach")
+            .arg(baseline.revision),
+        "checkout AgentModes compatibility baseline revision",
+    );
+}
+
+fn assert_git_status_for_test(command: &mut Command, label: &str) {
+    let status = command
+        .status()
+        .unwrap_or_else(|error| panic!("{label}: {error}"));
+    assert!(status.success(), "{label} failed with status {status}");
+}
+
+fn current_agentmodes_revision(root: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("rev-parse")
+        .arg("HEAD")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn policy_artifact_category_count(
+    artifacts: &[brownie_agentmodes::CompiledPolicyArtifact],
+    category: &str,
+) -> usize {
+    artifacts
+        .iter()
+        .filter(|artifact| artifact.category == category)
+        .count()
 }
 
 fn invoke_runtime_json(
