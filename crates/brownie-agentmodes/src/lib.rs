@@ -13,21 +13,24 @@ use sha2::{Digest, Sha256};
 pub const COMPATIBILITY_TARGET: &str = "AgentModes";
 pub const DEFAULT_MODE_ID: &str = "orchestrator";
 pub const AGENTMODES_V2_DEFAULT_ROLE_ID: &str = "core.orchestrator";
+pub const AGENTMODES_WORKFLOW_PATH: &str = "workflow.yaml";
 pub const AGENTMODES_MODEPACK_SCHEMA_VERSION: u64 = 1;
 pub const HANDOFF_TARGET_ALL_MODEPACK_MODES: &str = "$modepack/*";
 pub const CURRENT_AGENTMODES_COMPATIBILITY_BASELINE: AgentModesCompatibilityBaseline =
     AgentModesCompatibilityBaseline {
         repository: "globalpocket/AgentModes",
-        revision: "c48df6c6975b3597b97e75abbbd84bc9ab314ab9",
+        revision: "12ac2b86f32090deb1311459805f9d9d8667b6d2",
         root_env: "BROWNIE_AGENTMODES_COMPAT_ROOT",
         required_env: "BROWNIE_AGENTMODES_COMPAT_REQUIRED",
         expected_mode_file_count: 3,
+        expected_workflow_mode_count: 3,
+        expected_prompt_file_count: 3,
         expected_compiled_mode_count: 3,
         expected_rule_count: 0,
         expected_skill_count: 0,
         expected_command_count: 0,
         expected_contract_count: 0,
-        expected_schema_count: 5,
+        expected_schema_count: 6,
         expected_runtime_policy_count: 6,
     };
 const MAX_MODE_ID_CHARS: usize = 64;
@@ -43,6 +46,8 @@ pub struct AgentModesCompatibilityBaseline {
     pub root_env: &'static str,
     pub required_env: &'static str,
     pub expected_mode_file_count: usize,
+    pub expected_workflow_mode_count: usize,
+    pub expected_prompt_file_count: usize,
     pub expected_compiled_mode_count: usize,
     pub expected_rule_count: usize,
     pub expected_skill_count: usize,
@@ -267,6 +272,24 @@ struct RawAgentModesV2Permissions {
     dispatch: bool,
 }
 
+#[derive(Debug, Deserialize)]
+struct RawAgentModesWorkflow {
+    name: String,
+    schema_version: u64,
+    default_mode_id: String,
+    modes: Vec<RawAgentModesWorkflowMode>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawAgentModesWorkflowMode {
+    mode_id: String,
+    display_name: String,
+    prompt_file: String,
+    permissions: RawAgentModesV2Permissions,
+    #[serde(default)]
+    completion_rules: Vec<String>,
+}
+
 pub struct RuntimePermissionGate;
 
 impl RuntimePermissionGate {
@@ -424,6 +447,9 @@ pub fn compile_agentmodes_modepack_from_root(
     }
     let root = root.as_ref();
     options.global_policy_artifacts = compile_agentmodes_policy_artifacts_from_root(root)?;
+    if root.join(AGENTMODES_WORKFLOW_PATH).is_file() {
+        return compile_agentmodes_workflow_modepack_from_root(root, options);
+    }
     if root.join("core").is_dir() {
         return compile_agentmodes_v2_core_modepack_from_root(root, options);
     }
@@ -603,6 +629,183 @@ fn compile_agentmodes_v2_core_modepack_from_root(
     }
     let raw_roles = collect_agentmodes_v2_role_yaml_documents_from_root(root)?;
     compile_agentmodes_v2_roles(raw_roles, options)
+}
+
+fn compile_agentmodes_workflow_modepack_from_root(
+    root: &Path,
+    options: AgentModesCompileOptions,
+) -> Result<AgentModesModePack> {
+    if !options.delegation_coordinators.is_empty() {
+        bail!("AgentModes workflow entrypoint does not accept delegation_coordinators");
+    }
+    let workflow_path = root.join(AGENTMODES_WORKFLOW_PATH);
+    ensure_agentmodes_regular_file_safe(&workflow_path, "AgentModes workflow entrypoint")?;
+    let content = fs::read_to_string(&workflow_path).with_context(|| {
+        format!(
+            "failed to read AgentModes workflow entrypoint {}",
+            workflow_path.display()
+        )
+    })?;
+    let raw: RawAgentModesWorkflow = serde_yaml::from_str(&content).with_context(|| {
+        format!(
+            "failed to parse AgentModes workflow entrypoint {}",
+            workflow_path.display()
+        )
+    })?;
+    compile_agentmodes_workflow(root, raw, options)
+}
+
+fn compile_agentmodes_workflow(
+    root: &Path,
+    raw: RawAgentModesWorkflow,
+    options: AgentModesCompileOptions,
+) -> Result<AgentModesModePack> {
+    if raw.schema_version != AGENTMODES_MODEPACK_SCHEMA_VERSION {
+        bail!(
+            "unsupported AgentModes workflow schema_version {}; expected {}",
+            raw.schema_version,
+            AGENTMODES_MODEPACK_SCHEMA_VERSION
+        );
+    }
+    if raw.modes.is_empty() {
+        bail!("AgentModes workflow must contain at least one mode");
+    }
+    let name =
+        non_empty_agentmodes_field("workflow.name", options.modepack_name.unwrap_or(raw.name))?;
+    let workflow_default =
+        validate_agentmodes_mode_id("workflow.default_mode_id", raw.default_mode_id)?;
+    let mut seen = HashSet::new();
+    let mut compiled_modes = Vec::with_capacity(raw.modes.len());
+    for raw_mode in raw.modes {
+        let mode = compile_agentmodes_workflow_mode(
+            root,
+            raw_mode,
+            options.source_trust,
+            options.capability_ceiling,
+        )?;
+        if !seen.insert(mode.mode_id.clone()) {
+            bail!("duplicate AgentModes workflow mode_id: {}", mode.mode_id);
+        }
+        compiled_modes.push(mode);
+    }
+    if !seen.contains(&workflow_default) {
+        bail!("workflow.default_mode_id references unknown AgentModes mode_id: {workflow_default}");
+    }
+    let default = resolve_agentmodes_default_entrypoint_with_fallback(
+        options.default_entrypoint,
+        &seen,
+        &workflow_default,
+    )?;
+    let global_policy_artifacts =
+        validate_agentmodes_policy_artifacts(options.global_policy_artifacts)?;
+
+    Ok(AgentModesModePack {
+        name,
+        schema_version: AGENTMODES_MODEPACK_SCHEMA_VERSION,
+        entrypoints: AgentModesEntrypoints { default },
+        global_policy_artifacts,
+        modes: compiled_modes,
+    })
+}
+
+fn compile_agentmodes_workflow_mode(
+    root: &Path,
+    raw_mode: RawAgentModesWorkflowMode,
+    source_trust: AgentModesSourceTrust,
+    capability_ceiling: AgentModesCapabilityCeiling,
+) -> Result<CompiledModePolicy> {
+    let mode_id = validate_agentmodes_mode_id("workflow.modes[].mode_id", raw_mode.mode_id)?;
+    let display_name =
+        non_empty_agentmodes_field("workflow.modes[].display_name", raw_mode.display_name)?;
+    let prompt_file = validate_agentmodes_prompt_file_relative_path(
+        "workflow.modes[].prompt_file",
+        raw_mode.prompt_file,
+    )?;
+    let prompt_section = compile_agentmodes_workflow_prompt_section(root, &prompt_file)?;
+    let permissions = permissions_from_agentmodes_v2_permissions(
+        &mode_id,
+        &raw_mode.permissions,
+        source_trust,
+        capability_ceiling,
+    )?;
+    let completion_rules =
+        validate_agentmodes_workflow_completion_rules(&mode_id, raw_mode.completion_rules)?;
+    let role_definition = bounded_agentmodes_field(
+        "workflow.modes[].role_definition",
+        format!("AgentModes workflow role {mode_id}; runtime prompt file: {prompt_file}."),
+    )?;
+    let description = Some(bounded_agentmodes_field(
+        "workflow.modes[].description",
+        "AgentModes workspace framework role compiled from workflow.yaml metadata and Markdown prompt."
+            .to_string(),
+    )?);
+    let verification_responsibility = None;
+    let prompt_sections = vec![prompt_section];
+    let instruction_fingerprint = Some(mode_instruction_fingerprint(
+        &role_definition,
+        None,
+        description.as_deref(),
+        &prompt_sections,
+        &completion_rules,
+        verification_responsibility.as_deref(),
+        &[],
+    ));
+
+    Ok(CompiledModePolicy {
+        mode_id,
+        display_name,
+        role_definition,
+        when_to_use: None,
+        description,
+        prompt_sections,
+        verification_responsibility,
+        instruction_fingerprint,
+        permissions,
+        workspace_write_scopes: vec![],
+        allowed_handoff_targets: None,
+        mcp_access: vec![],
+        completion_rules,
+    })
+}
+
+fn compile_agentmodes_workflow_prompt_section(
+    root: &Path,
+    relative_path: &str,
+) -> Result<CompiledPromptSection> {
+    let prompt_path = ensure_agentmodes_relative_regular_file_safe(
+        root,
+        relative_path,
+        "AgentModes workflow prompt file",
+    )?;
+    let content = fs::read_to_string(&prompt_path).with_context(|| {
+        format!(
+            "failed to read AgentModes workflow prompt file {}",
+            prompt_path.display()
+        )
+    })?;
+    let content = bounded_agentmodes_field("workflow.modes[].prompt_file content", content)?;
+    Ok(CompiledPromptSection {
+        title: "prompt_file".to_string(),
+        source: format!("AgentModes.workflow.prompt_file:{relative_path}"),
+        content_fingerprint: sha256_fingerprint(content.as_bytes()),
+        content,
+    })
+}
+
+fn validate_agentmodes_workflow_completion_rules(
+    mode_id: &str,
+    values: Vec<String>,
+) -> Result<Vec<String>> {
+    let mut rules = values
+        .into_iter()
+        .map(|value| bounded_agentmodes_field("workflow.modes[].completion_rules[]", value))
+        .collect::<Result<Vec<_>>>()?;
+    if rules.is_empty() {
+        rules.push(format!(
+            "Return one bounded AgentModes workflow result for {mode_id}; prose does not grant runtime side-effect permissions."
+        ));
+    }
+    Ok(rules)
 }
 
 fn collect_agentmodes_v2_role_yaml_documents_from_root(
@@ -1192,6 +1395,51 @@ fn validate_policy_artifact_relative_path(field: &str, value: String) -> Result<
         bail!("AgentModes {field} must reference a markdown or YAML policy artifact");
     }
     Ok(value)
+}
+
+fn validate_agentmodes_prompt_file_relative_path(field: &str, value: String) -> Result<String> {
+    let value = validate_policy_artifact_relative_path(field, value)?;
+    if !value.ends_with(".md") {
+        bail!("AgentModes {field} must reference a Markdown prompt file");
+    }
+    Ok(value)
+}
+
+fn ensure_agentmodes_regular_file_safe(path: &Path, label: &str) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("failed to inspect {label} {}", path.display()))?;
+    if metadata.file_type().is_symlink() {
+        bail!("{label} must not be a symlink");
+    }
+    if !metadata.is_file() {
+        bail!("{label} must be a regular file");
+    }
+    Ok(())
+}
+
+fn ensure_agentmodes_relative_regular_file_safe(
+    root: &Path,
+    relative_path: &str,
+    label: &str,
+) -> Result<std::path::PathBuf> {
+    let mut current = root.to_path_buf();
+    let mut parts = relative_path.split('/').peekable();
+    while let Some(part) = parts.next() {
+        current.push(part);
+        let metadata = fs::symlink_metadata(&current)
+            .with_context(|| format!("failed to inspect {label} {}", current.display()))?;
+        if metadata.file_type().is_symlink() {
+            bail!("{label} must not contain symlink path components");
+        }
+        if parts.peek().is_some() {
+            if !metadata.is_dir() {
+                bail!("{label} parent path must be a directory");
+            }
+        } else if !metadata.is_file() {
+            bail!("{label} must be a regular file");
+        }
+    }
+    Ok(current)
 }
 
 fn bounded_policy_artifact_content(field: &str, value: String) -> Result<String> {
@@ -2024,6 +2272,195 @@ customModes:
     }
 
     #[test]
+    fn compiles_agentmodes_workflow_entrypoint_from_prompt_markdown() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("prompts")).expect("prompts");
+        std::fs::create_dir_all(root.join("core")).expect("core dir");
+        std::fs::write(root.join("core/orchestrator.yaml"), "not: [parsed").expect("legacy core");
+        std::fs::write(
+            root.join(AGENTMODES_WORKFLOW_PATH),
+            r#"
+name: agentmodes-core
+schema_version: 1
+default_mode_id: core.orchestrator
+modes:
+  - mode_id: core.orchestrator
+    display_name: AgentModes Core Orchestrator
+    prompt_file: prompts/core.orchestrator.md
+    permissions:
+      read: true
+      edit: false
+      command: false
+      git: false
+      network: false
+      mcp: false
+      phase_write: false
+      dispatch: false
+    completion_rules:
+      - Return an ORCHESTRATOR_PROPOSAL_V1-compatible structured result.
+      - Treat next_recommendation as advisory; Brownie Runtime owns scheduling.
+"#,
+        )
+        .expect("workflow");
+        std::fs::write(
+            root.join("prompts/core.orchestrator.md"),
+            "# Core Orchestrator\n\nReturn ORCHESTRATOR_PROPOSAL_V1 without dispatching.",
+        )
+        .expect("prompt");
+
+        let modepack =
+            compile_agentmodes_modepack_from_root(root, AgentModesCompileOptions::default())
+                .expect("compile workflow");
+
+        assert_eq!(modepack.name, "agentmodes-core");
+        assert_eq!(
+            modepack.entrypoints.default.as_deref(),
+            Some(AGENTMODES_V2_DEFAULT_ROLE_ID)
+        );
+        assert_eq!(modepack.modes.len(), 1);
+        let orchestrator = modepack
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == AGENTMODES_V2_DEFAULT_ROLE_ID)
+            .expect("orchestrator");
+        assert_eq!(
+            orchestrator.prompt_sections[0].source,
+            "AgentModes.workflow.prompt_file:prompts/core.orchestrator.md"
+        );
+        assert!(orchestrator.prompt_sections[0]
+            .content
+            .contains("ORCHESTRATOR_PROPOSAL_V1"));
+        assert!(orchestrator
+            .completion_rules
+            .iter()
+            .any(|rule| rule.contains("next_recommendation")));
+        assert!(!RuntimePermissionGate::check(orchestrator, RuntimeAction::WriteWorkspace).allowed);
+        assert!(!RuntimePermissionGate::check(orchestrator, RuntimeAction::ExecuteProcess).allowed);
+        assert!(!RuntimePermissionGate::check(orchestrator, RuntimeAction::SpawnSubtask).allowed);
+        assert!(!RuntimePermissionGate::check(orchestrator, RuntimeAction::UseMcpTool).allowed);
+        assert!(RuntimePermissionGate::check(orchestrator, RuntimeAction::IndexCodebase).allowed);
+        assert_eq!(orchestrator.allowed_handoff_targets, None);
+        assert!(orchestrator.mcp_access.is_empty());
+    }
+
+    #[test]
+    fn rejects_agentmodes_workflow_prompt_path_escape_fail_closed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        std::fs::write(root.join("secret.md"), "outside").expect("outside");
+        std::fs::write(
+            root.join(AGENTMODES_WORKFLOW_PATH),
+            r#"
+name: agentmodes-core
+schema_version: 1
+default_mode_id: core.orchestrator
+modes:
+  - mode_id: core.orchestrator
+    display_name: AgentModes Core Orchestrator
+    prompt_file: ../secret.md
+    permissions:
+      read: true
+      edit: false
+      command: false
+      git: false
+      network: false
+      mcp: false
+      phase_write: false
+      dispatch: false
+"#,
+        )
+        .expect("workflow");
+
+        let error =
+            compile_agentmodes_modepack_from_root(root, AgentModesCompileOptions::default())
+                .expect_err("unsafe prompt path should fail")
+                .to_string();
+
+        assert!(error.contains("must be a normalized relative path"));
+    }
+
+    #[test]
+    fn rejects_agentmodes_workflow_unknown_default_fail_closed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("prompts")).expect("prompts");
+        std::fs::write(root.join("prompts/core.orchestrator.md"), "prompt").expect("prompt");
+        std::fs::write(
+            root.join(AGENTMODES_WORKFLOW_PATH),
+            r#"
+name: agentmodes-core
+schema_version: 1
+default_mode_id: core.missing
+modes:
+  - mode_id: core.orchestrator
+    display_name: AgentModes Core Orchestrator
+    prompt_file: prompts/core.orchestrator.md
+    permissions:
+      read: true
+      edit: false
+      command: false
+      git: false
+      network: false
+      mcp: false
+      phase_write: false
+      dispatch: false
+"#,
+        )
+        .expect("workflow");
+
+        let error =
+            compile_agentmodes_modepack_from_root(root, AgentModesCompileOptions::default())
+                .expect_err("unknown default should fail")
+                .to_string();
+
+        assert!(error.contains("default_mode_id references unknown"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_agentmodes_workflow_symlinked_prompt_fail_closed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("prompts")).expect("prompts");
+        std::fs::write(root.join("outside.md"), "outside").expect("outside");
+        std::os::unix::fs::symlink(
+            root.join("outside.md"),
+            root.join("prompts/core.orchestrator.md"),
+        )
+        .expect("symlink");
+        std::fs::write(
+            root.join(AGENTMODES_WORKFLOW_PATH),
+            r#"
+name: agentmodes-core
+schema_version: 1
+default_mode_id: core.orchestrator
+modes:
+  - mode_id: core.orchestrator
+    display_name: AgentModes Core Orchestrator
+    prompt_file: prompts/core.orchestrator.md
+    permissions:
+      read: true
+      edit: false
+      command: false
+      git: false
+      network: false
+      mcp: false
+      phase_write: false
+      dispatch: false
+"#,
+        )
+        .expect("workflow");
+
+        let error =
+            compile_agentmodes_modepack_from_root(root, AgentModesCompileOptions::default())
+                .expect_err("symlinked prompt should fail")
+                .to_string();
+
+        assert!(error.contains("symlink"));
+    }
+
+    #[test]
     fn compiles_representative_agentmodes_mode_files_with_instruction_sentinels() {
         let modepack = compile_agentmodes_modepack_from_yaml_documents(
             [
@@ -2406,7 +2843,7 @@ customModes:
         }
 
         let root = std::path::PathBuf::from("/Users/satoshitanaka/Documents/AgentModes");
-        if !root.join("core").is_dir()
+        if !root.join(AGENTMODES_WORKFLOW_PATH).is_file()
             || current_agentmodes_revision(&root).as_deref() != Some(baseline.revision)
         {
             return None;
@@ -2423,6 +2860,10 @@ customModes:
             baseline.root_env,
             baseline.repository
         );
+        assert!(
+            root.join(AGENTMODES_WORKFLOW_PATH).is_file(),
+            "AgentModes compatibility baseline must include workflow.yaml"
+        );
         assert_eq!(
             current_agentmodes_revision(root).as_deref(),
             Some(baseline.revision),
@@ -2431,6 +2872,10 @@ customModes:
         assert!(
             root.join("core/orchestrator.yaml").is_file(),
             "AgentModes compatibility baseline must include v2 Core role artifacts"
+        );
+        assert!(
+            root.join("prompts/core.orchestrator.md").is_file(),
+            "AgentModes compatibility baseline must include workflow prompt files"
         );
         assert!(
             root.join("runtime-policies/brownie/loop-policy.yaml")
@@ -2454,7 +2899,8 @@ customModes:
     fn prepare_current_agentmodes_checkout_for_test(root: &std::path::Path) {
         let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
         if current_agentmodes_revision(root).as_deref() == Some(baseline.revision)
-            && root.join("core/orchestrator.yaml").is_file()
+            && root.join(AGENTMODES_WORKFLOW_PATH).is_file()
+            && root.join("prompts/core.orchestrator.md").is_file()
         {
             return;
         }
@@ -2535,23 +2981,42 @@ customModes:
             .count()
     }
 
+    fn current_agentmodes_prompt_file_count(root: &std::path::Path) -> usize {
+        std::fs::read_dir(root.join("prompts"))
+            .expect("read AgentModes workflow prompts")
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().extension().and_then(|value| value.to_str()) == Some("md"))
+            .count()
+    }
+
+    fn current_agentmodes_workflow_mode_count(root: &std::path::Path) -> usize {
+        let workflow: RawAgentModesWorkflow = serde_yaml::from_str(
+            &std::fs::read_to_string(root.join(AGENTMODES_WORKFLOW_PATH))
+                .expect("read AgentModes workflow"),
+        )
+        .expect("parse AgentModes workflow");
+        workflow.modes.len()
+    }
+
     #[test]
     fn current_agentmodes_compatibility_baseline_metadata_is_pinned() {
         let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
         assert_eq!(baseline.repository, "globalpocket/AgentModes");
         assert_eq!(
             baseline.revision,
-            "c48df6c6975b3597b97e75abbbd84bc9ab314ab9"
+            "12ac2b86f32090deb1311459805f9d9d8667b6d2"
         );
         assert_eq!(baseline.root_env, "BROWNIE_AGENTMODES_COMPAT_ROOT");
         assert_eq!(baseline.required_env, "BROWNIE_AGENTMODES_COMPAT_REQUIRED");
         assert_eq!(baseline.expected_mode_file_count, 3);
+        assert_eq!(baseline.expected_workflow_mode_count, 3);
+        assert_eq!(baseline.expected_prompt_file_count, 3);
         assert_eq!(baseline.expected_compiled_mode_count, 3);
         assert_eq!(baseline.expected_rule_count, 0);
         assert_eq!(baseline.expected_skill_count, 0);
         assert_eq!(baseline.expected_command_count, 0);
         assert_eq!(baseline.expected_contract_count, 0);
-        assert_eq!(baseline.expected_schema_count, 5);
+        assert_eq!(baseline.expected_schema_count, 6);
         assert_eq!(baseline.expected_runtime_policy_count, 6);
     }
 
@@ -2594,6 +3059,9 @@ customModes:
             == "schemas/role.schema.yaml"
             && artifact.category == "schema"));
         assert!(artifacts.iter().any(|artifact| artifact.relative_path
+            == "schemas/workflow.schema.yaml"
+            && artifact.category == "schema"));
+        assert!(artifacts.iter().any(|artifact| artifact.relative_path
             == "runtime-policies/brownie/loop-policy.yaml"
             && artifact.category == "runtime_policy"));
         assert!(artifacts.iter().all(|artifact| {
@@ -2617,6 +3085,14 @@ customModes:
         assert_eq!(
             current_agentmodes_mode_file_count(&root),
             baseline.expected_mode_file_count
+        );
+        assert_eq!(
+            current_agentmodes_workflow_mode_count(&root),
+            baseline.expected_workflow_mode_count
+        );
+        assert_eq!(
+            current_agentmodes_prompt_file_count(&root),
+            baseline.expected_prompt_file_count
         );
 
         let modepack = compile_agentmodes_modepack_from_root(
@@ -2665,10 +3141,14 @@ customModes:
         assert!(!RuntimePermissionGate::check(orchestrator, RuntimeAction::SpawnSubtask).allowed);
         assert!(!RuntimePermissionGate::check(orchestrator, RuntimeAction::WriteWorkspace).allowed);
         assert_eq!(orchestrator.allowed_handoff_targets, None);
+        assert!(orchestrator.prompt_sections.iter().any(|section| {
+            section.source == "AgentModes.workflow.prompt_file:prompts/core.orchestrator.md"
+                && section.content.contains("ORCHESTRATOR_PROPOSAL_V1")
+        }));
         assert!(orchestrator
-            .prompt_sections
+            .completion_rules
             .iter()
-            .any(|section| section.source == "AgentModes.v2.output_schema"));
+            .any(|rule| rule.contains("next_recommendation")));
         let reviewer = modepack
             .modes
             .iter()

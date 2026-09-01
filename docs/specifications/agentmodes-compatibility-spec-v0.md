@@ -114,10 +114,12 @@ Pack default is available, Brownie keeps its built-in fallback behavior.
 Brownie accepts AgentModes YAML as compatibility input and compiles it into the
 stable Brownie Mode Pack policy shape. The legacy v1 path reads `customModes`
 entries with `slug`, `name`, `roleDefinition`, `whenToUse`, `description`,
-`groups`, and `customInstructions`. The current v2 path reads AgentModes Core
-role contracts from `core/*.yaml` plus bounded policy artifacts from
-`schemas/*.yaml` and `runtime-policies/brownie/*.yaml`. Brownie does not rewrite
-the AgentModes format or vendor the AgentModes repository.
+`groups`, and `customInstructions`. The current v2 workspace framework path
+prefers `workflow.yaml`, reads each mode's bounded Markdown `prompt_file`, and
+collects bounded policy artifacts from `schemas/*.yaml` and
+`runtime-policies/brownie/*.yaml`. The older `core/*.yaml` compiler remains a
+fallback for checked-out v2 Core revisions without `workflow.yaml`. Brownie does
+not rewrite the AgentModes format or vendor the AgentModes repository.
 
 Only structured AgentModes `groups` grant runtime capabilities. `read` grants
 metadata-only workspace read/index capability, `edit` grants trusted workspace
@@ -242,9 +244,10 @@ protected global policy/catalog evidence, while `skill`, `command`, and
 compatibility selection explicitly materializes them. Ledger evidence uses
 relative artifact identities and bounded content; absolute AgentModes source
 paths and raw Mode Pack JSON are not required for replay. Real compatibility
-tests use Brownie-managed baseline metadata for expected mode-file,
-compiled-mode, rule, skill, command, contract, schema, and runtime-policy counts
-so revision drift or missing artifacts fails before release acceptance.
+tests use Brownie-managed baseline metadata for expected mode-file, workflow
+mode, prompt-file, compiled-mode, rule, skill, command, contract, schema, and
+runtime-policy counts so revision drift or missing artifacts fails before
+release acceptance.
 
 ## M12.1 handoff target compatibility
 
@@ -263,10 +266,13 @@ modes preserve their existing behavior by leaving the allow-list unset.
 
 Current AgentModes compatibility must be proven against the real pinned
 AgentModes source shape, not only short representative fixtures. For the v2 Core
-baseline, Brownie must compile all current `core/*.yaml` role contracts, collect
-the current `schemas/*.yaml` and `runtime-policies/brownie/*.yaml` policy
-artifacts, validate the generated Brownie Mode Pack, and activate it through the
-same runtime snapshot path used by ordinary external Mode Packs.
+baseline with a workspace framework entrypoint, Brownie must compile current
+`workflow.yaml` modes and their Markdown `prompt_file` role prompts, collect the
+current `schemas/*.yaml` and `runtime-policies/brownie/*.yaml` policy artifacts,
+validate the generated Brownie Mode Pack, and activate it through the same
+runtime snapshot path used by ordinary external Mode Packs. Older Core
+baselines without `workflow.yaml` may still compile through the fallback
+`core/*.yaml` role-contract path.
 
 The v2 Core baseline intentionally has no write-capable child role and no
 dispatching role. Brownie must not substitute built-in implementer behavior,

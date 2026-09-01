@@ -6,14 +6,17 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use brownie_agentmodes::{
-    CompiledMcpServerAccess, CompiledModePolicy, CompiledPolicyArtifact, ModePermissions,
-    WorkspaceWriteScope, HANDOFF_TARGET_ALL_MODEPACK_MODES,
+    compile_agentmodes_modepack_from_root, AgentModesCapabilityCeiling, AgentModesCompileOptions,
+    AgentModesSourceTrust, CompiledMcpServerAccess, CompiledModePolicy, CompiledPolicyArtifact,
+    ModePermissions, WorkspaceWriteScope, HANDOFF_TARGET_ALL_MODEPACK_MODES,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const DEFAULT_MODEPACK_NAME: &str = "agentmodes";
 pub const WORKSPACE_MODEPACK_PATH: &str = ".brownie/modepack.json";
+pub const WORKSPACE_AGENTMODES_FRAMEWORK_PATH: &str = ".brownie/AgentModes";
+pub const WORKSPACE_AGENTMODES_WORKFLOW_PATH: &str = ".brownie/AgentModes/workflow.yaml";
 pub const MODEPACK_SCHEMA_VERSION: u64 = 1;
 const MAX_HANDOFF_TARGETS: usize = 16;
 const MAX_HANDOFF_TARGET_CHARS: usize = 64;
@@ -212,15 +215,70 @@ pub fn load_workspace_modepack_with_options(
     workspace_root: impl AsRef<Path>,
     options: ModePackLoadOptions,
 ) -> Result<Option<ModePackSnapshot>> {
-    let path = workspace_root.as_ref().join(WORKSPACE_MODEPACK_PATH);
-    if !path.exists() {
-        return Ok(None);
+    let workspace_root = workspace_root.as_ref();
+    let path = workspace_root.join(WORKSPACE_MODEPACK_PATH);
+    if path.exists() {
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let raw: RawModePack = serde_json::from_str(&content)
+            .with_context(|| format!("failed to parse {}", path.display()))?;
+        return Ok(Some(compile_snapshot(raw, path, options)?));
     }
-    let content =
-        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
-    let raw: RawModePack = serde_json::from_str(&content)
-        .with_context(|| format!("failed to parse {}", path.display()))?;
-    Ok(Some(compile_snapshot(raw, path, options)?))
+
+    let agentmodes_workflow_path = workspace_root.join(WORKSPACE_AGENTMODES_WORKFLOW_PATH);
+    if agentmodes_workflow_path.exists() {
+        let agentmodes_root = workspace_root.join(WORKSPACE_AGENTMODES_FRAMEWORK_PATH);
+        let modepack = compile_agentmodes_modepack_from_root(
+            &agentmodes_root,
+            agentmodes_compile_options_from_modepack_load_options(options),
+        )
+        .with_context(|| {
+            format!(
+                "failed to compile AgentModes workspace framework {}",
+                agentmodes_workflow_path.display()
+            )
+        })?;
+        let json = serde_json::to_string(&modepack)
+            .context("failed to serialize compiled AgentModes workspace framework")?;
+        return Ok(Some(load_modepack_from_str_with_options(
+            &json,
+            agentmodes_workflow_path,
+            options,
+        )?));
+    }
+
+    Ok(None)
+}
+
+fn agentmodes_compile_options_from_modepack_load_options(
+    options: ModePackLoadOptions,
+) -> AgentModesCompileOptions {
+    AgentModesCompileOptions {
+        modepack_name: None,
+        default_entrypoint: None,
+        delegation_coordinators: vec![],
+        global_policy_artifacts: vec![],
+        source_trust: agentmodes_source_trust_from_modepack_source_trust(options.source_trust),
+        capability_ceiling: AgentModesCapabilityCeiling {
+            workspace_write: options.capability_ceiling.workspace_write,
+            process_exec: options.capability_ceiling.process_exec,
+            can_spawn_subtasks: options.capability_ceiling.can_spawn_subtasks,
+        },
+    }
+}
+
+fn agentmodes_source_trust_from_modepack_source_trust(
+    source_trust: ModePackSourceTrust,
+) -> AgentModesSourceTrust {
+    match source_trust {
+        ModePackSourceTrust::TrustedLocalDeveloper => AgentModesSourceTrust::TrustedLocalDeveloper,
+        ModePackSourceTrust::TrustedSignedActiveModePack => {
+            AgentModesSourceTrust::TrustedSignedActiveModePack
+        }
+        ModePackSourceTrust::UntrustedRepositoryLocal => {
+            AgentModesSourceTrust::UntrustedRepositoryLocal
+        }
+    }
 }
 
 pub fn load_modepack_from_str(
@@ -784,6 +842,122 @@ mod tests {
         assert!(!snapshot.modes[0].permissions.workspace_write);
         assert_eq!(snapshot.modes[0].allowed_handoff_targets, None);
         assert_eq!(snapshot.entrypoints.default_mode_id(), None);
+    }
+
+    #[test]
+    fn loads_agentmodes_workspace_framework_when_modepack_json_is_absent() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let agentmodes_dir = temp.path().join(WORKSPACE_AGENTMODES_FRAMEWORK_PATH);
+        fs::create_dir_all(agentmodes_dir.join("prompts")).expect("AgentModes prompts");
+        fs::write(
+            agentmodes_dir.join("workflow.yaml"),
+            r#"
+name: agentmodes-core
+schema_version: 1
+default_mode_id: core.orchestrator
+modes:
+  - mode_id: core.orchestrator
+    display_name: AgentModes Core Orchestrator
+    prompt_file: prompts/core.orchestrator.md
+    permissions:
+      read: true
+      edit: false
+      command: false
+      git: false
+      network: false
+      mcp: false
+      phase_write: false
+      dispatch: false
+    completion_rules:
+      - Return an ORCHESTRATOR_PROPOSAL_V1-compatible structured result.
+"#,
+        )
+        .expect("workflow");
+        fs::write(
+            agentmodes_dir.join("prompts/core.orchestrator.md"),
+            "# Core Orchestrator\n\nReturn ORCHESTRATOR_PROPOSAL_V1.",
+        )
+        .expect("prompt");
+
+        let snapshot = load_workspace_modepack_with_options(
+            temp.path(),
+            ModePackLoadOptions::trusted_local_developer(),
+        )
+        .expect("load")
+        .expect("snapshot");
+
+        assert_eq!(snapshot.name, "agentmodes-core");
+        assert_eq!(
+            snapshot.source_path,
+            temp.path().join(WORKSPACE_AGENTMODES_WORKFLOW_PATH)
+        );
+        assert_eq!(
+            snapshot.entrypoints.default_mode_id(),
+            Some(brownie_agentmodes::AGENTMODES_V2_DEFAULT_ROLE_ID)
+        );
+        let orchestrator = snapshot
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == brownie_agentmodes::AGENTMODES_V2_DEFAULT_ROLE_ID)
+            .expect("orchestrator");
+        assert_eq!(
+            orchestrator.prompt_sections[0].source,
+            "AgentModes.workflow.prompt_file:prompts/core.orchestrator.md"
+        );
+        assert!(orchestrator.prompt_sections[0]
+            .content
+            .contains("ORCHESTRATOR_PROPOSAL_V1"));
+        assert!(!RuntimePermissionGate::check(orchestrator, RuntimeAction::WriteWorkspace).allowed);
+        assert!(!RuntimePermissionGate::check(orchestrator, RuntimeAction::SpawnSubtask).allowed);
+        assert!(snapshot.mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn modepack_json_takes_precedence_over_agentmodes_workspace_framework() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let brownie_dir = temp.path().join(".brownie");
+        fs::create_dir_all(&brownie_dir).expect("brownie dir");
+        let agentmodes_dir = temp.path().join(WORKSPACE_AGENTMODES_FRAMEWORK_PATH);
+        fs::create_dir_all(&agentmodes_dir).expect("AgentModes dir");
+        fs::write(agentmodes_dir.join("workflow.yaml"), "not: [parsed").expect("workflow");
+        fs::write(
+            brownie_dir.join("modepack.json"),
+            r#"{
+              "name": "local-agentmodes",
+              "schema_version": 1,
+              "modes": [
+                {
+                  "mode_id": "reviewer-lite",
+                  "display_name": "Reviewer Lite",
+                  "role_definition": "Review local changes without writing files.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  },
+                  "completion_rules": ["Stop after reporting local review findings."]
+                }
+              ]
+            }"#,
+        )
+        .expect("modepack");
+
+        let snapshot = load_workspace_modepack_with_options(
+            temp.path(),
+            ModePackLoadOptions::trusted_local_developer(),
+        )
+        .expect("load")
+        .expect("snapshot");
+
+        assert_eq!(snapshot.name, "local-agentmodes");
+        assert_eq!(
+            snapshot.source_path,
+            temp.path().join(WORKSPACE_MODEPACK_PATH)
+        );
     }
 
     #[test]
@@ -1497,6 +1671,13 @@ customModes:
                 |artifact| artifact.relative_path == "schemas/role.schema.yaml"
                     && artifact.content_fingerprint.starts_with("sha256:")
             ));
+        assert!(snapshot
+            .global_policy_artifacts
+            .iter()
+            .any(
+                |artifact| artifact.relative_path == "schemas/workflow.schema.yaml"
+                    && artifact.content_fingerprint.starts_with("sha256:")
+            ));
         let orchestrator = snapshot
             .modes
             .iter()
@@ -1508,6 +1689,10 @@ customModes:
         );
         assert!(!RuntimePermissionGate::check(orchestrator, RuntimeAction::SpawnSubtask).allowed);
         assert_eq!(orchestrator.allowed_handoff_targets, None);
+        assert!(orchestrator.prompt_sections.iter().any(|section| {
+            section.source == "AgentModes.workflow.prompt_file:prompts/core.orchestrator.md"
+                && section.content.contains("ORCHESTRATOR_PROPOSAL_V1")
+        }));
         let reporter = snapshot
             .modes
             .iter()
@@ -1540,7 +1725,9 @@ customModes:
         }
 
         let root = std::path::PathBuf::from("/Users/satoshitanaka/Documents/AgentModes");
-        if !root.join("core").is_dir()
+        if !root
+            .join(brownie_agentmodes::AGENTMODES_WORKFLOW_PATH)
+            .is_file()
             || current_agentmodes_revision(&root).as_deref() != Some(baseline.revision)
         {
             return None;
@@ -1568,6 +1755,11 @@ customModes:
             baseline.root_env,
             baseline.repository
         );
+        assert!(
+            root.join(brownie_agentmodes::AGENTMODES_WORKFLOW_PATH)
+                .is_file(),
+            "AgentModes compatibility baseline must include workflow.yaml"
+        );
         assert_eq!(
             current_agentmodes_revision(root).as_deref(),
             Some(baseline.revision),
@@ -1576,6 +1768,10 @@ customModes:
         assert!(
             root.join("core/orchestrator.yaml").is_file(),
             "AgentModes compatibility baseline must include v2 Core role artifacts"
+        );
+        assert!(
+            root.join("prompts/core.orchestrator.md").is_file(),
+            "AgentModes compatibility baseline must include workflow prompt files"
         );
         assert!(
             root.join("runtime-policies/brownie/loop-policy.yaml")
@@ -1599,7 +1795,10 @@ customModes:
     fn prepare_current_agentmodes_checkout_for_test(root: &std::path::Path) {
         let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
         if current_agentmodes_revision(root).as_deref() == Some(baseline.revision)
-            && root.join("core/orchestrator.yaml").is_file()
+            && root
+                .join(brownie_agentmodes::AGENTMODES_WORKFLOW_PATH)
+                .is_file()
+            && root.join("prompts/core.orchestrator.md").is_file()
         {
             return;
         }

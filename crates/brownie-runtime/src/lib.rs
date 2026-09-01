@@ -16141,6 +16141,40 @@ mod tests {
         .expect("modepack");
     }
 
+    fn write_test_agentmodes_workspace_framework(workspace_root: &std::path::Path) {
+        let agentmodes_dir = workspace_root.join(".brownie/AgentModes");
+        std::fs::create_dir_all(agentmodes_dir.join("prompts")).expect("AgentModes prompts");
+        std::fs::write(
+            agentmodes_dir.join("workflow.yaml"),
+            r#"
+name: agentmodes-core
+schema_version: 1
+default_mode_id: core.orchestrator
+modes:
+  - mode_id: core.orchestrator
+    display_name: AgentModes Core Orchestrator
+    prompt_file: prompts/core.orchestrator.md
+    permissions:
+      read: true
+      edit: false
+      command: false
+      git: false
+      network: false
+      mcp: false
+      phase_write: false
+      dispatch: false
+    completion_rules:
+      - Return an ORCHESTRATOR_PROPOSAL_V1-compatible structured result.
+"#,
+        )
+        .expect("workflow");
+        std::fs::write(
+            agentmodes_dir.join("prompts/core.orchestrator.md"),
+            "# Core Orchestrator\n\nReturn ORCHESTRATOR_PROPOSAL_V1.",
+        )
+        .expect("prompt");
+    }
+
     fn write_capability_test_modepack(workspace_root: &std::path::Path) {
         let brownie_dir = workspace_root.join(".brownie");
         std::fs::create_dir_all(&brownie_dir).expect("brownie dir");
@@ -16620,7 +16654,9 @@ mod tests {
         }
 
         let root = std::path::PathBuf::from("/Users/satoshitanaka/Documents/AgentModes");
-        if !root.join("core").is_dir()
+        if !root
+            .join(brownie_agentmodes::AGENTMODES_WORKFLOW_PATH)
+            .is_file()
             || current_agentmodes_revision(&root).as_deref() != Some(baseline.revision)
         {
             return None;
@@ -16648,6 +16684,11 @@ mod tests {
             baseline.root_env,
             baseline.repository
         );
+        assert!(
+            root.join(brownie_agentmodes::AGENTMODES_WORKFLOW_PATH)
+                .is_file(),
+            "AgentModes compatibility baseline must include workflow.yaml"
+        );
         assert_eq!(
             current_agentmodes_revision(root).as_deref(),
             Some(baseline.revision),
@@ -16656,6 +16697,10 @@ mod tests {
         assert!(
             root.join("core/orchestrator.yaml").is_file(),
             "AgentModes compatibility baseline must include v2 Core role artifacts"
+        );
+        assert!(
+            root.join("prompts/core.orchestrator.md").is_file(),
+            "AgentModes compatibility baseline must include workflow prompt files"
         );
         assert!(
             root.join("runtime-policies/brownie/loop-policy.yaml")
@@ -16679,7 +16724,10 @@ mod tests {
     fn prepare_current_agentmodes_checkout_for_test(root: &std::path::Path) {
         let baseline = brownie_agentmodes::CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
         if current_agentmodes_revision(root).as_deref() == Some(baseline.revision)
-            && root.join("core/orchestrator.yaml").is_file()
+            && root
+                .join(brownie_agentmodes::AGENTMODES_WORKFLOW_PATH)
+                .is_file()
+            && root.join("prompts/core.orchestrator.md").is_file()
         {
             return;
         }
@@ -35238,10 +35286,13 @@ mod tests {
                 policy.mode_id
             );
             assert_eq!(policy.allowed_handoff_targets, None);
-            assert!(policy
-                .prompt_sections
-                .iter()
-                .any(|section| section["source"] == "AgentModes.v2.quality_gates"));
+            assert!(policy.prompt_sections.iter().any(|section| {
+                section["source"] == "AgentModes.workflow.prompt_file:prompts/core.orchestrator.md"
+                    || section["source"]
+                        == "AgentModes.workflow.prompt_file:prompts/core.reviewer.md"
+                    || section["source"]
+                        == "AgentModes.workflow.prompt_file:prompts/core.reporter.md"
+            }));
         }
 
         let orchestrator = resolve_workspace_mode_policy(&store, "core.orchestrator")
@@ -54564,6 +54615,45 @@ mod tests {
             .as_str()
             .expect("reason")
             .contains("reviewer-lite"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn mode_list_get_and_permission_check_include_agentmodes_workspace_framework() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_test_agentmodes_workspace_framework(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let list = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"mode.list"}"#);
+        let modes = list.result.expect("list result")["modes"]
+            .as_array()
+            .expect("modes")
+            .clone();
+        assert_eq!(modes.len(), 5);
+        assert!(modes.iter().any(|mode| {
+            mode["mode_id"] == "core.orchestrator"
+                && mode["permissions"]["workspace_write"] == false
+                && mode["permissions"]["can_spawn_subtasks"] == false
+        }));
+
+        let get = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"mode.get","params":{"mode_id":"core.orchestrator"}}"#,
+        );
+        let mode = get.result.expect("get result");
+        assert_eq!(mode["display_name"], "AgentModes Core Orchestrator");
+        assert_eq!(mode["permissions"]["codebase_index"], true);
+
+        let permission = parse_line(
+            r#"{"jsonrpc":"2.0","id":3,"method":"permission.check","params":{"mode_id":"core.orchestrator","action":"SpawnSubtask"}}"#,
+        );
+        let permission_result = permission.result.expect("permission result");
+        assert_eq!(permission_result["allowed"], false);
+        assert!(permission_result["reason"]
+            .as_str()
+            .expect("reason")
+            .contains("core.orchestrator"));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
