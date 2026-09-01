@@ -75,6 +75,13 @@ secrets. Replays are keyed to the runtime logical invocation identity so a lost
 response for the same invocation does not duplicate a commit, while a new
 authorized change set with the same message can produce a new commit.
 
+Local Git inspect, local Git mutation, local commit creation, remote Git
+communication, push, forge API access, PR create/update, and PR merge are
+separate authority categories. Brownie Runtime may own local bounded categories;
+forge adapters and hosted PR workflows are External Adapter responsibilities and
+must not be collapsed into `process_exec` or treated as Runtime release blockers
+unless a generic runtime boundary contract is missing.
+
 ## JSON-RPC
 
 `permission.check` accepts a built-in `mode_id` and action name, resolves the mode through the built-in registry, and returns an allowed/denied decision with a human-readable reason. Unknown modes return JSON-RPC `-32602`.

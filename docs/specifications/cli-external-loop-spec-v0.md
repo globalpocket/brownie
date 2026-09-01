@@ -6,6 +6,12 @@ launchd/systemd timer, or self-spawning recursive process. An external
 controller may invoke `brownie run "<objective>"` or `brownie resume`, wait as
 it chooses, and invoke Brownie again.
 
+Runtime release readiness follows
+`docs/specifications/runtime-boundary-and-release-dod-spec-v0.md`: missing
+external scheduling or hosted control-plane infrastructure is not a Brownie
+Runtime release blocker when the CLI/runtime request, replay, resume, result,
+and attestation contracts remain executable.
+
 Each CLI invocation reads durable runtime state, asks the Rust runtime for one
 bounded unit of progress, lets the runtime persist checkpoints, ledger entries,
 task state, and journey state, then exits. The next invocation must recover from

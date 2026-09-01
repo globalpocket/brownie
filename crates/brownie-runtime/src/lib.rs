@@ -338,6 +338,7 @@ use product_completion::{
     headless_product_remaining_gap_selection_fingerprint, headless_run_product_completion_decision,
     headless_run_product_evidence_matrix, headless_run_selected_product_gap_closure,
     is_bounded_product_completion_text, technical_debt_carry_forward_from_items,
+    technical_debt_carry_forward_v1_fingerprint,
 };
 #[cfg(test)]
 use product_completion::{
@@ -14357,6 +14358,7 @@ mod tests {
             capability: capability.to_string(),
             transition: format!("{capability}_transition"),
             status: "open".to_string(),
+            responsibility_domain: "runtime".to_string(),
             required: true,
             priority,
             next_action: "plan_next_phase".to_string(),
@@ -14472,6 +14474,57 @@ mod tests {
         assert_eq!(selected_gap_closure_evidence_set.len(), 1);
         assert!(selected_gap_closure_set_fingerprint.is_some());
         assert!(!product_completion_claim);
+    }
+
+    #[test]
+    fn project_completion_policy_rejects_external_required_runtime_gap() {
+        let policy_gaps = json!([
+            {
+                "gap_id": "scheduler-product-gap",
+                "capability": "external_scheduler_queue",
+                "transition": "commercial_control_plane_readiness",
+                "status": "open",
+                "responsibility_domain": "external_control_plane",
+                "required": true,
+                "priority": 10,
+                "next_action": "track_as_commercial_solution_readiness"
+            }
+        ]);
+
+        let error = project_completion_policy_remaining_gap_selection(
+            Some(&policy_gaps),
+            false,
+            &BTreeMap::new(),
+        )
+        .expect_err("external required gap must fail closed");
+
+        assert!(
+            error.contains("external responsibilities must not be required Runtime release"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn technical_debt_carry_forward_rejects_external_release_blockers() {
+        let error = technical_debt_carry_forward_from_items(&[TechnicalDebtCarryForwardItem {
+            debt_id: "vault-provider-gap".to_string(),
+            summary: "external secret provider readiness".to_string(),
+            source_milestone: "Commercial Readiness".to_string(),
+            source_phase: "CR.1".to_string(),
+            source_pr: None,
+            target_capability: "headless_autonomous_development".to_string(),
+            classification: "required_before_release".to_string(),
+            responsibility_domain: "external_control_plane".to_string(),
+            status: "open".to_string(),
+            next_action: "track_outside_runtime_release".to_string(),
+            closure_evidence_fingerprint: None,
+        }])
+        .expect_err("external release blocker must fail closed");
+
+        assert!(
+            error.contains("external responsibility items must not be blocking"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -50266,6 +50319,7 @@ modes:
                 source_pr: Some("PR248".to_string()),
                 target_capability: "headless_autonomous_development".to_string(),
                 classification: "post_v0".to_string(),
+                responsibility_domain: "runtime".to_string(),
                 status: "open".to_string(),
                 next_action: "admit_next_phase_with_debt_context".to_string(),
                 closure_evidence_fingerprint: None,
@@ -50423,6 +50477,7 @@ modes:
                 source_pr: None,
                 target_capability: "headless_autonomous_development".to_string(),
                 classification: "post_v0".to_string(),
+                responsibility_domain: "runtime".to_string(),
                 status: "open".to_string(),
                 next_action: "track_after_v0".to_string(),
                 closure_evidence_fingerprint: None,
@@ -51670,6 +51725,7 @@ modes:
                 source_pr: None,
                 target_capability: "headless_autonomous_development".to_string(),
                 classification: "post_v0".to_string(),
+                responsibility_domain: "external_control_plane".to_string(),
                 status: "open".to_string(),
                 next_action: "track_after_v0".to_string(),
                 closure_evidence_fingerprint: None,
@@ -51688,6 +51744,7 @@ modes:
                 source_pr: None,
                 target_capability: "headless_autonomous_development".to_string(),
                 classification: "blocking".to_string(),
+                responsibility_domain: "runtime".to_string(),
                 status: "open".to_string(),
                 next_action: "resolve_before_completion".to_string(),
                 closure_evidence_fingerprint: None,
@@ -51751,6 +51808,11 @@ modes:
             decided_result["product_completion_decision"]["technical_debt_carry_forward"]["items"]
                 [0]["classification"],
             "post_v0"
+        );
+        assert_eq!(
+            decided_result["product_completion_decision"]["technical_debt_carry_forward"]["items"]
+                [0]["responsibility_domain"],
+            "external_control_plane"
         );
         assert!(
             decided_result["product_completion_decision"]["product_evidence_fingerprint"]
@@ -51940,6 +52002,7 @@ modes:
                     source_pr: Some("PR248".to_string()),
                     target_capability: "headless_autonomous_development".to_string(),
                     classification: "required_before_release".to_string(),
+                    responsibility_domain: "runtime".to_string(),
                     status: "open".to_string(),
                     next_action: "bind_debt_to_continuation_task".to_string(),
                     closure_evidence_fingerprint: None,

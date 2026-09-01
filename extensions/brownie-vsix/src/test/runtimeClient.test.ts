@@ -2284,6 +2284,7 @@ describe('protocol validation', () => {
       source_pr: 'PR248',
       target_capability: 'headless_autonomous_development',
       classification: 'post_v0',
+      responsibility_domain: 'runtime',
       status: 'open',
       next_action: 'admit_next_phase_with_debt_context',
       closure_evidence_fingerprint: null,
@@ -2352,6 +2353,7 @@ describe('protocol validation', () => {
       capability: 'runtime_product_dod_remaining_gap_selection',
       transition: 'select remaining product dod gap',
       status: 'open',
+      responsibility_domain: 'runtime',
       required: true,
       priority: 10,
       next_action: 'plan_next_phase',
@@ -3036,6 +3038,8 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, technical_debt_carry_forward: [{ ...technicalDebtCarryForwardItems[0], raw_file_content: 'secret' }] } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, technical_debt_carry_forward: [technicalDebtCarryForwardItems[0], technicalDebtCarryForwardItems[0]] } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, technical_debt_carry_forward: [{ ...technicalDebtCarryForwardItems[0], classification: 'unknown' }] } })).toBe(false);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, technical_debt_carry_forward: [{ ...technicalDebtCarryForwardItems[0], classification: 'required_before_release', responsibility_domain: 'external_control_plane' }] } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, selected_remaining_gap: { ...selectedRemainingGap, responsibility_domain: 'external_adapter' } } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, technical_debt_transitions: [{ debt_id: 'm54-debt-1', status: 'resolved', next_action: 'close_debt' }] } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, technical_debt_transitions: [{ debt_id: 'm54-debt-1', status: 'resolved', next_action: 'close_debt', closure_evidence_fingerprint: `sha256:${'1'.repeat(64)}` }] } })).toBe(true);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, raw_manifest_text: 'secret' } })).toBe(false);
@@ -4739,6 +4743,7 @@ describe('RuntimeClient', () => {
       capability: 'bind_selected_gap_provenance',
       transition: 'runtime_selected_product_gap_continuation_provenance_binding',
       status: 'open',
+      responsibility_domain: 'runtime',
       required: true,
       priority: 10,
       next_action: 'admit_selected_gap_continuation',

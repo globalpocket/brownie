@@ -1132,6 +1132,7 @@ fn parse_project_completion_policy_remaining_gap(
                 | "capability"
                 | "transition"
                 | "status"
+                | "responsibility_domain"
                 | "required"
                 | "priority"
                 | "next_action"
@@ -1158,10 +1159,29 @@ fn parse_project_completion_policy_remaining_gap(
                 .to_string(),
         );
     }
+    let responsibility_domain = item
+        .get("responsibility_domain")
+        .and_then(Value::as_str)
+        .unwrap_or("runtime")
+        .to_string();
+    if !is_bounded_product_completion_text(&responsibility_domain, 48)
+        || !release_responsibility_domain_is_valid(&responsibility_domain)
+    {
+        return Err(
+            "invalid params: project completion policy product_dod_remaining_gaps responsibility_domain is unsupported"
+                .to_string(),
+        );
+    }
     let required = item.get("required").and_then(Value::as_bool).ok_or_else(|| {
         "invalid params: project completion policy product_dod_remaining_gaps required is required"
             .to_string()
     })?;
+    if required && responsibility_domain != "runtime" {
+        return Err(
+            "invalid params: external responsibilities must not be required Runtime release Product DoD gaps"
+                .to_string(),
+        );
+    }
     let priority_u64 = item.get("priority").and_then(Value::as_u64).ok_or_else(|| {
         "invalid params: project completion policy product_dod_remaining_gaps priority is required"
             .to_string()
@@ -1178,6 +1198,7 @@ fn parse_project_completion_policy_remaining_gap(
         capability,
         transition,
         status,
+        responsibility_domain,
         required,
         priority: priority_u64 as u16,
         next_action,
@@ -1898,9 +1919,11 @@ pub(super) fn technical_debt_carry_forward_from_items(
             || !is_bounded_product_completion_text(&item.source_milestone, 96)
             || !is_bounded_product_completion_text(&item.source_phase, 96)
             || !is_bounded_product_completion_text(&item.target_capability, 96)
+            || !is_bounded_product_completion_text(&item.responsibility_domain, 48)
             || !is_bounded_product_completion_text(&item.status, 48)
             || !is_bounded_product_completion_text(&item.next_action, 120)
             || !technical_debt_classification_is_valid(&item.classification)
+            || !release_responsibility_domain_is_valid(&item.responsibility_domain)
             || !technical_debt_status_is_active(&item.status)
             || item
                 .source_pr
@@ -1917,16 +1940,72 @@ pub(super) fn technical_debt_carry_forward_from_items(
                 "technical_debt_carry_forward items must be bounded ASCII metadata".to_string(),
             );
         }
+        if item.responsibility_domain != "runtime"
+            && matches!(
+                item.classification.as_str(),
+                "blocking" | "required_before_release"
+            )
+        {
+            return Err(
+                "technical_debt_carry_forward external responsibility items must not be blocking or required_before_release"
+                    .to_string(),
+            );
+        }
     }
 
     let canonical = json!({
-        "version": "technical_debt_carry_forward_v1",
+        "version": "technical_debt_carry_forward_v2",
         "items": sorted_items,
     });
     Ok(TechnicalDebtCarryForward {
         fingerprint: format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes())),
         items: sorted_items,
     })
+}
+
+pub(super) fn technical_debt_carry_forward_v1_fingerprint(
+    items: &[TechnicalDebtCarryForwardItem],
+) -> Result<String, String> {
+    if items.is_empty() || items.len() > 8 {
+        return Err("technical_debt_carry_forward must contain 1-8 items".to_string());
+    }
+    let mut sorted_items = items.to_vec();
+    sorted_items.sort_by(|left, right| left.debt_id.cmp(&right.debt_id));
+    let legacy_items: Vec<Value> = sorted_items
+        .iter()
+        .map(|item| {
+            let mut legacy_item = serde_json::Map::new();
+            legacy_item.insert("debt_id".to_string(), json!(item.debt_id));
+            legacy_item.insert("summary".to_string(), json!(item.summary));
+            legacy_item.insert("source_milestone".to_string(), json!(item.source_milestone));
+            legacy_item.insert("source_phase".to_string(), json!(item.source_phase));
+            if let Some(source_pr) = item.source_pr.as_ref() {
+                legacy_item.insert("source_pr".to_string(), json!(source_pr));
+            }
+            legacy_item.insert(
+                "target_capability".to_string(),
+                json!(item.target_capability),
+            );
+            legacy_item.insert("classification".to_string(), json!(item.classification));
+            legacy_item.insert("status".to_string(), json!(item.status));
+            legacy_item.insert("next_action".to_string(), json!(item.next_action));
+            if let Some(fingerprint) = item.closure_evidence_fingerprint.as_ref() {
+                legacy_item.insert(
+                    "closure_evidence_fingerprint".to_string(),
+                    json!(fingerprint),
+                );
+            }
+            Value::Object(legacy_item)
+        })
+        .collect();
+    let canonical = json!({
+        "version": "technical_debt_carry_forward_v1",
+        "items": legacy_items,
+    });
+    Ok(format!(
+        "sha256:{}",
+        hex_sha256(canonical.to_string().as_bytes())
+    ))
 }
 
 fn validate_technical_debt_transitions(
@@ -1993,6 +2072,13 @@ fn technical_debt_classification_is_valid(classification: &str) -> bool {
     )
 }
 
+fn release_responsibility_domain_is_valid(responsibility_domain: &str) -> bool {
+    matches!(
+        responsibility_domain,
+        "runtime" | "external_control_plane" | "external_adapter" | "commercial_solution"
+    )
+}
+
 fn technical_debt_status_is_active(status: &str) -> bool {
     matches!(status, "open" | "deferred")
 }
@@ -2004,6 +2090,7 @@ fn technical_debt_has_release_blocking_active_items(
         .map(|carry_forward| {
             carry_forward.items.iter().any(|item| {
                 technical_debt_status_is_active(&item.status)
+                    && item.responsibility_domain == "runtime"
                     && matches!(
                         item.classification.as_str(),
                         "blocking" | "required_before_release"

@@ -4,6 +4,14 @@
 
 Phase 1.1 extends the minimal task lifecycle authority in the Rust runtime with no-op task execution. It does not implement LLM calls, tool execution, AgentModes parsing, indexing, Qdrant, or llama-server integration.
 
+Task runtime responsibility is bounded by
+`docs/specifications/runtime-boundary-and-release-dod-spec-v0.md`: the runtime
+owns durable task/run/journey state, replay/stale/conflict protection, and
+bounded execution results. External schedulers, job queues, worker leases,
+hosted isolation, tenant operations, monitoring/SLA, billing, and product
+integrations are not task-runtime release blockers unless the generic runtime
+request/event/command/result contract needed to compose with them is missing.
+
 ## TaskRecord
 
 A task is persisted as a `TaskRecord` in `.brownie/runs/<run_id>/state.json`.

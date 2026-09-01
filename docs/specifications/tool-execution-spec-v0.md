@@ -10,6 +10,13 @@ All write, patch, process, subtask, network, service-control, and destructive to
 
 `tool.execute` is a standalone JSON-RPC method for explicit tool execution. Because it has no task context in Phase 1.7, callers must provide `mode_id` so the runtime can evaluate the request through `RuntimePermissionGate` before any execution dispatch.
 
+Controlled tool execution is a Brownie Runtime responsibility only for bounded
+local capabilities and generic protocol contracts. Hosted schedulers, daemon
+processes, forge apps, notification systems, SIEM/OTel exporters, tenant
+operations, and broad language adapter catalogs are External Control Plane or
+External Adapter responsibilities under
+`runtime-boundary-and-release-dod-spec-v0.md`.
+
 Example request:
 
 ```json

@@ -1,39 +1,39 @@
 {
   "schema_version": 1,
-  "phase": "CLI-C2",
-  "current_milestone": "brownie_cli_corrective_completion",
-  "milestone": "Brownie CLI Corrective Completion",
+  "phase": "RBD-1",
+  "current_milestone": "runtime_boundary_release_dod_alignment",
+  "milestone": "Brownie Runtime Boundary And Release DoD Alignment",
   "target_capability": "headless_autonomous_development",
-  "concrete_capability_transition": "Headless run completion closure, accepted-completion lookup, and finalization owner selection move from workspace-global task history to the active runtime journey/session graph.",
-  "forbidden_pattern": "develop_primary_command_cli_owned_agent_loop_cli_owned_mode_policy_cli_owned_permission_policy_cli_owned_replay_policy_cli_owned_recovery_policy_cli_owned_completion_policy_cli_owned_workspace_mutation_duplicate_product_dod_policy_generic_json_rpc_passthrough_rpc_mirror_report_only_readiness_only_diagnostic_wrapper_history_digest_verdict_summary_documentation_only_raw_prompt_provider_response_file_content_stdout_stderr_command_environment_secret_absolute_path_canonical_path_live_repo_local_state",
+  "concrete_capability_transition": "runtime_release_dod_is_enforced_by_responsibility_domains",
+  "forbidden_pattern": "scheduler_daemon_job_queue_worker_fleet_container_vm_kubernetes_vault_tenant_admin_ui_metrics_alerts_sla_billing_github_app_gitlab_app_pr_creation_notification_adapter_language_adapter_catalog_control_plane_product_required_before_runtime_release_generic_shell_arbitrary_process_exec_recursive_brownie_invocation_remote_git_push_merge_raw_prompt_provider_response_file_content_stdout_stderr_command_environment_secret_absolute_path_canonical_path",
   "project_objective_ref": "docs/architecture/product-charter.md",
   "strategic_capability_mapping": [
     {
       "capability": "headless_autonomous_development",
-      "relationship": "Allows repeated independent Brownie CLI journeys in one repository to complete and finalize the active journey graph rather than all historical workspace tasks."
+      "relationship": "Keeps autonomous runtime completion decisions tied to runtime-owned DoD rather than hosted control-plane or adapter product readiness."
     },
     {
-      "capability": "progress_visualization",
-      "relationship": "Makes runtime progress and completion views reflect the active journey scope instead of unrelated workspace history."
+      "capability": "runtime_permission_enforcement",
+      "relationship": "Separates runtime permission and tool authority from external scheduler, forge, notification, and commercial operations responsibilities."
     },
     {
-      "capability": "subtask_orchestration",
-      "relationship": "Includes typed descendants, recovery, retry, and continuation tasks connected to the active journey while excluding unrelated roots."
+      "capability": "controlled_workspace_tools",
+      "relationship": "Preserves controlled local tool boundaries while keeping forge and hosted product integrations outside Runtime Release DoD."
     }
   ],
   "phase_value_gate": {
     "required": true,
     "answers": {
-      "strategic_capabilities": "Advances headless_autonomous_development, progress_visualization, and subtask_orchestration.",
-      "new_capability": "An active headless journey can derive terminal completion evidence, accepted completion, closure progress, and finalization owner from its scoped task graph even when other completed or failed roots exist in the same repository.",
-      "why_existing_functionality_is_insufficient": "Workspace-global completion could pick the latest unrelated completed task, require all repository tasks to be complete, or reject finalization because more than one root task existed.",
-      "product_gap_if_skipped": "CLI Product Completion would remain valid only in isolated repositories and could fail or finalize incorrectly during normal repeated CLI use.",
-      "non_duplicative": "CLI-C2 is not resume selection, output formatting, installation, or primary run development-path evidence. It changes terminal completion ownership inside the Rust runtime.",
-      "no_new_rpc": "Yes. The implementation uses existing headless.run.drive, completion acceptance, and finalization paths.",
+      "strategic_capabilities": "Advances headless_autonomous_development, runtime_permission_enforcement, and controlled_workspace_tools.",
+      "new_capability": "Runtime Product DoD and technical debt evidence now classify responsibility domains so external readiness cannot block Runtime release.",
+      "why_existing_functionality_is_insufficient": "Previous evidence could describe scheduler, hosted operations, forge adapters, or commercial readiness as required_before_release without a machine-checkable runtime boundary.",
+      "product_gap_if_skipped": "Brownie could keep treating external platform work as unresolved Runtime Product DoD and delay Runtime release for non-runtime features.",
+      "non_duplicative": "This changes runtime validation, protocol shape, VSIX guards, CI guards, and specs rather than adding another report or roadmap.",
+      "no_new_rpc": "Yes. Existing product evidence, product completion decision, and protocol validation paths are extended with bounded metadata.",
       "no_new_summary": "Yes. No report, readiness, digest, history, verdict, summary, or inspection-only surface is added.",
-      "runtime_behavior_change": "Runtime behavior changes by filtering completion closure inputs and finalization owner validation through the active journey root and typed descendants before timestamp ordering.",
-      "headless_autonomous_contribution": "Long-running autonomous repositories can complete multiple independent CLI journeys without stale historical tasks contaminating terminal closure.",
-      "milestone_progress": "Closes the cli-session-scoped-completion corrective blocker after PR review and merge; cli-real-timeout-resume-evidence remains open for CLI-C3."
+      "runtime_behavior_change": "Runtime rejects external-domain required Product DoD gaps and external-domain blocking or required_before_release technical debt before product completion evidence is accepted.",
+      "headless_autonomous_contribution": "Autonomous completion can stop on Runtime release readiness while still carrying nonblocking external or commercial readiness debt forward.",
+      "milestone_progress": "Closes the release-boundary ambiguity before any new feature roadmap or commercial control-plane work."
     },
     "questions": [
       {
@@ -80,12 +80,12 @@
   },
   "review_value_gate": {
     "reject_when": [
-      "phase hard-codes implementer or orchestrator in the CLI",
-      "phase makes develop the primary command",
-      "phase moves mode policy, permissions, workspace mutation authority, replay, recovery, or completion policy into the CLI",
-      "phase scopes by goal text, mode_id, timestamp proximity, id similarity, objective text, or same workspace alone",
-      "phase adds a new RPC, generic JSON-RPC passthrough, report, readiness, history, digest, verdict, summary, or inspection-only surface",
-      "phase claims Product Completion while cli-real-timeout-resume-evidence remains open",
+      "phase implements a scheduler, daemon, job queue, hosted worker fleet, tenant service, billing system, monitoring dashboard, forge app, notification adapter, or commercial control-plane product",
+      "phase weakens Runtime ownership of task state, Mode Pack materialization, permission checks, tool execution, workspace mutation, replay, recovery, completion, or finalization",
+      "phase lets external control-plane, external adapter, or commercial solution debt use blocking or required_before_release classification",
+      "phase lets non-runtime Product DoD gaps use required=true",
+      "phase collapses Git remote, push, forge API, PR create/update, or PR merge into local process_exec or local Git inspect/commit authority",
+      "phase claims total Product Completion instead of bounded Runtime release boundary correction",
       "phase exposes raw prompt, provider response, file content, full diff, stdout, stderr, command, environment value, secret, absolute path, or canonical path"
     ]
   },
@@ -93,99 +93,161 @@
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "CLI-C2 updates the current phase manifest to describe runtime-owned scoped completion behavior. It does not weaken phase-value, diagnostics, control-plane authority, or product-completion guards.",
+    "review_intent": "RBD-1 updates the product-completion guard to require explicit Runtime Release DoD and external readiness separation without weakening evidence or wrapper-only rejection.",
     "changed_files": [
-      "crates/brownie-runtime/src/headless_journey.rs",
+      "README.md",
+      "crates/brownie-protocol/src/lib.rs",
       "crates/brownie-runtime/src/lib.rs",
-      "docs/architecture/phase-value-manifest.json"
+      "crates/brownie-runtime/src/product_completion.rs",
+      "crates/brownie-runtime/src/product_continuation.rs",
+      "docs/architecture/phase-value-manifest.json",
+      "docs/architecture/product-charter.md",
+      "docs/architecture/product-completion-gate.md",
+      "docs/architecture/runtime-overview.md",
+      "docs/specifications/agent-loop-spec-v0.md",
+      "docs/specifications/brownie-scope-v0.md",
+      "docs/specifications/cli-external-loop-spec-v0.md",
+      "docs/specifications/modepack-spec-v0.md",
+      "docs/specifications/permission-gate-spec-v0.md",
+      "docs/specifications/run-inspection-spec-v0.md",
+      "docs/specifications/runtime-boundary-and-release-dod-spec-v0.md",
+      "docs/specifications/runtime-protocol-spec-v0.md",
+      "docs/specifications/task-runtime-spec-v0.md",
+      "docs/specifications/tool-execution-spec-v0.md",
+      "extensions/brownie-vsix/src/runtime/protocol.ts",
+      "extensions/brownie-vsix/src/test/runtimeClient.test.ts",
+      "scripts/guard-product-completion.mjs",
+      "scripts/guard-product-completion.test.mjs"
     ]
   },
   "exit_criteria": [
-    "Active journey completion scope is derived in the Rust runtime from the journey checkpoint root plus typed task descendants and provenance-linked recovery/retry/continuation tasks.",
-    "headless.run.drive terminal completion evidence uses active journey scope before latest-completed timestamp ordering.",
-    "headless.run.drive accepted-completion lookup uses active journey scope before latest-completed timestamp ordering.",
-    "Completion closure progress uses active journey scope so unrelated roots do not block complete closure.",
-    "Completion finalization owner is selected from active journey scope rather than global root_task_ids.",
-    "Replay and duplicate-finalization idempotency remain intact.",
-    "CLI remains a thin caller and no new runtime RPC or report surface is added.",
-    "CLI-C2 closes only cli-session-scoped-completion; cli-real-timeout-resume-evidence remains open."
+    "Runtime responsibilities are documented separately from External Control Plane and External Adapter responsibilities.",
+    "Run Request, Runtime Event, Control Command, and Run Result or Attestation boundary contracts are documented as Runtime release requirements.",
+    "Product Completion Gate requires release_readiness_scope metadata that separates Runtime Release DoD from Commercial Solution Readiness.",
+    "Runtime technical debt carry-forward records include responsibility_domain with backward-compatible runtime default.",
+    "Runtime rejects external-domain blocking or required_before_release technical debt before Product Completion acceptance.",
+    "Runtime rejects external-domain required Product DoD gaps before product evidence matrix derivation.",
+    "VSIX protocol validators accept the bounded responsibility_domain fields and reject external-domain release blockers.",
+    "Guard tests prove missing release scope and external required-before-release debt are rejected."
   ],
   "behavior_evidence": [
-    "cargo test -p brownie-runtime headless_completion_scope_tasks_isolates_active_journey_root_from_unrelated_roots proves unrelated completed roots are excluded from active journey completion evidence.",
-    "cargo test -p brownie-runtime headless_latest_accepted_completion_uses_active_journey_scope_before_timestamp_ordering proves accepted-completion lookup scopes before selecting the latest completed task.",
-    "cargo test -p brownie-runtime headless_completion_finalization_uses_active_journey_scope_owner proves finalization owner selection uses active journey scope and replays without duplicate finalization events.",
-    "cargo test -p brownie-runtime completion_finalization proves existing global finalization checks still reject stale progress and conflicting owner checkpoints.",
-    "cargo test -p brownie-runtime proves existing runtime behavior remains compatible with scoped journey completion."
+    "cargo test -p brownie-runtime project_completion_policy_rejects_external_required_runtime_gap proves external Product DoD gaps cannot be required Runtime release gaps.",
+    "cargo test -p brownie-runtime technical_debt_carry_forward_rejects_external_release_blockers proves external debt cannot be required_before_release.",
+    "cargo test -p brownie-runtime headless_run_drive_records_product_complete_decision proves external post_v0 readiness debt remains visible without blocking Runtime product_complete.",
+    "node --test scripts/guard-product-completion.test.mjs proves the guard rejects missing release scope and external required-before-release debt.",
+    "VSIX runtimeClient protocol tests prove responsibility_domain fields are accepted for runtime payloads and rejected when external required gaps attempt to block."
   ],
   "product_dod": {
-    "closes": [],
+    "runtime_release_dod": [
+      "Durable task, run, journey, checkpoint, ledger, and replay authority.",
+      "AgentModes Mode Pack validation, pinning, and permission materialization.",
+      "Point-of-use permissions, controlled tools, workspace proposal/apply, approval, completion, and finalization.",
+      "Run Request, Runtime Event, Control Command, and Run Result or Attestation contracts."
+    ],
+    "commercial_solution_readiness": [
+      "Scheduler, daemon, job queue, worker fleet, leases, hosted isolation, tenants, Secret Provider product, metrics, alerts, SLA, billing, forge apps, notifications, customer admin UI, and broad language adapter catalog."
+    ],
+    "closes": [
+      "runtime-release-boundary-ambiguity",
+      "external-readiness-as-runtime-release-blocker"
+    ],
     "leaves_open": [
-      "CLI-C2 PR review and merge",
-      "cli-real-timeout-resume-evidence"
+      "commercial-control-plane-productization",
+      "external-forge-and-notification-adapters",
+      "hosted-operations-and-language-adapter-breadth"
     ],
     "does_not_close": [
-      "CLI Product Completion",
-      "cli-real-timeout-resume-evidence",
-      "cli-long-history-transport-bound assessment"
+      "New hosted scheduler or permanent daemon",
+      "GitHub App or GitLab product integration",
+      "Vault or tenant administration product",
+      "Monitoring, SLA, billing, or customer admin UI"
     ]
   },
   "technical_debt": [
     {
-      "id": "cli-primary-run-development-path",
-      "classification": "required_before_release",
-      "status_after_phase": "closed",
-      "evidence": "Resolved by merged PR #302 before CLI-C2."
+      "id": "commercial-control-plane-productization",
+      "classification": "post_v0",
+      "responsibility_domain": "commercial_solution",
+      "status_after_phase": "open",
+      "evidence": "Tracked outside Runtime Release DoD; not required_before_release for Brownie Runtime."
     },
     {
-      "id": "cli-session-scoped-completion",
-      "classification": "required_before_release",
+      "id": "external-forge-and-notification-adapters",
+      "classification": "post_v0",
+      "responsibility_domain": "external_adapter",
       "status_after_phase": "open",
-      "evidence": "Runtime scoped completion implementation exists on the CLI-C2 branch and remains open until PR review, CI, and merge."
+      "evidence": "Forge PR and notification products remain adapter readiness, not Runtime release blockers."
     },
     {
-      "id": "cli-real-timeout-resume-evidence",
-      "classification": "required_before_release",
+      "id": "hosted-scheduler-worker-and-secret-provider-products",
+      "classification": "post_v0",
+      "responsibility_domain": "external_control_plane",
       "status_after_phase": "open",
-      "evidence": "Intentionally left for CLI-C3 after session-scoped completion lands."
+      "evidence": "Schedulers, workers, leases, hosted isolation, and concrete Secret Provider integrations remain external control-plane readiness."
     }
   ],
   "product_completion_gate": {
     "required": true,
     "product_completion_claim": false,
     "accepted_capability": [
-      "Runtime active journey completion scope derivation.",
-      "Scoped terminal completion evidence lookup.",
-      "Scoped accepted-completion lookup.",
-      "Scoped closure progress and finalization owner validation."
+      "Runtime Release DoD responsibility-domain separation.",
+      "Runtime Product DoD gap responsibility validation.",
+      "Technical debt carry-forward responsibility validation.",
+      "VSIX and guard protocol enforcement for the same boundary."
     ],
     "behavior_evidence": [
-      "Targeted runtime tests prove unrelated roots no longer contaminate completion evidence, accepted-completion lookup, or finalization owner selection.",
-      "Full brownie-runtime tests pass."
+      "Runtime tests cover external required Product DoD gap rejection, external required-before-release debt rejection, and nonblocking external post_v0 carry-forward.",
+      "Product completion guard tests cover release_readiness_scope and external debt classification rejection.",
+      "VSIX protocol tests cover bounded responsibility_domain acceptance and rejection."
     ],
     "safety_boundary": [
-      "Rust runtime remains authority for completion closure, accepted completion, finalization owner, replay, and idempotency.",
-      "CLI-C2 does not add develop, generic passthrough, new RPC, wrapper, report, readiness, history, digest, verdict, or inspection-only surface.",
-      "Scope is derived from journey checkpoint identity, parent_run_id descendants, and typed runtime provenance rather than unsafe heuristics.",
+      "Rust Runtime remains authority for Product DoD selection, debt carry-forward, completion refusal, replay, and idempotency.",
+      "External control-plane, adapter, and commercial readiness entries cannot grant runtime permissions or block Runtime release.",
+      "CLI and VSIX remain thin transport/projection surfaces and do not own runtime release policy.",
       "No raw prompt, provider response, raw file content, full diff, stdout, stderr, command, environment value, secret, absolute path, or canonical path is exposed."
     ],
     "non_goals": [
-      "No terminal Product Completion in this phase.",
-      "No real timeout/process-loss resume evidence.",
-      "No long-history transport assessment.",
-      "No CLI-owned completion/finalization policy."
+      "No scheduler, daemon, permanent polling loop, job queue, worker fleet, or hosted control-plane product.",
+      "No Docker, Kubernetes, VM, Vault, tenant, admin UI, metrics, alerts, SLA, billing, or Secret Provider product.",
+      "No GitHub App, GitLab adapter, PR creation workflow, notification adapter, or broad language verifier catalog.",
+      "No remote Git push, PR merge capability, generic shell, arbitrary process execution, or recursive Brownie invocation."
     ],
     "rejected_alternatives": [
-      "Rejected CLI-side task graph scanning or completion policy.",
-      "Rejected new scoped-completion RPC wrapper.",
-      "Rejected timestamp-only or objective-text scoping.",
-      "Rejected Product Completion before CLI-C3 timeout evidence."
+      "Rejected treating Commercial Solution Readiness as Runtime required_before_release debt.",
+      "Rejected implementing hosted control-plane features to satisfy Runtime release DoD.",
+      "Rejected docs-only boundary correction without runtime and guard validation.",
+      "Rejected collapsing local Git and forge adapter capabilities into process_exec."
     ],
     "technical_debt": [
-      "cli-session-scoped-completion remains open until CLI-C2 PR review and merge.",
-      "cli-real-timeout-resume-evidence remains open."
+      "External control-plane productization remains post_v0 commercial readiness.",
+      "External forge and notification adapters remain post_v0 adapter readiness.",
+      "Hosted operations and language adapter breadth remain post_v0 commercial readiness."
     ],
     "next_capability_rationale": [
-      "Open and review the CLI-C2 PR, then proceed to CLI-C3 real timeout/process-loss resume evidence after merge."
-    ]
+      "After review, Brownie Runtime release readiness can be assessed against runtime contracts only; commercial solution readiness can be planned separately."
+    ],
+    "release_readiness_scope": {
+      "runtime_release_dod": [
+        "Durable task/run/journey state, checkpoint, ledger, idempotency, stale rejection, replay, conflict, and cancellation safety.",
+        "Agent loop execution, Mode Pack validation/pinning/materialization, permissions, controlled tools, workspace proposal/apply, approvals, and completion/finalization.",
+        "Product DoD selection and closure, runtime-domain debt carry-forward, and bounded refusal/blocker machinery."
+      ],
+      "runtime_boundary_contracts": [
+        "Run Request",
+        "Runtime Event",
+        "Control Command",
+        "Run Result and Attestation"
+      ],
+      "external_control_plane_responsibilities": [
+        "Scheduler, daemon, job queue, worker fleet, leases, retry policy, hosted isolation, Secret Provider product, metrics, alerts, SLA, HA, tenants, and billing."
+      ],
+      "external_adapter_responsibilities": [
+        "GitHub App, GitLab adapter, PR create/update/merge workflows, Slack, Teams, email, SIEM, OTel, customer systems, and language-specific verifier adapter breadth."
+      ],
+      "commercial_solution_readiness": [
+        "Packaging, operations, enterprise administration, hosted supportability, and customer-facing commercial readiness beyond Runtime release."
+      ],
+      "external_responsibility_not_release_blocking": true
+    }
   }
 }

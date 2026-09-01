@@ -53,6 +53,13 @@ const requiredGateArrays = [
   'next_capability_rationale'
 ];
 
+const releaseResponsibilityDomains = new Set([
+  'runtime',
+  'external_control_plane',
+  'external_adapter',
+  'commercial_solution'
+]);
+
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
@@ -153,6 +160,54 @@ function validateWrapperClaim(gate, manifestPath, errors) {
   );
 }
 
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validateReleaseReadinessScope(gate, manifestPath, errors) {
+  const scope = gate.release_readiness_scope;
+  requireValue(isRecord(scope), errors, `${manifestPath} product_completion_gate.release_readiness_scope must be an object.`);
+  if (!isRecord(scope)) {
+    return;
+  }
+
+  for (const field of [
+    'runtime_release_dod',
+    'runtime_boundary_contracts',
+    'external_control_plane_responsibilities',
+    'external_adapter_responsibilities',
+    'commercial_solution_readiness'
+  ]) {
+    validateStringArray(scope[field], `${manifestPath} product_completion_gate.release_readiness_scope.${field}`, errors);
+  }
+  requireValue(
+    scope.external_responsibility_not_release_blocking === true,
+    errors,
+    `${manifestPath} product_completion_gate.release_readiness_scope.external_responsibility_not_release_blocking must be true.`
+  );
+}
+
+function validateTechnicalDebtResponsibility(manifest, manifestPath, errors) {
+  const debtItems = Array.isArray(manifest.technical_debt) ? manifest.technical_debt : [];
+  for (const [index, item] of debtItems.entries()) {
+    if (!isRecord(item)) {
+      continue;
+    }
+    const domain = item.responsibility_domain ?? 'runtime';
+    const classification = item.classification ?? 'post_v0';
+    requireValue(
+      releaseResponsibilityDomains.has(domain),
+      errors,
+      `${manifestPath} technical_debt[${index}].responsibility_domain must be a known release responsibility domain.`
+    );
+    requireValue(
+      domain === 'runtime' || classification === 'post_v0',
+      errors,
+      `${manifestPath} technical_debt[${index}] external responsibility items must not be blocking or required_before_release.`
+    );
+  }
+}
+
 export function validateProductCompletionManifest(manifest, options = {}) {
   const manifestPath = options.manifestPath ?? defaultManifestPath;
   const errors = [];
@@ -181,6 +236,8 @@ export function validateProductCompletionManifest(manifest, options = {}) {
 
   validateBehaviorEvidence(manifest, gate, manifestPath, errors);
   validateWrapperClaim(gate, manifestPath, errors);
+  validateReleaseReadinessScope(gate, manifestPath, errors);
+  validateTechnicalDebtResponsibility(manifest, manifestPath, errors);
 
   const allEvidenceText = textOf({
     transition: manifest.concrete_capability_transition,

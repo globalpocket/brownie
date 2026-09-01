@@ -8,6 +8,13 @@ The Brownie agent loop is the runtime authority that advances a task from creati
 
 This specification covers the observable task execution behavior Brownie intends to reimplement from Zoo Code-style agent workflows.
 
+The agent loop is one Brownie Runtime responsibility within the boundary
+defined by `runtime-boundary-and-release-dod-spec-v0.md`. It owns bounded state
+transitions and runtime decisions for an admitted task, but it does not own
+external scheduling, worker fleets, hosted isolation, forge apps, notification
+systems, tenant administration, SLA, billing, or customer control-plane product
+behavior.
+
 ## State model
 
 The initial state set is:
@@ -478,7 +485,11 @@ M54.1 allows the existing product completion decision to carry optional bounded
 `technical_debt_carry_forward` evidence when the decision is
 `continue_development`. Each item is runtime-validated bounded ASCII metadata
 only: debt id, summary, source milestone, source phase, optional PR reference,
-target capability, status, and next action. Rust sorts the items, derives a
+target capability, responsibility domain, status, and next action. Runtime
+responsibility-domain items may be active `blocking` or
+`required_before_release`; external control-plane, external adapter, and
+commercial solution items must remain nonblocking `post_v0` readiness evidence
+and cannot block Brownie Runtime release. Rust sorts the items, derives a
 deterministic SHA-256 carry-forward fingerprint, records the bounded evidence in
 the product-decision ledger payload, and copies the fingerprint plus item
 summaries into `product_continuation_provenance` during

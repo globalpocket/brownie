@@ -27,7 +27,15 @@ function validManifest(overrides = {}) {
       non_goals: ['No new RPC or completion report surface.'],
       rejected_alternatives: ['CI-only completion and report-only completion.'],
       technical_debt: ['Future milestones still need product runtime capability work after R7.'],
-      next_capability_rationale: ['R7 closeout can follow after the gate is merged and assessed.']
+      next_capability_rationale: ['R7 closeout can follow after the gate is merged and assessed.'],
+      release_readiness_scope: {
+        runtime_release_dod: ['Runtime-owned task state and replay boundaries are executable.'],
+        runtime_boundary_contracts: ['Run Request, Runtime Event, Control Command, and Run Result are bounded.'],
+        external_control_plane_responsibilities: ['Schedulers and worker leases remain outside Runtime release.'],
+        external_adapter_responsibilities: ['PR creation and notification adapters remain outside Runtime release.'],
+        commercial_solution_readiness: ['Tenant administration and SLA reporting remain commercial readiness.'],
+        external_responsibility_not_release_blocking: true
+      }
     },
     ...overrides
   };
@@ -106,4 +114,25 @@ test('rejects missing technical debt classification', () => {
   });
   const errors = validateProductCompletionManifest(manifest);
   assert(errors.some((error) => error.includes('technical_debt')));
+});
+
+test('rejects missing release readiness scope', () => {
+  const gate = { ...validManifest().product_completion_gate };
+  delete gate.release_readiness_scope;
+  const errors = validateProductCompletionManifest(validManifest({ product_completion_gate: gate }));
+  assert(errors.some((error) => error.includes('release_readiness_scope')));
+});
+
+test('rejects external required-before-release debt', () => {
+  const manifest = validManifest({
+    technical_debt: [
+      {
+        id: 'scheduler-readiness',
+        classification: 'required_before_release',
+        responsibility_domain: 'external_control_plane'
+      }
+    ]
+  });
+  const errors = validateProductCompletionManifest(manifest);
+  assert(errors.some((error) => error.includes('external responsibility items')));
 });
