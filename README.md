@@ -4,6 +4,14 @@ Brownie is a new Code-OSS extension and Rust runtime for running AgentModes-comp
 
 Brownie is not a fork of Zoo Code or ZooCodeCustom. It is an independent implementation that references selected observable behavior and selected wrapper functionality from those projects.
 
+Brownie Runtime owns durable execution, AgentModes Mode Pack policy
+materialization, permission enforcement, controlled tools, workspace mutation
+boundaries, replay/stale/conflict protection, and completion machinery. External
+schedulers, workers, tenant operations, hosted monitoring, forge integrations,
+notifications, and commercial administration are external control-plane or
+adapter responsibilities, not Runtime release blockers. See
+`docs/specifications/runtime-boundary-and-release-dod-spec-v0.md`.
+
 ## Initial scope
 
 - Code-OSS VSIX using Custom Agent UI

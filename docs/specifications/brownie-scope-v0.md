@@ -12,6 +12,12 @@ Brownie is defined as:
 A Code-OSS Custom Agent UI extension backed by an AgentModes-compatible Rust Agent Runtime.
 ```
 
+The runtime boundary is defined in
+`docs/specifications/runtime-boundary-and-release-dod-spec-v0.md`. Brownie
+Runtime release readiness covers runtime-owned execution and generic boundary
+contracts; external control-plane services, hosted operations, and integration
+adapters are separate readiness domains.
+
 ## Related repositories
 
 - `globalpocket/Zoo-Code-Custom`: reference source for selected custom wrapper behavior and selected agent-loop control behavior.
@@ -66,6 +72,10 @@ Brownie treats AgentModes as an external Mode Pack:
   objective and selected index context evidence.
 - Runtime-owned objective-scoped workspace proposal candidate binding from the
   admitted journey task/run to one bounded non-mutating review target.
+- Runtime-owned request/event/command/result contracts for bounded integration
+  with external controllers and adapters.
+- Machine-checkable Release DoD separation for runtime, external control-plane,
+  external adapter, and commercial solution readiness domains.
 - stdio JSON-RPC boundary between VSIX and runtime.
 
 ## Out of scope for v0
@@ -77,6 +87,16 @@ Brownie treats AgentModes as an external Mode Pack:
 - Full production agent-loop implementation.
 - Production-grade indexer implementation.
 - Production-grade llama-server and Qdrant lifecycle management.
+- Scheduler, daemon, permanent polling loop, job queue, worker fleet, lease
+  manager, Docker/Kubernetes/VM isolation product, Vault or hosted Secret
+  Provider implementation, tenant administration, metrics/alerts/SLA dashboard,
+  billing, GitHub/GitLab App product, Slack/Teams/email notification adapter,
+  SIEM/OTel export product, and broad language verifier adapter catalog.
+
+These out-of-scope items may be Commercial Solution Readiness or external
+adapter work, but their absence is not an unresolved Brownie Runtime Product DoD
+gap unless a generic runtime boundary contract required to compose with them is
+missing.
 
 ## Design principles
 

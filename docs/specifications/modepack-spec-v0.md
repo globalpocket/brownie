@@ -6,6 +6,13 @@ Brownie treats AgentModes as an external Mode Pack.
 
 `brownie-modepack` manages retrieval, validation, compilation, activation, and rollback of Mode Pack snapshots.
 
+Mode Packs define workflow policy, roles, permissions, skills, commands, MCP
+servers, and completion contracts. Brownie Runtime materializes that policy and
+enforces capabilities at point of use. A Mode Pack cannot make external
+control-plane services, hosted adapters, or commercial operations features part
+of Brownie Runtime Release DoD; that split is defined in
+`runtime-boundary-and-release-dod-spec-v0.md`.
+
 ## Core rule
 
 Brownie executes a validated snapshot, not a live branch.

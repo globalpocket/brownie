@@ -20,6 +20,15 @@ Brownie Runtime
   -> Events
 ```
 
+Runtime release readiness follows the responsibility split in
+`../specifications/runtime-boundary-and-release-dod-spec-v0.md`. Brownie Runtime
+owns durable execution, policy materialization, permissions, controlled tools,
+workspace proposal/apply, replay/stale/conflict protection, bounded completion,
+and generic request/event/command/result contracts. External schedulers, worker
+fleets, hosted isolation, tenant operations, Secret Provider products,
+monitoring/SLA, billing, forge apps, notifications, and customer admin UI remain
+External Control Plane, External Adapter, or Commercial Solution Readiness.
+
 ## VSIX responsibility
 
 The VSIX owns:
@@ -1102,17 +1111,20 @@ execution, or workspace mutation is added.
 
 M62.1 lets the Rust runtime select the next Product DoD gap from the existing
 project completion policy derivation path. When `product_completion_claim` is
-false, the policy must include bounded `product_dod_remaining_gaps` metadata;
-Rust validates every gap, rejects unsupported status, duplicate ids, missing
-required fields, or missing open required gaps before product evidence matrix
-ledger mutation, then deterministically selects the highest numeric priority
-open required gap with stable `gap_id` tie-breaking and fingerprints it into
-the derived matrix. A following
+false, the policy must include bounded runtime-domain
+`product_dod_remaining_gaps` metadata; Rust validates every gap, rejects
+unsupported status, duplicate ids, missing required fields, non-runtime
+`required=true` gaps, or missing open required runtime gaps before product
+evidence matrix ledger mutation, then deterministically selects the highest
+numeric priority open required runtime gap with stable `gap_id` tie-breaking
+and fingerprints it into the derived matrix. A following
 `product_completion_decision` that references that derived matrix may omit
 caller-authored `remaining_capability`; Rust derives the effective remaining
 capability from the selected gap, returns bounded selected-gap metadata, and
 denies `product_complete` while the matrix still has an open required Product
-DoD gap. The extension only validates the bounded protocol shape. No new RPC,
+DoD gap. External control-plane, adapter, or commercial readiness items remain
+visible only as nonblocking readiness/debt evidence outside Runtime Release DoD.
+The extension only validates the bounded protocol shape. No new RPC,
 report/readiness/inspection surface, provider/tool execution, shell, git,
 network, service, or workspace mutation is added, and raw policy, artifact,
 prompt, provider, stdout/stderr, command, environment, path, and secret content

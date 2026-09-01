@@ -12,6 +12,30 @@ Code-OSS / Brownie VSIX
 Brownie Runtime
 ```
 
+The protocol is the Brownie Runtime boundary, not a hosted control-plane
+product. Runtime-owned messages are limited to:
+
+- Run Request: bounded objective or continuation identity, pinned Mode Pack
+  identity, workspace and execution scope handles, idempotency key, deadline or
+  execution constraints, secret references, requested isolation profile
+  metadata, approval policy, and expected fingerprints.
+- Runtime Event: append-only bounded state, progress, permission, tool,
+  approval, recovery, completion, refusal, and attestation evidence records.
+- Control Command: explicit caller-authorized continue, inspect, approve, deny,
+  cancel, retry, recover, apply, or finalize operations checked against current
+  runtime state, target fingerprints, and continuation identity.
+- Run Result and Attestation: bounded status, artifact references, verification
+  results, runtime / Mode Pack / LLM / toolchain identifiers, policy
+  fingerprints, ledger references, unresolved items, failure classification,
+  recovery history, replay state, selected scope, and refusal reasons.
+
+Schedulers, queues, workers, leases, hosted isolation, tenants, Secret Provider
+implementations, metrics, alerts, SLA, forge apps, notifications, admin UI, and
+billing are External Control Plane or External Adapter responsibilities. Their
+absence is not a Runtime protocol defect unless a generic bounded contract above
+is missing or stale. See
+`docs/specifications/runtime-boundary-and-release-dod-spec-v0.md`.
+
 ## Framing
 
 The runtime reads stdin one line at a time. Each non-empty line is one complete JSON-RPC request. For every request line, the runtime writes exactly one JSON-RPC response line to stdout and flushes stdout before reading the next request.

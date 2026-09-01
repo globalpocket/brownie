@@ -2432,6 +2432,12 @@ pub(super) fn product_continuation_payload_selected_remaining_gap(
         || !is_bounded_product_completion_text(&gap.capability, 120)
         || !is_bounded_product_completion_text(&gap.transition, 120)
         || !matches!(gap.status.as_str(), "open" | "deferred" | "closed")
+        || !is_bounded_product_completion_text(&gap.responsibility_domain, 48)
+        || !matches!(
+            gap.responsibility_domain.as_str(),
+            "runtime" | "external_control_plane" | "external_adapter" | "commercial_solution"
+        )
+        || (gap.required && gap.responsibility_domain != "runtime")
         || !is_bounded_product_completion_text(&gap.next_action, 120)
         || !is_sha256_fingerprint(&gap.selection_fingerprint)
     {
@@ -2472,7 +2478,20 @@ pub(super) fn product_continuation_payload_technical_debt_carry_forward(
                 .into(),
         )
     })?;
-    if carry_forward.fingerprint != expected.fingerprint || carry_forward.items != expected.items {
+    let legacy_v1_fingerprint =
+        technical_debt_carry_forward_v1_fingerprint(&carry_forward.items).map_err(|_| {
+            VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product continuation decision technical_debt_carry_forward is malformed"
+                    .into(),
+            )
+        })?;
+    let legacy_runtime_only = carry_forward
+        .items
+        .iter()
+        .all(|item| item.responsibility_domain == "runtime");
+    let fingerprint_matches = carry_forward.fingerprint == expected.fingerprint
+        || (legacy_runtime_only && carry_forward.fingerprint == legacy_v1_fingerprint);
+    if !fingerprint_matches || carry_forward.items != expected.items {
         return Err(VerificationRecoveryAdmissionError::InvalidParams(
             "invalid params: product continuation decision technical_debt_carry_forward fingerprint is stale"
                 .into(),

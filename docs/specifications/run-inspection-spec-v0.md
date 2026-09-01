@@ -2,6 +2,12 @@
 
 Phase 1.10 adds read-only inspection APIs for completed or in-progress task runs. These APIs are intended for the VSIX output channel and future progress UI, not for modifying runtime state.
 
+Inspection APIs expose Runtime-owned bounded state and evidence only. They do
+not create an External Control Plane, hosted monitor, SLA dashboard, tenant
+system, notification channel, forge adapter, or commercial readiness surface,
+and those external surfaces are not Brownie Runtime release blockers under
+`runtime-boundary-and-release-dod-spec-v0.md`.
+
 ## JSON-RPC methods
 
 - `run.events` accepts `{ "run_id": string }` and returns `{ "run_id": string, "events": LedgerEventSummary[] }`.

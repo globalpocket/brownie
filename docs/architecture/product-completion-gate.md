@@ -16,10 +16,44 @@ A completion claim must include:
 - Rejected alternatives.
 - Unresolved technical debt classification.
 - Next capability rationale or milestone exit rationale.
+- Runtime release scope separated from external control-plane, adapter, and
+  commercial solution readiness.
 
 ## Wrapper Boundary
 
 Wrapper-only, report-only, readiness-only, digest-only, history-only, verdict-only, inspection-only, preview-only, and summary-only phases cannot be accepted as product completion. A bounded blocker-removal phase may pass only when it explicitly names the blocker removed and does not claim product runtime completion.
+
+## Runtime Release DoD
+
+The current phase-value manifest must include
+`product_completion_gate.release_readiness_scope` with:
+
+- `runtime_release_dod`: runtime-owned task/run/journey state, agent loop,
+  Mode Pack policy, permissions, controlled tools, workspace proposal/apply,
+  replay/stale/conflict protection, and completion/finalization evidence.
+- `runtime_boundary_contracts`: bounded Run Request, Runtime Event, Control
+  Command, and Run Result/Attestation contracts.
+- `external_control_plane_responsibilities`: scheduler, queue, worker, lease,
+  retry policy, hosted isolation, Secret Provider, metrics, alerts, SLA, HA,
+  tenant, and billing responsibilities that remain outside Runtime release.
+- `external_adapter_responsibilities`: GitHub/GitLab, PR, review,
+  notification, SIEM/OTel, language verifier adapter, and customer system
+  integrations that remain outside Runtime release.
+- `commercial_solution_readiness`: packaging, operations, administration, and
+  enterprise readiness items that can be tracked after Runtime release.
+
+`external_responsibility_not_release_blocking` must be `true`. Machine-readable
+technical debt may mark active `runtime` items as `blocking` or
+`required_before_release`; `external_control_plane`, `external_adapter`, and
+`commercial_solution` items must remain nonblocking `post_v0` readiness items.
+Runtime-selected Product DoD gaps with `required=true` must also use
+`responsibility_domain="runtime"`.
+
+Missing generic runtime boundary contracts can block Runtime release. Missing
+scheduler, daemon, job queue, Docker/Kubernetes isolation, Vault integration,
+tenant administration, monitoring/SLA, billing, GitHub App, GitLab adapter,
+notification adapter, or broad language verifier catalog cannot block Runtime
+release by itself.
 
 ## Safety Boundary
 

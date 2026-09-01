@@ -2697,6 +2697,8 @@ pub struct TechnicalDebtCarryForwardItem {
     pub target_capability: String,
     #[serde(default = "default_technical_debt_classification")]
     pub classification: String,
+    #[serde(default = "default_technical_debt_responsibility_domain")]
+    pub responsibility_domain: String,
     pub status: String,
     pub next_action: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2722,6 +2724,10 @@ pub struct TechnicalDebtTransition {
 
 fn default_technical_debt_classification() -> String {
     "post_v0".to_string()
+}
+
+fn default_technical_debt_responsibility_domain() -> String {
+    "runtime".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2767,10 +2773,16 @@ pub struct HeadlessRunProductRemainingGapSelection {
     pub capability: String,
     pub transition: String,
     pub status: String,
+    #[serde(default = "default_product_remaining_gap_responsibility_domain")]
+    pub responsibility_domain: String,
     pub required: bool,
     pub priority: u16,
     pub next_action: String,
     pub selection_fingerprint: String,
+}
+
+fn default_product_remaining_gap_responsibility_domain() -> String {
+    "runtime".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

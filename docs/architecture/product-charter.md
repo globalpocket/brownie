@@ -9,6 +9,21 @@ assistant platform; actual executable capabilities remain bounded by the Rust
 runtime, active Mode Packs, runtime permissions, controlled tools, and the
 Product DoD accepted for Brownie.
 
+Brownie Runtime release readiness is not the same as commercial solution
+readiness. The runtime owns task/run/journey state, the agent loop, Mode Pack
+policy materialization, permissions, controlled tools, workspace proposal/apply,
+approval semantics, checkpoints, replay/stale/conflict protection, bounded
+completion decisions, and generic control-plane/adapter protocol contracts.
+Schedulers, queues, workers, leases, hosted isolation, Secret Provider
+implementations, tenants, metrics, alerts, SLA, billing, forge apps,
+notifications, customer admin UI, and language-specific adapter breadth are
+external control-plane, external adapter, or commercial readiness work.
+
+The authoritative split is
+`docs/specifications/runtime-boundary-and-release-dod-spec-v0.md`. Product DoD
+and release debt evidence must not classify external control-plane, adapter, or
+commercial solution gaps as Brownie Runtime `required_before_release` blockers.
+
 This repository copy mirrors the automation-owned charter used by the phase loop. The external automation state remains the scheduled task source of truth, but project planning and review artifacts in this repository must stay consistent with this charter.
 
 ## Non-Goals
@@ -17,6 +32,9 @@ This repository copy mirrors the automation-owned charter used by the phase loop
 - Do not optimize for adding endpoints.
 - Do not create observability wrappers without new user capability.
 - Do not treat CI success as sufficient evidence of product progress.
+- Do not make a scheduler, daemon, job queue, hosted tenant system, GitHub App,
+  monitoring/SLA stack, billing system, or customer admin UI a prerequisite for
+  Brownie Runtime release.
 
 ## Strategic Capabilities
 

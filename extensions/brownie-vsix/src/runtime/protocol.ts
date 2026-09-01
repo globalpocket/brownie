@@ -540,6 +540,7 @@ export interface TechnicalDebtCarryForwardItem {
   source_pr?: string | null;
   target_capability: string;
   classification?: 'blocking' | 'required_before_release' | 'post_v0';
+  responsibility_domain?: 'runtime' | 'external_control_plane' | 'external_adapter' | 'commercial_solution';
   status: string;
   next_action: string;
   closure_evidence_fingerprint?: string | null;
@@ -1479,6 +1480,7 @@ export interface HeadlessRunProductRemainingGapSelection {
   capability: string;
   transition: string;
   status: 'open' | 'deferred' | 'closed';
+  responsibility_domain?: 'runtime' | 'external_control_plane' | 'external_adapter' | 'commercial_solution';
   required: boolean;
   priority: number;
   next_action: string;
@@ -5624,6 +5626,8 @@ export function isProductLoopStopRecoveryProvenance(value: unknown): value is Pr
 }
 
 export function isTechnicalDebtCarryForwardItem(value: unknown): value is TechnicalDebtCarryForwardItem {
+  const responsibilityDomain = isRecord(value) && value.responsibility_domain !== undefined ? value.responsibility_domain : 'runtime';
+  const classification = isRecord(value) && value.classification !== undefined ? value.classification : 'post_v0';
   return (
     isRecord(value) &&
     hasOnlyFields(value, [
@@ -5634,6 +5638,7 @@ export function isTechnicalDebtCarryForwardItem(value: unknown): value is Techni
       'source_pr',
       'target_capability',
       'classification',
+      'responsibility_domain',
       'status',
       'next_action',
       'closure_evidence_fingerprint',
@@ -5646,6 +5651,8 @@ export function isTechnicalDebtCarryForwardItem(value: unknown): value is Techni
     (value.source_pr === undefined || value.source_pr === null || isBoundedAsciiMetadata(value.source_pr, 32)) &&
     isBoundedAsciiMetadata(value.target_capability, 96) &&
     (value.classification === undefined || value.classification === 'blocking' || value.classification === 'required_before_release' || value.classification === 'post_v0') &&
+    (value.responsibility_domain === undefined || isReleaseResponsibilityDomain(value.responsibility_domain)) &&
+    (responsibilityDomain === 'runtime' || classification === 'post_v0') &&
     (value.status === 'open' || value.status === 'deferred') &&
     isBoundedAsciiMetadata(value.next_action, 120) &&
     (value.closure_evidence_fingerprint === undefined || value.closure_evidence_fingerprint === null || (typeof value.closure_evidence_fingerprint === 'string' && isSha256Fingerprint(value.closure_evidence_fingerprint)))
@@ -8618,6 +8625,7 @@ export function isHeadlessRunSelectedProductGapClosureEvidence(value: unknown): 
 }
 
 export function isHeadlessRunProductRemainingGapSelection(value: unknown): value is HeadlessRunProductRemainingGapSelection {
+  const responsibilityDomain = isRecord(value) && value.responsibility_domain !== undefined ? value.responsibility_domain : 'runtime';
   return (
     isRecord(value) &&
     hasOnlyFields(value, [
@@ -8625,6 +8633,7 @@ export function isHeadlessRunProductRemainingGapSelection(value: unknown): value
       'capability',
       'transition',
       'status',
+      'responsibility_domain',
       'required',
       'priority',
       'next_action',
@@ -8635,7 +8644,9 @@ export function isHeadlessRunProductRemainingGapSelection(value: unknown): value
     isBoundedAsciiMetadata(value.capability, 120) &&
     isBoundedAsciiMetadata(value.transition, 120) &&
     (value.status === 'open' || value.status === 'deferred' || value.status === 'closed') &&
+    (value.responsibility_domain === undefined || isReleaseResponsibilityDomain(value.responsibility_domain)) &&
     typeof value.required === 'boolean' &&
+    (responsibilityDomain === 'runtime' || value.required === false) &&
     isNonNegativeInteger(value.priority) &&
     value.priority <= 65535 &&
     isBoundedAsciiMetadata(value.next_action, 120) &&
@@ -8740,6 +8751,15 @@ function isBoundedAsciiMetadata(value: unknown, maxLength: number): value is str
     value.trim().length > 0 &&
     value.length <= maxLength &&
     /^[A-Za-z0-9_.: -]+$/.test(value)
+  );
+}
+
+function isReleaseResponsibilityDomain(value: unknown): value is 'runtime' | 'external_control_plane' | 'external_adapter' | 'commercial_solution' {
+  return (
+    value === 'runtime' ||
+    value === 'external_control_plane' ||
+    value === 'external_adapter' ||
+    value === 'commercial_solution'
   );
 }
 
