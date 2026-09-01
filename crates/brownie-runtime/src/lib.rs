@@ -12590,6 +12590,8 @@ fn mode_summary(policy: CompiledModePolicy) -> ModeSummary {
             read_only: policy.permissions.read_only,
             workspace_write: policy.permissions.workspace_write,
             process_exec: policy.permissions.process_exec,
+            git_inspect: policy.permissions.git_inspect,
+            git_commit: policy.permissions.git_commit,
             network_access: policy.permissions.network_access,
             service_control: policy.permissions.service_control,
             destructive: policy.permissions.destructive,
@@ -12618,6 +12620,8 @@ fn mode_resolved_payload(policy: &CompiledModePolicy) -> Value {
             "read_only": policy.permissions.read_only,
             "workspace_write": policy.permissions.workspace_write,
             "process_exec": policy.permissions.process_exec,
+            "git_inspect": policy.permissions.git_inspect,
+            "git_commit": policy.permissions.git_commit,
             "network_access": policy.permissions.network_access,
             "service_control": policy.permissions.service_control,
             "destructive": policy.permissions.destructive,
@@ -12790,6 +12794,14 @@ fn compiled_mode_policy_from_payload(payload: &Value) -> Option<CompiledModePoli
             read_only: permissions.get("read_only")?.as_bool()?,
             workspace_write: permissions.get("workspace_write")?.as_bool()?,
             process_exec: permissions.get("process_exec")?.as_bool()?,
+            git_inspect: permissions
+                .get("git_inspect")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            git_commit: permissions
+                .get("git_commit")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             network_access: permissions.get("network_access")?.as_bool()?,
             service_control: permissions.get("service_control")?.as_bool()?,
             destructive: permissions.get("destructive")?.as_bool()?,
@@ -12857,6 +12869,8 @@ fn external_modepack_policy_fingerprint(
             "read_only": policy.permissions.read_only,
             "workspace_write": policy.permissions.workspace_write,
             "process_exec": policy.permissions.process_exec,
+            "git_inspect": policy.permissions.git_inspect,
+            "git_commit": policy.permissions.git_commit,
             "network_access": policy.permissions.network_access,
             "service_control": policy.permissions.service_control,
             "destructive": policy.permissions.destructive,
@@ -13710,6 +13724,8 @@ fn runtime_action_from_name(action: &RuntimeActionName) -> RuntimeAction {
         RuntimeActionName::SpawnSubtask => RuntimeAction::SpawnSubtask,
         RuntimeActionName::IndexCodebase => RuntimeAction::IndexCodebase,
         RuntimeActionName::UseMcpTool => RuntimeAction::UseMcpTool,
+        RuntimeActionName::UseGitInspectCapability => RuntimeAction::UseGitInspectCapability,
+        RuntimeActionName::UseGitCommitCapability => RuntimeAction::UseGitCommitCapability,
         RuntimeActionName::UseGitCapability => RuntimeAction::UseGitCapability,
     }
 }
@@ -13725,6 +13741,8 @@ fn runtime_action_name(action: &RuntimeAction) -> RuntimeActionName {
         RuntimeAction::SpawnSubtask => RuntimeActionName::SpawnSubtask,
         RuntimeAction::IndexCodebase => RuntimeActionName::IndexCodebase,
         RuntimeAction::UseMcpTool => RuntimeActionName::UseMcpTool,
+        RuntimeAction::UseGitInspectCapability => RuntimeActionName::UseGitInspectCapability,
+        RuntimeAction::UseGitCommitCapability => RuntimeActionName::UseGitCommitCapability,
         RuntimeAction::UseGitCapability => RuntimeActionName::UseGitCapability,
     }
 }
@@ -16519,6 +16537,8 @@ mod tests {
         skill_count: usize,
         command_count: usize,
         contract_count: usize,
+        schema_count: usize,
+        runtime_policy_count: usize,
     }
 
     fn write_current_agentmodes_modepack_if_available(
@@ -16530,11 +16550,6 @@ mod tests {
             &source_root,
             brownie_agentmodes::AgentModesCompileOptions {
                 modepack_name: Some("current-agentmodes".to_string()),
-                delegation_coordinators: vec![
-                    "orchestrator".to_string(),
-                    "workflow-orchestrator".to_string(),
-                    "epoch-orchestrator".to_string(),
-                ],
                 ..brownie_agentmodes::AgentModesCompileOptions::default()
             },
         )
@@ -16558,12 +16573,25 @@ mod tests {
                 &modepack.global_policy_artifacts,
                 "contract",
             ),
+            schema_count: modepack_policy_artifact_category_count(
+                &modepack.global_policy_artifacts,
+                "schema",
+            ),
+            runtime_policy_count: modepack_policy_artifact_category_count(
+                &modepack.global_policy_artifacts,
+                "runtime_policy",
+            ),
         };
         assert_eq!(fixture.mode_count, baseline.expected_compiled_mode_count);
         assert_eq!(fixture.rule_count, baseline.expected_rule_count);
         assert_eq!(fixture.skill_count, baseline.expected_skill_count);
         assert_eq!(fixture.command_count, baseline.expected_command_count);
         assert_eq!(fixture.contract_count, baseline.expected_contract_count);
+        assert_eq!(fixture.schema_count, baseline.expected_schema_count);
+        assert_eq!(
+            fixture.runtime_policy_count,
+            baseline.expected_runtime_policy_count
+        );
         let brownie_dir = workspace_root.join(".brownie");
         std::fs::create_dir_all(&brownie_dir).expect("brownie dir");
         std::fs::write(
@@ -16592,7 +16620,7 @@ mod tests {
         }
 
         let root = std::path::PathBuf::from("/Users/satoshitanaka/Documents/AgentModes");
-        if !root.join("modes").is_dir()
+        if !root.join("core").is_dir()
             || current_agentmodes_revision(&root).as_deref() != Some(baseline.revision)
         {
             return None;
@@ -16615,7 +16643,7 @@ mod tests {
     fn assert_current_agentmodes_root_for_test(root: &std::path::Path) {
         let baseline = brownie_agentmodes::CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
         assert!(
-            root.join("modes").is_dir(),
+            root.join("core").is_dir(),
             "{} must point to a checked-out {} repository",
             baseline.root_env,
             baseline.repository
@@ -16626,8 +16654,13 @@ mod tests {
             "AgentModes compatibility baseline revision drifted"
         );
         assert!(
-            root.join("skills/tdd-quality-gate/SKILL.md").is_file(),
-            "AgentModes compatibility baseline must include recursive SKILL.md artifacts"
+            root.join("core/orchestrator.yaml").is_file(),
+            "AgentModes compatibility baseline must include v2 Core role artifacts"
+        );
+        assert!(
+            root.join("runtime-policies/brownie/loop-policy.yaml")
+                .is_file(),
+            "AgentModes compatibility baseline must include Brownie runtime policies"
         );
     }
 
@@ -16646,7 +16679,7 @@ mod tests {
     fn prepare_current_agentmodes_checkout_for_test(root: &std::path::Path) {
         let baseline = brownie_agentmodes::CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
         if current_agentmodes_revision(root).as_deref() == Some(baseline.revision)
-            && root.join("skills/tdd-quality-gate/SKILL.md").is_file()
+            && root.join("core/orchestrator.yaml").is_file()
         {
             return;
         }
@@ -17493,7 +17526,7 @@ mod tests {
                     .as_ref()
                     .and_then(|payload| payload.get("required_action"))
                     .and_then(Value::as_str)
-                    == Some("UseGitCapability")
+                    == Some("UseGitInspectCapability")
         }));
         assert!(events.iter().any(|event| {
             event.kind == LedgerEventKind::ToolExecutionPermissionChecked
@@ -17502,7 +17535,7 @@ mod tests {
                     .as_ref()
                     .and_then(|payload| payload.get("required_action"))
                     .and_then(Value::as_str)
-                    == Some("UseGitCapability")
+                    == Some("UseGitInspectCapability")
                 && event
                     .payload
                     .as_ref()
@@ -17825,6 +17858,29 @@ mod tests {
         assert_eq!(result["status"], "Denied");
         assert_eq!(result["tool_id"], "process.exec");
         assert!(!result.to_string().contains("cargo fmt --check"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn tool_execute_process_exec_does_not_imply_git_commit() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tool.execute","params":{"mode_id":"verifier","tool_id":"git.commit","input":{"message":"Verifier must not commit"}}}"#,
+        );
+
+        assert!(response.error.is_none());
+        let result = response.result.expect("result");
+        assert_eq!(result["status"], "Denied");
+        assert_eq!(result["tool_id"], "git.commit");
+        assert!(result["output"]["reason"]
+            .as_str()
+            .expect("reason")
+            .contains("Git commit capability execution"));
+        assert!(!result.to_string().contains("Verifier must not commit"));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
@@ -34664,9 +34720,17 @@ mod tests {
             json_policy_artifact_category_count(&active.global_policy_artifacts, "contract"),
             fixture.contract_count
         );
+        assert_eq!(
+            json_policy_artifact_category_count(&active.global_policy_artifacts, "schema"),
+            fixture.schema_count
+        );
+        assert_eq!(
+            json_policy_artifact_category_count(&active.global_policy_artifacts, "runtime_policy"),
+            fixture.runtime_policy_count
+        );
 
         let run = parse_line(
-            r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"exercise current AgentModes selector policy","mode_id":"orchestrator"}}"#,
+            r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"exercise current AgentModes selector policy","mode_id":"core.orchestrator"}}"#,
         );
         assert!(run.error.is_none());
         let task_id = run.result.expect("task start result")["task_id"]
@@ -34688,7 +34752,7 @@ mod tests {
             .find(|event| event.kind == LedgerEventKind::ModeResolved)
             .and_then(|event| event.payload.as_ref())
             .expect("mode resolved payload");
-        assert_eq!(mode_resolved["mode_id"], "orchestrator");
+        assert_eq!(mode_resolved["mode_id"], "core.orchestrator");
         assert_eq!(mode_resolved["allowed_handoff_targets"], Value::Null);
         assert!(mode_resolved["prompt_sections"]
             .as_array()
@@ -34699,23 +34763,23 @@ mod tests {
             .expect("task-pinned artifact catalog");
         assert!(artifacts
             .iter()
-            .any(|artifact| artifact["category"] == "skill"
-                && artifact["relative_path"] == "skills/tdd-quality-gate/SKILL.md"
+            .any(|artifact| artifact["category"] == "schema"
+                && artifact["relative_path"] == "schemas/role.schema.yaml"
                 && artifact["content_fingerprint"]
                     .as_str()
                     .is_some_and(|value| value.starts_with("sha256:"))));
         assert!(artifacts
             .iter()
-            .any(|artifact| artifact["category"] == "contract"
-                && artifact["relative_path"] == "docs/contracts/task-packet-v1.md"));
+            .any(|artifact| artifact["category"] == "runtime_policy"
+                && artifact["relative_path"] == "runtime-policies/brownie/loop-policy.yaml"));
 
-        let composer_policy = resolve_workspace_mode_policy(&store, "user-response-composer")
-            .expect("resolve composer")
-            .expect("composer policy");
+        let reviewer_policy = resolve_workspace_mode_policy(&store, "core.reviewer")
+            .expect("resolve reviewer")
+            .expect("reviewer policy");
         assert!(
-            !RuntimePermissionGate::check(&composer_policy, RuntimeAction::SpawnSubtask).allowed
+            !RuntimePermissionGate::check(&reviewer_policy, RuntimeAction::SpawnSubtask).allowed
         );
-        assert_eq!(composer_policy.allowed_handoff_targets, None);
+        assert_eq!(reviewer_policy.allowed_handoff_targets, None);
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
@@ -34763,7 +34827,7 @@ mod tests {
             .get_task(task_id)
             .expect("get task")
             .expect("task");
-        assert_eq!(task.mode_id.as_deref(), Some("orchestrator"));
+        assert_eq!(task.mode_id.as_deref(), Some("core.orchestrator"));
         assert!(result["advances"][0]["steps"][0]
             .get("context_budget")
             .is_none());
@@ -34774,7 +34838,7 @@ mod tests {
             .find(|event| event.kind == LedgerEventKind::ModeResolved)
             .and_then(|event| event.payload.as_ref())
             .expect("mode resolved payload");
-        assert_eq!(mode_payload["mode_id"], "orchestrator");
+        assert_eq!(mode_payload["mode_id"], "core.orchestrator");
         assert_eq!(
             mode_payload["external_modepack_task_provenance"]["activation_fingerprint"],
             activation_fingerprint
@@ -34801,10 +34865,25 @@ mod tests {
                 .count(),
             fixture.skill_count
         );
+        assert_eq!(
+            artifacts
+                .iter()
+                .filter(|artifact| artifact["category"] == "schema")
+                .count(),
+            fixture.schema_count
+        );
+        assert_eq!(
+            artifacts
+                .iter()
+                .filter(|artifact| artifact["category"] == "runtime_policy")
+                .count(),
+            fixture.runtime_policy_count
+        );
         assert!(artifacts
             .iter()
-            .any(|artifact| artifact["category"] == "command"
-                && artifact["relative_path"] == "commands/tdd-quality-gate.md"));
+            .any(|artifact| artifact["category"] == "runtime_policy"
+                && artifact["relative_path"]
+                    == "runtime-policies/brownie/model-routing-policy.yaml"));
 
         let prompt_payload = events
             .iter()
@@ -34847,7 +34926,10 @@ mod tests {
         .result
         .expect("activation result");
         assert_eq!(activated["snapshot"]["modepack_name"], "current-agentmodes");
-        assert_eq!(activated["snapshot"]["default_entrypoint"], "orchestrator");
+        assert_eq!(
+            activated["snapshot"]["default_entrypoint"],
+            "core.orchestrator"
+        );
         let activation_fingerprint = activated["snapshot"]["activation_fingerprint"]
             .as_str()
             .expect("activation fingerprint")
@@ -34868,7 +34950,7 @@ mod tests {
             .get_task(task_id)
             .expect("get task")
             .expect("task");
-        assert_eq!(task.mode_id.as_deref(), Some("orchestrator"));
+        assert_eq!(task.mode_id.as_deref(), Some("core.orchestrator"));
         assert_ne!(task.mode_id.as_deref(), Some("implementer"));
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).expect("readme"),
@@ -34881,7 +34963,7 @@ mod tests {
             .find(|event| event.kind == LedgerEventKind::ModeResolved)
             .and_then(|event| event.payload.as_ref())
             .expect("mode resolved payload");
-        assert_eq!(mode_payload["mode_id"], "orchestrator");
+        assert_eq!(mode_payload["mode_id"], "core.orchestrator");
         assert_eq!(
             mode_payload["external_modepack_task_provenance"]["activation_fingerprint"],
             activation_fingerprint
@@ -34905,6 +34987,13 @@ mod tests {
                 .filter(|artifact| artifact["category"] == "skill")
                 .count(),
             fixture.skill_count
+        );
+        assert_eq!(
+            artifacts
+                .iter()
+                .filter(|artifact| artifact["category"] == "schema")
+                .count(),
+            fixture.schema_count
         );
 
         assert!(events.iter().any(|event| {
@@ -34949,7 +35038,7 @@ mod tests {
     }
 
     #[test]
-    fn current_agentmodes_write_mode_uses_runtime_owned_proposal_apply_verification_route() {
+    fn current_agentmodes_core_roles_do_not_expose_member_pack_write_authority() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_llm_env_for_test();
         let temp = tempfile::tempdir().expect("tempdir");
@@ -34959,306 +35048,114 @@ mod tests {
         };
         let store = BrownieStore::new(temp.path());
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
-        std::env::set_var("BROWNIE_LLM_PROVIDER", "fake");
 
-        commit_trusted_workspace_modepack_snapshot(&store);
+        let activated = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"modepack.activate","params":{"authorize":true}}"#,
+        )
+        .result
+        .expect("activation result");
+        assert_eq!(activated["snapshot"]["modepack_name"], "current-agentmodes");
+        assert_eq!(
+            activated["snapshot"]["default_entrypoint"],
+            "core.orchestrator"
+        );
+        assert_eq!(
+            activated["snapshot"]["mode_count"]
+                .as_u64()
+                .unwrap_or_default(),
+            fixture.mode_count as u64
+        );
+
         let active = store
             .read_active_modepack_snapshot()
             .expect("active snapshot")
             .expect("active snapshot");
-        let activation_fingerprint = active.summary.activation_fingerprint.clone();
-        let write_mode_id = ["verified-integrator", "code", "documenter"]
-            .into_iter()
-            .find_map(|mode_id| {
-                let policy = active
-                    .policies
+        assert_eq!(
+            active.summary.default_entrypoint.as_deref(),
+            Some("core.orchestrator")
+        );
+        for required in ["core.orchestrator", "core.reviewer", "core.reporter"] {
+            assert!(
+                active
+                    .summary
+                    .mode_ids
                     .iter()
-                    .find(|policy| policy.mode_id == mode_id)?;
-                if policy
+                    .any(|mode_id| mode_id == required),
+                "latest AgentModes Core must include {required}"
+            );
+        }
+        for removed_v1_role in ["verified-integrator", "code", "documenter"] {
+            assert!(
+                !active
+                    .summary
+                    .mode_ids
+                    .iter()
+                    .any(|mode_id| mode_id == removed_v1_role),
+                "latest AgentModes OSS Core must not pretend member-only role {removed_v1_role} is present"
+            );
+        }
+        for policy in &active.policies {
+            assert_eq!(
+                policy
                     .permissions
                     .get("workspace_write")
-                    .and_then(Value::as_bool)
-                    != Some(true)
-                {
-                    return None;
-                }
-                let compiled = resolve_workspace_mode_policy(&store, &policy.mode_id)
-                    .ok()
-                    .flatten()?;
-                RuntimePermissionGate::check_workspace_write_path(&compiled, "README.md")
-                    .allowed
-                    .then(|| policy.mode_id.clone())
-            })
-            .expect("current AgentModes coding edit mode with README write scope");
-        assert_ne!(write_mode_id, "implementer");
-        std::fs::remove_file(temp.path().join(".brownie/modepack.json"))
-            .expect("remove live modepack");
-
-        let drive_request = json!({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "headless.run.drive",
-            "params": {
-                "authorize": true,
-                "session_id": "mp8.agentmodes.edit",
-                "drive_id": "mp8.agentmodes.edit.drive",
-                "expected_start_session_sequence": 0,
-                "max_advances": 1,
-                "max_steps_per_advance": 1,
-                "journey_admission": {
-                    "journey_id": "mp8.agentmodes.edit.journey",
-                    "authorize_journey_start": true,
-                    "admission_id": "mp8.agentmodes.edit.admission",
-                    "task_start": {
-                        "goal": "Implement README update through a real AgentModes workspace edit role",
-                        "mode_id": write_mode_id
-                    }
-                }
-            }
-        });
-        let drive = parse_line(&drive_request.to_string())
-            .result
-            .expect("AgentModes edit drive result");
-        assert_eq!(drive["status"], "task_executed");
-        assert_eq!(drive["stop_reason"], "objective_proposal_candidate_ready");
-        assert_eq!(
-            drive["next_route"]["kind"],
-            "review_and_authorize_objective_proposal"
-        );
-        let candidate = &drive["objective_proposal_candidate"];
-        assert_eq!(candidate["status"], "ready_for_review");
-        assert_eq!(candidate["operation"], "replace_file");
-        assert_eq!(candidate["validation_status"], "Valid");
-        assert_eq!(candidate["approval_status"], "Pending");
-        assert!(candidate.get("content").is_none());
-        assert!(candidate.get("diff").is_none());
-        assert_eq!(
-            std::fs::read_to_string(temp.path().join("README.md")).expect("readme"),
-            "original README"
-        );
-
-        let task_id = candidate["task_id"].as_str().expect("task id");
-        let run_id = candidate["run_id"].as_str().expect("run id").to_string();
-        let task = store
-            .tasks()
-            .get_task(task_id)
-            .expect("get task")
-            .expect("task");
-        assert_eq!(task.mode_id.as_deref(), Some(write_mode_id.as_str()));
-        let events = store.tasks().read_ledger_events(&run_id).expect("events");
-        let mode_payload = events
-            .iter()
-            .find(|event| event.kind == LedgerEventKind::ModeResolved)
-            .and_then(|event| event.payload.as_ref())
-            .expect("mode resolved payload");
-        assert_eq!(mode_payload["mode_id"], write_mode_id);
-        assert_eq!(
-            mode_payload["external_modepack_task_provenance"]["activation_fingerprint"],
-            activation_fingerprint
-        );
-        assert_eq!(mode_payload["permissions"]["workspace_write"], json!(true));
-        assert_eq!(
-            events
+                    .and_then(Value::as_bool),
+                Some(false),
+                "{} must not grant workspace write in OSS Core",
+                policy.mode_id
+            );
+            assert_eq!(
+                policy
+                    .permissions
+                    .get("process_exec")
+                    .and_then(Value::as_bool),
+                Some(false),
+                "{} must not grant command execution in OSS Core",
+                policy.mode_id
+            );
+            assert_eq!(
+                policy
+                    .permissions
+                    .get("can_spawn_subtasks")
+                    .and_then(Value::as_bool),
+                Some(false),
+                "{} must not grant dispatch in OSS Core",
+                policy.mode_id
+            );
+            assert_eq!(policy.allowed_handoff_targets, None);
+            assert!(policy
+                .prompt_sections
                 .iter()
-                .filter(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
-                .count(),
-            1
-        );
-
-        let progress = drive["post_progress"].as_object().expect("post progress");
-        let authorization_target = json!({
-            "authorize_objective_proposal_preflight": true,
-            "journey_id": candidate["journey_id"],
-            "session_id": candidate["session_id"],
-            "source_drive_id": candidate["drive_id"],
-            "expected_journey_fingerprint": drive["journey"]["journey_fingerprint"],
-            "expected_candidate_fingerprint": candidate["candidate_fingerprint"],
-            "expected_objective_context_fingerprint": candidate["objective_context_fingerprint"],
-            "expected_selected_context_fingerprint": candidate["selected_context_fingerprint"],
-            "expected_task_id": candidate["task_id"],
-            "expected_run_id": candidate["run_id"],
-            "expected_proposal_id": candidate["proposal_id"],
-            "expected_source_event_id": candidate["source_event_id"],
-            "expected_source_event_kind": candidate["source_event_kind"],
-            "expected_operation": candidate["operation"],
-            "expected_path_fingerprint": candidate["path_fingerprint"],
-            "expected_validation_status": candidate["validation_status"],
-            "expected_approval_status": candidate["approval_status"],
-            "authorization_token_fingerprint": format!("sha256:{}", "8".repeat(64)),
-        });
-        let authorization_request = json!({
-            "jsonrpc": "2.0",
-            "id": 3,
-            "method": "headless.continue_once",
-            "params": {
-                "authorize": true,
-                "continuation_id": "mp8.agentmodes.edit.auth",
-                "expected_progress_fingerprint": progress["progress_fingerprint"],
-                "expected_aggregate_sequence": progress["aggregate_sequence"],
-                "objective_proposal_authorization_preflight_target": authorization_target
-            }
-        });
-        let authorized = parse_line(&authorization_request.to_string())
-            .result
-            .expect("authorization result");
-        let authorization_result = &authorized["objective_proposal_authorization_preflight_result"];
-        assert_eq!(authorization_result["status"], "authorized_preflight_ready");
-        assert_eq!(
-            authorized["next_route"]["kind"],
-            "apply_authorized_objective_proposal_explicitly"
-        );
-        assert_eq!(
-            std::fs::read_to_string(temp.path().join("README.md")).expect("readme"),
-            "original README"
-        );
-
-        let expected_hash = authorization_result["preflight_snapshot"]["file_sha256"]
-            .as_str()
-            .expect("preflight file hash")
-            .to_string();
-        let apply_target = json!({
-            "authorize_objective_proposal_apply": true,
-            "authorization_preflight_continuation_id": "mp8.agentmodes.edit.auth",
-            "expected_authorization_preflight_decision_id": authorized["decision_id"],
-            "journey_id": authorization_result["journey_id"],
-            "session_id": authorization_result["session_id"],
-            "source_drive_id": authorization_result["source_drive_id"],
-            "expected_journey_fingerprint": drive["journey"]["journey_fingerprint"],
-            "expected_candidate_fingerprint": authorization_result["candidate_fingerprint"],
-            "expected_objective_context_fingerprint": authorization_result["objective_context_fingerprint"],
-            "expected_selected_context_fingerprint": authorization_result["selected_context_fingerprint"],
-            "expected_task_id": authorization_result["task_id"],
-            "expected_run_id": authorization_result["run_id"],
-            "expected_proposal_id": authorization_result["proposal_id"],
-            "expected_source_event_id": authorization_result["source_event_id"],
-            "expected_source_event_kind": authorization_result["source_event_kind"],
-            "expected_operation": authorization_result["operation"],
-            "expected_path_fingerprint": authorization_result["path_fingerprint"],
-            "expected_validation_status": authorization_result["validation_status"],
-            "expected_approval_status": authorization_result["approval_status"],
-            "expected_authorization_preflight_fingerprint": authorization_result["authorization_preflight_fingerprint"],
-            "expected_preflight_snapshot_id": authorization_result["preflight_snapshot"]["snapshot_id"],
-            "expected_apply_plan_id": authorization_result["apply_plan"]["plan_id"],
-            "expected_target_sha256": expected_hash,
-            "replacement_content": "new README content"
-        });
-        let apply_request = json!({
-            "jsonrpc": "2.0",
-            "id": 4,
-            "method": "headless.continue_once",
-            "params": {
-                "authorize": true,
-                "continuation_id": "mp8.agentmodes.edit.apply",
-                "expected_progress_fingerprint": authorized["post_progress_fingerprint"],
-                "expected_aggregate_sequence": authorized["post_aggregate_sequence"],
-                "objective_proposal_apply_target": apply_target
-            }
-        });
-        let applied = parse_line(&apply_request.to_string())
-            .result
-            .expect("apply result");
-        assert_eq!(
-            applied["proposal_apply_result"]["apply_result"]["apply_status"],
-            "Applied"
-        );
-        assert_eq!(
-            applied["proposal_apply_result"]["apply_result"]["applied"],
-            true
-        );
-        assert_eq!(
-            applied["next_route"]["kind"],
-            "verify_objective_apply_explicitly"
-        );
-        assert_eq!(
-            std::fs::read_to_string(temp.path().join("README.md")).expect("readme"),
-            "new README content"
-        );
-        let apply_id = applied["proposal_apply_result"]["apply_result"]["apply_id"]
-            .as_str()
-            .expect("apply id")
-            .to_string();
-        let apply_checkpoint = store
-            .read_headless_objective_proposal_apply_checkpoint("mp8.agentmodes.edit.apply")
-            .expect("read apply checkpoint")
-            .expect("apply checkpoint");
-        let post_write_sha256 = apply_checkpoint
-            .result
-            .apply_result
-            .post_write_sha256
-            .clone()
-            .expect("post write hash");
-        let replayed_apply = parse_line(&apply_request.to_string())
-            .result
-            .expect("apply replay");
-        assert_eq!(replayed_apply["replayed"], true);
-
-        let verify_target = json!({
-            "authorize_objective_apply_verification": true,
-            "objective_apply_continuation_id": "mp8.agentmodes.edit.apply",
-            "expected_objective_apply_decision_id": applied["decision_id"],
-            "journey_id": authorization_result["journey_id"],
-            "session_id": authorization_result["session_id"],
-            "source_drive_id": authorization_result["source_drive_id"],
-            "expected_task_id": authorization_result["task_id"],
-            "expected_run_id": authorization_result["run_id"],
-            "expected_proposal_id": authorization_result["proposal_id"],
-            "expected_apply_id": apply_id,
-            "expected_operation": "replace_file",
-            "expected_apply_status": "Applied",
-            "expected_authorization_consumed": true,
-            "expected_path_fingerprint": authorization_result["path_fingerprint"],
-            "expected_apply_fingerprint": apply_checkpoint.apply_fingerprint,
-            "expected_post_write_sha256": post_write_sha256
-        });
-        let verify_request = json!({
-            "jsonrpc": "2.0",
-            "id": 5,
-            "method": "headless.continue_once",
-            "params": {
-                "authorize": true,
-                "continuation_id": "mp8.agentmodes.edit.verify",
-                "expected_progress_fingerprint": applied["post_progress_fingerprint"],
-                "expected_aggregate_sequence": applied["post_aggregate_sequence"],
-                "objective_apply_verification_target": verify_target
-            }
-        });
-        let verified = parse_line(&verify_request.to_string())
-            .result
-            .expect("verify result");
-        assert_eq!(
-            verified["objective_apply_verification_result"]["verification_status"],
-            "verified"
-        );
-        assert_eq!(
-            verified["next_route"]["kind"],
-            "accept_objective_completion_explicitly"
-        );
-        assert_eq!(
-            store
-                .tasks()
-                .read_ledger_events(&run_id)
-                .expect("events")
-                .iter()
-                .filter(|event| event.kind == LedgerEventKind::WorkspacePatchApplyResultRecorded)
-                .count(),
-            1
-        );
-
-        let ledger_json =
-            serde_json::to_string(&store.tasks().read_ledger_events(&run_id).expect("events"))
-                .expect("ledger json");
-        for forbidden in [
-            fixture.source_root.to_string_lossy().as_ref(),
-            "raw_prompt",
-            "provider_response",
-            "BROWNIE_LLM",
-            temp.path().to_string_lossy().as_ref(),
-        ] {
-            assert!(!ledger_json.contains(forbidden));
+                .any(|section| section["source"] == "AgentModes.v2.quality_gates"));
         }
 
+        let orchestrator = resolve_workspace_mode_policy(&store, "core.orchestrator")
+            .expect("resolve orchestrator")
+            .expect("orchestrator policy");
+        assert!(
+            !RuntimePermissionGate::check(&orchestrator, RuntimeAction::WriteWorkspace).allowed
+        );
+        assert!(
+            !RuntimePermissionGate::check(&orchestrator, RuntimeAction::ExecuteProcess).allowed
+        );
+        assert!(!RuntimePermissionGate::check(&orchestrator, RuntimeAction::SpawnSubtask).allowed);
+        assert!(
+            !RuntimePermissionGate::check(&orchestrator, RuntimeAction::UseGitInspectCapability)
+                .allowed
+        );
+        assert!(
+            !RuntimePermissionGate::check(&orchestrator, RuntimeAction::UseGitCommitCapability)
+                .allowed
+        );
+        assert!(
+            !RuntimePermissionGate::check_workspace_write_path(&orchestrator, "README.md").allowed
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).expect("readme"),
+            "original README"
+        );
+
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
-        std::env::remove_var("BROWNIE_LLM_PROVIDER");
         clear_llm_env_for_test();
     }
 
@@ -35285,7 +35182,7 @@ mod tests {
             fixture.mode_count as u64
         );
         let started = parse_line(
-            r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"Exercise explicit small prompt budget with current AgentModes orchestrator","mode_id":"orchestrator"}}"#,
+            r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"Exercise explicit small prompt budget with current AgentModes orchestrator","mode_id":"core.orchestrator"}}"#,
         )
         .result
         .expect("task start result");
@@ -35315,7 +35212,7 @@ mod tests {
     }
 
     #[test]
-    fn current_agentmodes_new_task_alias_uses_pinned_trusted_active_handoff_admission() {
+    fn current_agentmodes_core_new_task_alias_is_denied_without_dispatch_authority() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
         let Some(fixture) = write_current_agentmodes_modepack_if_available(temp.path()) else {
@@ -35328,8 +35225,8 @@ mod tests {
         let parent = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
-                goal: "Real AgentModes parent orchestration".into(),
-                mode_id: Some("orchestrator".into()),
+                goal: "Real AgentModes Core parent proposal".into(),
+                mode_id: Some("core.orchestrator".into()),
                 verification_recovery_source: None,
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
@@ -35337,100 +35234,36 @@ mod tests {
                 product_continuation_source: None,
             })
             .expect("start parent");
-        let policy = resolve_workspace_mode_policy(&store, "orchestrator")
+        let policy = resolve_workspace_mode_policy(&store, "core.orchestrator")
             .expect("resolve orchestrator")
             .expect("orchestrator policy");
-        assert_eq!(
-            policy.allowed_handoff_targets,
-            Some(vec![HANDOFF_TARGET_ALL_MODEPACK_MODES.to_string()])
-        );
+        assert!(!RuntimePermissionGate::check(&policy, RuntimeAction::SpawnSubtask).allowed);
+        assert_eq!(policy.allowed_handoff_targets, None);
 
-        let allowed = "new_task(\"reviewer\", \"Review real AgentModes bounded child admission.\")";
-        append_tool_intent_events(&store, &parent, &policy, allowed)
-            .expect("append allowed current AgentModes alias intent");
-        handle_approved_workspace_intents(&store, &parent, &policy, allowed)
-            .expect("handle allowed current AgentModes alias intent");
+        let denied =
+            "new_task(\"core.reviewer\", \"Review real AgentModes bounded child admission.\")";
+        append_tool_intent_events(&store, &parent, &policy, denied)
+            .expect("append denied current AgentModes alias intent");
+        handle_approved_workspace_intents(&store, &parent, &policy, denied)
+            .expect("handle denied current AgentModes alias intent");
 
         let parent_events = store
             .tasks()
             .read_ledger_events(&parent.run_id)
             .expect("parent events");
-        let queued = parent_events
+        assert!(parent_events
             .iter()
-            .find(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued)
-            .and_then(|event| event.payload.as_ref())
-            .expect("queued payload");
-        assert_eq!(queued["tool_id"], "subtask.spawn");
-        assert_eq!(queued["requested_mode_id"], "reviewer");
-        assert!(queued.get("input").is_none());
-        let source_candidate_id = queued["subtask_id"]
-            .as_str()
-            .expect("subtask id")
-            .to_string();
-        store
-            .tasks()
-            .append_task_event_with_payload(
-                &parent,
-                LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
-                Some(json!({
-                    "handoff_envelope_status": "Accepted",
-                    "handoff_envelope_id": "handoff_envelope_current_agentmodes_alias",
-                    "handoff_envelope_fingerprint": format!("sha256:{}", "c".repeat(64)),
-                    "candidate_ids": [source_candidate_id],
-                })),
-            )
-            .expect("append handoff envelope");
-        let child = materialize_controlled_child_task_from_handoff_envelope(&store, &parent)
-            .expect("materialize child")
-            .expect("child");
-        assert_eq!(child.mode_id.as_deref(), Some("reviewer"));
-        let child_events = store
-            .tasks()
-            .read_ledger_events(&child.run_id)
-            .expect("child events");
-        let provenance = &child_events[0]
-            .payload
-            .as_ref()
-            .expect("child started payload")["external_modepack_child_provenance"];
-        assert_eq!(provenance["mode_id"], "reviewer");
-        assert_eq!(provenance["modepack_name"], "current-agentmodes");
-        assert!(provenance["policy_fingerprint"]
-            .as_str()
-            .is_some_and(|value| value.starts_with("sha256:")));
-
-        let composer = store
-            .tasks()
-            .start_task(brownie_protocol::TaskStartParams {
-                goal: "Composer must not dispatch".into(),
-                mode_id: Some("user-response-composer".into()),
-                verification_recovery_source: None,
-                patch_apply_recovery_source: None,
-                verification_recovery_retry_source: None,
-                llm_provider_failure_retry_source: None,
-                product_continuation_source: None,
-            })
-            .expect("start composer");
-        let composer_policy = resolve_workspace_mode_policy(&store, "user-response-composer")
-            .expect("resolve composer")
-            .expect("composer policy");
-        let denied = "new_task(\"reviewer\", \"This non-dispatch mode must be denied.\")";
-        append_tool_intent_events(&store, &composer, &composer_policy, denied)
-            .expect("append denied current AgentModes alias intent");
-        handle_approved_workspace_intents(&store, &composer, &composer_policy, denied)
-            .expect("handle denied current AgentModes alias intent");
-        let composer_events = store
-            .tasks()
-            .read_ledger_events(&composer.run_id)
-            .expect("composer events");
-        assert!(composer_events
-            .iter()
-            .any(|event| event.kind == LedgerEventKind::ToolIntentDenied));
-        assert!(!composer_events
+            .any(|event| event.kind == LedgerEventKind::ToolIntentDenied
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("tool_id"))
+                    == Some(&json!("subtask.spawn"))));
+        assert!(!parent_events
             .iter()
             .any(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued));
 
-        let ledger_json = serde_json::to_string(&(parent_events, child_events, composer_events))
-            .expect("ledger json");
+        let ledger_json = serde_json::to_string(&parent_events).expect("ledger json");
         assert!(!ledger_json.contains("new_task("));
         assert!(!ledger_json.contains(fixture.source_root.to_string_lossy().as_ref()));
         assert!(!ledger_json.contains("raw_prompt"));

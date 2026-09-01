@@ -14,7 +14,11 @@ sha2.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+base64.workspace = true
 brownie-agentmodes = { path = "../brownie-agentmodes" }
+brownie-modepack = { path = "../brownie-modepack" }
+brownie-store = { path = "../brownie-store" }
+ed25519-dalek.workspace = true
 
 [lib]
 path = "src/lib.rs"

@@ -280,6 +280,16 @@ impl FakeLlm {
         let request_signal = extract_goal_signal(&prompt_text)
             .unwrap_or(prompt_text.as_str())
             .to_lowercase();
+        if prompt.contains("completed_child")
+            && prompt.contains("agentmodes_orchestrated_coding_e2e")
+            && prompt.contains("orchestrator")
+        {
+            return LlmResponse {
+                content:
+                    "Fake LLM final response after AgentModes orchestrated coding child completion."
+                        .to_string(),
+            };
+        }
         if prompt.contains("failed_child")
             && prompt.matches("completed_child").count() >= 2
             && prompt.contains("orchestrator")
@@ -345,6 +355,31 @@ impl FakeLlm {
                     serde_json::to_string_pretty(&intent).expect("fake intent serializes")
                 ),
             };
+        }
+        if !prompt.contains("completed_child")
+            && !prompt.contains("failed_child")
+            && prompt.contains("agentmodes_orchestrated_coding_e2e")
+            && prompt.contains("orchestrator")
+        {
+            if let Some(mode_id) = extract_agentmodes_orchestrated_coding_mode_id(&prompt_text) {
+                let intent = serde_json::json!({
+                    "tool_requests": [{
+                        "tool_id": "subtask.spawn",
+                        "reason": "Delegate this coding objective through the real AgentModes orchestrator policy.",
+                        "input": {
+                            "mode_id": mode_id,
+                            "goal": "Implement README update"
+                        }
+                    }]
+                });
+                return LlmResponse {
+                    content: format!(
+                        "Fake LLM AgentModes orchestrated coding request with {} messages.\n\n```brownie-tool-intent\n{}\n```",
+                        request.messages.len(),
+                        serde_json::to_string_pretty(&intent).expect("fake intent serializes")
+                    ),
+                };
+            }
         }
         if prompt.contains("tool execution:")
             && prompt.contains("mcp.github.search_code")
@@ -507,6 +542,24 @@ impl FakeLlm {
             ),
         }
     }
+}
+
+fn extract_agentmodes_orchestrated_coding_mode_id(prompt_text: &str) -> Option<String> {
+    let marker = "AGENTMODES_ORCHESTRATED_CODING_E2E_MODE=";
+    let start = prompt_text.find(marker)? + marker.len();
+    let rest = &prompt_text[start..];
+    let mode_id = rest
+        .split(|ch: char| ch.is_whitespace() || matches!(ch, '"' | '\'' | ',' | ';'))
+        .next()?;
+    if mode_id.is_empty()
+        || mode_id.len() > 128
+        || !mode_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    {
+        return None;
+    }
+    Some(mode_id.to_string())
 }
 
 #[derive(Debug, Default, Clone, Copy)]

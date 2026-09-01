@@ -64,6 +64,8 @@ pub enum ModePackSourceTrust {
 pub struct ModePackCapabilityCeiling {
     pub workspace_write: bool,
     pub process_exec: bool,
+    pub git_inspect: bool,
+    pub git_commit: bool,
     pub network_access: bool,
     pub service_control: bool,
     pub destructive: bool,
@@ -76,6 +78,8 @@ impl Default for ModePackCapabilityCeiling {
         Self {
             workspace_write: true,
             process_exec: true,
+            git_inspect: true,
+            git_commit: true,
             network_access: false,
             service_control: false,
             destructive: false,
@@ -352,6 +356,11 @@ fn effective_permissions(
     let process_exec = declared.process_exec
         && trusted_side_effect_source
         && options.capability_ceiling.process_exec;
+    let git_inspect = declared.git_inspect
+        && trusted_side_effect_source
+        && options.capability_ceiling.git_inspect;
+    let git_commit =
+        declared.git_commit && trusted_side_effect_source && options.capability_ceiling.git_commit;
     let network_access = false;
     let service_control = false;
     let destructive = false;
@@ -365,6 +374,8 @@ fn effective_permissions(
         read_only: declared.read_only
             || !(workspace_write
                 || process_exec
+                || git_inspect
+                || git_commit
                 || network_access
                 || service_control
                 || destructive
@@ -372,6 +383,8 @@ fn effective_permissions(
                 || mcp_tool_access),
         workspace_write,
         process_exec,
+        git_inspect,
+        git_commit,
         network_access,
         service_control,
         destructive,
@@ -406,11 +419,7 @@ fn validate_mcp_servers(
             if transport != "stdio" {
                 bail!("modepack mcp_servers[{server_id}].transport is unsupported: {transport}");
             }
-            let command = validate_mcp_text(
-                "mcp_servers[].command",
-                config.command,
-                MAX_MCP_COMMAND_CHARS,
-            )?;
+            let command = validate_mcp_stdio_command(&server_id, config.command)?;
             if config.args.len() > MAX_MCP_ARGS {
                 bail!("modepack mcp_servers[{server_id}].args exceeds argument limit");
             }
@@ -500,10 +509,31 @@ fn validate_mcp_identifier(field: &str, value: &str, max_chars: usize) -> Result
 
 fn validate_mcp_text(field: &str, value: String, max_chars: usize) -> Result<String> {
     let value = non_empty(field, value)?;
-    if value.chars().count() > max_chars || value.contains('\n') || value.contains('\r') {
+    if value.chars().count() > max_chars || value.chars().any(char::is_control) {
         bail!("modepack {field} is not a bounded single-line value");
     }
     Ok(value)
+}
+
+fn validate_mcp_stdio_command(server_id: &str, value: String) -> Result<String> {
+    let command = validate_mcp_text("mcp_servers[].command", value, MAX_MCP_COMMAND_CHARS)?;
+    let path = Path::new(&command);
+    if !path.is_absolute() {
+        bail!(
+            "modepack mcp_servers[{server_id}].command must be an absolute executable path; PATH lookup is not allowed"
+        );
+    }
+    if path.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir | std::path::Component::CurDir
+        )
+    }) {
+        bail!(
+            "modepack mcp_servers[{server_id}].command must not contain relative path components"
+        );
+    }
+    Ok(command)
 }
 
 fn mcp_config_identity_fingerprint(
@@ -579,7 +609,7 @@ fn validate_policy_artifacts(
 fn validate_policy_artifact_category(category: String) -> Result<String> {
     let category = non_empty("global_policy_artifacts[].category", category)?;
     match category.as_str() {
-        "rule" | "skill" | "command" | "contract" => Ok(category),
+        "rule" | "skill" | "command" | "contract" | "schema" | "runtime_policy" => Ok(category),
         other => bail!("modepack global_policy_artifacts category is unsupported: {other}"),
     }
 }
@@ -599,15 +629,19 @@ fn validate_policy_artifact_relative_path(value: String) -> Result<String> {
             "modepack global_policy_artifacts[].relative_path must be a normalized relative path"
         );
     }
-    if !value.ends_with(".md") {
-        bail!("modepack global_policy_artifacts[].relative_path must reference markdown");
+    if !(value.ends_with(".md") || value.ends_with(".yaml") || value.ends_with(".yml")) {
+        bail!("modepack global_policy_artifacts[].relative_path must reference markdown or YAML");
     }
     Ok(value)
 }
 
 fn validate_permissions(mode_id: &str, permissions: &ModePermissions) -> Result<()> {
     if permissions.read_only
-        && (permissions.workspace_write || permissions.process_exec || permissions.mcp_tool_access)
+        && (permissions.workspace_write
+            || permissions.process_exec
+            || permissions.git_inspect
+            || permissions.git_commit
+            || permissions.mcp_tool_access)
     {
         bail!("mode {mode_id} declares read_only=true with side-effect capabilities");
     }
@@ -1205,6 +1239,8 @@ mod tests {
                 capability_ceiling: ModePackCapabilityCeiling {
                     workspace_write: true,
                     process_exec: false,
+                    git_inspect: true,
+                    git_commit: true,
                     network_access: true,
                     service_control: true,
                     destructive: true,
@@ -1417,11 +1453,6 @@ customModes:
             &source_root,
             AgentModesCompileOptions {
                 modepack_name: Some("current-agentmodes".to_string()),
-                delegation_coordinators: vec![
-                    "orchestrator".to_string(),
-                    "workflow-orchestrator".to_string(),
-                    "epoch-orchestrator".to_string(),
-                ],
                 ..AgentModesCompileOptions::default()
             },
         )
@@ -1451,29 +1482,39 @@ customModes:
             policy_artifact_category_count(&snapshot.global_policy_artifacts, "contract"),
             baseline.expected_contract_count
         );
+        assert_eq!(
+            policy_artifact_category_count(&snapshot.global_policy_artifacts, "schema"),
+            baseline.expected_schema_count
+        );
+        assert_eq!(
+            policy_artifact_category_count(&snapshot.global_policy_artifacts, "runtime_policy"),
+            baseline.expected_runtime_policy_count
+        );
         assert!(snapshot
             .global_policy_artifacts
             .iter()
             .any(
-                |artifact| artifact.relative_path == "skills/tdd-quality-gate/SKILL.md"
+                |artifact| artifact.relative_path == "schemas/role.schema.yaml"
                     && artifact.content_fingerprint.starts_with("sha256:")
             ));
         let orchestrator = snapshot
             .modes
             .iter()
-            .find(|mode| mode.mode_id == "orchestrator")
+            .find(|mode| mode.mode_id == brownie_agentmodes::AGENTMODES_V2_DEFAULT_ROLE_ID)
             .expect("orchestrator");
         assert_eq!(
-            orchestrator.allowed_handoff_targets,
-            Some(vec![HANDOFF_TARGET_ALL_MODEPACK_MODES.to_string()])
+            snapshot.entrypoints.default_mode_id(),
+            Some(brownie_agentmodes::AGENTMODES_V2_DEFAULT_ROLE_ID)
         );
-        let composer = snapshot
+        assert!(!RuntimePermissionGate::check(orchestrator, RuntimeAction::SpawnSubtask).allowed);
+        assert_eq!(orchestrator.allowed_handoff_targets, None);
+        let reporter = snapshot
             .modes
             .iter()
-            .find(|mode| mode.mode_id == "user-response-composer")
-            .expect("user response composer");
-        assert!(!RuntimePermissionGate::check(composer, RuntimeAction::SpawnSubtask).allowed);
-        assert_eq!(composer.allowed_handoff_targets, None);
+            .find(|mode| mode.mode_id == "core.reporter")
+            .expect("reporter");
+        assert!(!RuntimePermissionGate::check(reporter, RuntimeAction::SpawnSubtask).allowed);
+        assert_eq!(reporter.allowed_handoff_targets, None);
     }
 
     static CURRENT_AGENTMODES_CHECKOUT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -1499,7 +1540,7 @@ customModes:
         }
 
         let root = std::path::PathBuf::from("/Users/satoshitanaka/Documents/AgentModes");
-        if !root.join("modes").is_dir()
+        if !root.join("core").is_dir()
             || current_agentmodes_revision(&root).as_deref() != Some(baseline.revision)
         {
             return None;
@@ -1522,7 +1563,7 @@ customModes:
     fn assert_current_agentmodes_root_for_test(root: &std::path::Path) {
         let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
         assert!(
-            root.join("modes").is_dir(),
+            root.join("core").is_dir(),
             "{} must point to a checked-out {} repository",
             baseline.root_env,
             baseline.repository
@@ -1533,8 +1574,13 @@ customModes:
             "AgentModes compatibility baseline revision drifted"
         );
         assert!(
-            root.join("skills/tdd-quality-gate/SKILL.md").is_file(),
-            "AgentModes compatibility baseline must include recursive SKILL.md artifacts"
+            root.join("core/orchestrator.yaml").is_file(),
+            "AgentModes compatibility baseline must include v2 Core role artifacts"
+        );
+        assert!(
+            root.join("runtime-policies/brownie/loop-policy.yaml")
+                .is_file(),
+            "AgentModes compatibility baseline must include Brownie runtime policies"
         );
     }
 
@@ -1553,7 +1599,7 @@ customModes:
     fn prepare_current_agentmodes_checkout_for_test(root: &std::path::Path) {
         let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
         if current_agentmodes_revision(root).as_deref() == Some(baseline.revision)
-            && root.join("skills/tdd-quality-gate/SKILL.md").is_file()
+            && root.join("core/orchestrator.yaml").is_file()
         {
             return;
         }
@@ -1715,6 +1761,106 @@ customModes:
     }
 
     #[test]
+    fn git_permissions_are_explicit_and_narrowed_by_trust() {
+        let modepack = r#"{
+          "name": "git-pack",
+          "schema_version": 1,
+          "modes": [
+            {
+              "mode_id": "git-observer",
+              "display_name": "Git Observer",
+              "role_definition": "May inspect Git but must not mutate it.",
+              "permissions": {
+                "read_only": false,
+                "workspace_write": false,
+                "process_exec": true,
+                "git_inspect": true,
+                "git_commit": false,
+                "network_access": false,
+                "service_control": false,
+                "destructive": false,
+                "can_spawn_subtasks": false
+              }
+            },
+            {
+              "mode_id": "legacy-runner",
+              "display_name": "Legacy Runner",
+              "role_definition": "Process execution does not imply Git authority.",
+              "permissions": {
+                "read_only": false,
+                "workspace_write": false,
+                "process_exec": true,
+                "network_access": false,
+                "service_control": false,
+                "destructive": false,
+                "can_spawn_subtasks": false
+              }
+            }
+          ]
+        }"#;
+
+        let trusted = load_modepack_from_str_with_options(
+            modepack,
+            ".brownie/modepack.json",
+            ModePackLoadOptions::trusted_signed_active_modepack(),
+        )
+        .expect("trusted git modepack");
+        let observer = trusted
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "git-observer")
+            .expect("observer");
+        assert!(RuntimePermissionGate::check(observer, RuntimeAction::ExecuteProcess).allowed);
+        assert!(
+            RuntimePermissionGate::check(observer, RuntimeAction::UseGitInspectCapability).allowed
+        );
+        assert!(
+            !RuntimePermissionGate::check(observer, RuntimeAction::UseGitCommitCapability).allowed
+        );
+
+        let legacy_runner = trusted
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "legacy-runner")
+            .expect("legacy runner");
+        assert!(RuntimePermissionGate::check(legacy_runner, RuntimeAction::ExecuteProcess).allowed);
+        assert!(
+            !RuntimePermissionGate::check(legacy_runner, RuntimeAction::UseGitInspectCapability)
+                .allowed
+        );
+        assert!(
+            !RuntimePermissionGate::check(legacy_runner, RuntimeAction::UseGitCommitCapability)
+                .allowed
+        );
+
+        let untrusted = load_modepack_from_str_with_options(
+            modepack,
+            ".brownie/modepack.json",
+            ModePackLoadOptions::untrusted_repository_local(),
+        )
+        .expect("untrusted git modepack should narrow");
+        let untrusted_observer = untrusted
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "git-observer")
+            .expect("untrusted observer");
+        assert!(
+            !RuntimePermissionGate::check(
+                untrusted_observer,
+                RuntimeAction::UseGitInspectCapability
+            )
+            .allowed
+        );
+        assert!(
+            !RuntimePermissionGate::check(
+                untrusted_observer,
+                RuntimeAction::UseGitCommitCapability
+            )
+            .allowed
+        );
+    }
+
+    #[test]
     fn rejects_read_only_side_effect_combination() {
         let temp = tempfile::tempdir().expect("temp dir");
         let brownie_dir = temp
@@ -1809,6 +1955,53 @@ customModes:
         assert!(snapshot.mcp_servers[0]
             .config_identity_fingerprint
             .starts_with("sha256:"));
+    }
+
+    #[test]
+    fn rejects_mcp_stdio_command_path_lookup() {
+        let modepack = r#"{
+          "name": "mcp-pack",
+          "schema_version": 1,
+          "mcp_servers": {
+            "local": {
+              "transport": "stdio",
+              "command": "npx",
+              "args": ["@example/server"]
+            }
+          },
+          "modes": [
+            {
+              "mode_id": "reviewer",
+              "display_name": "Reviewer",
+              "role_definition": "Review with a bounded MCP catalog.",
+              "permissions": {
+                "read_only": false,
+                "workspace_write": false,
+                "process_exec": false,
+                "network_access": false,
+                "service_control": false,
+                "destructive": false,
+                "can_spawn_subtasks": false,
+                "mcp_tool_access": true
+              },
+              "mcp": {
+                "servers": [
+                  { "id": "local", "tools": ["search"] }
+                ]
+              }
+            }
+          ]
+        }"#;
+
+        let error = load_modepack_from_str_with_options(
+            modepack,
+            ".brownie/modepack.json",
+            ModePackLoadOptions::trusted_signed_active_modepack(),
+        )
+        .expect_err("relative MCP command should fail closed")
+        .to_string();
+
+        assert!(error.contains("absolute executable path"));
     }
 
     #[test]

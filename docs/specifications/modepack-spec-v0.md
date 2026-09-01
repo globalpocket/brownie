@@ -147,13 +147,13 @@ side-effect still passes `RuntimePermissionGate`.
 
 ## MP-3 AgentModes compatibility compiler
 
-MP-3 adds a bounded compatibility compiler from representative AgentModes YAML
-into the existing Brownie Mode Pack JSON policy model. The compiler consumes
-`customModes` entries and emits the same `name`, `schema_version`,
-`entrypoints.default`, and `modes` fields that `brownie-modepack` already
-validates. AgentModes remains an external compatibility target; Brownie does not
-vendor AgentModes, change its source format, or encode AgentModes workflow
-routing decisions as Rust logic.
+MP-3 adds a bounded compatibility compiler from AgentModes YAML into the
+existing Brownie Mode Pack JSON policy model. The legacy v1 compiler consumes
+`customModes` entries. The current v2 Core compiler consumes `core/*.yaml` role
+contracts and emits the same `name`, `schema_version`, `entrypoints.default`,
+and `modes` fields that `brownie-modepack` already validates. AgentModes remains
+an external compatibility target; Brownie does not vendor AgentModes, change its
+source format, or encode AgentModes workflow routing decisions as Rust logic.
 
 The compiler maps structured AgentModes groups to trusted runtime capability
 bits: `read` enables read/index metadata, `edit` enables `workspace_write`,
@@ -216,35 +216,46 @@ same effective policy surface as runtime permission checks.
 
 Mode Packs may include top-level `global_policy_artifacts` for bounded workflow
 policy and artifact catalogs. Each artifact has a stable category (`rule`,
-`skill`, `command`, or `contract`), a normalized markdown `relative_path`, a
-title, bounded content, and a content fingerprint. AgentModes skill artifacts
-use the recursive `skills/**/SKILL.md` layout and are cataloged by relative path
-instead of being flattened into direct `skills/*.md` files. These artifacts are
-validated as protected policy metadata only. They do not grant workspace write,
-process execution, network/service access, destructive operation, or subtask
-authority, and they do not bypass source-trust narrowing or
-`RuntimePermissionGate`.
+`skill`, `command`, `contract`, `schema`, or `runtime_policy`), a normalized
+markdown or YAML `relative_path`, a title, bounded content, and a content
+fingerprint. Legacy AgentModes skill artifacts use the recursive
+`skills/**/SKILL.md` layout and are cataloged by relative path instead of being
+flattened into direct `skills/*.md` files. AgentModes v2 Core schemas and
+Brownie runtime-policy YAML are cataloged as `schema` and `runtime_policy`.
+These artifacts are validated as protected policy metadata only. They do not
+grant workspace write, process execution, Git authority, MCP authority,
+network/service access, destructive operation, or subtask authority, and they do
+not bypass source-trust narrowing or `RuntimePermissionGate`.
 
 Active snapshots include the validated `global_policy_artifacts` collection in
 the compiled-policy fingerprint surface. Task admission copies the active
 snapshot's artifacts into `ModeResolved` external Mode Pack provenance. Prompt
-construction materializes `rule` artifacts by default as protected global policy
-but does not insert unrelated `skill`, `command`, or `contract` content into
-every request. Those categories remain task-pinned catalogs until selected by
-structured compatibility metadata or an explicit workflow invocation path.
+construction materializes `rule`, `schema`, and `runtime_policy` artifacts as
+protected global policy/catalog evidence when selected by the compatibility
+path, but does not insert unrelated `skill`, `command`, or `contract` content
+into every request. Those categories remain task-pinned catalogs until selected
+by structured compatibility metadata or an explicit workflow invocation path.
 Running tasks therefore keep the artifact set selected at task start instead of
 reading live files after admission.
-MP-3.2G required compatibility tests must resolve the pinned AgentModes
-baseline revision through either an explicit root or a managed temporary
-checkout, then run the real compile, validation, activation, prompt, and handoff
-tests with the compatibility source marked required so missing source cannot
-silently skip coverage.
+MP-3.2G and later required compatibility tests must resolve the pinned
+AgentModes baseline revision through either an explicit root or a managed
+temporary checkout, then run the real compile, validation, activation, prompt,
+and authority tests with the compatibility source marked required so missing
+source cannot silently skip coverage.
 
-When no explicit compiler default entrypoint is supplied, the generated Mode
-Pack selects `orchestrator` only if that slug exists. Explicit compiler defaults
-must resolve to a compiled mode id. Duplicate slugs, blank required fields,
-unsafe mode ids, malformed group entries, unknown groups, and unknown explicit
-defaults fail closed before activation.
+When no explicit compiler default entrypoint is supplied, the generated legacy
+v1 Mode Pack selects `orchestrator` only if that slug exists. The current
+AgentModes v2 Core compiler selects `core.orchestrator`. Explicit compiler
+defaults must resolve to a compiled mode id. Duplicate slugs or role ids, blank
+required fields, unsafe mode ids, malformed group entries, unknown groups, and
+unknown explicit defaults fail closed before activation.
+
+AgentModes v2 Core role contracts are single-pass and do not dispatch, mutate
+phase, perform Git operations, or run the global workflow loop. The open-source
+Core baseline contains `core.orchestrator`, `core.reviewer`, and
+`core.reporter`; it does not contain member-only development-pack write roles.
+Brownie must preserve that boundary by denying workspace write and subtask
+requests from Core roles instead of substituting built-in implementer authority.
 
 Active Mode Pack policy shadows built-in fallback policy for the same mode id
 when a task is admitted through that active snapshot. Built-ins remain explicit

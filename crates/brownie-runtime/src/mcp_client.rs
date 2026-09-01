@@ -1,6 +1,7 @@
 //! Minimal runtime-owned MCP client for stdio tools.
 
 use std::io::{BufReader, Read, Write};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -282,12 +283,14 @@ fn stdio_request(config: &ModePackMcpServerConfig, request: Value) -> Result<Val
     if config.transport != "stdio" {
         bail!("unsupported MCP transport");
     }
+    validate_stdio_command_boundary(config)?;
     let mut command = Command::new(&config.command);
     command
         .args(&config.args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
+    configure_hardened_mcp_stdio_process(&mut command);
     configure_process_tree_timeout(&mut command);
     let mut child = command
         .spawn()
@@ -335,6 +338,38 @@ fn stdio_request(config: &ModePackMcpServerConfig, request: Value) -> Result<Val
         bail!("MCP stdio server returned empty response");
     }
     serde_json::from_str(&line).context("MCP stdio response is not valid JSON")
+}
+
+fn validate_stdio_command_boundary(config: &ModePackMcpServerConfig) -> Result<()> {
+    let path = Path::new(&config.command);
+    if !path.is_absolute() {
+        bail!("MCP stdio command must be an absolute executable path; PATH lookup is not allowed");
+    }
+    if path.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir | std::path::Component::CurDir
+        )
+    }) {
+        bail!("MCP stdio command must not contain relative path components");
+    }
+    Ok(())
+}
+
+fn configure_hardened_mcp_stdio_process(command: &mut Command) {
+    command.env_clear();
+    command.current_dir(mcp_stdio_neutral_cwd());
+}
+
+fn mcp_stdio_neutral_cwd() -> &'static Path {
+    #[cfg(windows)]
+    {
+        Path::new(r"C:\")
+    }
+    #[cfg(not(windows))]
+    {
+        Path::new("/")
+    }
 }
 
 fn read_stdio_response(stdout: std::process::ChildStdout) -> Result<String> {
@@ -530,4 +565,67 @@ fn client_meta() -> Value {
         },
         "io.modelcontextprotocol/clientCapabilities": {},
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn mcp_stdio_child_does_not_inherit_ambient_environment() {
+        let env_path = Path::new("/usr/bin/env");
+        if !env_path.exists() {
+            return;
+        }
+        std::env::set_var("BROWNIE_MCP_TEST_SECRET", "must-not-leak");
+        let mut command = Command::new(env_path);
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        configure_hardened_mcp_stdio_process(&mut command);
+
+        let output = command.output().expect("run env");
+
+        std::env::remove_var("BROWNIE_MCP_TEST_SECRET");
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(!stdout.contains("BROWNIE_MCP_TEST_SECRET"));
+        assert!(!stdout.contains("must-not-leak"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn mcp_stdio_child_uses_neutral_cwd() {
+        let pwd_path = Path::new("/bin/pwd");
+        if !pwd_path.exists() {
+            return;
+        }
+        let mut command = Command::new(pwd_path);
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        configure_hardened_mcp_stdio_process(&mut command);
+
+        let output = command.output().expect("run pwd");
+
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            mcp_stdio_neutral_cwd().to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn mcp_stdio_rejects_path_lookup_at_runtime_boundary() {
+        let config = ModePackMcpServerConfig {
+            server_id: "local".to_string(),
+            transport: "stdio".to_string(),
+            command: "npx".to_string(),
+            args: vec![],
+            config_identity_fingerprint: "sha256:test".to_string(),
+        };
+
+        let error = validate_stdio_command_boundary(&config)
+            .expect_err("relative command should fail closed")
+            .to_string();
+
+        assert!(error.contains("absolute executable path"));
+    }
 }
