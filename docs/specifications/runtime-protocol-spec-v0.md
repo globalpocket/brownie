@@ -809,7 +809,14 @@ Unknown mode IDs passed to `mode.get` return JSON-RPC `-32602 invalid params`. `
 
 ## M2 local Mode Pack runtime behavior
 
-M2 extends the existing mode RPCs without adding a new endpoint. When `.brownie/modepack.json` exists under the workspace root, `mode.list`, `mode.get`, `permission.check`, and explicit `task.start` mode resolution include local Mode Pack modes after validating the file through the Rust `brownie-modepack` crate.
+M2 extends the existing mode RPCs without adding a new endpoint. When
+`.brownie/modepack.json` exists under the workspace root, `mode.list`,
+`mode.get`, `permission.check`, and explicit `task.start` mode resolution
+include local Mode Pack modes after validating the file through the Rust
+`brownie-modepack` crate. If `.brownie/modepack.json` is absent and
+`.brownie/AgentModes/workflow.yaml` exists, the same paths compile that
+installed AgentModes workspace framework through `brownie-agentmodes` and then
+validate the resulting bounded Mode Pack snapshot through `brownie-modepack`.
 
 Invalid Mode Pack files fail these mode-resolution paths with an internal
 runtime error rather than silently falling back. MP-3.1 permits active or
@@ -820,7 +827,9 @@ task-pinned replay. Local Mode Pack modes must still be unique within the Mode
 Pack itself and cannot enable network access, service control, or destructive
 permissions.
 
-`task.start` records the resolved policy snapshot in the run ledger. `task.run` uses that ledger snapshot so already-started tasks are not affected by later edits to `.brownie/modepack.json`.
+`task.start` records the resolved policy snapshot in the run ledger. `task.run`
+uses that ledger snapshot so already-started tasks are not affected by later
+edits to `.brownie/modepack.json` or `.brownie/AgentModes/workflow.yaml`.
 
 ## Phase 1.4 permission gate update
 

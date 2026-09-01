@@ -38,7 +38,12 @@ A running task keeps the Mode Pack snapshot selected at task start. Later Mode P
 
 ## M2 local runtime slice
 
-M2 adds a local-only Mode Pack snapshot path at `.brownie/modepack.json`. The file is parsed by `brownie-modepack` and may contribute additional compiled modes to existing runtime mode paths:
+M2 adds a local-only Mode Pack snapshot path at `.brownie/modepack.json`.
+Post-MP-8 AgentModes compatibility also accepts an installed AgentModes
+workspace framework at `.brownie/AgentModes/workflow.yaml` when
+`.brownie/modepack.json` is absent. Both inputs are parsed by Rust runtime
+crates, compiled to the same bounded Mode Pack snapshot shape, and may
+contribute additional compiled modes to existing runtime mode paths:
 
 - `mode.list`
 - `mode.get`
@@ -186,23 +191,25 @@ local developer and trusted signed active sources may preserve declared command
 capability only when the runtime global ceiling also allows it.
 
 MP-3.2D extends this trust rule from AgentModes compilation to raw Mode Pack
-ingress. Repository-local `.brownie/modepack.json` is untrusted by default and
-its effective policy cannot self-authorize workspace writes, process execution,
-network access, service control, destructive operations, or subtask spawning by
-declaring those fields. Trusted local developer and trusted signed active Mode
-Pack ingress may preserve declared side-effect capability only after the same
-runtime ceiling is applied, and `RuntimePermissionGate` remains final authority
-at use time. Capability narrowing happens before task policy exposure, active
-snapshot evidence, and task-pinned `ModeResolved` reconstruction, so persisted
-runtime policy reflects effective permissions rather than raw declared
+ingress. Repository-local `.brownie/modepack.json` and installed
+`.brownie/AgentModes/workflow.yaml` framework input are untrusted by default and
+their effective policy cannot self-authorize workspace writes, process
+execution, network access, service control, destructive operations, or subtask
+spawning by declaring those fields. Trusted local developer and trusted signed
+active Mode Pack ingress may preserve declared side-effect capability only after
+the same runtime ceiling is applied, and `RuntimePermissionGate` remains final
+authority at use time. Capability narrowing happens before task policy exposure,
+active snapshot evidence, and task-pinned `ModeResolved` reconstruction, so
+persisted runtime policy reflects effective permissions rather than raw declared
 privilege.
 
 Compiled external modes may carry `when_to_use`, `description`,
 `prompt_sections`, `workspace_write_scopes`, `allowed_handoff_targets`, and
 `instruction_fingerprint`. `prompt_sections` are deterministic, bounded
 instruction artifacts derived from AgentModes fields such as
-`customInstructions`; each section carries a source label and content
-fingerprint. Mode Pack validation accepts these fields only as policy metadata
+`customInstructions` or `workflow.yaml` Markdown `prompt_file` references; each
+section carries a source label and content fingerprint. Mode Pack validation
+accepts these fields only as policy metadata
 and rejects malformed prompt sections fail-closed. The active snapshot
 fingerprint includes these instruction fields so task-pinned policy, replay,
 stale conflict handling, and child provenance reason about the exact workflow
