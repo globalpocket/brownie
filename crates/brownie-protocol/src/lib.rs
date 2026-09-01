@@ -145,6 +145,10 @@ pub struct ModePermissionsSummary {
     pub read_only: bool,
     pub workspace_write: bool,
     pub process_exec: bool,
+    #[serde(default)]
+    pub git_inspect: bool,
+    #[serde(default)]
+    pub git_commit: bool,
     pub network_access: bool,
     pub service_control: bool,
     pub destructive: bool,
@@ -651,6 +655,8 @@ pub enum RuntimeActionName {
     SpawnSubtask,
     IndexCodebase,
     UseMcpTool,
+    UseGitInspectCapability,
+    UseGitCommitCapability,
     UseGitCapability,
 }
 

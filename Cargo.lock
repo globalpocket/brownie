@@ -76,8 +76,12 @@ dependencies = [
 name = "brownie-cli"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "brownie-agentmodes",
+ "brownie-modepack",
  "brownie-protocol",
+ "brownie-store",
+ "ed25519-dalek",
  "serde",
  "serde_json",
  "sha2",

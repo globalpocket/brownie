@@ -1905,7 +1905,7 @@ fn git_status_tool() -> ToolDefinition {
         tool_id: GIT_STATUS_TOOL_ID.to_string(),
         display_name: "Git Status".to_string(),
         description: "Controlled bounded Git status for the admitted workspace repository. Callers cannot supply argv, cwd, environment, stdin, shell, remote, or path input.".to_string(),
-        required_action: RuntimeAction::UseGitCapability,
+        required_action: RuntimeAction::UseGitInspectCapability,
         input_schema: ToolInputSchema { fields: Vec::new() },
     }
 }
@@ -1915,7 +1915,7 @@ fn git_diff_tool() -> ToolDefinition {
         tool_id: GIT_DIFF_TOOL_ID.to_string(),
         display_name: "Git Diff Summary".to_string(),
         description: "Controlled bounded Git diff summary for the admitted workspace repository. Raw diffs and file contents are not returned. Callers cannot supply argv, cwd, environment, stdin, shell, remote, or path input.".to_string(),
-        required_action: RuntimeAction::UseGitCapability,
+        required_action: RuntimeAction::UseGitInspectCapability,
         input_schema: ToolInputSchema { fields: Vec::new() },
     }
 }
@@ -1925,7 +1925,7 @@ fn git_commit_tool() -> ToolDefinition {
         tool_id: GIT_COMMIT_TOOL_ID.to_string(),
         display_name: "Git Commit".to_string(),
         description: "Controlled bounded Git commit for already staged changes in the admitted workspace repository. Callers provide only a bounded message; argv, cwd, environment, stdin, shell, remote, path, branch, and ref input are rejected.".to_string(),
-        required_action: RuntimeAction::UseGitCapability,
+        required_action: RuntimeAction::UseGitCommitCapability,
         input_schema: ToolInputSchema {
             fields: vec![ToolInputField {
                 name: "message".to_string(),
@@ -3167,6 +3167,8 @@ mod tests {
                 capability_ceiling: ModePackCapabilityCeiling {
                     workspace_write: true,
                     process_exec: true,
+                    git_inspect: true,
+                    git_commit: true,
                     network_access: true,
                     service_control: true,
                     destructive: true,
@@ -4216,9 +4218,19 @@ mod tests {
         assert!(parsed.rejected.is_empty());
         let policy = BuiltinModeRegistry::get("implementer").expect("policy");
         let evaluation = ToolIntentEvaluator::evaluate(&policy, parsed);
-        assert!(evaluation.items.iter().all(|item| {
-            item.required_action == RuntimeAction::UseGitCapability && item.allowed
-        }));
+        assert_eq!(
+            evaluation.items[0].required_action,
+            RuntimeAction::UseGitInspectCapability
+        );
+        assert_eq!(
+            evaluation.items[1].required_action,
+            RuntimeAction::UseGitInspectCapability
+        );
+        assert_eq!(
+            evaluation.items[2].required_action,
+            RuntimeAction::UseGitCommitCapability
+        );
+        assert!(evaluation.items.iter().all(|item| item.allowed));
 
         let rejected = ToolIntentParser::parse_assistant_content(
             "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"git.status\",\"reason\":\"Try shell escape.\",\"input\":{\"command\":\"git status\",\"cwd\":\"/tmp\"}}]}\n```",

@@ -235,6 +235,7 @@ impl RuntimeClient {
         let result = self.follow_objective_proposal_apply_route_if_available(result)?;
         let result = self.follow_objective_apply_verification_route_if_available(result)?;
         let result = self.follow_objective_completion_acceptance_route_if_available(result)?;
+        let result = self.follow_parent_join_routes_if_available(result)?;
         let result = self.close_and_finalize_objective_completion_if_available(result)?;
         let result = self.accept_and_finalize_completed_run_if_available(result)?;
         if json_output {
@@ -302,6 +303,7 @@ impl RuntimeClient {
         let result = self.follow_objective_proposal_apply_route_if_available(result)?;
         let result = self.follow_objective_apply_verification_route_if_available(result)?;
         let result = self.follow_objective_completion_acceptance_route_if_available(result)?;
+        let result = self.follow_parent_join_routes_if_available(result)?;
         let result = self.close_and_finalize_objective_completion_if_available(result)?;
         let result = self.accept_and_finalize_completed_run_if_available(result)?;
         let result = merge_resume_drive_result(&advance_result, result)?;

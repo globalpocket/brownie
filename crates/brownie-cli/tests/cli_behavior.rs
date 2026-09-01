@@ -2404,7 +2404,7 @@ fn installed_json_run_uses_real_agentmodes_active_snapshot_from_arbitrary_reposi
         .as_array()
         .unwrap()
         .iter()
-        .any(|mode| mode == "orchestrator"));
+        .any(|mode| mode == "core.orchestrator"));
     let activation_fingerprint = activated["result"]["snapshot"]["activation_fingerprint"]
         .as_str()
         .unwrap()
@@ -2449,7 +2449,7 @@ fn installed_json_run_uses_real_agentmodes_active_snapshot_from_arbitrary_reposi
         &[],
     );
     let task = single_task_by_goal(&tasks, objective);
-    assert_eq!(task["mode_id"], "orchestrator");
+    assert_eq!(task["mode_id"], "core.orchestrator");
     let run_id = task["run_id"].as_str().expect("run id");
     let ledger = fs::read_to_string(
         repository
@@ -2462,7 +2462,7 @@ fn installed_json_run_uses_real_agentmodes_active_snapshot_from_arbitrary_reposi
     assert!(ledger.contains("external_modepack_task_provenance"));
     assert!(ledger.contains("current-agentmodes"));
     assert!(ledger.contains(&activation_fingerprint));
-    assert!(ledger.contains("\"mode_id\":\"orchestrator\""));
+    assert!(ledger.contains("\"mode_id\":\"core.orchestrator\""));
     assert!(ledger.contains("ToolIntentDenied"));
     assert!(ledger.contains("\"tool_id\":\"workspace.write\""));
     assert!(!ledger.contains(agentmodes.source_root.to_string_lossy().as_ref()));
@@ -2470,6 +2470,100 @@ fn installed_json_run_uses_real_agentmodes_active_snapshot_from_arbitrary_reposi
     assert!(!ledger.contains("provider_response"));
     assert!(!ledger.contains("BROWNIE_LLM"));
     assert!(!ledger.contains(repository.to_string_lossy().as_ref()));
+
+    fs::remove_dir_all(repository).unwrap();
+    fs::remove_dir_all(prefix).unwrap();
+}
+
+#[test]
+fn installed_json_run_uses_signed_latest_agentmodes_core_without_member_pack_write_authority() {
+    let (installed, prefix) =
+        install_real_cli_with_sibling_runtime("installed-agentmodes-core-only");
+    let runtime = installed_runtime_from_prefix(&prefix);
+    let repository = ordinary_git_repository("installed-agentmodes-core-only-repo");
+    let Some(agentmodes) = write_current_agentmodes_modepack_if_available(&repository) else {
+        fs::remove_dir_all(repository).unwrap();
+        fs::remove_dir_all(prefix).unwrap();
+        return;
+    };
+    let active =
+        activate_trusted_current_agentmodes_via_signed_candidate_for_cli(&runtime, &repository);
+
+    fs::remove_file(repository.join(".brownie/modepack.json")).unwrap();
+    let objective = "Implement README update through latest AgentModes Core";
+    let output = Command::new(&installed)
+        .args(["--json", "run", objective])
+        .current_dir(&repository)
+        .env_remove("BROWNIE_RUNTIME_PATH")
+        .env_remove("BROWNIE_WORKSPACE_ROOT")
+        .env("BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS", "30000")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "installed run failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["command"], "run");
+    assert_eq!(payload["run"]["status"], "no_eligible_task");
+    assert_eq!(
+        fs::read_to_string(repository.join("README.md")).unwrap(),
+        "# Ordinary repository\n"
+    );
+    assert!(!stdout.contains(repository.to_string_lossy().as_ref()));
+    assert!(!stdout.contains(prefix.to_string_lossy().as_ref()));
+    assert!(!stdout.contains(agentmodes.source_root.to_string_lossy().as_ref()));
+    assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
+    assert!(!stdout.contains("BROWNIE_WORKSPACE_ROOT"));
+
+    let tasks = invoke_runtime_json(
+        &runtime,
+        &repository,
+        &serde_json::json!({"jsonrpc":"2.0","id":2,"method":"task.list"}),
+        &[],
+    );
+    let root_task = single_task_by_goal(&tasks, objective);
+    assert_eq!(
+        root_task["mode_id"].as_str(),
+        Some(active.default_entrypoint.as_str())
+    );
+    let root_run_id = root_task["run_id"].as_str().expect("root run id");
+    let children = tasks["result"]["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|task| task["parent_run_id"].as_str() == Some(root_run_id))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        children.len(),
+        0,
+        "latest AgentModes OSS Core must not materialize member-only write children"
+    );
+
+    let root_ledger = fs::read_to_string(
+        repository
+            .join(".brownie/runs")
+            .join(root_run_id)
+            .join("ledger.jsonl"),
+    )
+    .expect("root ledger");
+    assert!(root_ledger.contains("ToolIntentDenied"));
+    assert!(root_ledger.contains("\"tool_id\":\"workspace.write\""));
+    assert!(root_ledger.contains("\"tool_id\":\"subtask.spawn\""));
+    assert!(!root_ledger.contains("SubtaskOrchestrationQueued"));
+    assert!(root_ledger.contains(&active.activation_fingerprint));
+    assert!(root_ledger.contains("\"mode_id\":\"core.orchestrator\""));
+    assert!(!root_ledger.contains(agentmodes.source_root.to_string_lossy().as_ref()));
+    assert!(!root_ledger.contains("raw_prompt"));
+    assert!(!root_ledger.contains("provider_response"));
+    assert!(!root_ledger.contains("BROWNIE_LLM"));
+    assert!(!root_ledger.contains(repository.to_string_lossy().as_ref()));
 
     fs::remove_dir_all(repository).unwrap();
     fs::remove_dir_all(prefix).unwrap();
@@ -3279,11 +3373,6 @@ fn write_current_agentmodes_modepack_if_available(
         &source_root,
         brownie_agentmodes::AgentModesCompileOptions {
             modepack_name: Some("current-agentmodes".to_string()),
-            delegation_coordinators: vec![
-                "orchestrator".to_string(),
-                "workflow-orchestrator".to_string(),
-                "epoch-orchestrator".to_string(),
-            ],
             ..brownie_agentmodes::AgentModesCompileOptions::default()
         },
     )
@@ -3305,10 +3394,18 @@ fn write_current_agentmodes_modepack_if_available(
         policy_artifact_category_count(&modepack.global_policy_artifacts, "contract"),
         baseline.expected_contract_count
     );
+    assert_eq!(
+        policy_artifact_category_count(&modepack.global_policy_artifacts, "schema"),
+        baseline.expected_schema_count
+    );
+    assert_eq!(
+        policy_artifact_category_count(&modepack.global_policy_artifacts, "runtime_policy"),
+        baseline.expected_runtime_policy_count
+    );
     assert!(modepack
         .modes
         .iter()
-        .any(|mode| mode.mode_id == "orchestrator"));
+        .any(|mode| mode.mode_id == brownie_agentmodes::AGENTMODES_V2_DEFAULT_ROLE_ID));
     let modepack_dir = workspace_root.join(".brownie");
     fs::create_dir_all(&modepack_dir).unwrap();
     fs::write(
@@ -3317,6 +3414,474 @@ fn write_current_agentmodes_modepack_if_available(
     )
     .unwrap();
     Some(CurrentAgentModesCliFixture { source_root })
+}
+
+struct TrustedCurrentAgentModesCliActivation {
+    default_entrypoint: String,
+    activation_fingerprint: String,
+}
+
+fn activate_trusted_current_agentmodes_via_signed_candidate_for_cli(
+    runtime: &Path,
+    workspace_root: &Path,
+) -> TrustedCurrentAgentModesCliActivation {
+    use base64::{engine::general_purpose, Engine as _};
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let modepack_path = workspace_root.join(".brownie/modepack.json");
+    let modepack_json = fs::read_to_string(&modepack_path).unwrap();
+    let bootstrap_json = r#"{
+      "name": "bootstrap-before-current-agentmodes",
+      "schema_version": 1,
+      "entrypoints": { "default": "bootstrap-reader" },
+      "modes": [
+        {
+          "mode_id": "bootstrap-reader",
+          "display_name": "Bootstrap Reader",
+          "role_definition": "Temporary read-only bootstrap policy before signed AgentModes Core replacement.",
+          "permissions": {
+            "read_only": true,
+            "workspace_write": false,
+            "process_exec": false,
+            "git_inspect": false,
+            "git_commit": false,
+            "network_access": false,
+            "service_control": false,
+            "destructive": false,
+            "can_spawn_subtasks": false,
+            "codebase_index": true,
+            "mcp_tool_access": false
+          }
+        }
+      ]
+    }"#;
+    fs::write(&modepack_path, bootstrap_json).unwrap();
+    let workspace_activation = invoke_runtime_json(
+        runtime,
+        workspace_root,
+        &serde_json::json!({"jsonrpc":"2.0","id":10,"method":"modepack.activate","params":{"authorize":true}}),
+        &[],
+    );
+    assert!(
+        workspace_activation.get("error").is_none(),
+        "workspace activation should succeed: {workspace_activation}"
+    );
+    let current_activation_fingerprint = workspace_activation["result"]["snapshot"]
+        ["activation_fingerprint"]
+        .as_str()
+        .expect("current activation fingerprint")
+        .to_string();
+    fs::write(&modepack_path, &modepack_json).unwrap();
+
+    let store = brownie_store::BrownieStore::new(workspace_root);
+    let snapshot = brownie_modepack::load_modepack_from_str_with_options(
+        &modepack_json,
+        ".brownie/modepack.json",
+        brownie_modepack::ModePackLoadOptions::trusted_signed_active_modepack(),
+    )
+    .expect("trusted current AgentModes load");
+    let default_entrypoint = snapshot
+        .entrypoints
+        .default_mode_id()
+        .expect("current AgentModes default entrypoint")
+        .to_string();
+    assert_eq!(
+        default_entrypoint,
+        brownie_agentmodes::AGENTMODES_V2_DEFAULT_ROLE_ID
+    );
+    let entry_policy = snapshot
+        .modes
+        .iter()
+        .find(|policy| policy.mode_id == default_entrypoint)
+        .expect("current AgentModes orchestrator policy");
+    assert!(!entry_policy.permissions.can_spawn_subtasks);
+    assert!(!entry_policy.permissions.workspace_write);
+    assert!(!entry_policy.permissions.process_exec);
+    assert_eq!(entry_policy.allowed_handoff_targets, None);
+    for required in ["core.orchestrator", "core.reviewer", "core.reporter"] {
+        assert!(
+            snapshot
+                .modes
+                .iter()
+                .any(|policy| policy.mode_id == required),
+            "current AgentModes Core must include {required}"
+        );
+    }
+    for policy in &snapshot.modes {
+        assert!(
+            !policy.permissions.workspace_write,
+            "{} must not grant workspace write in AgentModes OSS Core",
+            policy.mode_id
+        );
+        assert!(
+            !policy.permissions.process_exec,
+            "{} must not grant command execution in AgentModes OSS Core",
+            policy.mode_id
+        );
+        assert!(
+            !policy.permissions.can_spawn_subtasks,
+            "{} must not grant dispatch in AgentModes OSS Core",
+            policy.mode_id
+        );
+        assert!(
+            !policy.permissions.git_inspect && !policy.permissions.git_commit,
+            "{} must not grant Git authority in AgentModes OSS Core",
+            policy.mode_id
+        );
+    }
+
+    let policy_snapshots = snapshot
+        .modes
+        .iter()
+        .map(|policy| {
+            let policy_fingerprint = cli_external_modepack_policy_fingerprint(
+                &snapshot.name,
+                snapshot.schema_version,
+                policy,
+            );
+            brownie_store::ActiveModePackPolicySnapshot {
+                mode_id: policy.mode_id.clone(),
+                display_name: policy.display_name.clone(),
+                role_definition: policy.role_definition.clone(),
+                when_to_use: policy.when_to_use.clone(),
+                description: policy.description.clone(),
+                prompt_sections: cli_mode_prompt_sections_payload(policy),
+                verification_responsibility: policy.verification_responsibility.clone(),
+                instruction_fingerprint: policy.instruction_fingerprint.clone(),
+                permissions: cli_mode_permissions_payload(policy),
+                workspace_write_scopes: cli_mode_workspace_write_scopes_payload(policy),
+                allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
+                mcp_access: cli_mode_mcp_access_payload(policy),
+                completion_rules: policy.completion_rules.clone(),
+                policy_fingerprint,
+            }
+        })
+        .collect::<Vec<_>>();
+    let mode_ids = policy_snapshots
+        .iter()
+        .map(|policy| policy.mode_id.clone())
+        .collect::<Vec<_>>();
+    let global_policy_artifacts = cli_modepack_global_policy_artifacts_payload(&snapshot);
+    let compiled_policy_fingerprint = cli_active_modepack_compiled_policy_fingerprint(
+        &snapshot.name,
+        snapshot.schema_version,
+        snapshot.entrypoints.default_mode_id(),
+        &global_policy_artifacts,
+        &policy_snapshots,
+    );
+    let activation_fingerprint = cli_active_modepack_activation_fingerprint(
+        &snapshot.name,
+        snapshot.schema_version,
+        &compiled_policy_fingerprint,
+        &mode_ids,
+        snapshot.entrypoints.default_mode_id(),
+    );
+    let source_url = "https://example.com/current-agentmodes-modepack.json";
+    let source_url_host = "example.com";
+    let source_url_fingerprint = format!("sha256:{}", hex_lower(&Sha256::digest(source_url)));
+    let pinned_addr = "93.184.216.34:443";
+    let pinned_addr_fingerprint = format!("sha256:{}", hex_lower(&Sha256::digest(pinned_addr)));
+    let resolution_fingerprint = format!(
+        "sha256:{}",
+        hex_lower(&Sha256::digest(&pinned_addr_fingerprint))
+    );
+    let content_sha256 = format!("sha256:{}", hex_lower(&Sha256::digest(&modepack_json)));
+    let candidate = store
+        .commit_modepack_candidate_snapshot(&brownie_store::ModePackCandidateSnapshot {
+            summary: brownie_protocol::ModePackCandidateSummary {
+                candidate_id: format!("modepack_candidate_{}", &content_sha256[7..23]),
+                source_kind: "remote_https".to_string(),
+                source_url_host: source_url_host.to_string(),
+                source_url_fingerprint: source_url_fingerprint.clone(),
+                dns_binding: brownie_protocol::ModePackDnsBindingSummary {
+                    resolution_fingerprint,
+                    pinned_address_fingerprint: pinned_addr_fingerprint,
+                    resolved_address_count: 1,
+                    pinned_address_family: "ipv4".to_string(),
+                },
+                content_sha256: content_sha256.clone(),
+                byte_count: modepack_json.len(),
+                modepack_name: snapshot.name.clone(),
+                schema_version: snapshot.schema_version,
+                mode_count: mode_ids.len(),
+                mode_ids: mode_ids.clone(),
+                default_entrypoint: snapshot.entrypoints.default.clone(),
+                compiled_policy_fingerprint: compiled_policy_fingerprint.clone(),
+                cached_at: "2026-09-01T00:00:00Z".to_string(),
+                cache_event_id: String::new(),
+            },
+            modepack_json,
+        })
+        .expect("current AgentModes candidate cache");
+    assert!(!candidate.replayed);
+    let signing_key = SigningKey::from_bytes(&[42u8; 32]);
+    let public_key_bytes = signing_key.verifying_key().to_bytes();
+    let signer_fingerprint = format!("sha256:{}", hex_lower(&Sha256::digest(public_key_bytes)));
+    let statement = serde_json::json!({
+        "content_sha256": candidate.snapshot.summary.content_sha256,
+        "compiled_policy_fingerprint": candidate.snapshot.summary.compiled_policy_fingerprint,
+        "source_url_fingerprint": candidate.snapshot.summary.source_url_fingerprint,
+        "mode_ids": candidate.snapshot.summary.mode_ids,
+        "schema_version": candidate.snapshot.summary.schema_version,
+        "signer_fingerprint": signer_fingerprint,
+        "signer_identity": "brownie-cli-current-agentmodes-e2e",
+    })
+    .to_string();
+    let signature = signing_key.sign(statement.as_bytes());
+    let provenance = invoke_runtime_json(
+        runtime,
+        workspace_root,
+        &serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "modepack.verifyCandidateProvenance",
+            "params": {
+                "authorize_provenance_verification": true,
+                "expected_content_sha256": candidate.snapshot.summary.content_sha256,
+                "expected_compiled_policy_fingerprint": candidate.snapshot.summary.compiled_policy_fingerprint,
+                "expected_signer_fingerprint": signer_fingerprint,
+                "provenance_statement_json": statement,
+                "provenance_signature_base64": general_purpose::STANDARD.encode(signature.to_bytes()),
+                "provenance_public_key_base64": general_purpose::STANDARD.encode(public_key_bytes),
+            }
+        }),
+        &[],
+    );
+    assert!(
+        provenance.get("error").is_none(),
+        "provenance verification should succeed: {provenance}"
+    );
+    assert_eq!(provenance["result"]["verified"], true);
+    let trust = invoke_runtime_json(
+        runtime,
+        workspace_root,
+        &serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "modepack.trustSigner",
+            "params": {
+                "authorize_trust": true,
+                "signer_fingerprint": provenance["result"]["provenance"]["signer_fingerprint"],
+            }
+        }),
+        &[],
+    );
+    assert!(
+        trust.get("error").is_none(),
+        "signer trust should succeed: {trust}"
+    );
+    assert_eq!(trust["result"]["trusted"], true);
+    let approval = invoke_runtime_json(
+        runtime,
+        workspace_root,
+        &serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 13,
+            "method": "modepack.approveCandidate",
+            "params": {
+                "authorize_trust": true,
+                "expected_content_sha256": candidate.snapshot.summary.content_sha256,
+                "expected_compiled_policy_fingerprint": candidate.snapshot.summary.compiled_policy_fingerprint,
+                "expected_provenance_id": provenance["result"]["provenance"]["provenance_id"],
+                "expected_provenance_event_id": provenance["result"]["provenance"]["provenance_event_id"],
+                "expected_signer_fingerprint": provenance["result"]["provenance"]["signer_fingerprint"],
+                "expected_statement_sha256": provenance["result"]["provenance"]["statement_sha256"],
+            }
+        }),
+        &[],
+    );
+    assert!(
+        approval.get("error").is_none(),
+        "candidate approval should succeed: {approval}"
+    );
+    assert_eq!(approval["result"]["approved"], true);
+    let replacement = invoke_runtime_json(
+        runtime,
+        workspace_root,
+        &serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 14,
+            "method": "modepack.replaceActive",
+            "params": {
+                "authorize_replacement": true,
+                "expected_current_activation_fingerprint": current_activation_fingerprint,
+                "expected_candidate_activation_fingerprint": activation_fingerprint,
+                "approved_candidate_approval_id": approval["result"]["approval"]["approval_id"],
+                "expected_approved_candidate_content_sha256": approval["result"]["approval"]["content_sha256"],
+                "expected_approved_candidate_compiled_policy_fingerprint": approval["result"]["approval"]["compiled_policy_fingerprint"],
+                "expected_approved_candidate_id": approval["result"]["approval"]["candidate_id"],
+                "expected_approved_candidate_source_url_host": approval["result"]["approval"]["source_url_host"],
+                "expected_approved_candidate_source_url_fingerprint": approval["result"]["approval"]["source_url_fingerprint"],
+                "expected_approved_candidate_dns_resolution_fingerprint": candidate.snapshot.summary.dns_binding.resolution_fingerprint,
+                "expected_approved_candidate_pinned_address_fingerprint": candidate.snapshot.summary.dns_binding.pinned_address_fingerprint,
+                "expected_approved_candidate_approval_event_id": approval["result"]["approval"]["approval_event_id"],
+            }
+        }),
+        &[],
+    );
+    assert!(
+        replacement.get("error").is_none(),
+        "active replacement should succeed: {replacement}"
+    );
+    assert_eq!(replacement["result"]["replaced"], true);
+    assert_eq!(
+        replacement["result"]["replacement_snapshot"]["source_kind"],
+        "remote_https_candidate"
+    );
+    assert_eq!(
+        replacement["result"]["replacement_snapshot"]["activation_fingerprint"],
+        activation_fingerprint
+    );
+    assert_eq!(
+        replacement["result"]["approved_candidate"]["consumed"],
+        true
+    );
+    store
+        .read_active_modepack_snapshot()
+        .expect("active snapshot read")
+        .expect("active snapshot");
+    TrustedCurrentAgentModesCliActivation {
+        default_entrypoint,
+        activation_fingerprint,
+    }
+}
+
+fn cli_mode_permissions_payload(
+    policy: &brownie_agentmodes::CompiledModePolicy,
+) -> serde_json::Value {
+    serde_json::json!({
+        "read_only": policy.permissions.read_only,
+        "workspace_write": policy.permissions.workspace_write,
+        "process_exec": policy.permissions.process_exec,
+        "git_inspect": policy.permissions.git_inspect,
+        "git_commit": policy.permissions.git_commit,
+        "network_access": policy.permissions.network_access,
+        "service_control": policy.permissions.service_control,
+        "destructive": policy.permissions.destructive,
+        "can_spawn_subtasks": policy.permissions.can_spawn_subtasks,
+        "codebase_index": policy.permissions.codebase_index,
+        "mcp_tool_access": policy.permissions.mcp_tool_access,
+    })
+}
+
+fn cli_mode_prompt_sections_payload(
+    policy: &brownie_agentmodes::CompiledModePolicy,
+) -> Vec<serde_json::Value> {
+    policy
+        .prompt_sections
+        .iter()
+        .map(|section| serde_json::json!(section))
+        .collect()
+}
+
+fn cli_mode_workspace_write_scopes_payload(
+    policy: &brownie_agentmodes::CompiledModePolicy,
+) -> Vec<serde_json::Value> {
+    policy
+        .workspace_write_scopes
+        .iter()
+        .map(|scope| serde_json::json!(scope))
+        .collect()
+}
+
+fn cli_mode_mcp_access_payload(
+    policy: &brownie_agentmodes::CompiledModePolicy,
+) -> Vec<serde_json::Value> {
+    policy
+        .mcp_access
+        .iter()
+        .map(|access| serde_json::json!(access))
+        .collect()
+}
+
+fn cli_modepack_global_policy_artifacts_payload(
+    snapshot: &brownie_modepack::ModePackSnapshot,
+) -> Vec<serde_json::Value> {
+    snapshot
+        .global_policy_artifacts
+        .iter()
+        .map(|artifact| serde_json::json!(artifact))
+        .collect()
+}
+
+fn cli_external_modepack_policy_fingerprint(
+    modepack_name: &str,
+    schema_version: u64,
+    policy: &brownie_agentmodes::CompiledModePolicy,
+) -> String {
+    let canonical = serde_json::json!({
+        "version": "external_modepack_policy_fingerprint_v1",
+        "modepack_name": modepack_name,
+        "schema_version": schema_version,
+        "source_path": brownie_modepack::WORKSPACE_MODEPACK_PATH,
+        "mode_id": policy.mode_id,
+        "display_name": policy.display_name,
+        "role_definition": policy.role_definition,
+        "when_to_use": policy.when_to_use,
+        "description": policy.description,
+        "prompt_sections": policy.prompt_sections,
+        "verification_responsibility": policy.verification_responsibility,
+        "instruction_fingerprint": policy.instruction_fingerprint,
+        "workspace_write_scopes": policy.workspace_write_scopes,
+        "allowed_handoff_targets": policy.allowed_handoff_targets,
+        "mcp_access": policy.mcp_access,
+        "completion_rules": policy.completion_rules,
+        "permissions": {
+            "read_only": policy.permissions.read_only,
+            "workspace_write": policy.permissions.workspace_write,
+            "process_exec": policy.permissions.process_exec,
+            "git_inspect": policy.permissions.git_inspect,
+            "git_commit": policy.permissions.git_commit,
+            "network_access": policy.permissions.network_access,
+            "service_control": policy.permissions.service_control,
+            "destructive": policy.permissions.destructive,
+            "can_spawn_subtasks": policy.permissions.can_spawn_subtasks,
+            "codebase_index": policy.permissions.codebase_index,
+            "mcp_tool_access": policy.permissions.mcp_tool_access,
+        }
+    });
+    let digest = Sha256::digest(canonical.to_string().as_bytes());
+    format!("sha256:{}", hex_lower(&digest))
+}
+
+fn cli_active_modepack_compiled_policy_fingerprint(
+    modepack_name: &str,
+    schema_version: u64,
+    default_entrypoint: Option<&str>,
+    global_policy_artifacts: &[serde_json::Value],
+    policies: &[brownie_store::ActiveModePackPolicySnapshot],
+) -> String {
+    let canonical = serde_json::json!({
+        "version": "active_modepack_compiled_policy_fingerprint_v3",
+        "modepack_name": modepack_name,
+        "schema_version": schema_version,
+        "source_path": brownie_modepack::WORKSPACE_MODEPACK_PATH,
+        "default_entrypoint": default_entrypoint,
+        "global_policy_artifacts": global_policy_artifacts,
+        "policies": policies,
+    });
+    let digest = Sha256::digest(canonical.to_string().as_bytes());
+    format!("sha256:{}", hex_lower(&digest))
+}
+
+fn cli_active_modepack_activation_fingerprint(
+    modepack_name: &str,
+    schema_version: u64,
+    compiled_policy_fingerprint: &str,
+    mode_ids: &[String],
+    default_entrypoint: Option<&str>,
+) -> String {
+    let canonical = serde_json::json!({
+        "version": "active_modepack_activation_fingerprint_v2",
+        "modepack_name": modepack_name,
+        "schema_version": schema_version,
+        "source_path": brownie_modepack::WORKSPACE_MODEPACK_PATH,
+        "mode_ids": mode_ids,
+        "default_entrypoint": default_entrypoint,
+        "compiled_policy_fingerprint": compiled_policy_fingerprint,
+    });
+    let digest = Sha256::digest(canonical.to_string().as_bytes());
+    format!("sha256:{}", hex_lower(&digest))
 }
 
 fn current_agentmodes_required_for_test() -> bool {
@@ -3348,7 +3913,7 @@ fn current_agentmodes_root_for_test() -> Option<PathBuf> {
     }
 
     let root = PathBuf::from("/Users/satoshitanaka/Documents/AgentModes");
-    if !root.join("modes").is_dir()
+    if !root.join("core").is_dir()
         || current_agentmodes_revision(&root).as_deref() != Some(baseline.revision)
     {
         return None;
@@ -3359,7 +3924,7 @@ fn current_agentmodes_root_for_test() -> Option<PathBuf> {
 fn assert_current_agentmodes_root_for_test(root: &Path) {
     let baseline = brownie_agentmodes::CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
     assert!(
-        root.join("modes").is_dir(),
+        root.join("core").is_dir(),
         "{} must point to a checked-out {} repository",
         baseline.root_env,
         baseline.repository
@@ -3370,8 +3935,13 @@ fn assert_current_agentmodes_root_for_test(root: &Path) {
         "AgentModes compatibility baseline revision drifted"
     );
     assert!(
-        root.join("skills/tdd-quality-gate/SKILL.md").is_file(),
-        "AgentModes compatibility baseline must include recursive SKILL.md artifacts"
+        root.join("core/orchestrator.yaml").is_file(),
+        "AgentModes compatibility baseline must include v2 Core role artifacts"
+    );
+    assert!(
+        root.join("runtime-policies/brownie/loop-policy.yaml")
+            .is_file(),
+        "AgentModes compatibility baseline must include Brownie runtime policies"
     );
 }
 
@@ -3390,7 +3960,7 @@ fn current_agentmodes_managed_checkout_for_test(namespace: &str) -> PathBuf {
 fn prepare_current_agentmodes_checkout_for_test(root: &Path) {
     let baseline = brownie_agentmodes::CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
     if current_agentmodes_revision(root).as_deref() == Some(baseline.revision)
-        && root.join("skills/tdd-quality-gate/SKILL.md").is_file()
+        && root.join("core/orchestrator.yaml").is_file()
     {
         return;
     }

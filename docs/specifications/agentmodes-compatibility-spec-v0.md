@@ -4,12 +4,14 @@
 
 Brownie must run AgentModes configuration with stable, runtime-enforced semantics.
 
-AgentModes is an external compatibility target. It is not vendored into the Brownie repository.
-The pinned MP-3.2G compatibility baseline is `globalpocket/AgentModes` at
-`39c7391cf6e711f0a21b14c21bdf557cd12d701e`; required compatibility tests must
-resolve exactly that revision, using either an explicit root or a managed
-temporary checkout, and fail rather than silently skipping real compatibility
-coverage when the source tree is missing or at another revision.
+AgentModes is an external compatibility target. It is not vendored into the
+Brownie repository. The current compatibility baseline is
+`globalpocket/AgentModes` at
+`c48df6c6975b3597b97e75abbbd84bc9ab314ab9`, which is the AgentModes v2 Core
+layout. Required compatibility tests must resolve exactly that revision, using
+either an explicit root or a managed temporary checkout, and fail rather than
+silently skipping real compatibility coverage when the source tree is missing or
+at another revision.
 
 ## Pipeline
 
@@ -109,11 +111,13 @@ Pack default is available, Brownie keeps its built-in fallback behavior.
 
 ## MP-3 AgentModes compatibility compiler
 
-Brownie now accepts representative AgentModes YAML as compatibility input and
-compiles it into the stable Brownie Mode Pack policy shape. The compiler reads
-`customModes` entries with `slug`, `name`, `roleDefinition`, `whenToUse`,
-`description`, `groups`, and `customInstructions`; it does not rewrite the
-AgentModes format or vendor the AgentModes repository.
+Brownie accepts AgentModes YAML as compatibility input and compiles it into the
+stable Brownie Mode Pack policy shape. The legacy v1 path reads `customModes`
+entries with `slug`, `name`, `roleDefinition`, `whenToUse`, `description`,
+`groups`, and `customInstructions`. The current v2 path reads AgentModes Core
+role contracts from `core/*.yaml` plus bounded policy artifacts from
+`schemas/*.yaml` and `runtime-policies/brownie/*.yaml`. Brownie does not rewrite
+the AgentModes format or vendor the AgentModes repository.
 
 Only structured AgentModes `groups` grant runtime capabilities. `read` grants
 metadata-only workspace read/index capability, `edit` grants trusted workspace
@@ -124,12 +128,25 @@ policy data and cannot grant write, command, network, service, destructive, or
 subtask authority. The compiled JSON must still pass Mode Pack validation, and
 every side effect remains subject to `RuntimePermissionGate`.
 
-If no explicit compiler default entrypoint is provided, the compiler selects
-`orchestrator` when that AgentModes slug exists. Explicit defaults must refer to
+If no explicit compiler default entrypoint is provided, the legacy v1 compiler
+selects `orchestrator` when that AgentModes slug exists. For AgentModes v2 Core,
+the default is `core.orchestrator` when present. Explicit defaults must refer to
 a compiled mode id and use the same bounded ASCII identifier shape as other Mode
-Pack references. Unknown groups, malformed group entries, duplicate slugs,
-missing required fields, unsafe identifiers, and unknown explicit defaults fail
-closed.
+Pack references. Unknown groups, malformed group entries, duplicate slugs or role
+ids, missing required fields, unsafe identifiers, and unknown explicit defaults
+fail closed.
+
+AgentModes v2 roles are single-pass role contracts. Their `permissions.read`
+field may compile to metadata/index read capability, `permissions.edit` may
+compile to workspace write only when runtime ceilings allow it, and
+`permissions.command` may compile to process execution only for trusted source
+classes and runtime ceilings. `git`, `network`, and `mcp` are runtime-owned or
+reserved authority in the v2 Core compatibility path and do not grant Brownie
+side effects. `phase_write=true` or `dispatch=true` in a v2 role fails closed.
+The open-source v2 Core baseline contains only read-only/reporting roles
+(`core.orchestrator`, `core.reviewer`, and `core.reporter`); member-only
+development pack roles must not be assumed present by Brownie compatibility
+tests.
 
 MP-3.1 narrows the compiler boundary for real AgentModes execution semantics.
 `whenToUse` is selection guidance and must not compile into completion rules.
@@ -199,15 +216,16 @@ fail closed rather than dropping runtime policy, task-pinned Mode Pack policy,
 or compiled AgentModes instructions.
 
 MP-3.2F adds a bounded policy artifact surface for real AgentModes content
-outside `modes/*.yaml`. The compatibility compiler may collect markdown
-artifacts from `rules`, `commands`, and `docs/contracts`, and MP-3.2G extends
-skill collection to the real AgentModes layout `skills/**/SKILL.md`. Collection
-uses normalized relative paths, stable categories, bounded content, content
-fingerprints, deterministic ordering, and fail-closed symlink/root-escape
-rejection. These artifacts are protected workflow policy material only: their
-prose, command text, skill text, and contracts cannot grant workspace write,
-process execution, network/service access, destructive actions, or subtask
-spawning.
+outside mode role YAML. The legacy v1 compiler may collect markdown artifacts
+from `rules`, `commands`, `docs/contracts`, and recursive `skills/**/SKILL.md`.
+The v2 Core compiler also collects YAML artifacts from `schemas` and
+`runtime-policies/brownie`. Collection uses normalized relative paths, stable
+categories, bounded content, content fingerprints, deterministic ordering, and
+fail-closed symlink/root-escape rejection. These artifacts are protected workflow
+policy material only: their prose, command text, skill text, contracts, schemas,
+and runtime-policy text cannot grant workspace write, process execution,
+network/service access, destructive actions, Git authority, MCP authority, or
+subtask spawning.
 
 Global policy artifacts are serialized into the generated Mode Pack as
 `global_policy_artifacts` and must pass normal Mode Pack validation before they
@@ -218,14 +236,15 @@ artifact text or AgentModes-specific Rust mode ids.
 When a Mode Pack is activated, its policy artifacts are included in the active
 snapshot fingerprint surface and later written into task-pinned `ModeResolved`
 provenance for the selected external mode. Context materialization treats
-categories differently: `rule` artifacts are default protected global policy,
-while `skill`, `command`, and `contract` artifacts remain a task-pinned catalog
-unless a structured compatibility selection explicitly materializes them. Ledger
-evidence uses relative artifact identities and bounded content; absolute
-AgentModes source paths and raw Mode Pack JSON are not required for replay.
-Real compatibility tests use Brownie-managed baseline metadata for expected
-mode-file, compiled-mode, rule, skill, command, and contract counts so revision
-drift or missing recursive artifacts fails before MP-4.
+categories differently: `rule`, `schema`, and `runtime_policy` artifacts may be
+protected global policy/catalog evidence, while `skill`, `command`, and
+`contract` artifacts remain task-pinned catalogs unless a structured
+compatibility selection explicitly materializes them. Ledger evidence uses
+relative artifact identities and bounded content; absolute AgentModes source
+paths and raw Mode Pack JSON are not required for replay. Real compatibility
+tests use Brownie-managed baseline metadata for expected mode-file,
+compiled-mode, rule, skill, command, contract, schema, and runtime-policy counts
+so revision drift or missing artifacts fails before release acceptance.
 
 ## M12.1 handoff target compatibility
 
@@ -242,11 +261,20 @@ modes preserve their existing behavior by leaving the allow-list unset.
 
 ## MP-3.2A full-pack scale handoff contract
 
-Current AgentModes compatibility must be proven against the real mode-pack
-scale, not only short representative fixtures. Brownie must compile all current
-AgentModes `modes/*.yaml` entries from a pinned source revision or equivalent
-fixture fingerprint, then validate the generated Brownie Mode Pack and activate
-it through the same runtime snapshot path used by ordinary external Mode Packs.
+Current AgentModes compatibility must be proven against the real pinned
+AgentModes source shape, not only short representative fixtures. For the v2 Core
+baseline, Brownie must compile all current `core/*.yaml` role contracts, collect
+the current `schemas/*.yaml` and `runtime-policies/brownie/*.yaml` policy
+artifacts, validate the generated Brownie Mode Pack, and activate it through the
+same runtime snapshot path used by ordinary external Mode Packs.
+
+The v2 Core baseline intentionally has no write-capable child role and no
+dispatching role. Brownie must not substitute built-in implementer behavior,
+invent member-only development pack roles, or claim an autonomous coding E2E
+against the open-source Core repository. Installed CLI compatibility evidence
+for this baseline proves signed activation, default `core.orchestrator`
+admission, task-pinned provenance, and fail-closed denial of workspace write or
+subtask requests that exceed Core role authority.
 
 Empty `groups` is not delegation authority. A no-group AgentModes mode is
 read-only by default and cannot spawn subtasks unless a structured
@@ -277,8 +305,9 @@ The adapter must not derive delegation authority from prose, `whenToUse`, mode
 ids, keyword search, or `groups: []`. A mode can delegate only when its compiled
 policy has `SpawnSubtask` and the requested child target passes task-pinned
 handoff validation, including the `$modepack/*` same-pack selector contract
-from MP-3.2A. Non-dispatch modes such as `user-response-composer` remain unable
-to create children even if they mention or emit `new_task`.
+from MP-3.2A. Non-dispatch modes, including current v2 Core roles such as
+`core.orchestrator`, `core.reviewer`, and `core.reporter`, remain unable to
+create children even if they mention or emit `new_task`.
 
 Runtime evidence remains bounded and summary-only. Brownie must not persist raw
 provider output, raw `new_task` arguments, or the full child message beyond

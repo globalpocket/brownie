@@ -12,20 +12,23 @@ use sha2::{Digest, Sha256};
 
 pub const COMPATIBILITY_TARGET: &str = "AgentModes";
 pub const DEFAULT_MODE_ID: &str = "orchestrator";
+pub const AGENTMODES_V2_DEFAULT_ROLE_ID: &str = "core.orchestrator";
 pub const AGENTMODES_MODEPACK_SCHEMA_VERSION: u64 = 1;
 pub const HANDOFF_TARGET_ALL_MODEPACK_MODES: &str = "$modepack/*";
 pub const CURRENT_AGENTMODES_COMPATIBILITY_BASELINE: AgentModesCompatibilityBaseline =
     AgentModesCompatibilityBaseline {
         repository: "globalpocket/AgentModes",
-        revision: "39c7391cf6e711f0a21b14c21bdf557cd12d701e",
+        revision: "c48df6c6975b3597b97e75abbbd84bc9ab314ab9",
         root_env: "BROWNIE_AGENTMODES_COMPAT_ROOT",
         required_env: "BROWNIE_AGENTMODES_COMPAT_REQUIRED",
-        expected_mode_file_count: 28,
-        expected_compiled_mode_count: 86,
-        expected_rule_count: 1,
-        expected_skill_count: 7,
-        expected_command_count: 5,
-        expected_contract_count: 13,
+        expected_mode_file_count: 3,
+        expected_compiled_mode_count: 3,
+        expected_rule_count: 0,
+        expected_skill_count: 0,
+        expected_command_count: 0,
+        expected_contract_count: 0,
+        expected_schema_count: 5,
+        expected_runtime_policy_count: 6,
     };
 const MAX_MODE_ID_CHARS: usize = 64;
 const MAX_MODE_TEXT_CHARS: usize = 32_000;
@@ -45,6 +48,8 @@ pub struct AgentModesCompatibilityBaseline {
     pub expected_skill_count: usize,
     pub expected_command_count: usize,
     pub expected_contract_count: usize,
+    pub expected_schema_count: usize,
+    pub expected_runtime_policy_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -100,6 +105,10 @@ pub struct ModePermissions {
     pub read_only: bool,
     pub workspace_write: bool,
     pub process_exec: bool,
+    #[serde(default)]
+    pub git_inspect: bool,
+    #[serde(default)]
+    pub git_commit: bool,
     pub network_access: bool,
     pub service_control: bool,
     pub destructive: bool,
@@ -129,6 +138,8 @@ pub enum RuntimeAction {
     SpawnSubtask,
     IndexCodebase,
     UseMcpTool,
+    UseGitInspectCapability,
+    UseGitCommitCapability,
     UseGitCapability,
 }
 
@@ -224,6 +235,38 @@ struct RawAgentMode {
     custom_instructions: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct RawAgentModesV2Role {
+    id: String,
+    version: String,
+    kind: String,
+    scope: String,
+    invocation_mode: String,
+    permissions: RawAgentModesV2Permissions,
+    required_inputs: Vec<String>,
+    required_outputs: Vec<String>,
+    status_values: Vec<String>,
+    behavior_objective: String,
+    prohibited_actions: Vec<String>,
+    quality_gates: Vec<YamlValue>,
+    #[serde(default)]
+    output_schema: Option<YamlValue>,
+    #[serde(default)]
+    runtime_contract: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawAgentModesV2Permissions {
+    read: bool,
+    edit: bool,
+    command: bool,
+    git: bool,
+    network: bool,
+    mcp: bool,
+    phase_write: bool,
+    dispatch: bool,
+}
+
 pub struct RuntimePermissionGate;
 
 impl RuntimePermissionGate {
@@ -238,7 +281,11 @@ impl RuntimePermissionGate {
             RuntimeAction::SpawnSubtask => policy.permissions.can_spawn_subtasks,
             RuntimeAction::IndexCodebase => policy.permissions.codebase_index,
             RuntimeAction::UseMcpTool => policy.permissions.mcp_tool_access,
-            RuntimeAction::UseGitCapability => policy.permissions.process_exec,
+            RuntimeAction::UseGitInspectCapability => policy.permissions.git_inspect,
+            RuntimeAction::UseGitCommitCapability => policy.permissions.git_commit,
+            RuntimeAction::UseGitCapability => {
+                policy.permissions.git_inspect || policy.permissions.git_commit
+            }
         };
         let reason = permission_reason(policy, &action, allowed);
         PermissionDecision {
@@ -327,7 +374,9 @@ fn permission_reason(policy: &CompiledModePolicy, action: &RuntimeAction, allowe
         RuntimeAction::SpawnSubtask => "subtask spawning",
         RuntimeAction::IndexCodebase => "codebase indexing",
         RuntimeAction::UseMcpTool => "MCP tool execution",
-        RuntimeAction::UseGitCapability => "Git capability execution",
+        RuntimeAction::UseGitInspectCapability => "Git inspection capability execution",
+        RuntimeAction::UseGitCommitCapability => "Git commit capability execution",
+        RuntimeAction::UseGitCapability => "legacy Git capability execution",
     };
     if allowed {
         format!("Mode {} allows {capability}.", policy.mode_id)
@@ -375,6 +424,9 @@ pub fn compile_agentmodes_modepack_from_root(
     }
     let root = root.as_ref();
     options.global_policy_artifacts = compile_agentmodes_policy_artifacts_from_root(root)?;
+    if root.join("core").is_dir() {
+        return compile_agentmodes_v2_core_modepack_from_root(root, options);
+    }
     let documents = collect_agentmodes_mode_yaml_documents_from_root(root)?;
     let document_refs = documents.iter().map(String::as_str).collect::<Vec<_>>();
     compile_agentmodes_modepack_from_yaml_documents(document_refs, options)
@@ -389,6 +441,13 @@ pub fn compile_agentmodes_policy_artifacts_from_root(
     collect_recursive_skill_policy_artifact_files(root, &mut files)?;
     collect_direct_markdown_policy_artifact_files(root, "command", "commands", &mut files)?;
     collect_direct_markdown_policy_artifact_files(root, "contract", "docs/contracts", &mut files)?;
+    collect_direct_yaml_policy_artifact_files(root, "schema", "schemas", &mut files)?;
+    collect_direct_yaml_policy_artifact_files(
+        root,
+        "runtime_policy",
+        "runtime-policies/brownie",
+        &mut files,
+    )?;
     files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     if files.len() > MAX_POLICY_ARTIFACTS {
         bail!("AgentModes policy artifact count exceeds limit");
@@ -535,6 +594,333 @@ fn compile_agentmodes_document(
     })
 }
 
+fn compile_agentmodes_v2_core_modepack_from_root(
+    root: &Path,
+    options: AgentModesCompileOptions,
+) -> Result<AgentModesModePack> {
+    if !options.delegation_coordinators.is_empty() {
+        bail!("AgentModes v2 roles do not accept delegation_coordinators");
+    }
+    let raw_roles = collect_agentmodes_v2_role_yaml_documents_from_root(root)?;
+    compile_agentmodes_v2_roles(raw_roles, options)
+}
+
+fn collect_agentmodes_v2_role_yaml_documents_from_root(
+    root: &Path,
+) -> Result<Vec<RawAgentModesV2Role>> {
+    let dir = root.join("core");
+    ensure_policy_artifact_directory_safe(&dir, "core")?;
+    let mut paths = Vec::new();
+    collect_direct_yaml_paths(&dir, "AgentModes v2 core role", &mut paths)?;
+    if paths.is_empty() {
+        bail!("AgentModes v2 core must contain at least one role YAML");
+    }
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| {
+            let content = fs::read_to_string(&path).with_context(|| {
+                format!("failed to read AgentModes v2 role file {}", path.display())
+            })?;
+            serde_yaml::from_str(&content).with_context(|| {
+                format!("failed to parse AgentModes v2 role file {}", path.display())
+            })
+        })
+        .collect()
+}
+
+fn compile_agentmodes_v2_roles(
+    raw_roles: Vec<RawAgentModesV2Role>,
+    options: AgentModesCompileOptions,
+) -> Result<AgentModesModePack> {
+    if raw_roles.is_empty() {
+        bail!("AgentModes v2 core must contain at least one role");
+    }
+    let name = non_empty_agentmodes_field(
+        "modepack_name",
+        options
+            .modepack_name
+            .unwrap_or_else(|| "agentmodes-v2-core".to_string()),
+    )?;
+    let mut seen = HashSet::new();
+    let mut compiled_modes = Vec::with_capacity(raw_roles.len());
+    for raw_role in raw_roles {
+        let mode =
+            compile_agentmodes_v2_role(raw_role, options.source_trust, options.capability_ceiling)?;
+        if !seen.insert(mode.mode_id.clone()) {
+            bail!("duplicate AgentModes v2 role id: {}", mode.mode_id);
+        }
+        compiled_modes.push(mode);
+    }
+
+    let default = resolve_agentmodes_default_entrypoint_with_fallback(
+        options.default_entrypoint,
+        &seen,
+        AGENTMODES_V2_DEFAULT_ROLE_ID,
+    )?;
+    let global_policy_artifacts =
+        validate_agentmodes_policy_artifacts(options.global_policy_artifacts)?;
+
+    Ok(AgentModesModePack {
+        name,
+        schema_version: AGENTMODES_MODEPACK_SCHEMA_VERSION,
+        entrypoints: AgentModesEntrypoints { default },
+        global_policy_artifacts,
+        modes: compiled_modes,
+    })
+}
+
+fn compile_agentmodes_v2_role(
+    raw_role: RawAgentModesV2Role,
+    source_trust: AgentModesSourceTrust,
+    capability_ceiling: AgentModesCapabilityCeiling,
+) -> Result<CompiledModePolicy> {
+    let mode_id = validate_agentmodes_mode_id("AgentModes v2 role id", raw_role.id)?;
+    let version = bounded_agentmodes_field("AgentModes v2 role version", raw_role.version)?;
+    let kind = non_empty_agentmodes_field("AgentModes v2 role kind", raw_role.kind)?;
+    if kind != "role" {
+        bail!("AgentModes v2 role {mode_id} has unsupported kind: {kind}");
+    }
+    let invocation_mode =
+        validate_agentmodes_v2_invocation_mode(&mode_id, raw_role.invocation_mode)?;
+    let scope = bounded_agentmodes_field("AgentModes v2 role scope", raw_role.scope)?;
+    let behavior_objective = bounded_agentmodes_field(
+        "AgentModes v2 role behavior_objective",
+        raw_role.behavior_objective,
+    )?;
+    let required_inputs =
+        validate_agentmodes_v2_string_list(&mode_id, "required_inputs", raw_role.required_inputs)?;
+    let required_outputs = validate_agentmodes_v2_string_list(
+        &mode_id,
+        "required_outputs",
+        raw_role.required_outputs,
+    )?;
+    let status_values =
+        validate_agentmodes_v2_string_list(&mode_id, "status_values", raw_role.status_values)?;
+    let prohibited_actions = validate_agentmodes_v2_string_list(
+        &mode_id,
+        "prohibited_actions",
+        raw_role.prohibited_actions,
+    )?;
+    let runtime_contract = raw_role
+        .runtime_contract
+        .into_iter()
+        .map(|value| bounded_agentmodes_field("AgentModes v2 role runtime_contract[]", value))
+        .collect::<Result<Vec<_>>>()?;
+    let quality_gates = raw_role.quality_gates;
+    if quality_gates.is_empty() {
+        bail!("AgentModes v2 role {mode_id} must declare quality_gates");
+    }
+    let prompt_sections = compile_agentmodes_v2_prompt_sections(
+        &required_inputs,
+        &required_outputs,
+        &status_values,
+        &prohibited_actions,
+        &quality_gates,
+        raw_role.output_schema.as_ref(),
+        &runtime_contract,
+    )?;
+    let permissions = permissions_from_agentmodes_v2_permissions(
+        &mode_id,
+        &raw_role.permissions,
+        source_trust,
+        capability_ceiling,
+    )?;
+    let role_definition = bounded_agentmodes_field(
+        "AgentModes v2 role compiled role_definition",
+        format!("Scope: {scope}\n\nBehavior objective: {behavior_objective}"),
+    )?;
+    let description = Some(bounded_agentmodes_field(
+        "AgentModes v2 role description",
+        format!("AgentModes v2 role contract {version} ({invocation_mode})."),
+    )?);
+    let verification_responsibility = None;
+    let completion_rules = vec![
+        "Return one structured AgentModes v2 role result; do not dispatch, advance phases, mutate Runtime state, or continue the loop."
+            .to_string(),
+    ];
+    let instruction_fingerprint = Some(mode_instruction_fingerprint(
+        &role_definition,
+        None,
+        description.as_deref(),
+        &prompt_sections,
+        &completion_rules,
+        verification_responsibility.as_deref(),
+        &[],
+    ));
+
+    Ok(CompiledModePolicy {
+        mode_id: mode_id.clone(),
+        display_name: display_name_from_agentmodes_v2_role_id(&mode_id),
+        role_definition,
+        when_to_use: None,
+        description,
+        prompt_sections,
+        verification_responsibility,
+        instruction_fingerprint,
+        permissions,
+        workspace_write_scopes: vec![],
+        allowed_handoff_targets: None,
+        mcp_access: vec![],
+        completion_rules,
+    })
+}
+
+fn validate_agentmodes_v2_invocation_mode(mode_id: &str, value: String) -> Result<String> {
+    let value = non_empty_agentmodes_field("AgentModes v2 role invocation_mode", value)?;
+    match value.as_str() {
+        "single_pass"
+        | "single_pass_read_only"
+        | "single_pass_mutation"
+        | "single_pass_verification"
+        | "single_pass_reporting" => Ok(value),
+        other => bail!("AgentModes v2 role {mode_id} has unsupported invocation_mode: {other}"),
+    }
+}
+
+fn validate_agentmodes_v2_string_list(
+    mode_id: &str,
+    field: &str,
+    values: Vec<String>,
+) -> Result<Vec<String>> {
+    if values.is_empty() {
+        bail!("AgentModes v2 role {mode_id} must declare {field}");
+    }
+    values
+        .into_iter()
+        .map(|value| bounded_agentmodes_field(&format!("AgentModes v2 role {field}[]"), value))
+        .collect()
+}
+
+fn compile_agentmodes_v2_prompt_sections(
+    required_inputs: &[String],
+    required_outputs: &[String],
+    status_values: &[String],
+    prohibited_actions: &[String],
+    quality_gates: &[YamlValue],
+    output_schema: Option<&YamlValue>,
+    runtime_contract: &[String],
+) -> Result<Vec<CompiledPromptSection>> {
+    let mut sections = Vec::new();
+    push_agentmodes_v2_prompt_section(
+        &mut sections,
+        "required_inputs",
+        "AgentModes.v2.required_inputs",
+        required_inputs,
+    )?;
+    push_agentmodes_v2_prompt_section(
+        &mut sections,
+        "required_outputs",
+        "AgentModes.v2.required_outputs",
+        required_outputs,
+    )?;
+    push_agentmodes_v2_prompt_section(
+        &mut sections,
+        "status_values",
+        "AgentModes.v2.status_values",
+        status_values,
+    )?;
+    push_agentmodes_v2_prompt_section(
+        &mut sections,
+        "prohibited_actions",
+        "AgentModes.v2.prohibited_actions",
+        prohibited_actions,
+    )?;
+    push_agentmodes_v2_prompt_section(
+        &mut sections,
+        "quality_gates",
+        "AgentModes.v2.quality_gates",
+        quality_gates,
+    )?;
+    if let Some(output_schema) = output_schema {
+        push_agentmodes_v2_prompt_section(
+            &mut sections,
+            "output_schema",
+            "AgentModes.v2.output_schema",
+            output_schema,
+        )?;
+    }
+    if !runtime_contract.is_empty() {
+        push_agentmodes_v2_prompt_section(
+            &mut sections,
+            "runtime_contract",
+            "AgentModes.v2.runtime_contract",
+            runtime_contract,
+        )?;
+    }
+    Ok(sections)
+}
+
+fn push_agentmodes_v2_prompt_section<T: Serialize + ?Sized>(
+    sections: &mut Vec<CompiledPromptSection>,
+    title: &str,
+    source: &str,
+    value: &T,
+) -> Result<()> {
+    let content =
+        serde_yaml::to_string(value).context("failed to serialize AgentModes v2 prompt section")?;
+    let content = bounded_agentmodes_field("AgentModes v2 prompt section", content)?;
+    sections.push(CompiledPromptSection {
+        title: title.to_string(),
+        content_fingerprint: sha256_fingerprint(content.as_bytes()),
+        content,
+        source: source.to_string(),
+    });
+    Ok(())
+}
+
+fn permissions_from_agentmodes_v2_permissions(
+    mode_id: &str,
+    declared: &RawAgentModesV2Permissions,
+    source_trust: AgentModesSourceTrust,
+    capability_ceiling: AgentModesCapabilityCeiling,
+) -> Result<ModePermissions> {
+    if declared.phase_write {
+        bail!("AgentModes v2 role {mode_id} must not declare phase_write authority");
+    }
+    if declared.dispatch {
+        bail!("AgentModes v2 role {mode_id} must not declare dispatch authority");
+    }
+    let _declares_runtime_owned_or_reserved_authority =
+        declared.git || declared.network || declared.mcp;
+    let workspace_write = declared.edit && capability_ceiling.workspace_write;
+    let process_exec = declared.command
+        && capability_ceiling.process_exec
+        && source_trust_allows_process_exec(source_trust);
+    Ok(ModePermissions {
+        read_only: !(workspace_write || process_exec),
+        workspace_write,
+        process_exec,
+        git_inspect: false,
+        git_commit: false,
+        network_access: false,
+        service_control: false,
+        destructive: false,
+        can_spawn_subtasks: false,
+        codebase_index: declared.read,
+        mcp_tool_access: false,
+    })
+}
+
+fn display_name_from_agentmodes_v2_role_id(mode_id: &str) -> String {
+    mode_id
+        .split(['.', '-', '_'])
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => format!(
+                    "{}{}",
+                    first.to_ascii_uppercase(),
+                    chars.as_str().to_ascii_lowercase()
+                ),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn collect_direct_markdown_policy_artifact_files(
     root: &Path,
     category: &str,
@@ -569,6 +955,52 @@ fn collect_direct_markdown_policy_artifact_files(
     paths.sort();
     for path in paths {
         push_policy_artifact(root, category, &path, artifacts)?;
+    }
+    Ok(())
+}
+
+fn collect_direct_yaml_policy_artifact_files(
+    root: &Path,
+    category: &str,
+    directory: &str,
+    artifacts: &mut Vec<CompiledPolicyArtifact>,
+) -> Result<()> {
+    let dir = root.join(directory);
+    if !dir.exists() {
+        return Ok(());
+    }
+    ensure_policy_artifact_directory_safe(&dir, directory)?;
+    let mut paths = Vec::new();
+    collect_direct_yaml_paths(&dir, "AgentModes policy artifact", &mut paths)?;
+    paths.sort();
+    for path in paths {
+        push_policy_artifact(root, category, &path, artifacts)?;
+    }
+    Ok(())
+}
+
+fn collect_direct_yaml_paths(
+    dir: &Path,
+    label: &str,
+    paths: &mut Vec<std::path::PathBuf>,
+) -> Result<()> {
+    for entry in fs::read_dir(dir).with_context(|| format!("failed to read {label} directory"))? {
+        let path = entry
+            .with_context(|| format!("failed to read {label} directory"))?
+            .path();
+        let metadata = fs::symlink_metadata(&path)
+            .with_context(|| format!("failed to inspect {label} path {}", path.display()))?;
+        if metadata.file_type().is_symlink() {
+            bail!("{label} path must not be a symlink");
+        }
+        if metadata.is_file()
+            && matches!(
+                path.extension().and_then(|value| value.to_str()),
+                Some("yaml" | "yml")
+            )
+        {
+            paths.push(path);
+        }
     }
     Ok(())
 }
@@ -738,7 +1170,7 @@ fn validate_agentmodes_policy_artifacts(
 fn validate_policy_artifact_category(category: String) -> Result<String> {
     let category = non_empty_agentmodes_field("policy_artifacts[].category", category)?;
     match category.as_str() {
-        "rule" | "skill" | "command" | "contract" => Ok(category),
+        "rule" | "skill" | "command" | "contract" | "schema" | "runtime_policy" => Ok(category),
         other => bail!("AgentModes policy artifact category is unsupported: {other}"),
     }
 }
@@ -756,8 +1188,8 @@ fn validate_policy_artifact_relative_path(field: &str, value: String) -> Result<
     {
         bail!("AgentModes {field} must be a normalized relative path");
     }
-    if !value.ends_with(".md") {
-        bail!("AgentModes {field} must reference a markdown policy artifact");
+    if !(value.ends_with(".md") || value.ends_with(".yaml") || value.ends_with(".yml")) {
+        bail!("AgentModes {field} must reference a markdown or YAML policy artifact");
     }
     Ok(value)
 }
@@ -876,6 +1308,8 @@ fn permissions_from_agentmodes_groups(
         read_only: !workspace_write && !process_exec,
         workspace_write,
         process_exec,
+        git_inspect: false,
+        git_commit: false,
         network_access: false,
         service_control: false,
         destructive: false,
@@ -983,6 +1417,14 @@ fn resolve_agentmodes_default_entrypoint(
     requested: Option<String>,
     mode_ids: &HashSet<String>,
 ) -> Result<Option<String>> {
+    resolve_agentmodes_default_entrypoint_with_fallback(requested, mode_ids, DEFAULT_MODE_ID)
+}
+
+fn resolve_agentmodes_default_entrypoint_with_fallback(
+    requested: Option<String>,
+    mode_ids: &HashSet<String>,
+    default_mode_id: &str,
+) -> Result<Option<String>> {
     if let Some(requested) = requested {
         let requested = validate_agentmodes_mode_id("default_entrypoint", requested)?;
         if !mode_ids.contains(&requested) {
@@ -990,8 +1432,8 @@ fn resolve_agentmodes_default_entrypoint(
         }
         return Ok(Some(requested));
     }
-    if mode_ids.contains(DEFAULT_MODE_ID) {
-        Ok(Some(DEFAULT_MODE_ID.to_string()))
+    if mode_ids.contains(default_mode_id) {
+        Ok(Some(default_mode_id.to_string()))
     } else {
         Ok(None)
     }
@@ -1067,11 +1509,15 @@ fn permissions(
     process_exec: bool,
     can_spawn_subtasks: bool,
     codebase_index: bool,
+    git_inspect: bool,
+    git_commit: bool,
 ) -> ModePermissions {
     ModePermissions {
         read_only: !workspace_write,
         workspace_write,
         process_exec,
+        git_inspect,
+        git_commit,
         network_access: false,
         service_control: false,
         destructive: false,
@@ -1093,7 +1539,7 @@ fn orchestrator() -> CompiledModePolicy {
         prompt_sections: vec![],
         verification_responsibility: None,
         instruction_fingerprint: None,
-        permissions: permissions(false, false, true, true),
+        permissions: permissions(false, false, true, true, false, false),
         workspace_write_scopes: vec![],
         allowed_handoff_targets: None,
         mcp_access: vec![],
@@ -1113,7 +1559,7 @@ fn implementer() -> CompiledModePolicy {
         prompt_sections: vec![],
         verification_responsibility: None,
         instruction_fingerprint: None,
-        permissions: permissions(true, true, false, true),
+        permissions: permissions(true, true, false, true, true, true),
         workspace_write_scopes: vec![],
         allowed_handoff_targets: None,
         mcp_access: vec![],
@@ -1135,7 +1581,7 @@ fn verifier() -> CompiledModePolicy {
         prompt_sections: vec![],
         verification_responsibility: None,
         instruction_fingerprint: None,
-        permissions: permissions(false, true, false, false),
+        permissions: permissions(false, true, false, false, true, false),
         workspace_write_scopes: vec![],
         allowed_handoff_targets: None,
         mcp_access: vec![],
@@ -1161,6 +1607,8 @@ fn provider_runner() -> CompiledModePolicy {
             read_only: true,
             workspace_write: false,
             process_exec: false,
+            git_inspect: false,
+            git_commit: false,
             network_access: true,
             service_control: false,
             destructive: false,
@@ -1227,16 +1675,38 @@ mod tests {
         );
         assert!(RuntimePermissionGate::check(&orchestrator, RuntimeAction::SpawnSubtask).allowed);
         assert!(RuntimePermissionGate::check(&orchestrator, RuntimeAction::IndexCodebase).allowed);
+        assert!(
+            !RuntimePermissionGate::check(&orchestrator, RuntimeAction::UseGitInspectCapability)
+                .allowed
+        );
+        assert!(
+            !RuntimePermissionGate::check(&orchestrator, RuntimeAction::UseGitCommitCapability)
+                .allowed
+        );
 
         let implementer = BuiltinModeRegistry::get("implementer").expect("implementer");
         assert!(RuntimePermissionGate::check(&implementer, RuntimeAction::WriteWorkspace).allowed);
         assert!(RuntimePermissionGate::check(&implementer, RuntimeAction::ExecuteProcess).allowed);
         assert!(RuntimePermissionGate::check(&implementer, RuntimeAction::IndexCodebase).allowed);
+        assert!(
+            RuntimePermissionGate::check(&implementer, RuntimeAction::UseGitInspectCapability)
+                .allowed
+        );
+        assert!(
+            RuntimePermissionGate::check(&implementer, RuntimeAction::UseGitCommitCapability)
+                .allowed
+        );
 
         let verifier = BuiltinModeRegistry::get("verifier").expect("verifier");
         assert!(!RuntimePermissionGate::check(&verifier, RuntimeAction::WriteWorkspace).allowed);
         assert!(RuntimePermissionGate::check(&verifier, RuntimeAction::ExecuteProcess).allowed);
         assert!(!RuntimePermissionGate::check(&verifier, RuntimeAction::IndexCodebase).allowed);
+        assert!(
+            RuntimePermissionGate::check(&verifier, RuntimeAction::UseGitInspectCapability).allowed
+        );
+        assert!(
+            !RuntimePermissionGate::check(&verifier, RuntimeAction::UseGitCommitCapability).allowed
+        );
 
         let provider_runner = BuiltinModeRegistry::get("provider-runner").expect("provider-runner");
         assert!(
@@ -1247,6 +1717,14 @@ mod tests {
         );
         assert!(
             !RuntimePermissionGate::check(&provider_runner, RuntimeAction::ExecuteProcess).allowed
+        );
+        assert!(
+            !RuntimePermissionGate::check(&provider_runner, RuntimeAction::UseGitInspectCapability)
+                .allowed
+        );
+        assert!(
+            !RuntimePermissionGate::check(&provider_runner, RuntimeAction::UseGitCommitCapability)
+                .allowed
         );
     }
 
@@ -1265,6 +1743,8 @@ mod tests {
                 read_only: false,
                 workspace_write: true,
                 process_exec: false,
+                git_inspect: false,
+                git_commit: false,
                 network_access: false,
                 service_control: false,
                 destructive: false,
@@ -1295,6 +1775,8 @@ mod tests {
                 read_only: false,
                 workspace_write: false,
                 process_exec: true,
+                git_inspect: true,
+                git_commit: false,
                 network_access: false,
                 service_control: false,
                 destructive: false,
@@ -1311,6 +1793,12 @@ mod tests {
         };
         assert!(!RuntimePermissionGate::check(&tester, RuntimeAction::WriteWorkspace).allowed);
         assert!(RuntimePermissionGate::check(&tester, RuntimeAction::ExecuteProcess).allowed);
+        assert!(
+            RuntimePermissionGate::check(&tester, RuntimeAction::UseGitInspectCapability).allowed
+        );
+        assert!(
+            !RuntimePermissionGate::check(&tester, RuntimeAction::UseGitCommitCapability).allowed
+        );
     }
 
     fn representative_agentmodes_yaml() -> &'static str {
@@ -1918,7 +2406,7 @@ customModes:
         }
 
         let root = std::path::PathBuf::from("/Users/satoshitanaka/Documents/AgentModes");
-        if !root.join("modes").is_dir()
+        if !root.join("core").is_dir()
             || current_agentmodes_revision(&root).as_deref() != Some(baseline.revision)
         {
             return None;
@@ -1930,7 +2418,7 @@ customModes:
     fn assert_current_agentmodes_root_for_test(root: &std::path::Path) {
         let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
         assert!(
-            root.join("modes").is_dir(),
+            root.join("core").is_dir(),
             "{} must point to a checked-out {} repository",
             baseline.root_env,
             baseline.repository
@@ -1941,8 +2429,13 @@ customModes:
             "AgentModes compatibility baseline revision drifted"
         );
         assert!(
-            root.join("skills/tdd-quality-gate/SKILL.md").is_file(),
-            "AgentModes compatibility baseline must include recursive SKILL.md artifacts"
+            root.join("core/orchestrator.yaml").is_file(),
+            "AgentModes compatibility baseline must include v2 Core role artifacts"
+        );
+        assert!(
+            root.join("runtime-policies/brownie/loop-policy.yaml")
+                .is_file(),
+            "AgentModes compatibility baseline must include Brownie runtime policies"
         );
     }
 
@@ -1961,7 +2454,7 @@ customModes:
     fn prepare_current_agentmodes_checkout_for_test(root: &std::path::Path) {
         let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
         if current_agentmodes_revision(root).as_deref() == Some(baseline.revision)
-            && root.join("skills/tdd-quality-gate/SKILL.md").is_file()
+            && root.join("core/orchestrator.yaml").is_file()
         {
             return;
         }
@@ -2033,8 +2526,8 @@ customModes:
     }
 
     fn current_agentmodes_mode_file_count(root: &std::path::Path) -> usize {
-        std::fs::read_dir(root.join("modes"))
-            .expect("read AgentModes modes")
+        std::fs::read_dir(root.join("core"))
+            .expect("read AgentModes core roles")
             .filter_map(|entry| entry.ok())
             .filter(|entry| {
                 entry.path().extension().and_then(|value| value.to_str()) == Some("yaml")
@@ -2048,16 +2541,18 @@ customModes:
         assert_eq!(baseline.repository, "globalpocket/AgentModes");
         assert_eq!(
             baseline.revision,
-            "39c7391cf6e711f0a21b14c21bdf557cd12d701e"
+            "c48df6c6975b3597b97e75abbbd84bc9ab314ab9"
         );
         assert_eq!(baseline.root_env, "BROWNIE_AGENTMODES_COMPAT_ROOT");
         assert_eq!(baseline.required_env, "BROWNIE_AGENTMODES_COMPAT_REQUIRED");
-        assert_eq!(baseline.expected_mode_file_count, 28);
-        assert_eq!(baseline.expected_compiled_mode_count, 86);
-        assert_eq!(baseline.expected_rule_count, 1);
-        assert_eq!(baseline.expected_skill_count, 7);
-        assert_eq!(baseline.expected_command_count, 5);
-        assert_eq!(baseline.expected_contract_count, 13);
+        assert_eq!(baseline.expected_mode_file_count, 3);
+        assert_eq!(baseline.expected_compiled_mode_count, 3);
+        assert_eq!(baseline.expected_rule_count, 0);
+        assert_eq!(baseline.expected_skill_count, 0);
+        assert_eq!(baseline.expected_command_count, 0);
+        assert_eq!(baseline.expected_contract_count, 0);
+        assert_eq!(baseline.expected_schema_count, 5);
+        assert_eq!(baseline.expected_runtime_policy_count, 6);
     }
 
     #[test]
@@ -2087,19 +2582,20 @@ customModes:
             policy_artifact_category_count(&artifacts, "contract"),
             baseline.expected_contract_count
         );
+        assert_eq!(
+            policy_artifact_category_count(&artifacts, "schema"),
+            baseline.expected_schema_count
+        );
+        assert_eq!(
+            policy_artifact_category_count(&artifacts, "runtime_policy"),
+            baseline.expected_runtime_policy_count
+        );
         assert!(artifacts.iter().any(|artifact| artifact.relative_path
-            == "rules/00-agentmodes-compact-mode-contract.md"
-            && artifact.category == "rule"));
-        assert!(artifacts
-            .iter()
-            .any(|artifact| artifact.relative_path == "commands/analysis.md"
-                && artifact.category == "command"));
+            == "schemas/role.schema.yaml"
+            && artifact.category == "schema"));
         assert!(artifacts.iter().any(|artifact| artifact.relative_path
-            == "skills/tdd-quality-gate/SKILL.md"
-            && artifact.category == "skill"));
-        assert!(artifacts.iter().any(|artifact| artifact.relative_path
-            == "docs/contracts/task-packet-v1.md"
-            && artifact.category == "contract"));
+            == "runtime-policies/brownie/loop-policy.yaml"
+            && artifact.category == "runtime_policy"));
         assert!(artifacts.iter().all(|artifact| {
             !artifact.relative_path.starts_with('/')
                 && !artifact.relative_path.contains("..")
@@ -2127,11 +2623,6 @@ customModes:
             &root,
             AgentModesCompileOptions {
                 modepack_name: Some("current-agentmodes".to_string()),
-                delegation_coordinators: vec![
-                    "orchestrator".to_string(),
-                    "workflow-orchestrator".to_string(),
-                    "epoch-orchestrator".to_string(),
-                ],
                 ..AgentModesCompileOptions::default()
             },
         )
@@ -2154,22 +2645,36 @@ customModes:
             policy_artifact_category_count(&modepack.global_policy_artifacts, "contract"),
             baseline.expected_contract_count
         );
+        assert_eq!(
+            policy_artifact_category_count(&modepack.global_policy_artifacts, "schema"),
+            baseline.expected_schema_count
+        );
+        assert_eq!(
+            policy_artifact_category_count(&modepack.global_policy_artifacts, "runtime_policy"),
+            baseline.expected_runtime_policy_count
+        );
+        assert_eq!(
+            modepack.entrypoints.default.as_deref(),
+            Some(AGENTMODES_V2_DEFAULT_ROLE_ID)
+        );
         let orchestrator = modepack
             .modes
             .iter()
-            .find(|mode| mode.mode_id == "orchestrator")
+            .find(|mode| mode.mode_id == AGENTMODES_V2_DEFAULT_ROLE_ID)
             .expect("orchestrator");
-        assert!(RuntimePermissionGate::check(orchestrator, RuntimeAction::SpawnSubtask).allowed);
-        assert_eq!(
-            orchestrator.allowed_handoff_targets,
-            Some(vec![HANDOFF_TARGET_ALL_MODEPACK_MODES.to_string()])
-        );
-        let composer = modepack
+        assert!(!RuntimePermissionGate::check(orchestrator, RuntimeAction::SpawnSubtask).allowed);
+        assert!(!RuntimePermissionGate::check(orchestrator, RuntimeAction::WriteWorkspace).allowed);
+        assert_eq!(orchestrator.allowed_handoff_targets, None);
+        assert!(orchestrator
+            .prompt_sections
+            .iter()
+            .any(|section| section.source == "AgentModes.v2.output_schema"));
+        let reviewer = modepack
             .modes
             .iter()
-            .find(|mode| mode.mode_id == "user-response-composer")
-            .expect("user response composer");
-        assert!(!RuntimePermissionGate::check(composer, RuntimeAction::SpawnSubtask).allowed);
-        assert_eq!(composer.allowed_handoff_targets, None);
+            .find(|mode| mode.mode_id == "core.reviewer")
+            .expect("reviewer");
+        assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::SpawnSubtask).allowed);
+        assert_eq!(reviewer.allowed_handoff_targets, None);
     }
 }

@@ -4966,6 +4966,8 @@ pub(super) fn mode_permissions_payload(policy: &CompiledModePolicy) -> Value {
         "read_only": policy.permissions.read_only,
         "workspace_write": policy.permissions.workspace_write,
         "process_exec": policy.permissions.process_exec,
+        "git_inspect": policy.permissions.git_inspect,
+        "git_commit": policy.permissions.git_commit,
         "network_access": policy.permissions.network_access,
         "service_control": policy.permissions.service_control,
         "destructive": policy.permissions.destructive,
