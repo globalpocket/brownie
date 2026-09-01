@@ -63,7 +63,7 @@ allow-lists. The shape is:
   "mcp_servers": {
     "github": {
       "transport": "stdio",
-      "command": "...",
+      "command": "/absolute/path/to/server",
       "args": ["..."]
     }
   },
@@ -111,6 +111,37 @@ already admitted task. If another Mode Pack is later activated, the task still
 resolves MCP configuration from its pinned activation snapshot. If that private
 snapshot is missing or does not contain the pinned server/tool authority, MCP
 execution fails closed; it never falls back to a different activation.
+
+## Stdio Launch Contract
+
+The v0 MCP transport is stdio only and launch is request-scoped. Brownie Runtime
+launches only the structured command from the task-pinned trusted Mode Pack
+activation snapshot. The `command` value must be an absolute path; relative
+commands and PATH lookup are rejected. Arguments are fixed by the structured
+server configuration and are not supplied by provider output or MCP server
+text.
+
+The child process starts with a cleared inherited environment plus only
+runtime-selected deterministic values required for the protocol boundary.
+Ambient Brownie Runtime environment variables, secrets, credentials, user shell
+state, and workspace-specific values are not inherited. The child also starts in
+a neutral runtime-selected cwd, not the admitted workspace. Servers that depend
+on relative executable names, relative path arguments interpreted against the
+workspace, or workspace-cwd inheritance are intentionally outside the v0
+contract unless the trusted Mode Pack supplies an absolute executable and
+explicit absolute or self-contained arguments.
+
+The "trusted executable" boundary in v0 means a trusted signed/local Mode Pack
+activation names an absolute executable path that Runtime may launch under the
+bounded stdio contract. Brownie v0 does not add executable canonicalization,
+hash allow-listing, signing verification, or binary provenance validation for
+the executable itself.
+
+Each `tools/list` or `tools/call` request owns its MCP child lifecycle. Runtime
+uses null stdin after the JSON-RPC request stream, bounded response reads,
+hard timeouts, process-tree termination where supported, child reaping, and
+reader cleanup. Timeout, protocol failure, EOF, malformed response, and oversize
+response paths fail closed and must not leave a live child process tree behind.
 
 ## Task-Pinned Provenance
 

@@ -15,8 +15,11 @@ Phase 1.4 introduces the runtime permission gate foundation. The gate is a runti
 - `SpawnSubtask` — controlled by `can_spawn_subtasks`.
 - `IndexCodebase` — controlled by `codebase_index`.
 - `UseMcpTool` — controlled by `mcp_tool_access` plus structured MCP allow-list provenance.
-- `UseGitCapability` — controlled by `process_exec` in the compiled mode
-  policy, but exposed only through runtime-owned bounded Git capabilities.
+- `UseGitInspectCapability` — controlled by `git_inspect`.
+- `UseGitCommitCapability` — controlled by `git_commit`.
+- `UseGitCapability` — legacy aggregate compatibility action for older
+  summaries only; current controlled Git tools require the inspect or commit
+  action above and never derive either action from `process_exec`.
 
 The `read_only` field is informational for summaries. Individual capabilities are authoritative for gate decisions. Prompt text, role definitions, and completion rules cannot grant permissions that are not present in the compiled mode policy.
 
@@ -41,28 +44,36 @@ task-pinned proposal path before mutation. Approval and preflight evidence do
 not grant permission; they only satisfy additional apply gates after
 `RuntimePermissionGate` allows the scoped write.
 
-MP-7 adds dedicated runtime-owned Git capability execution. `git.status`,
-`git.diff`, and `git.commit` require `UseGitCapability` at point of use and
-must stay scoped to the admitted workspace repository. `git.commit` accepts only
-a bounded commit message and creates a commit from already staged changes; argv,
-cwd, environment, stdin, shell, remote, path, branch, ref, revision, push,
-remote mutation, branch deletion, and PR creation remain outside this
-capability. Ledger evidence is summary-only and must not persist raw diffs, raw
-file content, raw commit message text, command strings, environment values,
-absolute paths, canonical paths, credentials, or secrets. Replays of the same
-commit intent must not create duplicate commits.
+MP-7 adds dedicated runtime-owned Git capability execution. `git.status` and
+`git.diff` require `UseGitInspectCapability` at point of use. `git.commit`
+requires `UseGitCommitCapability` at point of use and must also receive
+runtime-owned authorized change-set provenance derived from durable workspace
+proposal/apply evidence for the same task/run/journey. `git_inspect` and
+`git_commit` do not imply one another, and `process_exec` does not imply either
+Git capability.
 
-MP-7.1 clarifies that `UseGitCapability` is narrower than generic process
-execution. A mode with `process_exec` can pass this gate only for the runtime's
-fixed Git capability ids and only after task/workspace provenance establishes
-the admitted repository. The gate does not authorize caller-supplied commands,
-argv, cwd, environment, stdin, shell, timeouts, remotes, branches, refs, pushes,
-PRs, service control, destructive operations, network access, or workspace
-write mutation. `git.status` and `git.diff` outputs may become bounded
-`untrusted_git_result_context` for the next agent step, but that context is
-below runtime and Mode Pack policy and cannot create or widen authority.
-Timeout, oversize, and process-lifecycle evidence is safety telemetry only; it
-does not substitute for durable permission checks.
+`git.commit` accepts only a bounded commit message from model/tool intent.
+Runtime, not the caller, materializes commit authorization containing the
+originating task/run/journey, authorized proposal/apply identities,
+workspace-relative path set, expected content fingerprints, applicable
+`workspace_write` scope fingerprint, expected parent HEAD, and logical Git
+invocation identity. Ambient staged changes are never content authority. A
+mode that can commit but cannot directly write the workspace may commit only a
+runtime-owned authorized change set handed off from another task; absent or
+malformed provenance fails closed.
+
+Git capabilities remain scoped to the admitted workspace repository. They do
+not authorize caller-supplied commands, argv, cwd, environment, stdin, shell,
+timeouts, remotes, branches, refs, pushes, PRs, service control, destructive
+operations, network access, or arbitrary workspace mutation. `git.status` and
+`git.diff` outputs may become bounded `untrusted_git_result_context` for the
+next agent step, but that context is below runtime and Mode Pack policy and
+cannot create or widen authority. Ledger evidence is summary-only and must not
+persist raw diffs, raw file content, raw commit message text, command strings,
+argv, environment values, absolute paths, canonical paths, credentials, or
+secrets. Replays are keyed to the runtime logical invocation identity so a lost
+response for the same invocation does not duplicate a commit, while a new
+authorized change set with the same message can produce a new commit.
 
 ## JSON-RPC
 

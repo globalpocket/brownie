@@ -126,11 +126,16 @@ generic shell Git execution. `git.status` and `git.diff` run fixed bounded
 inspection commands in the admitted workspace repository and return sanitized
 summary metadata plus bounded untrusted Git result context only.
 
-`git.status` and `git.diff` do not accept caller-supplied argv, cwd,
-environment, stdin, shell, timeout, path, branch, ref, revision, remote, push,
-or PR fields. The runtime resolves the admitted workspace repository, rejects
-non-repositories fail-closed, and launches only the fixed inspection command for
-the requested controlled capability. Their successful result contains a nested
+`git.status` and `git.diff` require `UseGitInspectCapability`; `git.commit`
+requires `UseGitCommitCapability`. Neither Git capability implies the other,
+and `process_exec` grants neither. `git.status` and `git.diff` do not accept
+caller-supplied argv, cwd, environment, stdin, shell, timeout, path, branch,
+ref, revision, remote, push, or PR fields. The runtime resolves the admitted
+workspace repository, rejects non-repositories fail-closed, and launches only
+the fixed inspection command for the requested controlled capability.
+`git.status` disables repository-local FSMonitor with command-level
+`-c core.fsmonitor=false`. `git.diff` disables repository external helpers with
+`--no-ext-diff` and `--no-textconv`. Their successful result contains a nested
 `git` block with operation, result fingerprint, summary line counts,
 materialized summary line counts, bounded summary lines, maximum line and item
 limits, truncation evidence, and explicit evidence that raw diffs, raw file
@@ -152,18 +157,41 @@ and duration. Raw stdout, stderr, command strings, argv, environment values,
 absolute paths, canonical paths, credentials, secrets, raw diffs, and raw file
 content are not persisted.
 
-`git.commit` creates a local commit from already staged changes in the admitted
-workspace repository. Its input is limited to a bounded `message` string; callers
-cannot provide argv, cwd, environment, stdin, shell, timeout, remote, path,
-branch, ref, revision, push, PR, or branch deletion fields. Runtime records the
-message fingerprint and commit id, not the raw message. Raw diffs, raw file
-content, raw command strings, environment values, absolute paths, canonical
-paths, credentials, and secrets must not be stored in ledger evidence.
+`git.commit` creates a local commit only from runtime-authorized workspace
+mutation evidence in the admitted repository. Its provider/tool-intent input is
+limited to a bounded `message` string; callers cannot provide argv, cwd,
+environment, stdin, shell, timeout, remote, path, branch, ref, revision, push,
+PR, branch deletion fields, or commit authorization. Before execution, Runtime
+builds the private commit authorization from task-pinned policy and durable
+workspace proposal/apply evidence. The authorization binds the originating
+task/run/journey, proposal and apply ids, workspace-relative path set,
+post-apply content fingerprints or delete evidence, applicable workspace-write
+scope fingerprint, expected parent HEAD, and logical Git invocation identity.
+If this provenance is missing, malformed, stale, or inconsistent with the
+current workspace, `git.commit` fails closed.
 
-Successful commit execution writes a Brownie commit-intent trailer into the Git
-commit message so retry after a lost response can recognize the latest matching
-commit and return replay evidence without creating a duplicate commit. This is
-local repository mutation only; remote Git operations remain out of scope.
+`git.commit` ignores the ambient Git index. Mutation uses a runtime-owned
+temporary index and Git plumbing: the parent tree is read into that index,
+authorized path blobs/removals are written into it, `write-tree` produces the
+candidate tree, `commit-tree` creates the commit with a Brownie
+commit-intent trailer bound to the logical invocation fingerprint, and
+`update-ref` performs a stale-checked branch update against the expected parent
+HEAD. Repository hook lifecycles such as `pre-commit`, `prepare-commit-msg`,
+`commit-msg`, and `post-commit` must not run. Runtime records sanitized
+metadata such as message fingerprint, commit id, authorized change-set
+fingerprint, workspace-write scope fingerprint, expected parent HEAD,
+committed tree fingerprint, replay status, bounded process telemetry, temporary
+index use/cleanup, and hook-bypass evidence. Raw diffs, raw file content, raw
+commit message text, raw command strings, argv, stdout, stderr, environment
+values, absolute paths, canonical paths, credentials, and secrets must not be
+stored in ledger evidence.
+
+Successful commit execution writes the Brownie commit-intent trailer so retry
+after a lost response can recognize the same logical invocation and return
+replay evidence without creating a duplicate commit. A later agent step with a
+new runtime-authorized change set and the same message has a different logical
+invocation identity and may create a new commit. This is local repository
+mutation only; remote Git operations remain out of scope.
 
 Runtime denies MCP execution when the task is unknown, the mode lacks
 `UseMcpTool`/`mcp_tool_access`, the server/tool pair is absent from the compiled
