@@ -305,9 +305,9 @@ use brownie_tools::{
     ToolPlanningInput, WorkspacePatchOperation, WorkspaceReadExecutor,
     CODEBASE_INDEX_SELECTION_READ_TOOL_ID, DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS,
     DEFAULT_PROPOSAL_PREVIEW_CHARS, GIT_COMMIT_TOOL_ID, GIT_DIFF_TOOL_ID, GIT_STATUS_TOOL_ID,
-    MAX_BOUNDED_CARGO_DIAGNOSTICS, MAX_GIT_SUMMARY_LINES, MAX_GIT_SUMMARY_LINE_CHARS,
-    MAX_SUBTASK_SPAWN_GOAL_CHARS, MAX_WORKSPACE_READ_BYTES, SUBTASK_SPAWN_TOOL_ID,
-    VERIFICATION_CARGO_CHECK_TOOL_ID, VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
+    MAX_BOUNDED_CARGO_DIAGNOSTICS, MAX_GIT_COMMIT_MESSAGE_CHARS, MAX_GIT_SUMMARY_LINES,
+    MAX_GIT_SUMMARY_LINE_CHARS, MAX_SUBTASK_SPAWN_GOAL_CHARS, MAX_WORKSPACE_READ_BYTES,
+    SUBTASK_SPAWN_TOOL_ID, VERIFICATION_CARGO_CHECK_TOOL_ID, VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
     VERIFICATION_CARGO_TEST_TOOL_ID, WORKSPACE_READ_TOOL_ID, WORKSPACE_WRITE_TOOL_ID,
 };
 use codebase_index::*;
@@ -17594,7 +17594,7 @@ mod tests {
                 .expect("git config");
             assert!(config.success());
         }
-        std::fs::write(temp.path().join("README.md"), "# Brownie\n").expect("readme");
+        std::fs::write(temp.path().join("README.md"), "# Initial\n").expect("initial readme");
         let add = std::process::Command::new("git")
             .arg("-C")
             .arg(temp.path())
@@ -17602,6 +17602,18 @@ mod tests {
             .status()
             .expect("git add");
         assert!(add.success());
+        let initial_commit = std::process::Command::new("git")
+            .arg("-C")
+            .arg(temp.path())
+            .args(["commit", "-qm", "init"])
+            .status()
+            .expect("git commit");
+        assert!(initial_commit.success());
+        std::fs::write(temp.path().join("README.md"), "# Brownie\n").expect("changed readme");
+        let readme_sha256 = format!(
+            "sha256:{}",
+            hex_sha256(&std::fs::read(temp.path().join("README.md")).expect("read readme"))
+        );
 
         let store = BrownieStore::new(temp.path());
         let task = store
@@ -17616,8 +17628,55 @@ mod tests {
                 product_continuation_source: None,
             })
             .expect("start task");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &task,
+                LedgerEventKind::HeadlessJourneyStarted,
+                Some(json!({
+                    "journey_id": "git.commit.journey.1",
+                    "task_id": task.task_id,
+                    "run_id": task.run_id,
+                })),
+            )
+            .expect("append journey");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &task,
+                LedgerEventKind::WorkspacePatchApplyResultRecorded,
+                Some(json!({
+                    "proposal_id": "proposal_git_commit_readme_1",
+                    "apply_id": "apply_git_commit_readme_1",
+                    "apply_status": "Applied",
+                    "apply_reason": "Applied",
+                    "authorization_id": "authorization_git_commit_readme_1",
+                    "authorization_consumed": true,
+                    "applied": true,
+                    "operation": WorkspacePatchOperation::ReplaceFile.as_str(),
+                    "atomic_replacement_completed": true,
+                    "atomic_create_completed": false,
+                    "atomic_delete_completed": false,
+                    "path": "README.md",
+                    "expected_target_sha256": null,
+                    "expected_target_absent": false,
+                    "pre_write_target_sha256": null,
+                    "pre_write_target_exists": true,
+                    "post_write_sha256": readme_sha256,
+                    "post_delete_target_exists": null,
+                    "content_chars": 10,
+                    "content_bytes": 10,
+                    "checked_at": "2026-09-01T00:00:00Z",
+                    "applied_at": "2026-09-01T00:00:01Z",
+                    "temp_file_cleaned": true,
+                    "check_count": 0,
+                    "failed_checks": [],
+                    "blocked_checks": [],
+                })),
+            )
+            .expect("append apply evidence");
         let policy = BuiltinModeRegistry::get("implementer").expect("implementer policy");
-        let assistant_content = "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"git.commit\",\"reason\":\"Commit bounded staged changes.\",\"input\":{\"message\":\"Commit staged README update\"}}]}\n```";
+        let assistant_content = "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"git.commit\",\"reason\":\"Commit runtime-authorized changes.\",\"input\":{\"message\":\"Commit authorized README update\"}}]}\n```";
 
         append_tool_intent_events(&store, &task, &policy, assistant_content)
             .expect("append git intent");
@@ -17632,7 +17691,7 @@ mod tests {
             .args(["rev-list", "--count", "HEAD"])
             .output()
             .expect("git rev-list");
-        assert_eq!(String::from_utf8_lossy(&count.stdout).trim(), "1");
+        assert_eq!(String::from_utf8_lossy(&count.stdout).trim(), "2");
 
         let events = store
             .tasks()
@@ -17657,11 +17716,22 @@ mod tests {
         assert_eq!(completed[0]["raw_diff_redacted"], true);
         assert_eq!(completed[0]["raw_message_redacted"], true);
         assert_eq!(completed[0]["process_launched"], true);
+        assert_eq!(completed[0]["mutation_process_launched"], true);
+        assert_eq!(completed[0]["ambient_index_ignored"], true);
+        assert_eq!(completed[0]["used_temporary_index"], true);
+        assert_eq!(completed[0]["used_git_plumbing"], true);
+        assert_eq!(completed[0]["repository_hooks_bypassed"], true);
         assert_eq!(completed[0]["replayed"], false);
         assert_eq!(completed[1]["commit_id"], completed[0]["commit_id"]);
-        assert_eq!(completed[1]["process_launched"], false);
+        assert_eq!(completed[1]["mutation_process_launched"], false);
         assert_eq!(completed[1]["replayed"], true);
         assert!(completed[0]["message_fingerprint"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("sha256:")));
+        assert!(completed[0]["authorized_change_set_fingerprint"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("sha256:")));
+        assert!(completed[0]["logical_invocation_fingerprint"]
             .as_str()
             .is_some_and(|value| value.starts_with("sha256:")));
         let serialized = serde_json::to_string(&events).expect("serialize events");
@@ -17881,6 +17951,51 @@ mod tests {
             .expect("reason")
             .contains("Git commit capability execution"));
         assert!(!result.to_string().contains("Verifier must not commit"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn tool_execute_git_commit_rejects_caller_supplied_runtime_fields() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Try unsafe commit input","mode_id":"implementer"}}"#,
+        );
+        let task_id = start.result.expect("start")["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tool.execute",
+            "params": {
+                "task_id": task_id,
+                "mode_id": "implementer",
+                "tool_id": "git.commit",
+                "input": {
+                    "message": "Unsafe commit input should stay private",
+                    "argv": ["commit"]
+                }
+            }
+        });
+        let response = parse_line(&request.to_string());
+
+        assert!(response.error.is_none());
+        let result = response.result.expect("result");
+        assert_eq!(result["status"], "Failed");
+        assert_eq!(result["tool_id"], "git.commit");
+        assert!(result["output"]["reason"]
+            .as_str()
+            .expect("reason")
+            .contains("does not accept command"));
+        assert_eq!(result["output"]["process_launched"], false);
+        assert!(!result
+            .to_string()
+            .contains("Unsafe commit input should stay private"));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }

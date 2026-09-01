@@ -2,6 +2,7 @@
 
 #[cfg(test)]
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs;
 use std::io::Read;
@@ -39,6 +40,10 @@ pub const MAX_GIT_SUMMARY_LINES: usize = 40;
 pub const MAX_GIT_SUMMARY_LINE_CHARS: usize = 240;
 pub const DEFAULT_GIT_TIMEOUT_MS: u64 = 5_000;
 pub const MAX_GIT_COMMIT_MESSAGE_CHARS: usize = 2_000;
+const MAX_GIT_COMMIT_AUTHORIZED_PATHS: usize = 64;
+const MAX_GIT_COMMIT_AUTH_ID_CHARS: usize = 128;
+const GIT_COMMIT_AUTHORIZATION_VERSION: &str = "brownie_git_commit_authorization_v1";
+const BROWNIE_COMMIT_INTENT_TRAILER: &str = "Brownie-Commit-Intent";
 pub const MAX_BOUNDED_CARGO_DIAGNOSTICS: usize = 5;
 const VERIFICATION_CAPTURE_JOIN_TIMEOUT_MS: u64 = 1_000;
 const GIT_CAPTURE_JOIN_TIMEOUT_MS: u64 = 1_000;
@@ -340,7 +345,14 @@ impl GitCommandExecutor {
         execute_bounded_git(
             workspace_root,
             GIT_STATUS_TOOL_ID,
-            &["status", "--short", "--branch", "--untracked-files=normal"],
+            &[
+                "-c",
+                "core.fsmonitor=false",
+                "status",
+                "--short",
+                "--branch",
+                "--untracked-files=normal",
+            ],
             "status",
         )
     }
@@ -359,14 +371,24 @@ impl GitCommandExecutor {
         execute_bounded_git(
             workspace_root,
             GIT_DIFF_TOOL_ID,
-            &["diff", "--stat", "--summary", "--find-renames", "--"],
+            &[
+                "-c",
+                "core.fsmonitor=false",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--stat",
+                "--summary",
+                "--find-renames",
+                "--",
+            ],
             "diff_summary",
         )
     }
 
     pub fn commit(workspace_root: &Path, input: &Value) -> anyhow::Result<ToolExecutionResult> {
-        let message = match preflight_git_commit_input(input) {
-            Ok(message) => message,
+        let (message, authorization) = match preflight_git_commit_execution_input(input) {
+            Ok(parsed) => parsed,
             Err(reason) => {
                 return Ok(ToolExecutionResult {
                     tool_id: GIT_COMMIT_TOOL_ID.to_string(),
@@ -375,7 +397,46 @@ impl GitCommandExecutor {
                 });
             }
         };
-        execute_bounded_git_commit(workspace_root, &message)
+        execute_bounded_git_commit(workspace_root, &message, &authorization)
+    }
+
+    pub fn current_head(workspace_root: &Path) -> anyhow::Result<Option<String>> {
+        let root = workspace_root
+            .canonicalize()
+            .context("workspace root is unavailable")?;
+        if let Some(result) = validate_git_repository_root(&root, GIT_COMMIT_TOOL_ID, "head")? {
+            anyhow::bail!(
+                "{}",
+                result
+                    .output
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Git capability requires a workspace repository.")
+            );
+        }
+        let output = run_bounded_git_process(
+            &root,
+            &[
+                "-c",
+                "core.fsmonitor=false",
+                "rev-parse",
+                "--verify",
+                "HEAD",
+            ],
+            git_timeout(),
+        )
+        .context("failed to inspect current git head")?;
+        if output.timed_out || output.output_oversized {
+            anyhow::bail!("bounded git head inspection failed closed");
+        }
+        if output.exit_code != Some(0) {
+            return Ok(None);
+        }
+        Ok(Some(
+            String::from_utf8_lossy(&output.combined_capture.content)
+                .trim()
+                .to_string(),
+        ))
     }
 }
 
@@ -388,56 +449,8 @@ fn execute_bounded_git(
     let root = workspace_root
         .canonicalize()
         .context("workspace root is unavailable")?;
-    let repo = run_bounded_git_process(&root, &["rev-parse", "--show-toplevel"], git_timeout())
-        .context("failed to inspect git repository")?;
-    if repo.timed_out || repo.output_oversized {
-        return Ok(ToolExecutionResult {
-            tool_id: tool_id.to_string(),
-            status: ToolExecutionStatus::Failed,
-            output: json!({
-                "reason": if repo.timed_out {
-                    "Git repository inspection timed out."
-                } else {
-                    "Git repository inspection exceeded byte limit."
-                },
-                "operation": operation,
-                "process_launched": true,
-                "timed_out": repo.timed_out,
-                "output_oversized": repo.output_oversized,
-                "duration_ms": repo.duration_ms,
-                "process_tree_timeout_supported": process_tree_timeout_supported(),
-                "process_tree_kill_attempted": repo.process_tree_kill_attempted,
-                "process_tree_kill_succeeded": repo.process_tree_kill_succeeded,
-                "process_tree_kill_reason": repo.process_tree_kill_reason,
-                "reader_thread_joined": repo.reader_thread_joined,
-                "git_environment_hardened": true,
-                "git_prompts_disabled": true,
-                "git_optional_locks_disabled": true,
-                "raw_diff_redacted": true,
-                "raw_file_content_redacted": true,
-                "absolute_paths_redacted": true,
-            }),
-        });
-    }
-    if repo.exit_code != Some(0) {
-        return Ok(ToolExecutionResult {
-            tool_id: tool_id.to_string(),
-            status: ToolExecutionStatus::Denied,
-            output: json!({ "reason": "Git capability requires a workspace repository." }),
-        });
-    }
-    let repo_root = String::from_utf8_lossy(&repo.combined_capture.content)
-        .trim()
-        .to_string();
-    let repo_root = Path::new(&repo_root)
-        .canonicalize()
-        .context("failed to validate git repository root")?;
-    if repo_root != root {
-        return Ok(ToolExecutionResult {
-            tool_id: tool_id.to_string(),
-            status: ToolExecutionStatus::Denied,
-            output: json!({ "reason": "Git capability is scoped to the admitted workspace repository." }),
-        });
+    if let Some(result) = validate_git_repository_root(&root, tool_id, operation)? {
+        return Ok(result);
     }
 
     let output = run_bounded_git_process(&root, args, git_timeout())
@@ -509,6 +522,69 @@ fn execute_bounded_git(
     Ok(result)
 }
 
+fn validate_git_repository_root(
+    root: &Path,
+    tool_id: &str,
+    operation: &str,
+) -> anyhow::Result<Option<ToolExecutionResult>> {
+    let repo = run_bounded_git_process(
+        root,
+        &["-c", "core.fsmonitor=false", "rev-parse", "--show-toplevel"],
+        git_timeout(),
+    )
+    .context("failed to inspect git repository")?;
+    if repo.timed_out || repo.output_oversized {
+        return Ok(Some(ToolExecutionResult {
+            tool_id: tool_id.to_string(),
+            status: ToolExecutionStatus::Failed,
+            output: json!({
+                "reason": if repo.timed_out {
+                    "Git repository inspection timed out."
+                } else {
+                    "Git repository inspection exceeded byte limit."
+                },
+                "operation": operation,
+                "process_launched": true,
+                "timed_out": repo.timed_out,
+                "output_oversized": repo.output_oversized,
+                "duration_ms": repo.duration_ms,
+                "process_tree_timeout_supported": process_tree_timeout_supported(),
+                "process_tree_kill_attempted": repo.process_tree_kill_attempted,
+                "process_tree_kill_succeeded": repo.process_tree_kill_succeeded,
+                "process_tree_kill_reason": repo.process_tree_kill_reason,
+                "reader_thread_joined": repo.reader_thread_joined,
+                "git_environment_hardened": true,
+                "git_prompts_disabled": true,
+                "git_optional_locks_disabled": true,
+                "raw_diff_redacted": true,
+                "raw_file_content_redacted": true,
+                "absolute_paths_redacted": true,
+            }),
+        }));
+    }
+    if repo.exit_code != Some(0) {
+        return Ok(Some(ToolExecutionResult {
+            tool_id: tool_id.to_string(),
+            status: ToolExecutionStatus::Denied,
+            output: json!({ "reason": "Git capability requires a workspace repository." }),
+        }));
+    }
+    let repo_root = String::from_utf8_lossy(&repo.combined_capture.content)
+        .trim()
+        .to_string();
+    let repo_root = Path::new(&repo_root)
+        .canonicalize()
+        .context("failed to validate git repository root")?;
+    if repo_root != root {
+        return Ok(Some(ToolExecutionResult {
+            tool_id: tool_id.to_string(),
+            status: ToolExecutionStatus::Denied,
+            output: json!({ "reason": "Git capability is scoped to the admitted workspace repository." }),
+        }));
+    }
+    Ok(None)
+}
+
 struct GitProcessResult {
     exit_code: Option<i32>,
     timed_out: bool,
@@ -526,6 +602,15 @@ fn run_bounded_git_process(
     args: &[&str],
     timeout: Duration,
 ) -> anyhow::Result<GitProcessResult> {
+    run_bounded_git_process_with_env(root, args, timeout, &[])
+}
+
+fn run_bounded_git_process_with_env(
+    root: &Path,
+    args: &[&str],
+    timeout: Duration,
+    extra_env: &[(&str, OsString)],
+) -> anyhow::Result<GitProcessResult> {
     let start = Instant::now();
     let total_bytes = Arc::new(AtomicUsize::new(0));
     let output_oversized = Arc::new(AtomicBool::new(false));
@@ -538,6 +623,9 @@ fn run_bounded_git_process(
         .stderr(Stdio::piped());
     configure_process_tree_timeout(&mut command);
     configure_hardened_git_environment(&mut command);
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
 
     let mut child = command.spawn()?;
     let stdout_handle = child.stdout.take().map(|stdout| {
@@ -694,41 +782,64 @@ fn sanitize_git_summary_line(line: &str) -> String {
         .collect()
 }
 
+#[derive(Debug, Clone)]
+struct GitCommitAuthorization {
+    task_id: String,
+    run_id: String,
+    journey_id: Option<String>,
+    apply_ids: Vec<String>,
+    proposal_ids: Vec<String>,
+    paths: Vec<GitAuthorizedPath>,
+    expected_parent_head: String,
+    authorized_change_set_fingerprint: String,
+    workspace_write_scope_fingerprint: String,
+    logical_invocation_id: String,
+}
+
+#[derive(Debug, Clone)]
+struct GitAuthorizedPath {
+    path: String,
+    operation: String,
+    post_write_sha256: Option<String>,
+    expected_target_absent: Option<bool>,
+    post_delete_target_exists: Option<bool>,
+}
+
 fn execute_bounded_git_commit(
     workspace_root: &Path,
     message: &str,
+    authorization: &GitCommitAuthorization,
 ) -> anyhow::Result<ToolExecutionResult> {
     let root = workspace_root
         .canonicalize()
         .context("workspace root is unavailable")?;
-    let repo = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .current_dir(&root)
-        .stdin(Stdio::null())
-        .output()
-        .context("failed to inspect git repository")?;
-    if !repo.status.success() {
-        return Ok(ToolExecutionResult {
-            tool_id: GIT_COMMIT_TOOL_ID.to_string(),
-            status: ToolExecutionStatus::Denied,
-            output: json!({ "reason": "Git capability requires a workspace repository." }),
-        });
-    }
-    let repo_root = String::from_utf8_lossy(&repo.stdout).trim().to_string();
-    let repo_root = Path::new(&repo_root)
-        .canonicalize()
-        .context("failed to validate git repository root")?;
-    if repo_root != root {
-        return Ok(ToolExecutionResult {
-            tool_id: GIT_COMMIT_TOOL_ID.to_string(),
-            status: ToolExecutionStatus::Denied,
-            output: json!({ "reason": "Git capability is scoped to the admitted workspace repository." }),
-        });
+    if let Some(result) = validate_git_repository_root(&root, GIT_COMMIT_TOOL_ID, "commit")? {
+        return Ok(result);
     }
 
     let message_fingerprint = sha256_fingerprint(message.as_bytes());
-    let intent_trailer = format!("Brownie-Commit-Intent: {message_fingerprint}");
-    if let Some(commit_id) = latest_commit_for_intent(&root, &intent_trailer)? {
+    let logical_invocation_fingerprint =
+        git_commit_logical_invocation_fingerprint(&message_fingerprint, authorization);
+    let intent_trailer =
+        format!("{BROWNIE_COMMIT_INTENT_TRAILER}: {logical_invocation_fingerprint}");
+    let mut process_count = 1usize;
+
+    let log_output = run_bounded_git_process(
+        &root,
+        &["-c", "core.fsmonitor=false", "log", "-1", "--format=%H%n%B"],
+        git_timeout(),
+    )
+    .context("failed to inspect latest git commit")?;
+    process_count += 1;
+    if let Some(result) = git_commit_process_failure(
+        &log_output,
+        "replay_lookup",
+        "git.commit replay lookup failed closed.",
+        process_count,
+    ) {
+        return Ok(result);
+    }
+    if let Some(commit_id) = parse_latest_commit_for_intent(&log_output, &intent_trailer) {
         return Ok(ToolExecutionResult {
             tool_id: GIT_COMMIT_TOOL_ID.to_string(),
             status: ToolExecutionStatus::Completed,
@@ -736,64 +847,450 @@ fn execute_bounded_git_commit(
                 "operation": "commit",
                 "commit_id": commit_id,
                 "message_fingerprint": message_fingerprint,
+                "expected_parent_head": &authorization.expected_parent_head,
+                "authorized_change_set_fingerprint": &authorization.authorized_change_set_fingerprint,
+                "workspace_write_scope_fingerprint": &authorization.workspace_write_scope_fingerprint,
+                "logical_invocation_fingerprint": logical_invocation_fingerprint,
+                "authorized_path_count": authorization.paths.len(),
                 "replayed": true,
-                "process_launched": false,
-                "raw_diff_redacted": true,
-                "raw_message_redacted": true,
-            }),
-        });
-    }
-
-    let staged = Command::new("git")
-        .args(["diff", "--cached", "--quiet", "--"])
-        .current_dir(&root)
-        .stdin(Stdio::null())
-        .status()
-        .context("failed to inspect staged git changes")?;
-    if staged.success() {
-        return Ok(ToolExecutionResult {
-            tool_id: GIT_COMMIT_TOOL_ID.to_string(),
-            status: ToolExecutionStatus::Failed,
-            output: json!({
-                "reason": "git.commit requires staged changes from prior authorized workspace mutation.",
-                "operation": "commit",
-                "process_launched": false,
-                "raw_diff_redacted": true,
-                "raw_message_redacted": true,
-            }),
-        });
-    }
-
-    let commit_message = format!("{message}\n\n{intent_trailer}\n");
-    let output = Command::new("git")
-        .args(["commit", "--no-gpg-sign", "-m", &commit_message])
-        .current_dir(&root)
-        .stdin(Stdio::null())
-        .output()
-        .context("failed to execute bounded git commit capability")?;
-    if !output.status.success() {
-        return Ok(ToolExecutionResult {
-            tool_id: GIT_COMMIT_TOOL_ID.to_string(),
-            status: ToolExecutionStatus::Failed,
-            output: json!({
-                "reason": "git commit failed.",
-                "operation": "commit",
-                "exit_status": output.status.code(),
+                "runtime_authorization_required": true,
                 "process_launched": true,
+                "mutation_process_launched": false,
+                "git_process_count": process_count,
+                "git_processes_bounded": true,
+                "git_environment_hardened": true,
+                "git_prompts_disabled": true,
+                "git_optional_locks_disabled": true,
                 "raw_diff_redacted": true,
+                "raw_file_content_redacted": true,
                 "raw_message_redacted": true,
+                "absolute_paths_redacted": true,
+                "ambient_index_ignored": true,
+                "used_temporary_index": true,
+                "used_git_plumbing": true,
+                "repository_hooks_bypassed": true,
             }),
         });
     }
-    let commit_id = Command::new("git")
-        .args(["rev-parse", "--verify", "HEAD"])
-        .current_dir(&root)
-        .stdin(Stdio::null())
-        .output()
-        .context("failed to inspect created git commit")?;
-    let commit_id = String::from_utf8_lossy(&commit_id.stdout)
-        .trim()
-        .to_string();
+
+    let current_head_output = run_bounded_git_process(
+        &root,
+        &[
+            "-c",
+            "core.fsmonitor=false",
+            "rev-parse",
+            "--verify",
+            "HEAD",
+        ],
+        git_timeout(),
+    )
+    .context("failed to inspect current git head")?;
+    process_count += 1;
+    if let Some(result) = git_commit_process_failure(
+        &current_head_output,
+        "inspect_head",
+        "git.commit current HEAD inspection failed closed.",
+        process_count,
+    ) {
+        return Ok(result);
+    }
+    let current_head = first_non_empty_git_output_line(&current_head_output)
+        .filter(|line| is_git_object_id(line))
+        .unwrap_or_default();
+    if current_head != authorization.expected_parent_head {
+        return Ok(git_commit_failed_output(json!({
+            "reason": "git.commit expected parent HEAD does not match current workspace HEAD.",
+            "operation": "commit",
+            "message_fingerprint": message_fingerprint,
+            "authorized_change_set_fingerprint": &authorization.authorized_change_set_fingerprint,
+            "workspace_write_scope_fingerprint": &authorization.workspace_write_scope_fingerprint,
+            "logical_invocation_fingerprint": logical_invocation_fingerprint,
+            "authorized_path_count": authorization.paths.len(),
+            "process_launched": true,
+            "mutation_process_launched": false,
+            "git_process_count": process_count,
+        })));
+    }
+
+    let parent_tree_output = run_bounded_git_process(
+        &root,
+        &[
+            "-c",
+            "core.fsmonitor=false",
+            "rev-parse",
+            &format!("{}^{{tree}}", authorization.expected_parent_head),
+        ],
+        git_timeout(),
+    )
+    .context("failed to inspect parent git tree")?;
+    process_count += 1;
+    if let Some(result) = git_commit_process_failure(
+        &parent_tree_output,
+        "inspect_parent_tree",
+        "git.commit parent tree inspection failed closed.",
+        process_count,
+    ) {
+        return Ok(result);
+    }
+    let parent_tree = first_non_empty_git_output_line(&parent_tree_output)
+        .filter(|line| is_git_object_id(line))
+        .unwrap_or_default();
+    if parent_tree.is_empty() {
+        return Ok(git_commit_failed_output(json!({
+            "reason": "git.commit parent tree inspection returned malformed output.",
+            "operation": "commit",
+            "process_launched": true,
+            "mutation_process_launched": false,
+            "git_process_count": process_count,
+        })));
+    }
+
+    let head_ref_output = run_bounded_git_process(
+        &root,
+        &["-c", "core.fsmonitor=false", "symbolic-ref", "-q", "HEAD"],
+        git_timeout(),
+    )
+    .context("failed to inspect git head ref")?;
+    process_count += 1;
+    if let Some(result) = git_commit_process_failure(
+        &head_ref_output,
+        "inspect_head_ref",
+        "git.commit branch ref inspection failed closed.",
+        process_count,
+    ) {
+        return Ok(result);
+    }
+    let head_ref = first_non_empty_git_output_line(&head_ref_output).unwrap_or_default();
+    if !head_ref.starts_with("refs/heads/") {
+        return Ok(git_commit_failed_output(json!({
+            "reason": "git.commit requires an attached local branch HEAD.",
+            "operation": "commit",
+            "process_launched": true,
+            "mutation_process_launched": false,
+            "git_process_count": process_count,
+        })));
+    }
+
+    let temp_index_path = runtime_git_temp_index_path();
+    let temp_index_env = [("GIT_INDEX_FILE", temp_index_path.as_os_str().to_os_string())];
+
+    let read_tree_output = run_bounded_git_process_with_env(
+        &root,
+        &[
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "read-tree",
+            &authorization.expected_parent_head,
+        ],
+        git_timeout(),
+        &temp_index_env,
+    )
+    .context("failed to prepare runtime git index")?;
+    process_count += 1;
+    if let Some(mut result) = git_commit_process_failure(
+        &read_tree_output,
+        "read_tree",
+        "git.commit temporary index preparation failed closed.",
+        process_count,
+    ) {
+        mark_temporary_index_used(&mut result, &temp_index_path);
+        return Ok(result);
+    }
+
+    for authorized_path in &authorization.paths {
+        if is_delete_operation(&authorized_path.operation) {
+            if authorized_path.post_delete_target_exists != Some(false) {
+                let cleaned = cleanup_runtime_git_temp_index(&temp_index_path);
+                return Ok(git_commit_failed_output(json!({
+                    "reason": "git.commit delete authorization is missing absent-path evidence.",
+                    "operation": "commit",
+                    "process_launched": true,
+                    "mutation_process_launched": false,
+                    "git_process_count": process_count,
+                    "used_temporary_index": true,
+                    "used_git_plumbing": true,
+                    "temporary_index_cleaned": cleaned,
+                })));
+            }
+            if root.join(&authorized_path.path).exists() {
+                let cleaned = cleanup_runtime_git_temp_index(&temp_index_path);
+                return Ok(git_commit_failed_output(json!({
+                    "reason": "git.commit authorized delete path still exists in workspace.",
+                    "operation": "commit",
+                    "process_launched": true,
+                    "mutation_process_launched": false,
+                    "git_process_count": process_count,
+                    "used_temporary_index": true,
+                    "used_git_plumbing": true,
+                    "temporary_index_cleaned": cleaned,
+                })));
+            }
+            let remove_output = run_bounded_git_process_with_env(
+                &root,
+                &[
+                    "-c",
+                    "core.fsmonitor=false",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "update-index",
+                    "--force-remove",
+                    "--",
+                    &authorized_path.path,
+                ],
+                git_timeout(),
+                &temp_index_env,
+            )
+            .context("failed to update runtime git index for delete")?;
+            process_count += 1;
+            if let Some(mut result) = git_commit_process_failure(
+                &remove_output,
+                "update_index_delete",
+                "git.commit authorized delete staging failed closed.",
+                process_count,
+            ) {
+                mark_temporary_index_used(&mut result, &temp_index_path);
+                return Ok(result);
+            }
+            continue;
+        }
+
+        if let Some(reason) = verify_authorized_workspace_file(&root, authorized_path) {
+            let cleaned = cleanup_runtime_git_temp_index(&temp_index_path);
+            return Ok(git_commit_failed_output(json!({
+                "reason": reason,
+                "operation": "commit",
+                "message_fingerprint": message_fingerprint,
+                "authorized_change_set_fingerprint": &authorization.authorized_change_set_fingerprint,
+                "workspace_write_scope_fingerprint": &authorization.workspace_write_scope_fingerprint,
+                "logical_invocation_fingerprint": logical_invocation_fingerprint,
+                "authorized_path_count": authorization.paths.len(),
+                "process_launched": true,
+                "mutation_process_launched": false,
+                "git_process_count": process_count,
+                "used_temporary_index": true,
+                "used_git_plumbing": true,
+                "temporary_index_cleaned": cleaned,
+            })));
+        }
+
+        let hash_output = run_bounded_git_process(
+            &root,
+            &[
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "hash-object",
+                "-w",
+                "--",
+                &authorized_path.path,
+            ],
+            git_timeout(),
+        )
+        .context("failed to write authorized git blob")?;
+        process_count += 1;
+        if let Some(mut result) = git_commit_process_failure(
+            &hash_output,
+            "hash_object",
+            "git.commit authorized blob write failed closed.",
+            process_count,
+        ) {
+            mark_temporary_index_used(&mut result, &temp_index_path);
+            return Ok(result);
+        }
+        let blob_id = first_non_empty_git_output_line(&hash_output)
+            .filter(|line| is_git_object_id(line))
+            .unwrap_or_default();
+        if blob_id.is_empty() {
+            let cleaned = cleanup_runtime_git_temp_index(&temp_index_path);
+            return Ok(git_commit_failed_output(json!({
+                "reason": "git.commit authorized blob write returned malformed output.",
+                "operation": "commit",
+                "process_launched": true,
+                "mutation_process_launched": false,
+                "git_process_count": process_count,
+                "used_temporary_index": true,
+                "used_git_plumbing": true,
+                "temporary_index_cleaned": cleaned,
+            })));
+        }
+        let update_output = run_bounded_git_process_with_env(
+            &root,
+            &[
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                "100644",
+                &blob_id,
+                &authorized_path.path,
+            ],
+            git_timeout(),
+            &temp_index_env,
+        )
+        .context("failed to update runtime git index")?;
+        process_count += 1;
+        if let Some(mut result) = git_commit_process_failure(
+            &update_output,
+            "update_index",
+            "git.commit authorized path staging failed closed.",
+            process_count,
+        ) {
+            mark_temporary_index_used(&mut result, &temp_index_path);
+            return Ok(result);
+        }
+    }
+
+    let tree_output = run_bounded_git_process_with_env(
+        &root,
+        &[
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "write-tree",
+        ],
+        git_timeout(),
+        &temp_index_env,
+    )
+    .context("failed to write authorized git tree")?;
+    process_count += 1;
+    if let Some(mut result) = git_commit_process_failure(
+        &tree_output,
+        "write_tree",
+        "git.commit authorized tree write failed closed.",
+        process_count,
+    ) {
+        mark_temporary_index_used(&mut result, &temp_index_path);
+        return Ok(result);
+    }
+    let tree_id = first_non_empty_git_output_line(&tree_output)
+        .filter(|line| is_git_object_id(line))
+        .unwrap_or_default();
+    if tree_id.is_empty() {
+        let cleaned = cleanup_runtime_git_temp_index(&temp_index_path);
+        return Ok(git_commit_failed_output(json!({
+            "reason": "git.commit authorized tree write returned malformed output.",
+            "operation": "commit",
+            "process_launched": true,
+            "mutation_process_launched": false,
+            "git_process_count": process_count,
+            "used_temporary_index": true,
+            "used_git_plumbing": true,
+            "temporary_index_cleaned": cleaned,
+        })));
+    }
+    if tree_id == parent_tree {
+        let cleaned = cleanup_runtime_git_temp_index(&temp_index_path);
+        return Ok(git_commit_failed_output(json!({
+            "reason": "git.commit authorized change set produced no tree changes.",
+            "operation": "commit",
+            "message_fingerprint": message_fingerprint,
+            "authorized_change_set_fingerprint": &authorization.authorized_change_set_fingerprint,
+            "workspace_write_scope_fingerprint": &authorization.workspace_write_scope_fingerprint,
+            "logical_invocation_fingerprint": logical_invocation_fingerprint,
+            "authorized_path_count": authorization.paths.len(),
+            "process_launched": true,
+            "mutation_process_launched": false,
+            "git_process_count": process_count,
+            "used_temporary_index": true,
+            "used_git_plumbing": true,
+            "temporary_index_cleaned": cleaned,
+        })));
+    }
+
+    let commit_message = format!("{message}\n\n{intent_trailer}");
+    let commit_env = [
+        ("GIT_AUTHOR_NAME", OsString::from("Brownie Runtime")),
+        (
+            "GIT_AUTHOR_EMAIL",
+            OsString::from("brownie-runtime@example.invalid"),
+        ),
+        ("GIT_COMMITTER_NAME", OsString::from("Brownie Runtime")),
+        (
+            "GIT_COMMITTER_EMAIL",
+            OsString::from("brownie-runtime@example.invalid"),
+        ),
+    ];
+    let commit_output = run_bounded_git_process_with_env(
+        &root,
+        &[
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit-tree",
+            &tree_id,
+            "-p",
+            &authorization.expected_parent_head,
+            "-m",
+            &commit_message,
+        ],
+        git_timeout(),
+        &commit_env,
+    )
+    .context("failed to create authorized git commit")?;
+    process_count += 1;
+    if let Some(mut result) = git_commit_process_failure(
+        &commit_output,
+        "commit_tree",
+        "git.commit commit-tree failed closed.",
+        process_count,
+    ) {
+        mark_temporary_index_used(&mut result, &temp_index_path);
+        return Ok(result);
+    }
+    let commit_id = first_non_empty_git_output_line(&commit_output)
+        .filter(|line| is_git_object_id(line))
+        .unwrap_or_default();
+    if commit_id.is_empty() {
+        let cleaned = cleanup_runtime_git_temp_index(&temp_index_path);
+        return Ok(git_commit_failed_output(json!({
+            "reason": "git.commit commit-tree returned malformed output.",
+            "operation": "commit",
+            "process_launched": true,
+            "mutation_process_launched": true,
+            "git_process_count": process_count,
+            "used_temporary_index": true,
+            "used_git_plumbing": true,
+            "temporary_index_cleaned": cleaned,
+        })));
+    }
+
+    let update_ref_output = run_bounded_git_process(
+        &root,
+        &[
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "update-ref",
+            head_ref,
+            &commit_id,
+            &authorization.expected_parent_head,
+        ],
+        git_timeout(),
+    )
+    .context("failed to stale-check and publish authorized git commit")?;
+    process_count += 1;
+    let temp_index_cleaned = cleanup_runtime_git_temp_index(&temp_index_path);
+    if let Some(mut result) = git_commit_process_failure(
+        &update_ref_output,
+        "update_ref",
+        "git.commit stale-checked ref update failed closed.",
+        process_count,
+    ) {
+        result.output["temporary_index_cleaned"] = json!(temp_index_cleaned);
+        result.output["used_temporary_index"] = json!(true);
+        result.output["used_git_plumbing"] = json!(true);
+        return Ok(result);
+    }
+
     Ok(ToolExecutionResult {
         tool_id: GIT_COMMIT_TOOL_ID.to_string(),
         status: ToolExecutionStatus::Completed,
@@ -801,34 +1298,208 @@ fn execute_bounded_git_commit(
             "operation": "commit",
             "commit_id": commit_id,
             "message_fingerprint": message_fingerprint,
+            "expected_parent_head": &authorization.expected_parent_head,
+            "authorized_change_set_fingerprint": &authorization.authorized_change_set_fingerprint,
+            "workspace_write_scope_fingerprint": &authorization.workspace_write_scope_fingerprint,
+            "logical_invocation_fingerprint": logical_invocation_fingerprint,
+            "authorized_path_count": authorization.paths.len(),
+            "committed_tree_fingerprint": sha256_fingerprint(tree_id.as_bytes()),
             "replayed": false,
+            "runtime_authorization_required": true,
             "process_launched": true,
+            "mutation_process_launched": true,
+            "git_process_count": process_count,
+            "git_processes_bounded": true,
+            "git_environment_hardened": true,
+            "git_prompts_disabled": true,
+            "git_optional_locks_disabled": true,
+            "ambient_index_ignored": true,
+            "used_temporary_index": true,
+            "temporary_index_cleaned": temp_index_cleaned,
+            "used_git_plumbing": true,
+            "repository_hooks_bypassed": true,
             "raw_diff_redacted": true,
+            "raw_file_content_redacted": true,
             "raw_message_redacted": true,
+            "absolute_paths_redacted": true,
         }),
     })
 }
 
-fn latest_commit_for_intent(root: &Path, intent_trailer: &str) -> anyhow::Result<Option<String>> {
-    let output = Command::new("git")
-        .args(["log", "-1", "--format=%H%n%B"])
-        .current_dir(root)
-        .stdin(Stdio::null())
-        .output()
-        .context("failed to inspect latest git commit")?;
-    if !output.status.success() {
-        return Ok(None);
+fn parse_latest_commit_for_intent(
+    output: &GitProcessResult,
+    intent_trailer: &str,
+) -> Option<String> {
+    if output.exit_code != Some(0) {
+        return None;
     }
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = String::from_utf8_lossy(&output.combined_capture.content);
     let mut lines = text.lines();
-    let Some(commit_id) = lines.next() else {
-        return Ok(None);
-    };
+    let commit_id = lines.next()?;
     if lines.any(|line| line.trim() == intent_trailer) {
-        Ok(Some(commit_id.to_string()))
+        Some(commit_id.to_string())
     } else {
-        Ok(None)
+        None
     }
+}
+
+fn git_commit_logical_invocation_fingerprint(
+    message_fingerprint: &str,
+    authorization: &GitCommitAuthorization,
+) -> String {
+    let canonical = json!({
+        "version": "brownie_git_commit_logical_invocation_v1",
+        "task_id": &authorization.task_id,
+        "run_id": &authorization.run_id,
+        "journey_id": &authorization.journey_id,
+        "apply_ids": &authorization.apply_ids,
+        "proposal_ids": &authorization.proposal_ids,
+        "expected_parent_head": &authorization.expected_parent_head,
+        "authorized_change_set_fingerprint": &authorization.authorized_change_set_fingerprint,
+        "workspace_write_scope_fingerprint": &authorization.workspace_write_scope_fingerprint,
+        "logical_invocation_id": &authorization.logical_invocation_id,
+        "message_fingerprint": message_fingerprint,
+    });
+    sha256_fingerprint(canonical.to_string().as_bytes())
+}
+
+fn git_commit_failed_output(output: Value) -> ToolExecutionResult {
+    let mut output = output;
+    set_default_json_bool(&mut output, "git_processes_bounded", true);
+    set_default_json_bool(&mut output, "git_environment_hardened", true);
+    set_default_json_bool(&mut output, "git_prompts_disabled", true);
+    set_default_json_bool(&mut output, "git_optional_locks_disabled", true);
+    set_default_json_bool(&mut output, "runtime_authorization_required", true);
+    set_default_json_bool(&mut output, "ambient_index_ignored", true);
+    set_default_json_bool(&mut output, "used_temporary_index", false);
+    set_default_json_bool(&mut output, "used_git_plumbing", false);
+    set_default_json_bool(&mut output, "repository_hooks_bypassed", true);
+    set_default_json_bool(&mut output, "raw_diff_redacted", true);
+    set_default_json_bool(&mut output, "raw_file_content_redacted", true);
+    set_default_json_bool(&mut output, "raw_message_redacted", true);
+    set_default_json_bool(&mut output, "absolute_paths_redacted", true);
+    ToolExecutionResult {
+        tool_id: GIT_COMMIT_TOOL_ID.to_string(),
+        status: ToolExecutionStatus::Failed,
+        output,
+    }
+}
+
+fn set_default_json_bool(output: &mut Value, key: &str, value: bool) {
+    if output.get(key).is_none() {
+        output[key] = json!(value);
+    }
+}
+
+fn mark_temporary_index_used(result: &mut ToolExecutionResult, path: &Path) {
+    result.output["used_temporary_index"] = json!(true);
+    result.output["used_git_plumbing"] = json!(true);
+    result.output["temporary_index_cleaned"] = json!(cleanup_runtime_git_temp_index(path));
+}
+
+fn git_commit_process_failure(
+    output: &GitProcessResult,
+    operation: &str,
+    reason: &str,
+    process_count: usize,
+) -> Option<ToolExecutionResult> {
+    let failed = output.timed_out || output.output_oversized || output.exit_code != Some(0);
+    failed.then(|| {
+        git_commit_failed_output(json!({
+            "reason": reason,
+            "operation": "commit",
+            "failed_git_operation": operation,
+            "exit_status": output.exit_code,
+            "process_launched": true,
+            "timed_out": output.timed_out,
+            "output_oversized": output.output_oversized,
+            "duration_ms": output.duration_ms,
+            "captured_bytes": output.combined_capture.bytes,
+            "output_truncated": output.combined_capture.truncated || output.output_oversized,
+            "process_tree_timeout_supported": process_tree_timeout_supported(),
+            "process_tree_kill_attempted": output.process_tree_kill_attempted,
+            "process_tree_kill_succeeded": output.process_tree_kill_succeeded,
+            "process_tree_kill_reason": output.process_tree_kill_reason,
+            "reader_thread_joined": output.reader_thread_joined,
+            "git_process_count": process_count,
+        }))
+    })
+}
+
+fn first_non_empty_git_output_line(output: &GitProcessResult) -> Option<&str> {
+    let text = std::str::from_utf8(&output.combined_capture.content).ok()?;
+    text.lines().map(str::trim).find(|line| !line.is_empty())
+}
+
+fn is_git_object_id(value: &str) -> bool {
+    matches!(value.len(), 40 | 64)
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn is_sha256_fingerprint(value: &str) -> bool {
+    let Some(hex) = value.strip_prefix("sha256:") else {
+        return false;
+    };
+    hex.len() == 64
+        && hex
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn runtime_git_temp_index_path() -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    std::env::temp_dir().join(format!(
+        "brownie-runtime-git-index-{}-{nanos}.idx",
+        std::process::id()
+    ))
+}
+
+fn cleanup_runtime_git_temp_index(path: &Path) -> bool {
+    match fs::remove_file(path) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(_) => false,
+    }
+}
+
+fn is_delete_operation(operation: &str) -> bool {
+    operation == WorkspacePatchOperation::DeleteFile.as_str()
+}
+
+fn verify_authorized_workspace_file(
+    root: &Path,
+    authorized_path: &GitAuthorizedPath,
+) -> Option<&'static str> {
+    if authorized_path.operation == WorkspacePatchOperation::CreateFile.as_str()
+        && authorized_path.expected_target_absent != Some(true)
+    {
+        return Some("git.commit create authorization must prove prior target absence.");
+    }
+    let full_path = root.join(&authorized_path.path);
+    let metadata = match fs::symlink_metadata(&full_path) {
+        Ok(metadata) => metadata,
+        Err(_) => return Some("git.commit authorized path is missing from workspace."),
+    };
+    if !metadata.file_type().is_file() {
+        return Some("git.commit authorized path is not a regular file.");
+    }
+    let Some(expected) = authorized_path.post_write_sha256.as_deref() else {
+        return Some("git.commit authorized write path is missing expected content fingerprint.");
+    };
+    let bytes = match fs::read(&full_path) {
+        Ok(bytes) => bytes,
+        Err(_) => return Some("git.commit authorized path content could not be read."),
+    };
+    let actual = sha256_fingerprint(&bytes);
+    if actual != expected {
+        return Some("git.commit authorized path content fingerprint does not match workspace.");
+    }
+    None
 }
 
 fn sha256_fingerprint(bytes: &[u8]) -> String {
@@ -1924,7 +2595,7 @@ fn git_commit_tool() -> ToolDefinition {
     ToolDefinition {
         tool_id: GIT_COMMIT_TOOL_ID.to_string(),
         display_name: "Git Commit".to_string(),
-        description: "Controlled bounded Git commit for already staged changes in the admitted workspace repository. Callers provide only a bounded message; argv, cwd, environment, stdin, shell, remote, path, branch, and ref input are rejected.".to_string(),
+        description: "Controlled bounded Git commit for runtime-authorized workspace changes in the admitted repository. Callers provide only a bounded message; Runtime attaches change-set provenance, ignores ambient staged changes, and rejects argv, cwd, environment, stdin, shell, remote, path, branch, and ref input.".to_string(),
         required_action: RuntimeAction::UseGitCommitCapability,
         input_schema: ToolInputSchema {
             fields: vec![ToolInputField {
@@ -2841,12 +3512,33 @@ fn preflight_git_diff_input(input: &Value) -> Result<(), &'static str> {
 }
 
 fn preflight_git_commit_input(input: &Value) -> Result<String, &'static str> {
+    preflight_git_commit_message(input, false)
+}
+
+fn preflight_git_commit_execution_input(
+    input: &Value,
+) -> Result<(String, GitCommitAuthorization), &'static str> {
+    let message = preflight_git_commit_message(input, true)?;
+    let object = input
+        .as_object()
+        .ok_or("git capability input must be an object.")?;
+    let authorization = object
+        .get("commit_authorization")
+        .ok_or("git.commit requires runtime-owned commit authorization.")?;
+    Ok((message, parse_git_commit_authorization(authorization)?))
+}
+
+fn preflight_git_commit_message(
+    input: &Value,
+    allow_runtime_authorization: bool,
+) -> Result<String, &'static str> {
     let Some(object) = input.as_object() else {
         return Err("git capability input must be an object.");
     };
     for key in object.keys() {
         match key.as_str() {
             "message" => {}
+            "commit_authorization" if allow_runtime_authorization => {}
             "command" | "argv" | "args" | "cwd" | "env" | "stdin" | "shell" | "timeout"
             | "timeout_ms" | "remote" | "path" | "paths" | "branch" | "ref" | "revision" => {
                 return Err("git capability does not accept command, argv, cwd, env, stdin, shell, timeout, remote, path, branch, ref, or revision input.");
@@ -2871,6 +3563,242 @@ fn preflight_git_commit_input(input: &Value) -> Result<String, &'static str> {
         return Err("git.commit input.message contains unsupported control characters.");
     }
     Ok(message.to_string())
+}
+
+fn parse_git_commit_authorization(value: &Value) -> Result<GitCommitAuthorization, &'static str> {
+    let Some(object) = value.as_object() else {
+        return Err("git.commit commit_authorization must be an object.");
+    };
+    for key in object.keys() {
+        match key.as_str() {
+            "version"
+            | "task_id"
+            | "run_id"
+            | "journey_id"
+            | "apply_ids"
+            | "proposal_ids"
+            | "paths"
+            | "expected_parent_head"
+            | "authorized_change_set_fingerprint"
+            | "workspace_write_scope_fingerprint"
+            | "logical_invocation_id" => {}
+            _ => return Err("git.commit commit_authorization contains unknown fields."),
+        }
+    }
+    if object.get("version").and_then(Value::as_str) != Some(GIT_COMMIT_AUTHORIZATION_VERSION) {
+        return Err("git.commit commit_authorization version is unsupported.");
+    }
+    let task_id = required_git_commit_auth_id(object, "task_id")?;
+    let run_id = required_git_commit_auth_id(object, "run_id")?;
+    let journey_id = match object.get("journey_id") {
+        Some(Value::String(value)) if !value.trim().is_empty() => {
+            if !is_runtime_identifier(value) {
+                return Err("git.commit commit_authorization journey_id is invalid.");
+            }
+            Some(value.to_string())
+        }
+        Some(Value::Null) | None => None,
+        _ => return Err("git.commit commit_authorization journey_id must be a string or null."),
+    };
+    let apply_ids = required_git_commit_auth_id_array(object, "apply_ids")?;
+    let proposal_ids = required_git_commit_auth_id_array(object, "proposal_ids")?;
+    let expected_parent_head = required_git_commit_auth_id(object, "expected_parent_head")?;
+    if !is_git_object_id(&expected_parent_head) {
+        return Err("git.commit commit_authorization expected_parent_head is invalid.");
+    }
+    let authorized_change_set_fingerprint =
+        required_git_commit_auth_fingerprint(object, "authorized_change_set_fingerprint")?;
+    let workspace_write_scope_fingerprint =
+        required_git_commit_auth_fingerprint(object, "workspace_write_scope_fingerprint")?;
+    let logical_invocation_id =
+        required_git_commit_auth_fingerprint(object, "logical_invocation_id")?;
+    let paths = parse_git_commit_authorized_paths(
+        object
+            .get("paths")
+            .ok_or("git.commit commit_authorization paths are required.")?,
+    )?;
+    Ok(GitCommitAuthorization {
+        task_id,
+        run_id,
+        journey_id,
+        apply_ids,
+        proposal_ids,
+        paths,
+        expected_parent_head,
+        authorized_change_set_fingerprint,
+        workspace_write_scope_fingerprint,
+        logical_invocation_id,
+    })
+}
+
+fn required_git_commit_auth_id(
+    object: &serde_json::Map<String, Value>,
+    key: &'static str,
+) -> Result<String, &'static str> {
+    let value = object
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or("git.commit commit_authorization is missing a required string field.")?;
+    if !is_runtime_identifier(value) {
+        return Err("git.commit commit_authorization contains an invalid identifier.");
+    }
+    Ok(value.to_string())
+}
+
+fn required_git_commit_auth_fingerprint(
+    object: &serde_json::Map<String, Value>,
+    key: &'static str,
+) -> Result<String, &'static str> {
+    let value = object
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or("git.commit commit_authorization is missing a required fingerprint.")?;
+    if !is_sha256_fingerprint(value) {
+        return Err("git.commit commit_authorization fingerprint is invalid.");
+    }
+    Ok(value.to_string())
+}
+
+fn required_git_commit_auth_id_array(
+    object: &serde_json::Map<String, Value>,
+    key: &'static str,
+) -> Result<Vec<String>, &'static str> {
+    let values = object
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or("git.commit commit_authorization is missing a required identifier array.")?;
+    if values.is_empty() || values.len() > MAX_GIT_COMMIT_AUTHORIZED_PATHS {
+        return Err("git.commit commit_authorization identifier array size is invalid.");
+    }
+    values
+        .iter()
+        .map(|value| {
+            let Some(value) = value.as_str() else {
+                return Err(
+                    "git.commit commit_authorization identifier array contains a non-string.",
+                );
+            };
+            if !is_runtime_identifier(value) {
+                return Err(
+                    "git.commit commit_authorization identifier array contains an invalid value.",
+                );
+            }
+            Ok(value.to_string())
+        })
+        .collect()
+}
+
+fn parse_git_commit_authorized_paths(
+    value: &Value,
+) -> Result<Vec<GitAuthorizedPath>, &'static str> {
+    let values = value
+        .as_array()
+        .ok_or("git.commit commit_authorization paths must be an array.")?;
+    if values.is_empty() || values.len() > MAX_GIT_COMMIT_AUTHORIZED_PATHS {
+        return Err("git.commit commit_authorization path count is invalid.");
+    }
+    let mut seen = BTreeSet::new();
+    let mut paths = Vec::new();
+    for value in values {
+        let Some(object) = value.as_object() else {
+            return Err("git.commit commit_authorization path entry must be an object.");
+        };
+        for key in object.keys() {
+            match key.as_str() {
+                "path"
+                | "operation"
+                | "post_write_sha256"
+                | "expected_target_absent"
+                | "post_delete_target_exists" => {}
+                _ => return Err("git.commit commit_authorization path entry has unknown fields."),
+            }
+        }
+        let path = object
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or("git.commit commit_authorization path must be a string.")?;
+        preflight_workspace_write_path(path)?;
+        if !seen.insert(path.to_string()) {
+            return Err("git.commit commit_authorization contains duplicate paths.");
+        }
+        let operation = object
+            .get("operation")
+            .and_then(Value::as_str)
+            .ok_or("git.commit commit_authorization operation must be a string.")?;
+        if operation != WorkspacePatchOperation::ReplaceFile.as_str()
+            && operation != WorkspacePatchOperation::CreateFile.as_str()
+            && operation != WorkspacePatchOperation::DeleteFile.as_str()
+            && operation != WorkspacePatchOperation::PatchFile.as_str()
+        {
+            return Err("git.commit commit_authorization operation is unsupported.");
+        }
+        let post_write_sha256 =
+            match object.get("post_write_sha256") {
+                Some(Value::String(value)) => {
+                    if !is_sha256_fingerprint(value) {
+                        return Err("git.commit commit_authorization path fingerprint is invalid.");
+                    }
+                    Some(value.to_string())
+                }
+                Some(Value::Null) | None => None,
+                _ => return Err(
+                    "git.commit commit_authorization path fingerprint must be a string or null.",
+                ),
+            };
+        if operation == WorkspacePatchOperation::DeleteFile.as_str() {
+            if post_write_sha256.is_some() {
+                return Err("git.commit delete authorization must not carry post_write_sha256.");
+            }
+        } else if post_write_sha256.is_none() {
+            return Err("git.commit write authorization requires post_write_sha256.");
+        }
+        let expected_target_absent = optional_bool_field(
+            object,
+            "expected_target_absent",
+            "git.commit expected_target_absent must be a boolean.",
+        )?;
+        let post_delete_target_exists = optional_bool_field(
+            object,
+            "post_delete_target_exists",
+            "git.commit post_delete_target_exists must be a boolean.",
+        )?;
+        if operation == WorkspacePatchOperation::DeleteFile.as_str()
+            && post_delete_target_exists != Some(false)
+        {
+            return Err(
+                "git.commit delete authorization requires post_delete_target_exists=false.",
+            );
+        }
+        paths.push(GitAuthorizedPath {
+            path: path.to_string(),
+            operation: operation.to_string(),
+            post_write_sha256,
+            expected_target_absent,
+            post_delete_target_exists,
+        });
+    }
+    Ok(paths)
+}
+
+fn optional_bool_field(
+    object: &serde_json::Map<String, Value>,
+    key: &'static str,
+    reason: &'static str,
+) -> Result<Option<bool>, &'static str> {
+    match object.get(key) {
+        Some(Value::Bool(value)) => Ok(Some(*value)),
+        Some(Value::Null) | None => Ok(None),
+        _ => Err(reason),
+    }
+}
+
+fn is_runtime_identifier(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty()
+        && value.len() <= MAX_GIT_COMMIT_AUTH_ID_CHARS
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':'))
 }
 
 fn preflight_git_input(input: &Value, tool_id: &str) -> Result<(), &'static str> {
@@ -4131,7 +5059,7 @@ mod tests {
     static GIT_TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
-    fn git_status_diff_and_commit_are_bounded_dedicated_capabilities() {
+    fn git_status_diff_and_authorized_commit_are_bounded_dedicated_capabilities() {
         let _lock = GIT_TEST_ENV_LOCK.lock().expect("git test env lock");
         let temp = git_repository("git-status-diff");
         fs::write(temp.path().join("README.md"), "# Changed\n").expect("write changed readme");
@@ -4167,17 +5095,51 @@ mod tests {
         assert!(!diff_json.contains("# Changed"));
         assert!(!diff_json.contains(temp.path().to_string_lossy().as_ref()));
 
+        fs::write(temp.path().join("foreign.txt"), "foreign staged change\n")
+            .expect("write foreign");
         let add = Command::new("git")
-            .args(["add", "README.md"])
+            .args(["add", "foreign.txt"])
             .current_dir(temp.path())
             .status()
-            .expect("git add");
+            .expect("git add foreign");
         assert!(add.success());
+        #[cfg(unix)]
+        let hook_sentinel = {
+            let sentinel = temp.path().join("hook-ran");
+            let hooks_dir = temp.path().join(".git").join("hooks");
+            for hook_name in [
+                "pre-commit",
+                "prepare-commit-msg",
+                "commit-msg",
+                "post-commit",
+            ] {
+                let hook = hooks_dir.join(hook_name);
+                fs::write(
+                    &hook,
+                    format!(
+                        "#!/bin/sh\nprintf hook > '{}'\nexit 1\n",
+                        sentinel.display()
+                    ),
+                )
+                .expect("write hook");
+                let mut permissions = fs::metadata(&hook).expect("metadata").permissions();
+                std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+                fs::set_permissions(&hook, permissions).expect("chmod hook");
+            }
+            sentinel
+        };
+        let commit_input = test_git_commit_input(
+            temp.path(),
+            "Update README from bounded git capability",
+            "proposal_readme_1",
+            "apply_readme_1",
+            "runtime.logical.1",
+        );
         let commit = ToolExecutor::execute_controlled(
             temp.path(),
             ToolExecutionRequest {
                 tool_id: GIT_COMMIT_TOOL_ID.to_string(),
-                input: json!({"message":"Update README from bounded git capability"}),
+                input: commit_input.clone(),
             },
         )
         .expect("git commit");
@@ -4186,33 +5148,183 @@ mod tests {
         assert_eq!(commit.output["raw_diff_redacted"], true);
         assert_eq!(commit.output["raw_message_redacted"], true);
         assert_eq!(commit.output["process_launched"], true);
+        assert_eq!(commit.output["mutation_process_launched"], true);
+        assert_eq!(commit.output["ambient_index_ignored"], true);
+        assert_eq!(commit.output["used_temporary_index"], true);
+        assert_eq!(commit.output["used_git_plumbing"], true);
+        assert_eq!(commit.output["repository_hooks_bypassed"], true);
         assert!(commit.output["commit_id"].as_str().is_some());
         assert!(commit.output["message_fingerprint"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("sha256:")));
+        assert!(commit.output["authorized_change_set_fingerprint"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("sha256:")));
+        assert!(commit.output["logical_invocation_fingerprint"]
             .as_str()
             .is_some_and(|value| value.starts_with("sha256:")));
         let commit_json = commit.output.to_string();
         assert!(!commit_json.contains("Update README from bounded git capability"));
         assert!(!commit_json.contains("# Changed"));
+        assert!(!commit_json.contains("foreign staged change"));
         assert!(!commit_json.contains(temp.path().to_string_lossy().as_ref()));
+        let head_paths = Command::new("git")
+            .args(["ls-tree", "-r", "--name-only", "HEAD"])
+            .current_dir(temp.path())
+            .output()
+            .expect("git ls-tree");
+        assert!(head_paths.status.success());
+        let head_paths = String::from_utf8_lossy(&head_paths.stdout);
+        assert!(head_paths.contains("README.md"));
+        assert!(!head_paths.contains("foreign.txt"));
+        #[cfg(unix)]
+        assert!(
+            !hook_sentinel.exists(),
+            "repository hooks must not run for git.commit"
+        );
+        let staged_paths = Command::new("git")
+            .args(["diff", "--cached", "--name-only"])
+            .current_dir(temp.path())
+            .output()
+            .expect("git staged paths");
+        assert!(staged_paths.status.success());
+        assert!(String::from_utf8_lossy(&staged_paths.stdout).contains("foreign.txt"));
 
         let replay = ToolExecutor::execute_controlled(
             temp.path(),
             ToolExecutionRequest {
                 tool_id: GIT_COMMIT_TOOL_ID.to_string(),
-                input: json!({"message":"Update README from bounded git capability"}),
+                input: commit_input,
             },
         )
         .expect("git commit replay");
         assert_eq!(replay.status, ToolExecutionStatus::Completed);
         assert_eq!(replay.output["commit_id"], commit.output["commit_id"]);
         assert_eq!(replay.output["replayed"], true);
-        assert_eq!(replay.output["process_launched"], false);
+        assert_eq!(replay.output["mutation_process_launched"], false);
+
+        fs::write(temp.path().join("README.md"), "# Changed Again\n")
+            .expect("write changed readme again");
+        let second_commit = ToolExecutor::execute_controlled(
+            temp.path(),
+            ToolExecutionRequest {
+                tool_id: GIT_COMMIT_TOOL_ID.to_string(),
+                input: test_git_commit_input(
+                    temp.path(),
+                    "Update README from bounded git capability",
+                    "proposal_readme_2",
+                    "apply_readme_2",
+                    "runtime.logical.2",
+                ),
+            },
+        )
+        .expect("second git commit");
+        assert_eq!(second_commit.status, ToolExecutionStatus::Completed);
+        assert_ne!(
+            second_commit.output["commit_id"],
+            commit.output["commit_id"]
+        );
+        assert_eq!(second_commit.output["replayed"], false);
+        let count = Command::new("git")
+            .args(["rev-list", "--count", "HEAD"])
+            .current_dir(temp.path())
+            .output()
+            .expect("git rev-list");
+        assert!(count.status.success());
+        assert_eq!(String::from_utf8_lossy(&count.stdout).trim(), "3");
+    }
+
+    #[test]
+    fn git_commit_without_runtime_authorization_fails_closed() {
+        let _lock = GIT_TEST_ENV_LOCK.lock().expect("git test env lock");
+        let temp = git_repository("git-commit-no-auth");
+        fs::write(temp.path().join("README.md"), "# Changed\n").expect("write changed readme");
+        let add = Command::new("git")
+            .args(["add", "README.md"])
+            .current_dir(temp.path())
+            .status()
+            .expect("git add");
+        assert!(add.success());
+
+        let commit = ToolExecutor::execute_controlled(
+            temp.path(),
+            ToolExecutionRequest {
+                tool_id: GIT_COMMIT_TOOL_ID.to_string(),
+                input: json!({"message":"Try ambient staged commit"}),
+            },
+        )
+        .expect("git commit");
+        assert_eq!(commit.status, ToolExecutionStatus::Failed);
+        assert!(commit.output["reason"]
+            .as_str()
+            .expect("reason")
+            .contains("runtime-owned commit authorization"));
+        let count = Command::new("git")
+            .args(["rev-list", "--count", "HEAD"])
+            .current_dir(temp.path())
+            .output()
+            .expect("git rev-list");
+        assert!(count.status.success());
+        assert_eq!(String::from_utf8_lossy(&count.stdout).trim(), "1");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_status_and_diff_do_not_run_repo_configured_helpers() {
+        let _lock = GIT_TEST_ENV_LOCK.lock().expect("git test env lock");
+        let temp = git_repository("git-helper-sentinels");
+
+        let fsmonitor_sentinel = temp.path().join("fsmonitor-ran");
+        let fsmonitor_script =
+            write_sentinel_script(temp.path(), "fsmonitor-sentinel.sh", &fsmonitor_sentinel);
+        let config = Command::new("git")
+            .args(["config", "core.fsmonitor"])
+            .arg(&fsmonitor_script)
+            .current_dir(temp.path())
+            .status()
+            .expect("git config fsmonitor");
+        assert!(config.success());
+        fs::write(temp.path().join("README.md"), "# fsmonitor sealed\n").expect("write readme");
+        let status = GitCommandExecutor::status(temp.path(), &json!({})).expect("git status");
+        assert_eq!(status.status, ToolExecutionStatus::Completed);
+        assert!(
+            !fsmonitor_sentinel.exists(),
+            "git.status must disable repo-local fsmonitor helpers"
+        );
+
+        let diff_sentinel = temp.path().join("diff-helper-ran");
+        let diff_script = write_sentinel_script(temp.path(), "diff-sentinel.sh", &diff_sentinel);
+        fs::write(
+            temp.path().join(".gitattributes"),
+            "README.md diff=sentinel\n",
+        )
+        .expect("write attributes");
+        let config = Command::new("git")
+            .args(["config", "diff.sentinel.command"])
+            .arg(&diff_script)
+            .current_dir(temp.path())
+            .status()
+            .expect("git config external diff");
+        assert!(config.success());
+        let config = Command::new("git")
+            .args(["config", "diff.sentinel.textconv"])
+            .arg(&diff_script)
+            .current_dir(temp.path())
+            .status()
+            .expect("git config textconv");
+        assert!(config.success());
+        let diff = GitCommandExecutor::diff_summary(temp.path(), &json!({})).expect("git diff");
+        assert_eq!(diff.status, ToolExecutionStatus::Completed);
+        assert!(
+            !diff_sentinel.exists(),
+            "git.diff must disable external diff and textconv helpers"
+        );
     }
 
     #[test]
     fn git_intents_require_dedicated_runtime_action_and_reject_shell_inputs() {
         let parsed = ToolIntentParser::parse_assistant_content(
-            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"git.status\",\"reason\":\"Inspect local repo state.\",\"input\":{}},{\"tool_id\":\"git.diff\",\"reason\":\"Inspect bounded diff summary.\",\"input\":{}},{\"tool_id\":\"git.commit\",\"reason\":\"Commit staged changes.\",\"input\":{\"message\":\"Bounded commit message\"}}]}\n```",
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"git.status\",\"reason\":\"Inspect local repo state.\",\"input\":{}},{\"tool_id\":\"git.diff\",\"reason\":\"Inspect bounded diff summary.\",\"input\":{}},{\"tool_id\":\"git.commit\",\"reason\":\"Commit runtime-authorized changes.\",\"input\":{\"message\":\"Bounded commit message\"}}]}\n```",
         );
         assert_eq!(parsed.requests.len(), 3);
         assert!(parsed.rejected.is_empty());
@@ -4306,6 +5418,10 @@ mod tests {
             &script,
             format!(
                 r#"#!/bin/sh
+while [ "$1" = "-c" ]; do
+  shift
+  shift
+done
 if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
   printf '%s\n' "{canonical_root}"
   exit 0
@@ -4335,6 +5451,82 @@ printf '%s\n' '?? normal.txt'
             fn kill(pid: i32, sig: i32) -> i32;
         }
         unsafe { kill(pid as i32, 0) == 0 }
+    }
+
+    fn test_git_commit_input(
+        root: &Path,
+        message: &str,
+        proposal_id: &str,
+        apply_id: &str,
+        logical_seed: &str,
+    ) -> Value {
+        let expected_parent = Command::new("git")
+            .args(["rev-parse", "--verify", "HEAD"])
+            .current_dir(root)
+            .output()
+            .expect("git head");
+        assert!(expected_parent.status.success());
+        let expected_parent = String::from_utf8_lossy(&expected_parent.stdout)
+            .trim()
+            .to_string();
+        let readme_bytes = fs::read(root.join("README.md")).expect("read readme");
+        let post_write_sha256 = sha256_fingerprint(&readme_bytes);
+        let authorized_change_set_fingerprint = sha256_fingerprint(
+            json!({
+                "proposal_id": proposal_id,
+                "apply_id": apply_id,
+                "path": "README.md",
+                "operation": WorkspacePatchOperation::ReplaceFile.as_str(),
+                "post_write_sha256": post_write_sha256,
+            })
+            .to_string()
+            .as_bytes(),
+        );
+        let workspace_write_scope_fingerprint = sha256_fingerprint(
+            json!({
+                "mode_id": "implementer",
+                "workspace_write_scope_count": 1,
+                "path": "README.md",
+            })
+            .to_string()
+            .as_bytes(),
+        );
+        json!({
+            "message": message,
+            "commit_authorization": {
+                "version": GIT_COMMIT_AUTHORIZATION_VERSION,
+                "task_id": "task.git.commit.1",
+                "run_id": "run.git.commit.1",
+                "journey_id": "journey.git.commit.1",
+                "apply_ids": [apply_id],
+                "proposal_ids": [proposal_id],
+                "paths": [{
+                    "path": "README.md",
+                    "operation": WorkspacePatchOperation::ReplaceFile.as_str(),
+                    "post_write_sha256": post_write_sha256,
+                    "expected_target_absent": false,
+                    "post_delete_target_exists": null,
+                }],
+                "expected_parent_head": expected_parent,
+                "authorized_change_set_fingerprint": authorized_change_set_fingerprint,
+                "workspace_write_scope_fingerprint": workspace_write_scope_fingerprint,
+                "logical_invocation_id": sha256_fingerprint(logical_seed.as_bytes()),
+            },
+        })
+    }
+
+    #[cfg(unix)]
+    fn write_sentinel_script(root: &Path, name: &str, sentinel: &Path) -> PathBuf {
+        let script = root.join(name);
+        fs::write(
+            &script,
+            format!("#!/bin/sh\nprintf ran > '{}'\nexit 0\n", sentinel.display()),
+        )
+        .expect("write sentinel script");
+        let mut permissions = fs::metadata(&script).expect("metadata").permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        fs::set_permissions(&script, permissions).expect("chmod sentinel script");
+        script
     }
 
     #[cfg(unix)]

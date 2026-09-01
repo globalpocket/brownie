@@ -305,9 +305,9 @@ request bodies, absolute paths, or canonical paths.
 
 Mode Packs may declare first-phase MCP access with a top-level `mcp_servers`
 map and per-mode `mcp.servers[].tools` allow-lists. Only `stdio` transport is
-valid in v0. Server ids and tool names are bounded identifiers, and duplicate,
-unknown, malformed, or oversized entries fail closed during Mode Pack
-validation.
+valid in v0. Server ids and tool names are bounded identifiers, the `command`
+must be an absolute executable path, and duplicate, unknown, relative-command,
+malformed, or oversized entries fail closed during Mode Pack validation.
 
 The mode permission bit is `mcp_tool_access`. It is narrowed by source trust and
 the runtime capability ceiling. Untrusted repository-local Mode Packs cannot
@@ -322,6 +322,17 @@ evidence. Task admission stores bounded catalog provenance instead; see
 `mcp-client-spec-v0.md`. Running task execution resolves MCP configuration from
 the runtime-owned active snapshot identity selected at task start, not by
 re-reading the live workspace Mode Pack file.
+
+MCP stdio launch is bounded by the runtime, not by the server or provider. The
+runtime does not perform PATH lookup, does not inherit the ambient Brownie
+environment, and starts the child in a neutral cwd rather than the admitted
+workspace. Relative path arguments or workspace-cwd dependent servers are
+outside v0 unless the trusted Mode Pack's absolute executable and explicit
+arguments are self-contained. In v0, "trusted executable" means the trusted
+signed/local Mode Pack activation names an absolute executable that Runtime may
+launch under this bounded contract; it does not mean Brownie performs
+executable canonicalization, hash allow-listing, signing verification, or binary
+provenance validation for the executable itself.
 
 ## Non-goals for v0
 

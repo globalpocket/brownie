@@ -408,14 +408,27 @@ fixed controlled ids:
 }
 ```
 
-`git.status`, `git.diff`, and `git.commit` require
-`RuntimePermissionGate::UseGitCapability` at point of use. They are not a
-generic Git, shell, process, remote, branch, PR, or patch-apply transport.
-Runtime resolves the admitted workspace repository and rejects requests that
-try to supply argv, cwd, environment, stdin, shell, timeout, path, branch, ref,
-revision, remote, push, PR, or arbitrary command fields. `git.commit` is
-limited to an already-staged local commit with a bounded message and durable
-commit-intent replay evidence.
+`git.status` and `git.diff` require
+`RuntimePermissionGate::UseGitInspectCapability` at point of use. `git.commit`
+requires `RuntimePermissionGate::UseGitCommitCapability` and task-pinned
+runtime authorization evidence at point of use. They are not a generic Git,
+shell, process, remote, branch, PR, patch-apply, or arbitrary command
+transport. `git_inspect` does not grant `git_commit`, `git_commit` does not
+grant `git_inspect`, and `process_exec` grants neither. Runtime resolves the
+admitted workspace repository and rejects requests that try to supply argv,
+cwd, environment, stdin, shell, timeout, path, branch, ref, revision, remote,
+push, PR, authorization, or arbitrary command fields.
+
+`git.commit` provider input is limited to a bounded message. Runtime derives
+the private execution authorization from the current task/run/journey,
+task-pinned policy, and durable authorized workspace proposal/apply evidence.
+That authorization binds proposal/apply identities, workspace-relative path
+set, post-apply content fingerprints or delete evidence, applicable
+workspace-write scope fingerprint, expected parent HEAD, and a logical Git
+invocation identity. Missing task evidence, missing authorized change-set
+evidence, stale parent HEAD, mismatched path/content evidence, or malformed
+authorization fails closed. Ambient staged changes are ignored and never become
+content authority.
 
 Completed `git.status` and `git.diff` output includes a nested `git` object with
 operation, result fingerprint, summary line counts, materialized summary line
@@ -427,18 +440,27 @@ runtime safety policy and Mode Pack permission policy and cannot grant
 authority, widen `workspace_write_scopes`, select additional Git operations, or
 alter completion gates.
 
-Git process execution uses fixed argv, null stdin, bounded in-flight aggregate
-stdout/stderr capture, hardened prompt/helper-disabled environment, timeout,
-process-tree termination where supported, child reaping, and reader-thread join
-tracking. Timeout and oversize paths return `Failed` or bounded failed output
-with lifecycle evidence such as `output_oversized`, `timed_out`,
-`process_tree_timeout_supported`, `process_tree_kill_attempted`,
-`process_tree_kill_succeeded`, `process_tree_kill_reason`,
-`reader_thread_joined`, `git_environment_hardened`,
-`git_prompts_disabled`, and `git_optional_locks_disabled`. Ledger and RPC
-evidence must not include raw stdout/stderr, raw diffs, raw file content, raw
-commit message text, command strings, argv, environment values, credentials,
-absolute paths, canonical paths, prompts, provider responses, or secrets.
+Git process execution uses runtime-owned fixed argv, null stdin, bounded
+in-flight aggregate stdout/stderr capture, hardened prompt/editor/pager/askpass
+disabled environment, disabled optional locks, timeout, process-tree
+termination where supported, child reaping, and reader-thread join tracking.
+`git.status` disables repository-local FSMonitor with command-level
+`-c core.fsmonitor=false`; `git.diff` disables repository external helpers with
+`--no-ext-diff` and `--no-textconv`. `git.commit` uses a runtime-owned
+temporary index plus plumbing (`read-tree`, `hash-object`, `update-index`,
+`write-tree`, `commit-tree`, and stale-checked `update-ref`) so ambient index
+contents and repository hooks do not run. Timeout and oversize paths return
+`Failed` or bounded failed output with lifecycle evidence such as
+`output_oversized`, `timed_out`, `process_tree_timeout_supported`,
+`process_tree_kill_attempted`, `process_tree_kill_succeeded`,
+`process_tree_kill_reason`, `reader_thread_joined`,
+`git_environment_hardened`, `git_prompts_disabled`,
+`git_optional_locks_disabled`, `ambient_index_ignored`,
+`used_temporary_index`, `used_git_plumbing`, and
+`repository_hooks_bypassed`. Ledger and RPC evidence must not include raw
+stdout/stderr, raw diffs, raw file content, raw commit message text, command
+strings, argv, environment values, credentials, absolute paths, canonical
+paths, prompts, provider responses, or secrets.
 
 The built-in tool registry requires `ReadWorkspace`; after that primary tool
 permission passes, the runtime checks `RuntimeAction::IndexCodebase` before it

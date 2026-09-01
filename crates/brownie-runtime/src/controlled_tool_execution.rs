@@ -1,6 +1,7 @@
 //! Controlled tool execution authority boundary.
 
 use super::*;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn handle_tool_list(id: Value) -> JsonRpcResponse<Value> {
     let tools = BuiltinToolRegistry::list()
@@ -132,7 +133,7 @@ pub(super) fn handle_tool_execute(id: Value, params: Option<Value>) -> JsonRpcRe
         Ok(None) => return error_response(id, -32602, "invalid params: unknown mode_id"),
         Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
     };
-    let decision = RuntimePermissionGate::check(&policy, definition.required_action);
+    let decision = RuntimePermissionGate::check(&policy, definition.required_action.clone());
     if !decision.allowed {
         return result_response(
             id,
@@ -155,11 +156,77 @@ pub(super) fn handle_tool_execute(id: Value, params: Option<Value>) -> JsonRpcRe
             Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
         };
     }
+    let input = if definition.tool_id == GIT_COMMIT_TOOL_ID {
+        let Some(task_id) = params.task_id.as_deref() else {
+            return result_response(
+                id,
+                json!(ToolExecuteResult {
+                    tool_id: definition.tool_id,
+                    status: ToolExecuteStatus::Denied,
+                    output: json!({ "reason": "git.commit requires task-pinned runtime authorization evidence." }),
+                }),
+            );
+        };
+        let record = match store.tasks().get_task(task_id) {
+            Ok(Some(record)) => record,
+            Ok(None) => {
+                return result_response(
+                    id,
+                    json!(ToolExecuteResult {
+                        tool_id: definition.tool_id,
+                        status: ToolExecuteStatus::Denied,
+                        output: json!({ "reason": "git.commit requires a known task." }),
+                    }),
+                )
+            }
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        };
+        let policy = match resolve_policy_for_task_run(&record, &store) {
+            Ok(policy) => policy,
+            Err(message) => {
+                return result_response(
+                    id,
+                    json!(ToolExecuteResult {
+                        tool_id: definition.tool_id,
+                        status: ToolExecuteStatus::Denied,
+                        output: json!({ "reason": message }),
+                    }),
+                )
+            }
+        };
+        let decision = RuntimePermissionGate::check(&policy, definition.required_action.clone());
+        if !decision.allowed {
+            return result_response(
+                id,
+                json!(ToolExecuteResult {
+                    tool_id: definition.tool_id,
+                    status: ToolExecuteStatus::Denied,
+                    output: json!({ "reason": decision.reason }),
+                }),
+            );
+        }
+        match runtime_git_commit_execution_input(&store, &record, &policy, &params.input, 0) {
+            Ok(Ok(input)) => input,
+            Ok(Err(reason)) => {
+                return result_response(
+                    id,
+                    json!(ToolExecuteResult {
+                        tool_id: definition.tool_id,
+                        status: ToolExecuteStatus::Failed,
+                        output: git_commit_authorization_failed_payload(reason),
+                    }),
+                )
+            }
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        }
+    } else {
+        params.input
+    };
     match ToolExecutor::execute_controlled(
         store.workspace_root(),
         ToolExecutionRequest {
             tool_id: definition.tool_id,
-            input: params.input,
+            input,
         },
     ) {
         Ok(result) => result_response(id, json!(tool_execute_result(result))),
@@ -522,6 +589,393 @@ pub(super) fn tool_intent_input_summary(input: &Value) -> ToolIntentInputSummary
 
 pub(super) fn summarize_intent_input(input: &Value) -> Value {
     json!(tool_intent_input_summary(input))
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeGitCommitPathAuthorization {
+    proposal_id: String,
+    apply_id: String,
+    path: String,
+    operation: String,
+    expected_target_sha256: Option<String>,
+    expected_target_absent: Option<bool>,
+    pre_write_target_sha256: Option<String>,
+    pre_write_target_exists: Option<bool>,
+    post_write_sha256: Option<String>,
+    post_delete_target_exists: Option<bool>,
+    content_bytes: u64,
+}
+
+fn runtime_git_commit_execution_input(
+    store: &BrownieStore,
+    record: &TaskRecord,
+    policy: &CompiledModePolicy,
+    input: &Value,
+    intent_index: usize,
+) -> anyhow::Result<Result<Value, String>> {
+    let message = match validate_runtime_git_commit_public_input(input) {
+        Ok(message) => message,
+        Err(reason) => return Ok(Err(reason)),
+    };
+
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    let Some(journey_id) = latest_headless_journey_id(&events) else {
+        return Ok(Err(
+            "git.commit requires runtime-owned journey provenance.".to_string()
+        ));
+    };
+    let paths = match collect_runtime_git_commit_path_authorizations(&events) {
+        Ok(paths) => paths,
+        Err(reason) => return Ok(Err(reason)),
+    };
+    if paths.is_empty() {
+        return Ok(Err(
+            "git.commit requires prior authorized workspace mutation evidence.".to_string(),
+        ));
+    }
+
+    let authorized_change_set_fingerprint =
+        runtime_git_commit_change_set_fingerprint(record, &journey_id, &paths);
+    let workspace_write_scope_fingerprint =
+        runtime_git_commit_workspace_scope_fingerprint(policy, &paths);
+    let message_fingerprint = runtime_sha256_fingerprint(message.as_bytes());
+    let expected_parent_head = latest_completed_git_commit_expected_parent(
+        &events,
+        &message_fingerprint,
+        &authorized_change_set_fingerprint,
+    )
+    .map(Ok)
+    .unwrap_or_else(|| {
+        brownie_tools::GitCommandExecutor::current_head(store.workspace_root())?
+            .ok_or_else(|| anyhow::anyhow!("git.commit requires an existing parent HEAD."))
+    })?;
+    let logical_invocation_id = runtime_git_commit_logical_invocation_id(
+        record,
+        &journey_id,
+        intent_index,
+        &authorized_change_set_fingerprint,
+    );
+    let apply_ids = paths
+        .iter()
+        .map(|path| path.apply_id.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let proposal_ids = paths
+        .iter()
+        .map(|path| path.proposal_id.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let path_payloads = paths
+        .iter()
+        .map(|path| {
+            json!({
+                "path": path.path,
+                "operation": path.operation,
+                "post_write_sha256": path.post_write_sha256,
+                "expected_target_absent": path.expected_target_absent,
+                "post_delete_target_exists": path.post_delete_target_exists,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(Ok(json!({
+        "message": message,
+        "commit_authorization": {
+            "version": "brownie_git_commit_authorization_v1",
+            "task_id": record.task_id,
+            "run_id": record.run_id,
+            "journey_id": journey_id,
+            "apply_ids": apply_ids,
+            "proposal_ids": proposal_ids,
+            "paths": path_payloads,
+            "expected_parent_head": expected_parent_head,
+            "authorized_change_set_fingerprint": authorized_change_set_fingerprint,
+            "workspace_write_scope_fingerprint": workspace_write_scope_fingerprint,
+            "logical_invocation_id": logical_invocation_id,
+        },
+    })))
+}
+
+fn validate_runtime_git_commit_public_input(input: &Value) -> Result<String, String> {
+    let Some(object) = input.as_object() else {
+        return Err("git capability input must be an object.".to_string());
+    };
+    for key in object.keys() {
+        match key.as_str() {
+            "message" => {}
+            "commit_authorization" => {
+                return Err(
+                    "git.commit commit_authorization is runtime-private and cannot be caller-supplied."
+                        .to_string(),
+                );
+            }
+            "command" | "argv" | "args" | "cwd" | "env" | "stdin" | "shell" | "timeout"
+            | "timeout_ms" | "remote" | "path" | "paths" | "branch" | "ref" | "revision" => {
+                return Err("git capability does not accept command, argv, cwd, env, stdin, shell, timeout, remote, path, branch, ref, or revision input.".to_string());
+            }
+            _ => return Err("git.commit does not accept unknown input fields.".to_string()),
+        }
+    }
+    let Some(message) = object.get("message").and_then(Value::as_str) else {
+        return Err("git.commit input.message must be a string.".to_string());
+    };
+    let message = message.trim();
+    if message.is_empty() {
+        return Err("git.commit input.message must not be empty.".to_string());
+    }
+    if message.chars().count() > MAX_GIT_COMMIT_MESSAGE_CHARS {
+        return Err("git.commit input.message exceeds the maximum length.".to_string());
+    }
+    if message
+        .chars()
+        .any(|ch| ch.is_control() && ch != '\n' && ch != '\t')
+    {
+        return Err(
+            "git.commit input.message contains unsupported control characters.".to_string(),
+        );
+    }
+    Ok(message.to_string())
+}
+
+fn latest_headless_journey_id(events: &[LedgerEvent]) -> Option<String> {
+    events.iter().rev().find_map(|event| {
+        event
+            .payload
+            .as_ref()
+            .and_then(|payload| payload.get("journey_id"))
+            .and_then(Value::as_str)
+            .filter(|journey_id| !journey_id.trim().is_empty())
+            .map(ToString::to_string)
+    })
+}
+
+fn collect_runtime_git_commit_path_authorizations(
+    events: &[LedgerEvent],
+) -> Result<Vec<RuntimeGitCommitPathAuthorization>, String> {
+    let mut by_path = BTreeMap::new();
+    for event in events {
+        if event.kind != LedgerEventKind::WorkspacePatchApplyResultRecorded {
+            continue;
+        }
+        let Some(payload) = event.payload.as_ref() else {
+            continue;
+        };
+        if let Some(items) = payload.get("transaction_items").and_then(Value::as_array) {
+            let Some(apply_id) = payload.get("apply_id").and_then(Value::as_str) else {
+                return Err(
+                    "git.commit transaction apply evidence is missing apply_id.".to_string()
+                );
+            };
+            for item in items {
+                if let Some(path) =
+                    runtime_git_commit_path_authorization_from_payload(item, Some(apply_id))?
+                {
+                    by_path.insert(path.path.clone(), path);
+                }
+            }
+            continue;
+        }
+        if let Some(path) = runtime_git_commit_path_authorization_from_payload(payload, None)? {
+            by_path.insert(path.path.clone(), path);
+        }
+    }
+    Ok(by_path.into_values().collect())
+}
+
+fn runtime_git_commit_path_authorization_from_payload(
+    payload: &Value,
+    transaction_apply_id: Option<&str>,
+) -> Result<Option<RuntimeGitCommitPathAuthorization>, String> {
+    if payload.get("applied").and_then(Value::as_bool) != Some(true)
+        || payload.get("apply_status").and_then(Value::as_str) != Some("Applied")
+    {
+        return Ok(None);
+    }
+    let proposal_id = payload
+        .get("proposal_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "git.commit apply evidence is missing proposal_id.".to_string())?
+        .to_string();
+    let apply_id = transaction_apply_id
+        .map(ToString::to_string)
+        .or_else(|| {
+            payload
+                .get("apply_id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+        })
+        .ok_or_else(|| "git.commit apply evidence is missing apply_id.".to_string())?;
+    let path = payload
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "git.commit apply evidence is missing path.".to_string())?
+        .to_string();
+    brownie_tools::preflight_workspace_write_path(&path)
+        .map_err(|reason| format!("git.commit apply evidence path is invalid: {reason}"))?;
+    let operation = payload
+        .get("operation")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "git.commit apply evidence is missing operation.".to_string())?
+        .to_string();
+    let post_write_sha256 = optional_sha256_payload(payload, "post_write_sha256")?;
+    let post_delete_target_exists = payload
+        .get("post_delete_target_exists")
+        .and_then(Value::as_bool);
+    if operation == WorkspacePatchOperation::DeleteFile.as_str() {
+        if post_delete_target_exists != Some(false) {
+            return Err("git.commit delete evidence must prove the path is absent.".to_string());
+        }
+    } else if post_write_sha256.is_none() {
+        return Err("git.commit write evidence is missing post_write_sha256.".to_string());
+    }
+    Ok(Some(RuntimeGitCommitPathAuthorization {
+        proposal_id,
+        apply_id,
+        path,
+        operation,
+        expected_target_sha256: optional_sha256_payload(payload, "expected_target_sha256")?,
+        expected_target_absent: payload
+            .get("expected_target_absent")
+            .and_then(Value::as_bool),
+        pre_write_target_sha256: optional_sha256_payload(payload, "pre_write_target_sha256")?,
+        pre_write_target_exists: payload
+            .get("pre_write_target_exists")
+            .and_then(Value::as_bool),
+        post_write_sha256,
+        post_delete_target_exists,
+        content_bytes: payload
+            .get("content_bytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+    }))
+}
+
+fn optional_sha256_payload(payload: &Value, key: &str) -> Result<Option<String>, String> {
+    match payload.get(key) {
+        Some(Value::String(value)) => {
+            if !is_sha256_fingerprint(value) {
+                return Err(format!("git.commit apply evidence {key} is malformed."));
+            }
+            Ok(Some(value.clone()))
+        }
+        Some(Value::Null) | None => Ok(None),
+        _ => Err(format!(
+            "git.commit apply evidence {key} must be a string or null."
+        )),
+    }
+}
+
+fn runtime_git_commit_change_set_fingerprint(
+    record: &TaskRecord,
+    journey_id: &str,
+    paths: &[RuntimeGitCommitPathAuthorization],
+) -> String {
+    let canonical_paths = paths
+        .iter()
+        .map(|path| {
+            json!({
+                "proposal_id": path.proposal_id,
+                "apply_id": path.apply_id,
+                "path": path.path,
+                "operation": path.operation,
+                "expected_target_sha256": path.expected_target_sha256,
+                "expected_target_absent": path.expected_target_absent,
+                "pre_write_target_sha256": path.pre_write_target_sha256,
+                "pre_write_target_exists": path.pre_write_target_exists,
+                "post_write_sha256": path.post_write_sha256,
+                "post_delete_target_exists": path.post_delete_target_exists,
+                "content_bytes": path.content_bytes,
+            })
+        })
+        .collect::<Vec<_>>();
+    let canonical = json!({
+        "version": "brownie_runtime_git_commit_change_set_v1",
+        "task_id": record.task_id,
+        "run_id": record.run_id,
+        "journey_id": journey_id,
+        "paths": canonical_paths,
+    });
+    runtime_sha256_fingerprint(canonical.to_string().as_bytes())
+}
+
+fn runtime_git_commit_workspace_scope_fingerprint(
+    policy: &CompiledModePolicy,
+    paths: &[RuntimeGitCommitPathAuthorization],
+) -> String {
+    let canonical = json!({
+        "version": "brownie_runtime_git_commit_workspace_scope_v1",
+        "mode_id": policy.mode_id,
+        "workspace_write_scope_count": policy.workspace_write_scopes.len(),
+        "workspace_write_scopes": policy.workspace_write_scopes,
+        "authorized_paths": paths.iter().map(|path| &path.path).collect::<Vec<_>>(),
+    });
+    runtime_sha256_fingerprint(canonical.to_string().as_bytes())
+}
+
+fn runtime_git_commit_logical_invocation_id(
+    record: &TaskRecord,
+    journey_id: &str,
+    intent_index: usize,
+    authorized_change_set_fingerprint: &str,
+) -> String {
+    let canonical = json!({
+        "version": "brownie_runtime_git_commit_tool_invocation_v1",
+        "task_id": record.task_id,
+        "run_id": record.run_id,
+        "journey_id": journey_id,
+        "tool_id": GIT_COMMIT_TOOL_ID,
+        "intent_index": intent_index,
+        "authorized_change_set_fingerprint": authorized_change_set_fingerprint,
+    });
+    runtime_sha256_fingerprint(canonical.to_string().as_bytes())
+}
+
+fn latest_completed_git_commit_expected_parent(
+    events: &[LedgerEvent],
+    message_fingerprint: &str,
+    authorized_change_set_fingerprint: &str,
+) -> Option<String> {
+    events.iter().rev().find_map(|event| {
+        if event.kind != LedgerEventKind::ToolExecutionCompleted {
+            return None;
+        }
+        let payload = event.payload.as_ref()?;
+        if payload.get("tool_id").and_then(Value::as_str) != Some(GIT_COMMIT_TOOL_ID)
+            || payload.get("message_fingerprint").and_then(Value::as_str)
+                != Some(message_fingerprint)
+            || payload
+                .get("authorized_change_set_fingerprint")
+                .and_then(Value::as_str)
+                != Some(authorized_change_set_fingerprint)
+        {
+            return None;
+        }
+        payload
+            .get("expected_parent_head")
+            .and_then(Value::as_str)
+            .filter(|head| !head.trim().is_empty())
+            .map(ToString::to_string)
+    })
+}
+
+fn git_commit_authorization_failed_payload(reason: String) -> Value {
+    json!({
+        "reason": reason,
+        "operation": "commit",
+        "runtime_authorization_required": true,
+        "process_launched": false,
+        "mutation_process_launched": false,
+        "raw_diff_redacted": true,
+        "raw_file_content_redacted": true,
+        "raw_message_redacted": true,
+        "absolute_paths_redacted": true,
+    })
+}
+
+fn runtime_sha256_fingerprint(bytes: &[u8]) -> String {
+    format!("sha256:{}", hex_sha256(bytes))
 }
 
 pub(super) fn normalized_subtask_spawn_goal_preview(input: &Value) -> Option<String> {
@@ -964,7 +1418,7 @@ pub(super) fn handle_approved_workspace_intents(
             }
             None => false,
         };
-    for decision in evaluation.items {
+    for (intent_index, decision) in evaluation.items.into_iter().enumerate() {
         let builtin_controlled_execution_tool = matches!(
             decision.tool_id.as_str(),
             WORKSPACE_READ_TOOL_ID
@@ -1035,11 +1489,42 @@ pub(super) fn handle_approved_workspace_intents(
             )?;
             continue;
         }
+        let execution_input = if decision.tool_id == GIT_COMMIT_TOOL_ID {
+            match runtime_git_commit_execution_input(
+                store,
+                record,
+                policy,
+                &decision.input,
+                intent_index,
+            )? {
+                Ok(input) => input,
+                Err(reason) => {
+                    store.tasks().append_task_event_with_payload(
+                        record,
+                        LedgerEventKind::ToolExecutionFailed,
+                        Some(json!({
+                            "tool_id": decision.tool_id,
+                            "status": "Failed",
+                            "reason": reason,
+                            "operation": "commit",
+                            "runtime_authorization_required": true,
+                            "raw_diff_redacted": true,
+                            "raw_file_content_redacted": true,
+                            "raw_message_redacted": true,
+                            "absolute_paths_redacted": true,
+                        })),
+                    )?;
+                    continue;
+                }
+            }
+        } else {
+            decision.input
+        };
         let result = ToolExecutor::execute_controlled(
             store.workspace_root(),
             ToolExecutionRequest {
                 tool_id: decision.tool_id,
-                input: decision.input,
+                input: execution_input,
             },
         )?;
         let kind = match result.status {
@@ -3391,8 +3876,24 @@ pub(super) fn tool_execution_ledger_payload(result: &brownie_tools::ToolExecutio
         "absolute_paths_redacted",
         "raw_message_redacted",
         "message_fingerprint",
+        "expected_parent_head",
+        "authorized_change_set_fingerprint",
+        "workspace_write_scope_fingerprint",
+        "logical_invocation_fingerprint",
+        "authorized_path_count",
+        "committed_tree_fingerprint",
         "commit_id",
         "replayed",
+        "mutation_process_launched",
+        "git_process_count",
+        "git_processes_bounded",
+        "ambient_index_ignored",
+        "used_temporary_index",
+        "temporary_index_cleaned",
+        "used_git_plumbing",
+        "repository_hooks_bypassed",
+        "runtime_authorization_required",
+        "failed_git_operation",
     ] {
         if let Some(value) = result.output.get(key) {
             payload.insert(key.to_string(), value.clone());

@@ -48,11 +48,21 @@ generic command transport. `git.status` and `git.diff` accept no operational
 input from the provider. Any provider-supplied path, argv, cwd, shell,
 environment, stdin, timeout, branch, ref, revision, remote, push, PR, or command
 field is rejected or ignored before execution according to the concrete tool
-schema. `git.commit` accepts only its bounded commit-message field and still
-uses the runtime-owned staged-change commit path.
+schema. `git.commit` accepts only its bounded commit-message field from the
+provider. Provider output cannot supply commit authorization, paths, parent
+refs, fingerprints, argv, cwd, environment, stdin, shell, remotes, pushes, PRs,
+or branch mutation.
 
-Approved Git intent is evaluated through `RuntimePermissionGate::UseGitCapability`
-against the task-pinned compiled mode policy before any process is launched.
+Approved `git.status` and `git.diff` intent is evaluated through
+`RuntimePermissionGate::UseGitInspectCapability`; approved `git.commit` intent
+is evaluated through `RuntimePermissionGate::UseGitCommitCapability`. These
+capabilities are independent, and `process_exec` does not grant either. After
+the commit permission check passes, Runtime privately materializes
+commit_authorization from durable task/run/journey workspace proposal/apply
+evidence and task-pinned workspace-write scope evidence. Missing or stale
+authorization evidence fails closed before any commit mutation process is
+launched. Ambient staged changes are ignored.
+
 Git result text is untrusted tool data. Summary lines from `git.status` or
 `git.diff` may influence the next model step only through bounded
 `untrusted_git_result_context`; they cannot grant permissions, widen
