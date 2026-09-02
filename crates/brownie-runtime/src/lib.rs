@@ -62179,6 +62179,113 @@ content-length: {}
     }
 
     #[test]
+    fn mcp_stdio_tool_call_distinguishes_tool_error_from_success() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "tool_error");
+        write_mcp_modepack(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use MCP safely","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id");
+        let response = handle_tool_execute(
+            json!(2),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {"query": "bounded"}
+            })),
+        )
+        .result
+        .expect("mcp execute");
+
+        assert_eq!(response["status"], json!("Failed"));
+        let mcp = &response["output"]["mcp"];
+        assert_eq!(mcp["protocol_status"], json!("ProtocolSucceeded"));
+        assert_eq!(mcp["tool_status"], json!("ToolReturnedError"));
+        assert_eq!(mcp["execution_status"], json!("ToolReturnedError"));
+        assert_eq!(mcp["is_error"], json!(true));
+        assert_eq!(mcp["retry_policy"], json!("policy_controlled"));
+        assert!(mcp["result_fingerprint"]
+            .as_str()
+            .expect("result fingerprint")
+            .starts_with("sha256:"));
+        assert!(mcp["content_items"][0]["text"]
+            .as_str()
+            .expect("bounded error text")
+            .contains("MCP_TOOL_ERROR_2b91"));
+        assert!(!serde_json::to_string(&response)
+            .expect("response json")
+            .contains(r#""jsonrpc":"2.0""#));
+    }
+
+    #[test]
+    fn mcp_stdio_tool_call_classifies_protocol_timeout_and_malformed_results() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        for (scenario, expected_status, expected_protocol_status) in [
+            ("call_protocol_error", "ProtocolFailed", "ProtocolFailed"),
+            ("call_timeout", "TimedOut", "TimedOut"),
+            ("call_malformed_result", "Failed", "ProtocolSucceeded"),
+        ] {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let fake_server = write_fake_mcp_server(temp.path(), scenario);
+            write_mcp_modepack(
+                temp.path(),
+                fake_server.to_str().unwrap(),
+                "search_code",
+                true,
+            );
+            commit_trusted_mcp_active_snapshot(temp.path());
+            let _cwd = super::tests::CwdGuard::enter(temp.path());
+
+            let start = parse_line(
+                r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use MCP safely","mode_id":"reviewer"}}"#,
+            )
+            .result
+            .unwrap_or_else(|| panic!("task start for {scenario}"));
+            let task_id = start["task_id"].as_str().expect("task id");
+            let response = handle_tool_execute(
+                json!(2),
+                Some(json!({
+                    "task_id": task_id,
+                    "mode_id": "reviewer",
+                    "tool_id": "mcp.github.search_code",
+                    "input": {"query": "bounded"}
+                })),
+            )
+            .result
+            .unwrap_or_else(|| panic!("mcp execute for {scenario}"));
+
+            assert_eq!(response["status"], json!("Failed"), "{scenario}");
+            assert_eq!(
+                response["output"]["mcp"]["execution_status"],
+                json!(expected_status),
+                "{scenario}"
+            );
+            assert_eq!(
+                response["output"]["mcp"]["protocol_status"],
+                json!(expected_protocol_status),
+                "{scenario}"
+            );
+            assert!(response["output"]["mcp"]["request_fingerprint"]
+                .as_str()
+                .expect("request fingerprint")
+                .starts_with("sha256:"));
+        }
+    }
+
+    #[test]
     fn mcp_stdio_requests_include_2026_07_28_required_client_metadata() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("temp dir");
@@ -62360,6 +62467,87 @@ content-length: {}
             .contains("MCP_RESULT_7f91c2"));
         let ledger_json = serde_json::to_string(&events).expect("ledger json");
         assert!(!ledger_json.contains(r#""jsonrpc":"2.0""#));
+        assert!(!ledger_json.contains(r#""method":"tools/call""#));
+    }
+
+    #[test]
+    fn task_run_does_not_use_mcp_tool_error_as_completion_or_success_replay_evidence() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "counting_tool_error");
+        write_mcp_modepack(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "fake");
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use MCP search_code through the normal agent loop","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id");
+        let run_id = start["run_id"].as_str().expect("run id");
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        if run.error.is_some() {
+            panic!("run error: {:?}", run.error);
+        }
+
+        let mcp_log = std::fs::read_to_string(temp.path().join("mcp-count.log")).expect("mcp log");
+        assert_eq!(
+            mcp_log
+                .lines()
+                .filter(|line| *line == "tools/call:search_code")
+                .count(),
+            1
+        );
+
+        let events = BrownieStore::new(temp.path())
+            .tasks()
+            .read_ledger_events(run_id)
+            .expect("events");
+        assert!(!events.iter().any(|event| {
+            event.kind == LedgerEventKind::ToolExecutionCompleted
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("mcp"))
+                    .is_some()
+        }));
+        assert!(!events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::SecondPassPromptBuilt));
+        let failed = events
+            .iter()
+            .find(|event| {
+                event.kind == LedgerEventKind::ToolExecutionFailed
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| payload.get("tool_id"))
+                        == Some(&json!("mcp.github.search_code"))
+            })
+            .expect("mcp tool failed event");
+        let failed_payload = failed.payload.as_ref().expect("failed payload");
+        assert_eq!(failed_payload["status"], json!("Failed"));
+        assert_eq!(
+            failed_payload["mcp"]["execution_status"],
+            json!("ToolReturnedError")
+        );
+        assert_eq!(failed_payload["mcp"]["is_error"], json!(true));
+        assert_eq!(
+            failed_payload["mcp"]["retry_policy"],
+            json!("policy_controlled")
+        );
+        let ledger_json = serde_json::to_string(&events).expect("ledger json");
         assert!(!ledger_json.contains(r#""method":"tools/call""#));
     }
 
@@ -63151,6 +63339,70 @@ case "$request" in
 esac
 "#
             }
+            "tool_error" => {
+                r#"#!/bin/sh
+read request
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_TOOL_ERROR_2b91"}],"isError":true}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+            }
+            "call_protocol_error" => {
+                r#"#!/bin/sh
+read request
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"boom"}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+            }
+            "call_timeout" => {
+                r#"#!/bin/sh
+read request
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    sleep 5
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+            }
+            "call_malformed_result" => {
+                r#"#!/bin/sh
+read request
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"missing explicit isError"}]}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+            }
             "counting" => {
                 r#"#!/bin/sh
 read request
@@ -63163,6 +63415,25 @@ case "$request" in
   *tools/call*)
     printf '%s\n' "tools/call:search_code" >> "$log"
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_RESULT_7f91c2"}],"isError":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+            }
+            "counting_tool_error" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_TOOL_ERROR_2b91"}],"isError":true}}'
     ;;
   *)
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'

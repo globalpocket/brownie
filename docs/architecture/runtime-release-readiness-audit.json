@@ -12,6 +12,7 @@
     "real-process-loss-recovery-e2e",
     "durable-schema-version-and-migration",
     "runtime-release-guard-ci",
+    "mcp-runtime-safety-policy",
     "protocol-event-canonization",
     "runtime-module-decomposition-reevaluation",
     "platform-deadline-durability-hardening"
@@ -101,6 +102,19 @@
         "This phase wires the Runtime release readiness guard into the VSIX check path that CI already invokes, but full CI Release Gate hardening remains a later P0 closure phase."
       ],
       "next_action": "Close in the CI Release Gate phase when workflow update authority is available."
+    },
+    {
+      "id": "mcp-runtime-safety-policy",
+      "title": "MCP Runtime Safety Policy finite closure",
+      "priority": "P0",
+      "status": "partial",
+      "responsibility_domain": "runtime",
+      "debt_classification": "required_before_release",
+      "evidence": [
+        "The user supplied a non-conflicting follow-on MCP Runtime Safety Policy campaign after RRD-1.",
+        "MCP-S1 closes result error semantics; remaining MCP safety items are tracked in docs/architecture/mcp-runtime-safety-policy-audit.json."
+      ],
+      "next_action": "Continue the MCP-S2 through MCP-S7 bounded phases before claiming Runtime Release Ready."
     },
     {
       "id": "oss-release-technical-basis",

@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "campaign": "mcp-runtime-safety-policy-finite-closure",
+  "phase": "MCP-S1",
+  "phase_title": "MCP Result Semantics",
+  "repository": "globalpocket/brownie",
+  "audited_main_commit": "84cafe8d1bc37a352c12a9cfd0467a5ba19a9cd2",
+  "mcp_first_architecture_preserved": true,
+  "runtime_release_ready": false,
+  "release_ready_blocked_by": [
+    "mcp-tool-safety-policy",
+    "mcp-tool-annotation-provenance",
+    "mcp-tool-approval-binding",
+    "mcp-runtime-schema-validation",
+    "mcp-secret-reference-contract",
+    "mcp-executable-identity"
+  ],
+  "classifications": [
+    {
+      "id": "mcp-result-error-semantics",
+      "title": "MCP isError and execution status semantics",
+      "priority": "P0",
+      "status": "implemented_sufficient",
+      "responsibility_domain": "runtime",
+      "debt_classification": "closed",
+      "evidence": [
+        "MCP tools/call separates ProtocolSucceeded from ToolSucceeded.",
+        "Explicit isError=true is ToolReturnedError and records ToolExecutionFailed with bounded context instead of ToolExecutionCompleted.",
+        "Protocol errors, timeouts, and malformed results have distinct bounded execution_status values."
+      ],
+      "next_action": "Use this closed result-semantics contract as the baseline for MCP-S2."
+    },
+    {
+      "id": "mcp-tool-safety-policy",
+      "title": "Tool-level Brownie safety policy",
+      "priority": "P0",
+      "status": "partial",
+      "responsibility_domain": "runtime",
+      "debt_classification": "required_before_release",
+      "evidence": [
+        "Compiled Mode Pack policy currently has mcp_tool_access and server/tool allow-lists.",
+        "It does not yet encode side_effect, approval, idempotency, or retry per MCP tool."
+      ],
+      "next_action": "Close in MCP-S2 by extending Mode Pack MCP policy while treating legacy tool-name entries fail-closed."
+    },
+    {
+      "id": "mcp-tool-annotation-provenance",
+      "title": "MCP tool annotation provenance",
+      "priority": "P0",
+      "status": "unimplemented",
+      "responsibility_domain": "runtime",
+      "debt_classification": "required_before_release",
+      "evidence": [
+        "tools/list catalogs schema and config fingerprints.",
+        "readOnlyHint, destructiveHint, idempotentHint, and openWorldHint are not yet parsed, pinned, fingerprinted, or drift-checked."
+      ],
+      "next_action": "Close in MCP-S3 with bounded annotation parsing that can only narrow policy."
+    },
+    {
+      "id": "mcp-tool-approval-binding",
+      "title": "Tool-level approval binding",
+      "priority": "P0",
+      "status": "partial",
+      "responsibility_domain": "runtime",
+      "debt_classification": "required_before_release",
+      "evidence": [
+        "Runtime has proposal, approval, fingerprint, and stale rejection mechanisms for controlled operations.",
+        "MCP external mutation and destructive calls are not yet bound to a single concrete approval fingerprint."
+      ],
+      "next_action": "Close in MCP-S4 through existing Runtime approval machinery, not a second MCP permission system."
+    },
+    {
+      "id": "mcp-runtime-schema-validation",
+      "title": "Runtime input/output schema validation",
+      "priority": "P0",
+      "status": "partial",
+      "responsibility_domain": "runtime",
+      "debt_classification": "required_before_release",
+      "evidence": [
+        "MCP input and output schema fingerprints and bounded summaries are task-pinned.",
+        "Actual arguments are currently checked only as objects, and structured output is not yet validated against a bounded schema subset."
+      ],
+      "next_action": "Close in MCP-S5 with bounded JSON Schema subset validation and fail-closed unsupported keywords."
+    },
+    {
+      "id": "mcp-secret-reference-contract",
+      "title": "MCP secret reference contract",
+      "priority": "P1",
+      "status": "unimplemented",
+      "responsibility_domain": "runtime",
+      "debt_classification": "required_before_release",
+      "evidence": [
+        "MCP stdio launches clear ambient inherited environment.",
+        "Runtime does not yet expose a minimal SecretResolver contract for scoped ephemeral MCP child environment injection."
+      ],
+      "next_action": "Close in MCP-S6 without implementing Vault, KMS, Secret Manager, tenant secret storage, or admin UI."
+    },
+    {
+      "id": "mcp-executable-identity",
+      "title": "MCP server executable identity",
+      "priority": "P1",
+      "status": "partial",
+      "responsibility_domain": "runtime",
+      "debt_classification": "required_before_release",
+      "evidence": [
+        "MCP stdio command must be absolute, rejects PATH lookup, clears env, uses neutral cwd, and reaps request-scoped child processes.",
+        "Executable content identity is not yet fixed and rechecked before tools/list and tools/call."
+      ],
+      "next_action": "Close in MCP-S7 by pinning executable hash evidence without ledgering raw paths or binary content."
+    },
+    {
+      "id": "mcp-p1-transport-task-reevaluation",
+      "title": "P1 transport and task reevaluation",
+      "priority": "P2",
+      "status": "runtime_outside",
+      "responsibility_domain": "external_control_plane",
+      "debt_classification": "post_v0",
+      "evidence": [
+        "Streamable HTTP, remote MCP servers, OAuth, MCP Apps, Roots, Elicitation, Sampling, long-running tasks, and public registries are explicitly outside this P0 campaign."
+      ],
+      "next_action": "Reevaluate only after stdio MCP safety closure is complete."
+    }
+  ]
+}

@@ -58,6 +58,86 @@ pub struct McpToolCatalog {
     pub catalog_fingerprint: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpToolCallStatus {
+    ToolSucceeded,
+    ToolReturnedError,
+}
+
+impl McpToolCallStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ToolSucceeded => "ToolSucceeded",
+            Self::ToolReturnedError => "ToolReturnedError",
+        }
+    }
+
+    pub fn is_success(self) -> bool {
+        matches!(self, Self::ToolSucceeded)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpToolCallResult {
+    pub status: McpToolCallStatus,
+    pub output: Value,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpToolCallFailureKind {
+    ProtocolFailed,
+    TimedOut,
+    Failed,
+}
+
+impl McpToolCallFailureKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ProtocolFailed => "ProtocolFailed",
+            Self::TimedOut => "TimedOut",
+            Self::Failed => "Failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpToolCallFailure {
+    pub kind: McpToolCallFailureKind,
+    pub message: String,
+}
+
+impl McpToolCallFailure {
+    fn protocol_failed(message: impl Into<String>) -> Self {
+        Self {
+            kind: McpToolCallFailureKind::ProtocolFailed,
+            message: message.into(),
+        }
+    }
+
+    fn timed_out(message: impl Into<String>) -> Self {
+        Self {
+            kind: McpToolCallFailureKind::TimedOut,
+            message: message.into(),
+        }
+    }
+
+    fn failed(message: impl Into<String>) -> Self {
+        Self {
+            kind: McpToolCallFailureKind::Failed,
+            message: message.into(),
+        }
+    }
+
+    fn from_stdio_error(error: anyhow::Error) -> Self {
+        let message = error.to_string();
+        if message.contains("timed out") {
+            Self::timed_out(message)
+        } else {
+            Self::protocol_failed(message)
+        }
+    }
+}
+
 pub fn normalized_tool_id(server_id: &str, tool_name: &str) -> String {
     format!("mcp.{server_id}.{tool_name}")
 }
@@ -166,10 +246,12 @@ pub fn call_tool(
     config: &ModePackMcpServerConfig,
     tool_name: &str,
     arguments: Value,
-) -> Result<Value> {
-    validate_tool_name(tool_name)?;
+) -> std::result::Result<McpToolCallResult, McpToolCallFailure> {
+    validate_tool_name(tool_name).map_err(|error| McpToolCallFailure::failed(error.to_string()))?;
     if !arguments.is_object() {
-        bail!("MCP tools/call arguments must be an object");
+        return Err(McpToolCallFailure::failed(
+            "MCP tools/call arguments must be an object",
+        ));
     }
     let response = stdio_request(
         config,
@@ -183,15 +265,34 @@ pub fn call_tool(
                 "arguments": arguments,
             }
         }),
-    )?;
-    validate_response_envelope(&response, 1, "MCP tools/call")?;
+    )
+    .map_err(McpToolCallFailure::from_stdio_error)?;
+    validate_response_envelope(&response, 1, "MCP tools/call")
+        .map_err(|error| McpToolCallFailure::protocol_failed(error.to_string()))?;
     if response.get("error").is_some() {
-        bail!("MCP tools/call returned protocol error");
+        return Err(McpToolCallFailure::protocol_failed(
+            "MCP tools/call returned protocol error",
+        ));
     }
     let result = response
         .get("result")
         .cloned()
-        .context("MCP tools/call missing result")?;
+        .ok_or_else(|| McpToolCallFailure::protocol_failed("MCP tools/call missing result"))?;
+    if !result.is_object() {
+        return Err(McpToolCallFailure::failed(
+            "MCP tools/call result must be an object",
+        ));
+    }
+    let Some(is_error) = result.get("isError").and_then(Value::as_bool) else {
+        return Err(McpToolCallFailure::failed(
+            "MCP tools/call result missing boolean isError",
+        ));
+    };
+    let status = if is_error {
+        McpToolCallStatus::ToolReturnedError
+    } else {
+        McpToolCallStatus::ToolSucceeded
+    };
     let content_item_count = result
         .get("content")
         .and_then(Value::as_array)
@@ -199,23 +300,30 @@ pub fn call_tool(
         .unwrap_or(0);
     let (content_items, content_truncated, text_chars, materialized_text_chars) =
         bounded_result_context_items(&result);
-    Ok(json!({
-        "server_id": config.server_id,
-        "tool_name": tool_name,
-        "protocol_version": MCP_PROTOCOL_VERSION,
-        "server_config_identity_fingerprint": config.config_identity_fingerprint,
-        "result_fingerprint": fingerprint_json(&result),
-        "is_error": result.get("isError").and_then(Value::as_bool).unwrap_or(false),
-        "content_item_count": content_item_count,
-        "materialized_content_item_count": content_items.len(),
-        "content_truncated": content_truncated,
-        "text_chars": text_chars,
-        "materialized_text_chars": materialized_text_chars,
-        "max_content_items": MAX_MCP_RESULT_CONTEXT_ITEMS,
-        "max_text_item_chars": MAX_MCP_RESULT_TEXT_ITEM_CHARS,
-        "max_total_text_chars": MAX_MCP_RESULT_TEXT_TOTAL_CHARS,
-        "content_items": content_items,
-    }))
+    Ok(McpToolCallResult {
+        status,
+        output: json!({
+            "server_id": config.server_id,
+            "tool_name": tool_name,
+            "protocol_version": MCP_PROTOCOL_VERSION,
+            "server_config_identity_fingerprint": config.config_identity_fingerprint,
+            "result_fingerprint": fingerprint_json(&result),
+            "is_error": is_error,
+            "protocol_status": "ProtocolSucceeded",
+            "tool_status": status.as_str(),
+            "execution_status": status.as_str(),
+            "retry_policy": if is_error { "policy_controlled" } else { "success_replay_allowed" },
+            "content_item_count": content_item_count,
+            "materialized_content_item_count": content_items.len(),
+            "content_truncated": content_truncated,
+            "text_chars": text_chars,
+            "materialized_text_chars": materialized_text_chars,
+            "max_content_items": MAX_MCP_RESULT_CONTEXT_ITEMS,
+            "max_text_item_chars": MAX_MCP_RESULT_TEXT_ITEM_CHARS,
+            "max_total_text_chars": MAX_MCP_RESULT_TEXT_TOTAL_CHARS,
+            "content_items": content_items,
+        }),
+    })
 }
 
 fn bounded_result_context_items(result: &Value) -> (Vec<Value>, bool, usize, usize) {
