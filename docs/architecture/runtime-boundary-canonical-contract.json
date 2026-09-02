@@ -2,7 +2,7 @@
   "schema_version": 1,
   "contract_id": "runtime-boundary-canonical-contract-v0",
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-  "phase": "RRP-1",
+  "phase": "RRP-2",
   "owner": "runtime",
   "runtime_release_debt_id": "runtime-boundary-protocol-contracts",
   "transport": {
@@ -104,7 +104,7 @@
       "owner": "runtime",
       "stability_class": "stable_v0",
       "schema_version": "runtime-protocol-v0",
-      "compatibility_expectation": "Control commands must be explicit, caller-authorized where mutating, and checked against current run state, target fingerprints, and continuation identity so stale commands fail closed.",
+      "compatibility_expectation": "Control commands must be explicit, caller-authorized where mutating, and checked against current run state, target fingerprints, continuation identity, and command-specific request fingerprints so stale commands fail closed. task.cancel requires caller authorization, task/run identity, current-state freshness, and exact-request replay evidence before producing or reusing TaskCancelled terminal evidence.",
       "implementation_anchors": [
         "crates/brownie-runtime/src/lib.rs",
         "crates/brownie-protocol/src/lib.rs"
@@ -234,6 +234,7 @@
     "runtime.config.get",
     "runtime.diagnostics.get",
     "task.start",
+    "task.cancel",
     "task.get",
     "task.run",
     "task.inspect",

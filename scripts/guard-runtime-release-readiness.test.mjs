@@ -223,6 +223,7 @@ function validBoundaryContract(overrides = {}) {
     required_runtime_methods: [
       'runtime.status',
       'task.start',
+      'task.cancel',
       'task.run',
       'task.inspect',
       'task.list',
@@ -329,11 +330,11 @@ test('rejects Runtime boundary contract with missing CLI or VSIX anchors', () =>
 test('rejects Runtime boundary contract that omits required method subset', () => {
   const contract = validBoundaryContract({
     required_runtime_methods: validBoundaryContract().required_runtime_methods.filter(
-      (method) => method !== 'task.run'
+      (method) => method !== 'task.cancel'
     )
   });
   const errors = validateRuntimeBoundaryContract(contract);
-  assert(errors.some((error) => error.includes('required_runtime_methods must include task.run')));
+  assert(errors.some((error) => error.includes('required_runtime_methods must include task.cancel')));
 });
 
 test('rejects Runtime boundary contract that drops non-authority language', () => {

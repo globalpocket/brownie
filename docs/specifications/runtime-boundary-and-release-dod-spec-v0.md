@@ -82,8 +82,11 @@ machine-checkable:
   environment, path, or secret material.
 - Control Command: explicit caller-authorized commands such as continue,
   inspect, approve, deny, cancel, retry, recover, apply, or finalize, each
-  bound to current run state, target fingerprint, and continuation identity so
-  stale approvals and commands fail closed.
+  bound to current run state, target fingerprint, continuation identity, or
+  command-specific request fingerprint so stale approvals and commands fail
+  closed. `task.cancel` is the explicit cancel command and requires caller
+  authorization, task/run identity, current-state freshness, and exact replay
+  evidence before terminal `TaskCancelled` evidence is produced or reused.
 - Run Result and Attestation: bounded status, artifact references,
   verification results, runtime / Mode Pack / LLM / toolchain identifiers,
   policy fingerprints, ledger references, unresolved items, failure
@@ -107,6 +110,13 @@ implementation/documentation/validator anchors.
 through the existing VSIX-invoked release-readiness check path. Missing boundary
 surfaces, missing anchors, missing required methods, missing compatibility
 matrix entries, or dropped non-authority language fail the guard.
+
+RRP-2 closes the explicit cancel command blocker by adding `task.cancel` to the
+Runtime boundary, VSIX validators, task runtime spec, protocol spec, and guarded
+required public method subset. Cancellation remains Runtime-owned and
+narrowing-only; it is not completion, verification, permission grant, workspace
+mutation authority, process control, service control, or external-loop
+scheduling authority.
 
 The canonical contract is a narrowing release gate. It can require
 documentation, validators, and Runtime-owned public surfaces to remain in sync,

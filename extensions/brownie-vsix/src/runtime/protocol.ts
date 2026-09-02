@@ -583,6 +583,15 @@ export interface TaskStartParams {
   productContinuationSource?: ProductContinuationSource | null;
 }
 
+export interface TaskCancelParams {
+  task_id: string;
+  run_id: string;
+  expected_status: TaskStatus;
+  expected_task_updated_at: string;
+  cancel_id: string;
+  authorize_cancel: true;
+}
+
 export type TaskRunSelectedIndexContext = CodebaseIndexSelectionReadResult;
 
 export interface TaskRunVerificationRecoveryContextRead {
@@ -1081,6 +1090,17 @@ export interface TaskStartResult {
   verification_recovery_retry_admission?: VerificationRecoveryRetryAdmission | null;
   llm_provider_failure_retry_admission?: LlmProviderFailureRetryAdmission | null;
   product_continuation_admission?: ProductContinuationAdmission | null;
+}
+
+export interface TaskCancelResult {
+  task_id: string;
+  run_id: string;
+  status: 'Cancelled';
+  replayed: boolean;
+  cancel_id: string;
+  cancel_fingerprint: string;
+  ledger_event_kind: 'TaskCancelled';
+  next_action: 'inspect_cancelled_task';
 }
 
 export interface VerificationRecoveryAdmission {
@@ -6155,6 +6175,58 @@ export function isTaskStartParams(value: unknown): value is TaskStartParams {
     value.productContinuationSource,
   ].filter((source) => source !== undefined && source !== null).length;
   return sourceCount <= 1;
+}
+
+export function isTaskCancelParams(value: unknown): value is TaskCancelParams {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'task_id',
+      'run_id',
+      'expected_status',
+      'expected_task_updated_at',
+      'cancel_id',
+      'authorize_cancel',
+    ]) &&
+    typeof value.task_id === 'string' &&
+    value.task_id.trim().length > 0 &&
+    typeof value.run_id === 'string' &&
+    value.run_id.trim().length > 0 &&
+    isTaskStatus(value.expected_status) &&
+    typeof value.expected_task_updated_at === 'string' &&
+    value.expected_task_updated_at.trim().length > 0 &&
+    typeof value.cancel_id === 'string' &&
+    value.cancel_id.trim().length > 0 &&
+    value.authorize_cancel === true
+  );
+}
+
+export function isTaskCancelResult(value: unknown): value is TaskCancelResult {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'task_id',
+      'run_id',
+      'status',
+      'replayed',
+      'cancel_id',
+      'cancel_fingerprint',
+      'ledger_event_kind',
+      'next_action',
+    ]) &&
+    typeof value.task_id === 'string' &&
+    value.task_id.trim().length > 0 &&
+    typeof value.run_id === 'string' &&
+    value.run_id.trim().length > 0 &&
+    value.status === 'Cancelled' &&
+    typeof value.replayed === 'boolean' &&
+    typeof value.cancel_id === 'string' &&
+    value.cancel_id.trim().length > 0 &&
+    typeof value.cancel_fingerprint === 'string' &&
+    isSha256Fingerprint(value.cancel_fingerprint) &&
+    value.ledger_event_kind === 'TaskCancelled' &&
+    value.next_action === 'inspect_cancelled_task'
+  );
 }
 
 export function isTaskRunParams(value: unknown): value is TaskRunParams {

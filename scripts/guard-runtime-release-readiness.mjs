@@ -77,6 +77,7 @@ const requiredBoundarySurfaceIds = [
 const requiredBoundaryMethodSubset = [
   'runtime.status',
   'task.start',
+  'task.cancel',
   'task.run',
   'task.inspect',
   'task.list',

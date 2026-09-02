@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isHeadlessContinueOnceParams, isHeadlessContinueOnceResult, isHeadlessRunAdvanceParams, isHeadlessRunAdvanceResult, isHeadlessRunDriveParams, isHeadlessRunDriveResult, isProgressSnapshot, isProposalApplyResult, isTaskListResult, isTaskRunVerificationRecoveryRepairOutcome, isTaskRunVerificationRecoveryRetryOutcome } from '../runtime/protocol';
 import { isCodebaseIndexBuildResult, isCodebaseIndexQueryResult, isCodebaseIndexSelectionReadResult, isCodebaseIndexSnapshotManifest } from '../runtime/protocol';
-import { isProductContinuationProvenance, isTaskRunContextBudgetSummary, isTaskRunParams, isTaskRunSelectedIndexPromptContextSummary, isTaskRunVerificationRecoveryContextRead, isTaskRunVerificationRecoveryContextReadSummary, isTaskStartParams, isTaskStartResult } from '../runtime/protocol';
+import { isProductContinuationProvenance, isTaskCancelParams, isTaskCancelResult, isTaskRunContextBudgetSummary, isTaskRunParams, isTaskRunSelectedIndexPromptContextSummary, isTaskRunVerificationRecoveryContextRead, isTaskRunVerificationRecoveryContextReadSummary, isTaskStartParams, isTaskStartResult } from '../runtime/protocol';
 import { RuntimeJsonRpcError } from '../runtime/errors';
 import { isChildInspectConsumedParentJoinRecoverySummary, isChildInspectParentJoinReadinessSummary, isRecoveryCycleBudgetOutcome, isRecoveryCycleChildProvenance, isRunInspectConsumedParentJoinRecoverySummary, isRunInspectParentJoinReadinessSummary, isTaskInspectResult, isTaskRecord, isTaskRunChildOrchestrationOutcome, isTaskRunParentJoinReadinessOutcome, isTaskRunResult } from '../runtime/protocol';
 import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewQueueDiagnosticsDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictResult, isProposalReviewQueueDiagnosticsDigestResult, isProposalReviewQueueDiagnosticsHistoryResult, isProposalReviewQueueDiagnosticsReportResult, isProposalReviewQueueDiagnosticsResult, isProposalReviewQueueResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
@@ -5197,6 +5197,62 @@ describe('RuntimeClient', () => {
 
     await expect(client.runTask('task_1')).resolves.toEqual(result);
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'task.run', params: { task_id: 'task_1' } }]);
+  });
+
+  it('creates a task.cancel request with bounded runtime-owned freshness evidence', async () => {
+    const params = {
+      task_id: 'task_1',
+      run_id: 'run_1',
+      expected_status: 'Running' as const,
+      expected_task_updated_at: '2026-06-26T00:00:00Z',
+      cancel_id: 'cancel_1',
+      authorize_cancel: true as const,
+    };
+    const result = {
+      task_id: 'task_1',
+      run_id: 'run_1',
+      status: 'Cancelled' as const,
+      replayed: false,
+      cancel_id: 'cancel_1',
+      cancel_fingerprint: `sha256:${'c'.repeat(64)}`,
+      ledger_event_kind: 'TaskCancelled' as const,
+      next_action: 'inspect_cancelled_task' as const,
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    expect(isTaskCancelParams(params)).toBe(true);
+    await expect(client.cancelTask(params)).resolves.toEqual(result);
+    expect(isTaskCancelResult(result)).toBe(true);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'task.cancel', params }]);
+  });
+
+  it('rejects invalid task.cancel params and invalid task.cancel results', async () => {
+    const validParams = {
+      task_id: 'task_1',
+      run_id: 'run_1',
+      expected_status: 'Running' as const,
+      expected_task_updated_at: '2026-06-26T00:00:00Z',
+      cancel_id: 'cancel_1',
+      authorize_cancel: true as const,
+    };
+    const invalidResult = {
+      task_id: 'task_1',
+      run_id: 'run_1',
+      status: 'Completed',
+      replayed: false,
+      cancel_id: 'cancel_1',
+      cancel_fingerprint: `sha256:${'c'.repeat(64)}`,
+      ledger_event_kind: 'TaskCancelled',
+      next_action: 'inspect_cancelled_task',
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: invalidResult });
+    const client = new RuntimeClient(transport);
+
+    expect(isTaskCancelParams({ ...validParams, authorize_cancel: false })).toBe(false);
+    expect(isTaskCancelResult(invalidResult)).toBe(false);
+    await expect(client.cancelTask({ ...validParams, task_id: '' })).rejects.toThrow('task.cancel received invalid params');
+    await expect(client.cancelTask(validParams)).rejects.toThrow('task.cancel returned an invalid result');
   });
 
   it('creates a headless.continue_once request without owning selection policy', async () => {

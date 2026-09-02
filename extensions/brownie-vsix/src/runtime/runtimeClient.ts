@@ -1,6 +1,7 @@
 import { RuntimeJsonRpcError, RuntimeProtocolError } from './errors';
 import type { ProposalApplyResult, ProposalPatchHunk } from './protocol';
 import type { CodebaseIndexSelectionReadResult, TaskRunParams } from './protocol';
+import type { TaskCancelParams, TaskCancelResult } from './protocol';
 import type { HeadlessContinueOnceParams, HeadlessContinueOnceResult } from './protocol';
 import type { HeadlessRunAdvanceParams, HeadlessRunAdvanceResult, HeadlessRunDriveParams, HeadlessRunDriveResult } from './protocol';
 import type { ModePackActivateResult, ModePackApproveCandidateResult, ModePackFetchCandidateResult, ModePackReplaceActiveResult, ModePackRevokeSignerResult, ModePackRollbackActiveResult, ModePackSelectRegistryUpdateResult, ModePackTrustSignerResult, ModePackVerifyCandidateProvenanceResult } from './protocol';
@@ -8,6 +9,7 @@ import { isProposalApplyResult } from './protocol';
 import type { TaskListResult } from './protocol';
 import { isHeadlessContinueOnceResult, isTaskListResult } from './protocol';
 import { isHeadlessRunAdvanceResult, isHeadlessRunDriveResult } from './protocol';
+import { isTaskCancelParams, isTaskCancelResult } from './protocol';
 import { isModePackActivateResult, isModePackApproveCandidateResult, isModePackFetchCandidateResult, isModePackReplaceActiveResult, isModePackRevokeSignerResult, isModePackRollbackActiveResult, isModePackSelectRegistryUpdateResult, isModePackTrustSignerResult, isModePackVerifyCandidateProvenanceResult } from './protocol';
 import type { JsonRpcRequest, LlmHealthResult, LlmStatusResult, RuntimeConfigGetResult, RuntimeDiagnosticsResult, ModeSummary, PermissionCheckResult, RuntimeActionName, RuntimeStatusResult, RunEventsResult, RunInspectResult, RunInspectSummary, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunResult, ProposalApproveResult, ProposalAuditTrailResult, ProposalPreflightResult, ProposalReadinessResult, ProposalInspectResult, ProposalListResult, ProposalRejectResult, ProposalReviewBundleResult, ProposalReviewQueueDiagnosticsDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestReportHistoryResult, ProposalReviewQueueDiagnosticsDigestReportResult, ProposalReviewQueueDiagnosticsDigestReportVerdictHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportResult, ProposalReviewQueueDiagnosticsDigestReportVerdictResult, ProposalReviewQueueDiagnosticsDigestResult, ProposalReviewQueueDiagnosticsHistoryResult, ProposalReviewQueueDiagnosticsReportResult, ProposalReviewQueueDiagnosticsResult, ProposalReviewQueueResult, ProposalReviewReportResult, ProposalReviewVerdictResult, TaskInspectResult, TaskRecord, TaskRunResult, ToolExecuteResult, ToolIntentParseResult, ToolPlanResult, TaskStartParams, TaskStartResult } from './protocol';
 import type { ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult } from './protocol';
@@ -409,6 +411,19 @@ export class RuntimeClient {
 
     if (!isTaskRunResult(result)) {
       throw new RuntimeProtocolError('task.run returned an invalid result');
+    }
+
+    return result;
+  }
+
+  async cancelTask(params: TaskCancelParams): Promise<TaskCancelResult> {
+    if (!isTaskCancelParams(params)) {
+      throw new RuntimeProtocolError('task.cancel received invalid params');
+    }
+    const result = await this.call<TaskCancelResult>('task.cancel', params);
+
+    if (!isTaskCancelResult(result)) {
+      throw new RuntimeProtocolError('task.cancel returned an invalid result');
     }
 
     return result;

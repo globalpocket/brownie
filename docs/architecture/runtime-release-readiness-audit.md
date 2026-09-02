@@ -2,7 +2,7 @@
 
 This audit is the bounded source of truth for the Runtime Release Readiness P0/P1 finite closure campaign. It does not declare Brownie Runtime release-ready; it records the remaining Runtime-owned blockers and keeps external platform, adapter, commercial, BDK, Enterprise, and Assurance work outside the Runtime release gate.
 
-Audited main: `0e610872f2201400e5b6e7a102caeff3eb200846`
+Audited main: `273e367641f03898e3a04dfaf6f0a37c7692fae3`
 
 RRP-1 adds the guarded canonical Runtime boundary contract at
 `docs/architecture/runtime-boundary-canonical-contract.json`. The Runtime
@@ -10,11 +10,16 @@ release-readiness guard validates that contract for required boundary surfaces,
 method subset, CLI/VSIX/Runtime/spec anchors, compatibility matrix entries, and
 non-authority language through the existing VSIX-invoked check path.
 
+RRP-2 adds the explicit Runtime-owned `task.cancel` command. Cancellation now
+requires caller authorization, task/run identity, current-state freshness,
+bounded cancel request fingerprinting, and exact durable replay evidence before
+terminal `TaskCancelled` evidence can be produced or reused.
+
 | ID | Priority | Classification | Status | Responsibility | Release classification | Evidence summary | Next action |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `runtime-release-debt-reaudit` | P0 | Runtime Release debt reaudit | implemented sufficient | Runtime | closed | Required specs, manifests, guards, crates, CLI, VSIX, and CI were reaudited and are now backed by a machine guard. | Use this artifact as the source for the remaining bounded closure phases. |
 | `runtime-boundary-protocol-contracts` | P0 | Boundary Protocol gaps | implemented sufficient | Runtime | closed | RRP-1 adds a canonical Runtime boundary contract and compatibility matrix, and the release-readiness guard validates required surfaces, method subset, anchors, and non-authority language. | Use the guarded canonical boundary contract while closing the remaining Runtime Release Readiness blockers. |
-| `explicit-cancel-command` | P0 | Cancel semantics | partial | Runtime | required before release | Cancelled status and ledger events exist, but no explicit caller-authorized public cancel command was found. | Add bounded Runtime-owned cancel command semantics and tests. |
+| `explicit-cancel-command` | P0 | Cancel semantics | implemented sufficient | Runtime | closed | RRP-2 adds `task.cancel` as a caller-authorized Runtime boundary with task/run identity, freshness checks, bounded cancel fingerprinting, single `TaskCancelled` terminal evidence, exact replay semantics, and VSIX thin validation. | Use `task.cancel` as the explicit cancellation boundary while closing the remaining blockers. |
 | `real-process-loss-recovery-e2e` | P0 | Real process loss Recovery E2E | partial | Runtime | required before release | Recovery probe exists and has crash-window tests; production-equivalent installed process-loss E2E is still missing. | Add a real crash/restart/recovery E2E through the public CLI/runtime boundary. |
 | `durable-schema-version-and-migration` | P0 | Durable schema version/migration | partial | Runtime | required before release | Many payloads carry `schema_version`, but release-level durable store schema migration/fail-closed behavior is not yet proven. | Add durable schema version and migration/fail-closed behavior. |
 | `runtime-release-guard-ci` | P0 | CI Release Gate | partial | Runtime | required before release | Existing CI still uses non-frozen pnpm install and does not directly run every release guard test. RRD-1 wired the Runtime release readiness guard into the VSIX check path already invoked by CI, and the guard now supports open-to-closed audit convergence plus terminal `runtime_release_ready=true` acceptance. Full workflow hardening still requires workflow update authority. | Close the remaining CI workflow hardening when workflow update authority is available. |

@@ -34,9 +34,13 @@ Phase 1.1 defines these status values:
 - `Running`: `task.run` has started the no-op AgentLoop skeleton.
 - `Completed`: the no-op AgentLoop skeleton completed successfully.
 - `Failed`: reserved for runtime or future AgentLoop failure reporting.
-- `Cancelled`: reserved for future cancellation handling.
+- `Cancelled`: terminal status set only by explicit Runtime-owned cancellation.
 
-In Phase 1.1, only `Created -> Running -> Completed` is implemented.
+The original Phase 1.1 lifecycle implemented `Created -> Running -> Completed`.
+RRP-2 adds explicit cancellation for cancellable non-terminal `Created`,
+`Queued`, and `Running` tasks through `task.cancel`; terminal statuses remain
+non-rerunnable and non-cancellable except for exact replay of existing
+cancellation evidence.
 
 ## Run storage
 
@@ -67,6 +71,29 @@ The persisted ledger is separate from any future prompt window truncation behavi
 ## `task.run`
 
 `task.run` advances a `Created` task to `Running`, calls the no-op AgentLoop skeleton, then persists `Completed`. The runtime updates `state.json` and appends `TaskRunning` and `TaskCompleted` events to `ledger.jsonl`. Running an unknown task or a task that is not `Created` returns invalid params.
+
+## `task.cancel`
+
+RRP-2 adds `task.cancel` as the explicit Runtime-owned cancellation boundary.
+The request must carry caller authorization, concrete `task_id` and `run_id`,
+the caller's expected current task status, the caller's expected task
+`updated_at`, and a bounded `cancel_id`. The runtime recomputes a cancel request
+fingerprint from that scoped request before any terminal evidence is written.
+
+Only `Created`, `Queued`, and `Running` tasks are cancellable. Missing tasks,
+run/task mismatches, stale expected status, stale expected `updated_at`,
+completed tasks, failed tasks, unrelated runs, missing authorization, malformed
+handles, and over-broad requests fail closed before a `TaskCancelled` event is
+appended. A successful cancellation transitions the task to `Cancelled`, appends
+one bounded `TaskCancelled` ledger event, and returns the cancel fingerprint and
+`next_action: "inspect_cancelled_task"`.
+
+Exact replay is idempotent only when the task is already `Cancelled` and the
+durable `TaskCancelled` payload matches the same cancel request fingerprint.
+Cancellation is not completion, verification, accepted completion, recovery
+authorization, approval evidence, permission grant, workspace mutation
+authority, MCP/tool authority, Mode Pack policy, external-loop scheduling
+authority, OS process-tree killing, or service control.
 
 ## `headless.continue_once`
 
