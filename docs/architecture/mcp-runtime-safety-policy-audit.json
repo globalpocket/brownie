@@ -1,14 +1,13 @@
 {
   "schema_version": 1,
   "campaign": "mcp-runtime-safety-policy-finite-closure",
-  "phase": "MCP-S4",
-  "phase_title": "Tool-level Approval Binding",
+  "phase": "MCP-S5",
+  "phase_title": "Runtime Input/Output Schema Validation",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "1e8637661865cac1c599be77993fea8147d5c05e",
+  "audited_main_commit": "e053577885c3020ea5ef149d71a0a9c604841158",
   "mcp_first_architecture_preserved": true,
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
-    "mcp-runtime-schema-validation",
     "mcp-secret-reference-contract",
     "mcp-executable-identity"
   ],
@@ -82,14 +81,17 @@
       "id": "mcp-runtime-schema-validation",
       "title": "Runtime input/output schema validation",
       "priority": "P0",
-      "status": "partial",
+      "status": "implemented_sufficient",
       "responsibility_domain": "runtime",
-      "debt_classification": "required_before_release",
+      "debt_classification": "closed",
       "evidence": [
-        "MCP input and output schema fingerprints and bounded summaries are task-pinned.",
-        "Actual arguments are currently checked only as objects, and structured output is not yet validated against a bounded schema subset."
+        "MCP catalog admission validates inputSchema and optional outputSchema against a bounded Runtime-owned JSON Schema subset before task-pinning.",
+        "Known unsupported validation keywords fail closed instead of being silently ignored.",
+        "Runtime validates MCP tools/call input against the task-pinned schema before server execution and denies invalid input before tools/call.",
+        "Runtime validates successful structured output against optional outputSchema before ToolExecutionCompleted and completed-success replay evidence.",
+        "Schema validation evidence is bounded to fingerprints/status/target metadata; raw schemas, raw inputs, and raw MCP responses are not ledgered."
       ],
-      "next_action": "Close in MCP-S5 with bounded JSON Schema subset validation and fail-closed unsupported keywords."
+      "next_action": "Use this closed schema-validation baseline for MCP-S6 secret reference contract."
     },
     {
       "id": "mcp-secret-reference-contract",

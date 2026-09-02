@@ -46,6 +46,18 @@ Server ids and tool names are bounded ASCII identifiers. Namespace collisions,
 duplicate tool names, malformed schemas, oversized schemas, protocol errors,
 server failures, and timeouts fail closed.
 
+Catalog admission validates MCP `inputSchema` and optional `outputSchema`
+against Brownie's bounded schema subset before those schemas are task-pinned.
+The supported v0 subset is intentionally small: object roots with supported
+`type` values for object, string, number, integer, boolean, array, and null;
+object `properties`, `required`, and boolean `additionalProperties`; array
+`items`; scalar `enum` and `const`; string `minLength`/`maxLength`; and numeric
+`minimum`/`maximum`. Known validation keywords outside that subset, including
+references, regex patterns, format validators, combinators, conditionals,
+custom object-key patterns, array cardinality constraints, and numeric
+exclusive/multiple constraints, fail closed instead of being silently ignored.
+Schema byte size, nesting depth, property count, and enum count are bounded.
+
 The autonomous tool-intent path uses the same boundary. For an admitted task,
 `tool.intent.parse` resolves task-pinned `ModeResolved` MCP catalog evidence,
 adds only those dynamic `mcp.<server_id>.<tool_name>` tools to the evaluator,
@@ -150,6 +162,20 @@ server process receives `tools/call`. The approval cannot override
 policy, prohibited retry, destructive/unknown policy, annotation narrowing, or
 catalog drift.
 
+Schemas are runtime contracts, not grants. Input schemas are checked before
+`tools/call`, after Mode Pack allow-list, safety-policy, annotation, approval,
+and task-pinned catalog checks have passed. Invalid input returns bounded
+`Denied` evidence and the server process does not receive `tools/call`.
+Successful tool results are checked against optional output schemas before
+`ToolExecutionCompleted`, completed-success replay evidence, or next-agent
+materialization can be produced. In v0, `outputSchema` validates the
+`structuredContent` object when present; when a server returns only content-style
+results, Runtime validates an empty structured-output object, so constrained
+output schemas still fail closed while unconstrained object schemas preserve the
+existing content-style result behavior. Missing `outputSchema` records
+`not_applicable` validation evidence and preserves existing bounded result
+behavior.
+
 Server configuration resolution is runtime-owned and tied to the Mode Pack
 activation snapshot selected at task admission. Runtime archives the
 secret-bearing server configuration in a private activation snapshot store keyed
@@ -208,7 +234,10 @@ At task admission, Runtime materializes bounded MCP catalog evidence in
 
 The ledger and prompt do not store raw server command arguments, environment
 values, credentials, secret headers, absolute source paths, or unbounded schema
-text. Prompt materialization may expose bounded tool id, bounded description,
+text. Runtime may retain raw schemas only in ephemeral in-memory catalog entries
+for validation during the current execution boundary; task-pinned durable
+evidence remains limited to fingerprints, summaries, and bounded provenance.
+Prompt materialization may expose bounded tool id, bounded description,
 and bounded input field names/types/required flags as ephemeral catalog material
 below runtime safety invariants, Mode Pack permission policy, and mode
 instructions. Fingerprints remain the provenance anchor; schema text and MCP
@@ -238,7 +267,11 @@ The v0 result-context contract is intentionally narrow:
   implementing multi-round-trip input, Elicitation, Roots, Sampling, or remote
   transport behavior;
 - explicit `isError=false` or omitted `isError` is `ToolSucceeded` and may
-  create `ToolExecutionCompleted` evidence;
+  create `ToolExecutionCompleted` evidence only after output schema validation
+  succeeds or is not applicable;
+- output schema validation status, schema fingerprint, structured-output
+  fingerprint, validation target, and failure fingerprint are recorded only as
+  bounded evidence;
 - explicit `isError=true` is `ToolReturnedError`, creates
   `ToolExecutionFailed` evidence, may carry bounded untrusted error text
   context, and is not verification-success, task-completion, or
