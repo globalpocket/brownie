@@ -76,7 +76,10 @@ allow-lists. The shape is:
     "github": {
       "transport": "stdio",
       "command": "/absolute/path/to/server",
-      "args": ["..."]
+      "args": ["..."],
+      "env": {
+        "GITHUB_TOKEN": { "secret_ref": "github.token" }
+      }
     }
   },
   "modes": [
@@ -176,6 +179,20 @@ existing content-style result behavior. Missing `outputSchema` records
 `not_applicable` validation evidence and preserves existing bounded result
 behavior.
 
+Secret references are launch-time runtime contracts, not grants. Trusted Mode
+Pack MCP server config may declare bounded stdio child environment bindings
+with `env` entries whose values are exactly `{ "secret_ref": "<id>" }`. Raw
+environment values, unsupported shapes, duplicate secret references, malformed
+environment names, malformed secret reference ids, and oversized declarations
+fail closed during Mode Pack validation. Runtime resolves each reference only
+through its `McpSecretResolver` boundary immediately before the request-scoped
+`tools/list` or `tools/call` launch, after the inherited environment has been
+cleared. Resolution failure or invalid resolved values fail before spawning the
+server. Resolved secret values are injected only into that one child process
+environment and are never persisted, replayed, returned, prompt-materialized, or
+included in task-pinned catalog evidence. Durable evidence may carry bounded
+secret reference fingerprints and counts only.
+
 Server configuration resolution is runtime-owned and tied to the Mode Pack
 activation snapshot selected at task admission. Runtime archives the
 secret-bearing server configuration in a private activation snapshot store keyed
@@ -229,6 +246,7 @@ At task admission, Runtime materializes bounded MCP catalog evidence in
 - bounded input schema summary for model/tool-definition materialization;
 - bounded MCP annotation payload and annotation fingerprint;
 - server/config identity fingerprint;
+- server secret reference fingerprints when configured;
 - MCP protocol version;
 - catalog fingerprint.
 

@@ -1,6 +1,6 @@
 //! External Mode Pack management crate.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -32,6 +32,9 @@ pub const MAX_MCP_TOOL_NAME_CHARS: usize = 96;
 pub const MAX_MCP_COMMAND_CHARS: usize = 512;
 pub const MAX_MCP_ARGS: usize = 32;
 pub const MAX_MCP_ARG_CHARS: usize = 512;
+pub const MAX_MCP_SECRET_ENV_BINDINGS: usize = 16;
+pub const MAX_MCP_SECRET_ENV_NAME_CHARS: usize = 64;
+pub const MAX_MCP_SECRET_REF_CHARS: usize = 128;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ModePackEntrypoints {
@@ -99,7 +102,16 @@ pub struct ModePackMcpServerConfig {
     pub transport: String,
     pub command: String,
     pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secret_env: Vec<ModePackMcpSecretEnvBinding>,
     pub config_identity_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackMcpSecretEnvBinding {
+    pub env_name: String,
+    pub secret_ref: String,
+    pub secret_ref_fingerprint: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,6 +168,8 @@ struct RawMcpServerConfig {
     command: String,
     #[serde(default)]
     args: Vec<String>,
+    #[serde(default)]
+    env: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -503,13 +517,20 @@ fn validate_mcp_servers(
                 .into_iter()
                 .map(|arg| validate_mcp_text("mcp_servers[].args[]", arg, MAX_MCP_ARG_CHARS))
                 .collect::<Result<Vec<_>>>()?;
-            let config_identity_fingerprint =
-                mcp_config_identity_fingerprint(&server_id, &transport, &command, &args);
+            let secret_env = validate_mcp_secret_env(&server_id, config.env)?;
+            let config_identity_fingerprint = mcp_config_identity_fingerprint(
+                &server_id,
+                &transport,
+                &command,
+                &args,
+                &secret_env,
+            );
             Ok(ModePackMcpServerConfig {
                 server_id,
                 transport,
                 command,
                 args,
+                secret_env,
                 config_identity_fingerprint,
             })
         })
@@ -709,11 +730,89 @@ fn validate_mcp_stdio_command(server_id: &str, value: String) -> Result<String> 
     Ok(command)
 }
 
+fn validate_mcp_secret_env(
+    server_id: &str,
+    raw: BTreeMap<String, serde_json::Value>,
+) -> Result<Vec<ModePackMcpSecretEnvBinding>> {
+    if raw.len() > MAX_MCP_SECRET_ENV_BINDINGS {
+        bail!("modepack mcp_servers[{server_id}].env exceeds secret binding limit");
+    }
+    let mut bindings = Vec::with_capacity(raw.len());
+    let mut seen_refs = HashSet::new();
+    for (env_name, value) in raw {
+        let env_name = validate_mcp_secret_env_name(&server_id, &env_name)?;
+        let object = value.as_object().ok_or_else(|| {
+            anyhow::anyhow!(
+                "modepack mcp_servers[{server_id}].env[{env_name}] must be a secret reference object"
+            )
+        })?;
+        if object.len() != 1 || !object.contains_key("secret_ref") {
+            bail!("modepack mcp_servers[{server_id}].env[{env_name}] supports only secret_ref");
+        }
+        let secret_ref = object
+            .get("secret_ref")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "modepack mcp_servers[{server_id}].env[{env_name}].secret_ref must be a string"
+                )
+            })?;
+        let secret_ref = validate_mcp_identifier(
+            "mcp_servers[].env[].secret_ref",
+            secret_ref,
+            MAX_MCP_SECRET_REF_CHARS,
+        )?;
+        if !seen_refs.insert(secret_ref.clone()) {
+            bail!("modepack mcp_servers[{server_id}].env has duplicate secret binding");
+        }
+        let secret_ref_fingerprint = format!(
+            "sha256:{}",
+            hex_sha256(
+                serde_json::json!({
+                    "version": "modepack_mcp_secret_ref_v1",
+                    "env_name": env_name,
+                    "secret_ref": secret_ref,
+                })
+                .to_string()
+                .as_bytes(),
+            )
+        );
+        bindings.push(ModePackMcpSecretEnvBinding {
+            env_name,
+            secret_ref,
+            secret_ref_fingerprint,
+        });
+    }
+    bindings.sort_by(|left, right| left.env_name.cmp(&right.env_name));
+    Ok(bindings)
+}
+
+fn validate_mcp_secret_env_name(server_id: &str, value: &str) -> Result<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        bail!("modepack mcp_servers[{server_id}].env name must not be empty");
+    }
+    if value.chars().count() > MAX_MCP_SECRET_ENV_NAME_CHARS {
+        bail!("modepack mcp_servers[{server_id}].env name exceeds length limit");
+    }
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        bail!("modepack mcp_servers[{server_id}].env name must not be empty");
+    };
+    if !(first.is_ascii_uppercase() || first == '_')
+        || !chars.all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
+    {
+        bail!("modepack mcp_servers[{server_id}].env name must be a bounded environment variable name");
+    }
+    Ok(value.to_string())
+}
+
 fn mcp_config_identity_fingerprint(
     server_id: &str,
     transport: &str,
     command: &str,
     args: &[String],
+    secret_env: &[ModePackMcpSecretEnvBinding],
 ) -> String {
     let canonical = serde_json::json!({
         "version": "modepack_mcp_server_config_identity_v1",
@@ -721,6 +820,15 @@ fn mcp_config_identity_fingerprint(
         "transport": transport,
         "command": command,
         "args": args,
+        "secret_env": secret_env
+            .iter()
+            .map(|binding| {
+                serde_json::json!({
+                    "env_name": binding.env_name,
+                    "secret_ref_fingerprint": binding.secret_ref_fingerprint,
+                })
+            })
+            .collect::<Vec<_>>(),
     });
     format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
 }
@@ -2221,13 +2329,16 @@ customModes:
         let modepack = r#"{
           "name": "mcp-pack",
           "schema_version": 1,
-          "mcp_servers": {
-            "github": {
-              "transport": "stdio",
-              "command": "/bin/echo",
-              "args": ["{}"]
-            }
-          },
+            "mcp_servers": {
+              "github": {
+                "transport": "stdio",
+                "command": "/bin/echo",
+                "args": ["{}"],
+                "env": {
+                  "GITHUB_TOKEN": { "secret_ref": "github.token" }
+                }
+              }
+            },
           "modes": [
             {
               "mode_id": "reviewer",
@@ -2292,6 +2403,128 @@ customModes:
         assert!(snapshot.mcp_servers[0]
             .config_identity_fingerprint
             .starts_with("sha256:"));
+        assert_eq!(snapshot.mcp_servers[0].secret_env.len(), 1);
+        assert_eq!(
+            snapshot.mcp_servers[0].secret_env[0].env_name,
+            "GITHUB_TOKEN"
+        );
+        assert_eq!(
+            snapshot.mcp_servers[0].secret_env[0].secret_ref,
+            "github.token"
+        );
+        assert!(snapshot.mcp_servers[0].secret_env[0]
+            .secret_ref_fingerprint
+            .starts_with("sha256:"));
+    }
+
+    #[test]
+    fn rejects_raw_mcp_secret_environment_values() {
+        let modepack = r#"{
+          "name": "mcp-pack",
+          "schema_version": 1,
+          "mcp_servers": {
+            "github": {
+              "transport": "stdio",
+              "command": "/bin/echo",
+              "env": {
+                "GITHUB_TOKEN": "raw-secret-value"
+              }
+            }
+          },
+          "modes": [
+            {
+              "mode_id": "reviewer",
+              "display_name": "Reviewer",
+              "role_definition": "Raw secret values are not Mode Pack policy.",
+              "permissions": {
+                "read_only": false,
+                "workspace_write": false,
+                "process_exec": false,
+                "network_access": false,
+                "service_control": false,
+                "destructive": false,
+                "can_spawn_subtasks": false,
+                "mcp_tool_access": true
+              },
+              "mcp": {
+                "servers": [
+                  { "id": "github", "tools": ["search_code"] }
+                ]
+              }
+            }
+          ]
+        }"#;
+
+        let error = load_modepack_from_str_with_options(
+            modepack,
+            ".brownie/modepack.json",
+            ModePackLoadOptions::trusted_signed_active_modepack(),
+        )
+        .expect_err("raw MCP env value should fail closed")
+        .to_string();
+
+        assert!(error.contains("secret reference object"));
+    }
+
+    #[test]
+    fn rejects_duplicate_mcp_secret_references() {
+        let modepack = r#"{
+          "name": "mcp-pack",
+          "schema_version": 1,
+          "mcp_servers": {
+            "github": {
+              "transport": "stdio",
+              "command": "/bin/echo",
+              "env": {
+                "GITHUB_TOKEN": { "secret_ref": "github.token" },
+                "SECOND_GITHUB_TOKEN": { "secret_ref": "github.token" }
+              }
+            }
+          },
+          "modes": [
+            {
+              "mode_id": "reviewer",
+              "display_name": "Reviewer",
+              "role_definition": "Duplicate secret refs are invalid.",
+              "permissions": {
+                "read_only": false,
+                "workspace_write": false,
+                "process_exec": false,
+                "network_access": false,
+                "service_control": false,
+                "destructive": false,
+                "can_spawn_subtasks": false,
+                "mcp_tool_access": true
+              },
+              "mcp": {
+                "servers": [
+                  {
+                    "id": "github",
+                    "tools": [
+                      {
+                        "name": "search_code",
+                        "side_effect": "read_only",
+                        "approval": "not_required",
+                        "idempotency": "safe",
+                        "retry": "policy_controlled"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }"#;
+
+        let error = load_modepack_from_str_with_options(
+            modepack,
+            ".brownie/modepack.json",
+            ModePackLoadOptions::trusted_signed_active_modepack(),
+        )
+        .expect_err("duplicate MCP secret references should fail closed")
+        .to_string();
+
+        assert!(error.contains("duplicate secret binding"));
     }
 
     #[test]

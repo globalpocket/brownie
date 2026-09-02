@@ -237,6 +237,18 @@ Successful `ToolSucceeded` responses are output-validated before
 structured-output object, preserving unconstrained content-style results while
 failing closed for constrained output contracts.
 
+MCP secret references are resolved only at the Runtime stdio launch boundary.
+Trusted Mode Pack server config may name bounded secret reference ids for child
+environment variables, but `tool.execute`, `task.run`, provider output, MCP
+descriptions, and server responses cannot supply raw environment values or
+secret values. Runtime clears ambient environment inheritance, resolves each
+configured reference through the request-scoped resolver immediately before
+`tools/list` or `tools/call`, injects only resolved values into that one child
+process, and denies unresolved or malformed references before spawn. Ledger and
+execution metadata may include bounded secret reference fingerprints and counts
+only; raw secret values, raw environment maps, resolver internals, and secret
+reference-derived authority are never persisted or prompt-materialized.
+
 MCP stdio server launch is runtime-owned and request-scoped in this phase. MCP
 server descriptions, schemas, command names, response text, and AgentModes prose
 cannot grant permission or widen tool routing authority. MCP tool annotations

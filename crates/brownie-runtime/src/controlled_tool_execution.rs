@@ -613,6 +613,7 @@ fn mcp_catalog_provenance_payload(
         "annotations": entry.annotations,
         "annotation_fingerprint": entry.annotation_fingerprint,
         "server_config_identity_fingerprint": entry.server_config_identity_fingerprint,
+        "server_secret_reference_fingerprints": catalog.server_secret_reference_fingerprints,
         "protocol_version": entry.protocol_version,
         "catalog_fingerprint": catalog.catalog_fingerprint,
     })
@@ -694,6 +695,7 @@ fn mcp_call_failure_metadata(
         "tool_name": tool_name,
         "protocol_version": mcp_client::MCP_PROTOCOL_VERSION,
         "server_config_identity_fingerprint": config.config_identity_fingerprint,
+        "server_secret_reference_fingerprint_count": config.secret_env.len(),
         "request_fingerprint": request_fingerprint,
         "protocol_status": match kind {
             mcp_client::McpToolCallFailureKind::ProtocolFailed => "ProtocolFailed",
@@ -731,6 +733,8 @@ fn pinned_mcp_catalog_allows(
                 .get("server_config_identity_fingerprint")
                 .and_then(Value::as_str)
                 == Some(entry.server_config_identity_fingerprint.as_str())
+            && catalog.get("server_secret_reference_fingerprints")
+                == Some(&json!(current_catalog.server_secret_reference_fingerprints))
             && catalog.get("protocol_version").and_then(Value::as_str)
                 == Some(entry.protocol_version.as_str())
             && catalog.get("catalog_fingerprint").and_then(Value::as_str)

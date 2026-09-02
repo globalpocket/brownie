@@ -1,14 +1,13 @@
 {
   "schema_version": 1,
   "campaign": "mcp-runtime-safety-policy-finite-closure",
-  "phase": "MCP-S5",
-  "phase_title": "Runtime Input/Output Schema Validation",
+  "phase": "MCP-S6",
+  "phase_title": "Secret Reference Contract",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "e053577885c3020ea5ef149d71a0a9c604841158",
+  "audited_main_commit": "84e0b41fa305fbb219dcb0d8544690e75c2dc415",
   "mcp_first_architecture_preserved": true,
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
-    "mcp-secret-reference-contract",
     "mcp-executable-identity"
   ],
   "classifications": [
@@ -97,14 +96,17 @@
       "id": "mcp-secret-reference-contract",
       "title": "MCP secret reference contract",
       "priority": "P1",
-      "status": "unimplemented",
+      "status": "implemented_sufficient",
       "responsibility_domain": "runtime",
-      "debt_classification": "required_before_release",
+      "debt_classification": "closed",
       "evidence": [
-        "MCP stdio launches clear ambient inherited environment.",
-        "Runtime does not yet expose a minimal SecretResolver contract for scoped ephemeral MCP child environment injection."
+        "Trusted Mode Pack MCP server config accepts only bounded structured secret-reference environment bindings.",
+        "Raw environment values, unsupported binding shapes, malformed environment names, malformed or oversized secret references, and duplicate secret references fail closed during Mode Pack validation.",
+        "Runtime resolves secret references only through a McpSecretResolver boundary immediately before each request-scoped tools/list or tools/call stdio launch.",
+        "Resolved values are injected only into the cleared child environment for that one request and are never serialized into task-pinned catalog evidence, ledgers, replay evidence, diagnostics, prompts, errors, or control-plane documents.",
+        "Missing or unresolvable secret references fail closed before spawning the MCP server, and bounded evidence carries only secret reference fingerprints/counts."
       ],
-      "next_action": "Close in MCP-S6 without implementing Vault, KMS, Secret Manager, tenant secret storage, or admin UI."
+      "next_action": "Use this closed secret-reference contract as the baseline for MCP-S7 executable identity."
     },
     {
       "id": "mcp-executable-identity",
@@ -117,7 +119,7 @@
         "MCP stdio command must be absolute, rejects PATH lookup, clears env, uses neutral cwd, and reaps request-scoped child processes.",
         "Executable content identity is not yet fixed and rechecked before tools/list and tools/call."
       ],
-      "next_action": "Close in MCP-S7 by pinning executable hash evidence without ledgering raw paths or binary content."
+      "next_action": "Close in MCP-S7 by pinning executable hash identity evidence without ledgering raw paths or binary content."
     },
     {
       "id": "mcp-p1-transport-task-reevaluation",
