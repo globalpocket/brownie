@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "phase": "MCP-S1",
+  "phase": "MCP-S1.1",
   "current_milestone": "mcp-runtime-safety-policy-finite-closure",
   "milestone": "Brownie MCP Runtime Safety Policy Finite Closure",
   "target_capability": "runtime_permission_enforcement",
-  "concrete_capability_transition": "mcp_tool_error_results_are_no_longer_success_or_replay_evidence",
+  "concrete_capability_transition": "mcp_tool_call_result_semantics_conform_to_current_protocol_without_widening_runtime_authority",
   "forbidden_pattern": "brownie_custom_tool_adapter_sdk_brownie_custom_tool_server_protocol_mcp_server_framework_streamable_http_oauth_mcp_apps_sampling_roots_elicitation_public_registry_automatic_install_remote_binary_distribution_scheduler_daemon_generic_shell_arbitrary_process_exec_modepack_policy_passthrough_raw_json_rpc_response_raw_error_secret_environment_absolute_path_canonical_path_binary_content",
   "project_objective_ref": "docs/architecture/product-charter.md",
   "strategic_capability_mapping": [
@@ -25,15 +25,15 @@
     "required": true,
     "answers": {
       "strategic_capabilities": "Advances runtime_permission_enforcement, headless_autonomous_development, and controlled_workspace_tools.",
-      "new_capability": "Brownie now distinguishes MCP ProtocolSucceeded, ToolSucceeded, ToolReturnedError, ProtocolFailed, TimedOut, and malformed-result Failed outcomes at the Runtime MCP tools/call boundary.",
-      "why_existing_functionality_is_insufficient": "The previous MCP call path recorded isError as metadata but treated any successful JSON-RPC result as ToolExecuteStatus::Completed, allowing tool-side errors to become completion and success-replay evidence.",
-      "product_gap_if_skipped": "A failing MCP tool could be replayed or summarized as successful autonomous progress, weakening Runtime-owned permission, verification, and completion semantics before later MCP safety policy phases.",
+      "new_capability": "Brownie now conforms the Runtime MCP tools/call boundary to current CallToolResult semantics: resultType complete is normal, omitted resultType is backward-compatible complete, input_required fails closed in v0, omitted isError defaults to false, and malformed content/isError remain bounded failures.",
+      "why_existing_functionality_is_insufficient": "MCP-S1 separated protocol success from tool success, but still required explicit isError=false and did not parse current resultType semantics, so protocol-conformant servers that omit isError could fail incorrectly and input_required results were not explicitly rejected.",
+      "product_gap_if_skipped": "A protocol-conformant MCP server could be misclassified, while unsupported input_required continuations would lack an explicit fail-closed Runtime status before later MCP safety policy phases compose around this boundary.",
       "non_duplicative": "This phase changes controlled MCP execution classification and tests the ledger/replay boundary; it does not add another audit-only report, endpoint, adapter, or wrapper.",
       "no_new_rpc": "Yes. The existing tool.execute, task.run, and headless run/resume paths are preserved.",
       "no_new_summary": "Yes. The phase adds bounded execution status metadata to existing MCP tool-result payloads and a campaign audit artifact, not a new user-facing summary API.",
-      "runtime_behavior_change": "Explicit isError=true now emits ToolExecutionFailed with bounded MCP context, while only explicit isError=false emits ToolExecutionCompleted and enters completed-success replay.",
-      "headless_autonomous_contribution": "Headless autonomous runs no longer build second-pass prompts or completion evidence from MCP tool-side errors, preventing false progress loops.",
-      "milestone_progress": "Closes the first required MCP Runtime Safety Policy phase and registers remaining MCP-S2 through MCP-S7 blockers without disturbing the prior Runtime Release Readiness campaign."
+      "runtime_behavior_change": "Explicit isError=true still emits ToolExecutionFailed with bounded MCP context; explicit isError=false or omitted isError can emit ToolExecutionCompleted only for complete results, while input_required and unknown resultType values are not completed-success replay evidence.",
+      "headless_autonomous_contribution": "Headless autonomous runs can accept current MCP complete results without false failure while still failing closed for unsupported multi-round-trip input semantics.",
+      "milestone_progress": "Corrects MCP-S1 to the current MCP protocol baseline before MCP-S2 starts, without broadening MCP transport, approval, schema, secret, annotation, or executable-identity scope."
     },
     "questions": [
       {
@@ -91,21 +91,23 @@
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "MCP-S1 updates the phase-value manifest and Runtime Release Readiness audit registration, so strict review must verify that the new MCP safety campaign cannot mask open Runtime release blockers or convert excluded MCP transport/product work into this P0 phase.",
+    "review_intent": "MCP-S1.1 updates the phase-value manifest and MCP Runtime Safety audit registration, so strict review must verify that protocol conformance cannot mask open Runtime release blockers or convert excluded MCP transport/product work into this P0 phase.",
     "changed_files": [
       "docs/architecture/phase-value-manifest.json",
+      "docs/architecture/mcp-runtime-safety-policy-audit.json",
       "docs/architecture/runtime-release-readiness-audit.json"
     ]
   },
   "exit_criteria": [
-    "MCP tools/call result classification requires explicit isError=false for ToolExecutionCompleted.",
+    "MCP tools/call result classification treats explicit isError=false and omitted isError as ToolSucceeded only for complete results.",
     "Explicit isError=true records ToolExecutionFailed with bounded MCP context and policy-controlled retry metadata.",
-    "JSON-RPC error, timeout, and malformed result paths are distinct bounded failure statuses.",
+    "resultType complete and absent backward-compatible resultType are accepted; input_required and unknown resultType values fail closed.",
+    "JSON-RPC error, timeout, input_required, unknown resultType, and malformed result paths are distinct bounded failure statuses.",
     "MCP tool error evidence is not used as second-pass prompt/completion evidence and is not replayed as a completed success.",
     "MCP Runtime Safety Policy audit classifies MCP-S1 through MCP-S7 without replacing the MCP-first architecture."
   ],
   "behavior_evidence": [
-    "cargo test -p brownie-runtime mcp -- --test-threads=1 covers successful MCP calls, isError=true tool errors, JSON-RPC protocol failure, timeout, malformed result failure, bounded result context, and completed-success replay.",
+    "cargo test -p brownie-runtime mcp -- --test-threads=1 covers successful MCP calls, omitted isError success, isError=true tool errors, JSON-RPC protocol failure, timeout, input_required fail-closed handling, unknown resultType protocol failure, malformed result failure, bounded result context, and completed-success replay.",
     "docs/specifications/mcp-client-spec-v0.md and docs/specifications/tool-execution-spec-v0.md define the S1 result semantics.",
     "docs/architecture/mcp-runtime-safety-policy-audit.json records S1 closed and S2-S7 remaining required-before-release Runtime debt."
   ],
@@ -113,11 +115,11 @@
     "required": true,
     "product_completion_claim": false,
     "accepted_capability": [
-      "Runtime MCP tools/call success evidence is now restricted to explicit isError=false results.",
+      "Runtime MCP tools/call success evidence is now restricted to complete results with explicit isError=false or omitted isError.",
       "Runtime MCP tool-side errors now produce bounded failure evidence instead of completed-success replay evidence."
     ],
     "behavior_evidence": [
-      "Focused MCP runtime tests cover isError=false success, isError=true tool failure, JSON-RPC protocol failure, timeout, malformed result failure, bounded context, and success replay preservation.",
+      "Focused MCP runtime tests cover isError=false success, omitted isError success, isError=true tool failure, JSON-RPC protocol failure, timeout, input_required fail-closed handling, unknown resultType protocol failure, malformed result failure, bounded context, and success replay preservation.",
       "Agent-loop MCP test coverage proves ToolReturnedError does not create SecondPassPromptBuilt or ToolExecutionCompleted MCP evidence."
     ],
     "safety_boundary": [
@@ -132,7 +134,7 @@
     ],
     "rejected_alternatives": [
       "Rejected expanding the external ToolExecuteStatus enum before a broader protocol contract review.",
-      "Rejected treating omitted isError as success because the campaign requires explicit isError=false only.",
+      "Rejected treating input_required as an implicit prompt continuation because v0 does not implement MCP multi-round-trip input, Elicitation, Roots, Sampling, or remote transport behavior.",
       "Rejected using MCP tool error text as completion or verification evidence."
     ],
     "technical_debt": [
@@ -197,7 +199,7 @@
       "classification": "closed",
       "responsibility_domain": "runtime",
       "status_after_phase": "closed",
-      "evidence": "isError=true is ToolReturnedError and ToolExecutionFailed; only isError=false can create ToolExecutionCompleted and completed-success replay evidence."
+      "evidence": "isError=true is ToolReturnedError and ToolExecutionFailed; only complete results with isError=false or omitted isError can create ToolExecutionCompleted and completed-success replay evidence; input_required fails closed in v0."
     },
     {
       "id": "mcp-tool-safety-policy",

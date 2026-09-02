@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "campaign": "mcp-runtime-safety-policy-finite-closure",
-  "phase": "MCP-S1",
-  "phase_title": "MCP Result Semantics",
+  "phase": "MCP-S1.1",
+  "phase_title": "MCP Result Semantics Protocol Conformance Corrective",
   "repository": "globalpocket/brownie",
   "audited_main_commit": "84cafe8d1bc37a352c12a9cfd0467a5ba19a9cd2",
   "mcp_first_architecture_preserved": true,
@@ -26,7 +26,9 @@
       "evidence": [
         "MCP tools/call separates ProtocolSucceeded from ToolSucceeded.",
         "Explicit isError=true is ToolReturnedError and records ToolExecutionFailed with bounded context instead of ToolExecutionCompleted.",
-        "Protocol errors, timeouts, and malformed results have distinct bounded execution_status values."
+        "Explicit isError=false and omitted isError are ToolSucceeded only for complete results.",
+        "resultType=complete and absent backward-compatible resultType are accepted; input_required fails closed as unsupported in v0.",
+        "Protocol errors, timeouts, unknown resultType values, input_required results, and malformed results have distinct bounded execution_status values."
       ],
       "next_action": "Use this closed result-semantics contract as the baseline for MCP-S2."
     },

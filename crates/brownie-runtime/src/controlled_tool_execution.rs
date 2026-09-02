@@ -385,6 +385,7 @@ fn mcp_call_failure_metadata(
             mcp_client::McpToolCallFailureKind::ProtocolFailed => "ProtocolFailed",
             mcp_client::McpToolCallFailureKind::TimedOut => "TimedOut",
             mcp_client::McpToolCallFailureKind::Failed => "ProtocolSucceeded",
+            mcp_client::McpToolCallFailureKind::InputRequiredUnsupported => "InputRequired",
         },
         "tool_status": Value::Null,
         "execution_status": execution_status,
