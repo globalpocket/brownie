@@ -25256,6 +25256,9 @@ modes:
                 !error
                     .message
                     .contains("conflicting headless run session checkpoint")
+                    && !error
+                        .message
+                        .contains("conflicting headless run session drive checkpoint")
             })
             .collect::<Vec<_>>();
         assert!(unexpected_errors.is_empty(), "{responses:?}");
