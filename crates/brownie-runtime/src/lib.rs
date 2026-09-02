@@ -25256,6 +25256,9 @@ modes:
                 !error
                     .message
                     .contains("conflicting headless run session checkpoint")
+                    && !error
+                        .message
+                        .contains("conflicting headless run session drive checkpoint")
             })
             .collect::<Vec<_>>();
         assert!(unexpected_errors.is_empty(), "{responses:?}");
@@ -63732,6 +63735,215 @@ content-length: {}
         .result
         .expect("execute result");
         assert_eq!(denied["status"], json!("Denied"));
+        let log_path = temp.path().join("mcp-count.log");
+        if log_path.exists() {
+            let mcp_log = std::fs::read_to_string(&log_path).expect("mcp log");
+            assert!(!mcp_log.contains("tools/call:search_code"));
+        }
+    }
+
+    #[test]
+    fn mcp_tool_stale_claim_lock_file_does_not_authorize_or_block_claim() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "counting");
+        write_mcp_modepack_with_tool_policy(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+            "external_mutation",
+            "required",
+            "unsafe",
+            "policy_controlled",
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Recover stale MCP claim lock","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id").to_string();
+        let run_id = start["run_id"].as_str().expect("run id").to_string();
+        let approval = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"mcp.tool.approve","params":{{"task_id":"{task_id}","mode_id":"reviewer","tool_id":"mcp.github.search_code","input":{{"query":"bounded"}},"approve":true,"approval_id":"rrp-3-stale-lock"}}}}"#
+        ))
+        .result
+        .expect("approval result");
+        let approval_fingerprint = approval["mcp_approval_binding"]["approval_fingerprint"]
+            .as_str()
+            .expect("approval fingerprint");
+        let lock_name = approval_fingerprint
+            .strip_prefix("sha256:")
+            .expect("sha prefix");
+        let lock_path = BrownieStore::new(temp.path())
+            .tasks()
+            .run_dir(&run_id)
+            .join(format!("mcp-approval-{lock_name}.lock"));
+        std::fs::write(&lock_path, "legacy-stale-create-new-lock\n").expect("stale lock");
+
+        let executed = handle_tool_execute(
+            json!(3),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {"query": "bounded"}
+            })),
+        )
+        .result
+        .expect("execution result");
+        assert_eq!(executed["status"], json!("Completed"));
+        assert!(lock_path.exists(), "lock files are not durable authority");
+        let mcp_log = std::fs::read_to_string(temp.path().join("mcp-count.log")).expect("mcp log");
+        assert_eq!(mcp_log.matches("tools/call:search_code").count(), 1);
+    }
+
+    #[test]
+    fn mcp_tool_recovery_probe_marks_unfinished_executing_once_and_blocks_reuse() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "counting");
+        write_mcp_modepack_with_tool_policy(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+            "external_mutation",
+            "required",
+            "unsafe",
+            "policy_controlled",
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        let objective = "Recover executing MCP approval";
+        let objective_fingerprint = format!(
+            "sha256:{}",
+            hex_sha256(
+                [
+                    b"brownie-cli-objective-fingerprint-v1\0".as_slice(),
+                    objective.as_bytes()
+                ]
+                .concat()
+                .as_slice()
+            )
+        );
+        let start = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"task.start","params":{{"goal":"{objective}","mode_id":"reviewer"}}}}"#
+        ))
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id").to_string();
+        let run_id = start["run_id"].as_str().expect("run id").to_string();
+        let store = BrownieStore::new(temp.path());
+        store
+            .tasks()
+            .write_headless_journey_start_checkpoint(&HeadlessJourneyStartCheckpoint {
+                journey_id: "rrp3.recover.journey".to_string(),
+                session_id: "rrp3.recover.session".to_string(),
+                drive_id: "rrp3.recover.drive".to_string(),
+                task_id: task_id.clone(),
+                run_id: run_id.clone(),
+                task_start_fingerprint: format!("sha256:{}", "a".repeat(64)),
+                start_progress: HeadlessRunProgressCheckpoint {
+                    progress_fingerprint: format!("sha256:{}", "b".repeat(64)),
+                    aggregate_sequence: 1,
+                },
+                journey_fingerprint: format!("sha256:{}", "c".repeat(64)),
+                objective_context: None,
+                product_objective_continuation_provenance: None,
+            })
+            .expect("journey checkpoint");
+        let approval = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"mcp.tool.approve","params":{{"task_id":"{task_id}","mode_id":"reviewer","tool_id":"mcp.github.search_code","input":{{"query":"bounded"}},"approve":true,"approval_id":"rrp-3-executing-recovery"}}}}"#
+        ))
+        .result
+        .expect("approval result");
+        let record = store
+            .tasks()
+            .get_task(&task_id)
+            .expect("task lookup")
+            .expect("task");
+        let mut executing = approval["mcp_approval_binding"].clone();
+        executing["status"] = json!("executing");
+        executing["outcome"] = json!("tools_call_claimed");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &record,
+                LedgerEventKind::McpToolExecutionApproved,
+                Some(executing),
+            )
+            .expect("executing approval event");
+
+        let probe_request = format!(
+            r#"{{
+              "jsonrpc":"2.0",
+              "id":4,
+              "method":"headless.run.recovery_probe",
+              "params":{{
+                "authorize_recovery_probe":true,
+                "session_id":"rrp3.recover.session",
+                "drive_id":"rrp3.recover.drive",
+                "journey_id":"rrp3.recover.journey",
+                "objective_fingerprint":"{objective_fingerprint}"
+              }}
+            }}"#
+        );
+        let first_probe = parse_line(&probe_request)
+            .result
+            .expect("first recovery probe");
+        assert_eq!(first_probe["admission_state"], json!("persisted"));
+        assert_eq!(first_probe["task_id"], json!(&task_id));
+        assert_eq!(first_probe["run_id"], json!(&run_id));
+        let second_probe = parse_line(&probe_request)
+            .result
+            .expect("second recovery probe");
+        assert_eq!(second_probe, first_probe);
+
+        let denied = handle_tool_execute(
+            json!(3),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {"query": "bounded"}
+            })),
+        )
+        .result
+        .expect("outcome unknown denied");
+        assert_eq!(denied["status"], json!("Denied"));
+        assert!(denied["output"]["reason"]
+            .as_str()
+            .expect("denial reason")
+            .contains("outcome_unknown"));
+
+        let events = store.tasks().read_ledger_events(&run_id).expect("events");
+        let approval_states = events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::McpToolExecutionApproved)
+            .filter_map(|event| event.payload.as_ref())
+            .filter_map(|payload| payload.get("status").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            approval_states,
+            vec!["approved", "executing", "outcome_unknown"]
+        );
+        let recovered = events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::McpToolExecutionApproved)
+            .filter_map(|event| event.payload.as_ref())
+            .find(|payload| payload.get("status") == Some(&json!("outcome_unknown")))
+            .expect("outcome unknown payload");
+        assert_eq!(
+            recovered["recovery_reason"],
+            json!("recovered_unfinished_mcp_execution")
+        );
+        assert!(recovered["recovery_fingerprint"]
+            .as_str()
+            .expect("recovery fingerprint")
+            .starts_with("sha256:"));
         let log_path = temp.path().join("mcp-count.log");
         if log_path.exists() {
             let mcp_log = std::fs::read_to_string(&log_path).expect("mcp log");
