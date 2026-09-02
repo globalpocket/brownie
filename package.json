@@ -17,6 +17,7 @@
     "guard:runtime-release-readiness:test": "node --test scripts/guard-runtime-release-readiness.test.mjs",
     "install:cli": "node scripts/install-brownie-cli.mjs",
     "install:cli:test": "node --test scripts/install-brownie-cli.test.mjs",
+    "test:rrp3-process-loss": "node scripts/rrp3-process-loss-recovery-e2e.mjs",
     "test": "pnpm --filter brownie-vsix test"
   },
   "packageManager": "pnpm@9.0.0",

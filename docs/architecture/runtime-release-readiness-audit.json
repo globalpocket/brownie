@@ -1,13 +1,12 @@
 {
   "schema_version": 1,
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-  "phase": "MCP-S4.1",
-  "phase_title": "Approval Consumption and Retry Safety Corrective",
+  "phase": "RRP-3",
+  "phase_title": "Real Process-Loss Recovery E2E",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "eca116e128f24ff3a7c3cd4f2897b4426491f979",
+  "audited_main_commit": "e098364d8a5a7ade0b8f9cfdb8f719682bd11063",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
-    "real-process-loss-recovery-e2e",
     "durable-schema-version-and-migration",
     "runtime-release-guard-ci",
     "protocol-event-canonization",
@@ -69,14 +68,16 @@
       "id": "real-process-loss-recovery-e2e",
       "title": "Real process loss Recovery E2E",
       "priority": "P0",
-      "status": "partial",
+      "status": "implemented_sufficient",
       "responsibility_domain": "runtime",
-      "debt_classification": "required_before_release",
+      "debt_classification": "closed",
       "evidence": [
-        "headless.run.recovery_probe exists and runtime tests cover task-only crash-window reconciliation.",
-        "Release evidence still needs one production-equivalent installed Brownie process-loss journey proving crash/restart/recovery behavior end to end through the public CLI/runtime boundary."
+        "RRP-3 replaces create_new MCP approval claim lock authority with an OS-owned advisory file lock over a non-authoritative residual lock file.",
+        "headless.run.recovery_probe invokes Runtime-owned unfinished MCP approval recovery and converts latest executing approval state to outcome_unknown with bounded fingerprint evidence exactly once.",
+        "Focused runtime tests cover stale residual lock file progress, executing-to-outcome_unknown recovery idempotence, and no tools/call replay from outcome_unknown.",
+        "test:rrp3-process-loss launches actual brownie-runtime child processes with an isolated trusted active Mode Pack snapshot and deterministic fake MCP stdio server, kills/restarts Runtime mid-call, verifies stale lock progress, executing-before-spawn recovery, outcome_unknown idempotence, independent process racing with at most one tools/call, and terminal consumed non-rerun after restart."
       ],
-      "next_action": "Add a bounded real process-loss E2E in the recovery phase."
+      "next_action": "Use RRP-3 process-loss evidence as the local Runtime recovery baseline while closing the remaining Runtime Release Readiness blockers."
     },
     {
       "id": "durable-schema-version-and-migration",

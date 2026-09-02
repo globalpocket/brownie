@@ -3,7 +3,7 @@
 use super::*;
 use anyhow::{bail, Context};
 use std::collections::{BTreeMap, BTreeSet};
-use std::{fs, io::Write, path::PathBuf, thread, time::Duration};
+use std::{fs, io::Write, thread, time::Duration};
 
 const MCP_APPROVAL_CLAIM_LOCK_RETRIES: usize = 40;
 const MCP_APPROVAL_CLAIM_LOCK_SLEEP: Duration = Duration::from_millis(25);
@@ -1099,15 +1099,36 @@ fn mcp_tool_approval_payload_matches_binding(payload: &Value, approval_binding: 
     .all(|key| payload.get(key) == approval_binding.get(key))
 }
 
-#[derive(Debug)]
-struct McpToolApprovalClaimLock {
-    path: PathBuf,
+fn mcp_tool_approval_payload_has_required_binding_fields(payload: &Value) -> bool {
+    let required_string_fields = [
+        "task_id",
+        "run_id",
+        "tool_id",
+        "server_id",
+        "tool_name",
+        "request_fingerprint",
+        "approval_fingerprint",
+    ];
+    required_string_fields
+        .into_iter()
+        .all(|key| payload.get(key).and_then(Value::as_str).is_some())
+        && payload
+            .get("request_fingerprint")
+            .and_then(Value::as_str)
+            .map(is_sha256_fingerprint)
+            .unwrap_or(false)
+        && payload
+            .get("approval_fingerprint")
+            .and_then(Value::as_str)
+            .map(is_sha256_fingerprint)
+            .unwrap_or(false)
+        && payload.get("catalog_provenance").is_some()
+        && payload.get("mcp_safety_policy").is_some()
 }
 
-impl Drop for McpToolApprovalClaimLock {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
+#[derive(Debug)]
+struct McpToolApprovalClaimLock {
+    _file: fs::File,
 }
 
 fn acquire_mcp_tool_approval_claim_lock(
@@ -1124,22 +1145,41 @@ fn acquire_mcp_tool_approval_claim_lock(
         .and_then(|fingerprint| fingerprint.strip_prefix("sha256:"))
         .filter(|fingerprint| {
             fingerprint.len() == 64 && fingerprint.chars().all(|ch| ch.is_ascii_hexdigit())
-        })
-        .unwrap_or("malformed");
+        });
+    let Some(lock_name) = lock_name else {
+        bail!("MCP tool approval fingerprint is malformed and cannot be locked");
+    };
     let lock_path = run_dir.join(format!("mcp-approval-{lock_name}.lock"));
     for _ in 0..MCP_APPROVAL_CLAIM_LOCK_RETRIES {
         match fs::OpenOptions::new()
+            .read(true)
             .write(true)
-            .create_new(true)
+            .create(true)
             .open(&lock_path)
         {
             Ok(mut file) => {
-                writeln!(file, "{}", runtime_sha256_fingerprint(lock_name.as_bytes()))
-                    .context("failed to write MCP approval claim lock")?;
-                return Ok(McpToolApprovalClaimLock { path: lock_path });
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                thread::sleep(MCP_APPROVAL_CLAIM_LOCK_SLEEP);
+                match file.try_lock() {
+                    Ok(()) => {}
+                    Err(std::fs::TryLockError::WouldBlock) => {
+                        thread::sleep(MCP_APPROVAL_CLAIM_LOCK_SLEEP);
+                        continue;
+                    }
+                    Err(std::fs::TryLockError::Error(error)) => {
+                        return Err(error)
+                            .with_context(|| format!("failed to lock {}", lock_path.display()));
+                    }
+                }
+                file.set_len(0)
+                    .with_context(|| format!("failed to reset {}", lock_path.display()))?;
+                writeln!(
+                    file,
+                    "brownie-mcp-approval-claim-lock-v2:{}",
+                    runtime_sha256_fingerprint(lock_name.as_bytes())
+                )
+                .context("failed to write MCP approval claim lock")?;
+                file.sync_all()
+                    .with_context(|| format!("failed to sync {}", lock_path.display()))?;
+                return Ok(McpToolApprovalClaimLock { _file: file });
             }
             Err(error) => {
                 return Err(error)
@@ -1151,6 +1191,89 @@ fn acquire_mcp_tool_approval_claim_lock(
         "failed to acquire MCP approval claim lock for {}",
         record.run_id
     )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct McpToolApprovalRecoverySummary {
+    pub recovered: usize,
+}
+
+pub(super) fn recover_unfinished_mcp_tool_approvals(
+    store: &BrownieStore,
+    record: &TaskRecord,
+    reason: &str,
+) -> anyhow::Result<McpToolApprovalRecoverySummary> {
+    if !is_bounded_runtime_identifier(reason, 96) {
+        bail!("MCP approval recovery reason is not bounded");
+    }
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    let mut latest_by_approval: BTreeMap<String, (usize, Value)> = BTreeMap::new();
+    for (index, event) in events.iter().enumerate() {
+        if event.kind != LedgerEventKind::McpToolExecutionApproved {
+            continue;
+        }
+        let Some(payload) = event.payload.as_ref() else {
+            continue;
+        };
+        let Some(approval_fingerprint) = payload
+            .get("approval_fingerprint")
+            .and_then(Value::as_str)
+            .filter(|value| is_sha256_fingerprint(value))
+        else {
+            continue;
+        };
+        latest_by_approval.insert(approval_fingerprint.to_string(), (index, payload.clone()));
+    }
+
+    let mut recovered = 0;
+    for (approval_fingerprint, (event_index, payload)) in latest_by_approval {
+        if McpToolApprovalState::from_payload(&payload) != McpToolApprovalState::Executing {
+            continue;
+        }
+        if payload.get("task_id").and_then(Value::as_str) != Some(record.task_id.as_str())
+            || payload.get("run_id").and_then(Value::as_str) != Some(record.run_id.as_str())
+            || !mcp_tool_approval_payload_has_required_binding_fields(&payload)
+        {
+            continue;
+        }
+        let mut terminal_binding =
+            mcp_tool_approval_state_payload(&payload, "outcome_unknown", Some(reason), None);
+        if let Some(object) = terminal_binding.as_object_mut() {
+            let source_state_fingerprint = payload
+                .get("approval_state_fingerprint")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            object.insert("recovery_reason".to_string(), json!(reason));
+            object.insert(
+                "recovery_source_state_fingerprint".to_string(),
+                json!(source_state_fingerprint),
+            );
+            object.insert(
+                "recovery_fingerprint".to_string(),
+                json!(runtime_sha256_fingerprint(
+                    canonical_json_value(&json!({
+                        "version": "mcp_tool_approval_process_loss_recovery_v1",
+                        "task_id": record.task_id,
+                        "run_id": record.run_id,
+                        "approval_fingerprint": approval_fingerprint,
+                        "source_state_fingerprint": source_state_fingerprint,
+                        "source_event_index": event_index,
+                        "reason": reason,
+                    }))
+                    .to_string()
+                    .as_bytes(),
+                )),
+            );
+        }
+        store.tasks().append_task_event_with_payload(
+            record,
+            LedgerEventKind::McpToolExecutionApproved,
+            Some(terminal_binding),
+        )?;
+        recovered += 1;
+    }
+
+    Ok(McpToolApprovalRecoverySummary { recovered })
 }
 
 fn is_bounded_runtime_identifier(value: &str, max_len: usize) -> bool {

@@ -4007,6 +4007,13 @@ pub(super) fn handle_headless_run_recovery_probe(
                 .into_iter()
                 .next()
                 .expect("single matching task");
+            if let Err(error) = recover_unfinished_mcp_tool_approvals(
+                &store,
+                &task,
+                "recovered_unfinished_mcp_execution",
+            ) {
+                return error_response(id, -32603, &format!("internal error: {error}"));
+            }
             return result_response(
                 id,
                 json!(HeadlessRunRecoveryProbeResult {
@@ -4118,6 +4125,15 @@ pub(super) fn handle_headless_run_recovery_probe(
                 next_runtime_invocation: None,
             }),
         );
+    }
+    if let Some(task) = task.as_ref() {
+        if let Err(error) = recover_unfinished_mcp_tool_approvals(
+            &store,
+            task,
+            "recovered_unfinished_mcp_execution",
+        ) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
     }
 
     result_response(
