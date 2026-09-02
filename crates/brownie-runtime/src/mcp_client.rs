@@ -8,7 +8,10 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use brownie_modepack::{ModePackMcpServerConfig, MAX_MCP_TOOL_NAME_CHARS};
+use brownie_modepack::{
+    ModePackMcpSecretEnvBinding, ModePackMcpServerConfig, MAX_MCP_SECRET_REF_CHARS,
+    MAX_MCP_TOOL_NAME_CHARS,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
@@ -26,6 +29,7 @@ const MAX_MCP_SCHEMA_ENUM_VALUES: usize = 64;
 const MAX_MCP_RESULT_CONTEXT_ITEMS: usize = 8;
 const MAX_MCP_RESULT_TEXT_ITEM_CHARS: usize = 2_048;
 const MAX_MCP_RESULT_TEXT_TOTAL_CHARS: usize = 8_192;
+const MAX_MCP_SECRET_VALUE_BYTES: usize = 8_192;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpToolCatalogEntry {
@@ -91,6 +95,8 @@ pub struct McpToolInputFieldSummary {
 pub struct McpToolCatalog {
     pub server_id: String,
     pub server_config_identity_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub server_secret_reference_fingerprints: Vec<String>,
     pub protocol_version: String,
     pub tools: Vec<McpToolCatalogEntry>,
     pub catalog_fingerprint: String,
@@ -211,9 +217,30 @@ pub fn split_normalized_tool_id(tool_id: &str) -> Option<(&str, &str)> {
     Some((server_id, tool_name))
 }
 
+pub trait McpSecretResolver {
+    fn resolve_secret(&self, secret_ref: &str) -> Option<String>;
+}
+
+#[derive(Debug, Default)]
+pub struct EnvMcpSecretResolver;
+
+impl McpSecretResolver for EnvMcpSecretResolver {
+    fn resolve_secret(&self, secret_ref: &str) -> Option<String> {
+        std::env::var(secret_ref).ok()
+    }
+}
+
 pub fn list_tools(config: &ModePackMcpServerConfig) -> Result<McpToolCatalog> {
+    list_tools_with_secret_resolver(config, &EnvMcpSecretResolver)
+}
+
+pub fn list_tools_with_secret_resolver(
+    config: &ModePackMcpServerConfig,
+    secret_resolver: &dyn McpSecretResolver,
+) -> Result<McpToolCatalog> {
     let response = stdio_request(
         config,
+        secret_resolver,
         json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -299,12 +326,14 @@ pub fn list_tools(config: &ModePackMcpServerConfig) -> Result<McpToolCatalog> {
         "version": "brownie_mcp_tool_catalog_v1",
         "server_id": config.server_id,
         "server_config_identity_fingerprint": config.config_identity_fingerprint,
+        "server_secret_reference_fingerprints": secret_reference_fingerprints(config),
         "protocol_version": MCP_PROTOCOL_VERSION,
         "tools": entries,
     }));
     Ok(McpToolCatalog {
         server_id: config.server_id.clone(),
         server_config_identity_fingerprint: config.config_identity_fingerprint.clone(),
+        server_secret_reference_fingerprints: secret_reference_fingerprints(config),
         protocol_version: MCP_PROTOCOL_VERSION.to_string(),
         tools: entries,
         catalog_fingerprint,
@@ -329,6 +358,15 @@ pub fn call_tool(
     entry: &McpToolCatalogEntry,
     arguments: Value,
 ) -> std::result::Result<McpToolCallResult, McpToolCallFailure> {
+    call_tool_with_secret_resolver(config, entry, arguments, &EnvMcpSecretResolver)
+}
+
+pub fn call_tool_with_secret_resolver(
+    config: &ModePackMcpServerConfig,
+    entry: &McpToolCatalogEntry,
+    arguments: Value,
+    secret_resolver: &dyn McpSecretResolver,
+) -> std::result::Result<McpToolCallResult, McpToolCallFailure> {
     let tool_name = entry.tool_name.as_str();
     validate_tool_name(tool_name).map_err(|error| McpToolCallFailure::failed(error.to_string()))?;
     if !arguments.is_object() {
@@ -338,6 +376,7 @@ pub fn call_tool(
     }
     let response = stdio_request(
         config,
+        secret_resolver,
         json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -431,6 +470,7 @@ pub fn call_tool(
             "tool_name": tool_name,
             "protocol_version": MCP_PROTOCOL_VERSION,
             "server_config_identity_fingerprint": config.config_identity_fingerprint,
+            "server_secret_reference_fingerprints": secret_reference_fingerprints(config),
             "result_fingerprint": fingerprint_json(&result),
             "is_error": is_error,
             "protocol_status": "ProtocolSucceeded",
@@ -567,7 +607,11 @@ fn bounded_result_context_items(result: &Value) -> (Vec<Value>, bool, usize, usi
     )
 }
 
-fn stdio_request(config: &ModePackMcpServerConfig, request: Value) -> Result<Value> {
+fn stdio_request(
+    config: &ModePackMcpServerConfig,
+    secret_resolver: &dyn McpSecretResolver,
+    request: Value,
+) -> Result<Value> {
     if config.transport != "stdio" {
         bail!("unsupported MCP transport");
     }
@@ -579,6 +623,7 @@ fn stdio_request(config: &ModePackMcpServerConfig, request: Value) -> Result<Val
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     configure_hardened_mcp_stdio_process(&mut command);
+    configure_mcp_secret_environment(&mut command, config, secret_resolver)?;
     configure_process_tree_timeout(&mut command);
     let mut child = command
         .spawn()
@@ -647,6 +692,68 @@ fn validate_stdio_command_boundary(config: &ModePackMcpServerConfig) -> Result<(
 fn configure_hardened_mcp_stdio_process(command: &mut Command) {
     command.env_clear();
     command.current_dir(mcp_stdio_neutral_cwd());
+}
+
+fn configure_mcp_secret_environment(
+    command: &mut Command,
+    config: &ModePackMcpServerConfig,
+    secret_resolver: &dyn McpSecretResolver,
+) -> Result<()> {
+    for binding in &config.secret_env {
+        validate_secret_binding(binding)?;
+        let Some(value) = secret_resolver.resolve_secret(&binding.secret_ref) else {
+            bail!("MCP secret reference for configured child environment is unresolved");
+        };
+        validate_secret_value(&value)?;
+        command.env(&binding.env_name, value);
+    }
+    Ok(())
+}
+
+fn validate_secret_binding(binding: &ModePackMcpSecretEnvBinding) -> Result<()> {
+    if binding.env_name.is_empty()
+        || binding.env_name.chars().count() > brownie_modepack::MAX_MCP_SECRET_ENV_NAME_CHARS
+        || !binding.env_name.chars().enumerate().all(|(index, ch)| {
+            if index == 0 {
+                ch.is_ascii_uppercase() || ch == '_'
+            } else {
+                ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_'
+            }
+        })
+    {
+        bail!("MCP secret environment binding name is invalid");
+    }
+    if binding.secret_ref.is_empty()
+        || binding.secret_ref.chars().count() > MAX_MCP_SECRET_REF_CHARS
+        || !binding
+            .secret_ref
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == '.')
+    {
+        bail!("MCP secret reference is invalid");
+    }
+    if !binding.secret_ref_fingerprint.starts_with("sha256:") {
+        bail!("MCP secret reference fingerprint is invalid");
+    }
+    Ok(())
+}
+
+fn validate_secret_value(value: &str) -> Result<()> {
+    if value.is_empty()
+        || value.len() > MAX_MCP_SECRET_VALUE_BYTES
+        || value.as_bytes().iter().any(|byte| *byte == 0)
+    {
+        bail!("MCP secret reference resolved to an invalid value");
+    }
+    Ok(())
+}
+
+fn secret_reference_fingerprints(config: &ModePackMcpServerConfig) -> Vec<String> {
+    config
+        .secret_env
+        .iter()
+        .map(|binding| binding.secret_ref_fingerprint.clone())
+        .collect()
 }
 
 fn mcp_stdio_neutral_cwd() -> &'static Path {
@@ -1267,6 +1374,7 @@ mod tests {
             transport: "stdio".to_string(),
             command: "npx".to_string(),
             args: vec![],
+            secret_env: vec![],
             config_identity_fingerprint: "sha256:test".to_string(),
         };
 
@@ -1275,5 +1383,129 @@ mod tests {
             .to_string();
 
         assert!(error.contains("absolute executable path"));
+    }
+
+    #[derive(Debug)]
+    struct StaticSecretResolver {
+        secret_ref: String,
+        value: String,
+    }
+
+    impl McpSecretResolver for StaticSecretResolver {
+        fn resolve_secret(&self, secret_ref: &str) -> Option<String> {
+            (secret_ref == self.secret_ref).then(|| self.value.clone())
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct MissingSecretResolver;
+
+    impl McpSecretResolver for MissingSecretResolver {
+        fn resolve_secret(&self, _secret_ref: &str) -> Option<String> {
+            None
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn mcp_secret_reference_is_injected_without_result_exposure() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let script = temp.path().join("fake-mcp-secret.sh");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+read request
+if [ "$BROWNIE_TEST_TOKEN" != "test-secret-value" ]; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"missing secret"}}'
+  exit 0
+fi
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"safe","inputSchema":{"type":"object"},"outputSchema":{"type":"object"},"annotations":{"readOnlyHint":true,"idempotentHint":true}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}],"structuredContent":{},"isError":false}}'
+    ;;
+esac
+"#,
+        )
+        .expect("write script");
+        let mut permissions = std::fs::metadata(&script)
+            .expect("script metadata")
+            .permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        std::fs::set_permissions(&script, permissions).expect("chmod script");
+        let config = ModePackMcpServerConfig {
+            server_id: "github".to_string(),
+            transport: "stdio".to_string(),
+            command: script.to_string_lossy().to_string(),
+            args: vec![],
+            secret_env: vec![ModePackMcpSecretEnvBinding {
+                env_name: "BROWNIE_TEST_TOKEN".to_string(),
+                secret_ref: "github.token".to_string(),
+                secret_ref_fingerprint: "sha256:test-secret-ref".to_string(),
+            }],
+            config_identity_fingerprint: "sha256:server-config".to_string(),
+        };
+        let resolver = StaticSecretResolver {
+            secret_ref: "github.token".to_string(),
+            value: "test-secret-value".to_string(),
+        };
+
+        let catalog = list_tools_with_secret_resolver(&config, &resolver).expect("catalog");
+        assert_eq!(
+            catalog.server_secret_reference_fingerprints,
+            vec!["sha256:test-secret-ref".to_string()]
+        );
+        let result =
+            call_tool_with_secret_resolver(&config, &catalog.tools[0], json!({}), &resolver)
+                .expect("call tool");
+
+        let serialized = result.output.to_string();
+        assert!(!serialized.contains("test-secret-value"));
+        assert!(!serialized.contains("github.token"));
+        assert!(serialized.contains("sha256:test-secret-ref"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn mcp_secret_resolution_failure_happens_before_spawn() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let marker = temp.path().join("spawned");
+        let script = temp.path().join("fake-mcp-secret-missing.sh");
+        std::fs::write(
+            &script,
+            format!(
+                r#"#!/bin/sh
+touch "{}"
+printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"tools":[]}}}}'
+"#,
+                marker.display()
+            ),
+        )
+        .expect("write script");
+        let mut permissions = std::fs::metadata(&script)
+            .expect("script metadata")
+            .permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        std::fs::set_permissions(&script, permissions).expect("chmod script");
+        let config = ModePackMcpServerConfig {
+            server_id: "github".to_string(),
+            transport: "stdio".to_string(),
+            command: script.to_string_lossy().to_string(),
+            args: vec![],
+            secret_env: vec![ModePackMcpSecretEnvBinding {
+                env_name: "BROWNIE_TEST_TOKEN".to_string(),
+                secret_ref: "github.token".to_string(),
+                secret_ref_fingerprint: "sha256:test-secret-ref".to_string(),
+            }],
+            config_identity_fingerprint: "sha256:server-config".to_string(),
+        };
+
+        let error = list_tools_with_secret_resolver(&config, &MissingSecretResolver)
+            .expect_err("unresolved secret reference should fail closed");
+
+        assert!(error.to_string().contains("unresolved"));
+        assert!(!marker.exists());
     }
 }

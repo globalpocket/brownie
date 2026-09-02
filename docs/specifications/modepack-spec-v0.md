@@ -362,6 +362,18 @@ evidence. Task admission stores bounded catalog provenance instead; see
 the runtime-owned active snapshot identity selected at task start, not by
 re-reading the live workspace Mode Pack file.
 
+MCP server config may include a bounded `env` map only for secret references.
+Each value must be exactly `{ "secret_ref": "<bounded-id>" }`; raw string values,
+inline credentials, shell expressions, file paths, URLs, unsupported object
+fields, malformed names, duplicate secret references, and oversized bindings
+fail closed. The environment key is the child process variable name and must be
+a bounded uppercase ASCII variable identifier. The secret reference id is an
+opaque Runtime resolver key; it is not a value, command, path, URL, or authority
+source. Server config identity and task-pinned catalog evidence include only
+secret reference fingerprints and counts, never raw secret values or environment
+maps. Runtime resolves and injects secret values immediately before each
+request-scoped stdio launch.
+
 MCP stdio launch is bounded by the runtime, not by the server or provider. The
 runtime does not perform PATH lookup, does not inherit the ambient Brownie
 environment, and starts the child in a neutral cwd rather than the admitted
