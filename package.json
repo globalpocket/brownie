@@ -13,6 +13,8 @@
     "guard:phase-value:test": "node --test scripts/guard-phase-value.test.mjs",
     "guard:product-completion": "node scripts/guard-product-completion.mjs",
     "guard:product-completion:test": "node --test scripts/guard-product-completion.test.mjs",
+    "guard:runtime-release-readiness": "node scripts/guard-runtime-release-readiness.mjs",
+    "guard:runtime-release-readiness:test": "node --test scripts/guard-runtime-release-readiness.test.mjs",
     "install:cli": "node scripts/install-brownie-cli.mjs",
     "install:cli:test": "node --test scripts/install-brownie-cli.test.mjs",
     "test": "pnpm --filter brownie-vsix test"

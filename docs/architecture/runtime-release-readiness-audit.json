@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "campaign": "runtime-release-readiness-p0-p1-finite-closure",
+  "phase": "RRD-1",
+  "phase_title": "Runtime Release Debt Reaudit",
+  "repository": "globalpocket/brownie",
+  "audited_main_commit": "6e712f1a34b51f06e6b5f4281d9b9429008d31b5",
+  "runtime_release_ready": false,
+  "release_ready_blocked_by": [
+    "runtime-boundary-protocol-contracts",
+    "explicit-cancel-command",
+    "real-process-loss-recovery-e2e",
+    "durable-schema-version-and-migration",
+    "runtime-release-guard-ci",
+    "protocol-event-canonization",
+    "runtime-module-decomposition-reevaluation",
+    "platform-deadline-durability-hardening"
+  ],
+  "owner_decisions": [
+    {
+      "id": "oss_license",
+      "status": "required",
+      "reason": "Cargo workspace remains UNLICENSED and publish=false, so OSS release basis cannot be declared by Runtime implementation alone."
+    }
+  ],
+  "classifications": [
+    {
+      "id": "runtime-release-debt-reaudit",
+      "title": "Runtime Release debt reaudit",
+      "priority": "P0",
+      "status": "implemented_sufficient",
+      "responsibility_domain": "runtime",
+      "debt_classification": "closed",
+      "evidence": [
+        "README, Product Charter, Product Completion Gate, Runtime Boundary DoD, Brownie Scope, Runtime Protocol, CLI External Loop, Task Runtime, Tool Execution, Permission Gate, ModePack specs, current phase-value manifest, M64.15 manifest, control-plane pointer, Rust crates, Node guards, VSIX check path, and CI workflow were reaudited.",
+        "This audit is now machine-checked by scripts/guard-runtime-release-readiness.mjs and human-readable in docs/architecture/runtime-release-readiness-audit.md."
+      ],
+      "next_action": "Use this artifact as the bounded source for the remaining P0/P1 closure phases."
+    },
+    {
+      "id": "runtime-boundary-protocol-contracts",
+      "title": "Boundary Protocol gaps",
+      "priority": "P0",
+      "status": "implemented_contract_gap",
+      "responsibility_domain": "runtime",
+      "debt_classification": "required_before_release",
+      "evidence": [
+        "Runtime boundary docs define Run Request, Runtime Event, Control Command, and Run Result/Attestation.",
+        "The contract is still split across README, runtime-boundary, runtime-protocol, CLI external-loop, run inspection, task runtime, and VSIX validators; a single canonical public contract and compatibility matrix is not yet release-guarded."
+      ],
+      "next_action": "Close in the Boundary Protocol phase by making the public protocol contract canonical and guardable without adding out-of-runtime platform features."
+    },
+    {
+      "id": "explicit-cancel-command",
+      "title": "Cancel semantics",
+      "priority": "P0",
+      "status": "partial",
+      "responsibility_domain": "runtime",
+      "debt_classification": "required_before_release",
+      "evidence": [
+        "TaskStatus::Cancelled and LedgerEventKind::TaskCancelled exist, and inspectors handle cancelled terminal status.",
+        "task-runtime-spec-v0 still reserves Cancelled for future handling, and no explicit caller-authorized cancel command was found in the runtime/CLI public method surface."
+      ],
+      "next_action": "Add bounded Runtime-owned cancel command semantics and tests in the cancel phase."
+    },
+    {
+      "id": "real-process-loss-recovery-e2e",
+      "title": "Real process loss Recovery E2E",
+      "priority": "P0",
+      "status": "partial",
+      "responsibility_domain": "runtime",
+      "debt_classification": "required_before_release",
+      "evidence": [
+        "headless.run.recovery_probe exists and runtime tests cover task-only crash-window reconciliation.",
+        "Release evidence still needs one production-equivalent installed Brownie process-loss journey proving crash/restart/recovery behavior end to end through the public CLI/runtime boundary."
+      ],
+      "next_action": "Add a bounded real process-loss E2E in the recovery phase."
+    },
+    {
+      "id": "durable-schema-version-and-migration",
+      "title": "Durable schema version and migration",
+      "priority": "P0",
+      "status": "partial",
+      "responsibility_domain": "runtime",
+      "debt_classification": "required_before_release",
+      "evidence": [
+        "Protocol, ModePack, AgentModes, CLI automation, MCP, and journey snapshots carry schema_version fields.",
+        "No release-level durable store schema version and forward migration gate was found for task/run/journey/checkpoint/ledger state."
+      ],
+      "next_action": "Add explicit durable schema version and migration/fail-closed behavior in the migration phase."
+    },
+    {
+      "id": "runtime-release-guard-ci",
+      "title": "CI Release Gate",
+      "priority": "P0",
+      "status": "partial",
+      "responsibility_domain": "runtime",
+      "debt_classification": "required_before_release",
+      "evidence": [
+        "The existing CI still uses pnpm install instead of pnpm install --frozen-lockfile and does not directly run every release-relevant guard test.",
+        "This phase wires the Runtime release readiness guard into the VSIX check path that CI already invokes, but full CI Release Gate hardening remains a later P0 closure phase."
+      ],
+      "next_action": "Close in the CI Release Gate phase when workflow update authority is available."
+    },
+    {
+      "id": "oss-release-technical-basis",
+      "title": "OSS Release technical basis",
+      "priority": "P1",
+      "status": "owner_decision_waiting",
+      "responsibility_domain": "owner",
+      "debt_classification": "owner_decision",
+      "owner_decision_required": "oss_license",
+      "evidence": [
+        "Workspace Cargo.toml declares license = UNLICENSED and publish = false.",
+        "Runtime can prepare technical release evidence, but license/publish posture requires owner decision before OSS Release Ready can be claimed."
+      ],
+      "next_action": "Record owner license/publish decision before declaring OSS release basis complete."
+    },
+    {
+      "id": "protocol-event-canonization",
+      "title": "Protocol/Event canonization",
+      "priority": "P1",
+      "status": "partial",
+      "responsibility_domain": "runtime",
+      "debt_classification": "required_before_release",
+      "evidence": [
+        "Runtime events and protocol structs exist in brownie-protocol, brownie-events, brownie-store, runtime, CLI, and VSIX projection code.",
+        "Release needs a canonical event/protocol ownership map and guard against drift between Rust protocol, runtime JSON-RPC handlers, CLI validation, VSIX validation, and docs."
+      ],
+      "next_action": "Canonize protocol/event ownership and drift tests in the protocol/event phase."
+    },
+    {
+      "id": "runtime-module-decomposition-reevaluation",
+      "title": "Runtime module decomposition reevaluation",
+      "priority": "P1",
+      "status": "partial",
+      "responsibility_domain": "runtime",
+      "debt_classification": "required_before_release",
+      "evidence": [
+        "M64.15 explicitly left runtime-module-decomposition open after partial closure.",
+        "crates/brownie-runtime/src/lib.rs remains very large and owns multiple release-critical protocol, admission, execution, recovery, and completion seams."
+      ],
+      "next_action": "Reevaluate module boundaries with behavior-preserving extraction only where it reduces release risk."
+    },
+    {
+      "id": "platform-deadline-durability-hardening",
+      "title": "Platform, deadline, and durability hardening",
+      "priority": "P1",
+      "status": "partial",
+      "responsibility_domain": "runtime",
+      "debt_classification": "required_before_release",
+      "evidence": [
+        "Runtime owns execution budgets, stale conflict behavior, recovery probes, and durable state boundaries.",
+        "Release needs a bounded audit and tests for deadline propagation, crash-safe write ordering, fsync/atomicity assumptions, platform path handling, and failure classification within local Runtime scope."
+      ],
+      "next_action": "Harden only Runtime-owned local durability and deadline semantics, not hosted platform products."
+    },
+    {
+      "id": "hosted-scheduler-daemon-worker-fleet",
+      "title": "Hosted scheduler, daemon, job queue, and worker fleet",
+      "priority": "P2",
+      "status": "runtime_outside",
+      "responsibility_domain": "external_control_plane",
+      "debt_classification": "post_v0",
+      "evidence": [
+        "README, Brownie Scope, Product Charter, and Runtime Boundary DoD classify schedulers, daemons, worker fleets, leases, hosted isolation, metrics, alerts, SLAs, and billing outside Brownie Runtime release."
+      ],
+      "next_action": "Track outside Runtime Release Readiness."
+    },
+    {
+      "id": "forge-notification-adapters",
+      "title": "Forge and notification adapters",
+      "priority": "P2",
+      "status": "runtime_outside",
+      "responsibility_domain": "external_adapter",
+      "debt_classification": "post_v0",
+      "evidence": [
+        "GitHub/GitLab Apps, PR create/update/merge workflows, Slack/Teams/email, SIEM, OTel, and customer-system adapters are external adapter readiness, not Runtime release blockers."
+      ],
+      "next_action": "Track as adapter product work only after Runtime release closure."
+    },
+    {
+      "id": "enterprise-commercial-readiness",
+      "title": "Enterprise, Assurance, and commercial solution readiness",
+      "priority": "P2",
+      "status": "runtime_outside",
+      "responsibility_domain": "commercial_solution",
+      "debt_classification": "post_v0",
+      "evidence": [
+        "Tenant management, SSO/RBAC server, customer admin UI, billing, certified stack, continuity assurance, and broad BDK/Enterprise/Assurance surfaces are outside this Runtime-owned campaign."
+      ],
+      "next_action": "Do not use these items to block Brownie Runtime release."
+    }
+  ]
+}
