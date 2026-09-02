@@ -185,20 +185,21 @@ use brownie_protocol::{
     RunEventsParams, RunEventsResult, RunInspectConsumedParentJoinRecoverySummary,
     RunInspectParams, RunInspectParentJoinReadinessSummary, RunInspectResult, RunInspectSummary,
     RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult,
-    RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
-    TaskListBounds, TaskListHeadlessRouteCandidate, TaskListParams, TaskListProgressBlockedSet,
-    TaskListProgressNextActionSet, TaskListProgressOverview, TaskListProgressStageCount,
-    TaskListResult, TaskProgressGraphEdge, TaskProgressGraphNode, TaskRecord,
-    TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome, TaskRunCompletionAcceptance,
-    TaskRunCompletionAcceptanceRequest, TaskRunCompletionEvidence, TaskRunContextBudget,
-    TaskRunContextBudgetSummary, TaskRunParams, TaskRunParentJoinReadinessOutcome,
-    TaskRunPatchApplyRecoveryRepairOutcome, TaskRunResult, TaskRunSelectedIndexContext,
-    TaskRunSelectedIndexPromptContextSummary, TaskRunVerificationCompletionGate,
-    TaskRunVerificationRecoveryContextRead, TaskRunVerificationRecoveryContextReadSummary,
-    TaskRunVerificationRecoveryRepairOutcome, TaskRunVerificationRecoveryRetryOutcome,
-    TaskStartParams, TaskStartResult, TaskStatus, TaskStatusCounts, TechnicalDebtCarryForward,
-    TechnicalDebtCarryForwardItem, TechnicalDebtTransition, ToolExecuteParams, ToolExecuteResult,
-    ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
+    RuntimeState, RuntimeStatus, TaskCancelParams, TaskCancelResult, TaskGetParams,
+    TaskInspectParams, TaskInspectResult, TaskListBounds, TaskListHeadlessRouteCandidate,
+    TaskListParams, TaskListProgressBlockedSet, TaskListProgressNextActionSet,
+    TaskListProgressOverview, TaskListProgressStageCount, TaskListResult, TaskProgressGraphEdge,
+    TaskProgressGraphNode, TaskRecord, TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome,
+    TaskRunCompletionAcceptance, TaskRunCompletionAcceptanceRequest, TaskRunCompletionEvidence,
+    TaskRunContextBudget, TaskRunContextBudgetSummary, TaskRunParams,
+    TaskRunParentJoinReadinessOutcome, TaskRunPatchApplyRecoveryRepairOutcome, TaskRunResult,
+    TaskRunSelectedIndexContext, TaskRunSelectedIndexPromptContextSummary,
+    TaskRunVerificationCompletionGate, TaskRunVerificationRecoveryContextRead,
+    TaskRunVerificationRecoveryContextReadSummary, TaskRunVerificationRecoveryRepairOutcome,
+    TaskRunVerificationRecoveryRetryOutcome, TaskStartParams, TaskStartResult, TaskStatus,
+    TaskStatusCounts, TechnicalDebtCarryForward, TechnicalDebtCarryForwardItem,
+    TechnicalDebtTransition, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus,
+    ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
     ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
     ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
     ToolPlanResult, ToolSummary, VerificationRecoveryAdmission, VerificationRecoveryApplyTarget,
@@ -427,6 +428,7 @@ const METHOD_RUNTIME_CONFIG_GET: &str = "runtime.config.get";
 const METHOD_RUNTIME_DIAGNOSTICS_GET: &str = "runtime.diagnostics.get";
 const METHOD_TASK_START: &str = "task.start";
 const METHOD_TASK_GET: &str = "task.get";
+const METHOD_TASK_CANCEL: &str = "task.cancel";
 const METHOD_TASK_RUN: &str = "task.run";
 const METHOD_TASK_INSPECT: &str = "task.inspect";
 const METHOD_TASK_LIST: &str = "task.list";
@@ -627,6 +629,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_RUNTIME_DIAGNOSTICS_GET => handle_runtime_diagnostics_get(request.id),
         METHOD_TASK_START => handle_task_start(request.id, request.params),
         METHOD_TASK_GET => handle_task_get(request.id, request.params),
+        METHOD_TASK_CANCEL => handle_task_cancel(request.id, request.params),
         METHOD_TASK_RUN => handle_task_run(request.id, request.params),
         METHOD_TASK_INSPECT => handle_task_inspect(request.id, request.params),
         METHOD_TASK_LIST => handle_task_list(request.id, request.params),
@@ -1382,6 +1385,164 @@ fn handle_task_get(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         Ok(None) => error_response(id, -32602, "invalid params: task not found"),
         Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
     }
+}
+
+fn handle_task_cancel(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: TaskCancelParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if let Err(message) = validate_task_cancel_params(&params) {
+        return error_response(id, -32602, &message);
+    }
+
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+
+    let record = match store.tasks().get_task(&params.task_id) {
+        Ok(Some(record)) => record,
+        Ok(None) => return error_response(id, -32602, "invalid params: task not found"),
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    if record.run_id != params.run_id {
+        return error_response(id, -32602, "invalid params: task/run identity mismatch");
+    }
+
+    let cancel_fingerprint = task_cancel_request_fingerprint(&params);
+    if record.status == TaskStatus::Cancelled {
+        return match task_cancel_replay_matches(&store, &params, &cancel_fingerprint) {
+            Ok(true) => result_response(
+                id,
+                json!(TaskCancelResult {
+                    task_id: record.task_id,
+                    run_id: record.run_id,
+                    status: TaskStatus::Cancelled,
+                    replayed: true,
+                    cancel_id: params.cancel_id,
+                    cancel_fingerprint,
+                    ledger_event_kind: "TaskCancelled".to_string(),
+                    next_action: "inspect_cancelled_task".to_string(),
+                }),
+            ),
+            Ok(false) => error_response(
+                id,
+                -32602,
+                "invalid params: task is already cancelled by a different request",
+            ),
+            Err(message) => error_response(id, -32603, &format!("internal error: {message}")),
+        };
+    }
+
+    if !task_status_is_cancellable(&record.status) {
+        return error_response(id, -32602, "invalid params: task is not cancellable");
+    }
+    if record.status != params.expected_status
+        || record.updated_at != params.expected_task_updated_at
+    {
+        return error_response(id, -32602, "invalid params: cancel request is stale");
+    }
+
+    let payload = json!({
+        "cancel_status": "Cancelled",
+        "cancel_id": params.cancel_id,
+        "cancel_fingerprint": cancel_fingerprint,
+        "request_fingerprint_version": TASK_CANCEL_REQUEST_FINGERPRINT_VERSION,
+        "task_id": params.task_id,
+        "run_id": params.run_id,
+        "previous_status": format!("{:?}", params.expected_status),
+        "expected_task_updated_at": params.expected_task_updated_at,
+        "caller_authorized": true,
+        "terminal_evidence": true,
+        "reason": "Runtime admitted an explicit caller-authorized cancel command for this task/run."
+    });
+
+    match store.tasks().update_task_status_with_payload(
+        &params.task_id,
+        TaskStatus::Cancelled,
+        LedgerEventKind::TaskCancelled,
+        Some(payload),
+    ) {
+        Ok(cancelled) => result_response(
+            id,
+            json!(TaskCancelResult {
+                task_id: cancelled.task_id,
+                run_id: cancelled.run_id,
+                status: cancelled.status,
+                replayed: false,
+                cancel_id: params.cancel_id,
+                cancel_fingerprint,
+                ledger_event_kind: "TaskCancelled".to_string(),
+                next_action: "inspect_cancelled_task".to_string(),
+            }),
+        ),
+        Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
+    }
+}
+
+const TASK_CANCEL_REQUEST_FINGERPRINT_VERSION: &str = "task_cancel_request_v1";
+
+fn validate_task_cancel_params(params: &TaskCancelParams) -> Result<(), String> {
+    if params.task_id.trim().is_empty() {
+        return Err("invalid params: task_id must not be empty".to_string());
+    }
+    if params.run_id.trim().is_empty() {
+        return Err("invalid params: run_id must not be empty".to_string());
+    }
+    if params.expected_task_updated_at.trim().is_empty() {
+        return Err("invalid params: expected_task_updated_at must not be empty".to_string());
+    }
+    if params.cancel_id.trim().is_empty() {
+        return Err("invalid params: cancel_id must not be empty".to_string());
+    }
+    if !params.authorize_cancel {
+        return Err("invalid params: authorize_cancel is required".to_string());
+    }
+    Ok(())
+}
+
+fn task_status_is_cancellable(status: &TaskStatus) -> bool {
+    matches!(
+        status,
+        TaskStatus::Created | TaskStatus::Queued | TaskStatus::Running
+    )
+}
+
+fn task_cancel_request_fingerprint(params: &TaskCancelParams) -> String {
+    let canonical = format!(
+        "{}\ntask_id={}\nrun_id={}\nexpected_status={:?}\nexpected_task_updated_at={}\ncancel_id={}\nauthorize_cancel=true\n",
+        TASK_CANCEL_REQUEST_FINGERPRINT_VERSION,
+        params.task_id,
+        params.run_id,
+        params.expected_status,
+        params.expected_task_updated_at,
+        params.cancel_id
+    );
+    format!("sha256:{}", hex_sha256(canonical.as_bytes()))
+}
+
+fn task_cancel_replay_matches(
+    store: &BrownieStore,
+    params: &TaskCancelParams,
+    cancel_fingerprint: &str,
+) -> Result<bool, String> {
+    let events = store
+        .tasks()
+        .read_ledger_events(&params.run_id)
+        .map_err(|error| error.to_string())?;
+    Ok(events.iter().any(|event| {
+        event.kind == LedgerEventKind::TaskCancelled
+            && event.task_id == params.task_id
+            && event.run_id == params.run_id
+            && event.payload.as_ref().is_some_and(|payload| {
+                payload.get("cancel_id").and_then(Value::as_str) == Some(params.cancel_id.as_str())
+                    && payload.get("cancel_fingerprint").and_then(Value::as_str)
+                        == Some(cancel_fingerprint)
+                    && payload.get("caller_authorized").and_then(Value::as_bool) == Some(true)
+                    && payload.get("terminal_evidence").and_then(Value::as_bool) == Some(true)
+            })
+    }))
 }
 
 fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
@@ -14253,6 +14414,168 @@ mod tests {
             .tasks()
             .read_ledger_events(run_id)
             .expect("ledger events")
+    }
+
+    #[test]
+    fn task_cancel_authorized_request_marks_created_task_cancelled_and_replays() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"cancel me","mode_id":"orchestrator"}}"#,
+        )
+        .result
+        .expect("task started");
+        let task_id = start["task_id"].as_str().expect("task id");
+        let run_id = start["run_id"].as_str().expect("run id");
+        let record = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.get","params":{{"task_id":"{task_id}"}}}}"#
+        ))
+        .result
+        .expect("task record");
+        let updated_at = record["updated_at"].as_str().expect("updated at");
+
+        let cancel_request = json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "task.cancel",
+            "params": {
+                "task_id": task_id,
+                "run_id": run_id,
+                "expected_status": "Created",
+                "expected_task_updated_at": updated_at,
+                "cancel_id": "cancel_001",
+                "authorize_cancel": true
+            }
+        });
+        let first = parse_line(&cancel_request.to_string())
+            .result
+            .expect("cancelled");
+        assert_eq!(first["status"], "Cancelled");
+        assert_eq!(first["replayed"], false);
+        assert_eq!(first["ledger_event_kind"], "TaskCancelled");
+        assert_eq!(first["next_action"], "inspect_cancelled_task");
+        assert!(first["cancel_fingerprint"]
+            .as_str()
+            .expect("fingerprint")
+            .starts_with("sha256:"));
+
+        let replayed = parse_line(&cancel_request.to_string())
+            .result
+            .expect("cancel replayed");
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        assert_eq!(replayed["status"], "Cancelled");
+        assert_eq!(replayed["replayed"], true);
+        assert_eq!(replayed["cancel_fingerprint"], first["cancel_fingerprint"]);
+
+        let events = store_events(temp.path(), run_id);
+        let cancelled_events = events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::TaskCancelled)
+            .collect::<Vec<_>>();
+        assert_eq!(cancelled_events.len(), 1);
+        let payload = cancelled_events[0].payload.as_ref().expect("payload");
+        assert_eq!(payload["cancel_id"], "cancel_001");
+        assert_eq!(payload["cancel_fingerprint"], first["cancel_fingerprint"]);
+        assert_eq!(payload["caller_authorized"], true);
+        assert_eq!(payload["terminal_evidence"], true);
+    }
+
+    #[test]
+    fn task_cancel_rejects_stale_request_without_terminal_evidence() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"stale cancel","mode_id":"orchestrator"}}"#,
+        )
+        .result
+        .expect("task started");
+        let task_id = start["task_id"].as_str().expect("task id");
+        let run_id = start["run_id"].as_str().expect("run id");
+        let cancel = parse_line(&format!(
+            r#"{{
+                "jsonrpc":"2.0",
+                "id":2,
+                "method":"task.cancel",
+                "params":{{
+                    "task_id":"{task_id}",
+                    "run_id":"{run_id}",
+                    "expected_status":"Running",
+                    "expected_task_updated_at":"stale",
+                    "cancel_id":"cancel_stale",
+                    "authorize_cancel":true
+                }}
+            }}"#
+        ));
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+
+        assert!(cancel
+            .error
+            .expect("stale rejected")
+            .message
+            .contains("cancel request is stale"));
+        let events = store_events(temp.path(), run_id);
+        assert!(!events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskCancelled));
+    }
+
+    #[test]
+    fn task_cancel_rejects_terminal_task_without_new_terminal_evidence() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"already done","mode_id":"orchestrator"}}"#,
+        )
+        .result
+        .expect("task started");
+        let task_id = start["task_id"].as_str().expect("task id");
+        let run_id = start["run_id"].as_str().expect("run id");
+        BrownieStore::new(temp.path())
+            .tasks()
+            .update_task_status(
+                task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("mark completed");
+        let record = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.get","params":{{"task_id":"{task_id}"}}}}"#
+        ))
+        .result
+        .expect("task record");
+        let updated_at = record["updated_at"].as_str().expect("updated at");
+        let cancel = parse_line(&format!(
+            r#"{{
+                "jsonrpc":"2.0",
+                "id":3,
+                "method":"task.cancel",
+                "params":{{
+                    "task_id":"{task_id}",
+                    "run_id":"{run_id}",
+                    "expected_status":"Completed",
+                    "expected_task_updated_at":"{updated_at}",
+                    "cancel_id":"cancel_completed",
+                    "authorize_cancel":true
+                }}
+            }}"#
+        ));
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+
+        assert!(cancel
+            .error
+            .expect("terminal rejected")
+            .message
+            .contains("task is not cancellable"));
+        let events = store_events(temp.path(), run_id);
+        assert!(!events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskCancelled));
     }
 
     fn write_m52_product_evidence_artifacts(

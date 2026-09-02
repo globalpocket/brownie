@@ -117,6 +117,36 @@ Expected response line:
 
 `goal` must be non-empty after trimming whitespace. Empty goals return `-32602`.
 
+## `task.cancel`
+
+RRP-2 adds `task.cancel` as a bounded, explicit, caller-authorized Control
+Command over the Runtime-owned task lifecycle.
+
+Request line:
+
+```json
+{"jsonrpc":"2.0","id":2,"method":"task.cancel","params":{"task_id":"task_<uuid>","run_id":"run_<uuid>","expected_status":"Running","expected_task_updated_at":"2026-09-02T00:00:00Z","cancel_id":"cancel_<bounded-id>","authorize_cancel":true}}
+```
+
+Expected response line:
+
+```json
+{"jsonrpc":"2.0","id":2,"result":{"task_id":"task_<uuid>","run_id":"run_<uuid>","status":"Cancelled","replayed":false,"cancel_id":"cancel_<bounded-id>","cancel_fingerprint":"sha256:<64 lowercase hex>","ledger_event_kind":"TaskCancelled","next_action":"inspect_cancelled_task"}}
+```
+
+The runtime accepts cancellation only for current non-terminal cancellable tasks
+with matching task/run identity, caller authorization, expected status,
+expected task `updated_at`, and a bounded request fingerprint. Missing,
+completed, failed, stale, mismatched, malformed, ambiguous, or unrelated
+requests return `-32602` before appending terminal evidence.
+
+If the task is already `Cancelled`, replay is idempotent only when the durable
+`TaskCancelled` payload matches the exact same cancel request fingerprint.
+`task.cancel` does not complete work, verify work, accept Product Completion,
+authorize recovery, grant permissions, mutate workspace files, grant MCP/tool
+authority, run child tasks, schedule background work, kill an OS process tree,
+or control services.
+
 M8.1 extends `task.start` with optional verification recovery admission:
 
 ```json

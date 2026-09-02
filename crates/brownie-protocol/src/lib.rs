@@ -1066,6 +1066,29 @@ pub struct TaskGetParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct TaskCancelParams {
+    pub task_id: String,
+    pub run_id: String,
+    pub expected_status: TaskStatus,
+    pub expected_task_updated_at: String,
+    pub cancel_id: String,
+    pub authorize_cancel: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskCancelResult {
+    pub task_id: String,
+    pub run_id: String,
+    pub status: TaskStatus,
+    pub replayed: bool,
+    pub cancel_id: String,
+    pub cancel_fingerprint: String,
+    pub ledger_event_kind: String,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TaskRunParams {
     pub task_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

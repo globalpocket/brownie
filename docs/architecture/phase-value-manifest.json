@@ -1,39 +1,39 @@
 {
   "schema_version": 1,
-  "phase": "RRP-1",
+  "phase": "RRP-2",
   "current_milestone": "runtime-release-readiness-p0-p1-finite-closure",
   "milestone": "Brownie Runtime Release Readiness Finite Closure",
   "target_capability": "headless_autonomous_development",
-  "concrete_capability_transition": "runtime_public_boundary_contract_is_canonical_and_release_guarded",
-  "forbidden_pattern": "runtime_release_ready_with_open_runtime_debt_documentation_only_completion_claim_report_only_readiness_wrapper_endpoint_count_rpc_mirror_cli_owned_runtime_policy_vsix_owned_runtime_policy_mcp_safety_reopen_streamable_http_oauth_mcp_apps_sampling_roots_elicitation_public_registry_automatic_install_hosted_secret_manager_remote_git_expansion_scheduler_daemon_generic_shell_arbitrary_process_exec_hosted_platform_forge_notification_adapters_remote_binary_distribution_package_installation_signing_infrastructure",
+  "concrete_capability_transition": "runtime_cancel_command_is_explicit_authorized_fresh_and_replay_safe",
+  "forbidden_pattern": "runtime_release_ready_with_open_runtime_debt_cancellation_as_completion_cancellation_as_verification_cancellation_as_permission_grant_cli_owned_cancel_policy_vsix_owned_cancel_policy_os_process_tree_killing_service_control_scheduler_daemon_generic_shell_arbitrary_process_exec_hosted_platform_forge_notification_adapters_streamable_http_oauth_mcp_apps_sampling_roots_elicitation_public_registry_automatic_install_hosted_secret_manager_remote_git_expansion_remote_binary_distribution_package_installation_signing_infrastructure",
   "project_objective_ref": "docs/architecture/product-charter.md",
   "strategic_capability_mapping": [
     {
       "capability": "headless_autonomous_development",
-      "relationship": "Turns the existing split Runtime boundary semantics into one canonical, guarded public contract and compatibility matrix for headless run, continue, inspect, event, and result flows."
+      "relationship": "Adds a Runtime-owned explicit cancel boundary so autonomous callers can stop stale or unwanted task execution through a bounded command instead of relying on implicit terminal states."
     },
     {
-      "capability": "headless_autonomous_development",
-      "relationship": "Gives headless and CLI callers a stable guarded boundary for run, continue, inspect, event, and result semantics without moving scheduler or policy logic outside Runtime."
+      "capability": "progress_visualization",
+      "relationship": "Makes cancelled task state inspectable through durable Runtime evidence with exact replay semantics and a clear next action for task inspection."
     },
     {
-      "capability": "controlled_workspace_tools",
-      "relationship": "Keeps controlled tool and workspace mutation surfaces anchored to Runtime-owned protocol contracts while preserving CLI and VSIX as bounded transport/projection layers."
+      "capability": "runtime_permission_enforcement",
+      "relationship": "Keeps cancellation narrowing-only and separate from completion, verification, permission grants, workspace mutation, MCP/tool authority, process control, and scheduler authority."
     }
   ],
   "phase_value_gate": {
     "required": true,
     "answers": {
-      "strategic_capabilities": "Advances runtime_boundary_protocol_contracts, headless_autonomous_development, and thin_cli_and_vsix_transport by making the public Runtime boundary canonical and release-guarded.",
-      "new_capability": "The existing Runtime release-readiness guard can now reject missing or drifting boundary surfaces, method subset, CLI/VSIX/Runtime/spec anchors, compatibility matrix entries, and non-authority language.",
-      "why_existing_functionality_is_insufficient": "Before RRP-1, Run Request, Runtime Event, Control Command, Run Result/Attestation, CLI external-loop, run inspection, task runtime, and VSIX validation contracts existed but were split across many docs and implementations without one guarded public inventory.",
-      "product_gap_if_skipped": "Brownie could ship a Runtime release with split or stale boundary semantics even while individual Rust, CLI, and VSIX checks still passed.",
-      "non_duplicative": "This phase adds a machine-checked canonical boundary contract and guard coverage; it is not a report-only audit, readiness wrapper, endpoint count, RPC mirror, or documentation-only verdict.",
-      "no_new_rpc": "Yes. RRP-1 uses existing protocol surfaces and guards; it does not add JSON-RPC methods or runtime execution paths.",
-      "no_new_summary": "Yes. The canonical contract is a release guard artifact, not a runtime report, digest, history, verdict, preview, or diagnostic wrapper endpoint.",
-      "runtime_behavior_change": "Runtime release readiness now fails closed when the canonical public boundary contract is absent, incomplete, internally inconsistent, or missing required anchors and non-authority language.",
-      "headless_autonomous_contribution": "Autonomous loops can rely on a guarded public boundary for run/resume/inspect/result interactions before later cancel, recovery, migration, and durability phases close their own blockers.",
-      "milestone_progress": "Closes the `runtime-boundary-protocol-contracts` P0 blocker while Runtime Release Ready remains false until the other recorded P0/P1 blockers are closed."
+      "strategic_capabilities": "Advances headless_autonomous_development, progress_visualization, and runtime_permission_enforcement by adding an explicit Runtime-owned cancel command.",
+      "new_capability": "Callers can invoke task.cancel with authorization, task/run identity, current-state freshness, cancel_id, and receive bounded TaskCancelled evidence or an idempotent exact replay.",
+      "why_existing_functionality_is_insufficient": "TaskStatus::Cancelled and TaskCancelled events existed, but there was no public Runtime admission command that owned authorization, freshness, replay, and terminal evidence.",
+      "product_gap_if_skipped": "Brownie could not safely expose cancellation as part of the local Runtime boundary before release; external controllers would have no bounded command contract to stop a task.",
+      "non_duplicative": "This phase changes Runtime behavior by adding the cancel admission path and replay semantics, then updates VSIX validators and release-readiness guards; it is not a report-only or endpoint-count phase.",
+      "no_new_rpc": "No. RRP-2 intentionally adds the required task.cancel Runtime RPC because the release blocker is the absence of an explicit cancel command.",
+      "no_new_summary": "Yes. The phase does not add a diagnostic, report, digest, verdict, history, preview, or summary endpoint.",
+      "runtime_behavior_change": "Created, Queued, and Running tasks can transition to Cancelled only through an authorized, fresh task.cancel request; stale, terminal, mismatched, malformed, and unauthorized requests fail closed before terminal evidence.",
+      "headless_autonomous_contribution": "Headless control loops can issue one bounded cancel command and safely replay the exact same cancellation without duplicate terminal events.",
+      "milestone_progress": "Closes the explicit-cancel-command P0 blocker while Runtime Release Ready remains false until the other recorded P0/P1 blockers and owner license/publish decision are resolved."
     },
     "questions": [
       {
@@ -80,79 +80,77 @@
   },
   "review_value_gate": {
     "reject_when": [
-      "phase claims Runtime Release Ready while explicit cancel, real process-loss recovery E2E, durable schema migration, CI workflow hardening, protocol/event canonization, module decomposition, or platform/deadline/durability blockers remain open",
-      "phase adds JSON-RPC methods, hosted platform behavior, scheduler, daemon, generic shell, arbitrary process execution, remote transport, forge adapter, signing infrastructure, package manager, or registry behavior",
-      "phase treats CLI, VSIX, MCP server text, schemas, annotations, results, executable identity, model output, docs, or control-plane prose as authority",
-      "phase stores raw prompts, provider responses, file content, command output, raw request bodies, environment values, secrets, absolute paths, canonical paths, or executable content as durable boundary evidence",
-      "phase closes unrelated Runtime Release Readiness blockers without their own bounded implementation evidence"
+      "phase claims Runtime Release Ready while process-loss recovery E2E, durable schema migration, CI workflow hardening, protocol/event canonization, module decomposition, or platform/deadline/durability blockers remain open",
+      "phase treats cancellation as completion, verification, accepted completion, recovery authorization, approval evidence, permission grant, workspace mutation authority, MCP/tool authority, Mode Pack policy, or external-loop scheduling authority",
+      "phase adds OS process-tree killing, service control, hosted platform behavior, scheduler, daemon, generic shell, arbitrary process execution, remote transport, forge adapter, signing infrastructure, package manager, or registry behavior",
+      "phase stores raw prompts, provider responses, file content, command output, raw request bodies, environment values, secrets, absolute paths, canonical paths, executable content, or process output as durable cancellation evidence"
     ]
   },
   "guard_engine_change_review": {
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "RRP-1 changes the Runtime release-readiness guard and current phase manifest. Review must confirm the new canonical boundary contract is a guarded release capability, keeps CLI/VSIX transport-only, and does not claim Runtime Release Ready while other P0/P1 blockers remain open.",
+    "review_intent": "RRP-2 changes the Runtime release-readiness guard, audit, and current phase manifest. Review must confirm task.cancel is a real Runtime-owned cancel boundary, keeps CLI/VSIX thin, and does not claim Runtime Release Ready while other P0/P1 blockers remain open.",
     "changed_files": [
+      "docs/architecture/phase-value-manifest.json",
       "docs/architecture/runtime-boundary-canonical-contract.json",
-      "scripts/guard-runtime-release-readiness.mjs",
-      "scripts/guard-runtime-release-readiness.test.mjs",
       "docs/architecture/runtime-release-readiness-audit.json",
-      "docs/architecture/runtime-release-readiness-audit.md",
-      "docs/specifications/runtime-boundary-and-release-dod-spec-v0.md",
-      "docs/specifications/runtime-protocol-spec-v0.md",
-      "docs/architecture/phase-value-manifest.json"
+      "scripts/guard-runtime-release-readiness.mjs",
+      "scripts/guard-runtime-release-readiness.test.mjs"
     ]
   },
   "exit_criteria": [
-    "A canonical Runtime boundary contract and compatibility matrix exists.",
-    "The Runtime release-readiness guard validates required boundary surfaces, required public method subset, CLI/VSIX/Runtime/spec anchors, compatibility matrix entries, and non-authority language.",
-    "The Runtime Release Readiness audit marks `runtime-boundary-protocol-contracts` closed and removes it from `release_ready_blocked_by`.",
-    "Runtime Release Ready remains false while the other Runtime P0/P1 blockers and owner license/publish decision remain open.",
-    "No new JSON-RPC method, scheduler, daemon, hosted platform, generic shell, arbitrary process execution, remote transport, forge adapter, signing infrastructure, package manager, registry, CLI-owned policy, or VSIX-owned policy is added."
+    "Runtime exposes task.cancel as a typed JSON-RPC method.",
+    "task.cancel requires caller authorization, task/run identity, expected current status, expected task updated_at, and a bounded cancel_id.",
+    "Only Created, Queued, and Running tasks can transition to Cancelled; stale, terminal, mismatched, malformed, missing, and unauthorized requests fail closed before TaskCancelled evidence.",
+    "Exact replay is idempotent only when durable cancellation evidence matches the same cancel request fingerprint.",
+    "VSIX protocol validators and runtime client projections cover task.cancel params/results without owning cancellation policy.",
+    "Runtime Release Readiness audit marks explicit-cancel-command closed and keeps Runtime Release Ready false while remaining blockers are open."
   ],
   "behavior_evidence": [
-    "Runtime release-readiness guard test accepts the canonical contract.",
-    "Runtime release-readiness guard tests reject missing required boundary surfaces, missing CLI/VSIX anchors, missing required method subset, and missing non-authority language.",
-    "Runtime release-readiness guard passes against repository audit and canonical boundary contract.",
-    "Runtime release-readiness audit records RRP-1 closure while keeping Runtime Release Ready false."
+    "brownie-runtime task_cancel tests cover authorized cancellation, exact replay, stale request rejection, and terminal-task rejection without new terminal evidence.",
+    "VSIX runtimeClient tests cover task.cancel request projection plus invalid params/result rejection.",
+    "Runtime release-readiness guard requires task.cancel in the canonical Runtime boundary method subset.",
+    "Runtime release-readiness guard and phase-value guards validate the updated audit and manifest."
   ],
   "product_completion_gate": {
     "required": true,
     "product_completion_claim": false,
     "accepted_capability": [
-      "The public Runtime boundary contract is canonical and release-guarded.",
-      "`runtime-boundary-protocol-contracts` is closed as a Runtime Release Readiness P0 blocker."
+      "The Runtime has an explicit, authorized, fresh, replay-safe task.cancel command.",
+      "`explicit-cancel-command` is closed as a Runtime Release Readiness P0 blocker."
     ],
     "behavior_evidence": [
-      "scripts/guard-runtime-release-readiness.test.mjs validates positive and negative canonical boundary contract cases.",
-      "scripts/guard-runtime-release-readiness.mjs validates docs/architecture/runtime-boundary-canonical-contract.json in the existing VSIX-invoked check path."
+      "Runtime tests validate successful cancel, idempotent replay, stale request fail-closed behavior, and terminal task fail-closed behavior.",
+      "VSIX tests validate task.cancel request and response shapes.",
+      "Release-readiness guard validates the canonical boundary includes task.cancel."
     ],
     "safety_boundary": [
-      "Rust Runtime remains the execution, admission, replay, permission, tool, workspace mutation, and completion authority.",
+      "Rust Runtime remains the cancellation, admission, replay, ledger, task lifecycle, and terminal-state authority.",
       "CLI and VSIX remain thin transport/projection/validation layers.",
-      "The canonical boundary contract is a narrowing release guard; it cannot grant Runtime authority or widen Mode Pack policy."
+      "Cancellation is narrowing-only and cannot grant completion, verification, permission, workspace mutation, MCP/tool, process-control, service-control, Mode Pack, or scheduler authority."
     ],
     "non_goals": [
-      "Does not add new Runtime RPC methods.",
-      "Does not add Streamable HTTP, OAuth, MCP Apps, Sampling, Roots, Elicitation, hosted secret manager, public registry, or automatic install.",
-      "Does not add hosted scheduler, background polling, permanent daemon, worker fleet, generic shell, arbitrary process execution, hosted platform, forge/notification adapters, remote Git expansion, package installation, signing infrastructure, or remote binary distribution.",
-      "Does not reopen MCP-S1 through MCP-S7.",
-      "Does not close explicit cancel, process-loss recovery E2E, durable schema migration, full CI workflow hardening, protocol/event canonization, module decomposition, or platform/deadline/durability blockers."
+      "Does not claim Runtime Release Ready.",
+      "Does not add OS process-tree killing, service control, scheduler, daemon, hosted platform, generic shell, arbitrary process execution, remote transport, forge/notification adapters, package installation, signing infrastructure, or registry behavior.",
+      "Does not reopen MCP-S1 through MCP-S7 or RRP-1.",
+      "Does not close process-loss recovery E2E, durable schema migration, CI workflow hardening, protocol/event canonization, module decomposition, or platform/deadline/durability blockers."
     ],
     "rejected_alternatives": [
-      "Rejected generating a broad endpoint inventory from source strings because RRP-1 needs stable release semantics, not an endpoint count.",
-      "Rejected adding a runtime status/report endpoint because release readiness should fail in CI before runtime execution.",
-      "Rejected moving schema authority into VSIX because the VSIX must remain a thin validator/projection layer.",
-      "Rejected closing protocol/event canonization in this phase because that remains a separate P1 ownership-map and drift-test blocker."
+      "Rejected treating existing Cancelled enum/event support as sufficient because it did not provide public Runtime cancel admission.",
+      "Rejected moving cancel policy into CLI or VSIX because cancellation state transitions and replay evidence are Runtime authority.",
+      "Rejected OS process-tree killing and service control because RRP-2 is the durable task cancellation contract, not process supervision.",
+      "Rejected closing recovery, migration, CI, protocol/event, decomposition, or durability blockers in this phase because each requires its own bounded evidence."
     ],
     "technical_debt": [
-      "Remaining Runtime Release Readiness blockers: explicit cancel command, real process-loss recovery E2E, durable schema version and migration, runtime-release-guard CI workflow hardening, protocol/event canonization, runtime module decomposition reevaluation, and platform/deadline/durability hardening.",
+      "Remaining Runtime Release Readiness blockers: real process-loss recovery E2E, durable schema version and migration, runtime-release-guard CI workflow hardening, protocol/event canonization, runtime module decomposition reevaluation, and platform/deadline/durability hardening.",
       "Owner license/publish decision remains required before OSS release basis can be claimed."
     ],
     "release_readiness_scope": {
       "runtime_release_dod": [
-        "Canonical Runtime public boundary contract and compatibility matrix.",
-        "Existing VSIX-invoked release-readiness guard coverage for that contract."
+        "Explicit caller-authorized cancel command.",
+        "Replay-safe terminal cancellation evidence.",
+        "Canonical Runtime boundary and VSIX validation coverage for task.cancel."
       ],
       "runtime_boundary_contracts": [
         "Run Request",
@@ -176,7 +174,7 @@
       "external_responsibility_not_release_blocking": true
     },
     "next_capability_rationale": [
-      "After RRP-1 merge, continue to the next recorded Runtime Release Readiness P0 blocker, currently `explicit-cancel-command`."
+      "After RRP-2 merge, continue to real-process-loss-recovery-e2e as the next recorded Runtime Release Readiness P0 blocker."
     ]
   }
 }

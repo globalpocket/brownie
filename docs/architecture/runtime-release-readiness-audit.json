@@ -1,13 +1,12 @@
 {
   "schema_version": 1,
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-  "phase": "RRP-1",
-  "phase_title": "Boundary Protocol Canonical Contract",
+  "phase": "RRP-2",
+  "phase_title": "Explicit Cancel Command",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "0e610872f2201400e5b6e7a102caeff3eb200846",
+  "audited_main_commit": "273e367641f03898e3a04dfaf6f0a37c7692fae3",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
-    "explicit-cancel-command",
     "real-process-loss-recovery-e2e",
     "durable-schema-version-and-migration",
     "runtime-release-guard-ci",
@@ -54,14 +53,17 @@
       "id": "explicit-cancel-command",
       "title": "Cancel semantics",
       "priority": "P0",
-      "status": "partial",
+      "status": "implemented_sufficient",
       "responsibility_domain": "runtime",
-      "debt_classification": "required_before_release",
+      "debt_classification": "closed",
       "evidence": [
-        "TaskStatus::Cancelled and LedgerEventKind::TaskCancelled exist, and inspectors handle cancelled terminal status.",
-        "task-runtime-spec-v0 still reserves Cancelled for future handling, and no explicit caller-authorized cancel command was found in the runtime/CLI public method surface."
+        "RRP-2 adds a Runtime-owned task.cancel JSON-RPC boundary with typed protocol params and result.",
+        "task.cancel requires caller authorization, concrete task/run identity, expected current status, expected task updated_at, bounded cancel_id, and a Runtime-computed cancel request fingerprint before terminal evidence.",
+        "Only Created, Queued, and Running tasks are cancellable; missing, stale, mismatched, completed, failed, malformed, ambiguous, or unrelated requests fail closed before TaskCancelled evidence.",
+        "Exact replay is idempotent only when the current durable TaskCancelled payload matches the same cancel request fingerprint; otherwise cancelled tasks fail closed without duplicate terminal evidence.",
+        "VSIX protocol validators and runtime client projections cover task.cancel params/results while remaining thin transport validation over Runtime authority."
       ],
-      "next_action": "Add bounded Runtime-owned cancel command semantics and tests in the cancel phase."
+      "next_action": "Use task.cancel as the explicit Runtime-owned cancellation boundary while closing the remaining Runtime Release Readiness blockers."
     },
     {
       "id": "real-process-loss-recovery-e2e",
