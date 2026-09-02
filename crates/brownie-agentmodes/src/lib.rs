@@ -103,6 +103,84 @@ pub struct CompiledPolicyArtifact {
 pub struct CompiledMcpServerAccess {
     pub server_id: String,
     pub tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_policies: Vec<CompiledMcpToolPolicy>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompiledMcpToolPolicy {
+    pub name: String,
+    pub side_effect: McpToolSideEffect,
+    pub approval: McpToolApproval,
+    pub idempotency: McpToolIdempotency,
+    pub retry: McpToolRetry,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub legacy_unclassified: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpToolSideEffect {
+    ReadOnly,
+    LocalMutation,
+    ExternalMutation,
+    Destructive,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpToolApproval {
+    NotRequired,
+    Required,
+    Prohibited,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpToolIdempotency {
+    Safe,
+    KeyRequired,
+    Unsafe,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpToolRetry {
+    Allowed,
+    PolicyControlled,
+    Prohibited,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+impl CompiledMcpServerAccess {
+    pub fn tool_policy(&self, tool_name: &str) -> Option<&CompiledMcpToolPolicy> {
+        self.tool_policies
+            .iter()
+            .find(|policy| policy.name == tool_name)
+    }
+}
+
+impl CompiledMcpToolPolicy {
+    pub fn permits_unapproved_runtime_execution(&self) -> bool {
+        !self.legacy_unclassified
+            && self.side_effect == McpToolSideEffect::ReadOnly
+            && self.approval == McpToolApproval::NotRequired
+            && self.idempotency == McpToolIdempotency::Safe
+            && self.retry != McpToolRetry::Prohibited
+    }
+
+    pub fn retry_policy_name(&self) -> &'static str {
+        match self.retry {
+            McpToolRetry::Allowed => "allowed",
+            McpToolRetry::PolicyControlled => "policy_controlled",
+            McpToolRetry::Prohibited => "prohibited",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -327,17 +405,54 @@ impl RuntimePermissionGate {
         if !base.allowed {
             return base;
         }
-        let allowed = policy.mcp_access.iter().any(|server| {
-            server.server_id == server_id && server.tools.iter().any(|tool| tool == tool_name)
-        });
+        let Some(server) = policy
+            .mcp_access
+            .iter()
+            .find(|server| server.server_id == server_id)
+        else {
+            return PermissionDecision {
+                action: RuntimeAction::UseMcpTool,
+                allowed: false,
+                reason: format!(
+                    "Mode {} does not allow MCP server {server_id}.",
+                    policy.mode_id
+                ),
+            };
+        };
+        if !server.tools.iter().any(|tool| tool == tool_name) {
+            return PermissionDecision {
+                action: RuntimeAction::UseMcpTool,
+                allowed: false,
+                reason: format!(
+                    "Mode {} does not allow MCP tool mcp.{server_id}.{tool_name}.",
+                    policy.mode_id
+                ),
+            };
+        }
+        let Some(tool_policy) = server.tool_policy(tool_name) else {
+            return PermissionDecision {
+                action: RuntimeAction::UseMcpTool,
+                allowed: false,
+                reason: format!(
+                    "Mode {} MCP tool mcp.{server_id}.{tool_name} has no structured Brownie safety policy.",
+                    policy.mode_id
+                ),
+            };
+        };
+        let allowed = tool_policy.permits_unapproved_runtime_execution();
         let reason = if allowed {
             format!(
-                "Mode {} allows MCP tool mcp.{server_id}.{tool_name} through compiled policy.",
+                "Mode {} allows MCP tool mcp.{server_id}.{tool_name} through structured read-only Brownie safety policy.",
+                policy.mode_id
+            )
+        } else if tool_policy.legacy_unclassified {
+            format!(
+                "Mode {} MCP tool mcp.{server_id}.{tool_name} uses legacy unclassified MCP policy and fails closed.",
                 policy.mode_id
             )
         } else {
             format!(
-                "Mode {} does not allow MCP tool mcp.{server_id}.{tool_name}.",
+                "Mode {} MCP tool mcp.{server_id}.{tool_name} requires unsupported or prohibited Brownie safety handling.",
                 policy.mode_id
             )
         };

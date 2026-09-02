@@ -25,9 +25,13 @@ The `read_only` field is informational for summaries. Individual capabilities ar
 
 MCP tool execution is a runtime action, not a text-derived capability. A mode
 must have compiled `mcp_tool_access`, the server/tool pair must appear in the
-structured Mode Pack allow-list, and the current catalog entry must match
-task-pinned MCP provenance before Runtime may call a normalized
-`mcp.<server_id>.<tool_name>` tool. See `mcp-client-spec-v0.md`.
+structured Mode Pack allow-list, the tool must have structured Brownie safety
+policy, and the current catalog entry must match task-pinned MCP provenance
+before Runtime may call a normalized `mcp.<server_id>.<tool_name>` tool. In v0,
+the gate allows only `read_only`, `approval=not_required`, `idempotency=safe`
+tools with retry other than `prohibited`; legacy-unclassified, local mutation,
+external mutation, destructive, unknown, and approval-required tools fail closed
+until later MCP safety phases bind approvals. See `mcp-client-spec-v0.md`.
 
 MP-3.1 adds scoped workspace-write checks for compiled AgentModes policy. When a
 mode has `workspace_write=true` and no `workspace_write_scopes`, the action bit

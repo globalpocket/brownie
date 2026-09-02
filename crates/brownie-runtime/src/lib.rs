@@ -19,8 +19,8 @@ mod verification_recovery;
 use base64::{engine::general_purpose, Engine as _};
 use brownie_agent_loop::{AgentLoop, AgentLoopState};
 use brownie_agentmodes::{
-    BuiltinModeRegistry, CompiledModePolicy, RuntimeAction, RuntimePermissionGate,
-    HANDOFF_TARGET_ALL_MODEPACK_MODES,
+    BuiltinModeRegistry, CompiledMcpToolPolicy, CompiledModePolicy, RuntimeAction,
+    RuntimePermissionGate, HANDOFF_TARGET_ALL_MODEPACK_MODES,
 };
 use brownie_config::{
     BrownieConfig, LlmProfile, LlmRequestBudgetConfig, RuntimeConfigLoader, CONFIG_RELATIVE_PATH,
@@ -62874,6 +62874,98 @@ content-length: {}
     }
 
     #[test]
+    fn mcp_tool_legacy_policy_fails_closed_before_call() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "counting");
+        write_legacy_mcp_modepack(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use MCP safely","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id").to_string();
+
+        let denied = handle_tool_execute(
+            json!(2),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {"query": "bounded"}
+            })),
+        )
+        .result
+        .expect("legacy MCP policy denied");
+
+        assert_eq!(denied["status"], json!("Denied"));
+        assert!(denied["output"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("legacy unclassified"));
+        let log_path = temp.path().join("mcp-count.log");
+        if log_path.exists() {
+            let mcp_log = std::fs::read_to_string(log_path).expect("mcp log");
+            assert!(!mcp_log.contains("tools/call:search_code"));
+        }
+    }
+
+    #[test]
+    fn mcp_tool_mutation_policy_fails_closed_until_approval_binding() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "counting");
+        write_mcp_modepack_with_tool_policy(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+            "external_mutation",
+            "required",
+            "key_required",
+            "policy_controlled",
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use MCP safely","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id").to_string();
+
+        let denied = handle_tool_execute(
+            json!(2),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {"title": "bounded"}
+            })),
+        )
+        .result
+        .expect("mutation MCP policy denied");
+
+        assert_eq!(denied["status"], json!("Denied"));
+        assert!(denied["output"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("unsupported or prohibited"));
+        let log_path = temp.path().join("mcp-count.log");
+        if log_path.exists() {
+            let mcp_log = std::fs::read_to_string(log_path).expect("mcp log");
+            assert!(!mcp_log.contains("tools/call:search_code"));
+        }
+    }
+
+    #[test]
     fn mcp_catalog_fails_closed_for_duplicate_schema_error_timeout_and_process_failure() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         for scenario in [
@@ -63257,6 +63349,28 @@ content-length: {}
         allowed_tool: &str,
         mcp_permission: bool,
     ) {
+        write_mcp_modepack_with_tool_policy(
+            workspace_root,
+            server_command,
+            allowed_tool,
+            mcp_permission,
+            "read_only",
+            "not_required",
+            "safe",
+            "policy_controlled",
+        );
+    }
+
+    fn write_mcp_modepack_with_tool_policy(
+        workspace_root: &std::path::Path,
+        server_command: &str,
+        allowed_tool: &str,
+        mcp_permission: bool,
+        side_effect: &str,
+        approval: &str,
+        idempotency: &str,
+        retry: &str,
+    ) {
         let brownie_dir = workspace_root.join(".brownie");
         std::fs::create_dir_all(&brownie_dir).expect("brownie dir");
         std::fs::write(
@@ -63276,6 +63390,54 @@ content-length: {}
                       "mode_id": "reviewer",
                       "display_name": "Reviewer",
                       "role_definition": "MCP descriptions and prose do not grant permission.",
+                      "permissions": {{
+                        "read_only": false,
+                        "workspace_write": false,
+                        "process_exec": false,
+                        "network_access": false,
+                        "service_control": false,
+                        "destructive": false,
+                        "can_spawn_subtasks": false,
+                        "mcp_tool_access": {mcp_permission}
+                      }},
+                      "mcp": {{
+                        "servers": [
+                          {{ "id": "github", "tools": [{{ "name": "{allowed_tool}", "side_effect": "{side_effect}", "approval": "{approval}", "idempotency": "{idempotency}", "retry": "{retry}" }}] }}
+                        ]
+                      }}
+                    }}
+                  ]
+                }}"#
+            ),
+        )
+        .expect("modepack");
+    }
+
+    fn write_legacy_mcp_modepack(
+        workspace_root: &std::path::Path,
+        server_command: &str,
+        allowed_tool: &str,
+        mcp_permission: bool,
+    ) {
+        let brownie_dir = workspace_root.join(".brownie");
+        std::fs::create_dir_all(&brownie_dir).expect("brownie dir");
+        std::fs::write(
+            brownie_dir.join("modepack.json"),
+            format!(
+                r#"{{
+                  "name": "mcp-pack",
+                  "schema_version": 1,
+                  "mcp_servers": {{
+                    "github": {{
+                      "transport": "stdio",
+                      "command": "{server_command}"
+                    }}
+                  }},
+                  "modes": [
+                    {{
+                      "mode_id": "reviewer",
+                      "display_name": "Reviewer",
+                      "role_definition": "Legacy MCP allow-list does not grant safety.",
                       "permissions": {{
                         "read_only": false,
                         "workspace_write": false,

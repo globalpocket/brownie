@@ -288,6 +288,14 @@ fn execute_mcp_tool_for_record(
             output: json!({ "reason": decision.reason }),
         });
     }
+    let Some(tool_policy) = compiled_mcp_tool_policy(policy, &server_id, &tool_name) else {
+        return Ok(ToolExecuteResult {
+            tool_id,
+            status: ToolExecuteStatus::Denied,
+            output: json!({ "reason": "MCP tool has no structured Brownie safety policy." }),
+        });
+    };
+    let mcp_safety_policy = mcp_tool_safety_policy_payload(tool_policy);
     let Some(config) = mcp_server_config_for_policy(&store, &record, &server_id)? else {
         return Ok(ToolExecuteResult {
             tool_id,
@@ -337,7 +345,8 @@ fn execute_mcp_tool_for_record(
                     "server_config_identity_fingerprint": catalog_entry.server_config_identity_fingerprint,
                     "protocol_version": catalog_entry.protocol_version,
                     "catalog_fingerprint": catalog.catalog_fingerprint,
-                }
+                },
+                "mcp_safety_policy": mcp_safety_policy,
             }),
         }),
         Ok(call_result) => Ok(ToolExecuteResult {
@@ -354,7 +363,8 @@ fn execute_mcp_tool_for_record(
                     "server_config_identity_fingerprint": catalog_entry.server_config_identity_fingerprint,
                     "protocol_version": catalog_entry.protocol_version,
                     "catalog_fingerprint": catalog.catalog_fingerprint,
-                }
+                },
+                "mcp_safety_policy": mcp_safety_policy,
             }),
         }),
         Err(error) => Ok(ToolExecuteResult {
@@ -362,10 +372,39 @@ fn execute_mcp_tool_for_record(
             status: ToolExecuteStatus::Failed,
             output: json!({
                 "reason": format!("MCP tools/call {}.", error.kind.as_str()),
-                "mcp": mcp_call_failure_metadata(&config, &tool_name, &request_fingerprint, error.kind),
+                "mcp": mcp_call_failure_metadata(
+                    &config,
+                    &tool_name,
+                    &request_fingerprint,
+                    error.kind,
+                    tool_policy.retry_policy_name(),
+                ),
+                "mcp_safety_policy": mcp_safety_policy,
             }),
         }),
     }
+}
+
+fn compiled_mcp_tool_policy<'a>(
+    policy: &'a CompiledModePolicy,
+    server_id: &str,
+    tool_name: &str,
+) -> Option<&'a CompiledMcpToolPolicy> {
+    policy
+        .mcp_access
+        .iter()
+        .find(|server| server.server_id == server_id)
+        .and_then(|server| server.tool_policy(tool_name))
+}
+
+fn mcp_tool_safety_policy_payload(policy: &CompiledMcpToolPolicy) -> Value {
+    json!({
+        "side_effect": policy.side_effect,
+        "approval": policy.approval,
+        "idempotency": policy.idempotency,
+        "retry": policy.retry,
+        "legacy_unclassified": policy.legacy_unclassified,
+    })
 }
 
 fn mcp_call_failure_metadata(
@@ -373,6 +412,7 @@ fn mcp_call_failure_metadata(
     tool_name: &str,
     request_fingerprint: &str,
     kind: mcp_client::McpToolCallFailureKind,
+    retry_policy: &str,
 ) -> Value {
     let execution_status = kind.as_str();
     json!({
@@ -389,7 +429,7 @@ fn mcp_call_failure_metadata(
         },
         "tool_status": Value::Null,
         "execution_status": execution_status,
-        "retry_policy": "policy_controlled",
+        "retry_policy": retry_policy,
     })
 }
 
@@ -1629,6 +1669,9 @@ fn append_approved_mcp_tool_execution(
         return Ok(());
     };
     let permission = RuntimePermissionGate::check_mcp_tool(policy, server_id, tool_name);
+    let mcp_safety_policy = compiled_mcp_tool_policy(policy, server_id, tool_name)
+        .map(mcp_tool_safety_policy_payload)
+        .unwrap_or(Value::Null);
     store.tasks().append_task_event_with_payload(
         record,
         LedgerEventKind::ToolExecutionPermissionChecked,
@@ -1640,6 +1683,7 @@ fn append_approved_mcp_tool_execution(
             "server_id": server_id,
             "tool_name": tool_name,
             "request_fingerprint": request_fingerprint,
+            "mcp_safety_policy": mcp_safety_policy,
         })),
     )?;
     if !permission.allowed {

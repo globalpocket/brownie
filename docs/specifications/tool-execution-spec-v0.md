@@ -202,9 +202,13 @@ mutation only; remote Git operations remain out of scope.
 
 Runtime denies MCP execution when the task is unknown, the mode lacks
 `UseMcpTool`/`mcp_tool_access`, the server/tool pair is absent from the compiled
-Mode Pack allow-list, the structured server configuration is missing, or the
-current `tools/list` catalog no longer matches the task-pinned schema/config
-fingerprints. `tools/call` is attempted only after those checks pass.
+Mode Pack allow-list, the tool lacks structured Brownie safety policy, the tool
+uses legacy unclassified policy, the policy is not executable without approval
+binding, the structured server configuration is missing, or the current
+`tools/list` catalog no longer matches the task-pinned schema/config
+fingerprints. `tools/call` is attempted only after those checks pass. In v0,
+approval-free MCP execution is limited to `read_only`, `approval=not_required`,
+`idempotency=safe`, and non-prohibited retry policy.
 
 MCP stdio server launch is runtime-owned and request-scoped in this phase. MCP
 server descriptions, schemas, command names, response text, and AgentModes prose

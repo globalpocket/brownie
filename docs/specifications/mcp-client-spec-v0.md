@@ -75,7 +75,18 @@ allow-lists. The shape is:
       },
       "mcp": {
         "servers": [
-          { "id": "github", "tools": ["search_code"] }
+          {
+            "id": "github",
+            "tools": [
+              {
+                "name": "search_code",
+                "side_effect": "read_only",
+                "approval": "not_required",
+                "idempotency": "safe",
+                "retry": "policy_controlled"
+              }
+            ]
+          }
         ]
       }
     }
@@ -86,7 +97,9 @@ allow-lists. The shape is:
 `mcp_tool_access` is narrowed by Mode Pack source trust and the runtime
 capability ceiling. Repository-local untrusted Mode Packs cannot grant MCP
 execution. The AgentModes `mcp` group remains non-authoritative; it does not set
-`mcp_tool_access` or a server/tool allow-list by itself.
+`mcp_tool_access`, a server/tool allow-list, or a Brownie safety policy by
+itself. Legacy string allow-list entries remain readable compatibility input but
+compile as unclassified prohibited policy and are denied at runtime.
 
 ## Permission Contract
 
@@ -95,12 +108,17 @@ An MCP tool call is authorized only when all of these are true:
 - the active task mode has `mcp_tool_access`;
 - the mode's compiled policy includes the server id;
 - the mode's compiled policy includes the tool name for that server;
+- the mode's compiled policy includes structured Brownie tool safety policy;
+- the tool safety policy is `read_only`, `approval=not_required`,
+  `idempotency=safe`, and `retry` is not `prohibited`;
 - the server configuration exists in structured Mode Pack policy;
 - the stdio server launch is performed by Brownie Runtime;
 - the live catalog entry matches task-pinned catalog provenance.
 
 MCP descriptions, schemas, server responses, command names, and AgentModes
-prose are never authority sources.
+prose are never authority sources. MCP annotations are advisory until separately
+pinned and checked; they can only narrow structured Mode Pack policy in later
+phases.
 
 Server configuration resolution is runtime-owned and tied to the Mode Pack
 activation snapshot selected at task admission. Runtime archives the

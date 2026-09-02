@@ -1,14 +1,13 @@
 {
   "schema_version": 1,
   "campaign": "mcp-runtime-safety-policy-finite-closure",
-  "phase": "MCP-S1.1",
-  "phase_title": "MCP Result Semantics Protocol Conformance Corrective",
+  "phase": "MCP-S2",
+  "phase_title": "MCP Tool-level Brownie Safety Policy",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "84cafe8d1bc37a352c12a9cfd0467a5ba19a9cd2",
+  "audited_main_commit": "ee1fb2473725a23502b4ddf626005c2c18ac0e85",
   "mcp_first_architecture_preserved": true,
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
-    "mcp-tool-safety-policy",
     "mcp-tool-annotation-provenance",
     "mcp-tool-approval-binding",
     "mcp-runtime-schema-validation",
@@ -36,14 +35,17 @@
       "id": "mcp-tool-safety-policy",
       "title": "Tool-level Brownie safety policy",
       "priority": "P0",
-      "status": "partial",
+      "status": "implemented_sufficient",
       "responsibility_domain": "runtime",
-      "debt_classification": "required_before_release",
+      "debt_classification": "closed",
       "evidence": [
-        "Compiled Mode Pack policy currently has mcp_tool_access and server/tool allow-lists.",
-        "It does not yet encode side_effect, approval, idempotency, or retry per MCP tool."
+        "Compiled Mode Pack MCP tool policy now encodes side_effect, approval, idempotency, and retry per tool.",
+        "Legacy string tool-name entries remain readable compatibility input but compile as legacy_unclassified with unknown/prohibited safety policy and are denied by Runtime.",
+        "RuntimePermissionGate requires mcp_tool_access, server/tool allow-list membership, and executable structured Brownie safety policy before tools/call.",
+        "In v0, approval-free MCP execution is limited to read_only, approval=not_required, idempotency=safe, and retry other than prohibited.",
+        "Local and external mutation, destructive, unknown, approval-required, and legacy-unclassified tools fail closed until later approval binding phases."
       ],
-      "next_action": "Close in MCP-S2 by extending Mode Pack MCP policy while treating legacy tool-name entries fail-closed."
+      "next_action": "Use this closed policy baseline for MCP-S3 annotation provenance and MCP-S4 approval binding."
     },
     {
       "id": "mcp-tool-annotation-provenance",
