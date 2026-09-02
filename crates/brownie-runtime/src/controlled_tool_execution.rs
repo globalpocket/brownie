@@ -324,11 +324,22 @@ fn execute_mcp_tool_for_record(
             output: json!({ "reason": "MCP tool is outside the validated server catalog." }),
         });
     };
-    if !pinned_mcp_catalog_allows(&store, &record, catalog_entry)? {
+    if !pinned_mcp_catalog_allows(&store, &record, &catalog, catalog_entry)? {
         return Ok(ToolExecuteResult {
             tool_id,
             status: ToolExecuteStatus::Denied,
             output: json!({ "reason": "MCP tool catalog does not match task-pinned provenance." }),
+        });
+    }
+    if let Some(reason) = mcp_annotation_safety_denial(tool_policy, catalog_entry) {
+        return Ok(ToolExecuteResult {
+            tool_id,
+            status: ToolExecuteStatus::Denied,
+            output: json!({
+                "reason": reason,
+                "catalog_provenance": mcp_catalog_provenance_payload(&catalog, catalog_entry),
+                "mcp_safety_policy": mcp_safety_policy,
+            }),
         });
     }
     match mcp_client::call_tool(&config, &tool_name, input) {
@@ -337,15 +348,7 @@ fn execute_mcp_tool_for_record(
             status: ToolExecuteStatus::Completed,
             output: json!({
                 "mcp": with_mcp_request_fingerprint(call_result.output, &request_fingerprint),
-                "catalog_provenance": {
-                    "server_id": catalog_entry.server_id,
-                    "tool_name": catalog_entry.tool_name,
-                    "input_schema_fingerprint": catalog_entry.input_schema_fingerprint,
-                    "output_schema_fingerprint": catalog_entry.output_schema_fingerprint,
-                    "server_config_identity_fingerprint": catalog_entry.server_config_identity_fingerprint,
-                    "protocol_version": catalog_entry.protocol_version,
-                    "catalog_fingerprint": catalog.catalog_fingerprint,
-                },
+                "catalog_provenance": mcp_catalog_provenance_payload(&catalog, catalog_entry),
                 "mcp_safety_policy": mcp_safety_policy,
             }),
         }),
@@ -355,15 +358,7 @@ fn execute_mcp_tool_for_record(
             output: json!({
                 "reason": "MCP tool returned error.",
                 "mcp": with_mcp_request_fingerprint(call_result.output, &request_fingerprint),
-                "catalog_provenance": {
-                    "server_id": catalog_entry.server_id,
-                    "tool_name": catalog_entry.tool_name,
-                    "input_schema_fingerprint": catalog_entry.input_schema_fingerprint,
-                    "output_schema_fingerprint": catalog_entry.output_schema_fingerprint,
-                    "server_config_identity_fingerprint": catalog_entry.server_config_identity_fingerprint,
-                    "protocol_version": catalog_entry.protocol_version,
-                    "catalog_fingerprint": catalog.catalog_fingerprint,
-                },
+                "catalog_provenance": mcp_catalog_provenance_payload(&catalog, catalog_entry),
                 "mcp_safety_policy": mcp_safety_policy,
             }),
         }),
@@ -407,6 +402,59 @@ fn mcp_tool_safety_policy_payload(policy: &CompiledMcpToolPolicy) -> Value {
     })
 }
 
+fn mcp_annotation_safety_denial(
+    policy: &CompiledMcpToolPolicy,
+    entry: &mcp_client::McpToolCatalogEntry,
+) -> Option<String> {
+    let annotations = &entry.annotations;
+    if policy.side_effect == brownie_agentmodes::McpToolSideEffect::ReadOnly {
+        if annotations.read_only_hint == Some(false) {
+            return Some(format!(
+                "MCP tool mcp.{}.{} annotation readOnlyHint=false conflicts with Brownie read_only policy and fails closed.",
+                entry.server_id, entry.tool_name
+            ));
+        }
+        if annotations.destructive_hint == Some(true) {
+            return Some(format!(
+                "MCP tool mcp.{}.{} annotation destructiveHint=true conflicts with Brownie read_only policy and fails closed.",
+                entry.server_id, entry.tool_name
+            ));
+        }
+        if annotations.open_world_hint == Some(true) {
+            return Some(format!(
+                "MCP tool mcp.{}.{} annotation openWorldHint=true requires later approval binding and fails closed for autonomous read-only execution.",
+                entry.server_id, entry.tool_name
+            ));
+        }
+    }
+    if policy.idempotency == brownie_agentmodes::McpToolIdempotency::Safe
+        && annotations.idempotent_hint == Some(false)
+    {
+        return Some(format!(
+            "MCP tool mcp.{}.{} annotation idempotentHint=false conflicts with Brownie safe idempotency and fails closed.",
+            entry.server_id, entry.tool_name
+        ));
+    }
+    None
+}
+
+fn mcp_catalog_provenance_payload(
+    catalog: &mcp_client::McpToolCatalog,
+    entry: &mcp_client::McpToolCatalogEntry,
+) -> Value {
+    json!({
+        "server_id": entry.server_id,
+        "tool_name": entry.tool_name,
+        "input_schema_fingerprint": entry.input_schema_fingerprint,
+        "output_schema_fingerprint": entry.output_schema_fingerprint,
+        "annotations": entry.annotations,
+        "annotation_fingerprint": entry.annotation_fingerprint,
+        "server_config_identity_fingerprint": entry.server_config_identity_fingerprint,
+        "protocol_version": entry.protocol_version,
+        "catalog_fingerprint": catalog.catalog_fingerprint,
+    })
+}
+
 fn mcp_call_failure_metadata(
     config: &brownie_modepack::ModePackMcpServerConfig,
     tool_name: &str,
@@ -436,6 +484,7 @@ fn mcp_call_failure_metadata(
 fn pinned_mcp_catalog_allows(
     store: &BrownieStore,
     record: &TaskRecord,
+    current_catalog: &mcp_client::McpToolCatalog,
     entry: &mcp_client::McpToolCatalogEntry,
 ) -> anyhow::Result<bool> {
     let events = store.tasks().read_ledger_events(&record.run_id)?;
@@ -458,6 +507,8 @@ fn pinned_mcp_catalog_allows(
                 == Some(entry.server_config_identity_fingerprint.as_str())
             && catalog.get("protocol_version").and_then(Value::as_str)
                 == Some(entry.protocol_version.as_str())
+            && catalog.get("catalog_fingerprint").and_then(Value::as_str)
+                == Some(current_catalog.catalog_fingerprint.as_str())
             && catalog
                 .get("tools")
                 .and_then(Value::as_array)
@@ -472,6 +523,9 @@ fn pinned_mcp_catalog_allows(
                                 .get("output_schema_fingerprint")
                                 .and_then(Value::as_str)
                                 == entry.output_schema_fingerprint.as_deref()
+                            && tool.get("annotation_fingerprint").and_then(Value::as_str)
+                                == Some(entry.annotation_fingerprint.as_str())
+                            && tool.get("annotations") == Some(&json!(entry.annotations))
                     })
                 })
                 .unwrap_or(false)
@@ -4093,6 +4147,8 @@ pub(super) fn tool_execute_result_ledger_payload(result: &ToolExecuteResult) -> 
             "tool_name",
             "input_schema_fingerprint",
             "output_schema_fingerprint",
+            "annotations",
+            "annotation_fingerprint",
             "server_config_identity_fingerprint",
             "protocol_version",
             "catalog_fingerprint",

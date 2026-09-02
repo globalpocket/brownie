@@ -1,14 +1,13 @@
 {
   "schema_version": 1,
   "campaign": "mcp-runtime-safety-policy-finite-closure",
-  "phase": "MCP-S2",
-  "phase_title": "MCP Tool-level Brownie Safety Policy",
+  "phase": "MCP-S3",
+  "phase_title": "MCP Tool Annotation Provenance And Drift Checks",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "ee1fb2473725a23502b4ddf626005c2c18ac0e85",
+  "audited_main_commit": "9d83bf81c80980c36df7181eb3f03edcc41408f6",
   "mcp_first_architecture_preserved": true,
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
-    "mcp-tool-annotation-provenance",
     "mcp-tool-approval-binding",
     "mcp-runtime-schema-validation",
     "mcp-secret-reference-contract",
@@ -51,14 +50,18 @@
       "id": "mcp-tool-annotation-provenance",
       "title": "MCP tool annotation provenance",
       "priority": "P0",
-      "status": "unimplemented",
+      "status": "implemented_sufficient",
       "responsibility_domain": "runtime",
-      "debt_classification": "required_before_release",
+      "debt_classification": "closed",
       "evidence": [
-        "tools/list catalogs schema and config fingerprints.",
-        "readOnlyHint, destructiveHint, idempotentHint, and openWorldHint are not yet parsed, pinned, fingerprinted, or drift-checked."
+        "tools/list parses bounded MCP annotations readOnlyHint, destructiveHint, idempotentHint, and openWorldHint.",
+        "Catalog entries carry bounded annotations plus an annotation_fingerprint, and the catalog fingerprint source includes those values.",
+        "Mode-resolved task-pinned MCP catalog evidence includes annotation payloads and fingerprints without storing raw schemas, responses, paths, secrets, or environment values.",
+        "tools/call rechecks live catalog fingerprints and per-tool annotation fingerprints before server execution, so annotation drift fails closed.",
+        "Invalid known annotation field types fail closed during catalog admission.",
+        "Contradictory or open-world annotations narrow approval-free read-only execution before tools/call; descriptions and annotation prose are never authority."
       ],
-      "next_action": "Close in MCP-S3 with bounded annotation parsing that can only narrow policy."
+      "next_action": "Use this closed narrowing-only annotation provenance baseline for MCP-S4 approval binding."
     },
     {
       "id": "mcp-tool-approval-binding",

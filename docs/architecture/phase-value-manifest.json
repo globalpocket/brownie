@@ -1,39 +1,39 @@
 {
   "schema_version": 1,
-  "phase": "MCP-S2",
+  "phase": "MCP-S3",
   "current_milestone": "mcp-runtime-safety-policy-finite-closure",
   "milestone": "Brownie MCP Runtime Safety Policy Finite Closure",
   "target_capability": "runtime_permission_enforcement",
-  "concrete_capability_transition": "mcp_tools_call_requires_structured_tool_level_brownie_safety_policy",
+  "concrete_capability_transition": "mcp_tool_annotations_are_task_pinned_fingerprinted_and_narrow_tools_call_execution",
   "forbidden_pattern": "product_completion_reopen_cli_mp_history_runtime_release_ready_with_open_runtime_debt_adapter_manifest_custom_tool_protocol_streamable_http_oauth_mcp_apps_sampling_roots_elicitation_public_registry_automatic_install_remote_binary_distribution_scheduler_daemon_generic_shell_arbitrary_process_exec_mcp_annotation_as_authority_tool_description_as_authority_model_output_as_authority_modepack_policy_passthrough_raw_json_rpc_response_raw_error_secret_environment_absolute_path_canonical_path_binary_content",
   "project_objective_ref": "docs/architecture/product-charter.md",
   "strategic_capability_mapping": [
     {
       "capability": "runtime_permission_enforcement",
-      "relationship": "Requires MCP tools/call to pass a Runtime-owned structured safety policy gate in addition to mcp_tool_access and server/tool allow-list membership."
+      "relationship": "Requires MCP tools/call to match task-pinned tool annotation provenance and denies approval-free execution when annotations narrow or contradict structured Brownie safety policy."
     },
     {
       "capability": "headless_autonomous_development",
-      "relationship": "Prevents autonomous agent loops from executing unclassified or mutating MCP tools merely because a model selected an allow-listed tool."
+      "relationship": "Prevents autonomous agent loops from continuing with stale or drifted MCP annotation evidence after tools/list changes."
     },
     {
       "capability": "controlled_workspace_tools",
-      "relationship": "Keeps controlled tool execution bounded by task-pinned Mode Pack policy and Runtime permission checks."
+      "relationship": "Keeps MCP execution bounded by task-pinned catalog provenance while preserving Mode Pack structured policy as the authority source."
     }
   ],
   "phase_value_gate": {
     "required": true,
     "answers": {
       "strategic_capabilities": "Advances runtime_permission_enforcement and headless_autonomous_development while preserving controlled_workspace_tools boundaries.",
-      "new_capability": "Runtime can distinguish explicitly safe read-only MCP tools from legacy, unclassified, mutating, destructive, unknown, or approval-required MCP tools before attempting tools/call.",
-      "why_existing_functionality_is_insufficient": "The previous MCP policy had mcp_tool_access plus server/tool names only, so a trusted Mode Pack could not express side effects, approval requirements, idempotency, or retry semantics per tool.",
-      "product_gap_if_skipped": "MCP server/tool allow-lists would continue to look like executable authority even when a tool is mutating, unsafe, approval-required, or merely a legacy string entry.",
-      "non_duplicative": "This phase changes compiled Mode Pack policy and Runtime permission behavior; it does not add a wrapper, adapter manifest, new RPC, or documentation-only verdict.",
+      "new_capability": "Runtime can parse, pin, fingerprint, and drift-check MCP tool annotations, then use them only to narrow approval-free tools/call execution.",
+      "why_existing_functionality_is_insufficient": "MCP-S2 added structured Brownie safety policy, but tools/list annotations were still not represented in task-pinned catalog evidence, so annotation changes could not be detected as catalog drift.",
+      "product_gap_if_skipped": "A server could change readOnlyHint, destructiveHint, idempotentHint, or openWorldHint after task admission without Runtime detecting the provenance drift before tools/call.",
+      "non_duplicative": "This phase changes MCP catalog admission, task-pinned provenance, drift checks, and Runtime execution narrowing; it does not add a wrapper, adapter manifest, new RPC, or documentation-only verdict.",
       "no_new_rpc": "Yes. The existing tool.execute, task.run, and headless run/resume paths are preserved.",
       "no_new_summary": "Yes. The phase updates existing policy, Runtime execution evidence, specs, and audits rather than adding a summary endpoint.",
-      "runtime_behavior_change": "MCP tools/call is attempted only after structured Brownie tool safety policy permits approval-free execution; legacy and mutating policies are denied before server execution.",
-      "headless_autonomous_contribution": "Autonomous runs can safely use task-pinned read-only MCP tools while future mutation and approval work remains fail-closed.",
-      "milestone_progress": "Closes MCP-S2 and leaves MCP-S3 through MCP-S7 open before Runtime Release Ready."
+      "runtime_behavior_change": "MCP tools/call is denied before server execution when live annotations drift from task-pinned catalog evidence or when annotations contradict approval-free read-only safe execution.",
+      "headless_autonomous_contribution": "Autonomous runs can safely continue using MCP tools only when the live catalog still matches admitted annotation evidence and annotations do not narrow the call out of approval-free safety.",
+      "milestone_progress": "Closes MCP-S3 and leaves MCP-S4 through MCP-S7 open before Runtime Release Ready."
     },
     "questions": [
       {
@@ -81,8 +81,9 @@
   "review_value_gate": {
     "reject_when": [
       "phase treats MCP annotations, descriptions, schemas, results, or model output as authority",
-      "phase lets legacy string allow-list entries execute as read-only tools",
-      "phase allows local_mutation, external_mutation, destructive, unknown, approval-required, or prohibited-retry MCP tools to execute before approval binding",
+      "phase infers annotations from tool descriptions or prose",
+      "phase lets annotations widen Mode Pack policy, grant mcp_tool_access, add allow-list membership, or bypass approval binding",
+      "phase stores raw JSON-RPC responses, raw schemas, raw prompt/provider responses, absolute paths, canonical paths, secrets, environment values, or binary content in ledger evidence",
       "phase adds a Brownie-specific MCP adapter manifest, custom tool adapter protocol, Streamable HTTP, OAuth, MCP Apps, Sampling, Roots, Elicitation, public registry, automatic install, scheduler, daemon, generic shell, arbitrary process execution, recursive Brownie invocation, or unrelated product surfaces"
     ]
   },
@@ -90,60 +91,63 @@
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "MCP-S2 changes Runtime MCP permission behavior and release audit evidence, so strict review must verify that only structured read-only safe MCP tools can execute and that legacy or mutating tool policies fail closed.",
+    "review_intent": "MCP-S3 changes Runtime MCP catalog provenance and execution narrowing, so strict review must verify annotations are parsed and drift-checked as task-pinned narrowing-only hints rather than authority.",
     "changed_files": [
-      "crates/brownie-agentmodes/src/lib.rs",
-      "crates/brownie-modepack/src/lib.rs",
+      "crates/brownie-runtime/src/mcp_client.rs",
       "crates/brownie-runtime/src/controlled_tool_execution.rs",
       "crates/brownie-runtime/src/lib.rs",
       "docs/architecture/phase-value-manifest.json",
       "docs/architecture/mcp-runtime-safety-policy-audit.json",
+      "docs/architecture/mcp-runtime-safety-policy-audit.md",
+      "docs/specifications/mcp-client-spec-v0.md",
+      "docs/specifications/tool-execution-spec-v0.md",
+      "docs/specifications/permission-gate-spec-v0.md",
       "docs/architecture/runtime-release-readiness-audit.json",
-      "scripts/guard-runtime-release-readiness.mjs",
-      "scripts/guard-runtime-release-readiness.test.mjs"
+      "docs/architecture/runtime-release-readiness-audit.md",
+      "docs/specifications/modepack-spec-v0.md"
     ]
   },
   "exit_criteria": [
-    "Compiled MCP access includes per-tool side_effect, approval, idempotency, retry, and legacy_unclassified safety policy.",
-    "Legacy MCP string allow-list entries remain readable but are denied by Runtime before tools/call.",
-    "Structured read_only, approval=not_required, idempotency=safe, non-prohibited retry policy can execute through existing MCP paths.",
-    "Mutation, destructive, unknown, approval-required, and prohibited-retry MCP policies fail closed before tools/call.",
-    "MCP-S2 is marked closed while MCP-S3 through MCP-S7 and Runtime Release Ready remain open."
+    "MCP tools/list parses bounded boolean readOnlyHint, destructiveHint, idempotentHint, and openWorldHint annotations.",
+    "MCP catalog entries include annotations and annotation_fingerprint, and task-pinned catalog fingerprints cover annotation values.",
+    "MCP tools/call detects annotation drift by comparing live catalog and per-tool annotation fingerprints with task-pinned provenance before server execution.",
+    "Invalid known annotation field types fail closed during catalog admission.",
+    "Contradictory or open-world annotations narrow approval-free read-only execution before tools/call.",
+    "MCP-S3 is marked closed while MCP-S4 through MCP-S7 and Runtime Release Ready remain open."
   ],
   "behavior_evidence": [
-    "brownie-modepack test coverage covers structured MCP policy and legacy-unclassified compatibility input.",
-    "brownie-runtime test coverage covers read-only MCP execution, legacy policy denial, mutation policy denial, and S1/S1.1 result semantics preservation.",
-    "docs/architecture/mcp-runtime-safety-policy-audit.json records MCP-S2 as closed while leaving MCP-S3 through MCP-S7 open."
+    "brownie-runtime test coverage proves annotation parsing, task-pinned annotation fingerprints, and annotation drift denial.",
+    "brownie-runtime test coverage proves read-only approval-free MCP execution is narrowed by readOnlyHint=false, destructiveHint=true, idempotentHint=false, and openWorldHint=true before tools/call.",
+    "brownie-runtime test coverage proves invalid known annotation field types fail closed at catalog admission.",
+    "docs/architecture/mcp-runtime-safety-policy-audit.json records MCP-S3 as closed while leaving MCP-S4 through MCP-S7 open."
   ],
   "product_completion_gate": {
     "required": true,
     "product_completion_claim": false,
     "accepted_capability": [
-      "MCP tools/call now requires structured per-tool Brownie safety policy.",
-      "Legacy unclassified and mutating MCP tools fail closed before server execution."
+      "MCP tool annotations are now bounded, task-pinned, fingerprinted catalog provenance.",
+      "Annotation drift and narrowing conflicts fail closed before tools/call."
     ],
     "behavior_evidence": [
-      "ModePack compiler test coverage preserves structured policy and fail-closed legacy classification.",
-      "Runtime focused MCP test coverage proves safe read-only execution and denial before tools/call for unsafe policies."
+      "Runtime focused MCP test coverage proves annotation provenance, drift detection, invalid annotation rejection, and narrowing-only execution behavior."
     ],
     "safety_boundary": [
       "Rust Runtime remains the execution, admission, replay, permission, tool, workspace mutation, and completion authority.",
-      "Mode Pack structured policy is the MCP tool safety authority; MCP annotations, descriptions, schemas, results, and model output cannot grant authority.",
-      "Mutation and approval-required MCP tools remain fail-closed until MCP-S4 approval binding."
+      "Mode Pack structured policy remains the MCP tool safety authority; MCP annotations, descriptions, schemas, results, and model output cannot grant authority.",
+      "Annotations can only narrow approval-free execution or fail closed; mutation and approval-required MCP tools remain fail-closed until MCP-S4 approval binding."
     ],
     "non_goals": [
       "Does not add a Brownie-specific tool adapter SDK or protocol.",
       "Does not add Streamable HTTP, OAuth, MCP Apps, Sampling, Roots, Elicitation, public registry, automatic install, scheduler, daemon, generic shell, arbitrary process execution, or recursive Brownie invocation.",
-      "Does not close MCP-S3 through MCP-S7.",
+      "Does not close MCP-S4 through MCP-S7.",
       "Does not close full CI workflow hardening while workflow update authority is unavailable."
     ],
     "rejected_alternatives": [
-      "Rejected treating legacy string allow-lists as read-only because tool names alone do not describe safety.",
-      "Rejected deriving safety from MCP descriptions or annotations because S3 has not yet pinned and drift-checked annotations.",
-      "Rejected executing approval-required mutation tools in S2 because MCP-S4 approval binding remains open."
+      "Rejected treating annotations as authority because MCP annotations are server-supplied hints, not Mode Pack policy.",
+      "Rejected inferring annotations from descriptions because prose cannot grant or narrow authority deterministically.",
+      "Rejected allowing openWorldHint=true approval-free because open-world effects require later approval binding or fail-closed handling."
     ],
     "technical_debt": [
-      "MCP-S3 annotation provenance and drift checks remain open.",
       "MCP-S4 tool-level approval binding remains open.",
       "MCP-S5 runtime input/output schema validation remains open.",
       "MCP-S6 secret reference contract remains open.",
@@ -171,7 +175,7 @@
       "external_responsibility_not_release_blocking": true
     },
     "next_capability_rationale": [
-      "MCP-S3 should parse, pin, fingerprint, and drift-check MCP annotations as narrowing-only evidence against this structured policy baseline."
+      "MCP-S4 should bind approval-required MCP tool calls to one concrete Runtime approval fingerprint using this task-pinned annotation provenance baseline."
     ]
   }
 }

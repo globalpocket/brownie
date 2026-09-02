@@ -31,7 +31,11 @@ before Runtime may call a normalized `mcp.<server_id>.<tool_name>` tool. In v0,
 the gate allows only `read_only`, `approval=not_required`, `idempotency=safe`
 tools with retry other than `prohibited`; legacy-unclassified, local mutation,
 external mutation, destructive, unknown, and approval-required tools fail closed
-until later MCP safety phases bind approvals. See `mcp-client-spec-v0.md`.
+until later MCP safety phases bind approvals. MCP annotations are narrowing-only
+provenance: `readOnlyHint=false`, `destructiveHint=true`,
+`idempotentHint=false`, or `openWorldHint=true` deny approval-free execution,
+but annotations never grant mode permission or widen structured Mode Pack
+policy. See `mcp-client-spec-v0.md`.
 
 MP-3.1 adds scoped workspace-write checks for compiled AgentModes policy. When a
 mode has `workspace_write=true` and no `workspace_write_scopes`, the action bit

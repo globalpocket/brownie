@@ -116,9 +116,23 @@ An MCP tool call is authorized only when all of these are true:
 - the live catalog entry matches task-pinned catalog provenance.
 
 MCP descriptions, schemas, server responses, command names, and AgentModes
-prose are never authority sources. MCP annotations are advisory until separately
-pinned and checked; they can only narrow structured Mode Pack policy in later
-phases.
+prose are never authority sources. MCP annotations are bounded structured hints,
+not authority sources. Brownie Runtime parses only boolean `readOnlyHint`,
+`destructiveHint`, `idempotentHint`, and `openWorldHint` values from
+`tools/list`; missing values remain unknown, and invalid known annotation field
+types fail closed during catalog admission. Runtime never infers annotations
+from tool descriptions or other prose.
+
+Catalog entries include the bounded annotation payload and an
+`annotation_fingerprint`. The task-pinned MCP catalog fingerprint covers those
+annotation values, and `tools/call` rechecks both the live catalog fingerprint
+and the per-tool annotation fingerprint before server execution. Annotation
+drift therefore fails closed as catalog drift. Annotation hints can only narrow
+structured Mode Pack policy: approval-free read-only execution is denied before
+`tools/call` when `readOnlyHint=false`, `destructiveHint=true`,
+`idempotentHint=false`, or `openWorldHint=true`. An annotation can never grant
+`mcp_tool_access`, add a server/tool allow-list entry, bypass approval binding,
+or widen a Brownie safety policy.
 
 Server configuration resolution is runtime-owned and tied to the Mode Pack
 activation snapshot selected at task admission. Runtime archives the

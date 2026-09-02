@@ -63305,6 +63305,153 @@ content-length: {}
     }
 
     #[test]
+    fn mcp_catalog_pins_tool_annotations_and_detects_annotation_drift() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "annotated_counting");
+        write_mcp_modepack(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use annotated MCP safely","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id").to_string();
+        let run_id = start["run_id"].as_str().expect("run id");
+
+        let events = BrownieStore::new(temp.path())
+            .tasks()
+            .read_ledger_events(run_id)
+            .expect("events");
+        let mode_resolved = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ModeResolved)
+            .and_then(|event| event.payload.as_ref())
+            .expect("mode resolved");
+        let tool = &mode_resolved["mcp_tool_catalogs"][0]["tools"][0];
+        assert_eq!(tool["annotations"]["readOnlyHint"], json!(true));
+        assert_eq!(tool["annotations"]["idempotentHint"], json!(true));
+        assert_eq!(tool["annotations"]["destructiveHint"], json!(false));
+        assert_eq!(tool["annotations"]["openWorldHint"], json!(false));
+        assert!(tool["annotation_fingerprint"]
+            .as_str()
+            .expect("annotation fingerprint")
+            .starts_with("sha256:"));
+
+        write_annotation_drift_mcp_server(&fake_server);
+        let response = handle_tool_execute(
+            json!(2),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {"query": "bounded"}
+            })),
+        )
+        .result
+        .expect("annotation drift response");
+
+        assert_eq!(response["status"], json!("Denied"));
+        assert!(response["output"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("task-pinned provenance"));
+        let mcp_log = std::fs::read_to_string(temp.path().join("mcp-count.log")).expect("mcp log");
+        assert!(!mcp_log.contains("tools/call:search_code"));
+    }
+
+    #[test]
+    fn mcp_read_only_execution_is_narrowed_by_contradictory_annotations() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        for (scenario, expected_fragment) in [
+            ("annotation_read_only_false", "readOnlyHint=false"),
+            ("annotation_destructive_true", "destructiveHint=true"),
+            ("annotation_idempotent_false", "idempotentHint=false"),
+            ("annotation_open_world_true", "openWorldHint=true"),
+        ] {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let fake_server = write_fake_mcp_server(temp.path(), scenario);
+            write_mcp_modepack(
+                temp.path(),
+                fake_server.to_str().unwrap(),
+                "search_code",
+                true,
+            );
+            commit_trusted_mcp_active_snapshot(temp.path());
+            let _cwd = super::tests::CwdGuard::enter(temp.path());
+            let start = parse_line(
+                r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use annotated MCP safely","mode_id":"reviewer"}}"#,
+            )
+            .result
+            .unwrap_or_else(|| panic!("task start for {scenario}"));
+            let task_id = start["task_id"].as_str().expect("task id").to_string();
+
+            let response = handle_tool_execute(
+                json!(2),
+                Some(json!({
+                    "task_id": task_id,
+                    "mode_id": "reviewer",
+                    "tool_id": "mcp.github.search_code",
+                    "input": {"query": "bounded"}
+                })),
+            )
+            .result
+            .unwrap_or_else(|| panic!("annotation denial response for {scenario}"));
+
+            assert_eq!(response["status"], json!("Denied"), "{scenario}");
+            assert!(
+                response["output"]["reason"]
+                    .as_str()
+                    .unwrap()
+                    .contains(expected_fragment),
+                "{scenario}: {}",
+                response["output"]["reason"]
+            );
+            assert!(
+                response["output"]["catalog_provenance"]["annotation_fingerprint"]
+                    .as_str()
+                    .expect("annotation fingerprint")
+                    .starts_with("sha256:")
+            );
+            let log_path = temp.path().join("mcp-count.log");
+            if log_path.exists() {
+                let mcp_log = std::fs::read_to_string(log_path).expect("mcp log");
+                assert!(!mcp_log.contains("tools/call:search_code"), "{scenario}");
+            }
+        }
+    }
+
+    #[test]
+    fn mcp_invalid_annotation_shape_fails_closed_at_catalog_admission() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "annotation_invalid_type");
+        write_mcp_modepack(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+
+        let start_response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use MCP safely","mode_id":"reviewer"}}"#,
+        );
+
+        let error = start_response
+            .error
+            .expect("invalid annotation should fail");
+        assert!(error.message.contains("readOnlyHint"));
+    }
+
+    #[test]
     fn mcp_mode_resolved_pins_bounded_catalog_without_raw_config_or_schema() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("temp dir");
@@ -63337,6 +63484,8 @@ content-length: {}
         assert!(serialized.contains("mcp.github.search_code"));
         assert!(serialized.contains("input_schema_fingerprint"));
         assert!(serialized.contains("input_schema_summary"));
+        assert!(serialized.contains("annotations"));
+        assert!(serialized.contains("annotation_fingerprint"));
         assert!(serialized.contains(r#""name":"query""#));
         assert!(serialized.contains(r#""type":"string""#));
         assert!(!serialized.contains(fake_server.to_str().unwrap()));
@@ -63705,6 +63854,95 @@ case "$request" in
 esac
 "#
             }
+            "annotated_counting" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false},"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_RESULT_7f91c2"}],"isError":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+            }
+            "annotation_read_only_false" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","annotations":{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false},"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"should not call"}],"isError":false}}'
+    ;;
+esac
+"#
+            }
+            "annotation_destructive_true" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","annotations":{"readOnlyHint":true,"destructiveHint":true,"idempotentHint":true,"openWorldHint":false},"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"should not call"}],"isError":false}}'
+    ;;
+esac
+"#
+            }
+            "annotation_idempotent_false" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":false,"openWorldHint":false},"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"should not call"}],"isError":false}}'
+    ;;
+esac
+"#
+            }
+            "annotation_open_world_true" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":true},"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"should not call"}],"isError":false}}'
+    ;;
+esac
+"#
+            }
+            "annotation_invalid_type" => {
+                r#"#!/bin/sh
+read request
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","annotations":{"readOnlyHint":"yes"},"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+"#
+            }
             "oversized_result" => {
                 r#"#!/bin/sh
 read request
@@ -63779,6 +64017,34 @@ esac
 "#,
         )
         .expect("changed fake mcp server");
+    }
+
+    fn write_annotation_drift_mcp_server(path: &std::path::Path) {
+        std::fs::write(
+            path,
+            r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","annotations":{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false},"inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"changed annotation"}],"isError":false}}'
+    ;;
+esac
+"#,
+        )
+        .expect("annotation drift fake mcp server");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(path).expect("metadata").permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(path, permissions).expect("permissions");
+        }
     }
 
     fn commit_trusted_mcp_active_snapshot(workspace_root: &std::path::Path) -> String {
