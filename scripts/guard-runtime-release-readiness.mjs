@@ -36,14 +36,14 @@ const allowedDebtClassifications = new Set([
 
 const requiredRuntimeItems = new Map([
   ['runtime-release-debt-reaudit', { priority: 'P0', status: 'implemented_sufficient', debt: 'closed' }],
-  ['runtime-boundary-protocol-contracts', { priority: 'P0', debt: 'required_before_release' }],
-  ['explicit-cancel-command', { priority: 'P0', debt: 'required_before_release' }],
-  ['real-process-loss-recovery-e2e', { priority: 'P0', debt: 'required_before_release' }],
-  ['durable-schema-version-and-migration', { priority: 'P0', debt: 'required_before_release' }],
-  ['runtime-release-guard-ci', { priority: 'P0', debt: 'required_before_release' }],
-  ['protocol-event-canonization', { priority: 'P1', debt: 'required_before_release' }],
-  ['runtime-module-decomposition-reevaluation', { priority: 'P1', debt: 'required_before_release' }],
-  ['platform-deadline-durability-hardening', { priority: 'P1', debt: 'required_before_release' }]
+  ['runtime-boundary-protocol-contracts', { priority: 'P0' }],
+  ['explicit-cancel-command', { priority: 'P0' }],
+  ['real-process-loss-recovery-e2e', { priority: 'P0' }],
+  ['durable-schema-version-and-migration', { priority: 'P0' }],
+  ['runtime-release-guard-ci', { priority: 'P0' }],
+  ['protocol-event-canonization', { priority: 'P1' }],
+  ['runtime-module-decomposition-reevaluation', { priority: 'P1' }],
+  ['platform-deadline-durability-hardening', { priority: 'P1' }]
 ]);
 
 const requiredOutsideItems = new Map([
@@ -99,6 +99,15 @@ function findOwnerDecision(audit, id) {
   return decisions.find((decision) => decision && decision.id === id && decision.status === 'required');
 }
 
+function isOpenRuntimeReleaseBlocker(item) {
+  return (
+    item.responsibility_domain === 'runtime' &&
+    ['P0', 'P1'].includes(item.priority) &&
+    item.status !== 'implemented_sufficient' &&
+    item.debt_classification === 'required_before_release'
+  );
+}
+
 export function validateRuntimeReleaseReadinessAudit(audit, options = {}) {
   const auditPath = options.auditPath ?? defaultAuditPath;
   const ciText = options.ciText ?? '';
@@ -108,7 +117,7 @@ export function validateRuntimeReleaseReadinessAudit(audit, options = {}) {
 
   requireValue(Number.isInteger(audit.schema_version) && audit.schema_version > 0, errors, `${auditPath} schema_version must be a positive integer.`);
   requireValue(audit.campaign === 'runtime-release-readiness-p0-p1-finite-closure', errors, `${auditPath} campaign must identify the finite P0/P1 closure campaign.`);
-  requireValue(audit.runtime_release_ready === false, errors, `${auditPath} runtime_release_ready must remain false while required Runtime P0/P1 debt is open.`);
+  requireValue(typeof audit.runtime_release_ready === 'boolean', errors, `${auditPath} runtime_release_ready must be a boolean.`);
 
   const classifications = Array.isArray(audit.classifications) ? audit.classifications : [];
   requireValue(classifications.length > 0, errors, `${auditPath} classifications must be non-empty.`);
@@ -135,10 +144,13 @@ export function validateRuntimeReleaseReadinessAudit(audit, options = {}) {
     }
     requireValue(item.priority === expected.priority, errors, `${auditPath} ${id} must remain ${expected.priority}.`);
     requireValue(item.responsibility_domain === 'runtime', errors, `${auditPath} ${id} must be Runtime-owned.`);
-    requireValue(item.debt_classification === expected.debt, errors, `${auditPath} ${id} must be classified ${expected.debt}.`);
     if (expected.status) {
       requireValue(item.status === expected.status, errors, `${auditPath} ${id} must have status ${expected.status}.`);
+      requireValue(item.debt_classification === expected.debt, errors, `${auditPath} ${id} must be classified ${expected.debt}.`);
+    } else if (item.status === 'implemented_sufficient') {
+      requireValue(item.debt_classification === 'closed', errors, `${auditPath} ${id} must be classified closed after implemented_sufficient.`);
     } else {
+      requireValue(item.debt_classification === 'required_before_release', errors, `${auditPath} ${id} must remain required_before_release until implemented_sufficient.`);
       requireValue(
         ['implemented_contract_gap', 'partial', 'unimplemented'].includes(item.status),
         errors,
@@ -175,17 +187,43 @@ export function validateRuntimeReleaseReadinessAudit(audit, options = {}) {
       errors,
       `${auditPath} non-runtime item ${item.id} must not block Runtime release.`
     );
+    if (item.responsibility_domain === 'runtime' && ['P0', 'P1'].includes(item.priority) && item.status === 'implemented_sufficient') {
+      requireValue(
+        item.debt_classification === 'closed',
+        errors,
+        `${auditPath} implemented Runtime ${item.priority} item ${item.id} must be closed.`
+      );
+    }
   }
 
   const blockedBy = new Set(Array.isArray(audit.release_ready_blocked_by) ? audit.release_ready_blocked_by : []);
+  const openRuntimeBlockers = classifications.filter(isOpenRuntimeReleaseBlocker);
   for (const item of classifications) {
-    if (
-      item.responsibility_domain === 'runtime' &&
-      ['P0', 'P1'].includes(item.priority) &&
-      item.debt_classification === 'required_before_release'
-    ) {
+    if (isOpenRuntimeReleaseBlocker(item)) {
       requireValue(blockedBy.has(item.id), errors, `${auditPath} release_ready_blocked_by must include ${item.id}.`);
     }
+  }
+  for (const id of blockedBy) {
+    const item = byId.get(id);
+    requireValue(Boolean(item), errors, `${auditPath} release_ready_blocked_by contains unknown id ${id}.`);
+    if (!item) {
+      continue;
+    }
+    requireValue(
+      isOpenRuntimeReleaseBlocker(item),
+      errors,
+      `${auditPath} release_ready_blocked_by must not include closed or non-runtime item ${id}.`
+    );
+  }
+  if (openRuntimeBlockers.length > 0) {
+    requireValue(
+      audit.runtime_release_ready === false,
+      errors,
+      `${auditPath} runtime_release_ready must remain false while required Runtime P0/P1 debt is open.`
+    );
+  } else {
+    requireValue(audit.runtime_release_ready === true, errors, `${auditPath} runtime_release_ready must be true after all Runtime P0/P1 release blockers are closed.`);
+    requireValue(blockedBy.size === 0, errors, `${auditPath} release_ready_blocked_by must be empty when Runtime release is ready.`);
   }
 
   if (/license\s*=\s*"UNLICENSED"/.test(cargoText) || /publish\s*=\s*false/.test(cargoText)) {
