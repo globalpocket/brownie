@@ -85,6 +85,7 @@ const requiredBoundaryMethodSubset = [
   'run.events',
   'run.inspect',
   'tool.execute',
+  'mcp.tool.approve',
   'proposal.inspect'
 ];
 

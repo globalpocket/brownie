@@ -231,6 +231,7 @@ function validBoundaryContract(overrides = {}) {
       'run.events',
       'run.inspect',
       'tool.execute',
+      'mcp.tool.approve',
       'proposal.inspect'
     ],
     non_authority: [

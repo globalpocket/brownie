@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "campaign": "mcp-runtime-safety-policy-finite-closure",
-  "phase": "MCP-S7",
-  "phase_title": "MCP Server Executable Identity",
+  "phase": "MCP-S4.1",
+  "phase_title": "Approval Consumption and Retry Safety Corrective",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "fba0c2c9dbe872f267e77970a620582c4c989f7c",
+  "audited_main_commit": "eca116e128f24ff3a7c3cd4f2897b4426491f979",
   "mcp_first_architecture_preserved": true,
   "runtime_release_ready": false,
   "release_ready_blocked_by": [],
@@ -72,7 +72,24 @@
         "Matching runtime-ledgered approval evidence permits the exact invocation and task-scoped replay reuses completed evidence without a duplicate tools/call.",
         "Approval evidence cannot override mcp_tool_access, server/tool allow-list membership, legacy-unclassified policy, prohibited retry, destructive or unknown policy, annotation narrowing, or catalog drift."
       ],
-      "next_action": "Use this closed approval-binding baseline for MCP-S5 runtime input/output schema validation."
+      "next_action": "Use MCP-S4.1 approval consumption/retry corrective as the active approval-binding baseline."
+    },
+    {
+      "id": "mcp-approval-consumption-retry-safety",
+      "title": "Approval consumption and retry safety",
+      "priority": "P0",
+      "status": "implemented_sufficient",
+      "responsibility_domain": "runtime",
+      "debt_classification": "closed",
+      "evidence": [
+        "Public mcp.tool.approve recomputes scoped approval binding inside Runtime and records bounded approved state evidence.",
+        "Approval-required tools/call execution evaluates only the latest approval state for the scoped approval fingerprint, not any historical approved event.",
+        "Approved evidence is atomically claimed as executing under a run-local claim lock immediately before tools/call.",
+        "Tool success and tool-returned errors terminalize the approval as consumed; timeout and protocol-failure windows terminalize it as outcome_unknown.",
+        "Consumed, executing, outcome_unknown, rejected, expired, invalidated, stale, malformed, or over-broad approval evidence cannot launch another tools/call.",
+        "Concurrent same-approval execution starts tools/call at most once and completed task-scoped MCP evidence remains replayed without duplicate execution."
+      ],
+      "next_action": "Use this corrective as the active approval-binding baseline; do not reopen MCP-S1 through MCP-S7 unless a concrete regression is found."
     },
     {
       "id": "mcp-runtime-schema-validation",

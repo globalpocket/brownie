@@ -73,8 +73,9 @@ use brownie_protocol::{
     JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmHealthParams,
     LlmHealthResult, LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission,
     LlmProviderFailureRetryProvenance, LlmProviderFailureRetryRunTarget,
-    LlmProviderFailureRetrySource, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
-    ModeListResult, ModePackActivateParams, ModePackActivateResult, ModePackActiveSnapshotSummary,
+    LlmProviderFailureRetrySource, LlmRequestBudgetSummary, LlmStatusResult,
+    McpToolApprovalApproveParams, McpToolApprovalApproveResult, ModeGetParams, ModeListResult,
+    ModePackActivateParams, ModePackActivateResult, ModePackActiveSnapshotSummary,
     ModePackApproveCandidateParams, ModePackApproveCandidateResult,
     ModePackApprovedCandidateSummary, ModePackCandidateProvenanceSummary, ModePackCandidateSummary,
     ModePackDnsBindingSummary, ModePackFetchCandidateParams, ModePackFetchCandidateResult,
@@ -468,6 +469,7 @@ const METHOD_TOOL_LIST: &str = "tool.list";
 const METHOD_TOOL_PLAN: &str = "tool.plan";
 const METHOD_TOOL_INTENT_PARSE: &str = "tool.intent.parse";
 const METHOD_TOOL_EXECUTE: &str = "tool.execute";
+const METHOD_MCP_TOOL_APPROVE: &str = "mcp.tool.approve";
 const METHOD_RUN_EVENTS: &str = "run.events";
 const METHOD_RUN_INSPECT: &str = "run.inspect";
 const METHOD_CODEBASE_INDEX_BUILD: &str = "codebase.index.build";
@@ -667,6 +669,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_TOOL_PLAN => handle_tool_plan(request.id, request.params),
         METHOD_TOOL_INTENT_PARSE => handle_tool_intent_parse(request.id, request.params),
         METHOD_TOOL_EXECUTE => handle_tool_execute(request.id, request.params),
+        METHOD_MCP_TOOL_APPROVE => handle_mcp_tool_approve(request.id, request.params),
         METHOD_RUN_EVENTS => handle_run_events(request.id, request.params),
         METHOD_RUN_INSPECT => handle_run_inspect(request.id, request.params),
         METHOD_CODEBASE_INDEX_BUILD => handle_codebase_index_build(request.id, request.params),
@@ -63404,7 +63407,286 @@ content-length: {}
     }
 
     #[test]
-    fn mcp_tool_mutation_policy_requires_matching_runtime_approval_binding() {
+    fn mcp_tool_public_approval_round_trip_executes_once_and_consumes_approval() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "counting");
+        write_mcp_modepack_with_tool_policy(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+            "external_mutation",
+            "required",
+            "unsafe",
+            "policy_controlled",
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use MCP safely","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id").to_string();
+        let run_id = start["run_id"].as_str().expect("run id").to_string();
+
+        let approval = parse_line(&format!(
+            r#"{{
+              "jsonrpc":"2.0",
+              "id":2,
+              "method":"mcp.tool.approve",
+              "params":{{
+                "task_id":"{task_id}",
+                "mode_id":"reviewer",
+                "tool_id":"mcp.github.search_code",
+                "input":{{"query":"bounded"}},
+                "approve":true,
+                "approval_id":"mcp-s4-1-public-approval"
+              }}
+            }}"#
+        ))
+        .result
+        .expect("approval result");
+
+        assert_eq!(approval["status"], json!("approved"));
+        assert_eq!(
+            approval["mcp_approval_binding"]["status"],
+            json!("approved")
+        );
+        assert!(approval["mcp_approval_binding"]["approval_fingerprint"]
+            .as_str()
+            .expect("approval fingerprint")
+            .starts_with("sha256:"));
+        assert!(approval["mcp_approval_binding"]["approval_id_fingerprint"]
+            .as_str()
+            .expect("approval id fingerprint")
+            .starts_with("sha256:"));
+
+        let executed = handle_tool_execute(
+            json!(3),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {"query": "bounded"}
+            })),
+        )
+        .result
+        .expect("approved execution result");
+        assert_eq!(executed["status"], json!("Completed"));
+        assert_eq!(
+            executed["output"]["mcp_approval_binding"]["status"],
+            json!("consumed")
+        );
+
+        let denied = handle_tool_execute(
+            json!(4),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {"query": "bounded"}
+            })),
+        )
+        .result
+        .expect("consumed approval denied");
+        assert_eq!(denied["status"], json!("Denied"));
+        assert!(denied["output"]["reason"]
+            .as_str()
+            .expect("denial reason")
+            .contains("latest state is consumed"));
+
+        let events = BrownieStore::new(temp.path())
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events");
+        let approval_states = events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::McpToolExecutionApproved)
+            .filter_map(|event| event.payload.as_ref())
+            .filter_map(|payload| payload.get("status").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(approval_states, vec!["approved", "executing", "consumed"]);
+        let mcp_log = std::fs::read_to_string(temp.path().join("mcp-count.log")).expect("mcp log");
+        assert_eq!(mcp_log.matches("tools/call:search_code").count(), 1);
+    }
+
+    #[test]
+    fn mcp_tool_concurrent_same_approval_execution_launches_once() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "counting");
+        write_mcp_modepack_with_tool_policy(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+            "external_mutation",
+            "required",
+            "unsafe",
+            "policy_controlled",
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use MCP safely","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id").to_string();
+        let run_id = start["run_id"].as_str().expect("run id").to_string();
+        let approval = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"mcp.tool.approve","params":{{"task_id":"{task_id}","mode_id":"reviewer","tool_id":"mcp.github.search_code","input":{{"query":"bounded"}},"approve":true,"approval_id":"mcp-s4-1-concurrent"}}}}"#
+        ))
+        .result
+        .expect("approval result");
+        assert_eq!(approval["status"], json!("approved"));
+
+        let request_a_task_id = task_id.clone();
+        let request_b_task_id = task_id.clone();
+        let handle_a = std::thread::spawn(move || {
+            handle_tool_execute(
+                json!("a"),
+                Some(json!({
+                    "task_id": request_a_task_id,
+                    "mode_id": "reviewer",
+                    "tool_id": "mcp.github.search_code",
+                    "input": {"query": "bounded"}
+                })),
+            )
+            .result
+            .expect("first execution response")
+        });
+        let handle_b = std::thread::spawn(move || {
+            handle_tool_execute(
+                json!("b"),
+                Some(json!({
+                    "task_id": request_b_task_id,
+                    "mode_id": "reviewer",
+                    "tool_id": "mcp.github.search_code",
+                    "input": {"query": "bounded"}
+                })),
+            )
+            .result
+            .expect("second execution response")
+        });
+        let first = handle_a.join().expect("first thread");
+        let second = handle_b.join().expect("second thread");
+        let statuses = [first["status"].clone(), second["status"].clone()];
+        assert_eq!(
+            statuses
+                .iter()
+                .filter(|status| **status == json!("Completed"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            statuses
+                .iter()
+                .filter(|status| **status == json!("Denied"))
+                .count(),
+            1
+        );
+
+        let mcp_log = std::fs::read_to_string(temp.path().join("mcp-count.log")).expect("mcp log");
+        assert_eq!(mcp_log.matches("tools/call:search_code").count(), 1);
+        let events = BrownieStore::new(temp.path())
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events");
+        let approval_states = events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::McpToolExecutionApproved)
+            .filter_map(|event| event.payload.as_ref())
+            .filter_map(|payload| payload.get("status").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(approval_states, vec!["approved", "executing", "consumed"]);
+    }
+
+    #[test]
+    fn mcp_tool_timeout_after_approval_records_outcome_unknown_and_blocks_reuse() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "call_timeout");
+        write_mcp_modepack_with_tool_policy(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+            "external_mutation",
+            "required",
+            "unsafe",
+            "policy_controlled",
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use MCP safely","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id").to_string();
+        let run_id = start["run_id"].as_str().expect("run id").to_string();
+        let approval = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"mcp.tool.approve","params":{{"task_id":"{task_id}","mode_id":"reviewer","tool_id":"mcp.github.search_code","input":{{"query":"bounded"}},"approve":true,"approval_id":"mcp-s4-1-timeout"}}}}"#
+        ))
+        .result
+        .expect("approval result");
+        assert_eq!(approval["status"], json!("approved"));
+
+        let failed = handle_tool_execute(
+            json!(3),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {"query": "bounded"}
+            })),
+        )
+        .result
+        .expect("timeout execution result");
+        assert_eq!(failed["status"], json!("Failed"));
+        assert_eq!(
+            failed["output"]["mcp_approval_binding"]["status"],
+            json!("outcome_unknown")
+        );
+
+        let denied = handle_tool_execute(
+            json!(4),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {"query": "bounded"}
+            })),
+        )
+        .result
+        .expect("outcome unknown reuse denied");
+        assert_eq!(denied["status"], json!("Denied"));
+        assert!(denied["output"]["reason"]
+            .as_str()
+            .expect("denial reason")
+            .contains("outcome_unknown"));
+
+        let events = BrownieStore::new(temp.path())
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events");
+        let approval_states = events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::McpToolExecutionApproved)
+            .filter_map(|event| event.payload.as_ref())
+            .filter_map(|payload| payload.get("status").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            approval_states,
+            vec!["approved", "executing", "outcome_unknown"]
+        );
+    }
+
+    #[test]
+    fn mcp_tool_key_required_idempotency_fails_closed_without_runtime_key_validation() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("temp dir");
         let fake_server = write_fake_mcp_server(temp.path(), "counting");
@@ -63416,6 +63698,145 @@ content-length: {}
             "external_mutation",
             "required",
             "key_required",
+            "policy_controlled",
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use MCP safely","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id").to_string();
+
+        let approval = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"mcp.tool.approve","params":{{"task_id":"{task_id}","mode_id":"reviewer","tool_id":"mcp.github.search_code","input":{{"query":"bounded"}},"approve":true,"approval_id":"mcp-s4-1-key-required"}}}}"#
+        ))
+        .result
+        .expect("approval result");
+        assert_eq!(approval["status"], json!("denied"));
+        assert!(approval["mcp_approval_binding"]["reason"]
+            .as_str()
+            .expect("denial reason")
+            .contains("unsupported or prohibited Brownie safety handling"));
+
+        let denied = handle_tool_execute(
+            json!(3),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {"query": "bounded"}
+            })),
+        )
+        .result
+        .expect("execute result");
+        assert_eq!(denied["status"], json!("Denied"));
+        let log_path = temp.path().join("mcp-count.log");
+        if log_path.exists() {
+            let mcp_log = std::fs::read_to_string(&log_path).expect("mcp log");
+            assert!(!mcp_log.contains("tools/call:search_code"));
+        }
+    }
+
+    #[test]
+    fn mcp_tool_approval_latest_consumed_state_beats_historical_approved_event() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "counting");
+        write_mcp_modepack_with_tool_policy(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+            "external_mutation",
+            "required",
+            "unsafe",
+            "policy_controlled",
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use MCP safely","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id").to_string();
+
+        let denied = handle_tool_execute(
+            json!(2),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {"query": "bounded"}
+            })),
+        )
+        .result
+        .expect("mutation MCP policy denied");
+        assert_eq!(denied["status"], json!("Denied"));
+
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .get_task(&task_id)
+            .expect("task lookup")
+            .expect("task");
+        let mut approval = denied["output"]["mcp_approval_binding"].clone();
+        approval["status"] = json!("approved");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &record,
+                LedgerEventKind::McpToolExecutionApproved,
+                Some(approval.clone()),
+            )
+            .expect("approval event");
+
+        let mut consumed_approval = approval;
+        consumed_approval["status"] = json!("consumed");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &record,
+                LedgerEventKind::McpToolExecutionApproved,
+                Some(consumed_approval),
+            )
+            .expect("consumed approval event");
+
+        let consumed_denied = handle_tool_execute(
+            json!(3),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {"query": "bounded"}
+            })),
+        )
+        .result
+        .expect("consumed approval denied");
+
+        assert_eq!(consumed_denied["status"], json!("Denied"));
+        let log_path = temp.path().join("mcp-count.log");
+        if log_path.exists() {
+            let mcp_log = std::fs::read_to_string(&log_path).expect("mcp log");
+            assert!(!mcp_log.contains("tools/call:search_code"));
+        }
+    }
+
+    #[test]
+    fn mcp_tool_mutation_policy_requires_matching_runtime_approval_binding() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "counting");
+        write_mcp_modepack_with_tool_policy(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+            "external_mutation",
+            "required",
+            "unsafe",
             "policy_controlled",
         );
         commit_trusted_mcp_active_snapshot(temp.path());

@@ -764,6 +764,23 @@ pub struct ToolExecuteResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpToolApprovalApproveParams {
+    pub mode_id: String,
+    pub task_id: String,
+    pub tool_id: String,
+    pub input: serde_json::Value,
+    pub approve: bool,
+    pub approval_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpToolApprovalApproveResult {
+    pub tool_id: String,
+    pub status: String,
+    pub mcp_approval_binding: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ToolExecuteStatus {
     Completed,
     Denied,

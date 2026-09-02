@@ -259,6 +259,7 @@
     "tool.plan",
     "tool.intent.parse",
     "tool.execute",
+    "mcp.tool.approve",
     "run.events",
     "run.inspect",
     "codebase.index.build",

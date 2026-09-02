@@ -31,10 +31,13 @@ before Runtime may call a normalized `mcp.<server_id>.<tool_name>` tool. In v0,
 the gate allows approval-free execution only for `read_only`,
 `approval=not_required`, `idempotency=safe` tools with retry other than
 `prohibited`. Tools with `approval=required` may execute only through the
-runtime approval-binding path, where the ledger contains one matching scoped
-approval fingerprint for the exact task/run/tool/request/catalog/safety-policy
-tuple. Legacy-unclassified, destructive, unknown, prohibited-retry, missing
-policy, missing catalog, and missing or mismatched approval cases fail closed.
+runtime approval-binding path, where Runtime has the latest scoped approval
+state `approved` for the exact task/run/tool/request/catalog/safety-policy
+tuple and can claim it as `executing` immediately before `tools/call`.
+Consumed, executing, outcome-unknown, legacy-unclassified, destructive,
+unknown, prohibited-retry, `idempotency=key_required` without Runtime-owned key
+validation, missing policy, missing catalog, and missing or mismatched approval
+cases fail closed.
 MCP annotations are narrowing-only provenance: `readOnlyHint=false`,
 `destructiveHint=true`, `idempotentHint=false`, or `openWorldHint=true` deny
 approval-free execution, but annotations never grant mode permission or widen
