@@ -37,6 +37,12 @@ absence is not a Runtime protocol defect unless a generic bounded contract above
 is missing or stale. See
 `docs/specifications/runtime-boundary-and-release-dod-spec-v0.md`.
 
+The guarded canonical boundary inventory and compatibility matrix live in
+`docs/architecture/runtime-boundary-canonical-contract.json`. Release-readiness
+checks validate that artifact so the public Runtime protocol, CLI projection,
+VSIX validators, run inspection, and task runtime documentation cannot silently
+drift from the v0 boundary contract.
+
 ## Framing
 
 The runtime reads stdin one line at a time. Each non-empty line is one complete JSON-RPC request. For every request line, the runtime writes exactly one JSON-RPC response line to stdout and flushes stdout before reading the next request.

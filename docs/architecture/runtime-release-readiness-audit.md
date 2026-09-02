@@ -1,13 +1,19 @@
 # Brownie Runtime Release Readiness Audit
 
-This audit is the bounded source of truth for the `RRD-1` phase of the Runtime Release Readiness P0/P1 finite closure campaign. It does not declare Brownie Runtime release-ready; it records the remaining Runtime-owned blockers and keeps external platform, adapter, commercial, BDK, Enterprise, and Assurance work outside the Runtime release gate.
+This audit is the bounded source of truth for the Runtime Release Readiness P0/P1 finite closure campaign. It does not declare Brownie Runtime release-ready; it records the remaining Runtime-owned blockers and keeps external platform, adapter, commercial, BDK, Enterprise, and Assurance work outside the Runtime release gate.
 
-Audited main: `6e712f1a34b51f06e6b5f4281d9b9429008d31b5`
+Audited main: `0e610872f2201400e5b6e7a102caeff3eb200846`
+
+RRP-1 adds the guarded canonical Runtime boundary contract at
+`docs/architecture/runtime-boundary-canonical-contract.json`. The Runtime
+release-readiness guard validates that contract for required boundary surfaces,
+method subset, CLI/VSIX/Runtime/spec anchors, compatibility matrix entries, and
+non-authority language through the existing VSIX-invoked check path.
 
 | ID | Priority | Classification | Status | Responsibility | Release classification | Evidence summary | Next action |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `runtime-release-debt-reaudit` | P0 | Runtime Release debt reaudit | implemented sufficient | Runtime | closed | Required specs, manifests, guards, crates, CLI, VSIX, and CI were reaudited and are now backed by a machine guard. | Use this artifact as the source for the remaining bounded closure phases. |
-| `runtime-boundary-protocol-contracts` | P0 | Boundary Protocol gaps | implemented but integration-public-contract lacking | Runtime | required before release | Boundary contracts exist, but the public contract is still split across docs, Rust protocol/runtime, CLI, and VSIX validators. | Canonize the public protocol contract and compatibility matrix. |
+| `runtime-boundary-protocol-contracts` | P0 | Boundary Protocol gaps | implemented sufficient | Runtime | closed | RRP-1 adds a canonical Runtime boundary contract and compatibility matrix, and the release-readiness guard validates required surfaces, method subset, anchors, and non-authority language. | Use the guarded canonical boundary contract while closing the remaining Runtime Release Readiness blockers. |
 | `explicit-cancel-command` | P0 | Cancel semantics | partial | Runtime | required before release | Cancelled status and ledger events exist, but no explicit caller-authorized public cancel command was found. | Add bounded Runtime-owned cancel command semantics and tests. |
 | `real-process-loss-recovery-e2e` | P0 | Real process loss Recovery E2E | partial | Runtime | required before release | Recovery probe exists and has crash-window tests; production-equivalent installed process-loss E2E is still missing. | Add a real crash/restart/recovery E2E through the public CLI/runtime boundary. |
 | `durable-schema-version-and-migration` | P0 | Durable schema version/migration | partial | Runtime | required before release | Many payloads carry `schema_version`, but release-level durable store schema migration/fail-closed behavior is not yet proven. | Add durable schema version and migration/fail-closed behavior. |
@@ -21,4 +27,5 @@ Audited main: `6e712f1a34b51f06e6b5f4281d9b9429008d31b5`
 | `forge-notification-adapters` | P2 | Forge/notification adapters | runtime-outside | External Adapter | post-v0 | GitHub/GitLab App, PR workflows, Slack/Teams/email, SIEM, OTel, and customer integrations remain external adapter readiness. | Track outside Runtime Release Readiness. |
 | `enterprise-commercial-readiness` | P2 | Enterprise/commercial readiness | runtime-outside | Commercial Solution | post-v0 | Tenant admin, SSO/RBAC server, customer admin UI, certified stack, continuity assurance, and BDK/Enterprise/Assurance products are outside this campaign. | Do not block Brownie Runtime release on these items. |
 
-Runtime Release Ready remains `false` while the required-before-release Runtime P0/P1 items remain open.
+Runtime Release Ready remains `false` while the remaining required-before-release
+Runtime P0/P1 items remain open.

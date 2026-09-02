@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { validateRuntimeReleaseReadinessAudit } from './guard-runtime-release-readiness.mjs';
+import {
+  validateRuntimeBoundaryContract,
+  validateRuntimeReleaseReadinessAudit
+} from './guard-runtime-release-readiness.mjs';
 
 const ciText = [
   'pnpm guard:phase-value',
@@ -141,6 +144,103 @@ function validate(audit, options = {}) {
   });
 }
 
+function validBoundaryContract(overrides = {}) {
+  const anchors = {
+    implementation_anchors: [
+      'crates/brownie-runtime/src/lib.rs',
+      'crates/brownie-protocol/src/lib.rs'
+    ],
+    documentation_anchors: [
+      'docs/specifications/runtime-protocol-spec-v0.md',
+      'docs/specifications/runtime-boundary-and-release-dod-spec-v0.md',
+      'docs/specifications/cli-external-loop-spec-v0.md',
+      'docs/specifications/run-inspection-spec-v0.md',
+      'docs/specifications/task-runtime-spec-v0.md'
+    ],
+    validator_anchors: [
+      'extensions/brownie-vsix/src/runtime/protocol.ts',
+      'extensions/brownie-vsix/src/runtime/runtimeClient.ts',
+      'crates/brownie-cli/src/runtime_client.rs'
+    ]
+  };
+  const surface = (id) => ({
+    id,
+    title: id,
+    owner: 'runtime',
+    stability_class: 'stable_v0',
+    schema_version: 'runtime-protocol-v0',
+    compatibility_expectation: `${id} remains bounded and Runtime-owned.`,
+    ...anchors
+  });
+  return {
+    schema_version: 1,
+    contract_id: 'runtime-boundary-canonical-contract-v0',
+    campaign: 'runtime-release-readiness-p0-p1-finite-closure',
+    phase: 'RRP-1',
+    owner: 'runtime',
+    runtime_release_debt_id: 'runtime-boundary-protocol-contracts',
+    transport: {
+      kind: 'stdio_ndjson_jsonrpc_2_0',
+      owner: 'runtime',
+      stability_class: 'stable_v0',
+      compatibility_expectation: 'One bounded JSON-RPC response per request.',
+      schema_version: 'runtime-protocol-v0',
+      ...anchors
+    },
+    compatibility_matrix: [
+      {
+        client: 'brownie-cli',
+        boundary_role: 'thin_terminal_transport',
+        compatibility_expectation: 'CLI remains transport-only.',
+        anchors: ['crates/brownie-cli/src/runtime_client.rs']
+      },
+      {
+        client: 'brownie-vsix',
+        boundary_role: 'thin_ui_transport_and_validator',
+        compatibility_expectation: 'VSIX validates bounded shapes only.',
+        anchors: [
+          'extensions/brownie-vsix/src/runtime/protocol.ts',
+          'extensions/brownie-vsix/src/runtime/runtimeClient.ts'
+        ]
+      },
+      {
+        client: 'external-control-plane',
+        boundary_role: 'scheduler_outside_runtime',
+        compatibility_expectation: 'Hosted control plane remains outside Runtime.',
+        anchors: ['docs/specifications/runtime-boundary-and-release-dod-spec-v0.md']
+      }
+    ],
+    boundary_surfaces: [
+      surface('run-request'),
+      surface('runtime-event'),
+      surface('control-command'),
+      surface('run-result-attestation'),
+      surface('run-inspection'),
+      surface('task-runtime'),
+      surface('cli-external-loop'),
+      surface('vsix-validation')
+    ],
+    required_runtime_methods: [
+      'runtime.status',
+      'task.start',
+      'task.run',
+      'task.inspect',
+      'task.list',
+      'headless.continue_once',
+      'run.events',
+      'run.inspect',
+      'tool.execute',
+      'proposal.inspect'
+    ],
+    non_authority: [
+      'CLI and VSIX presentation cannot grant Runtime authority.',
+      'MCP descriptions remain non-authoritative.',
+      'Raw prompt material must not become boundary evidence.'
+    ],
+    ...overrides
+  };
+}
+
 test('accepts bounded Runtime release readiness audit', () => {
   assert.deepEqual(validate(validAudit()), []);
 });
@@ -200,4 +300,43 @@ test('rejects CI or VSIX check path that omits release readiness guard coverage'
 
   const vsixErrors = validate(validAudit(), { vsixPackageText: 'pnpm --workspace-root guard:phase-value' });
   assert(vsixErrors.some((error) => error.includes('guard:runtime-release-readiness')));
+});
+
+test('accepts canonical Runtime boundary contract', () => {
+  assert.deepEqual(validateRuntimeBoundaryContract(validBoundaryContract()), []);
+});
+
+test('rejects Runtime boundary contract that omits required public surfaces', () => {
+  const contract = validBoundaryContract({
+    boundary_surfaces: validBoundaryContract().boundary_surfaces.filter(
+      (surface) => surface.id !== 'control-command'
+    )
+  });
+  const errors = validateRuntimeBoundaryContract(contract);
+  assert(errors.some((error) => error.includes('boundary surface control-command')));
+});
+
+test('rejects Runtime boundary contract with missing CLI or VSIX anchors', () => {
+  const contract = validBoundaryContract({
+    compatibility_matrix: validBoundaryContract().compatibility_matrix.map((entry) =>
+      entry.client === 'brownie-vsix' ? { ...entry, anchors: [] } : entry
+    )
+  });
+  const errors = validateRuntimeBoundaryContract(contract);
+  assert(errors.some((error) => error.includes('brownie-vsix anchors')));
+});
+
+test('rejects Runtime boundary contract that omits required method subset', () => {
+  const contract = validBoundaryContract({
+    required_runtime_methods: validBoundaryContract().required_runtime_methods.filter(
+      (method) => method !== 'task.run'
+    )
+  });
+  const errors = validateRuntimeBoundaryContract(contract);
+  assert(errors.some((error) => error.includes('required_runtime_methods must include task.run')));
+});
+
+test('rejects Runtime boundary contract that drops non-authority language', () => {
+  const errors = validateRuntimeBoundaryContract(validBoundaryContract({ non_authority: [] }));
+  assert(errors.some((error) => error.includes('non_authority')));
 });
