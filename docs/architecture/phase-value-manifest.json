@@ -1,39 +1,39 @@
 {
   "schema_version": 1,
-  "phase": "MCP-S4",
+  "phase": "MCP-S5",
   "current_milestone": "mcp-runtime-safety-policy-finite-closure",
   "milestone": "Brownie MCP Runtime Safety Policy Finite Closure",
   "target_capability": "runtime_permission_enforcement",
-  "concrete_capability_transition": "approval_required_mcp_tools_call_is_bound_to_runtime_materialized_approval_fingerprint",
-  "forbidden_pattern": "product_completion_reopen_cli_mp_history_runtime_release_ready_with_open_runtime_debt_adapter_manifest_custom_tool_protocol_streamable_http_oauth_mcp_apps_sampling_roots_elicitation_public_registry_automatic_install_remote_binary_distribution_scheduler_daemon_generic_shell_arbitrary_process_exec_mcp_annotation_as_authority_tool_description_as_authority_model_output_as_authority_modepack_policy_passthrough_raw_json_rpc_response_raw_error_secret_environment_absolute_path_canonical_path_binary_content",
+  "concrete_capability_transition": "mcp_tools_call_inputs_and_successful_structured_outputs_are_runtime_schema_validated",
+  "forbidden_pattern": "product_completion_reopen_cli_mp_history_runtime_release_ready_with_open_runtime_debt_adapter_manifest_custom_tool_protocol_streamable_http_oauth_mcp_apps_sampling_roots_elicitation_public_registry_automatic_install_remote_binary_distribution_scheduler_daemon_generic_shell_arbitrary_process_exec_mcp_schema_as_authority_mcp_annotation_as_authority_tool_description_as_authority_model_output_as_authority_modepack_policy_passthrough_raw_json_rpc_response_raw_schema_raw_input_raw_error_secret_environment_absolute_path_canonical_path_binary_content",
   "project_objective_ref": "docs/architecture/product-charter.md",
   "strategic_capability_mapping": [
     {
       "capability": "runtime_permission_enforcement",
-      "relationship": "Requires approval-required MCP tools/call to match one Runtime-materialized, task-scoped approval fingerprint before server execution."
+      "relationship": "Requires MCP tools/call input and successful structured output to satisfy task-pinned bounded schema contracts without widening policy."
     },
     {
       "capability": "headless_autonomous_development",
-      "relationship": "Allows autonomous task replay to reuse completed approved MCP evidence for the same request without duplicating tools/call."
+      "relationship": "Prevents autonomous runs from treating malformed or drifting MCP data as completed-success replay evidence."
     },
     {
       "capability": "controlled_workspace_tools",
-      "relationship": "Keeps MCP mutation-capable tool execution bounded by task-pinned Mode Pack policy, catalog provenance, annotation provenance, and Runtime approval evidence."
+      "relationship": "Keeps MCP tool data crossing runtime boundaries schema-checked and bounded below Mode Pack policy, annotations, approval binding, and catalog provenance."
     }
   ],
   "phase_value_gate": {
     "required": true,
     "answers": {
       "strategic_capabilities": "Advances runtime_permission_enforcement and headless_autonomous_development while preserving controlled_workspace_tools boundaries.",
-      "new_capability": "Runtime can execute approval-required MCP tools only when one concrete task-scoped approval fingerprint matches the exact tool request and pinned provenance.",
-      "why_existing_functionality_is_insufficient": "MCP-S2 and MCP-S3 left approval-required mutation-capable tools fail-closed; there was no Runtime-owned approval binding for a concrete tools/call request.",
-      "product_gap_if_skipped": "Mode Packs could describe approval-required MCP tools, but Brownie could not safely execute them or prove stale, broad, consumed, or mismatched approval evidence is rejected before server execution.",
-      "non_duplicative": "This phase changes Runtime MCP permission and execution behavior, ledger evidence, approval fingerprint matching, specs, and audits; it is not a wrapper, adapter manifest, new transport, or documentation-only verdict.",
-      "no_new_rpc": "Yes. The existing tool.execute, task.run, and headless run/resume paths are preserved; approval evidence is ledger-bound rather than CLI-owned authority.",
-      "no_new_summary": "Yes. The phase updates existing policy, execution evidence, specs, and audits rather than adding a summary endpoint.",
-      "runtime_behavior_change": "Approval-required MCP tools deny before tools/call unless Runtime finds matching task/run/tool/request/catalog/annotation/safety-policy approval evidence.",
-      "headless_autonomous_contribution": "Autonomous runs can continue with approved MCP tools while deterministic replay avoids duplicate tools/call for the same completed invocation.",
-      "milestone_progress": "Closes MCP-S4 and leaves MCP-S5 through MCP-S7 open before Runtime Release Ready."
+      "new_capability": "Runtime validates MCP tools/call input before server execution and validates successful structured output before ToolExecutionCompleted or success replay evidence.",
+      "why_existing_functionality_is_insufficient": "MCP-S4 bound approval-required calls, but arguments were still only object-checked and successful structured output was not validated against a bounded schema subset.",
+      "product_gap_if_skipped": "MCP schemas would remain fingerprinted provenance only, allowing malformed inputs or schema-incompatible successful outputs to cross runtime evidence boundaries.",
+      "non_duplicative": "This phase changes Runtime MCP catalog admission, pre-call validation, success evidence, replay safety, specs, and audits; it is not a wrapper, adapter manifest, transport expansion, or documentation-only verdict.",
+      "no_new_rpc": "Yes. The existing tool.execute, task.run, and headless run/resume paths are preserved; schema validation is Runtime-owned execution gating.",
+      "no_new_summary": "Yes. The phase updates existing execution behavior and evidence rather than adding a summary endpoint.",
+      "runtime_behavior_change": "Invalid or unsupported MCP schemas fail closed at catalog admission, invalid input denies before tools/call, and invalid successful structured output becomes ToolExecutionFailed rather than ToolExecutionCompleted.",
+      "headless_autonomous_contribution": "Autonomous runs cannot replay or continue from MCP success evidence unless schema validation succeeded or no output schema applies.",
+      "milestone_progress": "Closes MCP-S5 and leaves MCP-S6 through MCP-S7 open before Runtime Release Ready."
     },
     "questions": [
       {
@@ -91,10 +91,9 @@
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "MCP-S4 changes Runtime MCP approval-required execution, so strict review must verify approval evidence is exact, task-scoped, bounded, and cannot widen Mode Pack policy or bypass annotation/catalog safety.",
+    "review_intent": "MCP-S5 changes Runtime MCP schema admission and execution evidence, so strict review must verify schemas fail closed, remain non-authoritative, and cannot bypass Mode Pack policy, annotations, approval binding, or catalog drift.",
     "changed_files": [
-      "crates/brownie-agentmodes/src/lib.rs",
-      "crates/brownie-store/src/lib.rs",
+      "crates/brownie-runtime/src/mcp_client.rs",
       "crates/brownie-runtime/src/controlled_tool_execution.rs",
       "crates/brownie-runtime/src/lib.rs",
       "docs/architecture/phase-value-manifest.json",
@@ -102,54 +101,52 @@
       "docs/architecture/mcp-runtime-safety-policy-audit.md",
       "docs/specifications/mcp-client-spec-v0.md",
       "docs/specifications/tool-execution-spec-v0.md",
-      "docs/specifications/permission-gate-spec-v0.md",
       "docs/architecture/runtime-release-readiness-audit.json",
-      "docs/architecture/runtime-release-readiness-audit.md",
-      "docs/specifications/modepack-spec-v0.md"
+      "docs/architecture/runtime-release-readiness-audit.md"
     ]
   },
   "exit_criteria": [
-    "Approval-required MCP tools/call execution requires one Runtime-materialized approval fingerprint before server execution.",
-    "Approval binding fingerprints cover task id, run id, normalized tool id, server id, tool name, request fingerprint, task-pinned catalog/schema/annotation provenance, server config identity, and structured Brownie MCP safety policy.",
-    "Missing, stale, consumed, malformed, mismatched, or over-broad approval evidence fails closed before tools/call.",
-    "Matching approval evidence permits the exact invocation and task-scoped replay does not duplicate tools/call.",
-    "Approval evidence cannot override Mode Pack allow-list, mcp_tool_access, legacy-unclassified/prohibited/destructive/unknown policy, annotation narrowing, or catalog drift.",
-    "MCP-S4 is marked closed while MCP-S5 through MCP-S7 and Runtime Release Ready remain open."
+    "MCP catalog admission validates inputSchema and optional outputSchema against a bounded Runtime-owned JSON Schema subset.",
+    "Known unsupported schema validation keywords fail closed instead of being ignored.",
+    "MCP tools/call input is validated before server execution and invalid input does not launch tools/call.",
+    "Successful structured output is validated before ToolExecutionCompleted and completed-success replay evidence.",
+    "Schema validation cannot override Mode Pack allow-lists, mcp_tool_access, S2 safety policy, S3 annotations, S4 approval binding, or catalog drift.",
+    "Raw schemas, raw inputs, raw MCP responses, absolute paths, environment values, and secrets are not persisted.",
+    "MCP-S5 is marked closed while MCP-S6 through MCP-S7 and Runtime Release Ready remain open."
   ],
   "behavior_evidence": [
-    "brownie-runtime focused test coverage proves approval-required MCP execution denies before tools/call without exact approval evidence.",
-    "brownie-runtime focused test coverage proves stale, consumed, and over-broad approval evidence fail closed before tools/call.",
-    "brownie-runtime focused test coverage proves matching runtime-ledgered approval evidence permits execution and repeated agent-loop handling does not duplicate tools/call.",
-    "docs/architecture/mcp-runtime-safety-policy-audit.json records MCP-S4 as closed while leaving MCP-S5 through MCP-S7 open."
+    "brownie-runtime focused test coverage proves invalid MCP input is denied before tools/call and valid input records bounded schema validation evidence.",
+    "brownie-runtime focused test coverage proves unsupported schema keywords fail closed at catalog admission.",
+    "brownie-runtime focused test coverage proves invalid successful structured output is Failed rather than Completed and omitted outputSchema preserves existing success behavior.",
+    "docs/architecture/mcp-runtime-safety-policy-audit.json records MCP-S5 as closed while leaving MCP-S6 through MCP-S7 open."
   ],
   "product_completion_gate": {
     "required": true,
     "product_completion_claim": false,
     "accepted_capability": [
-      "Approval-required MCP tool calls are bound to concrete Runtime approval fingerprints.",
-      "Approved MCP execution remains task-pinned, provenance-bound, and replay-safe without duplicate tools/call."
+      "MCP tool input and output schema enforcement is Runtime-owned and bounded.",
+      "Schema-compatible MCP execution remains task-pinned, provenance-bound, and replay-safe without raw schema/input/response ledgering."
     ],
     "behavior_evidence": [
-      "Runtime focused MCP approval-binding test coverage proves exact approval matching, stale/consumed/broad denial, and no duplicate tools/call replay."
+      "Runtime focused MCP schema-validation test coverage proves input denial before tools/call, output validation before success evidence, unsupported keyword fail-closed behavior, and omitted outputSchema compatibility."
     ],
     "safety_boundary": [
       "Rust Runtime remains the execution, admission, replay, permission, tool, workspace mutation, and completion authority.",
-      "Mode Pack structured policy remains the MCP tool safety authority; MCP annotations, descriptions, schemas, results, model output, and approval prose cannot grant authority.",
-      "Approval evidence only satisfies an additional Runtime gate for an already allowed server/tool/policy tuple; it cannot widen Mode Pack policy or bypass catalog and annotation drift checks."
+      "Mode Pack structured policy remains the MCP tool safety authority; MCP schemas, annotations, descriptions, results, and model output cannot grant authority.",
+      "Schema validation only rejects or validates data at runtime boundaries; it cannot widen Mode Pack policy, allow-list membership, approval binding, annotations, or catalog provenance."
     ],
     "non_goals": [
       "Does not add a Brownie-specific tool adapter SDK or protocol.",
       "Does not add Streamable HTTP, OAuth, MCP Apps, Sampling, Roots, Elicitation, public registry, automatic install, scheduler, daemon, generic shell, arbitrary process execution, or recursive Brownie invocation.",
-      "Does not close MCP-S5 through MCP-S7.",
+      "Does not close MCP-S6 or MCP-S7.",
       "Does not close full CI workflow hardening while workflow update authority is unavailable."
     ],
     "rejected_alternatives": [
-      "Rejected approval from CLI flags or model prose because caller text cannot grant Runtime authority.",
-      "Rejected broad server-level approval because approval must bind the exact task/run/tool/request/catalog/safety-policy tuple.",
-      "Rejected letting approval override annotation narrowing or catalog drift because server-supplied metadata is not authority and live provenance must still match task-pinned evidence."
+      "Rejected full JSON Schema support because unsupported semantics must fail closed in v0 rather than be partly interpreted.",
+      "Rejected schema-derived permissions because schemas are data contracts, not authority.",
+      "Rejected ledgering raw schemas, inputs, or MCP responses because fingerprints and bounded validation metadata are sufficient evidence."
     ],
     "technical_debt": [
-      "MCP-S5 runtime input/output schema validation remains open.",
       "MCP-S6 secret reference contract remains open.",
       "MCP-S7 executable identity remains open.",
       "Previously recorded Runtime Release Readiness blockers remain open, including full CI workflow hardening."
@@ -175,7 +172,7 @@
       "external_responsibility_not_release_blocking": true
     },
     "next_capability_rationale": [
-      "MCP-S5 should validate runtime MCP input and output data against a bounded schema subset before and after approved tools/call execution."
+      "MCP-S6 should add a Runtime-owned secret reference contract for scoped ephemeral MCP child environment injection without persisting secret values."
     ]
   }
 }

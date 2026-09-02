@@ -62918,6 +62918,167 @@ content-length: {}
     }
 
     #[test]
+    fn mcp_tool_input_schema_validation_denies_invalid_input_before_call() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "schema_validation_counting");
+        write_mcp_modepack(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use schema-validated MCP safely","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id").to_string();
+
+        let valid = handle_tool_execute(
+            json!(2),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {
+                    "query": "bounded",
+                    "limit": 3,
+                    "mode": "code",
+                    "fixed": true,
+                    "tags": ["rust"]
+                }
+            })),
+        )
+        .result
+        .expect("valid schema input");
+        assert_eq!(valid["status"], json!("Completed"));
+        assert_eq!(
+            valid["output"]["mcp_schema_validation"]["input"]["status"],
+            json!("validated")
+        );
+        assert!(
+            valid["output"]["mcp_schema_validation"]["input"]["input_schema_fingerprint"]
+                .as_str()
+                .expect("schema fingerprint")
+                .starts_with("sha256:")
+        );
+        assert!(
+            valid["output"]["mcp_schema_validation"]["input"]["validated_value_fingerprint"]
+                .as_str()
+                .expect("value fingerprint")
+                .starts_with("sha256:")
+        );
+
+        for (index, input, expected_fragment) in [
+            (3, json!({}), "missing required field query"),
+            (4, json!({"query": 7}), "expected string"),
+            (
+                5,
+                json!({"query": "ok", "extra": true}),
+                "additional field extra",
+            ),
+            (
+                6,
+                json!({"query": "bounded", "mode": "docs"}),
+                "enum mismatch",
+            ),
+            (
+                7,
+                json!({"query": "bounded", "fixed": false}),
+                "const mismatch",
+            ),
+            (
+                8,
+                json!({"query": "bounded", "tags": [9]}),
+                "expected string",
+            ),
+        ] {
+            let denied = handle_tool_execute(
+                json!(index),
+                Some(json!({
+                    "task_id": task_id,
+                    "mode_id": "reviewer",
+                    "tool_id": "mcp.github.search_code",
+                    "input": input
+                })),
+            )
+            .result
+            .unwrap_or_else(|| panic!("invalid schema input {index}"));
+            assert_eq!(denied["status"], json!("Denied"), "{index}");
+            assert!(
+                denied["output"]["reason"]
+                    .as_str()
+                    .expect("denial reason")
+                    .contains(expected_fragment),
+                "{index}: {}",
+                denied["output"]["reason"]
+            );
+        }
+
+        let mcp_log = std::fs::read_to_string(temp.path().join("mcp-count.log")).expect("mcp log");
+        assert_eq!(mcp_log.matches("tools/call:search_code").count(), 1);
+    }
+
+    #[test]
+    fn mcp_tool_output_schema_validation_blocks_success_evidence() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        for (scenario, expected_status) in [
+            ("schema_output_validating", "Completed"),
+            ("schema_output_invalid", "Failed"),
+            ("schema_output_omitted", "Completed"),
+        ] {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let fake_server = write_fake_mcp_server(temp.path(), scenario);
+            write_mcp_modepack(
+                temp.path(),
+                fake_server.to_str().unwrap(),
+                "search_code",
+                true,
+            );
+            commit_trusted_mcp_active_snapshot(temp.path());
+            let _cwd = super::tests::CwdGuard::enter(temp.path());
+            let start = parse_line(
+                r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use output schema MCP safely","mode_id":"reviewer"}}"#,
+            )
+            .result
+            .unwrap_or_else(|| panic!("task start for {scenario}"));
+            let task_id = start["task_id"].as_str().expect("task id").to_string();
+
+            let response = handle_tool_execute(
+                json!(2),
+                Some(json!({
+                    "task_id": task_id,
+                    "mode_id": "reviewer",
+                    "tool_id": "mcp.github.search_code",
+                    "input": {"query": "bounded"}
+                })),
+            )
+            .result
+            .unwrap_or_else(|| panic!("mcp execute for {scenario}"));
+            assert_eq!(response["status"], json!(expected_status), "{scenario}");
+            if expected_status == "Completed" {
+                let output_status = response["output"]["mcp_schema_validation"]["output"]["status"]
+                    .as_str()
+                    .expect("output validation status");
+                assert!(matches!(output_status, "validated" | "not_applicable"));
+            } else {
+                assert_eq!(
+                    response["output"]["mcp"]["output_schema_validation"]["status"],
+                    json!("failed")
+                );
+                assert!(response["output"]["mcp"]["output_schema_validation"]
+                    ["result_fingerprint"]
+                    .as_str()
+                    .expect("result fingerprint")
+                    .starts_with("sha256:"));
+            }
+        }
+    }
+
+    #[test]
     fn mcp_tool_mutation_policy_requires_matching_runtime_approval_binding() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("temp dir");
@@ -62947,7 +63108,7 @@ content-length: {}
                 "task_id": task_id,
                 "mode_id": "reviewer",
                 "tool_id": "mcp.github.search_code",
-                "input": {"title": "bounded"}
+                "input": {"query": "bounded"}
             })),
         )
         .result
@@ -62989,7 +63150,7 @@ content-length: {}
                 "task_id": task_id,
                 "mode_id": "reviewer",
                 "tool_id": "mcp.github.search_code",
-                "input": {"title": "bounded"}
+                "input": {"query": "bounded"}
             })),
         )
         .result
@@ -63012,7 +63173,7 @@ content-length: {}
                 "task_id": task_id,
                 "mode_id": "reviewer",
                 "tool_id": "mcp.github.search_code",
-                "input": {"title": "bounded"}
+                "input": {"query": "bounded"}
             })),
         )
         .result
@@ -63036,7 +63197,7 @@ content-length: {}
                 "task_id": task_id,
                 "mode_id": "reviewer",
                 "tool_id": "mcp.github.search_code",
-                "input": {"title": "bounded"}
+                "input": {"query": "bounded"}
             })),
         )
         .result
@@ -63055,7 +63216,7 @@ content-length: {}
             .expect("approval event");
 
         let policy = resolve_policy_for_task_run(&record, &store).expect("policy");
-        let assistant_content = "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"mcp.github.search_code\",\"reason\":\"Use approved task-pinned MCP catalog.\",\"input\":{\"title\":\"bounded\"}}]}\n```";
+        let assistant_content = "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"mcp.github.search_code\",\"reason\":\"Use approved task-pinned MCP catalog.\",\"input\":{\"query\":\"bounded\"}}]}\n```";
         handle_approved_workspace_intents(&store, &record, &policy, assistant_content)
             .expect("approved mutation MCP policy executes");
         handle_approved_workspace_intents(&store, &record, &policy, assistant_content)
@@ -63168,6 +63329,7 @@ content-length: {}
             "duplicate",
             "malformed_schema",
             "oversized_schema",
+            "schema_unsupported_keyword",
             "protocol_error",
             "invalid_jsonrpc",
             "mismatched_id",
@@ -63831,6 +63993,12 @@ big=$(printf '%20000s' x)
 printf '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"safe","inputSchema":{"type":"object","description":"%s"}}]}}\n' "$big"
 "#
             }
+            "schema_unsupported_keyword" => {
+                r#"#!/bin/sh
+read request
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"safe","inputSchema":{"type":"object","properties":{"query":{"type":"string","pattern":"^safe$"}}}}]}}'
+"#
+            }
             "protocol_error" => {
                 r#"#!/bin/sh
 read request
@@ -64043,6 +64211,82 @@ case "$request" in
   *tools/call*)
     printf '%s\n' "tools/call:search_code" >> "$log"
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_TOOL_ERROR_2b91"}],"isError":true}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+            }
+            "schema_validation_counting" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string","minLength":3,"maxLength":8},"limit":{"type":"integer","minimum":1,"maximum":5},"mode":{"type":"string","enum":["code"]},"fixed":{"type":"boolean","const":true},"tags":{"type":"array","items":{"type":"string"}}},"required":["query"],"additionalProperties":false},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_RESULT_7f91c2"}],"isError":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+            }
+            "schema_output_validating" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"structuredContent":{"answer":"ok"},"content":[{"type":"text","text":"MCP_RESULT_7f91c2"}],"isError":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+            }
+            "schema_output_invalid" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"structuredContent":{"answer":7},"content":[{"type":"text","text":"SHOULD_NOT_BE_SUCCESS"}],"isError":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+            }
+            "schema_output_omitted" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_RESULT_7f91c2"}],"isError":false}}'
     ;;
   *)
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'

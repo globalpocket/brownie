@@ -225,6 +225,18 @@ non-prohibited retry policy, and it is further narrowed by bounded MCP tool
 annotations: `readOnlyHint=false`, `destructiveHint=true`,
 `idempotentHint=false`, or `openWorldHint=true` deny before server execution.
 
+MCP runtime schema validation is another fail-closed execution gate, not a
+permission source. Runtime validates the task-pinned MCP `inputSchema` and
+optional `outputSchema` at catalog admission against Brownie's bounded v0 schema
+subset. For `tools/call`, input validation happens after permission, policy,
+catalog, annotation, and approval checks but before server execution; invalid
+input returns bounded `Denied` evidence and does not launch `tools/call`.
+Successful `ToolSucceeded` responses are output-validated before
+`ToolExecutionCompleted` or success replay evidence is emitted. In v0,
+`outputSchema` validates `structuredContent` when present and otherwise an empty
+structured-output object, preserving unconstrained content-style results while
+failing closed for constrained output contracts.
+
 MCP stdio server launch is runtime-owned and request-scoped in this phase. MCP
 server descriptions, schemas, command names, response text, and AgentModes prose
 cannot grant permission or widen tool routing authority. MCP tool annotations
@@ -232,7 +244,8 @@ are task-pinned provenance and narrowing-only safety hints; they cannot grant
 permission, add allow-list membership, or bypass approval. Successful MCP tool
 results may contribute bounded text result context to the next agent step as
 untrusted data, with result fingerprints, request fingerprints, item counts,
-text limits, and truncation evidence. Raw JSON-RPC responses, server
+text limits, truncation evidence, and bounded schema-validation evidence. Raw
+JSON-RPC responses, server
 configuration, credentials, environment values, secret headers, raw schemas,
 prompts, provider responses, absolute paths, canonical paths, and raw file
 content are not ledger authority or prompt authority. See

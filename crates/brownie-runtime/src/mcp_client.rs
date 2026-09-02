@@ -20,6 +20,9 @@ const MAX_MCP_SCHEMA_BYTES: usize = 16_384;
 const MAX_MCP_DESCRIPTION_CHARS: usize = 1_000;
 const MAX_MCP_SCHEMA_SUMMARY_FIELDS: usize = 32;
 const MAX_MCP_SCHEMA_TYPE_CHARS: usize = 32;
+const MAX_MCP_SCHEMA_DEPTH: usize = 12;
+const MAX_MCP_SCHEMA_PROPERTIES: usize = 64;
+const MAX_MCP_SCHEMA_ENUM_VALUES: usize = 64;
 const MAX_MCP_RESULT_CONTEXT_ITEMS: usize = 8;
 const MAX_MCP_RESULT_TEXT_ITEM_CHARS: usize = 2_048;
 const MAX_MCP_RESULT_TEXT_TOTAL_CHARS: usize = 8_192;
@@ -32,8 +35,12 @@ pub struct McpToolCatalogEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub input_schema_fingerprint: String,
+    #[serde(skip)]
+    pub input_schema: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_schema_fingerprint: Option<String>,
+    #[serde(skip)]
+    pub output_schema: Option<Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub input_schema_summary: Vec<McpToolInputFieldSummary>,
     #[serde(default)]
@@ -137,6 +144,7 @@ impl McpToolCallFailureKind {
 pub struct McpToolCallFailure {
     pub kind: McpToolCallFailureKind,
     pub message: String,
+    pub metadata: Option<Value>,
 }
 
 impl McpToolCallFailure {
@@ -144,6 +152,7 @@ impl McpToolCallFailure {
         Self {
             kind: McpToolCallFailureKind::ProtocolFailed,
             message: message.into(),
+            metadata: None,
         }
     }
 
@@ -151,6 +160,7 @@ impl McpToolCallFailure {
         Self {
             kind: McpToolCallFailureKind::TimedOut,
             message: message.into(),
+            metadata: None,
         }
     }
 
@@ -158,6 +168,15 @@ impl McpToolCallFailure {
         Self {
             kind: McpToolCallFailureKind::Failed,
             message: message.into(),
+            metadata: None,
+        }
+    }
+
+    fn failed_with_metadata(message: impl Into<String>, metadata: Value) -> Self {
+        Self {
+            kind: McpToolCallFailureKind::Failed,
+            message: message.into(),
+            metadata: Some(metadata),
         }
     }
 
@@ -165,6 +184,7 @@ impl McpToolCallFailure {
         Self {
             kind: McpToolCallFailureKind::InputRequiredUnsupported,
             message: message.into(),
+            metadata: None,
         }
     }
 
@@ -234,6 +254,7 @@ pub fn list_tools(config: &ModePackMcpServerConfig) -> Result<McpToolCatalog> {
             .get("inputSchema")
             .filter(|value| value.is_object())
             .context("MCP tool inputSchema must be an object")?;
+        validate_mcp_schema_subset(input_schema, "MCP tool inputSchema", true)?;
         let input_schema_fingerprint = bounded_schema_fingerprint(input_schema)?;
         let input_schema_summary = bounded_input_schema_summary(input_schema)?;
         let output_schema_fingerprint = object
@@ -242,6 +263,7 @@ pub fn list_tools(config: &ModePackMcpServerConfig) -> Result<McpToolCatalog> {
                 if !schema.is_object() {
                     bail!("MCP tool outputSchema must be an object");
                 }
+                validate_mcp_schema_subset(schema, "MCP tool outputSchema", true)?;
                 bounded_schema_fingerprint(schema)
             })
             .transpose()?;
@@ -262,7 +284,9 @@ pub fn list_tools(config: &ModePackMcpServerConfig) -> Result<McpToolCatalog> {
             tool_name: name.to_string(),
             description,
             input_schema_fingerprint,
+            input_schema: input_schema.clone(),
             output_schema_fingerprint,
+            output_schema: object.get("outputSchema").cloned(),
             input_schema_summary,
             annotations,
             annotation_fingerprint,
@@ -287,11 +311,25 @@ pub fn list_tools(config: &ModePackMcpServerConfig) -> Result<McpToolCatalog> {
     })
 }
 
+pub fn validate_tool_input_against_schema(
+    entry: &McpToolCatalogEntry,
+    input: &Value,
+) -> Result<Value> {
+    validate_json_value_against_schema(&entry.input_schema, input, "$", "input")?;
+    Ok(json!({
+        "schema_validation_version": 1,
+        "input_schema_fingerprint": entry.input_schema_fingerprint,
+        "validated_value_fingerprint": fingerprint_json(input),
+        "status": "validated",
+    }))
+}
+
 pub fn call_tool(
     config: &ModePackMcpServerConfig,
-    tool_name: &str,
+    entry: &McpToolCatalogEntry,
     arguments: Value,
 ) -> std::result::Result<McpToolCallResult, McpToolCallFailure> {
+    let tool_name = entry.tool_name.as_str();
     validate_tool_name(tool_name).map_err(|error| McpToolCallFailure::failed(error.to_string()))?;
     if !arguments.is_object() {
         return Err(McpToolCallFailure::failed(
@@ -356,6 +394,33 @@ pub fn call_tool(
     } else {
         McpToolCallStatus::ToolSucceeded
     };
+    let output_schema_validation = if status.is_success() {
+        match validate_tool_output_against_schema(entry, &result) {
+            Ok(evidence) => evidence,
+            Err(error) => {
+                let reason = bounded_failure_message(error.to_string());
+                return Err(McpToolCallFailure::failed_with_metadata(
+                    "MCP tools/call output schema validation failed",
+                    json!({
+                        "output_schema_validation": {
+                            "schema_validation_version": 1,
+                            "status": "failed",
+                            "reason": reason,
+                            "output_schema_fingerprint": entry.output_schema_fingerprint,
+                            "result_fingerprint": fingerprint_json(&result),
+                            "validation_target": "structuredContent_or_empty_object",
+                        }
+                    }),
+                ));
+            }
+        }
+    } else {
+        json!({
+            "schema_validation_version": 1,
+            "status": "not_applicable",
+            "reason": "tool_error_result",
+        })
+    };
     let content_item_count = content.len();
     let (content_items, content_truncated, text_chars, materialized_text_chars) =
         bounded_result_context_items(&result);
@@ -382,9 +447,14 @@ pub fn call_tool(
             "max_content_items": MAX_MCP_RESULT_CONTEXT_ITEMS,
             "max_text_item_chars": MAX_MCP_RESULT_TEXT_ITEM_CHARS,
             "max_total_text_chars": MAX_MCP_RESULT_TEXT_TOTAL_CHARS,
+            "output_schema_validation": output_schema_validation,
             "content_items": content_items,
         }),
     })
+}
+
+fn bounded_failure_message(message: String) -> String {
+    message.chars().take(240).collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -693,6 +763,343 @@ fn bounded_schema_fingerprint(schema: &Value) -> Result<String> {
         bail!("MCP tool schema exceeds byte limit");
     }
     Ok(fingerprint_bytes(text.as_bytes()))
+}
+
+fn validate_mcp_schema_subset(
+    schema: &Value,
+    context: &str,
+    require_object_root: bool,
+) -> Result<()> {
+    let canonical = canonical_json(schema);
+    let text = canonical.to_string();
+    if text.len() > MAX_MCP_SCHEMA_BYTES {
+        bail!("{context} exceeds byte limit");
+    }
+    validate_mcp_schema_subset_inner(schema, context, 0, require_object_root)
+}
+
+fn validate_mcp_schema_subset_inner(
+    schema: &Value,
+    context: &str,
+    depth: usize,
+    require_object_root: bool,
+) -> Result<()> {
+    if depth > MAX_MCP_SCHEMA_DEPTH {
+        bail!("{context} exceeds schema depth limit");
+    }
+    let object = schema
+        .as_object()
+        .with_context(|| format!("{context} schema node must be an object"))?;
+    for keyword in object.keys() {
+        if is_unsupported_validation_keyword(keyword) {
+            bail!("{context} contains unsupported schema keyword {keyword}");
+        }
+    }
+    let Some(schema_type) = object.get("type").and_then(Value::as_str) else {
+        bail!("{context} schema type must be a supported string");
+    };
+    if !is_supported_schema_type(schema_type) {
+        bail!("{context} schema type is unsupported");
+    }
+    if require_object_root && schema_type != "object" {
+        bail!("{context} root schema must be type object");
+    }
+    match schema_type {
+        "object" => {
+            if let Some(properties) = object.get("properties") {
+                let properties = properties
+                    .as_object()
+                    .with_context(|| format!("{context} properties must be an object"))?;
+                if properties.len() > MAX_MCP_SCHEMA_PROPERTIES {
+                    bail!("{context} properties exceed bounded limit");
+                }
+                for (name, property_schema) in properties {
+                    validate_tool_name(name)
+                        .with_context(|| format!("{context} property name is malformed"))?;
+                    validate_mcp_schema_subset_inner(property_schema, context, depth + 1, false)?;
+                }
+            }
+            if let Some(required) = object.get("required") {
+                let required = required
+                    .as_array()
+                    .with_context(|| format!("{context} required must be an array"))?;
+                if required.len() > MAX_MCP_SCHEMA_PROPERTIES {
+                    bail!("{context} required exceeds bounded limit");
+                }
+                for item in required {
+                    let name = item
+                        .as_str()
+                        .with_context(|| format!("{context} required entries must be strings"))?;
+                    validate_tool_name(name)
+                        .with_context(|| format!("{context} required property is malformed"))?;
+                }
+            }
+            if let Some(additional) = object.get("additionalProperties") {
+                if !additional.is_boolean() {
+                    bail!("{context} additionalProperties must be a boolean");
+                }
+            }
+        }
+        "array" => {
+            if let Some(items) = object.get("items") {
+                validate_mcp_schema_subset_inner(items, context, depth + 1, false)?;
+            }
+        }
+        "string" => {
+            validate_u64_keyword(object, "minLength", context)?;
+            validate_u64_keyword(object, "maxLength", context)?;
+        }
+        "number" | "integer" => {
+            validate_number_keyword(object, "minimum", context)?;
+            validate_number_keyword(object, "maximum", context)?;
+        }
+        "boolean" | "null" => {}
+        _ => unreachable!("supported schema type checked"),
+    }
+    if let Some(values) = object.get("enum") {
+        let values = values
+            .as_array()
+            .with_context(|| format!("{context} enum must be an array"))?;
+        if values.is_empty() || values.len() > MAX_MCP_SCHEMA_ENUM_VALUES {
+            bail!("{context} enum must be non-empty and bounded");
+        }
+    }
+    Ok(())
+}
+
+fn validate_u64_keyword(object: &Map<String, Value>, keyword: &str, context: &str) -> Result<()> {
+    if let Some(value) = object.get(keyword) {
+        if value.as_u64().is_none() {
+            bail!("{context} {keyword} must be an unsigned integer");
+        }
+    }
+    Ok(())
+}
+
+fn validate_number_keyword(
+    object: &Map<String, Value>,
+    keyword: &str,
+    context: &str,
+) -> Result<()> {
+    if let Some(value) = object.get(keyword) {
+        if value.as_f64().is_none() {
+            bail!("{context} {keyword} must be a number");
+        }
+    }
+    Ok(())
+}
+
+fn is_supported_schema_type(value: &str) -> bool {
+    matches!(
+        value,
+        "object" | "string" | "number" | "integer" | "boolean" | "array" | "null"
+    )
+}
+
+fn is_unsupported_validation_keyword(keyword: &str) -> bool {
+    matches!(
+        keyword,
+        "$ref"
+            | "$dynamicRef"
+            | "oneOf"
+            | "anyOf"
+            | "allOf"
+            | "not"
+            | "if"
+            | "then"
+            | "else"
+            | "pattern"
+            | "format"
+            | "patternProperties"
+            | "propertyNames"
+            | "dependentRequired"
+            | "dependentSchemas"
+            | "contains"
+            | "minContains"
+            | "maxContains"
+            | "minItems"
+            | "maxItems"
+            | "uniqueItems"
+            | "multipleOf"
+            | "exclusiveMinimum"
+            | "exclusiveMaximum"
+    )
+}
+
+fn validate_tool_output_against_schema(
+    entry: &McpToolCatalogEntry,
+    result: &Value,
+) -> Result<Value> {
+    let Some(schema) = entry.output_schema.as_ref() else {
+        return Ok(json!({
+            "schema_validation_version": 1,
+            "status": "not_applicable",
+            "reason": "missing_output_schema",
+        }));
+    };
+    let empty_object = json!({});
+    let value = result.get("structuredContent").unwrap_or(&empty_object);
+    validate_json_value_against_schema(schema, value, "$", "output")?;
+    Ok(json!({
+        "schema_validation_version": 1,
+        "output_schema_fingerprint": entry.output_schema_fingerprint,
+        "validated_value_fingerprint": fingerprint_json(value),
+        "validation_target": "structuredContent_or_empty_object",
+        "status": "validated",
+    }))
+}
+
+fn validate_json_value_against_schema(
+    schema: &Value,
+    value: &Value,
+    path: &str,
+    subject: &str,
+) -> Result<()> {
+    let object = schema
+        .as_object()
+        .with_context(|| format!("MCP {subject} schema at {path} must be an object"))?;
+    if let Some(expected) = object.get("const") {
+        if value != expected {
+            bail!("MCP {subject} schema const mismatch at {path}");
+        }
+    }
+    if let Some(values) = object.get("enum").and_then(Value::as_array) {
+        if !values.iter().any(|expected| expected == value) {
+            bail!("MCP {subject} schema enum mismatch at {path}");
+        }
+    }
+    let schema_type = object
+        .get("type")
+        .and_then(Value::as_str)
+        .with_context(|| format!("MCP {subject} schema type must be present"))?;
+    match schema_type {
+        "object" => validate_object_value(object, value, path, subject),
+        "string" => validate_string_value(object, value, path, subject),
+        "number" => {
+            validate_number_value(object, value, path, false, subject)?;
+            Ok(())
+        }
+        "integer" => {
+            validate_number_value(object, value, path, true, subject)?;
+            Ok(())
+        }
+        "array" => validate_array_value(object, value, path, subject),
+        "boolean" if value.is_boolean() => Ok(()),
+        "null" if value.is_null() => Ok(()),
+        "boolean" | "null" => bail!("MCP {subject} schema type mismatch at {path}"),
+        _ => bail!("MCP {subject} schema type is unsupported at {path}"),
+    }
+}
+
+fn validate_object_value(
+    object: &Map<String, Value>,
+    value: &Value,
+    path: &str,
+    subject: &str,
+) -> Result<()> {
+    let value_object = value
+        .as_object()
+        .with_context(|| format!("MCP {subject} schema expected object at {path}"))?;
+    let properties = object.get("properties").and_then(Value::as_object);
+    if let Some(required) = object.get("required").and_then(Value::as_array) {
+        for item in required {
+            let name = item
+                .as_str()
+                .with_context(|| format!("MCP {subject} schema required entry must be a string"))?;
+            if !value_object.contains_key(name) {
+                bail!("MCP {subject} schema missing required field {name}");
+            }
+        }
+    }
+    if object.get("additionalProperties").and_then(Value::as_bool) == Some(false) {
+        for key in value_object.keys() {
+            if !properties
+                .map(|property_map| property_map.contains_key(key))
+                .unwrap_or(false)
+            {
+                bail!("MCP {subject} schema disallows additional field {key}");
+            }
+        }
+    }
+    if let Some(properties) = properties {
+        for (name, property_schema) in properties {
+            if let Some(field_value) = value_object.get(name) {
+                validate_json_value_against_schema(
+                    property_schema,
+                    field_value,
+                    &format!("{path}.{name}"),
+                    subject,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_array_value(
+    object: &Map<String, Value>,
+    value: &Value,
+    path: &str,
+    subject: &str,
+) -> Result<()> {
+    let values = value
+        .as_array()
+        .with_context(|| format!("MCP {subject} schema expected array at {path}"))?;
+    if let Some(items) = object.get("items") {
+        for (index, item) in values.iter().enumerate() {
+            validate_json_value_against_schema(items, item, &format!("{path}[{index}]"), subject)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_string_value(
+    object: &Map<String, Value>,
+    value: &Value,
+    path: &str,
+    subject: &str,
+) -> Result<()> {
+    let string = value
+        .as_str()
+        .with_context(|| format!("MCP {subject} schema expected string at {path}"))?;
+    let chars = string.chars().count() as u64;
+    if let Some(min) = object.get("minLength").and_then(Value::as_u64) {
+        if chars < min {
+            bail!("MCP {subject} schema string is shorter than minLength at {path}");
+        }
+    }
+    if let Some(max) = object.get("maxLength").and_then(Value::as_u64) {
+        if chars > max {
+            bail!("MCP {subject} schema string exceeds maxLength at {path}");
+        }
+    }
+    Ok(())
+}
+
+fn validate_number_value(
+    object: &Map<String, Value>,
+    value: &Value,
+    path: &str,
+    integer: bool,
+    subject: &str,
+) -> Result<()> {
+    let number = value
+        .as_f64()
+        .with_context(|| format!("MCP {subject} schema expected number at {path}"))?;
+    if integer && !(value.as_i64().is_some() || value.as_u64().is_some()) {
+        bail!("MCP {subject} schema expected integer at {path}");
+    }
+    if let Some(minimum) = object.get("minimum").and_then(Value::as_f64) {
+        if number < minimum {
+            bail!("MCP {subject} schema number is below minimum at {path}");
+        }
+    }
+    if let Some(maximum) = object.get("maximum").and_then(Value::as_f64) {
+        if number > maximum {
+            bail!("MCP {subject} schema number exceeds maximum at {path}");
+        }
+    }
+    Ok(())
 }
 
 fn bounded_input_schema_summary(schema: &Value) -> Result<Vec<McpToolInputFieldSummary>> {

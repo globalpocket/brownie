@@ -364,44 +364,101 @@ fn execute_mcp_tool_for_record(
             }),
         });
     }
-    match mcp_client::call_tool(&config, &tool_name, input) {
-        Ok(call_result) if call_result.status.is_success() => Ok(ToolExecuteResult {
-            tool_id,
-            status: ToolExecuteStatus::Completed,
-            output: json!({
-                "mcp": with_mcp_request_fingerprint(call_result.output, &request_fingerprint),
-                "catalog_provenance": mcp_catalog_provenance_payload(&catalog, catalog_entry),
-                "mcp_safety_policy": mcp_safety_policy,
-                "mcp_approval_binding": approval_binding,
-            }),
-        }),
-        Ok(call_result) => Ok(ToolExecuteResult {
-            tool_id,
-            status: ToolExecuteStatus::Failed,
-            output: json!({
-                "reason": "MCP tool returned error.",
-                "mcp": with_mcp_request_fingerprint(call_result.output, &request_fingerprint),
-                "catalog_provenance": mcp_catalog_provenance_payload(&catalog, catalog_entry),
-                "mcp_safety_policy": mcp_safety_policy,
-                "mcp_approval_binding": approval_binding,
-            }),
-        }),
-        Err(error) => Ok(ToolExecuteResult {
-            tool_id,
-            status: ToolExecuteStatus::Failed,
-            output: json!({
-                "reason": format!("MCP tools/call {}.", error.kind.as_str()),
-                "mcp": mcp_call_failure_metadata(
-                    &config,
-                    &tool_name,
-                    &request_fingerprint,
-                    error.kind,
-                    tool_policy.retry_policy_name(),
-                ),
-                "mcp_safety_policy": mcp_safety_policy,
-                "mcp_approval_binding": approval_binding,
-            }),
-        }),
+    let schema_validation = match mcp_client::validate_tool_input_against_schema(
+        catalog_entry,
+        &input,
+    ) {
+        Ok(evidence) => evidence,
+        Err(error) => {
+            return Ok(ToolExecuteResult {
+                tool_id,
+                status: ToolExecuteStatus::Denied,
+                output: json!({
+                    "reason": format!("MCP tool input schema validation failed: {error}"),
+                    "catalog_provenance": mcp_catalog_provenance_payload(&catalog, catalog_entry),
+                    "mcp_safety_policy": mcp_safety_policy,
+                    "mcp_approval_binding": approval_binding,
+                }),
+            })
+        }
+    };
+    match mcp_client::call_tool(&config, catalog_entry, input) {
+        Ok(call_result) if call_result.status.is_success() => {
+            let output_schema_validation = call_result
+                .output
+                .get("output_schema_validation")
+                .cloned()
+                .unwrap_or(Value::Null);
+            Ok(ToolExecuteResult {
+                tool_id,
+                status: ToolExecuteStatus::Completed,
+                output: json!({
+                    "mcp": with_mcp_request_fingerprint(call_result.output, &request_fingerprint),
+                    "catalog_provenance": mcp_catalog_provenance_payload(&catalog, catalog_entry),
+                    "mcp_safety_policy": mcp_safety_policy,
+                    "mcp_approval_binding": approval_binding,
+                    "mcp_schema_validation": {
+                        "input": schema_validation,
+                        "output": output_schema_validation,
+                    },
+                }),
+            })
+        }
+        Ok(call_result) => {
+            let output_schema_validation = call_result
+                .output
+                .get("output_schema_validation")
+                .cloned()
+                .unwrap_or(Value::Null);
+            Ok(ToolExecuteResult {
+                tool_id,
+                status: ToolExecuteStatus::Failed,
+                output: json!({
+                    "reason": "MCP tool returned error.",
+                    "mcp": with_mcp_request_fingerprint(call_result.output, &request_fingerprint),
+                    "catalog_provenance": mcp_catalog_provenance_payload(&catalog, catalog_entry),
+                    "mcp_safety_policy": mcp_safety_policy,
+                    "mcp_approval_binding": approval_binding,
+                    "mcp_schema_validation": {
+                        "input": schema_validation,
+                        "output": output_schema_validation,
+                    },
+                }),
+            })
+        }
+        Err(error) => {
+            let mut mcp = mcp_call_failure_metadata(
+                &config,
+                &tool_name,
+                &request_fingerprint,
+                error.kind,
+                tool_policy.retry_policy_name(),
+            );
+            if let Some(metadata) = error.metadata {
+                merge_object_fields(&mut mcp, metadata);
+            }
+            Ok(ToolExecuteResult {
+                tool_id,
+                status: ToolExecuteStatus::Failed,
+                output: json!({
+                    "reason": format!("MCP tools/call {}.", error.kind.as_str()),
+                    "mcp": mcp,
+                    "mcp_safety_policy": mcp_safety_policy,
+                    "mcp_approval_binding": approval_binding,
+                    "mcp_schema_validation": {
+                        "input": schema_validation,
+                    },
+                }),
+            })
+        }
+    }
+}
+
+fn merge_object_fields(target: &mut Value, extra: Value) {
+    if let (Some(target), Some(extra)) = (target.as_object_mut(), extra.as_object()) {
+        for (key, value) in extra {
+            target.insert(key.clone(), value.clone());
+        }
     }
 }
 
