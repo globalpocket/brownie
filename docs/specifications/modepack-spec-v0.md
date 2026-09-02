@@ -381,9 +381,11 @@ workspace. Relative path arguments or workspace-cwd dependent servers are
 outside v0 unless the trusted Mode Pack's absolute executable and explicit
 arguments are self-contained. In v0, "trusted executable" means the trusted
 signed/local Mode Pack activation names an absolute executable that Runtime may
-launch under this bounded contract; it does not mean Brownie performs
-executable canonicalization, hash allow-listing, signing verification, or binary
-provenance validation for the executable itself.
+launch under this bounded contract and bind to bounded executable identity
+fingerprints at task admission and launch time. It does not mean Brownie
+performs executable canonicalization, external hash allow-listing, signing
+verification, registry lookup, package installation, or binary provenance
+validation for the executable itself.
 
 ## Non-goals for v0
 

@@ -12,7 +12,6 @@
     "real-process-loss-recovery-e2e",
     "durable-schema-version-and-migration",
     "runtime-release-guard-ci",
-    "mcp-runtime-safety-policy",
     "protocol-event-canonization",
     "runtime-module-decomposition-reevaluation",
     "platform-deadline-durability-hardening"
@@ -109,15 +108,16 @@
       "id": "mcp-runtime-safety-policy",
       "title": "MCP Runtime Safety Policy finite closure",
       "priority": "P0",
-      "status": "partial",
+      "status": "implemented_sufficient",
       "responsibility_domain": "runtime",
-      "debt_classification": "required_before_release",
+      "debt_classification": "closed",
       "evidence": [
         "The user supplied a non-conflicting follow-on MCP Runtime Safety Policy campaign after RRD-1.",
-        "MCP-S1 closes result error semantics, MCP-S1.1 corrects the CallToolResult resultType/isError protocol-conformance edge cases, MCP-S2 closes tool-level Brownie safety policy, MCP-S3 closes annotation provenance/drift checks, MCP-S4 closes tool-level approval binding, MCP-S5 closes runtime input/output schema validation, and MCP-S6 closes the secret reference contract.",
-        "MCP-S7 executable identity remains open and is tracked in docs/architecture/mcp-runtime-safety-policy-audit.json."
+        "MCP-S1 closes result error semantics, MCP-S1.1 corrects CallToolResult resultType/isError protocol-conformance edge cases, MCP-S2 closes tool-level Brownie safety policy, MCP-S3 closes annotation provenance/drift checks, MCP-S4 closes tool-level approval binding, MCP-S5 closes runtime input/output schema validation, MCP-S6 closes the secret reference contract, and MCP-S7 closes executable identity.",
+        "MCP stdio execution is now result-safe, policy-bound, annotation/catalog drift checked, approval-bound, schema-validated, secret-reference scoped, and executable-identity pinned and rechecked before launch.",
+        "MCP server descriptions, schemas, annotations, results, secret references, executable identity, and model output remain non-authoritative and narrowing-only."
       ],
-      "next_action": "Continue MCP-S7 before claiming Runtime Release Ready."
+      "next_action": "Continue the remaining Runtime Release Readiness P0/P1 blockers before claiming Runtime Release Ready."
     },
     {
       "id": "oss-release-technical-basis",

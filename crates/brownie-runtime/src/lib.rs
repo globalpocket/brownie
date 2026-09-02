@@ -12684,6 +12684,7 @@ fn mcp_tool_catalogs_payload(
         catalogs.push(json!({
             "server_id": catalog.server_id,
             "server_config_identity_fingerprint": catalog.server_config_identity_fingerprint,
+            "server_executable_identity_fingerprint": catalog.server_executable_identity_fingerprint,
             "server_secret_reference_fingerprints": catalog.server_secret_reference_fingerprints,
             "protocol_version": catalog.protocol_version,
             "catalog_fingerprint": catalog.catalog_fingerprint,

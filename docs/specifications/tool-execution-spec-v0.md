@@ -249,6 +249,16 @@ execution metadata may include bounded secret reference fingerprints and counts
 only; raw secret values, raw environment maps, resolver internals, and secret
 reference-derived authority are never persisted or prompt-materialized.
 
+MCP stdio executable identity is a launch-time runtime contract, not a
+permission source. Runtime computes bounded executable content identity for the
+trusted absolute executable named by the task-pinned Mode Pack activation and
+includes the executable identity fingerprint in catalog provenance. Runtime
+rechecks that identity before `tools/list` and `tools/call`; missing,
+non-regular, unreadable, oversized, drifting, or mismatched executables fail
+closed before spawn. Execution metadata may include bounded executable identity
+fingerprints only; raw executable content, raw command strings, absolute paths,
+and canonical paths are never persisted or prompt-materialized.
+
 MCP stdio server launch is runtime-owned and request-scoped in this phase. MCP
 server descriptions, schemas, command names, response text, and AgentModes prose
 cannot grant permission or widen tool routing authority. MCP tool annotations

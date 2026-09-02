@@ -1,39 +1,39 @@
 {
   "schema_version": 1,
-  "phase": "MCP-S6",
+  "phase": "MCP-S7",
   "current_milestone": "mcp-runtime-safety-policy-finite-closure",
   "milestone": "Brownie MCP Runtime Safety Policy Finite Closure",
   "target_capability": "runtime_permission_enforcement",
-  "concrete_capability_transition": "mcp_stdio_secret_references_are_runtime_resolved_and_request_scoped",
-  "forbidden_pattern": "product_completion_reopen_cli_mp_history_runtime_release_ready_with_open_runtime_debt_adapter_manifest_custom_tool_protocol_streamable_http_oauth_mcp_apps_sampling_roots_elicitation_public_registry_automatic_install_hosted_secret_manager_remote_binary_distribution_scheduler_daemon_generic_shell_arbitrary_process_exec_mcp_secret_as_authority_mcp_schema_as_authority_mcp_annotation_as_authority_tool_description_as_authority_model_output_as_authority_modepack_policy_passthrough_raw_json_rpc_response_raw_schema_raw_input_raw_error_raw_secret_raw_environment_map_environment_value_absolute_path_canonical_path_binary_content",
+  "concrete_capability_transition": "mcp_stdio_executable_identity_is_runtime_pinned_and_rechecked",
+  "forbidden_pattern": "product_completion_reopen_cli_mp_history_runtime_release_ready_with_open_runtime_debt_adapter_manifest_custom_tool_protocol_streamable_http_oauth_mcp_apps_sampling_roots_elicitation_public_registry_automatic_install_hosted_secret_manager_remote_binary_distribution_package_installation_signing_infrastructure_scheduler_daemon_generic_shell_arbitrary_process_exec_mcp_executable_identity_as_authority_mcp_secret_as_authority_mcp_schema_as_authority_mcp_annotation_as_authority_tool_description_as_authority_model_output_as_authority_modepack_policy_passthrough_raw_json_rpc_response_raw_schema_raw_input_raw_error_raw_secret_raw_environment_map_environment_value_absolute_path_canonical_path_binary_content_raw_command_string",
   "project_objective_ref": "docs/architecture/product-charter.md",
   "strategic_capability_mapping": [
     {
       "capability": "runtime_permission_enforcement",
-      "relationship": "Requires MCP stdio credential injection to pass through a Runtime-owned secret reference contract without widening Mode Pack policy or tool authority."
+      "relationship": "Requires MCP stdio execution to bind the trusted Mode Pack executable to Runtime-owned bounded content identity before launch without turning executable identity into authority."
     },
     {
       "capability": "headless_autonomous_development",
-      "relationship": "Allows autonomous runs to use trusted MCP servers that require scoped credentials while preserving replay-safe bounded evidence and fail-closed launch semantics."
+      "relationship": "Allows autonomous runs to detect executable drift between task-pinned catalog admission and later tools/call execution without relying on human inspection or external wrapper checks."
     },
     {
       "capability": "controlled_workspace_tools",
-      "relationship": "Keeps MCP tool execution request-scoped and environment-cleared while permitting only explicitly configured secret references resolved at launch."
+      "relationship": "Keeps MCP tool execution request-scoped, provenance-bound, and fail-closed when the executable target changes or is invalid before spawn."
     }
   ],
   "phase_value_gate": {
     "required": true,
     "answers": {
-      "strategic_capabilities": "Advances runtime_permission_enforcement, headless_autonomous_development, and controlled_workspace_tools by adding a bounded Runtime-owned secret reference launch path for MCP stdio servers.",
-      "new_capability": "Trusted Mode Pack MCP server config can name bounded secret references that Runtime resolves and injects only into the request-scoped tools/list or tools/call child environment.",
-      "why_existing_functionality_is_insufficient": "Before MCP-S6, Brownie correctly cleared inherited environment, but there was no auditable path for intentionally supplying scoped credentials to trusted MCP stdio servers without raw environment values.",
-      "product_gap_if_skipped": "Credentialed MCP servers would either remain unusable or pressure callers toward unsafe raw environment inheritance, raw Mode Pack secrets, or external wrapper behavior outside Runtime evidence.",
-      "non_duplicative": "This phase changes Mode Pack MCP config admission, Runtime stdio launch behavior, catalog provenance, execution metadata, specs, and audits; it is not a wrapper, adapter manifest, hosted secret manager, or documentation-only verdict.",
-      "no_new_rpc": "Yes. The existing tools/list, tool.execute, task.run, and headless run/resume boundaries are preserved; secret resolution is Runtime launch plumbing below those surfaces.",
+      "strategic_capabilities": "Advances runtime_permission_enforcement, headless_autonomous_development, and controlled_workspace_tools by adding Runtime-owned executable identity admission and launch rechecks for MCP stdio servers.",
+      "new_capability": "Runtime can pin the executable identity used to build an MCP tool catalog and fail closed if the executable is missing, non-regular, unreadable, oversized, drifting, or mismatched before tools/list or tools/call spawn.",
+      "why_existing_functionality_is_insufficient": "Before MCP-S7, Brownie required an absolute command, denied PATH lookup, cleared environment, and used a neutral cwd, but it did not bind the executable content identity to task-pinned MCP catalog provenance.",
+      "product_gap_if_skipped": "A trusted absolute executable path could change after catalog materialization without explicit Runtime drift evidence, weakening task-pinned MCP provenance before release.",
+      "non_duplicative": "This phase changes Runtime MCP launch admission, catalog provenance, task-pinned catalog matching, execution metadata, specs, and audits; it is not a wrapper, report, registry, signing system, package manager, or documentation-only verdict.",
+      "no_new_rpc": "Yes. The existing tools/list, tool.execute, task.run, and headless run/resume boundaries are preserved; executable identity is Runtime launch-boundary evidence below those surfaces.",
       "no_new_summary": "Yes. The phase updates existing execution behavior and bounded evidence rather than adding a report, readiness endpoint, or diagnostic wrapper.",
-      "runtime_behavior_change": "Raw MCP env values fail closed at Mode Pack validation, unresolved references fail before spawn, and successful launches inject only resolved scoped values after env_clear while evidence exposes only fingerprints/counts.",
-      "headless_autonomous_contribution": "Headless runs can execute authorized credentialed MCP stdio tools without inheriting ambient secrets or replaying raw secret material; resume relies on bounded completed evidence rather than persisted secret values.",
-      "milestone_progress": "Closes MCP-S6 and leaves MCP-S7 executable identity as the remaining MCP safety phase before the campaign can move past stdio MCP safety closure."
+      "runtime_behavior_change": "Runtime hashes executable content before tools/list, records only bounded identity fingerprints, rechecks identity before tools/list and tools/call spawn, and denies drift or invalid executable targets before server execution.",
+      "headless_autonomous_contribution": "Headless runs can rely on task-pinned MCP executable provenance and fail closed during resume or later tool execution if the server binary changed after admission.",
+      "milestone_progress": "Closes MCP-S7, the final MCP Runtime Safety Policy phase, while Runtime Release Ready remains false until other recorded Runtime Release Readiness P0/P1 blockers are closed."
     },
     "questions": [
       {
@@ -80,20 +80,19 @@
   },
   "review_value_gate": {
     "reject_when": [
-      "phase stores raw secret values, raw environment maps, resolver internals, raw JSON-RPC responses, raw schemas, raw prompt/provider responses, absolute paths, canonical paths, or binary content in ledger evidence",
-      "phase allows Mode Pack env values to contain inline raw credentials, shell expressions, file paths, URLs, command substitutions, or arbitrary environment maps",
-      "phase lets secret references widen Mode Pack policy, grant mcp_tool_access, add server/tool allow-list membership, bypass S2 safety policy, S3 annotation narrowing, S4 approval binding, S5 schema validation, or catalog drift checks",
-      "phase resolves secrets in CLI, provider output, MCP server text, prompts, diagnostics, or control-plane documents instead of Runtime stdio launch",
-      "phase adds a hosted secret manager, OAuth, Streamable HTTP, MCP Apps, Sampling, Roots, Elicitation, public registry, automatic install, scheduler, daemon, generic shell, arbitrary process execution, recursive Brownie invocation, or unrelated product surfaces"
+      "phase stores raw executable content, raw command strings, absolute paths, canonical paths, raw environment maps, raw secret values, raw JSON-RPC responses, raw schemas, raw prompt/provider responses, or binary content in ledger evidence",
+      "phase lets executable identity widen Mode Pack policy, grant mcp_tool_access, add server/tool allow-list membership, satisfy S2 safety policy, override S3 annotations, satisfy S4 approval binding, bypass S5 schema validation, bypass S6 secret reference constraints, or catalog drift checks",
+      "phase adds PATH lookup, package installation, remote fetch, registry lookup, signing infrastructure, binary provenance system, hosted secret manager, OAuth, Streamable HTTP, MCP Apps, Sampling, Roots, Elicitation, scheduler, daemon, generic shell, arbitrary process execution, recursive Brownie invocation, or unrelated product surfaces",
+      "phase moves executable validation into CLI, provider output, MCP server text, prompts, diagnostics, or control-plane documents instead of Runtime stdio launch",
+      "phase claims Runtime Release Ready while other Runtime Release Readiness P0/P1 blockers remain open"
     ]
   },
   "guard_engine_change_review": {
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "MCP-S6 changes Runtime MCP stdio launch behavior and Runtime release audit state, so strict review must verify secret references remain launch-scoped, fail closed, and never persist raw secrets or widen authority.",
+    "review_intent": "MCP-S7 changes Runtime MCP stdio launch behavior and Runtime release audit state, so strict review must verify executable identity remains narrowing-only, fail-closed, and never persists raw paths, command strings, or binary content.",
     "changed_files": [
-      "crates/brownie-modepack/src/lib.rs",
       "crates/brownie-runtime/src/mcp_client.rs",
       "crates/brownie-runtime/src/controlled_tool_execution.rs",
       "crates/brownie-runtime/src/lib.rs",
@@ -103,70 +102,71 @@
       "docs/specifications/mcp-client-spec-v0.md",
       "docs/specifications/modepack-spec-v0.md",
       "docs/specifications/tool-execution-spec-v0.md",
+      "docs/specifications/runtime-protocol-spec-v0.md",
       "docs/architecture/runtime-release-readiness-audit.json",
       "docs/architecture/runtime-release-readiness-audit.md"
     ]
   },
   "exit_criteria": [
-    "Trusted Mode Pack MCP server config accepts only bounded structured env secret_ref bindings.",
-    "Raw environment values, unsupported binding shapes, malformed names, duplicate secret references, oversized references, and unresolvable references fail closed.",
-    "Runtime resolves secret references only through a Runtime-owned resolver immediately before request-scoped tools/list and tools/call stdio launch.",
-    "The MCP child environment remains cleared except for deterministic Runtime values and explicitly resolved scoped secret bindings.",
-    "Raw secret values and raw environment maps are not persisted, returned, prompt-materialized, ledgered, or recorded in control-plane documents.",
-    "Secret references cannot override Mode Pack allow-lists, mcp_tool_access, S2 safety policy, S3 annotations, S4 approval binding, S5 schema validation, catalog drift, or Runtime authority.",
-    "MCP-S6 is marked closed while MCP-S7 and Runtime Release Ready remain open."
+    "Runtime computes bounded executable content identity for MCP stdio server config without ledgering raw executable content, raw command strings, absolute paths, or canonical paths.",
+    "Task-pinned MCP catalog evidence carries bounded executable identity fingerprints and catalog fingerprints cover executable identity.",
+    "tools/list and tools/call recheck executable identity immediately before stdio spawn.",
+    "Missing, non-regular, unreadable, oversized, drifting, or mismatched executables fail closed before spawn.",
+    "Executable identity cannot override Mode Pack allow-lists, mcp_tool_access, S2 safety policy, S3 annotations, S4 approval binding, S5 schema validation, S6 secret references, catalog drift, or Runtime authority.",
+    "MCP-S7 is marked closed while Runtime Release Ready remains false until the other recorded Runtime Release Readiness P0/P1 blockers are closed."
   ],
   "behavior_evidence": [
-    "brownie-modepack focused test coverage proves valid structured secret references compile and raw or duplicate MCP env bindings fail closed.",
-    "brownie-runtime focused test coverage proves secret references are injected into request-scoped child environments without result exposure and unresolved references fail before spawn.",
-    "docs/architecture/mcp-runtime-safety-policy-audit.json records MCP-S6 as closed while leaving MCP-S7 open."
+    "brownie-runtime focused test coverage proves executable identity is cataloged without raw path evidence.",
+    "brownie-runtime focused test coverage proves executable drift after catalog admission fails closed before tools/call spawn.",
+    "brownie-runtime focused test coverage proves non-regular executable targets fail before spawn.",
+    "docs/architecture/mcp-runtime-safety-policy-audit.json records MCP-S7 as closed and removes MCP-specific release blockers while Runtime Release Ready remains false."
   ],
   "product_completion_gate": {
     "required": true,
     "product_completion_claim": false,
     "accepted_capability": [
-      "MCP stdio secret references are Runtime-resolved, request-scoped, and bounded.",
-      "Credentialed MCP launch remains task-pinned, provenance-bound, environment-cleared, and replay-safe without raw secret persistence."
+      "MCP stdio executable identity is Runtime-pinned, task-pinned, and rechecked before launch.",
+      "MCP Runtime Safety Policy S1 through S7 are implemented sufficiently for stdio MCP safety closure."
     ],
     "behavior_evidence": [
-      "Runtime and Mode Pack focused test coverage proves accepted structured references, raw value rejection, duplicate-reference rejection, launch-time injection, unresolved pre-spawn failure, and bounded evidence."
+      "Runtime focused test coverage proves bounded executable identity provenance, drift denial before spawn, and invalid executable denial before spawn."
     ],
     "safety_boundary": [
       "Rust Runtime remains the execution, admission, replay, permission, tool, workspace mutation, and completion authority.",
-      "Mode Pack structured policy remains the MCP tool safety authority; MCP secret references, schemas, annotations, descriptions, results, and model output cannot grant authority.",
-      "Secret references only resolve scoped child environment values at launch; they cannot widen Mode Pack policy, allow-list membership, approval binding, annotations, schema validation, or catalog provenance."
+      "Mode Pack structured policy remains the MCP tool safety authority; MCP executable identity, secret references, schemas, annotations, descriptions, results, and model output cannot grant authority.",
+      "Executable identity can only narrow or deny launch; it cannot widen Mode Pack policy, allow-list membership, approval binding, annotations, schema validation, secret resolution, or catalog provenance."
     ],
     "non_goals": [
-      "Does not add a hosted secret manager, Vault, KMS, OAuth, Streamable HTTP, MCP Apps, Sampling, Roots, Elicitation, registry, or automatic install.",
+      "Does not add PATH lookup, package installation, remote fetch, registry lookup, signing infrastructure, binary provenance systems, or remote binary distribution.",
+      "Does not add Streamable HTTP, OAuth, MCP Apps, Sampling, Roots, Elicitation, hosted secret manager, or public registry.",
       "Does not add a Brownie-specific tool adapter SDK or protocol.",
-      "Does not add scheduler, daemon, generic shell, arbitrary process execution, recursive Brownie invocation, or remote Git expansion.",
-      "Does not close MCP-S7 executable identity.",
-      "Does not close full CI workflow hardening while workflow update authority is unavailable."
+      "Does not add scheduler, daemon, generic shell, arbitrary process execution, recursive Brownie invocation, hosted platform, forge adapters, or remote Git expansion.",
+      "Does not close the remaining non-MCP Runtime Release Readiness P0/P1 blockers."
     ],
     "rejected_alternatives": [
-      "Rejected raw env strings in Mode Pack config because credential values must not become policy data or persisted evidence.",
-      "Rejected ambient environment inheritance because MCP-S1 through MCP-S5 safety assumes stdio children do not inherit arbitrary Runtime/user shell state.",
-      "Rejected CLI-owned or provider-owned secret resolution because Runtime owns MCP launch, evidence, replay, and permission boundaries.",
-      "Rejected hosted secret-manager integration because MCP-S6 only defines the minimal resolver contract required for local stdio release safety."
+      "Rejected raw path or canonical path persistence because durable evidence must remain bounded and path-free.",
+      "Rejected raw executable content persistence because binary content must not enter ledger, prompts, diagnostics, or control-plane documents.",
+      "Rejected external signing, registry, package manager, and remote binary provenance systems because MCP-S7 is limited to Runtime-owned v0 content identity checks.",
+      "Rejected CLI-owned executable validation because Runtime owns MCP launch, evidence, replay, and permission boundaries."
     ],
     "technical_debt": [
-      "MCP-S7 executable identity remains open.",
-      "Previously recorded Runtime Release Readiness blockers remain open, including full CI workflow hardening."
+      "Previously recorded Runtime Release Readiness blockers remain open, including boundary protocol contracts, explicit cancel command, real process-loss recovery E2E, durable schema version and migration, full CI workflow hardening, protocol/event canonization, runtime module decomposition reevaluation, and platform/deadline/durability hardening.",
+      "Owner license/publish decision remains required before OSS release basis can be claimed."
     ],
     "release_readiness_scope": {
       "runtime_release_dod": [
-        "Runtime-owned MCP permission checks, tool execution, bounded evidence, replay, completion semantics, and request-scoped stdio launch.",
-        "Task-pinned Mode Pack policy, catalog provenance, annotation provenance, approval provenance, schema provenance, secret reference fingerprints, and point-of-use Runtime safety enforcement."
+        "Runtime-owned MCP permission checks, tool execution, bounded evidence, replay, completion semantics, request-scoped stdio launch, secret references, and executable identity checks.",
+        "Task-pinned Mode Pack policy, catalog provenance, annotation provenance, approval provenance, schema provenance, secret reference fingerprints, executable identity fingerprints, and point-of-use Runtime safety enforcement."
       ],
       "runtime_boundary_contracts": [
         "Existing tool.execute, task.run, tools/list, tools/call, and headless run/resume paths.",
-        "Existing ToolExecutionCompleted, ToolExecutionFailed, ToolExecutionDenied, MCP catalog, schema validation, and approval ledger evidence."
+        "Existing ToolExecutionCompleted, ToolExecutionFailed, ToolExecutionDenied, MCP catalog, schema validation, approval, secret reference, and executable identity evidence."
       ],
       "external_control_plane_responsibilities": [
         "Scheduling, background polling, daemonization, hosted queues, worker fleets, and remote server operations."
       ],
       "external_adapter_responsibilities": [
-        "MCP server implementation, GitHub/GitLab/Slack adapters, OAuth application wiring, remote transport hosting, and hosted credential management."
+        "MCP server implementation, GitHub/GitLab/Slack adapters, OAuth application wiring, remote transport hosting, hosted credential management, registries, signing infrastructure, and package distribution."
       ],
       "commercial_solution_readiness": [
         "Enterprise tenant management, SSO/RBAC server, admin UI, monitoring backend, billing, SLA, private registry, and certified stack."
@@ -174,7 +174,7 @@
       "external_responsibility_not_release_blocking": true
     },
     "next_capability_rationale": [
-      "MCP-S7 should add MCP server executable identity evidence and drift checks before tools/list and tools/call without ledgering raw paths or binary content."
+      "After MCP-S7 merge, perform MCP Runtime Safety Policy closeout and then continue to the next recorded Runtime Release Readiness P0/P1 blocker selected by the control-plane."
     ]
   }
 }
