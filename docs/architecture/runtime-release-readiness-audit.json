@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-  "phase": "RRP-2",
-  "phase_title": "Explicit Cancel Command",
+  "phase": "MCP-S4.1",
+  "phase_title": "Approval Consumption and Retry Safety Corrective",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "273e367641f03898e3a04dfaf6f0a37c7692fae3",
+  "audited_main_commit": "eca116e128f24ff3a7c3cd4f2897b4426491f979",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
     "real-process-loss-recovery-e2e",
@@ -115,9 +115,10 @@
       "debt_classification": "closed",
       "evidence": [
         "The user supplied a non-conflicting follow-on MCP Runtime Safety Policy campaign after RRD-1.",
-        "MCP-S1 closes result error semantics, MCP-S1.1 corrects CallToolResult resultType/isError protocol-conformance edge cases, MCP-S2 closes tool-level Brownie safety policy, MCP-S3 closes annotation provenance/drift checks, MCP-S4 closes tool-level approval binding, MCP-S5 closes runtime input/output schema validation, MCP-S6 closes the secret reference contract, and MCP-S7 closes executable identity.",
-        "MCP stdio execution is now result-safe, policy-bound, annotation/catalog drift checked, approval-bound, schema-validated, secret-reference scoped, and executable-identity pinned and rechecked before launch.",
-        "MCP server descriptions, schemas, annotations, results, secret references, executable identity, and model output remain non-authoritative and narrowing-only."
+        "MCP-S1 closes result error semantics, MCP-S1.1 corrects CallToolResult resultType/isError protocol-conformance edge cases, MCP-S2 closes tool-level Brownie safety policy, MCP-S3 closes annotation provenance/drift checks, MCP-S4 closes tool-level approval binding, MCP-S4.1 closes approval consumption/retry safety, MCP-S5 closes runtime input/output schema validation, MCP-S6 closes the secret reference contract, and MCP-S7 closes executable identity.",
+        "MCP stdio execution is now result-safe, policy-bound, annotation/catalog drift checked, approval-state-bound, schema-validated, secret-reference scoped, and executable-identity pinned and rechecked before launch.",
+        "MCP approval-required execution uses public mcp.tool.approve, Runtime-owned latest-state approval claims, consumed/outcome_unknown terminalization, and duplicate retry/reuse denial from durable attempt evidence.",
+        "MCP server descriptions, schemas, annotations, results, secret references, executable identity, approval state, and model output remain non-authoritative and narrowing-only."
       ],
       "next_action": "Continue the remaining Runtime Release Readiness P0/P1 blockers before claiming Runtime Release Ready."
     },

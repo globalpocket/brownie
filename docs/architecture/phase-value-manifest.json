@@ -1,39 +1,39 @@
 {
   "schema_version": 1,
-  "phase": "RRP-2",
-  "current_milestone": "runtime-release-readiness-p0-p1-finite-closure",
-  "milestone": "Brownie Runtime Release Readiness Finite Closure",
-  "target_capability": "headless_autonomous_development",
-  "concrete_capability_transition": "runtime_cancel_command_is_explicit_authorized_fresh_and_replay_safe",
-  "forbidden_pattern": "runtime_release_ready_with_open_runtime_debt_cancellation_as_completion_cancellation_as_verification_cancellation_as_permission_grant_cli_owned_cancel_policy_vsix_owned_cancel_policy_os_process_tree_killing_service_control_scheduler_daemon_generic_shell_arbitrary_process_exec_hosted_platform_forge_notification_adapters_streamable_http_oauth_mcp_apps_sampling_roots_elicitation_public_registry_automatic_install_hosted_secret_manager_remote_git_expansion_remote_binary_distribution_package_installation_signing_infrastructure",
+  "phase": "MCP-S4.1",
+  "current_milestone": "mcp-runtime-safety-policy-corrective",
+  "milestone": "Brownie MCP Runtime Safety Policy Corrective",
+  "target_capability": "runtime_permission_enforcement",
+  "concrete_capability_transition": "mcp_approval_consumption_is_monotonic_claimed_and_retry_safe",
+  "forbidden_pattern": "historical_approved_reuse_consumed_approval_reuse_metadata_only_retry_approval_as_completion_approval_as_verification_approval_as_permission_grant_key_required_without_runtime_key_validation_runtime_release_ready_with_open_runtime_debt_cli_owned_approval_policy_vsix_owned_approval_policy_store_written_external_authority_streamable_http_oauth_mcp_apps_sampling_roots_elicitation_public_registry_automatic_install_hosted_secret_manager_remote_git_expansion_scheduler_daemon_generic_shell_arbitrary_process_exec_hosted_platform_forge_notification_adapters_custom_tool_adapter_protocols_remote_binary_distribution_package_installation_signing_infrastructure",
   "project_objective_ref": "docs/architecture/product-charter.md",
   "strategic_capability_mapping": [
     {
-      "capability": "headless_autonomous_development",
-      "relationship": "Adds a Runtime-owned explicit cancel boundary so autonomous callers can stop stale or unwanted task execution through a bounded command instead of relying on implicit terminal states."
-    },
-    {
-      "capability": "progress_visualization",
-      "relationship": "Makes cancelled task state inspectable through durable Runtime evidence with exact replay semantics and a clear next action for task inspection."
-    },
-    {
       "capability": "runtime_permission_enforcement",
-      "relationship": "Keeps cancellation narrowing-only and separate from completion, verification, permission grants, workspace mutation, MCP/tool authority, process control, and scheduler authority."
+      "relationship": "Makes MCP approval evidence monotonic and latest-state based so a historical approved event cannot authorize execution after consumed, executing, stale, malformed, or outcome-unknown evidence."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Provides a public Runtime-owned mcp.tool.approve boundary and replay-safe execution claim semantics for autonomous controllers without granting CLI, VSIX, or model output approval authority."
+    },
+    {
+      "capability": "controlled_workspace_tools",
+      "relationship": "Tightens the previously closed MCP-S4 approval binding baseline with atomic pre-spawn claim, terminal consumption, outcome-unknown handling, concurrent duplicate denial, and fail-closed key_required behavior until key validation exists."
     }
   ],
   "phase_value_gate": {
     "required": true,
     "answers": {
-      "strategic_capabilities": "Advances headless_autonomous_development, progress_visualization, and runtime_permission_enforcement by adding an explicit Runtime-owned cancel command.",
-      "new_capability": "Callers can invoke task.cancel with authorization, task/run identity, current-state freshness, cancel_id, and receive bounded TaskCancelled evidence or an idempotent exact replay.",
-      "why_existing_functionality_is_insufficient": "TaskStatus::Cancelled and TaskCancelled events existed, but there was no public Runtime admission command that owned authorization, freshness, replay, and terminal evidence.",
-      "product_gap_if_skipped": "Brownie could not safely expose cancellation as part of the local Runtime boundary before release; external controllers would have no bounded command contract to stop a task.",
-      "non_duplicative": "This phase changes Runtime behavior by adding the cancel admission path and replay semantics, then updates VSIX validators and release-readiness guards; it is not a report-only or endpoint-count phase.",
-      "no_new_rpc": "No. RRP-2 intentionally adds the required task.cancel Runtime RPC because the release blocker is the absence of an explicit cancel command.",
+      "strategic_capabilities": "Advances runtime_permission_enforcement, headless_autonomous_development, and controlled_workspace_tools by turning MCP approval evidence into a Runtime-owned monotonic state machine.",
+      "new_capability": "Callers can use mcp.tool.approve to request a Runtime-computed approval binding, and approval-required MCP tools execute only after an atomic approved-to-executing claim immediately before tools/call.",
+      "why_existing_functionality_is_insufficient": "MCP-S4 bound approvals to scoped fingerprints, but historical approved evidence could still be reused after later consumed evidence unless Runtime considered the latest approval state and claimed it atomically.",
+      "product_gap_if_skipped": "Approval-required MCP mutation tools could be retried or reused from stale durable approval evidence, leaving MCP execution unsafe despite S4 approval binding.",
+      "non_duplicative": "This phase changes Runtime execution semantics and tests the previously missing consumed-state and concurrent-claim cases; it is not another approval-binding documentation pass.",
+      "no_new_rpc": "No. The phase intentionally adds mcp.tool.approve because previous tests relied on direct Store-written approval evidence, which is not a public Runtime boundary.",
       "no_new_summary": "Yes. The phase does not add a diagnostic, report, digest, verdict, history, preview, or summary endpoint.",
-      "runtime_behavior_change": "Created, Queued, and Running tasks can transition to Cancelled only through an authorized, fresh task.cancel request; stale, terminal, mismatched, malformed, and unauthorized requests fail closed before terminal evidence.",
-      "headless_autonomous_contribution": "Headless control loops can issue one bounded cancel command and safely replay the exact same cancellation without duplicate terminal events.",
-      "milestone_progress": "Closes the explicit-cancel-command P0 blocker while Runtime Release Ready remains false until the other recorded P0/P1 blockers and owner license/publish decision are resolved."
+      "runtime_behavior_change": "Approval-required MCP tools now require the latest matching state to be approved, claim that approval as executing under a run-local lock, terminalize it as consumed or outcome_unknown, deny duplicate/concurrent reuse, and fail closed for key_required idempotency until Runtime key validation exists.",
+      "headless_autonomous_contribution": "Headless controllers can approve one exact MCP invocation through Runtime and know that duplicate retries, stale approvals, and ambiguous outcome windows will not launch a second tools/call.",
+      "milestone_progress": "Closes the MCP-S4.1 corrective debt while Runtime Release Ready remains false until the other recorded Runtime Release Readiness blockers and owner license/publish decision are resolved."
     },
     "questions": [
       {
@@ -80,17 +80,19 @@
   },
   "review_value_gate": {
     "reject_when": [
-      "phase claims Runtime Release Ready while process-loss recovery E2E, durable schema migration, CI workflow hardening, protocol/event canonization, module decomposition, or platform/deadline/durability blockers remain open",
-      "phase treats cancellation as completion, verification, accepted completion, recovery authorization, approval evidence, permission grant, workspace mutation authority, MCP/tool authority, Mode Pack policy, or external-loop scheduling authority",
-      "phase adds OS process-tree killing, service control, hosted platform behavior, scheduler, daemon, generic shell, arbitrary process execution, remote transport, forge adapter, signing infrastructure, package manager, or registry behavior",
-      "phase stores raw prompts, provider responses, file content, command output, raw request bodies, environment values, secrets, absolute paths, canonical paths, executable content, or process output as durable cancellation evidence"
+      "phase accepts any historical approved MCP approval event instead of the latest matching approval state",
+      "phase launches tools/call before atomically claiming approved approval evidence as executing",
+      "phase permits consumed, executing, outcome_unknown, stale, mismatched, malformed, over-broad, rejected, expired, or invalidated approval evidence to authorize execution",
+      "phase treats approval evidence as completion, verification, accepted completion, recovery authorization, permission grant, workspace mutation authority, MCP/tool authority, Mode Pack policy, or external-loop scheduling authority",
+      "phase allows idempotency=key_required without Runtime-owned concrete key pointer validation",
+      "phase claims Runtime Release Ready while process-loss recovery E2E, durable schema migration, CI workflow hardening, protocol/event canonization, module decomposition, or platform/deadline/durability blockers remain open"
     ]
   },
   "guard_engine_change_review": {
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "RRP-2 changes the Runtime release-readiness guard, audit, and current phase manifest. Review must confirm task.cancel is a real Runtime-owned cancel boundary, keeps CLI/VSIX thin, and does not claim Runtime Release Ready while other P0/P1 blockers remain open.",
+    "review_intent": "MCP-S4.1 changes the Runtime release-readiness guard, boundary contract, audit, and current phase manifest. Review must confirm mcp.tool.approve is a Runtime-owned approval boundary, approval evidence is latest-state and consumption-safe, and Runtime Release Ready remains false.",
     "changed_files": [
       "docs/architecture/phase-value-manifest.json",
       "docs/architecture/runtime-boundary-canonical-contract.json",
@@ -100,47 +102,51 @@
     ]
   },
   "exit_criteria": [
-    "Runtime exposes task.cancel as a typed JSON-RPC method.",
-    "task.cancel requires caller authorization, task/run identity, expected current status, expected task updated_at, and a bounded cancel_id.",
-    "Only Created, Queued, and Running tasks can transition to Cancelled; stale, terminal, mismatched, malformed, missing, and unauthorized requests fail closed before TaskCancelled evidence.",
-    "Exact replay is idempotent only when durable cancellation evidence matches the same cancel request fingerprint.",
-    "VSIX protocol validators and runtime client projections cover task.cancel params/results without owning cancellation policy.",
-    "Runtime Release Readiness audit marks explicit-cancel-command closed and keeps Runtime Release Ready false while remaining blockers are open."
+    "Runtime exposes mcp.tool.approve as a typed JSON-RPC method that recomputes approval binding evidence from task policy, live catalog, pinned catalog provenance, annotations, schema fingerprints, server identity, and structured MCP safety policy.",
+    "Approval-required MCP execution uses only the latest matching McpToolExecutionApproved state; historical approved evidence cannot beat later consumed, executing, outcome_unknown, stale, malformed, or terminal approval evidence.",
+    "Approved evidence is atomically claimed as executing immediately before tools/call under a run-local claim lock.",
+    "Successful, tool-error, schema-failed, or unsupported-input-required outcomes terminalize claimed approval as consumed; timeout or protocol-failure windows terminalize it as outcome_unknown.",
+    "Concurrent execution attempts for the same approval launch at most one tools/call.",
+    "idempotency=key_required fails closed until Runtime-owned concrete key pointer validation exists.",
+    "Runtime Release Readiness and MCP safety audits record MCP-S4.1 as corrective closure while Runtime Release Ready remains false."
   ],
   "behavior_evidence": [
-    "brownie-runtime task_cancel tests cover authorized cancellation, exact replay, stale request rejection, and terminal-task rejection without new terminal evidence.",
-    "VSIX runtimeClient tests cover task.cancel request projection plus invalid params/result rejection.",
-    "Runtime release-readiness guard requires task.cancel in the canonical Runtime boundary method subset.",
-    "Runtime release-readiness guard and phase-value guards validate the updated audit and manifest."
+    "brownie-runtime mcp_tool_approval_latest_consumed_state_beats_historical_approved_event covers approved-to-consumed reuse denial before tools/call.",
+    "brownie-runtime mcp_tool_public_approval_round_trip_executes_once_and_consumes_approval covers the public mcp.tool.approve boundary and one-shot consumption.",
+    "brownie-runtime mcp_tool_concurrent_same_approval_execution_launches_once covers the atomic execution claim.",
+    "brownie-runtime mcp_tool_timeout_after_approval_records_outcome_unknown_and_blocks_reuse covers ambiguous outcome fail-closed retry behavior.",
+    "brownie-runtime mcp_tool_key_required_idempotency_fails_closed_without_runtime_key_validation covers key_required fail-closed behavior.",
+    "Runtime release-readiness guard requires mcp.tool.approve in the canonical Runtime boundary method subset."
   ],
   "product_completion_gate": {
     "required": true,
     "product_completion_claim": false,
     "accepted_capability": [
-      "The Runtime has an explicit, authorized, fresh, replay-safe task.cancel command.",
-      "`explicit-cancel-command` is closed as a Runtime Release Readiness P0 blocker."
+      "MCP approval-required execution is latest-state, consumption-safe, and duplicate-retry safe.",
+      "mcp.tool.approve provides a public Runtime-owned approval boundary instead of relying on direct Store-written evidence.",
+      "MCP-S4.1 is closed as a corrective to the MCP Runtime Safety Policy baseline."
     ],
     "behavior_evidence": [
-      "Runtime tests validate successful cancel, idempotent replay, stale request fail-closed behavior, and terminal task fail-closed behavior.",
-      "VSIX tests validate task.cancel request and response shapes.",
-      "Release-readiness guard validates the canonical boundary includes task.cancel."
+      "Runtime tests validate public approval, consumed-state denial, concurrent duplicate denial, timeout outcome_unknown denial, and key_required fail-closed behavior.",
+      "Runtime Release Readiness guard validates the canonical boundary includes mcp.tool.approve.",
+      "MCP and Runtime release audits document the corrected approval consumption and retry semantics."
     ],
     "safety_boundary": [
-      "Rust Runtime remains the cancellation, admission, replay, ledger, task lifecycle, and terminal-state authority.",
+      "Rust Runtime remains the approval admission, claim, replay, ledger, permission, tool execution, and terminal evidence authority.",
       "CLI and VSIX remain thin transport/projection/validation layers.",
-      "Cancellation is narrowing-only and cannot grant completion, verification, permission, workspace mutation, MCP/tool, process-control, service-control, Mode Pack, or scheduler authority."
+      "MCP approval evidence is narrowing-only and cannot grant completion, verification, permission, workspace mutation, Mode Pack policy, MCP access, catalog authority, schema authority, executable identity, or external-loop scheduling authority."
     ],
     "non_goals": [
       "Does not claim Runtime Release Ready.",
-      "Does not add OS process-tree killing, service control, scheduler, daemon, hosted platform, generic shell, arbitrary process execution, remote transport, forge/notification adapters, package installation, signing infrastructure, or registry behavior.",
-      "Does not reopen MCP-S1 through MCP-S7 or RRP-1.",
+      "Does not add Streamable HTTP, OAuth, MCP Apps, Sampling, Roots, Elicitation, registry, automatic install, hosted secret manager, remote Git expansion, scheduler, daemon, generic shell, arbitrary process execution, hosted platform, forge/notification adapters, custom tool adapter protocols, package installation, signing infrastructure, or remote binary distribution.",
+      "Does not reopen MCP-S1 through MCP-S7 except for the targeted MCP-S4.1 approval-consumption corrective.",
       "Does not close process-loss recovery E2E, durable schema migration, CI workflow hardening, protocol/event canonization, module decomposition, or platform/deadline/durability blockers."
     ],
     "rejected_alternatives": [
-      "Rejected treating existing Cancelled enum/event support as sufficient because it did not provide public Runtime cancel admission.",
-      "Rejected moving cancel policy into CLI or VSIX because cancellation state transitions and replay evidence are Runtime authority.",
-      "Rejected OS process-tree killing and service control because RRP-2 is the durable task cancellation contract, not process supervision.",
-      "Rejected closing recovery, migration, CI, protocol/event, decomposition, or durability blockers in this phase because each requires its own bounded evidence."
+      "Rejected scanning for any matching approved event because it permits historical approval reuse after consumed evidence.",
+      "Rejected direct Store-written approval as the acceptance boundary because callers need a Runtime-owned approval command.",
+      "Rejected metadata-only retry policy because Runtime must derive retry admissibility from durable approval attempt state.",
+      "Rejected key_required approval until Runtime has a concrete key pointer validation contract."
     ],
     "technical_debt": [
       "Remaining Runtime Release Readiness blockers: real process-loss recovery E2E, durable schema version and migration, runtime-release-guard CI workflow hardening, protocol/event canonization, runtime module decomposition reevaluation, and platform/deadline/durability hardening.",
@@ -148,9 +154,9 @@
     ],
     "release_readiness_scope": {
       "runtime_release_dod": [
-        "Explicit caller-authorized cancel command.",
-        "Replay-safe terminal cancellation evidence.",
-        "Canonical Runtime boundary and VSIX validation coverage for task.cancel."
+        "Runtime-owned public MCP approval boundary.",
+        "Monotonic approval state machine and atomic pre-spawn claim.",
+        "Retry-safe terminal approval consumption evidence."
       ],
       "runtime_boundary_contracts": [
         "Run Request",
@@ -159,6 +165,8 @@
         "Run Result and Attestation",
         "Run Inspection",
         "Task Runtime",
+        "Tool Execution",
+        "MCP Approval",
         "CLI External Loop",
         "VSIX Validation"
       ],
@@ -174,7 +182,7 @@
       "external_responsibility_not_release_blocking": true
     },
     "next_capability_rationale": [
-      "After RRP-2 merge, continue to real-process-loss-recovery-e2e as the next recorded Runtime Release Readiness P0 blocker."
+      "After MCP-S4.1 merge, stop as requested; later Runtime Release Readiness blockers remain recorded for a future explicit loop step."
     ]
   }
 }

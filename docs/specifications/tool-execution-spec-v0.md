@@ -127,16 +127,21 @@ execution requires `task_id` so Runtime can use the task-pinned `ModeResolved`
 policy and MCP catalog provenance admitted for that task.
 
 Approval-required MCP tools may execute only after Runtime finds a matching
-`McpToolExecutionApproved` ledger event for the same task/run, normalized tool
+latest `McpToolExecutionApproved` state for the same task/run, normalized tool
 id, server id, tool name, request fingerprint, catalog/schema/annotation
 provenance, server config identity, and structured Brownie MCP safety policy.
-The approval binding fingerprint is materialized by Runtime and stored as
-bounded evidence; raw input JSON, raw schemas, raw server config, environment
-values, credentials, absolute paths, canonical paths, and raw MCP responses are
-not persisted. Missing, stale, consumed, malformed, mismatched, or broad
-approval evidence returns `Denied` before `tools/call`. Completed task-scoped
-MCP evidence is replayed for the same approved request without launching a
-duplicate `tools/call`.
+Callers approve through `mcp.tool.approve`, which recomputes the approval
+binding inside Runtime and appends bounded `status="approved"` evidence.
+Immediately before `tools/call`, Runtime atomically claims that approval by
+moving it to `status="executing"` under a run-local claim lock. Success and
+tool-returned errors consume the approval; timeout and protocol-failure windows
+after launch record `status="outcome_unknown"`. Raw input JSON, raw schemas,
+raw server config, environment values, credentials, absolute paths, canonical
+paths, and raw MCP responses are not persisted. Missing, stale, consumed,
+executing, outcome-unknown, malformed, mismatched, or broad approval evidence
+returns `Denied` before another `tools/call`. Completed task-scoped MCP
+evidence is replayed for the same approved request without launching a duplicate
+`tools/call`.
 
 ## MP-7 Git tools
 

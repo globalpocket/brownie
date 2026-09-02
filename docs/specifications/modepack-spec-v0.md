@@ -348,8 +348,12 @@ compiled policy is `read_only`, `approval=not_required`, `idempotency=safe`, and
 Runtime-materialized approval binding fingerprint before `tools/call`; the
 approval is scoped to the task/run, normalized tool id, request fingerprint,
 task-pinned catalog/schema/annotation provenance, server config identity, and
-structured Brownie MCP safety policy. Destructive, unknown, retry-prohibited,
-and legacy-unclassified tools fail closed. MCP `tools/list` annotations are not
+structured Brownie MCP safety policy. Runtime owns the approval state machine:
+only the latest `approved` state can be claimed as `executing` before
+`tools/call`, and consumed, executing, outcome-unknown, rejected, expired, or
+invalidated states cannot be reused. Destructive, unknown, retry-prohibited,
+`idempotency=key_required` without Runtime-owned key validation, and
+legacy-unclassified tools fail closed. MCP `tools/list` annotations are not
 Mode Pack authority, but Runtime pins bounded boolean annotation provenance for
 `readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint` and
 uses it only to narrow execution or fail closed when live annotations drift.

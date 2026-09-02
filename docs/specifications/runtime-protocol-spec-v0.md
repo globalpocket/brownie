@@ -434,6 +434,35 @@ process failure, protocol error, malformed schema, oversized schema, and
 timeout. Timeout and protocol-failure paths terminate the request-scoped stdio
 server process before returning. See `mcp-client-spec-v0.md`.
 
+Approval-required MCP tools are approved through `mcp.tool.approve`, not by
+caller-supplied ledger writes or prose. The request names the task, mode, tool,
+bounded input, `approve=true`, and a bounded approval id:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 15,
+  "method": "mcp.tool.approve",
+  "params": {
+    "task_id": "task_<uuid>",
+    "mode_id": "reviewer",
+    "tool_id": "mcp.github.search_code",
+    "input": { "query": "bounded" },
+    "approve": true,
+    "approval_id": "approval-1"
+  }
+}
+```
+
+Runtime resolves the task-pinned policy, live catalog, schema, annotation,
+server configuration, secret-reference, and executable-identity provenance,
+then materializes the approval binding fingerprint itself. The durable approval
+state is monotonic: `approved` may be claimed once as `executing`, then becomes
+`consumed` after success/tool-error or `outcome_unknown` after timeout or
+protocol-failure windows. Rejected, expired, invalidated, consumed, executing,
+outcome-unknown, malformed, stale, or over-broad approval evidence cannot be
+reused to launch another `tools/call`.
+
 For admitted tasks, `tool.intent.parse` may include `task_id`. When present,
 Runtime resolves the task-pinned `ModeResolved` policy and MCP catalog evidence,
 adds those dynamic MCP tools to the same intent evaluator used for built-in

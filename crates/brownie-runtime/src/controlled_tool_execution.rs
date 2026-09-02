@@ -1,7 +1,12 @@
 //! Controlled tool execution authority boundary.
 
 use super::*;
+use anyhow::{bail, Context};
 use std::collections::{BTreeMap, BTreeSet};
+use std::{fs, io::Write, path::PathBuf, thread, time::Duration};
+
+const MCP_APPROVAL_CLAIM_LOCK_RETRIES: usize = 40;
+const MCP_APPROVAL_CLAIM_LOCK_SLEEP: Duration = Duration::from_millis(25);
 
 pub(super) fn handle_tool_list(id: Value) -> JsonRpcResponse<Value> {
     let tools = BuiltinToolRegistry::list()
@@ -234,6 +239,171 @@ pub(super) fn handle_tool_execute(id: Value, params: Option<Value>) -> JsonRpcRe
     }
 }
 
+pub(super) fn handle_mcp_tool_approve(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: McpToolApprovalApproveParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if !params.approve {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: approve must be true for mcp.tool.approve",
+        );
+    }
+    if !is_bounded_runtime_identifier(&params.approval_id, 128) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: approval_id must be a bounded runtime identifier",
+        );
+    }
+    match approve_mcp_tool_execution(params) {
+        Ok(result) => result_response(id, json!(result)),
+        Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
+    }
+}
+
+fn approve_mcp_tool_execution(
+    params: McpToolApprovalApproveParams,
+) -> anyhow::Result<McpToolApprovalApproveResult> {
+    let request_fingerprint =
+        mcp_tool_execution_request_fingerprint(&params.tool_id, &params.input);
+    let Some((server_id, tool_name)) = mcp_client::split_normalized_tool_id(&params.tool_id) else {
+        return Ok(McpToolApprovalApproveResult {
+            tool_id: params.tool_id,
+            status: "denied".to_string(),
+            mcp_approval_binding: json!({ "reason": "Malformed MCP tool id." }),
+        });
+    };
+    let server_id = server_id.to_string();
+    let tool_name = tool_name.to_string();
+    let store = BrownieStore::from_env_or_cwd()?;
+    let Some(record) = store.tasks().get_task(&params.task_id)? else {
+        return Ok(McpToolApprovalApproveResult {
+            tool_id: params.tool_id,
+            status: "denied".to_string(),
+            mcp_approval_binding: json!({ "reason": "MCP approval requires a known task." }),
+        });
+    };
+    let policy = match resolve_policy_for_task_run(&record, &store) {
+        Ok(policy) => policy,
+        Err(message) => {
+            return Ok(McpToolApprovalApproveResult {
+                tool_id: params.tool_id,
+                status: "denied".to_string(),
+                mcp_approval_binding: json!({ "reason": message }),
+            })
+        }
+    };
+    if policy.mode_id != params.mode_id {
+        return Ok(McpToolApprovalApproveResult {
+            tool_id: params.tool_id,
+            status: "denied".to_string(),
+            mcp_approval_binding: json!({ "reason": "MCP approval mode_id does not match task policy." }),
+        });
+    }
+    let decision = mcp_tool_runtime_permission_decision(&policy, &server_id, &tool_name);
+    if !decision.allowed {
+        return Ok(McpToolApprovalApproveResult {
+            tool_id: params.tool_id,
+            status: "denied".to_string(),
+            mcp_approval_binding: json!({ "reason": decision.reason }),
+        });
+    }
+    let Some(tool_policy) = compiled_mcp_tool_policy(&policy, &server_id, &tool_name) else {
+        return Ok(McpToolApprovalApproveResult {
+            tool_id: params.tool_id,
+            status: "denied".to_string(),
+            mcp_approval_binding: json!({ "reason": "MCP approval requires structured Brownie safety policy." }),
+        });
+    };
+    if !tool_policy.permits_runtime_approval_binding() {
+        return Ok(McpToolApprovalApproveResult {
+            tool_id: params.tool_id,
+            status: "denied".to_string(),
+            mcp_approval_binding: json!({ "reason": "MCP tool policy cannot be approved for runtime execution." }),
+        });
+    }
+    let mcp_safety_policy = mcp_tool_safety_policy_payload(tool_policy);
+    let Some(config) = mcp_server_config_for_policy(&store, &record, &server_id)? else {
+        return Ok(McpToolApprovalApproveResult {
+            tool_id: params.tool_id,
+            status: "denied".to_string(),
+            mcp_approval_binding: json!({ "reason": "MCP server is not configured by structured Mode Pack policy." }),
+        });
+    };
+    let catalog = match mcp_client::list_tools(&config) {
+        Ok(catalog) => catalog,
+        Err(error) => {
+            return Ok(McpToolApprovalApproveResult {
+                tool_id: params.tool_id,
+                status: "failed".to_string(),
+                mcp_approval_binding: json!({ "reason": format!("MCP tools/list failed: {error}") }),
+            })
+        }
+    };
+    let Some(catalog_entry) = catalog
+        .tools
+        .iter()
+        .find(|entry| entry.tool_name == tool_name && entry.tool_id == params.tool_id)
+    else {
+        return Ok(McpToolApprovalApproveResult {
+            tool_id: params.tool_id,
+            status: "denied".to_string(),
+            mcp_approval_binding: json!({ "reason": "MCP tool is outside the validated server catalog." }),
+        });
+    };
+    if !pinned_mcp_catalog_allows(&store, &record, &catalog, catalog_entry)? {
+        return Ok(McpToolApprovalApproveResult {
+            tool_id: params.tool_id,
+            status: "denied".to_string(),
+            mcp_approval_binding: json!({ "reason": "MCP tool catalog does not match task-pinned provenance." }),
+        });
+    }
+    if let Some(reason) = mcp_annotation_safety_denial(tool_policy, catalog_entry) {
+        return Ok(McpToolApprovalApproveResult {
+            tool_id: params.tool_id,
+            status: "denied".to_string(),
+            mcp_approval_binding: json!({ "reason": reason }),
+        });
+    }
+    if let Err(error) = mcp_client::validate_tool_input_against_schema(catalog_entry, &params.input)
+    {
+        return Ok(McpToolApprovalApproveResult {
+            tool_id: params.tool_id,
+            status: "denied".to_string(),
+            mcp_approval_binding: json!({
+                "reason": format!("MCP tool input schema validation failed: {error}")
+            }),
+        });
+    }
+    let approval_binding = mcp_tool_approval_binding_payload(
+        &record,
+        &params.tool_id,
+        &request_fingerprint,
+        &catalog,
+        catalog_entry,
+        &mcp_safety_policy,
+    );
+    let approved_binding =
+        match approve_mcp_tool_binding(&store, &record, &approval_binding, &params.approval_id)? {
+            Ok(binding) => binding,
+            Err(reason) => {
+                return Ok(McpToolApprovalApproveResult {
+                    tool_id: params.tool_id,
+                    status: "denied".to_string(),
+                    mcp_approval_binding: json!({ "reason": reason }),
+                })
+            }
+        };
+    Ok(McpToolApprovalApproveResult {
+        tool_id: params.tool_id,
+        status: "approved".to_string(),
+        mcp_approval_binding: approved_binding,
+    })
+}
+
 fn execute_mcp_tool(params: ToolExecuteParams) -> anyhow::Result<ToolExecuteResult> {
     let Some(task_id) = params.task_id.as_deref() else {
         return Ok(ToolExecuteResult {
@@ -350,20 +520,6 @@ fn execute_mcp_tool_for_record(
         catalog_entry,
         &mcp_safety_policy,
     );
-    if tool_policy.permits_runtime_approval_binding()
-        && !matching_mcp_tool_approval_bound(store, record, &approval_binding)?
-    {
-        return Ok(ToolExecuteResult {
-            tool_id,
-            status: ToolExecuteStatus::Denied,
-            output: json!({
-                "reason": "MCP tool requires a matching runtime approval fingerprint before tools/call.",
-                "mcp_approval_binding": approval_binding,
-                "catalog_provenance": mcp_catalog_provenance_payload(&catalog, catalog_entry),
-                "mcp_safety_policy": mcp_safety_policy,
-            }),
-        });
-    }
     let schema_validation = match mcp_client::validate_tool_input_against_schema(
         catalog_entry,
         &input,
@@ -382,6 +538,28 @@ fn execute_mcp_tool_for_record(
             })
         }
     };
+    let approval_claim = if tool_policy.permits_runtime_approval_binding() {
+        match claim_mcp_tool_approval_for_execution(store, record, &approval_binding)? {
+            McpToolApprovalClaimResult::Claimed(claim) => Some(claim),
+            McpToolApprovalClaimResult::Denied(reason) => {
+                return Ok(ToolExecuteResult {
+                    tool_id,
+                    status: ToolExecuteStatus::Denied,
+                    output: json!({
+                        "reason": reason,
+                        "mcp_approval_binding": approval_binding,
+                        "catalog_provenance": mcp_catalog_provenance_payload(&catalog, catalog_entry),
+                        "mcp_safety_policy": mcp_safety_policy,
+                        "mcp_schema_validation": {
+                            "input": schema_validation,
+                        },
+                    }),
+                });
+            }
+        }
+    } else {
+        None
+    };
     match mcp_client::call_tool(&config, catalog_entry, input) {
         Ok(call_result) if call_result.status.is_success() => {
             let output_schema_validation = call_result
@@ -389,6 +567,15 @@ fn execute_mcp_tool_for_record(
                 .get("output_schema_validation")
                 .cloned()
                 .unwrap_or(Value::Null);
+            let approval_binding = terminalize_mcp_tool_approval(
+                store,
+                record,
+                approval_claim.as_ref(),
+                "consumed",
+                "tool_succeeded",
+                call_result.output.get("result_fingerprint"),
+            )?
+            .unwrap_or(approval_binding);
             Ok(ToolExecuteResult {
                 tool_id,
                 status: ToolExecuteStatus::Completed,
@@ -410,6 +597,15 @@ fn execute_mcp_tool_for_record(
                 .get("output_schema_validation")
                 .cloned()
                 .unwrap_or(Value::Null);
+            let approval_binding = terminalize_mcp_tool_approval(
+                store,
+                record,
+                approval_claim.as_ref(),
+                "consumed",
+                "tool_returned_error",
+                call_result.output.get("result_fingerprint"),
+            )?
+            .unwrap_or(approval_binding);
             Ok(ToolExecuteResult {
                 tool_id,
                 status: ToolExecuteStatus::Failed,
@@ -437,6 +633,22 @@ fn execute_mcp_tool_for_record(
             if let Some(metadata) = error.metadata {
                 merge_object_fields(&mut mcp, metadata);
             }
+            let approval_status = match error.kind {
+                mcp_client::McpToolCallFailureKind::TimedOut
+                | mcp_client::McpToolCallFailureKind::ProtocolFailed => "outcome_unknown",
+                mcp_client::McpToolCallFailureKind::Failed
+                | mcp_client::McpToolCallFailureKind::InputRequiredUnsupported => "consumed",
+            };
+            let outcome = error.kind.as_str();
+            let approval_binding = terminalize_mcp_tool_approval(
+                store,
+                record,
+                approval_claim.as_ref(),
+                approval_status,
+                outcome,
+                mcp.get("result_fingerprint"),
+            )?
+            .unwrap_or(approval_binding);
             Ok(ToolExecuteResult {
                 tool_id,
                 status: ToolExecuteStatus::Failed,
@@ -650,37 +862,303 @@ fn mcp_tool_approval_binding_payload(
     payload
 }
 
-fn matching_mcp_tool_approval_bound(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum McpToolApprovalState {
+    Requested,
+    Approved,
+    Executing,
+    Consumed,
+    Rejected,
+    Expired,
+    Invalidated,
+    OutcomeUnknown,
+    Malformed,
+}
+
+impl McpToolApprovalState {
+    fn from_payload(payload: &Value) -> Self {
+        match payload.get("status").and_then(Value::as_str) {
+            Some("requested") => Self::Requested,
+            Some("approved") => Self::Approved,
+            Some("executing") => Self::Executing,
+            Some("consumed") => Self::Consumed,
+            Some("rejected") => Self::Rejected,
+            Some("expired") => Self::Expired,
+            Some("invalidated") => Self::Invalidated,
+            Some("outcome_unknown") => Self::OutcomeUnknown,
+            _ => Self::Malformed,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Requested => "requested",
+            Self::Approved => "approved",
+            Self::Executing => "executing",
+            Self::Consumed => "consumed",
+            Self::Rejected => "rejected",
+            Self::Expired => "expired",
+            Self::Invalidated => "invalidated",
+            Self::OutcomeUnknown => "outcome_unknown",
+            Self::Malformed => "malformed",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct McpToolApprovalClaim {
+    executing_binding: Value,
+}
+
+enum McpToolApprovalClaimResult {
+    Claimed(McpToolApprovalClaim),
+    Denied(String),
+}
+
+fn claim_mcp_tool_approval_for_execution(
     store: &BrownieStore,
     record: &TaskRecord,
     approval_binding: &Value,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<McpToolApprovalClaimResult> {
+    let _lock = acquire_mcp_tool_approval_claim_lock(store, record, approval_binding)?;
+    match latest_mcp_tool_approval_state(store, record, approval_binding)? {
+        Some(McpToolApprovalState::Approved) => {
+            let executing_binding = mcp_tool_approval_state_payload(
+                approval_binding,
+                "executing",
+                Some("tools_call_claimed"),
+                None,
+            );
+            store.tasks().append_task_event_with_payload(
+                record,
+                LedgerEventKind::McpToolExecutionApproved,
+                Some(executing_binding.clone()),
+            )?;
+            Ok(McpToolApprovalClaimResult::Claimed(McpToolApprovalClaim {
+                executing_binding,
+            }))
+        }
+        Some(state) => Ok(McpToolApprovalClaimResult::Denied(format!(
+            "MCP tool approval latest state is {} and cannot be used for tools/call.",
+            state.as_str()
+        ))),
+        None => Ok(McpToolApprovalClaimResult::Denied(
+            "MCP tool requires a matching runtime approval fingerprint before tools/call."
+                .to_string(),
+        )),
+    }
+}
+
+fn approve_mcp_tool_binding(
+    store: &BrownieStore,
+    record: &TaskRecord,
+    approval_binding: &Value,
+    approval_id: &str,
+) -> anyhow::Result<std::result::Result<Value, String>> {
+    let _lock = acquire_mcp_tool_approval_claim_lock(store, record, approval_binding)?;
+    match latest_mcp_tool_approval_state(store, record, approval_binding)? {
+        Some(McpToolApprovalState::Approved) => {
+            return Ok(Ok(mcp_tool_approval_state_payload(
+                approval_binding,
+                "approved",
+                Some("approval_replay"),
+                None,
+            )))
+        }
+        Some(state) if state != McpToolApprovalState::Requested => {
+            return Ok(Err(format!(
+                "MCP tool approval latest state is {} and cannot be approved again",
+                state.as_str()
+            )));
+        }
+        _ => {}
+    }
+    let approval_id_fingerprint = runtime_sha256_fingerprint(approval_id.as_bytes());
+    let mut approved_binding = mcp_tool_approval_state_payload(
+        approval_binding,
+        "approved",
+        Some("caller_approved"),
+        None,
+    );
+    if let Some(object) = approved_binding.as_object_mut() {
+        object.insert(
+            "approval_id_fingerprint".to_string(),
+            json!(approval_id_fingerprint),
+        );
+    }
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::McpToolExecutionApproved,
+        Some(approved_binding.clone()),
+    )?;
+    Ok(Ok(approved_binding))
+}
+
+fn terminalize_mcp_tool_approval(
+    store: &BrownieStore,
+    record: &TaskRecord,
+    claim: Option<&McpToolApprovalClaim>,
+    status: &str,
+    outcome: &str,
+    outcome_fingerprint: Option<&Value>,
+) -> anyhow::Result<Option<Value>> {
+    let Some(claim) = claim else {
+        return Ok(None);
+    };
+    let terminal_binding = mcp_tool_approval_state_payload(
+        &claim.executing_binding,
+        status,
+        Some(outcome),
+        outcome_fingerprint,
+    );
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::McpToolExecutionApproved,
+        Some(terminal_binding.clone()),
+    )?;
+    Ok(Some(terminal_binding))
+}
+
+fn mcp_tool_approval_state_payload(
+    approval_binding: &Value,
+    status: &str,
+    outcome: Option<&str>,
+    outcome_fingerprint: Option<&Value>,
+) -> Value {
+    let mut payload = approval_binding.clone();
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("status".to_string(), json!(status));
+        object.insert(
+            "approval_state_fingerprint".to_string(),
+            json!(runtime_sha256_fingerprint(
+                canonical_json_value(&json!({
+                    "version": "mcp_tool_approval_state_v1",
+                    "approval_fingerprint": approval_binding
+                        .get("approval_fingerprint")
+                        .and_then(Value::as_str)
+                        .unwrap_or(""),
+                    "status": status,
+                    "outcome": outcome,
+                    "outcome_fingerprint": outcome_fingerprint,
+                }))
+                .to_string()
+                .as_bytes(),
+            )),
+        );
+        if let Some(outcome) = outcome {
+            object.insert("outcome".to_string(), json!(outcome));
+        }
+        if let Some(fingerprint) = outcome_fingerprint {
+            object.insert("outcome_fingerprint".to_string(), fingerprint.clone());
+        }
+    }
+    payload
+}
+
+fn latest_mcp_tool_approval_state(
+    store: &BrownieStore,
+    record: &TaskRecord,
+    approval_binding: &Value,
+) -> anyhow::Result<Option<McpToolApprovalState>> {
     let events = store.tasks().read_ledger_events(&record.run_id)?;
     let expected_fingerprint = approval_binding
         .get("approval_fingerprint")
         .and_then(Value::as_str);
-    Ok(expected_fingerprint.is_some_and(|fingerprint| {
-        events
-            .iter()
-            .rev()
-            .filter(|event| event.kind == LedgerEventKind::McpToolExecutionApproved)
-            .filter_map(|event| event.payload.as_ref())
-            .any(|payload| {
-                payload.get("status").and_then(Value::as_str) == Some("approved")
-                    && payload.get("approval_fingerprint").and_then(Value::as_str)
-                        == Some(fingerprint)
-                    && payload.get("task_id") == approval_binding.get("task_id")
-                    && payload.get("run_id") == approval_binding.get("run_id")
-                    && payload.get("tool_id") == approval_binding.get("tool_id")
-                    && payload.get("server_id") == approval_binding.get("server_id")
-                    && payload.get("tool_name") == approval_binding.get("tool_name")
-                    && payload.get("request_fingerprint")
-                        == approval_binding.get("request_fingerprint")
-                    && payload.get("catalog_provenance")
-                        == approval_binding.get("catalog_provenance")
-                    && payload.get("mcp_safety_policy") == approval_binding.get("mcp_safety_policy")
-            })
-    }))
+    let Some(fingerprint) = expected_fingerprint else {
+        return Ok(None);
+    };
+    Ok(events
+        .iter()
+        .rev()
+        .filter(|event| event.kind == LedgerEventKind::McpToolExecutionApproved)
+        .filter_map(|event| event.payload.as_ref())
+        .find(|payload| {
+            payload.get("approval_fingerprint").and_then(Value::as_str) == Some(fingerprint)
+        })
+        .map(|payload| {
+            if mcp_tool_approval_payload_matches_binding(payload, approval_binding) {
+                McpToolApprovalState::from_payload(payload)
+            } else {
+                McpToolApprovalState::Malformed
+            }
+        }))
+}
+
+fn mcp_tool_approval_payload_matches_binding(payload: &Value, approval_binding: &Value) -> bool {
+    [
+        "task_id",
+        "run_id",
+        "tool_id",
+        "server_id",
+        "tool_name",
+        "request_fingerprint",
+        "catalog_provenance",
+        "mcp_safety_policy",
+    ]
+    .into_iter()
+    .all(|key| payload.get(key) == approval_binding.get(key))
+}
+
+#[derive(Debug)]
+struct McpToolApprovalClaimLock {
+    path: PathBuf,
+}
+
+impl Drop for McpToolApprovalClaimLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn acquire_mcp_tool_approval_claim_lock(
+    store: &BrownieStore,
+    record: &TaskRecord,
+    approval_binding: &Value,
+) -> anyhow::Result<McpToolApprovalClaimLock> {
+    let run_dir = store.tasks().run_dir(&record.run_id);
+    fs::create_dir_all(&run_dir)
+        .with_context(|| format!("failed to create {}", run_dir.display()))?;
+    let lock_name = approval_binding
+        .get("approval_fingerprint")
+        .and_then(Value::as_str)
+        .and_then(|fingerprint| fingerprint.strip_prefix("sha256:"))
+        .filter(|fingerprint| {
+            fingerprint.len() == 64 && fingerprint.chars().all(|ch| ch.is_ascii_hexdigit())
+        })
+        .unwrap_or("malformed");
+    let lock_path = run_dir.join(format!("mcp-approval-{lock_name}.lock"));
+    for _ in 0..MCP_APPROVAL_CLAIM_LOCK_RETRIES {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+        {
+            Ok(mut file) => {
+                writeln!(file, "{}", runtime_sha256_fingerprint(lock_name.as_bytes()))
+                    .context("failed to write MCP approval claim lock")?;
+                return Ok(McpToolApprovalClaimLock { path: lock_path });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                thread::sleep(MCP_APPROVAL_CLAIM_LOCK_SLEEP);
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("failed to acquire {}", lock_path.display()));
+            }
+        }
+    }
+    bail!(
+        "failed to acquire MCP approval claim lock for {}",
+        record.run_id
+    )
+}
+
+fn is_bounded_runtime_identifier(value: &str, max_len: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= max_len
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
 }
 
 fn mcp_call_failure_metadata(

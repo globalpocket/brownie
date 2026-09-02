@@ -180,6 +180,7 @@ impl CompiledMcpToolPolicy {
             && self.side_effect != McpToolSideEffect::Destructive
             && self.side_effect != McpToolSideEffect::Unknown
             && self.idempotency != McpToolIdempotency::Unknown
+            && self.idempotency != McpToolIdempotency::KeyRequired
             && self.retry != McpToolRetry::Prohibited
     }
 

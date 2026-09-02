@@ -127,7 +127,8 @@ An MCP tool call is authorized only when all of these are true:
 - either the tool safety policy is approval-free safe (`read_only`,
   `approval=not_required`, `idempotency=safe`, and `retry` is not
   `prohibited`) or the tool safety policy permits runtime approval binding and
-  one matching task-scoped approval fingerprint is present in the run ledger;
+  the latest Runtime-owned approval state for the task-scoped approval
+  fingerprint is `approved`;
 - the server configuration exists in structured Mode Pack policy;
 - the stdio server launch is performed by Brownie Runtime;
 - the live catalog entry matches task-pinned catalog provenance.
@@ -153,22 +154,31 @@ or widen a Brownie safety policy.
 
 Approval-required MCP calls do not become authority because the server,
 description, schema, annotation, model, CLI, or caller says they are approved.
-Before `tools/call`, Runtime materializes an approval binding fingerprint from
-the task id, run id, normalized tool id, server id, tool name, normalized
-request fingerprint, task-pinned catalog provenance, schema and annotation
-fingerprints, server config identity fingerprint, and structured Brownie MCP
-safety policy. A matching `McpToolExecutionApproved` ledger event must carry
-`status="approved"` and the same scoped fields. Missing, stale, mismatched,
-consumed, malformed, or over-broad approval evidence fails closed before the
-server process receives `tools/call`. The approval cannot override
+Before approval or `tools/call`, Runtime materializes an approval binding
+fingerprint from the task id, run id, normalized tool id, server id, tool name,
+normalized request fingerprint, task-pinned catalog provenance, schema and
+annotation fingerprints, server config identity fingerprint, and structured
+Brownie MCP safety policy. Public `mcp.tool.approve` recomputes this binding
+inside Runtime and records bounded `McpToolExecutionApproved`
+`status="approved"` evidence; callers may not submit an arbitrary binding as
+authority. Immediately before `tools/call`, Runtime takes an approval claim
+lock, verifies the latest state for the approval fingerprint is still
+`approved`, and records `status="executing"`. Completed tool success and
+tool-returned errors move the approval to `status="consumed"`; timeout or
+protocol-failure windows after launch move it to `status="outcome_unknown"`.
+Missing, stale, mismatched, consumed, executing, rejected, expired,
+invalidated, outcome-unknown, malformed, or over-broad approval evidence fails
+closed before the server process receives another `tools/call`. The approval
+state cannot override
 `mcp_tool_access`, server/tool allow-list membership, legacy-unclassified
-policy, prohibited retry, destructive/unknown policy, annotation narrowing, or
-catalog drift.
+policy, prohibited retry, `idempotency=key_required` without Runtime-owned key
+validation, destructive/unknown policy, annotation narrowing, or catalog drift.
 
 Schemas are runtime contracts, not grants. Input schemas are checked before
-`tools/call`, after Mode Pack allow-list, safety-policy, annotation, approval,
-and task-pinned catalog checks have passed. Invalid input returns bounded
-`Denied` evidence and the server process does not receive `tools/call`.
+`tools/call`, after Mode Pack allow-list, safety-policy, annotation, and
+task-pinned catalog checks have passed, but before an approval-required
+invocation is claimed for execution. Invalid input returns bounded `Denied`
+evidence and the server process does not receive `tools/call`.
 Successful tool results are checked against optional output schemas before
 `ToolExecutionCompleted`, completed-success replay evidence, or next-agent
 materialization can be produced. In v0, `outputSchema` validates the
