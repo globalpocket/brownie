@@ -99,9 +99,11 @@
       "debt_classification": "required_before_release",
       "evidence": [
         "The existing CI still uses pnpm install instead of pnpm install --frozen-lockfile and does not directly run every release-relevant guard test.",
-        "This phase wires the Runtime release readiness guard into the VSIX check path that CI already invokes, but full CI Release Gate hardening remains a later P0 closure phase."
+        "RRD-1 wires the Runtime release readiness guard into the VSIX check path that CI already invokes.",
+        "The Runtime release readiness guard now supports audit-driven convergence: open Runtime P0/P1 debt keeps runtime_release_ready=false, closed Runtime blockers must be removed from release_ready_blocked_by, and all closed Runtime blockers require runtime_release_ready=true.",
+        "Full CI Release Gate hardening remains a later P0 closure phase because workflow update authority was unavailable."
       ],
-      "next_action": "Close in the CI Release Gate phase when workflow update authority is available."
+      "next_action": "Close the remaining CI workflow hardening when workflow update authority is available."
     },
     {
       "id": "mcp-runtime-safety-policy",

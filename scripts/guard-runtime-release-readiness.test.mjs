@@ -108,6 +108,30 @@ function validAudit(overrides = {}) {
   };
 }
 
+function terminalRuntimeReadyAudit(overrides = {}) {
+  const audit = validAudit();
+  return {
+    ...audit,
+    runtime_release_ready: true,
+    release_ready_blocked_by: [],
+    classifications: audit.classifications.map((entry) => {
+      if (
+        entry.responsibility_domain === 'runtime' &&
+        ['P0', 'P1'].includes(entry.priority)
+      ) {
+        return {
+          ...entry,
+          status: 'implemented_sufficient',
+          debt_classification: 'closed',
+          evidence: ['bounded closure evidence']
+        };
+      }
+      return entry;
+    }),
+    ...overrides
+  };
+}
+
 function validate(audit, options = {}) {
   return validateRuntimeReleaseReadinessAudit(audit, {
     ciText,
@@ -121,9 +145,23 @@ test('accepts bounded Runtime release readiness audit', () => {
   assert.deepEqual(validate(validAudit()), []);
 });
 
+test('accepts terminal Runtime release readiness audit after all Runtime blockers close', () => {
+  assert.deepEqual(validate(terminalRuntimeReadyAudit()), []);
+});
+
 test('rejects declaring Runtime release ready with open required debt', () => {
   const errors = validate(validAudit({ runtime_release_ready: true }));
   assert(errors.some((error) => error.includes('runtime_release_ready')));
+});
+
+test('rejects stale not-ready decision after all Runtime blockers close', () => {
+  const errors = validate(terminalRuntimeReadyAudit({ runtime_release_ready: false }));
+  assert(errors.some((error) => error.includes('runtime_release_ready must be true')));
+});
+
+test('rejects release blockers that name closed Runtime items', () => {
+  const errors = validate(terminalRuntimeReadyAudit({ release_ready_blocked_by: ['explicit-cancel-command'] }));
+  assert(errors.some((error) => error.includes('release_ready_blocked_by must not include closed')));
 });
 
 test('rejects open Runtime P0 item misclassified as external post-v0 debt', () => {
