@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use brownie_agentmodes::{
     compile_agentmodes_modepack_from_root, AgentModesCapabilityCeiling, AgentModesCompileOptions,
-    AgentModesSourceTrust, CompiledMcpServerAccess, CompiledModePolicy, CompiledPolicyArtifact,
+    AgentModesSourceTrust, CompiledMcpServerAccess, CompiledMcpToolPolicy, CompiledModePolicy,
+    CompiledPolicyArtifact, McpToolApproval, McpToolIdempotency, McpToolRetry, McpToolSideEffect,
     ModePermissions, WorkspaceWriteScope, HANDOFF_TARGET_ALL_MODEPACK_MODES,
 };
 use serde::{Deserialize, Serialize};
@@ -199,7 +200,23 @@ struct RawModeMcpAccess {
 struct RawModeMcpServerAccess {
     id: String,
     #[serde(default)]
-    tools: Vec<String>,
+    tools: Vec<RawModeMcpToolAccess>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawModeMcpToolAccess {
+    LegacyName(String),
+    Policy(RawModeMcpToolPolicy),
+}
+
+#[derive(Debug, Deserialize)]
+struct RawModeMcpToolPolicy {
+    name: String,
+    side_effect: McpToolSideEffect,
+    approval: McpToolApproval,
+    idempotency: McpToolIdempotency,
+    retry: McpToolRetry,
 }
 
 pub fn load_workspace_modepack(
@@ -528,13 +545,16 @@ fn validate_mode_mcp_access(
                 bail!("modepack mode {mode_id} MCP server {server_id} exceeds tool limit");
             }
             let mut seen_tools = HashSet::new();
-            let mut tools = server
+            let mut tool_policies = server
                 .tools
                 .into_iter()
-                .map(|tool| {
-                    validate_mcp_identifier("mcp.servers[].tools[]", &tool, MAX_MCP_TOOL_NAME_CHARS)
-                })
+                .map(|tool| compile_mcp_tool_policy(mode_id, &server_id, tool))
                 .collect::<Result<Vec<_>>>()?;
+            tool_policies.sort_by(|a, b| a.name.cmp(&b.name));
+            let mut tools = tool_policies
+                .iter()
+                .map(|policy| policy.name.clone())
+                .collect::<Vec<_>>();
             tools.sort();
             for tool in &tools {
                 if !seen_tools.insert(tool.clone()) {
@@ -543,9 +563,104 @@ fn validate_mode_mcp_access(
                     );
                 }
             }
-            Ok(CompiledMcpServerAccess { server_id, tools })
+            Ok(CompiledMcpServerAccess {
+                server_id,
+                tools,
+                tool_policies,
+            })
         })
         .collect()
+}
+
+fn compile_mcp_tool_policy(
+    mode_id: &str,
+    server_id: &str,
+    raw: RawModeMcpToolAccess,
+) -> Result<CompiledMcpToolPolicy> {
+    match raw {
+        RawModeMcpToolAccess::LegacyName(name) => {
+            let name =
+                validate_mcp_identifier("mcp.servers[].tools[]", &name, MAX_MCP_TOOL_NAME_CHARS)?;
+            Ok(CompiledMcpToolPolicy {
+                name,
+                side_effect: McpToolSideEffect::Unknown,
+                approval: McpToolApproval::Prohibited,
+                idempotency: McpToolIdempotency::Unknown,
+                retry: McpToolRetry::Prohibited,
+                legacy_unclassified: true,
+            })
+        }
+        RawModeMcpToolAccess::Policy(raw) => {
+            let name = validate_mcp_identifier(
+                "mcp.servers[].tools[].name",
+                &raw.name,
+                MAX_MCP_TOOL_NAME_CHARS,
+            )?;
+            validate_mcp_tool_safety_policy(mode_id, server_id, &name, &raw)?;
+            Ok(CompiledMcpToolPolicy {
+                name,
+                side_effect: raw.side_effect,
+                approval: raw.approval,
+                idempotency: raw.idempotency,
+                retry: raw.retry,
+                legacy_unclassified: false,
+            })
+        }
+    }
+}
+
+fn validate_mcp_tool_safety_policy(
+    mode_id: &str,
+    server_id: &str,
+    tool_name: &str,
+    policy: &RawModeMcpToolPolicy,
+) -> Result<()> {
+    match policy.side_effect {
+        McpToolSideEffect::ReadOnly => {
+            if policy.idempotency != McpToolIdempotency::Safe {
+                bail!(
+                    "modepack mode {mode_id} MCP tool mcp.{server_id}.{tool_name} read_only policy must be idempotency=safe"
+                );
+            }
+            if policy.retry == McpToolRetry::Prohibited {
+                bail!(
+                    "modepack mode {mode_id} MCP tool mcp.{server_id}.{tool_name} read_only policy must allow retry or policy-controlled retry"
+                );
+            }
+        }
+        McpToolSideEffect::LocalMutation | McpToolSideEffect::ExternalMutation => {
+            if policy.approval != McpToolApproval::Required {
+                bail!(
+                    "modepack mode {mode_id} MCP tool mcp.{server_id}.{tool_name} mutation policy must be approval=required"
+                );
+            }
+            if policy.retry == McpToolRetry::Allowed {
+                bail!(
+                    "modepack mode {mode_id} MCP tool mcp.{server_id}.{tool_name} mutation policy must not use retry=allowed"
+                );
+            }
+        }
+        McpToolSideEffect::Destructive => {
+            if policy.approval != McpToolApproval::Prohibited
+                || policy.idempotency != McpToolIdempotency::Unsafe
+                || policy.retry != McpToolRetry::Prohibited
+            {
+                bail!(
+                    "modepack mode {mode_id} MCP tool mcp.{server_id}.{tool_name} destructive policy must be approval=prohibited, idempotency=unsafe, retry=prohibited"
+                );
+            }
+        }
+        McpToolSideEffect::Unknown => {
+            if policy.approval != McpToolApproval::Prohibited
+                || policy.retry != McpToolRetry::Prohibited
+            {
+                bail!(
+                    "modepack mode {mode_id} MCP tool mcp.{server_id}.{tool_name} unknown policy must be approval=prohibited and retry=prohibited"
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_mcp_identifier(field: &str, value: &str, max_chars: usize) -> Result<String> {
@@ -2130,7 +2245,25 @@ customModes:
               },
               "mcp": {
                 "servers": [
-                  { "id": "github", "tools": ["get_file_contents", "search_code"] }
+                  {
+                    "id": "github",
+                    "tools": [
+                      {
+                        "name": "get_file_contents",
+                        "side_effect": "read_only",
+                        "approval": "not_required",
+                        "idempotency": "safe",
+                        "retry": "policy_controlled"
+                      },
+                      {
+                        "name": "search_code",
+                        "side_effect": "read_only",
+                        "approval": "not_required",
+                        "idempotency": "safe",
+                        "retry": "allowed"
+                      }
+                    ]
+                  }
                 ]
               }
             }
@@ -2151,9 +2284,63 @@ customModes:
             policy.mcp_access[0].tools,
             vec!["get_file_contents".to_string(), "search_code".to_string()]
         );
+        assert_eq!(policy.mcp_access[0].tool_policies.len(), 2);
+        assert!(policy.mcp_access[0]
+            .tool_policy("search_code")
+            .expect("search_code policy")
+            .permits_unapproved_runtime_execution());
         assert!(snapshot.mcp_servers[0]
             .config_identity_fingerprint
             .starts_with("sha256:"));
+    }
+
+    #[test]
+    fn legacy_mcp_tool_allow_list_compiles_as_unclassified_fail_closed_policy() {
+        let modepack = r#"{
+          "name": "mcp-pack",
+          "schema_version": 1,
+          "mcp_servers": {
+            "github": {
+              "transport": "stdio",
+              "command": "/bin/echo",
+              "args": ["{}"]
+            }
+          },
+          "modes": [
+            {
+              "mode_id": "reviewer",
+              "display_name": "Reviewer",
+              "role_definition": "Legacy MCP allow-list is not a safety policy.",
+              "permissions": {
+                "read_only": false,
+                "workspace_write": false,
+                "process_exec": false,
+                "network_access": false,
+                "service_control": false,
+                "destructive": false,
+                "can_spawn_subtasks": false,
+                "mcp_tool_access": true
+              },
+              "mcp": {
+                "servers": [
+                  { "id": "github", "tools": ["search_code"] }
+                ]
+              }
+            }
+          ]
+        }"#;
+
+        let snapshot = load_modepack_from_str_with_options(
+            modepack,
+            ".brownie/modepack.json",
+            ModePackLoadOptions::trusted_signed_active_modepack(),
+        )
+        .expect("legacy MCP allow-list should remain readable");
+        let policy = &snapshot.modes[0].mcp_access[0].tool_policies[0];
+
+        assert_eq!(policy.name, "search_code");
+        assert!(policy.legacy_unclassified);
+        assert!(!policy.permits_unapproved_runtime_execution());
     }
 
     #[test]

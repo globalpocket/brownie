@@ -1,39 +1,39 @@
 {
   "schema_version": 1,
-  "phase": "RRG-1",
-  "current_milestone": "runtime-release-readiness-p0-p1-finite-closure",
-  "milestone": "Brownie Runtime Release Readiness P0/P1 Finite Closure",
+  "phase": "MCP-S2",
+  "current_milestone": "mcp-runtime-safety-policy-finite-closure",
+  "milestone": "Brownie MCP Runtime Safety Policy Finite Closure",
   "target_capability": "runtime_permission_enforcement",
-  "concrete_capability_transition": "runtime_release_guard_supports_audit_driven_open_to_closed_convergence_before_mcp_s2",
-  "forbidden_pattern": "product_completion_reopen_cli_mp_history_runtime_release_ready_with_open_runtime_debt_closed_blocker_still_in_release_ready_blocked_by_external_blocker_required_before_release_streamable_http_oauth_mcp_apps_sampling_roots_elicitation_public_registry_automatic_install_remote_binary_distribution_scheduler_daemon_generic_shell_arbitrary_process_exec_modepack_policy_passthrough_raw_json_rpc_response_raw_error_secret_environment_absolute_path_canonical_path_binary_content",
+  "concrete_capability_transition": "mcp_tools_call_requires_structured_tool_level_brownie_safety_policy",
+  "forbidden_pattern": "product_completion_reopen_cli_mp_history_runtime_release_ready_with_open_runtime_debt_adapter_manifest_custom_tool_protocol_streamable_http_oauth_mcp_apps_sampling_roots_elicitation_public_registry_automatic_install_remote_binary_distribution_scheduler_daemon_generic_shell_arbitrary_process_exec_mcp_annotation_as_authority_tool_description_as_authority_model_output_as_authority_modepack_policy_passthrough_raw_json_rpc_response_raw_error_secret_environment_absolute_path_canonical_path_binary_content",
   "project_objective_ref": "docs/architecture/product-charter.md",
   "strategic_capability_mapping": [
     {
       "capability": "runtime_permission_enforcement",
-      "relationship": "Allows the release readiness audit to converge from open Runtime P0/P1 blockers to closed evidence without rewriting the guard every phase."
+      "relationship": "Requires MCP tools/call to pass a Runtime-owned structured safety policy gate in addition to mcp_tool_access and server/tool allow-list membership."
     },
     {
       "capability": "headless_autonomous_development",
-      "relationship": "Keeps autonomous phase selection finite by making the guard validate the audit state instead of hard-coding only the current incomplete state."
+      "relationship": "Prevents autonomous agent loops from executing unclassified or mutating MCP tools merely because a model selected an allow-listed tool."
     },
     {
       "capability": "controlled_workspace_tools",
-      "relationship": "Preserves Runtime-owned release blockers and prevents closed or external items from remaining release blockers."
+      "relationship": "Keeps controlled tool execution bounded by task-pinned Mode Pack policy and Runtime permission checks."
     }
   ],
   "phase_value_gate": {
     "required": true,
     "answers": {
-      "strategic_capabilities": "Advances runtime_permission_enforcement and headless_autonomous_development, with controlled_workspace_tools protected by the same release gate.",
-      "new_capability": "The Runtime release readiness guard can now validate both the current not-ready audit state and the future terminal ready state after all Runtime P0/P1 release blockers are closed.",
-      "why_existing_functionality_is_insufficient": "The guard already accepted current incomplete evidence, but it fixed required Runtime blocker debt to required_before_release and runtime_release_ready=false, so later closure phases would have to rewrite guard source to mark blockers closed.",
-      "product_gap_if_skipped": "MCP-S2 and later release phases could implement real closure evidence yet fail the release guard merely because the guard cannot represent convergence.",
-      "non_duplicative": "This phase changes the guard's machine-checkable acceptance semantics and tests terminal convergence; it does not add another report, wrapper, endpoint, or MCP execution surface.",
+      "strategic_capabilities": "Advances runtime_permission_enforcement and headless_autonomous_development while preserving controlled_workspace_tools boundaries.",
+      "new_capability": "Runtime can distinguish explicitly safe read-only MCP tools from legacy, unclassified, mutating, destructive, unknown, or approval-required MCP tools before attempting tools/call.",
+      "why_existing_functionality_is_insufficient": "The previous MCP policy had mcp_tool_access plus server/tool names only, so a trusted Mode Pack could not express side effects, approval requirements, idempotency, or retry semantics per tool.",
+      "product_gap_if_skipped": "MCP server/tool allow-lists would continue to look like executable authority even when a tool is mutating, unsafe, approval-required, or merely a legacy string entry.",
+      "non_duplicative": "This phase changes compiled Mode Pack policy and Runtime permission behavior; it does not add a wrapper, adapter manifest, new RPC, or documentation-only verdict.",
       "no_new_rpc": "Yes. The existing tool.execute, task.run, and headless run/resume paths are preserved.",
-      "no_new_summary": "Yes. The phase updates an existing release guard and audit artifact, not a new user-facing summary API.",
-      "runtime_behavior_change": "Open Runtime P0/P1 required-before-release items still force runtime_release_ready=false, closed Runtime items must use implemented_sufficient plus closed, closed items cannot remain in release_ready_blocked_by, and an all-closed Runtime audit must set runtime_release_ready=true.",
-      "headless_autonomous_contribution": "The loop can now close Runtime release blockers one by one without creating a fresh guard-source corrective for every successful phase.",
-      "milestone_progress": "Closes the guard convergence blocker recorded before MCP-S2 while leaving the remaining MCP-S2 through MCP-S7 safety work open."
+      "no_new_summary": "Yes. The phase updates existing policy, Runtime execution evidence, specs, and audits rather than adding a summary endpoint.",
+      "runtime_behavior_change": "MCP tools/call is attempted only after structured Brownie tool safety policy permits approval-free execution; legacy and mutating policies are denied before server execution.",
+      "headless_autonomous_contribution": "Autonomous runs can safely use task-pinned read-only MCP tools while future mutation and approval work remains fail-closed.",
+      "milestone_progress": "Closes MCP-S2 and leaves MCP-S3 through MCP-S7 open before Runtime Release Ready."
     },
     "questions": [
       {
@@ -80,76 +80,75 @@
   },
   "review_value_gate": {
     "reject_when": [
-      "phase lets Runtime release be ready while open Runtime P0/P1 required-before-release debt remains",
-      "phase allows closed, unknown, owner, external control-plane, adapter, or commercial items to remain in release_ready_blocked_by",
-      "phase reclassifies Runtime-owned P0/P1 blockers as external post-v0 work without closure evidence",
-      "phase claims full CI Release Gate hardening despite workflow update authority still being unavailable",
-      "phase adds Streamable HTTP, OAuth, MCP Apps, Sampling, Roots, Elicitation, public registry, automatic install, scheduler, daemon, generic shell, arbitrary process execution, recursive Brownie invocation, or unrelated product surfaces"
+      "phase treats MCP annotations, descriptions, schemas, results, or model output as authority",
+      "phase lets legacy string allow-list entries execute as read-only tools",
+      "phase allows local_mutation, external_mutation, destructive, unknown, approval-required, or prohibited-retry MCP tools to execute before approval binding",
+      "phase adds a Brownie-specific MCP adapter manifest, custom tool adapter protocol, Streamable HTTP, OAuth, MCP Apps, Sampling, Roots, Elicitation, public registry, automatic install, scheduler, daemon, generic shell, arbitrary process execution, recursive Brownie invocation, or unrelated product surfaces"
     ]
   },
   "guard_engine_change_review": {
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "RRG-1 updates the Runtime Release Readiness guard, so strict review must verify that convergence support cannot mask open Runtime release blockers, leave closed blockers in release_ready_blocked_by, or convert excluded platform/product work into Runtime release scope.",
+    "review_intent": "MCP-S2 changes Runtime MCP permission behavior and release audit evidence, so strict review must verify that only structured read-only safe MCP tools can execute and that legacy or mutating tool policies fail closed.",
     "changed_files": [
-      "scripts/guard-runtime-release-readiness.mjs",
-      "scripts/guard-runtime-release-readiness.test.mjs",
+      "crates/brownie-agentmodes/src/lib.rs",
+      "crates/brownie-modepack/src/lib.rs",
+      "crates/brownie-runtime/src/controlled_tool_execution.rs",
+      "crates/brownie-runtime/src/lib.rs",
       "docs/architecture/phase-value-manifest.json",
-      "docs/architecture/runtime-release-readiness-audit.json"
+      "docs/architecture/mcp-runtime-safety-policy-audit.json",
+      "docs/architecture/runtime-release-readiness-audit.json",
+      "scripts/guard-runtime-release-readiness.mjs",
+      "scripts/guard-runtime-release-readiness.test.mjs"
     ]
   },
   "exit_criteria": [
-    "Current incomplete Runtime release audit still passes with runtime_release_ready=false while Runtime P0/P1 blockers remain open.",
-    "A terminal audit with all Runtime P0/P1 blockers implemented_sufficient and closed passes with runtime_release_ready=true.",
-    "Open Runtime P0/P1 release blockers must be present in release_ready_blocked_by.",
-    "Closed, unknown, owner, and external items cannot remain in release_ready_blocked_by.",
-    "Runtime-owned P0/P1 items cannot be misclassified as external post-v0 debt.",
-    "The remaining CI workflow hardening blocker stays partial and required_before_release."
+    "Compiled MCP access includes per-tool side_effect, approval, idempotency, retry, and legacy_unclassified safety policy.",
+    "Legacy MCP string allow-list entries remain readable but are denied by Runtime before tools/call.",
+    "Structured read_only, approval=not_required, idempotency=safe, non-prohibited retry policy can execute through existing MCP paths.",
+    "Mutation, destructive, unknown, approval-required, and prohibited-retry MCP policies fail closed before tools/call.",
+    "MCP-S2 is marked closed while MCP-S3 through MCP-S7 and Runtime Release Ready remain open."
   ],
   "behavior_evidence": [
-    "pnpm guard:runtime-release-readiness:test covers current not-ready acceptance, terminal ready acceptance, stale not-ready rejection, and closed blocker rejection.",
-    "pnpm guard:runtime-release-readiness validates the current Runtime Release Readiness audit.",
-    "docs/architecture/runtime-release-readiness-audit.json records guard convergence evidence while keeping full CI workflow hardening open."
+    "brownie-modepack test coverage covers structured MCP policy and legacy-unclassified compatibility input.",
+    "brownie-runtime test coverage covers read-only MCP execution, legacy policy denial, mutation policy denial, and S1/S1.1 result semantics preservation.",
+    "docs/architecture/mcp-runtime-safety-policy-audit.json records MCP-S2 as closed while leaving MCP-S3 through MCP-S7 open."
   ],
   "product_completion_gate": {
     "required": true,
     "product_completion_claim": false,
     "accepted_capability": [
-      "Runtime Release Readiness guard now supports bounded open-to-closed blocker convergence.",
-      "Runtime Release Ready can become true only after all Runtime P0/P1 release blockers are implemented_sufficient and closed."
+      "MCP tools/call now requires structured per-tool Brownie safety policy.",
+      "Legacy unclassified and mutating MCP tools fail closed before server execution."
     ],
     "behavior_evidence": [
-      "Runtime release readiness guard tests cover current not-ready audits, terminal ready audits, stale not-ready terminal audits, and closed blockers left in release_ready_blocked_by.",
-      "The current Runtime Release Readiness audit still passes while existing Runtime blockers remain open."
+      "ModePack compiler test coverage preserves structured policy and fail-closed legacy classification.",
+      "Runtime focused MCP test coverage proves safe read-only execution and denial before tools/call for unsafe policies."
     ],
     "safety_boundary": [
       "Rust Runtime remains the execution, admission, replay, permission, tool, workspace mutation, and completion authority.",
-      "The guard validates audit-owned release readiness evidence; prose, CLI, VSIX, AgentModes, MCP metadata, and external artifacts cannot grant release readiness.",
-      "External platform, adapter, commercial, scheduler, daemon, registry, and hosted features remain outside Runtime release blockers."
+      "Mode Pack structured policy is the MCP tool safety authority; MCP annotations, descriptions, schemas, results, and model output cannot grant authority.",
+      "Mutation and approval-required MCP tools remain fail-closed until MCP-S4 approval binding."
     ],
     "non_goals": [
       "Does not add a Brownie-specific tool adapter SDK or protocol.",
       "Does not add Streamable HTTP, OAuth, MCP Apps, Sampling, Roots, Elicitation, public registry, automatic install, scheduler, daemon, generic shell, arbitrary process execution, or recursive Brownie invocation.",
-      "Does not close MCP-S2 through MCP-S7.",
+      "Does not close MCP-S3 through MCP-S7.",
       "Does not close full CI workflow hardening while workflow update authority is unavailable."
     ],
     "rejected_alternatives": [
-      "Rejected leaving runtime_release_ready hard-coded to false because it prevents finite release convergence.",
-      "Rejected letting closed Runtime items remain in release_ready_blocked_by because that would hide stale audit state.",
-      "Rejected broad CI workflow changes because workflow update authority remains unavailable in this environment."
+      "Rejected treating legacy string allow-lists as read-only because tool names alone do not describe safety.",
+      "Rejected deriving safety from MCP descriptions or annotations because S3 has not yet pinned and drift-checked annotations.",
+      "Rejected executing approval-required mutation tools in S2 because MCP-S4 approval binding remains open."
     ],
     "technical_debt": [
-      "Full CI Release Gate workflow hardening remains open.",
-      "MCP-S2 tool-level Brownie safety policy remains open.",
       "MCP-S3 annotation provenance and drift checks remain open.",
       "MCP-S4 tool-level approval binding remains open.",
       "MCP-S5 runtime input/output schema validation remains open.",
       "MCP-S6 secret reference contract remains open.",
-      "MCP-S7 executable identity remains open."
-    ],
-    "next_capability_rationale": [
-      "MCP-S2 should add structured per-tool safety policy before annotation, approval, schema, secret, or executable identity phases can safely compose around it."
+      "MCP-S7 executable identity remains open.",
+      "Previously recorded Runtime Release Readiness blockers remain open, including full CI workflow hardening."
     ],
     "release_readiness_scope": {
       "runtime_release_dod": [
@@ -170,89 +169,9 @@
         "Enterprise tenant management, SSO/RBAC server, admin UI, monitoring backend, billing, SLA, private registry, and certified stack."
       ],
       "external_responsibility_not_release_blocking": true
-    }
-  },
-  "product_dod": {
-    "runtime_release_dod": [
-      "Runtime-owned release readiness guard must validate current open debt and terminal closed debt without source rewrites."
-    ],
-    "closes": [
-      "runtime-release-guard-convergence"
-    ],
-    "leaves_open": [
-      "mcp-tool-safety-policy",
-      "mcp-tool-annotation-provenance",
-      "mcp-tool-approval-binding",
-      "mcp-runtime-schema-validation",
-      "mcp-secret-reference-contract",
-      "mcp-executable-identity"
-    ],
-    "does_not_close": [
-      "Full CI Release Gate workflow hardening",
-      "Tool-level Brownie safety policy",
-      "MCP annotation provenance and drift checks",
-      "Tool-level approval binding",
-      "Runtime input/output schema validation",
-      "Secret reference contract",
-      "MCP server executable identity"
+    },
+    "next_capability_rationale": [
+      "MCP-S3 should parse, pin, fingerprint, and drift-check MCP annotations as narrowing-only evidence against this structured policy baseline."
     ]
-  },
-  "technical_debt": [
-    {
-      "id": "runtime-release-guard-convergence",
-      "classification": "closed",
-      "responsibility_domain": "runtime",
-      "status_after_phase": "closed",
-      "evidence": "Guard accepts current not-ready audits and terminal ready audits, rejects stale closed blockers, and requires runtime_release_ready=true only after all Runtime P0/P1 blockers close."
-    },
-    {
-      "id": "runtime-release-guard-ci",
-      "classification": "required_before_release",
-      "responsibility_domain": "runtime",
-      "status_after_phase": "open",
-      "evidence": "Full CI Release Gate workflow hardening remains open because workflow update authority is unavailable."
-    },
-    {
-      "id": "mcp-tool-safety-policy",
-      "classification": "required_before_release",
-      "responsibility_domain": "runtime",
-      "status_after_phase": "open",
-      "evidence": "Per-tool side-effect, approval, idempotency, and retry policy remains open for MCP-S2."
-    },
-    {
-      "id": "mcp-tool-annotation-provenance",
-      "classification": "required_before_release",
-      "responsibility_domain": "runtime",
-      "status_after_phase": "open",
-      "evidence": "MCP annotations are not yet pinned into catalog provenance or drift checks."
-    },
-    {
-      "id": "mcp-tool-approval-binding",
-      "classification": "required_before_release",
-      "responsibility_domain": "runtime",
-      "status_after_phase": "open",
-      "evidence": "MCP external mutation/destructive call approval binding remains open."
-    },
-    {
-      "id": "mcp-runtime-schema-validation",
-      "classification": "required_before_release",
-      "responsibility_domain": "runtime",
-      "status_after_phase": "open",
-      "evidence": "Runtime still needs bounded input/output schema validation for MCP tools/call."
-    },
-    {
-      "id": "mcp-secret-reference-contract",
-      "classification": "required_before_release",
-      "responsibility_domain": "runtime",
-      "status_after_phase": "open",
-      "evidence": "Secret reference contract remains open; no secret manager implementation is in scope."
-    },
-    {
-      "id": "mcp-executable-identity",
-      "classification": "required_before_release",
-      "responsibility_domain": "runtime",
-      "status_after_phase": "open",
-      "evidence": "Executable content identity pinning remains open while existing absolute path and stdio hardening stay preserved."
-    }
-  ]
+  }
 }

@@ -318,16 +318,35 @@ request bodies, absolute paths, or canonical paths.
 ## MCP policy
 
 Mode Packs may declare first-phase MCP access with a top-level `mcp_servers`
-map and per-mode `mcp.servers[].tools` allow-lists. Only `stdio` transport is
-valid in v0. Server ids and tool names are bounded identifiers, the `command`
-must be an absolute executable path, and duplicate, unknown, relative-command,
-malformed, or oversized entries fail closed during Mode Pack validation.
+map and per-mode `mcp.servers[].tools` entries. Each tool entry must carry
+Brownie safety policy: `side_effect`, `approval`, `idempotency`, and `retry`.
+Legacy string tool names are still parseable as compatibility input, but compile
+as `legacy_unclassified` with `side_effect=unknown`, `approval=prohibited`,
+`idempotency=unknown`, and `retry=prohibited`; Runtime denies those calls. Only
+`stdio` transport is valid in v0. Server ids and tool names are bounded
+identifiers, the `command` must be an absolute executable path, and duplicate,
+unknown, relative-command, malformed, or oversized entries fail closed during
+Mode Pack validation.
 
 The mode permission bit is `mcp_tool_access`. It is narrowed by source trust and
 the runtime capability ceiling. Untrusted repository-local Mode Packs cannot
 grant MCP execution even if they declare `mcp_tool_access` and allow-listed
 tools. AgentModes `mcp` groups remain candidates/prose only unless a structured
-Mode Pack MCP server/tool allow-list exists.
+Mode Pack MCP server/tool allow-list and Brownie safety policy exists.
+
+Tool safety values are:
+
+- `side_effect`: `read_only`, `local_mutation`, `external_mutation`,
+  `destructive`, or `unknown`.
+- `approval`: `not_required`, `required`, or `prohibited`.
+- `idempotency`: `safe`, `key_required`, `unsafe`, or `unknown`.
+- `retry`: `allowed`, `policy_controlled`, or `prohibited`.
+
+In v0, Runtime may execute MCP tools without a separate approval only when the
+compiled policy is `read_only`, `approval=not_required`, `idempotency=safe`, and
+`retry` is not `prohibited`. Local mutation, external mutation, destructive,
+unknown, and legacy-unclassified tools fail closed until a later phase binds MCP
+tool approvals.
 
 Mode Pack MCP server command configuration is structured runtime policy. It is
 not prompt authority, and raw command configuration, credentials, environment
