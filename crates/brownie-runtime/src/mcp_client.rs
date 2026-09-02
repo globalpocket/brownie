@@ -88,6 +88,7 @@ pub enum McpToolCallFailureKind {
     ProtocolFailed,
     TimedOut,
     Failed,
+    InputRequiredUnsupported,
 }
 
 impl McpToolCallFailureKind {
@@ -96,6 +97,7 @@ impl McpToolCallFailureKind {
             Self::ProtocolFailed => "ProtocolFailed",
             Self::TimedOut => "TimedOut",
             Self::Failed => "Failed",
+            Self::InputRequiredUnsupported => "InputRequiredUnsupported",
         }
     }
 }
@@ -124,6 +126,13 @@ impl McpToolCallFailure {
     fn failed(message: impl Into<String>) -> Self {
         Self {
             kind: McpToolCallFailureKind::Failed,
+            message: message.into(),
+        }
+    }
+
+    fn input_required_unsupported(message: impl Into<String>) -> Self {
+        Self {
+            kind: McpToolCallFailureKind::InputRequiredUnsupported,
             message: message.into(),
         }
     }
@@ -171,6 +180,7 @@ pub fn list_tools(config: &ModePackMcpServerConfig) -> Result<McpToolCatalog> {
         .get("result")
         .and_then(Value::as_object)
         .context("MCP tools/list missing result object")?;
+    validate_complete_result_type(result, "MCP tools/list")?;
     let tools = result
         .get("tools")
         .and_then(Value::as_array)
@@ -283,21 +293,35 @@ pub fn call_tool(
             "MCP tools/call result must be an object",
         ));
     }
-    let Some(is_error) = result.get("isError").and_then(Value::as_bool) else {
+    let result_object = result.as_object().expect("checked object");
+    let result_type = match classify_call_result_type(result_object)? {
+        McpCallResultType::Complete(result_type) => result_type,
+        McpCallResultType::InputRequired => {
+            return Err(McpToolCallFailure::input_required_unsupported(
+                "MCP tools/call input_required results are not supported in v0",
+            ));
+        }
+    };
+    let Some(content) = result.get("content").and_then(Value::as_array) else {
         return Err(McpToolCallFailure::failed(
-            "MCP tools/call result missing boolean isError",
+            "MCP tools/call result content must be an array",
         ));
+    };
+    let is_error = match result.get("isError") {
+        Some(Value::Bool(value)) => *value,
+        None => false,
+        Some(_) => {
+            return Err(McpToolCallFailure::failed(
+                "MCP tools/call result isError must be a boolean when present",
+            ))
+        }
     };
     let status = if is_error {
         McpToolCallStatus::ToolReturnedError
     } else {
         McpToolCallStatus::ToolSucceeded
     };
-    let content_item_count = result
-        .get("content")
-        .and_then(Value::as_array)
-        .map(|items| items.len())
-        .unwrap_or(0);
+    let content_item_count = content.len();
     let (content_items, content_truncated, text_chars, materialized_text_chars) =
         bounded_result_context_items(&result);
     Ok(McpToolCallResult {
@@ -312,6 +336,8 @@ pub fn call_tool(
             "protocol_status": "ProtocolSucceeded",
             "tool_status": status.as_str(),
             "execution_status": status.as_str(),
+            "result_type": result_type.value,
+            "result_type_source": result_type.source,
             "retry_policy": if is_error { "policy_controlled" } else { "success_replay_allowed" },
             "content_item_count": content_item_count,
             "materialized_content_item_count": content_items.len(),
@@ -324,6 +350,55 @@ pub fn call_tool(
             "content_items": content_items,
         }),
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct McpCompleteResultType {
+    value: &'static str,
+    source: &'static str,
+}
+
+enum McpCallResultType {
+    Complete(McpCompleteResultType),
+    InputRequired,
+}
+
+fn classify_call_result_type(
+    result: &Map<String, Value>,
+) -> std::result::Result<McpCallResultType, McpToolCallFailure> {
+    match result.get("resultType") {
+        Some(Value::String(value)) if value == "complete" => {
+            Ok(McpCallResultType::Complete(McpCompleteResultType {
+                value: "complete",
+                source: "wire",
+            }))
+        }
+        Some(Value::String(value)) if value == "input_required" => {
+            Ok(McpCallResultType::InputRequired)
+        }
+        Some(Value::String(_)) => Err(McpToolCallFailure::protocol_failed(
+            "MCP tools/call returned unsupported resultType",
+        )),
+        Some(_) => Err(McpToolCallFailure::protocol_failed(
+            "MCP tools/call resultType must be a string",
+        )),
+        None => Ok(McpCallResultType::Complete(McpCompleteResultType {
+            value: "complete",
+            source: "backward_compat_absent",
+        })),
+    }
+}
+
+fn validate_complete_result_type(result: &Map<String, Value>, operation: &str) -> Result<()> {
+    match result.get("resultType") {
+        Some(Value::String(value)) if value == "complete" => Ok(()),
+        Some(Value::String(value)) if value == "input_required" => {
+            bail!("{operation} input_required results are not supported in v0")
+        }
+        Some(Value::String(_)) => bail!("{operation} returned unsupported resultType"),
+        Some(_) => bail!("{operation} resultType must be a string"),
+        None => Ok(()),
+    }
 }
 
 fn bounded_result_context_items(result: &Value) -> (Vec<Value>, bool, usize, usize) {

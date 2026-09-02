@@ -219,14 +219,18 @@ content are not ledger authority or prompt authority. See
 
 MCP-S1 separates JSON-RPC protocol success from MCP tool success without
 changing the external `ToolExecuteStatus` enum. A valid `tools/call` envelope
-with a result is `ProtocolSucceeded`; only an explicit `isError=false` result is
-`ToolSucceeded` and may emit `ToolExecutionCompleted`. An explicit
+with a complete result is `ProtocolSucceeded`; `resultType="complete"` is the
+normal v0 result type, absent `resultType` is accepted as backward-compatible
+`complete`, and `input_required` fails closed as unsupported in v0. Explicit
+`isError=false` or omitted `isError` is `ToolSucceeded` and may emit
+`ToolExecutionCompleted`. An explicit
 `isError=true` result is `ToolReturnedError`: the runtime emits
 `ToolExecutionFailed` with bounded MCP error context, does not treat it as
 verification or completion evidence, and does not place it in the completed
 success replay cache. JSON-RPC `error` responses are `ProtocolFailed`, request
-timeouts are `TimedOut`, and malformed result bodies are `Failed`. Retry remains
-policy-controlled and must not be inferred from the MCP result text.
+timeouts are `TimedOut`, unknown result types are `ProtocolFailed`, and
+malformed result bodies are `Failed`. Retry remains policy-controlled and must
+not be inferred from the MCP result text.
 
 ## Phase 1.8 task-scoped read-only execution
 

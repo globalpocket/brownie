@@ -62154,6 +62154,7 @@ content-length: {}
             .unwrap()
             .starts_with("sha256:"));
         assert_eq!(mcp["is_error"], json!(false));
+        assert_eq!(mcp["result_type"], json!("complete"));
         assert_eq!(mcp["content_item_count"], json!(2));
         assert_eq!(mcp["materialized_content_item_count"], json!(2));
         assert_eq!(mcp["content_truncated"], json!(true));
@@ -62231,12 +62232,65 @@ content-length: {}
     }
 
     #[test]
-    fn mcp_stdio_tool_call_classifies_protocol_timeout_and_malformed_results() {
+    fn mcp_stdio_tool_call_treats_omitted_is_error_as_success() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "call_omitted_is_error");
+        write_mcp_modepack(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use MCP safely","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id");
+        let response = handle_tool_execute(
+            json!(2),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {"query": "bounded"}
+            })),
+        )
+        .result
+        .expect("mcp execute");
+
+        assert_eq!(response["status"], json!("Completed"));
+        let mcp = &response["output"]["mcp"];
+        assert_eq!(mcp["protocol_status"], json!("ProtocolSucceeded"));
+        assert_eq!(mcp["tool_status"], json!("ToolSucceeded"));
+        assert_eq!(mcp["execution_status"], json!("ToolSucceeded"));
+        assert_eq!(mcp["is_error"], json!(false));
+        assert_eq!(mcp["result_type"], json!("complete"));
+        assert_eq!(mcp["result_type_source"], json!("wire"));
+        assert_eq!(mcp["retry_policy"], json!("success_replay_allowed"));
+    }
+
+    #[test]
+    fn mcp_stdio_tool_call_classifies_protocol_timeout_result_type_and_malformed_results() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         for (scenario, expected_status, expected_protocol_status) in [
             ("call_protocol_error", "ProtocolFailed", "ProtocolFailed"),
             ("call_timeout", "TimedOut", "TimedOut"),
             ("call_malformed_result", "Failed", "ProtocolSucceeded"),
+            (
+                "call_input_required",
+                "InputRequiredUnsupported",
+                "InputRequired",
+            ),
+            (
+                "call_unknown_result_type",
+                "ProtocolFailed",
+                "ProtocolFailed",
+            ),
         ] {
             let temp = tempfile::tempdir().expect("temp dir");
             let fake_server = write_fake_mcp_server(temp.path(), scenario);
@@ -63395,7 +63449,55 @@ case "$request" in
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
     ;;
   *tools/call*)
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"missing explicit isError"}]}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","content":"not an array","isError":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+            }
+            "call_omitted_is_error" => {
+                r#"#!/bin/sh
+read request
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","content":[{"type":"text","text":"MCP_RESULT_OMITTED_IS_ERROR"}]}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+            }
+            "call_input_required" => {
+                r#"#!/bin/sh
+read request
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"input_required","requestState":"bounded-state-token"}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+            }
+            "call_unknown_result_type" => {
+                r#"#!/bin/sh
+read request
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"resultType":"unknown_future","content":[{"type":"text","text":"unsupported"}],"isError":false}}'
     ;;
   *)
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
