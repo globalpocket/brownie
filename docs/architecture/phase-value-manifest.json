@@ -1,39 +1,39 @@
 {
   "schema_version": 1,
-  "phase": "RRD-1",
-  "current_milestone": "runtime_release_readiness_p0_p1_finite_closure",
-  "milestone": "Brownie Runtime Release Readiness P0/P1 Finite Closure",
-  "target_capability": "headless_autonomous_development",
-  "concrete_capability_transition": "runtime_release_debt_reaudit_is_machine_checked_and_ci_enforced",
-  "forbidden_pattern": "bdk_enterprise_assurance_feature_scheduler_daemon_job_queue_worker_fleet_docker_vm_kubernetes_vault_kms_secret_manager_production_impl_tenant_management_sso_rbac_server_admin_approval_web_ui_github_app_gitlab_app_pr_create_merge_slack_teams_email_notification_monitoring_backend_dashboard_alert_sla_billing_private_registry_certified_stack_continuity_assurance_bdk_scaffold_mock_dev_cli_remote_git_push_merge_generic_shell_arbitrary_process_exec_recursive_brownie_invocation_raw_prompt_provider_response_file_content_stdout_stderr_command_environment_secret_absolute_path_canonical_path",
+  "phase": "MCP-S1",
+  "current_milestone": "mcp-runtime-safety-policy-finite-closure",
+  "milestone": "Brownie MCP Runtime Safety Policy Finite Closure",
+  "target_capability": "runtime_permission_enforcement",
+  "concrete_capability_transition": "mcp_tool_error_results_are_no_longer_success_or_replay_evidence",
+  "forbidden_pattern": "brownie_custom_tool_adapter_sdk_brownie_custom_tool_server_protocol_mcp_server_framework_streamable_http_oauth_mcp_apps_sampling_roots_elicitation_public_registry_automatic_install_remote_binary_distribution_scheduler_daemon_generic_shell_arbitrary_process_exec_modepack_policy_passthrough_raw_json_rpc_response_raw_error_secret_environment_absolute_path_canonical_path_binary_content",
   "project_objective_ref": "docs/architecture/product-charter.md",
   "strategic_capability_mapping": [
     {
-      "capability": "headless_autonomous_development",
-      "relationship": "Keeps Runtime release readiness tied to executable local Runtime debt classification before new autonomous feature work proceeds."
+      "capability": "runtime_permission_enforcement",
+      "relationship": "Keeps MCP tool execution success evidence owned by Runtime status semantics instead of server prose or result text."
     },
     {
-      "capability": "runtime_permission_enforcement",
-      "relationship": "Preserves the boundary that Runtime-owned permission, tool, cancellation, replay, recovery, and completion debt cannot be hidden inside external platform work."
+      "capability": "headless_autonomous_development",
+      "relationship": "Prevents autonomous loops from treating MCP tool-side errors as successful context, verification evidence, or completed-success replay."
     },
     {
       "capability": "controlled_workspace_tools",
-      "relationship": "Keeps workspace mutation and controlled tool release blockers separate from forge, notification, hosted scheduler, and commercial product readiness."
+      "relationship": "Preserves bounded tool execution and ledger evidence behavior while leaving workspace, Git, verifier, and completion tools inside the Runtime."
     }
   ],
   "phase_value_gate": {
     "required": true,
     "answers": {
-      "strategic_capabilities": "Advances headless_autonomous_development, runtime_permission_enforcement, and controlled_workspace_tools.",
-      "new_capability": "Brownie now has a machine-checked Runtime Release Readiness audit that classifies P0/P1 Runtime blockers, owner decisions, out-of-runtime work, and the still-open CI Release Gate before implementation phases begin.",
-      "why_existing_functionality_is_insufficient": "The prior manifest separated Runtime DoD from external responsibilities, but it did not provide a guarded P0/P1 release-debt inventory or verify that the Runtime release readiness guard remains on the existing CI-invoked VSIX check path.",
-      "product_gap_if_skipped": "Brownie could either claim Runtime Release Ready with open Runtime blockers or incorrectly block Runtime release on scheduler, daemon, enterprise, adapter, BDK, or hosted platform work.",
-      "non_duplicative": "This phase adds a new audit artifact, guard, negative tests, CI wiring, and manifest alignment rather than another readiness summary.",
-      "no_new_rpc": "Yes. The phase introduces no protocol method, CLI command, runtime endpoint, or VSIX command.",
-      "no_new_summary": "Yes. The audit is a release gate artifact consumed by a guard, not a new runtime inspection, digest, history, verdict, or user-facing summary API.",
-      "runtime_behavior_change": "Release readiness validation now fails closed when open Runtime P0/P1 blockers are misclassified, when out-of-runtime work blocks release, when OSS owner decisions are omitted, or when the existing CI-invoked VSIX check path omits the Runtime release readiness guard.",
-      "headless_autonomous_contribution": "The autonomous controller can proceed through finite corrective phases using a guarded list of Runtime-owned blockers instead of drifting into platform or commercial work.",
-      "milestone_progress": "Closes the first required campaign step, Runtime Release debt reaudit, and makes later P0/P1 closure phases auditable."
+      "strategic_capabilities": "Advances runtime_permission_enforcement, headless_autonomous_development, and controlled_workspace_tools.",
+      "new_capability": "Brownie now distinguishes MCP ProtocolSucceeded, ToolSucceeded, ToolReturnedError, ProtocolFailed, TimedOut, and malformed-result Failed outcomes at the Runtime MCP tools/call boundary.",
+      "why_existing_functionality_is_insufficient": "The previous MCP call path recorded isError as metadata but treated any successful JSON-RPC result as ToolExecuteStatus::Completed, allowing tool-side errors to become completion and success-replay evidence.",
+      "product_gap_if_skipped": "A failing MCP tool could be replayed or summarized as successful autonomous progress, weakening Runtime-owned permission, verification, and completion semantics before later MCP safety policy phases.",
+      "non_duplicative": "This phase changes controlled MCP execution classification and tests the ledger/replay boundary; it does not add another audit-only report, endpoint, adapter, or wrapper.",
+      "no_new_rpc": "Yes. The existing tool.execute, task.run, and headless run/resume paths are preserved.",
+      "no_new_summary": "Yes. The phase adds bounded execution status metadata to existing MCP tool-result payloads and a campaign audit artifact, not a new user-facing summary API.",
+      "runtime_behavior_change": "Explicit isError=true now emits ToolExecutionFailed with bounded MCP context, while only explicit isError=false emits ToolExecutionCompleted and enters completed-success replay.",
+      "headless_autonomous_contribution": "Headless autonomous runs no longer build second-pass prompts or completion evidence from MCP tool-side errors, preventing false progress loops.",
+      "milestone_progress": "Closes the first required MCP Runtime Safety Policy phase and registers remaining MCP-S2 through MCP-S7 blockers without disturbing the prior Runtime Release Readiness campaign."
     },
     "questions": [
       {
@@ -80,228 +80,166 @@
   },
   "review_value_gate": {
     "reject_when": [
-      "phase adds BDK, Enterprise, Assurance, scheduler, daemon, job queue, worker fleet, hosted platform, forge adapter, notification adapter, admin UI, monitoring, billing, private registry, or commercial solution features",
-      "phase implements cancel, migration, process-loss E2E, protocol canonization, module decomposition, or platform hardening instead of only auditing and guarding the release debt inventory",
-      "phase classifies open Runtime P0/P1 release blockers as post_v0 or external responsibility",
-      "phase lets external control-plane, external adapter, or commercial solution work block Brownie Runtime release",
-      "phase declares Runtime Release Ready before all required Runtime P0/P1 blockers are closed",
-      "phase weakens Runtime ownership of task state, permission checks, tool execution, workspace mutation, replay, recovery, completion, or finalization",
-      "phase exposes raw prompt, provider response, file content, full diff, stdout, stderr, command, environment value, secret, absolute path, or canonical path"
+      "phase replaces MCP with a Brownie-specific tool adapter path",
+      "phase lets LLM, CLI, VSIX, AgentModes prose, MCP server description, MCP schema, MCP annotation, or MCP result text grant runtime authority",
+      "phase treats isError=true as ToolExecutionCompleted, verification success, task completion evidence, or completed-success replay evidence",
+      "phase stores raw JSON-RPC responses, raw tool errors, secrets, environment values, absolute paths, canonical paths, binary content, prompts, provider responses, or raw file content in ledger payloads",
+      "phase adds Streamable HTTP, OAuth, MCP Apps, Sampling, Roots, Elicitation, public registry, automatic install, scheduler, daemon, generic shell, arbitrary process execution, or recursive Brownie invocation"
     ]
   },
   "guard_engine_change_review": {
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "RRD-1 adds a Runtime Release Readiness guard and connects it to CI, so strict review must ensure the new guard cannot mask open Runtime P0/P1 blockers or convert external platform work into release-blocking Runtime debt.",
+    "review_intent": "MCP-S1 updates the phase-value manifest and Runtime Release Readiness audit registration, so strict review must verify that the new MCP safety campaign cannot mask open Runtime release blockers or convert excluded MCP transport/product work into this P0 phase.",
     "changed_files": [
-      ".github/workflows/ci.yml",
       "docs/architecture/phase-value-manifest.json",
-      "docs/architecture/runtime-release-readiness-audit.json",
-      "docs/architecture/runtime-release-readiness-audit.md",
-      "extensions/brownie-vsix/package.json",
-      "package.json",
-      "scripts/guard-phase-value.mjs",
-      "scripts/guard-phase-value.test.mjs",
-      "scripts/guard-product-completion.mjs",
-      "scripts/guard-product-completion.test.mjs",
-      "scripts/guard-runtime-release-readiness.mjs",
-      "scripts/guard-runtime-release-readiness.test.mjs"
+      "docs/architecture/runtime-release-readiness-audit.json"
     ]
   },
   "exit_criteria": [
-    "A human-readable Runtime Release Readiness audit table classifies requested P0/P1/P2 items as implemented sufficient, implemented contract gap, partial, runtime-outside, or owner-decision waiting.",
-    "A machine-readable Runtime Release Readiness audit artifact records Runtime Release Ready as false and lists required-before-release Runtime blockers.",
-    "A guard rejects missing required Runtime blockers, open Runtime P0/P1 debt that is not required_before_release, out-of-runtime work that blocks Runtime release, missing OSS owner decision while Cargo remains UNLICENSED/publish=false, and missing existing CI-invoked VSIX release guard coverage.",
-    "The Runtime release readiness guard is wired into the VSIX check path invoked by existing CI, while full CI Release Gate hardening remains an explicit P0 blocker.",
-    "Phase value and Product Completion guards pass without claiming full Runtime Release Ready."
+    "MCP tools/call result classification requires explicit isError=false for ToolExecutionCompleted.",
+    "Explicit isError=true records ToolExecutionFailed with bounded MCP context and policy-controlled retry metadata.",
+    "JSON-RPC error, timeout, and malformed result paths are distinct bounded failure statuses.",
+    "MCP tool error evidence is not used as second-pass prompt/completion evidence and is not replayed as a completed success.",
+    "MCP Runtime Safety Policy audit classifies MCP-S1 through MCP-S7 without replacing the MCP-first architecture."
   ],
   "behavior_evidence": [
-    "node --test scripts/guard-runtime-release-readiness.test.mjs proves valid audit acceptance plus rejection of premature release-ready claim, Runtime P0 misclassification, external release blockers, missing owner license decision, and CI omissions.",
-    "pnpm guard:runtime-release-readiness proves the repository audit, Cargo license/publish state, and CI gate are aligned.",
-    "pnpm guard:phase-value proves guard-engine changes are represented in this manifest.",
-    "pnpm guard:product-completion proves this bounded phase remains a blocker-removal gate and does not claim total Product Completion."
-  ],
-  "product_dod": {
-    "runtime_release_dod": [
-      "Durable task/run/journey state, checkpoint, ledger, idempotency, stale rejection, replay, conflict, cancellation safety, schema migration, recovery, protocol/event ownership, completion, and finalization.",
-      "Agent loop execution, Mode Pack validation/pinning/materialization, permissions, controlled tools, workspace proposal/apply, approvals, and bounded refusal/blocker machinery.",
-      "Run Request, Runtime Event, Control Command, and Run Result/Attestation contracts."
-    ],
-    "commercial_solution_readiness": [
-      "BDK, Enterprise, Assurance, scheduler, daemon, job queue, worker fleet, Docker/VM/Kubernetes management, tenant management, SSO/RBAC server, admin/approval UI, forge apps, notifications, monitoring backend/dashboard/alert/SLA/billing, private registry, certified stack, and continuity assurance."
-    ],
-    "closes": [
-      "runtime-release-debt-reaudit",
-      "runtime-release-debt-reaudit"
-    ],
-    "leaves_open": [
-      "runtime-boundary-protocol-contracts",
-      "explicit-cancel-command",
-      "real-process-loss-recovery-e2e",
-      "durable-schema-version-and-migration",
-      "runtime-release-guard-ci",
-      "oss-release-technical-basis-owner-decision",
-      "protocol-event-canonization",
-      "runtime-module-decomposition-reevaluation",
-      "platform-deadline-durability-hardening"
-    ],
-    "does_not_close": [
-      "Cancel command implementation",
-      "Real process-loss recovery E2E",
-      "Durable migration implementation",
-      "Full CI Release Gate workflow hardening",
-      "OSS license/publish owner decision",
-      "Protocol/event canonization implementation",
-      "Runtime module decomposition",
-      "Platform/deadline/durability hardening"
-    ]
-  },
-  "technical_debt": [
-    {
-      "id": "runtime-boundary-protocol-contracts",
-      "classification": "required_before_release",
-      "responsibility_domain": "runtime",
-      "status_after_phase": "open",
-      "evidence": "Boundary contracts exist but need a canonical public protocol contract and compatibility matrix."
-    },
-    {
-      "id": "explicit-cancel-command",
-      "classification": "required_before_release",
-      "responsibility_domain": "runtime",
-      "status_after_phase": "open",
-      "evidence": "Cancelled state exists but explicit caller-authorized cancellation semantics are still partial."
-    },
-    {
-      "id": "real-process-loss-recovery-e2e",
-      "classification": "required_before_release",
-      "responsibility_domain": "runtime",
-      "status_after_phase": "open",
-      "evidence": "Recovery probe exists but production-equivalent installed process-loss E2E remains open."
-    },
-    {
-      "id": "durable-schema-version-and-migration",
-      "classification": "required_before_release",
-      "responsibility_domain": "runtime",
-      "status_after_phase": "open",
-      "evidence": "Payload schema versions exist but release-level durable store schema and migration behavior remains open."
-    },
-    {
-      "id": "runtime-release-guard-ci",
-      "classification": "required_before_release",
-      "responsibility_domain": "runtime",
-      "status_after_phase": "open",
-      "evidence": "Existing CI invokes the VSIX check path with the new release readiness guard, but frozen install and direct release guard-test workflow enforcement remain open."
-    },
-    {
-      "id": "protocol-event-canonization",
-      "classification": "required_before_release",
-      "responsibility_domain": "runtime",
-      "status_after_phase": "open",
-      "evidence": "Rust protocol, runtime handlers, store/events, CLI, VSIX, and docs need a guarded ownership map."
-    },
-    {
-      "id": "runtime-module-decomposition-reevaluation",
-      "classification": "required_before_release",
-      "responsibility_domain": "runtime",
-      "status_after_phase": "open",
-      "evidence": "M64.15 left Runtime module decomposition open."
-    },
-    {
-      "id": "platform-deadline-durability-hardening",
-      "classification": "required_before_release",
-      "responsibility_domain": "runtime",
-      "status_after_phase": "open",
-      "evidence": "Local Runtime deadline, platform, and durability hardening remains open."
-    },
-    {
-      "id": "hosted-scheduler-daemon-worker-fleet",
-      "classification": "post_v0",
-      "responsibility_domain": "external_control_plane",
-      "status_after_phase": "open",
-      "evidence": "Hosted scheduling and worker infrastructure is outside Brownie Runtime release."
-    },
-    {
-      "id": "forge-notification-adapters",
-      "classification": "post_v0",
-      "responsibility_domain": "external_adapter",
-      "status_after_phase": "open",
-      "evidence": "Forge and notification workflows are external adapters."
-    },
-    {
-      "id": "enterprise-commercial-readiness",
-      "classification": "post_v0",
-      "responsibility_domain": "commercial_solution",
-      "status_after_phase": "open",
-      "evidence": "Enterprise, Assurance, BDK, certified stack, continuity assurance, and commercial operations readiness are outside this Runtime campaign."
-    }
+    "cargo test -p brownie-runtime mcp -- --test-threads=1 covers successful MCP calls, isError=true tool errors, JSON-RPC protocol failure, timeout, malformed result failure, bounded result context, and completed-success replay.",
+    "docs/specifications/mcp-client-spec-v0.md and docs/specifications/tool-execution-spec-v0.md define the S1 result semantics.",
+    "docs/architecture/mcp-runtime-safety-policy-audit.json records S1 closed and S2-S7 remaining required-before-release Runtime debt."
   ],
   "product_completion_gate": {
     "required": true,
     "product_completion_claim": false,
     "accepted_capability": [
-      "Runtime Release debt reaudit machine gate.",
-      "Runtime P0/P1 release blocker responsibility classification.",
-      "Existing CI-invoked VSIX check coverage for the Runtime release readiness guard.",
-      "Out-of-runtime work remains nonblocking for Brownie Runtime release."
+      "Runtime MCP tools/call success evidence is now restricted to explicit isError=false results.",
+      "Runtime MCP tool-side errors now produce bounded failure evidence instead of completed-success replay evidence."
     ],
     "behavior_evidence": [
-      "Runtime release readiness guard tests reject premature release-ready claims, missing blockers, Runtime P0/P1 misclassification, external release blockers, omitted owner decision, and missing existing CI-invoked VSIX guard coverage.",
-      "Runtime release readiness guard validates the current audit, Cargo owner-decision state, and VSIX check wiring.",
-      "Existing Product Completion and Phase Value guards validate this bounded blocker-removal phase."
+      "Focused MCP runtime tests cover isError=false success, isError=true tool failure, JSON-RPC protocol failure, timeout, malformed result failure, bounded context, and success replay preservation.",
+      "Agent-loop MCP test coverage proves ToolReturnedError does not create SecondPassPromptBuilt or ToolExecutionCompleted MCP evidence."
     ],
     "safety_boundary": [
-      "Rust Runtime remains authority for execution, admission, replay, permission, tool execution, workspace mutation, completion, and finalization.",
-      "This phase adds no runtime RPC, no CLI command, no VSIX command, no scheduler, no daemon, no job queue, no external adapter, no hosted platform, and no commercial product work.",
-      "External control-plane, adapter, commercial, BDK, Enterprise, and Assurance items cannot grant runtime authority or block Runtime release.",
-      "No raw prompt, provider response, raw file content, full diff, stdout, stderr, command, environment value, secret, absolute path, or canonical path is exposed."
+      "Rust Runtime remains the permission, execution, ledger, replay, and completion authority for MCP calls.",
+      "MCP server description, schema, annotation, result text, AgentModes prose, CLI, VSIX, and LLM output cannot grant authority.",
+      "Failure payloads retain bounded metadata and do not ledger raw JSON-RPC responses, raw errors, secrets, environment values, absolute paths, canonical paths, prompts, provider responses, or binary content."
     ],
     "non_goals": [
-      "No cancel implementation, migration implementation, process-loss E2E implementation, protocol/event refactor, module decomposition, or durability hardening in this phase.",
-      "No BDK, Enterprise, Assurance, scheduler, daemon, job queue, worker fleet, Docker, VM, Kubernetes, Vault/KMS/Secret Manager production integration, tenant management, SSO/RBAC server, admin UI, forge app, notification, monitoring, billing, registry, certified stack, or continuity assurance feature.",
-      "No remote Git push/merge, generic shell, arbitrary process execution, recursive Brownie invocation, or broad feature roadmap."
+      "Does not add a Brownie-specific tool adapter SDK or protocol.",
+      "Does not add Streamable HTTP, OAuth, MCP Apps, Sampling, Roots, Elicitation, public registry, automatic install, scheduler, daemon, generic shell, arbitrary process execution, or recursive Brownie invocation.",
+      "Does not close MCP-S2 through MCP-S7."
     ],
     "rejected_alternatives": [
-      "Rejected one huge PR that implements all P0/P1 phases together.",
-      "Rejected docs-only audit without a machine guard and negative tests.",
-      "Rejected declaring Runtime Release Ready after the audit because required-before-release Runtime blockers remain open.",
-      "Rejected treating external hosted platform or commercial solution work as Runtime release blockers."
+      "Rejected expanding the external ToolExecuteStatus enum before a broader protocol contract review.",
+      "Rejected treating omitted isError as success because the campaign requires explicit isError=false only.",
+      "Rejected using MCP tool error text as completion or verification evidence."
     ],
     "technical_debt": [
-      "Runtime boundary protocol contracts remain required_before_release.",
-      "Cancel semantics remain required_before_release.",
-      "Real process-loss recovery E2E remains required_before_release.",
-      "Durable schema version and migration remain required_before_release.",
-      "Protocol/event canonization remains required_before_release.",
-      "Runtime module decomposition reevaluation remains required_before_release.",
-      "Full CI Release Gate workflow hardening remains required_before_release.",
-      "Platform/deadline/durability hardening remains required_before_release.",
-      "OSS license/publish posture requires owner decision."
+      "MCP-S2 tool-level Brownie safety policy remains open.",
+      "MCP-S3 annotation provenance and drift checks remain open.",
+      "MCP-S4 tool-level approval binding remains open.",
+      "MCP-S5 runtime input/output schema validation remains open.",
+      "MCP-S6 secret reference contract remains open.",
+      "MCP-S7 executable identity remains open."
     ],
     "next_capability_rationale": [
-      "The next bounded phase can implement Boundary Protocol gaps using the guarded audit as its input and without drifting into out-of-runtime platform work."
+      "MCP-S2 should add structured per-tool safety policy before annotation, approval, schema, secret, or executable identity phases can safely compose around it."
     ],
     "release_readiness_scope": {
       "runtime_release_dod": [
-        "Runtime-owned task/run/journey state, checkpoints, ledger, replay, idempotency, stale conflict handling, cancellation, migration, recovery, permissions, tools, workspace mutation, completion, and finalization.",
-        "Runtime-owned protocol/event contracts and local durability/deadline/platform behavior."
+        "Runtime-owned MCP permission checks, tool execution, bounded evidence, replay, and completion semantics.",
+        "Task-pinned Mode Pack policy, catalog provenance, and point-of-use Runtime safety enforcement."
       ],
       "runtime_boundary_contracts": [
-        "Run Request",
-        "Runtime Event",
-        "Control Command",
-        "Run Result and Attestation"
+        "Existing tool.execute, task.run, and headless run/resume paths.",
+        "Existing ToolExecutionCompleted, ToolExecutionFailed, and ToolExecutionDenied ledger evidence."
       ],
       "external_control_plane_responsibilities": [
-        "Scheduler, daemon, job queue, worker fleet, leases, hosted isolation, Secret Provider product, metrics, alerts, SLA, HA, tenants, and billing."
+        "Scheduling, background polling, daemonization, hosted queues, worker fleets, and remote server operations."
       ],
       "external_adapter_responsibilities": [
-        "GitHub App, GitLab adapter, PR create/update/merge workflows, Slack, Teams, email, SIEM, OTel, customer systems, and language-specific verifier adapter breadth."
+        "MCP server implementation, GitHub/GitLab/Slack adapters, OAuth application wiring, and remote transport hosting."
       ],
       "commercial_solution_readiness": [
-        "BDK, Enterprise, Assurance, packaging, operations, admin UI, certified stack, continuity assurance, and customer-facing commercial readiness beyond Runtime release."
+        "Enterprise tenant management, SSO/RBAC server, admin UI, monitoring backend, billing, SLA, private registry, and certified stack."
       ],
       "external_responsibility_not_release_blocking": true
     }
-  }
+  },
+  "product_dod": {
+    "runtime_release_dod": [
+      "Runtime-owned MCP execution, permission checks, bounded result evidence, replay behavior, and completion evidence."
+    ],
+    "closes": [
+      "mcp-result-error-semantics"
+    ],
+    "leaves_open": [
+      "mcp-tool-safety-policy",
+      "mcp-tool-annotation-provenance",
+      "mcp-tool-approval-binding",
+      "mcp-runtime-schema-validation",
+      "mcp-secret-reference-contract",
+      "mcp-executable-identity"
+    ],
+    "does_not_close": [
+      "Tool-level Brownie safety policy",
+      "MCP annotation provenance and drift checks",
+      "Tool-level approval binding",
+      "Runtime input/output schema validation",
+      "Secret reference contract",
+      "MCP server executable identity"
+    ]
+  },
+  "technical_debt": [
+    {
+      "id": "mcp-result-error-semantics",
+      "classification": "closed",
+      "responsibility_domain": "runtime",
+      "status_after_phase": "closed",
+      "evidence": "isError=true is ToolReturnedError and ToolExecutionFailed; only isError=false can create ToolExecutionCompleted and completed-success replay evidence."
+    },
+    {
+      "id": "mcp-tool-safety-policy",
+      "classification": "required_before_release",
+      "responsibility_domain": "runtime",
+      "status_after_phase": "open",
+      "evidence": "Per-tool side-effect, approval, idempotency, and retry policy remains open for MCP-S2."
+    },
+    {
+      "id": "mcp-tool-annotation-provenance",
+      "classification": "required_before_release",
+      "responsibility_domain": "runtime",
+      "status_after_phase": "open",
+      "evidence": "MCP annotations are not yet pinned into catalog provenance or drift checks."
+    },
+    {
+      "id": "mcp-tool-approval-binding",
+      "classification": "required_before_release",
+      "responsibility_domain": "runtime",
+      "status_after_phase": "open",
+      "evidence": "MCP external mutation/destructive call approval binding remains open."
+    },
+    {
+      "id": "mcp-runtime-schema-validation",
+      "classification": "required_before_release",
+      "responsibility_domain": "runtime",
+      "status_after_phase": "open",
+      "evidence": "Runtime still needs bounded input/output schema validation for MCP tools/call."
+    },
+    {
+      "id": "mcp-secret-reference-contract",
+      "classification": "required_before_release",
+      "responsibility_domain": "runtime",
+      "status_after_phase": "open",
+      "evidence": "Secret reference contract remains open; no secret manager implementation is in scope."
+    },
+    {
+      "id": "mcp-executable-identity",
+      "classification": "required_before_release",
+      "responsibility_domain": "runtime",
+      "status_after_phase": "open",
+      "evidence": "Executable content identity pinning remains open while existing absolute path and stdio hardening stay preserved."
+    }
+  ]
 }

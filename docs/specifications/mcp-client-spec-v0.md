@@ -178,8 +178,17 @@ The v0 result-context contract is intentionally narrow:
 
 - text content items may be included after deterministic bounding;
 - content item count, materialized item count, total text chars, materialized
-  text chars, per-item and total limits, truncation flags, `isError`, and the
-  result fingerprint are recorded as bounded evidence;
+  text chars, per-item and total limits, truncation flags, `isError`,
+  protocol status, tool status, execution status, retry policy, and the result
+  fingerprint are recorded as bounded evidence;
+- `ProtocolSucceeded` means a valid JSON-RPC `tools/call` response envelope with
+  a result was received, not that the tool itself succeeded;
+- only explicit `isError=false` is `ToolSucceeded` and may create
+  `ToolExecutionCompleted` evidence;
+- explicit `isError=true` is `ToolReturnedError`, creates
+  `ToolExecutionFailed` evidence, may carry bounded untrusted error text
+  context, and is not verification-success, task-completion, or
+  completed-success replay evidence;
 - unsupported, binary, resource, image, audio, or blob-like items are reduced to
   bounded metadata or fail closed before prompt materialization;
 - raw JSON-RPC responses, raw schemas, raw prompts, raw provider responses,
@@ -194,13 +203,19 @@ the persisted bounded result context and request fingerprint instead of
 unconditionally re-running the MCP tool. A repeated request with matching
 task/tool/input fingerprint reuses the completed evidence; mismatched or absent
 evidence follows the normal permission and execution path or fails closed.
+`ToolReturnedError`, `ProtocolFailed`, `TimedOut`, `Denied`, and `Cancelled`
+are not success replay cache entries. Retry of tool-error or protocol-failure
+evidence is allowed only by explicit policy in later safety-policy phases.
 
 ## Failure And Replay
 
 `tools/list` and `tools/call` failures are bounded runtime tool failures. They
-do not widen policy and do not change task replay authority. If the server
-catalog changes after task admission, execution is denied unless the current
-entry still matches the task-pinned catalog fingerprint evidence.
+do not widen policy and do not change task replay authority. JSON-RPC `error`
+responses and malformed envelopes are `ProtocolFailed`; request timeouts are
+`TimedOut`; malformed `result` bodies, including missing or non-boolean
+`isError`, are `Failed`. If the server catalog changes after task admission,
+execution is denied unless the current entry still matches the task-pinned
+catalog fingerprint evidence.
 
 The first-phase stdio lifecycle is request-scoped. Timeout, protocol failure,
 EOF, malformed response, or oversized response paths terminate the MCP child

@@ -278,7 +278,9 @@ fn execute_mcp_tool_for_record(
             output: json!({ "reason": "Malformed MCP tool id." }),
         });
     };
-    let decision = RuntimePermissionGate::check_mcp_tool(&policy, server_id, tool_name);
+    let server_id = server_id.to_string();
+    let tool_name = tool_name.to_string();
+    let decision = RuntimePermissionGate::check_mcp_tool(&policy, &server_id, &tool_name);
     if !decision.allowed {
         return Ok(ToolExecuteResult {
             tool_id,
@@ -286,7 +288,7 @@ fn execute_mcp_tool_for_record(
             output: json!({ "reason": decision.reason }),
         });
     }
-    let Some(config) = mcp_server_config_for_policy(&store, &record, server_id)? else {
+    let Some(config) = mcp_server_config_for_policy(&store, &record, &server_id)? else {
         return Ok(ToolExecuteResult {
             tool_id,
             status: ToolExecuteStatus::Denied,
@@ -321,12 +323,29 @@ fn execute_mcp_tool_for_record(
             output: json!({ "reason": "MCP tool catalog does not match task-pinned provenance." }),
         });
     }
-    match mcp_client::call_tool(&config, tool_name, input) {
-        Ok(output) => Ok(ToolExecuteResult {
+    match mcp_client::call_tool(&config, &tool_name, input) {
+        Ok(call_result) if call_result.status.is_success() => Ok(ToolExecuteResult {
             tool_id,
             status: ToolExecuteStatus::Completed,
             output: json!({
-                "mcp": with_mcp_request_fingerprint(output, &request_fingerprint),
+                "mcp": with_mcp_request_fingerprint(call_result.output, &request_fingerprint),
+                "catalog_provenance": {
+                    "server_id": catalog_entry.server_id,
+                    "tool_name": catalog_entry.tool_name,
+                    "input_schema_fingerprint": catalog_entry.input_schema_fingerprint,
+                    "output_schema_fingerprint": catalog_entry.output_schema_fingerprint,
+                    "server_config_identity_fingerprint": catalog_entry.server_config_identity_fingerprint,
+                    "protocol_version": catalog_entry.protocol_version,
+                    "catalog_fingerprint": catalog.catalog_fingerprint,
+                }
+            }),
+        }),
+        Ok(call_result) => Ok(ToolExecuteResult {
+            tool_id,
+            status: ToolExecuteStatus::Failed,
+            output: json!({
+                "reason": "MCP tool returned error.",
+                "mcp": with_mcp_request_fingerprint(call_result.output, &request_fingerprint),
                 "catalog_provenance": {
                     "server_id": catalog_entry.server_id,
                     "tool_name": catalog_entry.tool_name,
@@ -341,9 +360,36 @@ fn execute_mcp_tool_for_record(
         Err(error) => Ok(ToolExecuteResult {
             tool_id,
             status: ToolExecuteStatus::Failed,
-            output: json!({ "reason": format!("MCP tools/call failed: {error}") }),
+            output: json!({
+                "reason": format!("MCP tools/call {}.", error.kind.as_str()),
+                "mcp": mcp_call_failure_metadata(&config, &tool_name, &request_fingerprint, error.kind),
+            }),
         }),
     }
+}
+
+fn mcp_call_failure_metadata(
+    config: &brownie_modepack::ModePackMcpServerConfig,
+    tool_name: &str,
+    request_fingerprint: &str,
+    kind: mcp_client::McpToolCallFailureKind,
+) -> Value {
+    let execution_status = kind.as_str();
+    json!({
+        "server_id": config.server_id,
+        "tool_name": tool_name,
+        "protocol_version": mcp_client::MCP_PROTOCOL_VERSION,
+        "server_config_identity_fingerprint": config.config_identity_fingerprint,
+        "request_fingerprint": request_fingerprint,
+        "protocol_status": match kind {
+            mcp_client::McpToolCallFailureKind::ProtocolFailed => "ProtocolFailed",
+            mcp_client::McpToolCallFailureKind::TimedOut => "TimedOut",
+            mcp_client::McpToolCallFailureKind::Failed => "ProtocolSucceeded",
+        },
+        "tool_status": Value::Null,
+        "execution_status": execution_status,
+        "retry_policy": "policy_controlled",
+    })
 }
 
 fn pinned_mcp_catalog_allows(
@@ -3968,6 +4014,10 @@ pub(super) fn tool_execute_result_ledger_payload(result: &ToolExecuteResult) -> 
             "request_fingerprint",
             "result_fingerprint",
             "is_error",
+            "protocol_status",
+            "tool_status",
+            "execution_status",
+            "retry_policy",
             "content_item_count",
             "materialized_content_item_count",
             "content_truncated",
