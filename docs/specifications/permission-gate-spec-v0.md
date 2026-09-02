@@ -28,14 +28,17 @@ must have compiled `mcp_tool_access`, the server/tool pair must appear in the
 structured Mode Pack allow-list, the tool must have structured Brownie safety
 policy, and the current catalog entry must match task-pinned MCP provenance
 before Runtime may call a normalized `mcp.<server_id>.<tool_name>` tool. In v0,
-the gate allows only `read_only`, `approval=not_required`, `idempotency=safe`
-tools with retry other than `prohibited`; legacy-unclassified, local mutation,
-external mutation, destructive, unknown, and approval-required tools fail closed
-until later MCP safety phases bind approvals. MCP annotations are narrowing-only
-provenance: `readOnlyHint=false`, `destructiveHint=true`,
-`idempotentHint=false`, or `openWorldHint=true` deny approval-free execution,
-but annotations never grant mode permission or widen structured Mode Pack
-policy. See `mcp-client-spec-v0.md`.
+the gate allows approval-free execution only for `read_only`,
+`approval=not_required`, `idempotency=safe` tools with retry other than
+`prohibited`. Tools with `approval=required` may execute only through the
+runtime approval-binding path, where the ledger contains one matching scoped
+approval fingerprint for the exact task/run/tool/request/catalog/safety-policy
+tuple. Legacy-unclassified, destructive, unknown, prohibited-retry, missing
+policy, missing catalog, and missing or mismatched approval cases fail closed.
+MCP annotations are narrowing-only provenance: `readOnlyHint=false`,
+`destructiveHint=true`, `idempotentHint=false`, or `openWorldHint=true` deny
+approval-free execution, but annotations never grant mode permission or widen
+structured Mode Pack policy. See `mcp-client-spec-v0.md`.
 
 MP-3.1 adds scoped workspace-write checks for compiled AgentModes policy. When a
 mode has `workspace_write=true` and no `workspace_write_scopes`, the action bit

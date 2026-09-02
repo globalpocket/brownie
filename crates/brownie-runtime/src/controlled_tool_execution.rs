@@ -280,7 +280,7 @@ fn execute_mcp_tool_for_record(
     };
     let server_id = server_id.to_string();
     let tool_name = tool_name.to_string();
-    let decision = RuntimePermissionGate::check_mcp_tool(&policy, &server_id, &tool_name);
+    let decision = mcp_tool_runtime_permission_decision(&policy, &server_id, &tool_name);
     if !decision.allowed {
         return Ok(ToolExecuteResult {
             tool_id,
@@ -342,6 +342,28 @@ fn execute_mcp_tool_for_record(
             }),
         });
     }
+    let approval_binding = mcp_tool_approval_binding_payload(
+        record,
+        &tool_id,
+        &request_fingerprint,
+        &catalog,
+        catalog_entry,
+        &mcp_safety_policy,
+    );
+    if tool_policy.permits_runtime_approval_binding()
+        && !matching_mcp_tool_approval_bound(store, record, &approval_binding)?
+    {
+        return Ok(ToolExecuteResult {
+            tool_id,
+            status: ToolExecuteStatus::Denied,
+            output: json!({
+                "reason": "MCP tool requires a matching runtime approval fingerprint before tools/call.",
+                "mcp_approval_binding": approval_binding,
+                "catalog_provenance": mcp_catalog_provenance_payload(&catalog, catalog_entry),
+                "mcp_safety_policy": mcp_safety_policy,
+            }),
+        });
+    }
     match mcp_client::call_tool(&config, &tool_name, input) {
         Ok(call_result) if call_result.status.is_success() => Ok(ToolExecuteResult {
             tool_id,
@@ -350,6 +372,7 @@ fn execute_mcp_tool_for_record(
                 "mcp": with_mcp_request_fingerprint(call_result.output, &request_fingerprint),
                 "catalog_provenance": mcp_catalog_provenance_payload(&catalog, catalog_entry),
                 "mcp_safety_policy": mcp_safety_policy,
+                "mcp_approval_binding": approval_binding,
             }),
         }),
         Ok(call_result) => Ok(ToolExecuteResult {
@@ -360,6 +383,7 @@ fn execute_mcp_tool_for_record(
                 "mcp": with_mcp_request_fingerprint(call_result.output, &request_fingerprint),
                 "catalog_provenance": mcp_catalog_provenance_payload(&catalog, catalog_entry),
                 "mcp_safety_policy": mcp_safety_policy,
+                "mcp_approval_binding": approval_binding,
             }),
         }),
         Err(error) => Ok(ToolExecuteResult {
@@ -375,8 +399,90 @@ fn execute_mcp_tool_for_record(
                     tool_policy.retry_policy_name(),
                 ),
                 "mcp_safety_policy": mcp_safety_policy,
+                "mcp_approval_binding": approval_binding,
             }),
         }),
+    }
+}
+
+fn mcp_tool_runtime_permission_decision(
+    policy: &CompiledModePolicy,
+    server_id: &str,
+    tool_name: &str,
+) -> PermissionDecision {
+    let base = RuntimePermissionGate::check(policy, RuntimeAction::UseMcpTool);
+    if !base.allowed {
+        return base;
+    }
+    let Some(server) = policy
+        .mcp_access
+        .iter()
+        .find(|server| server.server_id == server_id)
+    else {
+        return PermissionDecision {
+            action: RuntimeAction::UseMcpTool,
+            allowed: false,
+            reason: format!(
+                "Mode {} does not allow MCP server {server_id}.",
+                policy.mode_id
+            ),
+        };
+    };
+    if !server.tools.iter().any(|tool| tool == tool_name) {
+        return PermissionDecision {
+            action: RuntimeAction::UseMcpTool,
+            allowed: false,
+            reason: format!(
+                "Mode {} does not allow MCP tool mcp.{server_id}.{tool_name}.",
+                policy.mode_id
+            ),
+        };
+    }
+    let Some(tool_policy) = server.tool_policy(tool_name) else {
+        return PermissionDecision {
+            action: RuntimeAction::UseMcpTool,
+            allowed: false,
+            reason: format!(
+                "Mode {} MCP tool mcp.{server_id}.{tool_name} has no structured Brownie safety policy.",
+                policy.mode_id
+            ),
+        };
+    };
+    if tool_policy.permits_unapproved_runtime_execution() {
+        return PermissionDecision {
+            action: RuntimeAction::UseMcpTool,
+            allowed: true,
+            reason: format!(
+                "Mode {} allows MCP tool mcp.{server_id}.{tool_name} through structured read-only Brownie safety policy.",
+                policy.mode_id
+            ),
+        };
+    }
+    if tool_policy.permits_runtime_approval_binding() {
+        return PermissionDecision {
+            action: RuntimeAction::UseMcpTool,
+            allowed: true,
+            reason: format!(
+                "Mode {} allows MCP tool mcp.{server_id}.{tool_name} only with matching runtime approval binding.",
+                policy.mode_id
+            ),
+        };
+    }
+    let reason = if tool_policy.legacy_unclassified {
+        format!(
+            "Mode {} MCP tool mcp.{server_id}.{tool_name} uses legacy unclassified MCP policy and fails closed.",
+            policy.mode_id
+        )
+    } else {
+        format!(
+            "Mode {} MCP tool mcp.{server_id}.{tool_name} requires unsupported or prohibited Brownie safety handling.",
+            policy.mode_id
+        )
+    };
+    PermissionDecision {
+        action: RuntimeAction::UseMcpTool,
+        allowed: false,
+        reason,
     }
 }
 
@@ -453,6 +559,69 @@ fn mcp_catalog_provenance_payload(
         "protocol_version": entry.protocol_version,
         "catalog_fingerprint": catalog.catalog_fingerprint,
     })
+}
+
+fn mcp_tool_approval_binding_payload(
+    record: &TaskRecord,
+    tool_id: &str,
+    request_fingerprint: &str,
+    catalog: &mcp_client::McpToolCatalog,
+    entry: &mcp_client::McpToolCatalogEntry,
+    mcp_safety_policy: &Value,
+) -> Value {
+    let mut payload = json!({
+        "approval_schema_version": 1,
+        "task_id": record.task_id,
+        "run_id": record.run_id,
+        "tool_id": tool_id,
+        "server_id": entry.server_id,
+        "tool_name": entry.tool_name,
+        "request_fingerprint": request_fingerprint,
+        "catalog_provenance": mcp_catalog_provenance_payload(catalog, entry),
+        "mcp_safety_policy": mcp_safety_policy,
+    });
+    let approval_fingerprint =
+        runtime_sha256_fingerprint(canonical_json_value(&payload).to_string().as_bytes());
+    if let Some(object) = payload.as_object_mut() {
+        object.insert(
+            "approval_fingerprint".to_string(),
+            json!(approval_fingerprint),
+        );
+    }
+    payload
+}
+
+fn matching_mcp_tool_approval_bound(
+    store: &BrownieStore,
+    record: &TaskRecord,
+    approval_binding: &Value,
+) -> anyhow::Result<bool> {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    let expected_fingerprint = approval_binding
+        .get("approval_fingerprint")
+        .and_then(Value::as_str);
+    Ok(expected_fingerprint.is_some_and(|fingerprint| {
+        events
+            .iter()
+            .rev()
+            .filter(|event| event.kind == LedgerEventKind::McpToolExecutionApproved)
+            .filter_map(|event| event.payload.as_ref())
+            .any(|payload| {
+                payload.get("status").and_then(Value::as_str) == Some("approved")
+                    && payload.get("approval_fingerprint").and_then(Value::as_str)
+                        == Some(fingerprint)
+                    && payload.get("task_id") == approval_binding.get("task_id")
+                    && payload.get("run_id") == approval_binding.get("run_id")
+                    && payload.get("tool_id") == approval_binding.get("tool_id")
+                    && payload.get("server_id") == approval_binding.get("server_id")
+                    && payload.get("tool_name") == approval_binding.get("tool_name")
+                    && payload.get("request_fingerprint")
+                        == approval_binding.get("request_fingerprint")
+                    && payload.get("catalog_provenance")
+                        == approval_binding.get("catalog_provenance")
+                    && payload.get("mcp_safety_policy") == approval_binding.get("mcp_safety_policy")
+            })
+    }))
 }
 
 fn mcp_call_failure_metadata(
@@ -1722,7 +1891,7 @@ fn append_approved_mcp_tool_execution(
         )?;
         return Ok(());
     };
-    let permission = RuntimePermissionGate::check_mcp_tool(policy, server_id, tool_name);
+    let permission = mcp_tool_runtime_permission_decision(policy, server_id, tool_name);
     let mcp_safety_policy = compiled_mcp_tool_policy(policy, server_id, tool_name)
         .map(mcp_tool_safety_policy_payload)
         .unwrap_or(Value::Null);
@@ -4161,6 +4330,12 @@ pub(super) fn tool_execute_result_ledger_payload(result: &ToolExecuteResult) -> 
             "catalog_provenance".to_string(),
             Value::Object(provenance_payload),
         );
+    }
+    if let Some(policy) = result.output.get("mcp_safety_policy") {
+        payload.insert("mcp_safety_policy".to_string(), policy.clone());
+    }
+    if let Some(binding) = result.output.get("mcp_approval_binding") {
+        payload.insert("mcp_approval_binding".to_string(), binding.clone());
     }
     Value::Object(payload)
 }

@@ -109,8 +109,10 @@ An MCP tool call is authorized only when all of these are true:
 - the mode's compiled policy includes the server id;
 - the mode's compiled policy includes the tool name for that server;
 - the mode's compiled policy includes structured Brownie tool safety policy;
-- the tool safety policy is `read_only`, `approval=not_required`,
-  `idempotency=safe`, and `retry` is not `prohibited`;
+- either the tool safety policy is approval-free safe (`read_only`,
+  `approval=not_required`, `idempotency=safe`, and `retry` is not
+  `prohibited`) or the tool safety policy permits runtime approval binding and
+  one matching task-scoped approval fingerprint is present in the run ledger;
 - the server configuration exists in structured Mode Pack policy;
 - the stdio server launch is performed by Brownie Runtime;
 - the live catalog entry matches task-pinned catalog provenance.
@@ -133,6 +135,20 @@ structured Mode Pack policy: approval-free read-only execution is denied before
 `idempotentHint=false`, or `openWorldHint=true`. An annotation can never grant
 `mcp_tool_access`, add a server/tool allow-list entry, bypass approval binding,
 or widen a Brownie safety policy.
+
+Approval-required MCP calls do not become authority because the server,
+description, schema, annotation, model, CLI, or caller says they are approved.
+Before `tools/call`, Runtime materializes an approval binding fingerprint from
+the task id, run id, normalized tool id, server id, tool name, normalized
+request fingerprint, task-pinned catalog provenance, schema and annotation
+fingerprints, server config identity fingerprint, and structured Brownie MCP
+safety policy. A matching `McpToolExecutionApproved` ledger event must carry
+`status="approved"` and the same scoped fields. Missing, stale, mismatched,
+consumed, malformed, or over-broad approval evidence fails closed before the
+server process receives `tools/call`. The approval cannot override
+`mcp_tool_access`, server/tool allow-list membership, legacy-unclassified
+policy, prohibited retry, destructive/unknown policy, annotation narrowing, or
+catalog drift.
 
 Server configuration resolution is runtime-owned and tied to the Mode Pack
 activation snapshot selected at task admission. Runtime archives the
@@ -185,6 +201,7 @@ At task admission, Runtime materializes bounded MCP catalog evidence in
 - input schema fingerprint;
 - output schema fingerprint when available;
 - bounded input schema summary for model/tool-definition materialization;
+- bounded MCP annotation payload and annotation fingerprint;
 - server/config identity fingerprint;
 - MCP protocol version;
 - catalog fingerprint.
@@ -240,6 +257,10 @@ the persisted bounded result context and request fingerprint instead of
 unconditionally re-running the MCP tool. A repeated request with matching
 task/tool/input fingerprint reuses the completed evidence; mismatched or absent
 evidence follows the normal permission and execution path or fails closed.
+For approval-required MCP calls, replay also remains bound to the same approval
+binding fingerprint recorded with the completed tool evidence; a new or
+mismatched request must pass a fresh approval-binding check rather than reusing
+approval prose or a broad approval marker.
 `ToolReturnedError`, `ProtocolFailed`, `TimedOut`, `Denied`, `Cancelled`, and
 `InputRequiredUnsupported` are not success replay cache entries. Retry of
 tool-error or protocol-failure evidence is allowed only by explicit policy in

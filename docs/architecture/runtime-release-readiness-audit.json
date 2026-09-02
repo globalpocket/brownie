@@ -114,9 +114,10 @@
       "debt_classification": "required_before_release",
       "evidence": [
         "The user supplied a non-conflicting follow-on MCP Runtime Safety Policy campaign after RRD-1.",
-        "MCP-S1 closes result error semantics, MCP-S1.1 corrects the CallToolResult resultType/isError protocol-conformance edge cases, MCP-S2 closes tool-level Brownie safety policy, and MCP-S3 closes annotation provenance/drift checks; remaining MCP safety items are tracked in docs/architecture/mcp-runtime-safety-policy-audit.json."
+        "MCP-S1 closes result error semantics, MCP-S1.1 corrects the CallToolResult resultType/isError protocol-conformance edge cases, MCP-S2 closes tool-level Brownie safety policy, MCP-S3 closes annotation provenance/drift checks, and MCP-S4 closes tool-level approval binding.",
+        "Remaining MCP safety items are tracked in docs/architecture/mcp-runtime-safety-policy-audit.json."
       ],
-      "next_action": "Continue the MCP-S4 through MCP-S7 bounded phases before claiming Runtime Release Ready."
+      "next_action": "Continue MCP-S5 through MCP-S7 before claiming Runtime Release Ready."
     },
     {
       "id": "oss-release-technical-basis",

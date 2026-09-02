@@ -111,8 +111,8 @@ persist raw selected paths or raw selected file content.
 ## Ledger behavior
 
 The store defines task-scoped event kinds: `ToolExecutionRequested`,
-`ToolExecutionPermissionChecked`, `ToolExecutionCompleted`,
-`ToolExecutionDenied`, and `ToolExecutionFailed`.
+`McpToolExecutionApproved`, `ToolExecutionPermissionChecked`,
+`ToolExecutionCompleted`, `ToolExecutionDenied`, and `ToolExecutionFailed`.
 
 Standalone `tool.execute` does not write run ledger events in Phase 1.7 because
 it is not attached to a task/run. Task-scoped execution during `task.run` uses
@@ -125,6 +125,18 @@ MCP tools use the same `tool.execute` boundary with normalized ids of the form
 `mcp.<server_id>.<tool_name>`. Unlike older standalone native tool calls, MCP
 execution requires `task_id` so Runtime can use the task-pinned `ModeResolved`
 policy and MCP catalog provenance admitted for that task.
+
+Approval-required MCP tools may execute only after Runtime finds a matching
+`McpToolExecutionApproved` ledger event for the same task/run, normalized tool
+id, server id, tool name, request fingerprint, catalog/schema/annotation
+provenance, server config identity, and structured Brownie MCP safety policy.
+The approval binding fingerprint is materialized by Runtime and stored as
+bounded evidence; raw input JSON, raw schemas, raw server config, environment
+values, credentials, absolute paths, canonical paths, and raw MCP responses are
+not persisted. Missing, stale, consumed, malformed, mismatched, or broad
+approval evidence returns `Denied` before `tools/call`. Completed task-scoped
+MCP evidence is replayed for the same approved request without launching a
+duplicate `tools/call`.
 
 ## MP-7 Git tools
 
