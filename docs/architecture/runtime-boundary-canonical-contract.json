@@ -1,0 +1,283 @@
+{
+  "schema_version": 1,
+  "contract_id": "runtime-boundary-canonical-contract-v0",
+  "campaign": "runtime-release-readiness-p0-p1-finite-closure",
+  "phase": "RRP-1",
+  "owner": "runtime",
+  "runtime_release_debt_id": "runtime-boundary-protocol-contracts",
+  "transport": {
+    "kind": "stdio_ndjson_jsonrpc_2_0",
+    "owner": "runtime",
+    "stability_class": "stable_v0",
+    "compatibility_expectation": "External callers may depend on one request line producing one bounded JSON-RPC response line; invalid JSON and invalid params fail closed without exposing raw prompt, file, command, environment, path, or secret material.",
+    "schema_version": "runtime-protocol-v0",
+    "implementation_anchors": [
+      "crates/brownie-runtime/src/lib.rs",
+      "crates/brownie-protocol/src/lib.rs"
+    ],
+    "documentation_anchors": [
+      "docs/specifications/runtime-protocol-spec-v0.md",
+      "docs/specifications/runtime-boundary-and-release-dod-spec-v0.md"
+    ],
+    "validator_anchors": [
+      "extensions/brownie-vsix/src/runtime/protocol.ts",
+      "extensions/brownie-vsix/src/runtime/runtimeClient.ts",
+      "crates/brownie-cli/src/runtime_client.rs"
+    ]
+  },
+  "compatibility_matrix": [
+    {
+      "client": "brownie-cli",
+      "boundary_role": "thin_terminal_transport",
+      "compatibility_expectation": "May invoke and render bounded Runtime protocol results, but must not own runtime policy, permission, replay, recovery, workspace mutation, or completion decisions.",
+      "anchors": [
+        "crates/brownie-cli/src/runtime_client.rs",
+        "docs/specifications/cli-external-loop-spec-v0.md"
+      ]
+    },
+    {
+      "client": "brownie-vsix",
+      "boundary_role": "thin_ui_transport_and_validator",
+      "compatibility_expectation": "May validate and present bounded protocol shapes, but must not infer Runtime authority or make policy decisions.",
+      "anchors": [
+        "extensions/brownie-vsix/src/runtime/protocol.ts",
+        "extensions/brownie-vsix/src/runtime/runtimeClient.ts"
+      ]
+    },
+    {
+      "client": "external-control-plane",
+      "boundary_role": "scheduler_outside_runtime",
+      "compatibility_expectation": "May schedule explicit bounded Runtime commands, but scheduler, daemon, worker, lease, hosted isolation, metrics, and secret provider products are outside Runtime release readiness.",
+      "anchors": [
+        "docs/specifications/runtime-boundary-and-release-dod-spec-v0.md"
+      ]
+    }
+  ],
+  "boundary_surfaces": [
+    {
+      "id": "run-request",
+      "title": "Run Request",
+      "owner": "runtime",
+      "stability_class": "stable_v0",
+      "schema_version": "runtime-protocol-v0",
+      "compatibility_expectation": "Requests must carry bounded objective or continuation identity, task/run handles, idempotency or expected fingerprints where required, policy fingerprints, scoped inputs, and secret references rather than secret values.",
+      "implementation_anchors": [
+        "crates/brownie-runtime/src/lib.rs",
+        "crates/brownie-protocol/src/lib.rs"
+      ],
+      "documentation_anchors": [
+        "docs/specifications/runtime-protocol-spec-v0.md",
+        "docs/specifications/task-runtime-spec-v0.md",
+        "docs/specifications/cli-external-loop-spec-v0.md"
+      ],
+      "validator_anchors": [
+        "extensions/brownie-vsix/src/runtime/protocol.ts",
+        "extensions/brownie-vsix/src/runtime/runtimeClient.ts",
+        "crates/brownie-cli/src/runtime_client.rs"
+      ]
+    },
+    {
+      "id": "runtime-event",
+      "title": "Runtime Event",
+      "owner": "runtime",
+      "stability_class": "stable_v0",
+      "schema_version": "runtime-protocol-v0",
+      "compatibility_expectation": "Events are append-only bounded evidence for runtime state, progress, permission, tool, approval, recovery, completion, refusal, and attestation; they must not persist raw prompt, provider response, file content, command, environment, path, or secret material.",
+      "implementation_anchors": [
+        "crates/brownie-runtime/src/lib.rs",
+        "crates/brownie-events/src/lib.rs",
+        "crates/brownie-protocol/src/lib.rs"
+      ],
+      "documentation_anchors": [
+        "docs/specifications/runtime-protocol-spec-v0.md",
+        "docs/specifications/run-inspection-spec-v0.md",
+        "docs/specifications/task-runtime-spec-v0.md"
+      ],
+      "validator_anchors": [
+        "extensions/brownie-vsix/src/runtime/protocol.ts",
+        "extensions/brownie-vsix/src/runtime/runtimeClient.ts"
+      ]
+    },
+    {
+      "id": "control-command",
+      "title": "Control Command",
+      "owner": "runtime",
+      "stability_class": "stable_v0",
+      "schema_version": "runtime-protocol-v0",
+      "compatibility_expectation": "Control commands must be explicit, caller-authorized where mutating, and checked against current run state, target fingerprints, and continuation identity so stale commands fail closed.",
+      "implementation_anchors": [
+        "crates/brownie-runtime/src/lib.rs",
+        "crates/brownie-protocol/src/lib.rs"
+      ],
+      "documentation_anchors": [
+        "docs/specifications/runtime-protocol-spec-v0.md",
+        "docs/specifications/task-runtime-spec-v0.md",
+        "docs/specifications/run-inspection-spec-v0.md"
+      ],
+      "validator_anchors": [
+        "extensions/brownie-vsix/src/runtime/protocol.ts",
+        "extensions/brownie-vsix/src/runtime/runtimeClient.ts",
+        "crates/brownie-cli/src/runtime_client.rs"
+      ]
+    },
+    {
+      "id": "run-result-attestation",
+      "title": "Run Result And Attestation",
+      "owner": "runtime",
+      "stability_class": "stable_v0",
+      "schema_version": "runtime-protocol-v0",
+      "compatibility_expectation": "Results expose bounded status, artifact references, verification results, runtime/Mode Pack/LLM/toolchain identifiers, policy fingerprints, ledger references, replay state, completion evidence, failure classification, and blocker/refusal reasons.",
+      "implementation_anchors": [
+        "crates/brownie-runtime/src/lib.rs",
+        "crates/brownie-protocol/src/lib.rs"
+      ],
+      "documentation_anchors": [
+        "docs/specifications/runtime-protocol-spec-v0.md",
+        "docs/specifications/task-runtime-spec-v0.md",
+        "docs/specifications/run-inspection-spec-v0.md"
+      ],
+      "validator_anchors": [
+        "extensions/brownie-vsix/src/runtime/protocol.ts",
+        "extensions/brownie-vsix/src/runtime/runtimeClient.ts",
+        "crates/brownie-cli/src/runtime_client.rs"
+      ]
+    },
+    {
+      "id": "run-inspection",
+      "title": "Run Inspection",
+      "owner": "runtime",
+      "stability_class": "stable_v0",
+      "schema_version": "run-inspection-v0",
+      "compatibility_expectation": "Inspection is read-only and summary-bounded; it derives from persisted Runtime state and must not execute work, append ledger events, or reveal raw sensitive material.",
+      "implementation_anchors": [
+        "crates/brownie-runtime/src/lib.rs",
+        "crates/brownie-protocol/src/lib.rs"
+      ],
+      "documentation_anchors": [
+        "docs/specifications/run-inspection-spec-v0.md",
+        "docs/specifications/runtime-protocol-spec-v0.md"
+      ],
+      "validator_anchors": [
+        "extensions/brownie-vsix/src/runtime/protocol.ts",
+        "extensions/brownie-vsix/src/runtime/runtimeClient.ts",
+        "crates/brownie-cli/src/runtime_client.rs"
+      ]
+    },
+    {
+      "id": "task-runtime",
+      "title": "Task Runtime",
+      "owner": "runtime",
+      "stability_class": "stable_v0",
+      "schema_version": "task-runtime-v0",
+      "compatibility_expectation": "Task lifecycle, agent-loop execution, ledger writes, completion, refusal, recovery, replay, and terminal state transitions remain Runtime-owned and are only invoked through bounded protocol commands.",
+      "implementation_anchors": [
+        "crates/brownie-runtime/src/lib.rs",
+        "crates/brownie-runtime/src/headless_continue.rs",
+        "crates/brownie-runtime/src/headless_journey.rs",
+        "crates/brownie-protocol/src/lib.rs"
+      ],
+      "documentation_anchors": [
+        "docs/specifications/task-runtime-spec-v0.md",
+        "docs/specifications/agent-loop-spec-v0.md",
+        "docs/specifications/runtime-protocol-spec-v0.md"
+      ],
+      "validator_anchors": [
+        "extensions/brownie-vsix/src/runtime/protocol.ts",
+        "extensions/brownie-vsix/src/runtime/runtimeClient.ts",
+        "crates/brownie-cli/src/runtime_client.rs"
+      ]
+    },
+    {
+      "id": "cli-external-loop",
+      "title": "CLI External Loop",
+      "owner": "runtime",
+      "stability_class": "stable_v0",
+      "schema_version": "cli-external-loop-v0",
+      "compatibility_expectation": "The CLI starts or resumes bounded Runtime work through `brownie run` and `brownie resume`; it presents progress and results without reimplementing the agent loop or Runtime policy.",
+      "implementation_anchors": [
+        "crates/brownie-cli/src/runtime_client.rs",
+        "crates/brownie-cli/src/cli.rs"
+      ],
+      "documentation_anchors": [
+        "docs/specifications/cli-external-loop-spec-v0.md",
+        "docs/specifications/runtime-protocol-spec-v0.md"
+      ],
+      "validator_anchors": [
+        "crates/brownie-cli/tests/cli_behavior.rs"
+      ]
+    },
+    {
+      "id": "vsix-validation",
+      "title": "VSIX Validation",
+      "owner": "runtime",
+      "stability_class": "stable_v0",
+      "schema_version": "runtime-protocol-v0",
+      "compatibility_expectation": "VSIX validators mirror bounded Runtime protocol shapes for UI safety and drift detection, but do not own policy or grant Runtime authority.",
+      "implementation_anchors": [
+        "extensions/brownie-vsix/src/runtime/protocol.ts",
+        "extensions/brownie-vsix/src/runtime/runtimeClient.ts"
+      ],
+      "documentation_anchors": [
+        "docs/specifications/runtime-protocol-spec-v0.md",
+        "docs/specifications/runtime-boundary-and-release-dod-spec-v0.md"
+      ],
+      "validator_anchors": [
+        "extensions/brownie-vsix/src/test/runtimeClient.test.ts",
+        "extensions/brownie-vsix/package.json"
+      ]
+    }
+  ],
+  "required_runtime_methods": [
+    "runtime.status",
+    "llm.status",
+    "llm.health",
+    "runtime.config.get",
+    "runtime.diagnostics.get",
+    "task.start",
+    "task.get",
+    "task.run",
+    "task.inspect",
+    "task.list",
+    "headless.continue_once",
+    "headless.run.advance",
+    "headless.run.drive",
+    "headless.run.recovery_probe",
+    "mode.list",
+    "mode.get",
+    "modepack.activate",
+    "modepack.fetchCandidate",
+    "modepack.selectRegistryUpdate",
+    "modepack.approveCandidate",
+    "modepack.trustSigner",
+    "modepack.revokeSigner",
+    "modepack.verifyCandidateProvenance",
+    "modepack.replaceActive",
+    "modepack.rollbackActive",
+    "permission.check",
+    "tool.list",
+    "tool.plan",
+    "tool.intent.parse",
+    "tool.execute",
+    "run.events",
+    "run.inspect",
+    "codebase.index.build",
+    "codebase.index.query",
+    "proposal.list",
+    "proposal.inspect",
+    "proposal.approve",
+    "proposal.reject",
+    "proposal.preflight",
+    "proposal.readiness",
+    "proposal.applyCapability",
+    "proposal.applyDryRun",
+    "proposal.apply",
+    "proposal.applyDryRunHistory",
+    "proposal.auditTrail"
+  ],
+  "non_authority": [
+    "CLI and VSIX presentation cannot grant Runtime authority.",
+    "Protocol schemas and validators can narrow or reject, but cannot widen Mode Pack policy or Runtime permissions.",
+    "MCP descriptions, schemas, annotations, results, secret references, and executable identity remain non-authoritative.",
+    "Raw prompt, provider response, file content, command output, environment values, absolute paths, canonical paths, secret values, and executable content must not be durable boundary evidence."
+  ]
+}

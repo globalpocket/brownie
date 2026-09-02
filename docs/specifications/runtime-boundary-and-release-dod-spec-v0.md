@@ -93,6 +93,27 @@ machine-checkable:
 These contracts are runtime release blockers when missing or stale because they
 define how the runtime safely composes with external systems.
 
+## Canonical Boundary Contract
+
+The canonical public Runtime boundary contract is recorded in
+`docs/architecture/runtime-boundary-canonical-contract.json`. That artifact is
+the release-readiness source for the current v0 boundary inventory and
+compatibility matrix. It names the required Run Request, Runtime Event, Control
+Command, Run Result/Attestation, run inspection, task runtime, CLI external-loop,
+and VSIX validation surfaces, plus the bounded public method subset and
+implementation/documentation/validator anchors.
+
+`scripts/guard-runtime-release-readiness.mjs` validates the canonical contract
+through the existing VSIX-invoked release-readiness check path. Missing boundary
+surfaces, missing anchors, missing required methods, missing compatibility
+matrix entries, or dropped non-authority language fail the guard.
+
+The canonical contract is a narrowing release gate. It can require
+documentation, validators, and Runtime-owned public surfaces to remain in sync,
+but it cannot grant permissions, widen Mode Pack policy, authorize workspace
+mutation, accept MCP server claims as authority, or move Runtime policy into the
+CLI or VSIX.
+
 ## Release DoD Split
 
 Brownie Runtime Release DoD contains only runtime-owned behavior and generic

@@ -6,6 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const defaultRepoRoot = path.resolve(__dirname, '..');
 const defaultAuditPath = 'docs/architecture/runtime-release-readiness-audit.json';
+const defaultBoundaryContractPath = 'docs/architecture/runtime-boundary-canonical-contract.json';
 const defaultCiPath = '.github/workflows/ci.yml';
 const defaultCargoPath = 'Cargo.toml';
 const defaultVsixPackagePath = 'extensions/brownie-vsix/package.json';
@@ -62,6 +63,43 @@ const requiredVsixCheckCommands = [
   'pnpm --workspace-root guard:runtime-release-readiness'
 ];
 
+const requiredBoundarySurfaceIds = [
+  'run-request',
+  'runtime-event',
+  'control-command',
+  'run-result-attestation',
+  'run-inspection',
+  'task-runtime',
+  'cli-external-loop',
+  'vsix-validation'
+];
+
+const requiredBoundaryMethodSubset = [
+  'runtime.status',
+  'task.start',
+  'task.run',
+  'task.inspect',
+  'task.list',
+  'headless.continue_once',
+  'run.events',
+  'run.inspect',
+  'tool.execute',
+  'proposal.inspect'
+];
+
+const requiredBoundaryAnchorPaths = [
+  'crates/brownie-runtime/src/lib.rs',
+  'crates/brownie-protocol/src/lib.rs',
+  'docs/specifications/runtime-protocol-spec-v0.md',
+  'docs/specifications/runtime-boundary-and-release-dod-spec-v0.md',
+  'docs/specifications/cli-external-loop-spec-v0.md',
+  'docs/specifications/run-inspection-spec-v0.md',
+  'docs/specifications/task-runtime-spec-v0.md',
+  'extensions/brownie-vsix/src/runtime/protocol.ts',
+  'extensions/brownie-vsix/src/runtime/runtimeClient.ts',
+  'crates/brownie-cli/src/runtime_client.rs'
+];
+
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
@@ -106,6 +144,99 @@ function isOpenRuntimeReleaseBlocker(item) {
     item.status !== 'implemented_sufficient' &&
     item.debt_classification === 'required_before_release'
   );
+}
+
+function allStrings(value) {
+  return Array.isArray(value) && value.length > 0 && value.every(isNonEmptyString);
+}
+
+function collectBoundaryAnchors(contract) {
+  const anchors = new Set();
+  for (const key of ['implementation_anchors', 'documentation_anchors', 'validator_anchors', 'anchors']) {
+    if (Array.isArray(contract?.transport?.[key])) {
+      for (const anchor of contract.transport[key]) {
+        anchors.add(anchor);
+      }
+    }
+  }
+  for (const entry of Array.isArray(contract?.compatibility_matrix) ? contract.compatibility_matrix : []) {
+    for (const anchor of Array.isArray(entry?.anchors) ? entry.anchors : []) {
+      anchors.add(anchor);
+    }
+  }
+  for (const surface of Array.isArray(contract?.boundary_surfaces) ? contract.boundary_surfaces : []) {
+    for (const key of ['implementation_anchors', 'documentation_anchors', 'validator_anchors']) {
+      for (const anchor of Array.isArray(surface?.[key]) ? surface[key] : []) {
+        anchors.add(anchor);
+      }
+    }
+  }
+  return anchors;
+}
+
+export function validateRuntimeBoundaryContract(contract, options = {}) {
+  const contractPath = options.contractPath ?? defaultBoundaryContractPath;
+  const errors = [];
+
+  requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
+  requireValue(contract.contract_id === 'runtime-boundary-canonical-contract-v0', errors, `${contractPath} contract_id must identify the canonical Runtime boundary contract.`);
+  requireValue(contract.campaign === 'runtime-release-readiness-p0-p1-finite-closure', errors, `${contractPath} campaign must match Runtime release readiness.`);
+  requireValue(contract.owner === 'runtime', errors, `${contractPath} owner must be runtime.`);
+  requireValue(contract.runtime_release_debt_id === 'runtime-boundary-protocol-contracts', errors, `${contractPath} must bind to runtime-boundary-protocol-contracts.`);
+  requireValue(contract.transport?.kind === 'stdio_ndjson_jsonrpc_2_0', errors, `${contractPath} transport.kind must be stdio_ndjson_jsonrpc_2_0.`);
+  requireValue(contract.transport?.owner === 'runtime', errors, `${contractPath} transport owner must be runtime.`);
+  requireValue(isNonEmptyString(contract.transport?.compatibility_expectation), errors, `${contractPath} transport must include a compatibility expectation.`);
+  requireValue(isNonEmptyString(contract.transport?.schema_version), errors, `${contractPath} transport must include schema_version.`);
+
+  const surfaces = Array.isArray(contract.boundary_surfaces) ? contract.boundary_surfaces : [];
+  requireValue(surfaces.length > 0, errors, `${contractPath} boundary_surfaces must be non-empty.`);
+  const bySurfaceId = new Map();
+  for (const [index, surface] of surfaces.entries()) {
+    requireValue(isNonEmptyString(surface.id), errors, `${contractPath} boundary_surfaces[${index}].id must be non-empty.`);
+    requireValue(isNonEmptyString(surface.title), errors, `${contractPath} ${surface.id ?? index} title must be non-empty.`);
+    requireValue(surface.owner === 'runtime', errors, `${contractPath} ${surface.id ?? index} owner must be runtime.`);
+    requireValue(isNonEmptyString(surface.stability_class), errors, `${contractPath} ${surface.id ?? index} stability_class must be non-empty.`);
+    requireValue(isNonEmptyString(surface.schema_version), errors, `${contractPath} ${surface.id ?? index} schema_version must be non-empty.`);
+    requireValue(isNonEmptyString(surface.compatibility_expectation), errors, `${contractPath} ${surface.id ?? index} compatibility_expectation must be non-empty.`);
+    requireValue(allStrings(surface.implementation_anchors), errors, `${contractPath} ${surface.id ?? index} implementation_anchors must be non-empty strings.`);
+    requireValue(allStrings(surface.documentation_anchors), errors, `${contractPath} ${surface.id ?? index} documentation_anchors must be non-empty strings.`);
+    requireValue(allStrings(surface.validator_anchors), errors, `${contractPath} ${surface.id ?? index} validator_anchors must be non-empty strings.`);
+    if (isNonEmptyString(surface.id)) {
+      requireValue(!bySurfaceId.has(surface.id), errors, `${contractPath} duplicate boundary surface ${surface.id}.`);
+      bySurfaceId.set(surface.id, surface);
+    }
+  }
+  for (const id of requiredBoundarySurfaceIds) {
+    requireValue(bySurfaceId.has(id), errors, `${contractPath} must include boundary surface ${id}.`);
+  }
+
+  const methods = new Set(Array.isArray(contract.required_runtime_methods) ? contract.required_runtime_methods : []);
+  for (const method of requiredBoundaryMethodSubset) {
+    requireValue(methods.has(method), errors, `${contractPath} required_runtime_methods must include ${method}.`);
+  }
+
+  const compatibilityMatrix = Array.isArray(contract.compatibility_matrix) ? contract.compatibility_matrix : [];
+  for (const client of ['brownie-cli', 'brownie-vsix', 'external-control-plane']) {
+    const entry = compatibilityMatrix.find((item) => item?.client === client);
+    requireValue(Boolean(entry), errors, `${contractPath} compatibility_matrix must include ${client}.`);
+    if (entry) {
+      requireValue(isNonEmptyString(entry.boundary_role), errors, `${contractPath} ${client} boundary_role must be non-empty.`);
+      requireValue(isNonEmptyString(entry.compatibility_expectation), errors, `${contractPath} ${client} compatibility_expectation must be non-empty.`);
+      requireValue(allStrings(entry.anchors), errors, `${contractPath} ${client} anchors must be non-empty strings.`);
+    }
+  }
+
+  const anchors = collectBoundaryAnchors(contract);
+  for (const anchor of requiredBoundaryAnchorPaths) {
+    requireValue(anchors.has(anchor), errors, `${contractPath} must anchor ${anchor}.`);
+  }
+
+  const nonAuthority = Array.isArray(contract.non_authority) ? contract.non_authority.join('\n') : '';
+  for (const term of ['CLI', 'VSIX', 'cannot grant', 'MCP', 'Raw prompt']) {
+    requireValue(nonAuthority.includes(term), errors, `${contractPath} non_authority must preserve ${term} boundary language.`);
+  }
+
+  return errors;
 }
 
 export function validateRuntimeReleaseReadinessAudit(audit, options = {}) {
@@ -249,12 +380,18 @@ export function validateRuntimeReleaseReadinessAudit(audit, options = {}) {
 export function runRuntimeReleaseReadinessGuard(options = {}) {
   const repoRoot = options.repoRoot ?? defaultRepoRoot;
   const auditPath = options.auditPath ?? process.env.BROWNIE_RUNTIME_RELEASE_READINESS_AUDIT ?? defaultAuditPath;
+  const boundaryContractPath = options.boundaryContractPath ?? process.env.BROWNIE_RUNTIME_BOUNDARY_CONTRACT ?? defaultBoundaryContractPath;
   const readErrors = [];
   const audit = options.audit ?? readJson(repoRoot, auditPath, readErrors);
+  const boundaryContract = options.boundaryContract ?? readJson(repoRoot, boundaryContractPath, readErrors);
   const ciText = options.ciText ?? readText(repoRoot, defaultCiPath, readErrors);
   const cargoText = options.cargoText ?? readText(repoRoot, defaultCargoPath, readErrors);
   const vsixPackageText = options.vsixPackageText ?? readText(repoRoot, defaultVsixPackagePath, readErrors);
-  const errors = [...readErrors, ...validateRuntimeReleaseReadinessAudit(audit, { auditPath, ciText, cargoText, vsixPackageText })];
+  const errors = [
+    ...readErrors,
+    ...validateRuntimeReleaseReadinessAudit(audit, { auditPath, ciText, cargoText, vsixPackageText }),
+    ...validateRuntimeBoundaryContract(boundaryContract, { contractPath: boundaryContractPath })
+  ];
   return { errors, auditPath };
 }
 

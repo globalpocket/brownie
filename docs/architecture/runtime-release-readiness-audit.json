@@ -1,13 +1,12 @@
 {
   "schema_version": 1,
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-  "phase": "RRD-1",
-  "phase_title": "Runtime Release Debt Reaudit",
+  "phase": "RRP-1",
+  "phase_title": "Boundary Protocol Canonical Contract",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "6e712f1a34b51f06e6b5f4281d9b9429008d31b5",
+  "audited_main_commit": "0e610872f2201400e5b6e7a102caeff3eb200846",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
-    "runtime-boundary-protocol-contracts",
     "explicit-cancel-command",
     "real-process-loss-recovery-e2e",
     "durable-schema-version-and-migration",
@@ -41,14 +40,15 @@
       "id": "runtime-boundary-protocol-contracts",
       "title": "Boundary Protocol gaps",
       "priority": "P0",
-      "status": "implemented_contract_gap",
+      "status": "implemented_sufficient",
       "responsibility_domain": "runtime",
-      "debt_classification": "required_before_release",
+      "debt_classification": "closed",
       "evidence": [
         "Runtime boundary docs define Run Request, Runtime Event, Control Command, and Run Result/Attestation.",
-        "The contract is still split across README, runtime-boundary, runtime-protocol, CLI external-loop, run inspection, task runtime, and VSIX validators; a single canonical public contract and compatibility matrix is not yet release-guarded."
+        "RRP-1 adds docs/architecture/runtime-boundary-canonical-contract.json as the canonical public Runtime boundary contract and compatibility matrix.",
+        "scripts/guard-runtime-release-readiness.mjs validates required Runtime boundary surfaces, required public method subset, CLI/VSIX/Runtime/spec anchors, compatibility-matrix entries, and non-authority language through the existing VSIX-invoked release-readiness guard path."
       ],
-      "next_action": "Close in the Boundary Protocol phase by making the public protocol contract canonical and guardable without adding out-of-runtime platform features."
+      "next_action": "Use the canonical Runtime boundary contract as the guarded source for public boundary compatibility while closing the remaining Runtime Release Readiness blockers."
     },
     {
       "id": "explicit-cancel-command",
