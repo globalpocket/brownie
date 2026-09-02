@@ -613,6 +613,7 @@ fn mcp_catalog_provenance_payload(
         "annotations": entry.annotations,
         "annotation_fingerprint": entry.annotation_fingerprint,
         "server_config_identity_fingerprint": entry.server_config_identity_fingerprint,
+        "server_executable_identity_fingerprint": entry.server_executable_identity_fingerprint,
         "server_secret_reference_fingerprints": catalog.server_secret_reference_fingerprints,
         "protocol_version": entry.protocol_version,
         "catalog_fingerprint": catalog.catalog_fingerprint,
@@ -735,6 +736,14 @@ fn pinned_mcp_catalog_allows(
                 == Some(entry.server_config_identity_fingerprint.as_str())
             && catalog.get("server_secret_reference_fingerprints")
                 == Some(&json!(current_catalog.server_secret_reference_fingerprints))
+            && catalog
+                .get("server_executable_identity_fingerprint")
+                .and_then(Value::as_str)
+                == Some(
+                    current_catalog
+                        .server_executable_identity_fingerprint
+                        .as_str(),
+                )
             && catalog.get("protocol_version").and_then(Value::as_str)
                 == Some(entry.protocol_version.as_str())
             && catalog.get("catalog_fingerprint").and_then(Value::as_str)
@@ -756,6 +765,10 @@ fn pinned_mcp_catalog_allows(
                             && tool.get("annotation_fingerprint").and_then(Value::as_str)
                                 == Some(entry.annotation_fingerprint.as_str())
                             && tool.get("annotations") == Some(&json!(entry.annotations))
+                            && tool
+                                .get("server_executable_identity_fingerprint")
+                                .and_then(Value::as_str)
+                                == Some(entry.server_executable_identity_fingerprint.as_str())
                     })
                 })
                 .unwrap_or(false)

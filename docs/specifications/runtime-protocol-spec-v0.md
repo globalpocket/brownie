@@ -18,7 +18,8 @@ product. Runtime-owned messages are limited to:
 - Run Request: bounded objective or continuation identity, pinned Mode Pack
   identity, workspace and execution scope handles, idempotency key, deadline or
   execution constraints, secret references, requested isolation profile
-  metadata, approval policy, and expected fingerprints.
+  metadata, approval policy, and expected fingerprints including bounded MCP
+  executable identity fingerprints.
 - Runtime Event: append-only bounded state, progress, permission, tool,
   approval, recovery, completion, refusal, and attestation evidence records.
 - Control Command: explicit caller-authorized continue, inspect, approve, deny,

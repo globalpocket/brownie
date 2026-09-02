@@ -1,5 +1,6 @@
 //! Minimal runtime-owned MCP client for stdio tools.
 
+use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -30,6 +31,7 @@ const MAX_MCP_RESULT_CONTEXT_ITEMS: usize = 8;
 const MAX_MCP_RESULT_TEXT_ITEM_CHARS: usize = 2_048;
 const MAX_MCP_RESULT_TEXT_TOTAL_CHARS: usize = 8_192;
 const MAX_MCP_SECRET_VALUE_BYTES: usize = 8_192;
+const MAX_MCP_EXECUTABLE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpToolCatalogEntry {
@@ -51,6 +53,7 @@ pub struct McpToolCatalogEntry {
     pub annotations: McpToolAnnotations,
     pub annotation_fingerprint: String,
     pub server_config_identity_fingerprint: String,
+    pub server_executable_identity_fingerprint: String,
     pub protocol_version: String,
 }
 
@@ -95,11 +98,19 @@ pub struct McpToolInputFieldSummary {
 pub struct McpToolCatalog {
     pub server_id: String,
     pub server_config_identity_fingerprint: String,
+    pub server_executable_identity_fingerprint: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub server_secret_reference_fingerprints: Vec<String>,
     pub protocol_version: String,
     pub tools: Vec<McpToolCatalogEntry>,
     pub catalog_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpExecutableIdentity {
+    pub executable_identity_fingerprint: String,
+    pub executable_content_fingerprint: String,
+    pub executable_size_bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -238,9 +249,11 @@ pub fn list_tools_with_secret_resolver(
     config: &ModePackMcpServerConfig,
     secret_resolver: &dyn McpSecretResolver,
 ) -> Result<McpToolCatalog> {
+    let executable_identity = materialize_mcp_executable_identity(config)?;
     let response = stdio_request(
         config,
         secret_resolver,
+        Some(&executable_identity),
         json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -318,6 +331,9 @@ pub fn list_tools_with_secret_resolver(
             annotations,
             annotation_fingerprint,
             server_config_identity_fingerprint: config.config_identity_fingerprint.clone(),
+            server_executable_identity_fingerprint: executable_identity
+                .executable_identity_fingerprint
+                .clone(),
             protocol_version: MCP_PROTOCOL_VERSION.to_string(),
         });
     }
@@ -326,6 +342,7 @@ pub fn list_tools_with_secret_resolver(
         "version": "brownie_mcp_tool_catalog_v1",
         "server_id": config.server_id,
         "server_config_identity_fingerprint": config.config_identity_fingerprint,
+        "server_executable_identity_fingerprint": executable_identity.executable_identity_fingerprint,
         "server_secret_reference_fingerprints": secret_reference_fingerprints(config),
         "protocol_version": MCP_PROTOCOL_VERSION,
         "tools": entries,
@@ -333,6 +350,7 @@ pub fn list_tools_with_secret_resolver(
     Ok(McpToolCatalog {
         server_id: config.server_id.clone(),
         server_config_identity_fingerprint: config.config_identity_fingerprint.clone(),
+        server_executable_identity_fingerprint: executable_identity.executable_identity_fingerprint,
         server_secret_reference_fingerprints: secret_reference_fingerprints(config),
         protocol_version: MCP_PROTOCOL_VERSION.to_string(),
         tools: entries,
@@ -374,9 +392,23 @@ pub fn call_tool_with_secret_resolver(
             "MCP tools/call arguments must be an object",
         ));
     }
+    let executable_identity = materialize_mcp_executable_identity(config)
+        .map_err(|error| McpToolCallFailure::protocol_failed(error.to_string()))?;
+    if executable_identity.executable_identity_fingerprint
+        != entry.server_executable_identity_fingerprint
+    {
+        return Err(McpToolCallFailure::failed_with_metadata(
+            "MCP stdio executable identity drifted before tools/call",
+            json!({
+                "server_executable_identity_fingerprint": executable_identity.executable_identity_fingerprint,
+                "expected_server_executable_identity_fingerprint": entry.server_executable_identity_fingerprint,
+            }),
+        ));
+    }
     let response = stdio_request(
         config,
         secret_resolver,
+        Some(&executable_identity),
         json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -470,6 +502,7 @@ pub fn call_tool_with_secret_resolver(
             "tool_name": tool_name,
             "protocol_version": MCP_PROTOCOL_VERSION,
             "server_config_identity_fingerprint": config.config_identity_fingerprint,
+            "server_executable_identity_fingerprint": executable_identity.executable_identity_fingerprint,
             "server_secret_reference_fingerprints": secret_reference_fingerprints(config),
             "result_fingerprint": fingerprint_json(&result),
             "is_error": is_error,
@@ -610,12 +643,20 @@ fn bounded_result_context_items(result: &Value) -> (Vec<Value>, bool, usize, usi
 fn stdio_request(
     config: &ModePackMcpServerConfig,
     secret_resolver: &dyn McpSecretResolver,
+    expected_executable_identity: Option<&McpExecutableIdentity>,
     request: Value,
 ) -> Result<Value> {
     if config.transport != "stdio" {
         bail!("unsupported MCP transport");
     }
-    validate_stdio_command_boundary(config)?;
+    let executable_identity = materialize_mcp_executable_identity(config)?;
+    if let Some(expected) = expected_executable_identity {
+        if executable_identity.executable_identity_fingerprint
+            != expected.executable_identity_fingerprint
+        {
+            bail!("MCP stdio executable identity drifted before launch");
+        }
+    }
     let mut command = Command::new(&config.command);
     command
         .args(&config.args)
@@ -686,6 +727,75 @@ fn validate_stdio_command_boundary(config: &ModePackMcpServerConfig) -> Result<(
     }) {
         bail!("MCP stdio command must not contain relative path components");
     }
+    Ok(())
+}
+
+fn materialize_mcp_executable_identity(
+    config: &ModePackMcpServerConfig,
+) -> Result<McpExecutableIdentity> {
+    validate_stdio_command_boundary(config)?;
+    let path = Path::new(&config.command);
+    let metadata = std::fs::symlink_metadata(path)
+        .context("MCP stdio executable identity metadata is unavailable")?;
+    if !metadata.file_type().is_file() {
+        bail!("MCP stdio executable identity requires a regular file");
+    }
+    let executable_size_bytes = metadata.len();
+    if executable_size_bytes == 0 || executable_size_bytes > MAX_MCP_EXECUTABLE_BYTES {
+        bail!("MCP stdio executable identity is outside the supported byte limit");
+    }
+    validate_executable_permissions(&metadata)?;
+    let mut file = File::open(path).context("MCP stdio executable identity is unreadable")?;
+    let mut hasher = Sha256::new();
+    let mut total = 0_u64;
+    let mut chunk = [0_u8; 8192];
+    loop {
+        let read = file
+            .read(&mut chunk)
+            .context("failed to read MCP stdio executable identity")?;
+        if read == 0 {
+            break;
+        }
+        total = total.saturating_add(read as u64);
+        if total > MAX_MCP_EXECUTABLE_BYTES {
+            bail!("MCP stdio executable identity exceeds the supported byte limit");
+        }
+        hasher.update(&chunk[..read]);
+    }
+    if total != executable_size_bytes {
+        bail!("MCP stdio executable identity changed while being read");
+    }
+    let executable_content_fingerprint = format!(
+        "sha256:{}",
+        hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+    let executable_identity_fingerprint = fingerprint_json(&json!({
+        "version": "brownie_mcp_executable_identity_v1",
+        "content_fingerprint": executable_content_fingerprint,
+        "size_bytes": executable_size_bytes,
+    }));
+    Ok(McpExecutableIdentity {
+        executable_identity_fingerprint,
+        executable_content_fingerprint,
+        executable_size_bytes,
+    })
+}
+
+#[cfg(unix)]
+fn validate_executable_permissions(metadata: &std::fs::Metadata) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    if metadata.permissions().mode() & 0o111 == 0 {
+        bail!("MCP stdio executable identity target is not executable");
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn validate_executable_permissions(_metadata: &std::fs::Metadata) -> Result<()> {
     Ok(())
 }
 
@@ -1507,5 +1617,150 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"tools":[]}}}}'
 
         assert!(error.to_string().contains("unresolved"));
         assert!(!marker.exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn mcp_executable_identity_is_cataloged_without_raw_path() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let script = temp.path().join("fake-mcp-identity.sh");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+read request
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","inputSchema":{"type":"object"},"annotations":{"readOnlyHint":true,"idempotentHint":true}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}],"structuredContent":{},"isError":false}}'
+    ;;
+esac
+"#,
+        )
+        .expect("write script");
+        make_executable(&script);
+        let config = ModePackMcpServerConfig {
+            server_id: "github".to_string(),
+            transport: "stdio".to_string(),
+            command: script.to_string_lossy().to_string(),
+            args: vec![],
+            secret_env: vec![],
+            config_identity_fingerprint: "sha256:server-config".to_string(),
+        };
+
+        let catalog = list_tools(&config).expect("catalog");
+        let entry = &catalog.tools[0];
+
+        assert!(catalog
+            .server_executable_identity_fingerprint
+            .starts_with("sha256:"));
+        assert_eq!(
+            entry.server_executable_identity_fingerprint,
+            catalog.server_executable_identity_fingerprint
+        );
+        assert!(catalog.catalog_fingerprint.starts_with("sha256:"));
+        let serialized = serde_json::to_string(&catalog).expect("serialize catalog");
+        assert!(serialized.contains("server_executable_identity_fingerprint"));
+        assert!(!serialized.contains(&script.to_string_lossy().to_string()));
+        assert!(!serialized.contains("fake-mcp-identity.sh"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn mcp_executable_identity_drift_fails_before_call_spawn() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let marker = temp.path().join("spawned-after-drift");
+        let script = temp.path().join("fake-mcp-drift.sh");
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+read request
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","inputSchema":{"type":"object"},"outputSchema":{"type":"object"},"annotations":{"readOnlyHint":true,"idempotentHint":true}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}],"structuredContent":{},"isError":false}}'
+    ;;
+esac
+"#,
+        )
+        .expect("write script");
+        make_executable(&script);
+        let config = ModePackMcpServerConfig {
+            server_id: "github".to_string(),
+            transport: "stdio".to_string(),
+            command: script.to_string_lossy().to_string(),
+            args: vec![],
+            secret_env: vec![],
+            config_identity_fingerprint: "sha256:server-config".to_string(),
+        };
+        let catalog = list_tools(&config).expect("catalog");
+        std::fs::write(
+            &script,
+            format!(
+                r#"#!/bin/sh
+touch "{}"
+printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"content":[{{"type":"text","text":"changed"}}],"structuredContent":{{}},"isError":false}}}}'
+"#,
+                marker.display()
+            ),
+        )
+        .expect("rewrite script");
+        make_executable(&script);
+
+        let error = call_tool(&config, &catalog.tools[0], json!({}))
+            .expect_err("drifted executable identity should fail closed");
+
+        assert_eq!(error.kind, McpToolCallFailureKind::Failed);
+        assert!(error.message.contains("identity drifted"));
+        assert!(!marker.exists());
+        let metadata = error.metadata.expect("bounded drift metadata");
+        assert!(metadata
+            .get("server_executable_identity_fingerprint")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.starts_with("sha256:")));
+        assert_eq!(
+            metadata
+                .get("expected_server_executable_identity_fingerprint")
+                .and_then(Value::as_str),
+            Some(
+                catalog.tools[0]
+                    .server_executable_identity_fingerprint
+                    .as_str()
+            )
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn mcp_executable_identity_rejects_non_regular_before_spawn() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let marker = temp.path().join("spawned");
+        let config = ModePackMcpServerConfig {
+            server_id: "github".to_string(),
+            transport: "stdio".to_string(),
+            command: temp.path().to_string_lossy().to_string(),
+            args: vec![],
+            secret_env: vec![],
+            config_identity_fingerprint: "sha256:server-config".to_string(),
+        };
+
+        let error = list_tools(&config)
+            .expect_err("directory executable identity should fail closed")
+            .to_string();
+
+        assert!(error.contains("regular file"));
+        assert!(!marker.exists());
+    }
+
+    #[cfg(unix)]
+    fn make_executable(path: &Path) {
+        let mut permissions = std::fs::metadata(path)
+            .expect("script metadata")
+            .permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        std::fs::set_permissions(path, permissions).expect("chmod script");
     }
 }

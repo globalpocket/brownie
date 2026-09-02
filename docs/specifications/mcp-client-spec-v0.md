@@ -224,9 +224,14 @@ explicit absolute or self-contained arguments.
 
 The "trusted executable" boundary in v0 means a trusted signed/local Mode Pack
 activation names an absolute executable path that Runtime may launch under the
-bounded stdio contract. Brownie v0 does not add executable canonicalization,
-hash allow-listing, signing verification, or binary provenance validation for
-the executable itself.
+bounded stdio contract. Runtime additionally computes bounded executable
+content identity before `tools/list`, includes the executable identity
+fingerprint in task-pinned catalog/config provenance, and rechecks the same
+identity immediately before each `tools/list` or `tools/call` spawn. Missing,
+non-regular, unreadable, oversized, drifting, or mismatched executable targets
+fail closed before launch. Brownie v0 does not add executable canonicalization,
+external hash allow-listing, signing verification, registry lookup, package
+installation, or binary provenance validation for the executable itself.
 
 Each `tools/list` or `tools/call` request owns its MCP child lifecycle. Runtime
 uses null stdin after the JSON-RPC request stream, bounded response reads,
@@ -246,15 +251,17 @@ At task admission, Runtime materializes bounded MCP catalog evidence in
 - bounded input schema summary for model/tool-definition materialization;
 - bounded MCP annotation payload and annotation fingerprint;
 - server/config identity fingerprint;
+- server executable identity fingerprint;
 - server secret reference fingerprints when configured;
 - MCP protocol version;
 - catalog fingerprint.
 
 The ledger and prompt do not store raw server command arguments, environment
-values, credentials, secret headers, absolute source paths, or unbounded schema
-text. Runtime may retain raw schemas only in ephemeral in-memory catalog entries
-for validation during the current execution boundary; task-pinned durable
-evidence remains limited to fingerprints, summaries, and bounded provenance.
+values, credentials, secret headers, absolute source paths, canonical paths,
+raw executable content, or unbounded schema text. Runtime may retain raw schemas
+only in ephemeral in-memory catalog entries for validation during the current
+execution boundary; task-pinned durable evidence remains limited to
+fingerprints, summaries, and bounded provenance.
 Prompt materialization may expose bounded tool id, bounded description,
 and bounded input field names/types/required flags as ephemeral catalog material
 below runtime safety invariants, Mode Pack permission policy, and mode
