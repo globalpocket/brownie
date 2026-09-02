@@ -346,7 +346,10 @@ In v0, Runtime may execute MCP tools without a separate approval only when the
 compiled policy is `read_only`, `approval=not_required`, `idempotency=safe`, and
 `retry` is not `prohibited`. Local mutation, external mutation, destructive,
 unknown, and legacy-unclassified tools fail closed until a later phase binds MCP
-tool approvals.
+tool approvals. MCP `tools/list` annotations are not Mode Pack authority, but
+Runtime pins bounded boolean annotation provenance for `readOnlyHint`,
+`destructiveHint`, `idempotentHint`, and `openWorldHint` and uses it only to
+narrow execution or fail closed when live annotations drift.
 
 Mode Pack MCP server command configuration is structured runtime policy. It is
 not prompt authority, and raw command configuration, credentials, environment

@@ -36,8 +36,39 @@ pub struct McpToolCatalogEntry {
     pub output_schema_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub input_schema_summary: Vec<McpToolInputFieldSummary>,
+    #[serde(default)]
+    pub annotations: McpToolAnnotations,
+    pub annotation_fingerprint: String,
     pub server_config_identity_fingerprint: String,
     pub protocol_version: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpToolAnnotations {
+    #[serde(
+        default,
+        rename = "readOnlyHint",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub read_only_hint: Option<bool>,
+    #[serde(
+        default,
+        rename = "destructiveHint",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub destructive_hint: Option<bool>,
+    #[serde(
+        default,
+        rename = "idempotentHint",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub idempotent_hint: Option<bool>,
+    #[serde(
+        default,
+        rename = "openWorldHint",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub open_world_hint: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -223,6 +254,8 @@ pub fn list_tools(config: &ModePackMcpServerConfig) -> Result<McpToolCatalog> {
                     .take(MAX_MCP_DESCRIPTION_CHARS)
                     .collect::<String>()
             });
+        let annotations = bounded_tool_annotations(object)?;
+        let annotation_fingerprint = fingerprint_json(&json!(annotations));
         entries.push(McpToolCatalogEntry {
             tool_id: normalized_tool_id(&config.server_id, name),
             server_id: config.server_id.clone(),
@@ -231,6 +264,8 @@ pub fn list_tools(config: &ModePackMcpServerConfig) -> Result<McpToolCatalog> {
             input_schema_fingerprint,
             output_schema_fingerprint,
             input_schema_summary,
+            annotations,
+            annotation_fingerprint,
             server_config_identity_fingerprint: config.config_identity_fingerprint.clone(),
             protocol_version: MCP_PROTOCOL_VERSION.to_string(),
         });
@@ -706,6 +741,29 @@ fn bounded_input_schema_summary(schema: &Value) -> Result<Vec<McpToolInputFieldS
         });
     }
     Ok(fields)
+}
+
+fn bounded_tool_annotations(object: &Map<String, Value>) -> Result<McpToolAnnotations> {
+    let Some(value) = object.get("annotations") else {
+        return Ok(McpToolAnnotations::default());
+    };
+    let annotations = value
+        .as_object()
+        .context("MCP tool annotations must be an object when present")?;
+    Ok(McpToolAnnotations {
+        read_only_hint: bounded_annotation_bool(annotations, "readOnlyHint")?,
+        destructive_hint: bounded_annotation_bool(annotations, "destructiveHint")?,
+        idempotent_hint: bounded_annotation_bool(annotations, "idempotentHint")?,
+        open_world_hint: bounded_annotation_bool(annotations, "openWorldHint")?,
+    })
+}
+
+fn bounded_annotation_bool(annotations: &Map<String, Value>, field: &str) -> Result<Option<bool>> {
+    match annotations.get(field) {
+        Some(Value::Bool(value)) => Ok(Some(*value)),
+        Some(_) => bail!("MCP tool annotation {field} must be a boolean when present"),
+        None => Ok(None),
+    }
 }
 
 fn fingerprint_json(value: &Value) -> String {

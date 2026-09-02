@@ -206,13 +206,18 @@ Mode Pack allow-list, the tool lacks structured Brownie safety policy, the tool
 uses legacy unclassified policy, the policy is not executable without approval
 binding, the structured server configuration is missing, or the current
 `tools/list` catalog no longer matches the task-pinned schema/config
-fingerprints. `tools/call` is attempted only after those checks pass. In v0,
-approval-free MCP execution is limited to `read_only`, `approval=not_required`,
-`idempotency=safe`, and non-prohibited retry policy.
+fingerprints, including per-tool annotation fingerprints. `tools/call` is
+attempted only after those checks pass. In v0, approval-free MCP execution is
+limited to `read_only`, `approval=not_required`, `idempotency=safe`, and
+non-prohibited retry policy, and it is further narrowed by bounded MCP tool
+annotations: `readOnlyHint=false`, `destructiveHint=true`,
+`idempotentHint=false`, or `openWorldHint=true` deny before server execution.
 
 MCP stdio server launch is runtime-owned and request-scoped in this phase. MCP
 server descriptions, schemas, command names, response text, and AgentModes prose
-cannot grant permission or widen tool routing authority. Successful MCP tool
+cannot grant permission or widen tool routing authority. MCP tool annotations
+are task-pinned provenance and narrowing-only safety hints; they cannot grant
+permission, add allow-list membership, or bypass approval. Successful MCP tool
 results may contribute bounded text result context to the next agent step as
 untrusted data, with result fingerprints, request fingerprints, item counts,
 text limits, and truncation evidence. Raw JSON-RPC responses, server
