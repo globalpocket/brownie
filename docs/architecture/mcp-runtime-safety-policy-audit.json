@@ -1,14 +1,13 @@
 {
   "schema_version": 1,
   "campaign": "mcp-runtime-safety-policy-finite-closure",
-  "phase": "MCP-S3",
-  "phase_title": "MCP Tool Annotation Provenance And Drift Checks",
+  "phase": "MCP-S4",
+  "phase_title": "Tool-level Approval Binding",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "9d83bf81c80980c36df7181eb3f03edcc41408f6",
+  "audited_main_commit": "1e8637661865cac1c599be77993fea8147d5c05e",
   "mcp_first_architecture_preserved": true,
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
-    "mcp-tool-approval-binding",
     "mcp-runtime-schema-validation",
     "mcp-secret-reference-contract",
     "mcp-executable-identity"
@@ -67,14 +66,17 @@
       "id": "mcp-tool-approval-binding",
       "title": "Tool-level approval binding",
       "priority": "P0",
-      "status": "partial",
+      "status": "implemented_sufficient",
       "responsibility_domain": "runtime",
-      "debt_classification": "required_before_release",
+      "debt_classification": "closed",
       "evidence": [
-        "Runtime has proposal, approval, fingerprint, and stale rejection mechanisms for controlled operations.",
-        "MCP external mutation and destructive calls are not yet bound to a single concrete approval fingerprint."
+        "Approval-required MCP tools/call execution is bound to a Runtime-materialized approval fingerprint before server execution.",
+        "The approval binding includes task id, run id, normalized MCP tool id, server id, tool name, request fingerprint, task-pinned catalog/schema/annotation provenance, server config identity, and structured Brownie MCP safety policy.",
+        "Missing, stale, consumed, malformed, mismatched, or over-broad approval evidence denies before tools/call.",
+        "Matching runtime-ledgered approval evidence permits the exact invocation and task-scoped replay reuses completed evidence without a duplicate tools/call.",
+        "Approval evidence cannot override mcp_tool_access, server/tool allow-list membership, legacy-unclassified policy, prohibited retry, destructive or unknown policy, annotation narrowing, or catalog drift."
       ],
-      "next_action": "Close in MCP-S4 through existing Runtime approval machinery, not a second MCP permission system."
+      "next_action": "Use this closed approval-binding baseline for MCP-S5 runtime input/output schema validation."
     },
     {
       "id": "mcp-runtime-schema-validation",

@@ -174,6 +174,15 @@ impl CompiledMcpToolPolicy {
             && self.retry != McpToolRetry::Prohibited
     }
 
+    pub fn permits_runtime_approval_binding(&self) -> bool {
+        !self.legacy_unclassified
+            && self.approval == McpToolApproval::Required
+            && self.side_effect != McpToolSideEffect::Destructive
+            && self.side_effect != McpToolSideEffect::Unknown
+            && self.idempotency != McpToolIdempotency::Unknown
+            && self.retry != McpToolRetry::Prohibited
+    }
+
     pub fn retry_policy_name(&self) -> &'static str {
         match self.retry {
             McpToolRetry::Allowed => "allowed",

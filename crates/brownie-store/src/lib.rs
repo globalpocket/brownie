@@ -5052,6 +5052,7 @@ pub enum LedgerEventKind {
     SubtaskDispatchHandoffEnvelopeRecorded,
     ParentJoinContinuationFingerprintConsumed,
     ToolExecutionRequested,
+    McpToolExecutionApproved,
     ToolExecutionPermissionChecked,
     ToolExecutionCompleted,
     ToolExecutionDenied,
