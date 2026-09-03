@@ -31,6 +31,9 @@ use uuid::Uuid;
 pub const WORKSPACE_STATE_DIR: &str = ".brownie";
 pub const RUNS_DIR: &str = "runs";
 pub const CODEBASE_INDEX_DIR: &str = "codebase-index";
+pub const DURABLE_STORE_SCHEMA_MANIFEST: &str = "store-schema.json";
+pub const DURABLE_STORE_SCHEMA_VERSION: u64 = 1;
+pub const DURABLE_STORE_SCHEMA_MIN_SUPPORTED_VERSION: u64 = 1;
 const HEADLESS_CONTINUATIONS_DIR: &str = "headless-continuations";
 const HEADLESS_OBJECTIVE_ADMISSIONS_DIR: &str = "headless-objective-admissions";
 const HEADLESS_JOURNEY_EXECUTIONS_DIR: &str = "headless-journey-executions";
@@ -43,6 +46,22 @@ const RUN_ADMISSION_LOCK_RETRIES: usize = 200;
 const RUN_ADMISSION_LOCK_SLEEP: Duration = Duration::from_millis(10);
 const HEADLESS_OBJECTIVE_ADMISSION_LOCK_STALE_AFTER: Duration = Duration::from_secs(5);
 const CODEBASE_INDEX_LOCK_STALE_AFTER_SECONDS: i64 = 30 * 60;
+const DURABLE_STORE_SCHEMA_ID: &str = "brownie-runtime-durable-store";
+const DURABLE_STORE_SCHEMA_MANIFEST_FORMAT_VERSION: u64 = 1;
+const DURABLE_STORE_SCHEMA_STATE_CURRENT: &str = "current";
+const DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED: &str = "initialized-v1";
+const DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED: &str = "adopted-missing-v1-layout";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DurableStoreSchemaManifest {
+    pub schema_id: String,
+    pub manifest_format_version: u64,
+    pub store_schema_version: u64,
+    pub minimum_runtime_store_schema_version: u64,
+    pub state: String,
+    pub migration: String,
+}
 
 #[derive(Debug, Clone)]
 pub struct BrownieStore {
@@ -61,11 +80,17 @@ impl BrownieStore {
             Some(root) => PathBuf::from(root),
             None => std::env::current_dir().context("failed to read current working directory")?,
         };
-        Ok(Self::new(workspace_root))
+        let store = Self::new(workspace_root);
+        store.ensure_durable_schema()?;
+        Ok(store)
     }
 
     pub fn tasks(&self) -> &TaskStore {
         &self.task_store
+    }
+
+    pub fn ensure_durable_schema(&self) -> Result<DurableStoreSchemaManifest> {
+        self.task_store.ensure_durable_schema()
     }
 
     pub fn codebase_index(&self) -> CodebaseIndexStore {
@@ -73,6 +98,7 @@ impl BrownieStore {
     }
 
     pub fn read_active_modepack_snapshot(&self) -> Result<Option<ActiveModePackSnapshot>> {
+        self.ensure_durable_schema()?;
         let path = self.active_modepack_current_path();
         if !path.exists() {
             return Ok(None);
@@ -88,6 +114,7 @@ impl BrownieStore {
         &self,
         activation_fingerprint: &str,
     ) -> Result<Option<ActiveModePackSnapshot>> {
+        self.ensure_durable_schema()?;
         let path = self.active_modepack_snapshot_archive_path(activation_fingerprint);
         if path.exists() {
             let content = fs::read_to_string(&path)
@@ -570,6 +597,7 @@ impl BrownieStore {
         &self,
         content_sha256: &str,
     ) -> Result<Option<ModePackCandidateSnapshot>> {
+        self.ensure_durable_schema()?;
         let path = self.modepack_candidate_cache_path(content_sha256);
         if !path.exists() {
             return Ok(None);
@@ -586,6 +614,7 @@ impl BrownieStore {
         current_activation_fingerprint: &str,
         candidate_content_sha256: &str,
     ) -> Result<Option<ModePackRegistryUpdateSelectionSnapshot>> {
+        self.ensure_durable_schema()?;
         let path = self.modepack_registry_update_selection_path(
             current_activation_fingerprint,
             candidate_content_sha256,
@@ -684,6 +713,7 @@ impl BrownieStore {
         &self,
         continuation_id: &str,
     ) -> Result<Option<HeadlessModePackSelectedCandidateFetchCheckpoint>> {
+        self.ensure_durable_schema()?;
         let path = self.headless_modepack_selected_candidate_fetch_path(continuation_id);
         match fs::read_to_string(&path) {
             Ok(body) => serde_json::from_str(&body)
@@ -726,6 +756,7 @@ impl BrownieStore {
         &self,
         continuation_id: &str,
     ) -> Result<Option<HeadlessModePackRegistryUpdateSelectionCheckpoint>> {
+        self.ensure_durable_schema()?;
         let path = self.headless_modepack_registry_update_selection_path(continuation_id);
         match fs::read_to_string(&path) {
             Ok(body) => serde_json::from_str(&body)
@@ -769,6 +800,7 @@ impl BrownieStore {
         &self,
         continuation_id: &str,
     ) -> Result<Option<HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint>> {
+        self.ensure_durable_schema()?;
         let path =
             self.headless_modepack_selected_candidate_provenance_verification_path(continuation_id);
         match fs::read_to_string(&path) {
@@ -816,6 +848,7 @@ impl BrownieStore {
         &self,
         continuation_id: &str,
     ) -> Result<Option<HeadlessModePackSelectedCandidateApprovalCheckpoint>> {
+        self.ensure_durable_schema()?;
         let path = self.headless_modepack_selected_candidate_approval_path(continuation_id);
         match fs::read_to_string(&path) {
             Ok(body) => serde_json::from_str(&body)
@@ -859,6 +892,7 @@ impl BrownieStore {
         &self,
         continuation_id: &str,
     ) -> Result<Option<HeadlessObjectiveProposalAuthorizationPreflightCheckpoint>> {
+        self.ensure_durable_schema()?;
         let path = self.headless_objective_proposal_authorization_preflight_path(continuation_id);
         match fs::read_to_string(&path) {
             Ok(body) => serde_json::from_str(&body)
@@ -904,6 +938,7 @@ impl BrownieStore {
         &self,
         continuation_id: &str,
     ) -> Result<Option<HeadlessObjectiveProposalApplyCheckpoint>> {
+        self.ensure_durable_schema()?;
         let path = self.headless_objective_proposal_apply_path(continuation_id);
         match fs::read_to_string(&path) {
             Ok(body) => serde_json::from_str(&body)
@@ -945,6 +980,7 @@ impl BrownieStore {
         &self,
         continuation_id: &str,
     ) -> Result<Option<HeadlessObjectiveApplyVerificationCheckpoint>> {
+        self.ensure_durable_schema()?;
         let path = self.headless_objective_apply_verification_path(continuation_id);
         match fs::read_to_string(&path) {
             Ok(body) => serde_json::from_str(&body)
@@ -986,6 +1022,7 @@ impl BrownieStore {
         &self,
         continuation_id: &str,
     ) -> Result<Option<HeadlessObjectiveCompletionAcceptanceCheckpoint>> {
+        self.ensure_durable_schema()?;
         let path = self.headless_objective_completion_acceptance_path(continuation_id);
         match fs::read_to_string(&path) {
             Ok(body) => serde_json::from_str(&body)
@@ -1027,6 +1064,7 @@ impl BrownieStore {
         &self,
         continuation_id: &str,
     ) -> Result<Option<HeadlessModePackSelectedCandidateReplacementCheckpoint>> {
+        self.ensure_durable_schema()?;
         let path = self.headless_modepack_selected_candidate_replacement_path(continuation_id);
         match fs::read_to_string(&path) {
             Ok(body) => serde_json::from_str(&body)
@@ -1072,6 +1110,7 @@ impl BrownieStore {
         &self,
         continuation_id: &str,
     ) -> Result<Option<HeadlessModePackSelectedActiveRollbackCheckpoint>> {
+        self.ensure_durable_schema()?;
         let path = self.headless_modepack_selected_active_rollback_path(continuation_id);
         match fs::read_to_string(&path) {
             Ok(body) => serde_json::from_str(&body)
@@ -1155,6 +1194,7 @@ impl BrownieStore {
         &self,
         content_sha256: &str,
     ) -> Result<Option<ModePackApprovedCandidateSnapshot>> {
+        self.ensure_durable_schema()?;
         let path = self.modepack_candidate_approval_path(content_sha256);
         if !path.exists() {
             return Ok(None);
@@ -1170,6 +1210,7 @@ impl BrownieStore {
         &self,
         content_sha256: &str,
     ) -> Result<Option<ModePackCandidateProvenanceSnapshot>> {
+        self.ensure_durable_schema()?;
         let path = self.modepack_candidate_provenance_path(content_sha256);
         if !path.exists() {
             return Ok(None);
@@ -1185,6 +1226,7 @@ impl BrownieStore {
         &self,
         signer_fingerprint: &str,
     ) -> Result<Option<ModePackTrustedSignerSnapshot>> {
+        self.ensure_durable_schema()?;
         let path = self.modepack_trusted_signer_path(signer_fingerprint);
         if !path.exists() {
             return Ok(None);
@@ -1200,6 +1242,7 @@ impl BrownieStore {
         &self,
         signer_fingerprint: &str,
     ) -> Result<Option<ModePackRevokedSignerSnapshot>> {
+        self.ensure_durable_schema()?;
         let path = self.modepack_revoked_signer_path(signer_fingerprint);
         if !path.exists() {
             return Ok(None);
@@ -3123,6 +3166,28 @@ impl TaskStore {
         }
     }
 
+    pub fn ensure_durable_schema(&self) -> Result<DurableStoreSchemaManifest> {
+        match self.read_durable_schema_manifest() {
+            Ok(Some(manifest)) => {
+                validate_durable_schema_manifest(&manifest)?;
+                Ok(manifest)
+            }
+            Ok(None) => self.initialize_or_adopt_durable_schema_manifest(),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn read_durable_schema_manifest(&self) -> Result<Option<DurableStoreSchemaManifest>> {
+        let path = self.durable_schema_manifest_path();
+        match fs::read_to_string(&path) {
+            Ok(body) => serde_json::from_str(&body)
+                .with_context(|| format!("failed to parse {}", path.display()))
+                .map(Some),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+        }
+    }
+
     pub fn start_task(&self, params: TaskStartParams) -> Result<TaskRecord> {
         self.start_task_with_recovery_identity(params, None)
     }
@@ -3140,6 +3205,7 @@ impl TaskStore {
         params: TaskStartParams,
         headless_run_recovery_identity: Option<HeadlessRunRecoveryIdentityEvidence>,
     ) -> Result<TaskRecord> {
+        self.ensure_durable_schema()?;
         let now = timestamp()?;
         let task_id = format!("task_{}", Uuid::new_v4());
         let run_id = format!("run_{}", Uuid::new_v4());
@@ -3193,6 +3259,7 @@ impl TaskStore {
     }
 
     pub fn start_child_task(&self, params: ChildTaskStartParams) -> Result<TaskRecord> {
+        self.ensure_durable_schema()?;
         let now = timestamp()?;
         let task_id = format!("task_{}", Uuid::new_v4());
         let run_id = format!("run_{}", Uuid::new_v4());
@@ -4138,6 +4205,7 @@ impl TaskStore {
     }
 
     pub fn list_tasks(&self) -> Result<Vec<TaskRecord>> {
+        self.ensure_durable_schema()?;
         let runs_dir = self.runs_dir();
         if !runs_dir.exists() {
             return Ok(Vec::new());
@@ -4179,6 +4247,7 @@ impl TaskStore {
     }
 
     fn write_task_state(&self, record: &TaskRecord) -> Result<()> {
+        self.ensure_durable_schema()?;
         let run_dir = self.run_dir(&record.run_id);
         fs::create_dir_all(&run_dir)
             .with_context(|| format!("failed to create {}", run_dir.display()))?;
@@ -4209,6 +4278,7 @@ impl TaskStore {
     }
 
     pub fn read_ledger_events(&self, run_id: &str) -> Result<Vec<LedgerEvent>> {
+        self.ensure_durable_schema()?;
         RunLedger::new(self.run_dir(run_id)).read_events()
     }
 
@@ -4216,6 +4286,7 @@ impl TaskStore {
         &self,
         continuation_id: &str,
     ) -> Result<Option<HeadlessContinuationDecisionLookup>> {
+        self.ensure_durable_schema()?;
         let path = self.headless_continuation_decision_path(continuation_id);
         match fs::read_to_string(&path) {
             Ok(body) => serde_json::from_str(&body)
@@ -4249,6 +4320,7 @@ impl TaskStore {
         &self,
         session_id: &str,
     ) -> Result<Option<HeadlessRunSessionCheckpoint>> {
+        self.ensure_durable_schema()?;
         let path = self.headless_run_session_current_path(session_id);
         match fs::read_to_string(&path) {
             Ok(body) => serde_json::from_str(&body)
@@ -4291,6 +4363,7 @@ impl TaskStore {
         session_id: &str,
         drive_id: &str,
     ) -> Result<Option<HeadlessRunSessionDriveCheckpoint>> {
+        self.ensure_durable_schema()?;
         let path = self.headless_run_session_drive_path(session_id, drive_id);
         match fs::read_to_string(&path) {
             Ok(body) => serde_json::from_str(&body)
@@ -4329,6 +4402,7 @@ impl TaskStore {
         &self,
         journey_id: &str,
     ) -> Result<Option<HeadlessJourneyStartCheckpoint>> {
+        self.ensure_durable_schema()?;
         let path = self.headless_journey_start_path(journey_id);
         match fs::read_to_string(&path) {
             Ok(body) => serde_json::from_str(&body)
@@ -4342,6 +4416,7 @@ impl TaskStore {
     pub fn list_headless_journey_start_checkpoints(
         &self,
     ) -> Result<Vec<HeadlessJourneyStartCheckpoint>> {
+        self.ensure_durable_schema()?;
         let dir = self.headless_journeys_dir();
         if !dir.exists() {
             return Ok(Vec::new());
@@ -4424,6 +4499,7 @@ impl TaskStore {
         &self,
         admission_id: &str,
     ) -> Result<Option<HeadlessObjectiveAdmissionCheckpoint>> {
+        self.ensure_durable_schema()?;
         let path = self.headless_objective_admission_path(admission_id);
         match fs::read_to_string(&path) {
             Ok(body) => serde_json::from_str(&body)
@@ -4438,6 +4514,7 @@ impl TaskStore {
         &self,
         admission_id: &str,
     ) -> Result<Option<HeadlessObjectiveAdmissionReservation>> {
+        self.ensure_durable_schema()?;
         let path = self.headless_objective_admission_reservation_path(admission_id);
         match fs::read_to_string(&path) {
             Ok(body) => serde_json::from_str(&body)
@@ -4538,6 +4615,7 @@ impl TaskStore {
         &self,
         journey_id: &str,
     ) -> Result<Option<HeadlessJourneyExecutionCheckpoint>> {
+        self.ensure_durable_schema()?;
         let path = self.headless_journey_execution_path(journey_id);
         match fs::read_to_string(&path) {
             Ok(body) => serde_json::from_str(&body)
@@ -4584,6 +4662,7 @@ impl TaskStore {
         session_id: &str,
         drive_id: &str,
     ) -> Result<Option<HeadlessRunCompletionFinalizationCheckpoint>> {
+        self.ensure_durable_schema()?;
         let path = self.headless_run_completion_finalization_path(session_id, drive_id);
         match fs::read_to_string(&path) {
             Ok(body) => serde_json::from_str(&body)
@@ -4625,6 +4704,7 @@ impl TaskStore {
         record: &TaskRecord,
         events: Vec<(LedgerEventKind, Option<serde_json::Value>)>,
     ) -> Result<()> {
+        self.ensure_durable_schema()?;
         let ledger_events = events
             .into_iter()
             .map(|(kind, payload)| {
@@ -4789,8 +4869,69 @@ impl TaskStore {
         Ok(age >= HEADLESS_OBJECTIVE_ADMISSION_LOCK_STALE_AFTER)
     }
 
+    fn initialize_or_adopt_durable_schema_manifest(&self) -> Result<DurableStoreSchemaManifest> {
+        let state_dir_existed = self.workspace_state_dir().exists();
+        let _lock = self.acquire_durable_schema_migration_lock()?;
+        if let Some(manifest) = self.read_durable_schema_manifest()? {
+            validate_durable_schema_manifest(&manifest)?;
+            return Ok(manifest);
+        }
+
+        let manifest = current_durable_schema_manifest(if state_dir_existed {
+            DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED
+        } else {
+            DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED
+        });
+        let body = serde_json::to_string_pretty(&manifest)
+            .context("failed to serialize durable store schema manifest")?;
+        write_file_atomically(&self.durable_schema_manifest_path(), body.as_bytes())
+            .context("failed to write durable store schema manifest")?;
+        Ok(manifest)
+    }
+
+    fn acquire_durable_schema_migration_lock(&self) -> Result<RunAdmissionLock> {
+        let state_dir = self.workspace_state_dir();
+        fs::create_dir_all(&state_dir)
+            .with_context(|| format!("failed to create {}", state_dir.display()))?;
+        let lock_path = state_dir.join("store-schema.lock");
+        for _ in 0..RUN_ADMISSION_LOCK_RETRIES {
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&lock_path)
+            {
+                Ok(mut file) => {
+                    writeln!(file, "{}", timestamp()?)
+                        .context("failed to write durable schema migration lock heartbeat")?;
+                    return Ok(RunAdmissionLock { path: lock_path });
+                }
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                    thread::sleep(RUN_ADMISSION_LOCK_SLEEP);
+                }
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("failed to acquire {}", lock_path.display()));
+                }
+            }
+        }
+        bail!(
+            "durable schema migration lock remained busy after {} attempts: {}",
+            RUN_ADMISSION_LOCK_RETRIES,
+            lock_path.display()
+        )
+    }
+
+    fn durable_schema_manifest_path(&self) -> PathBuf {
+        self.workspace_state_dir()
+            .join(DURABLE_STORE_SCHEMA_MANIFEST)
+    }
+
+    fn workspace_state_dir(&self) -> PathBuf {
+        self.workspace_root.join(WORKSPACE_STATE_DIR)
+    }
+
     fn runs_dir(&self) -> PathBuf {
-        self.workspace_root.join(WORKSPACE_STATE_DIR).join(RUNS_DIR)
+        self.workspace_state_dir().join(RUNS_DIR)
     }
 
     fn headless_continuation_decision_path(&self, continuation_id: &str) -> PathBuf {
@@ -5097,6 +5238,54 @@ pub enum LedgerEventKind {
     TaskCancelled,
 }
 
+fn current_durable_schema_manifest(migration: &str) -> DurableStoreSchemaManifest {
+    DurableStoreSchemaManifest {
+        schema_id: DURABLE_STORE_SCHEMA_ID.to_string(),
+        manifest_format_version: DURABLE_STORE_SCHEMA_MANIFEST_FORMAT_VERSION,
+        store_schema_version: DURABLE_STORE_SCHEMA_VERSION,
+        minimum_runtime_store_schema_version: DURABLE_STORE_SCHEMA_MIN_SUPPORTED_VERSION,
+        state: DURABLE_STORE_SCHEMA_STATE_CURRENT.to_string(),
+        migration: migration.to_string(),
+    }
+}
+
+fn validate_durable_schema_manifest(manifest: &DurableStoreSchemaManifest) -> Result<()> {
+    if manifest.schema_id != DURABLE_STORE_SCHEMA_ID {
+        bail!("unsupported durable store schema id");
+    }
+    if manifest.manifest_format_version != DURABLE_STORE_SCHEMA_MANIFEST_FORMAT_VERSION {
+        bail!(
+            "unsupported durable store schema manifest format version: {}",
+            manifest.manifest_format_version
+        );
+    }
+    if manifest.store_schema_version == 0 {
+        bail!("malformed durable store schema version");
+    }
+    if manifest.store_schema_version > DURABLE_STORE_SCHEMA_VERSION {
+        bail!(
+            "unsupported future durable store schema version: {}",
+            manifest.store_schema_version
+        );
+    }
+    if manifest.minimum_runtime_store_schema_version > DURABLE_STORE_SCHEMA_VERSION {
+        bail!(
+            "durable store requires newer runtime schema support: {}",
+            manifest.minimum_runtime_store_schema_version
+        );
+    }
+    if manifest.state != DURABLE_STORE_SCHEMA_STATE_CURRENT {
+        bail!("durable store schema is not current");
+    }
+    if !matches!(
+        manifest.migration.as_str(),
+        DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED | DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED
+    ) {
+        bail!("unsupported durable store schema migration state");
+    }
+    Ok(())
+}
+
 fn timestamp() -> Result<String> {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
@@ -5106,6 +5295,128 @@ fn timestamp() -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn durable_schema_manifest_created_on_first_task_store_access() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = TaskStore::new(temp.path());
+
+        assert!(store.list_tasks().expect("list tasks").is_empty());
+
+        let manifest = store
+            .read_durable_schema_manifest()
+            .expect("read manifest")
+            .expect("manifest");
+        assert_eq!(
+            manifest,
+            current_durable_schema_manifest(DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED)
+        );
+        assert!(temp
+            .path()
+            .join(WORKSPACE_STATE_DIR)
+            .join(DURABLE_STORE_SCHEMA_MANIFEST)
+            .exists());
+        assert!(!temp
+            .path()
+            .join(WORKSPACE_STATE_DIR)
+            .join("store-schema.lock")
+            .exists());
+    }
+
+    #[test]
+    fn durable_schema_missing_manifest_adopts_existing_v1_layout() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(temp.path().join(WORKSPACE_STATE_DIR).join(RUNS_DIR))
+            .expect("legacy runs dir");
+        let store = TaskStore::new(temp.path());
+
+        let manifest = store.ensure_durable_schema().expect("ensure schema");
+
+        assert_eq!(
+            manifest,
+            current_durable_schema_manifest(DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED)
+        );
+    }
+
+    #[test]
+    fn durable_schema_malformed_manifest_fails_closed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = temp
+            .path()
+            .join(WORKSPACE_STATE_DIR)
+            .join(DURABLE_STORE_SCHEMA_MANIFEST);
+        write_file_atomically(&manifest_path, b"{not-json").expect("write malformed manifest");
+        let store = TaskStore::new(temp.path());
+
+        let error = store.list_tasks().expect_err("malformed manifest rejected");
+
+        assert!(error.to_string().contains("failed to parse"));
+    }
+
+    #[test]
+    fn durable_schema_future_version_fails_closed_before_task_state_mutation() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = TaskStore::new(temp.path());
+        let mut manifest =
+            current_durable_schema_manifest(DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED);
+        manifest.store_schema_version = DURABLE_STORE_SCHEMA_VERSION + 1;
+        let body = serde_json::to_string_pretty(&manifest).expect("serialize manifest");
+        write_file_atomically(
+            &temp
+                .path()
+                .join(WORKSPACE_STATE_DIR)
+                .join(DURABLE_STORE_SCHEMA_MANIFEST),
+            body.as_bytes(),
+        )
+        .expect("write future manifest");
+
+        let error = store
+            .start_task(TaskStartParams {
+                goal: "must not mutate".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect_err("future manifest rejected");
+
+        assert!(error
+            .to_string()
+            .contains("unsupported future durable store schema version"));
+        assert!(!temp
+            .path()
+            .join(WORKSPACE_STATE_DIR)
+            .join(RUNS_DIR)
+            .exists());
+    }
+
+    #[test]
+    fn durable_schema_minimum_runtime_version_fails_closed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let mut manifest =
+            current_durable_schema_manifest(DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED);
+        manifest.minimum_runtime_store_schema_version = DURABLE_STORE_SCHEMA_VERSION + 1;
+        let body = serde_json::to_string_pretty(&manifest).expect("serialize manifest");
+        write_file_atomically(
+            &temp
+                .path()
+                .join(WORKSPACE_STATE_DIR)
+                .join(DURABLE_STORE_SCHEMA_MANIFEST),
+            body.as_bytes(),
+        )
+        .expect("write future manifest");
+
+        let error = store
+            .ensure_durable_schema()
+            .expect_err("future manifest rejected");
+
+        assert!(error
+            .to_string()
+            .contains("durable store requires newer runtime schema support"));
+    }
 
     #[test]
     fn codebase_index_store_writes_current_snapshot_and_bounded_event() {

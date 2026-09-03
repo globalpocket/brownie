@@ -1,13 +1,12 @@
 {
   "schema_version": 1,
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-  "phase": "RRP-3.1",
-  "phase_title": "MCP Execution and Recovery Race Safety",
+  "phase": "RRP-4",
+  "phase_title": "Durable Schema Version and Migration",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "3f08b3b91923731287be49c2d4daafab80f44873",
+  "audited_main_commit": "a274ff9cf6d982318fb0ee7d7c7fad73f0e870b0",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
-    "durable-schema-version-and-migration",
     "runtime-release-guard-ci",
     "protocol-event-canonization",
     "runtime-module-decomposition-reevaluation",
@@ -85,14 +84,17 @@
       "id": "durable-schema-version-and-migration",
       "title": "Durable schema version and migration",
       "priority": "P0",
-      "status": "partial",
+      "status": "implemented_sufficient",
       "responsibility_domain": "runtime",
-      "debt_classification": "required_before_release",
+      "debt_classification": "closed",
       "evidence": [
-        "Protocol, ModePack, AgentModes, CLI automation, MCP, and journey snapshots carry schema_version fields.",
-        "No release-level durable store schema version and forward migration gate was found for task/run/journey/checkpoint/ledger state."
+        "RRP-4 adds .brownie/store-schema.json as the release-level durable store schema manifest for local Runtime state, with schema id, manifest format version, store schema version, minimum runtime schema version, current state, and bounded migration source only.",
+        "TaskStore::ensure_durable_schema creates v1 manifests for new stores and adopts missing-manifest v1-shaped .brownie layouts under an exclusive store-schema.lock before durable reads or writes continue.",
+        "Manifest parsing is strict and validation fails closed for malformed JSON, unknown fields, wrong schema id, non-current state, unsupported migration state, zero versions, future store schema versions, or minimum runtime schema versions newer than this Runtime.",
+        "BrownieStore::from_env_or_cwd gates store-backed Runtime methods before durable JSON-RPC work proceeds, and task state, run ledger, headless continuation, run session, journey, objective admission, completion finalization, active ModePack, and ModePack candidate durable paths check schema before mutation through their read/write entrypoints. Store-free status remains outside the durable gate.",
+        "cargo test -p brownie-store durable_schema -- --test-threads=1 covers manifest creation, legacy adoption, malformed rejection, future-version rejection before mutation, and minimum-runtime-version rejection."
       ],
-      "next_action": "Add explicit durable schema version and migration/fail-closed behavior in the migration phase."
+      "next_action": "Use the RRP-4 durable schema gate as the local Runtime v1 migration baseline while closing the remaining Runtime Release Readiness blockers."
     },
     {
       "id": "runtime-release-guard-ci",
@@ -103,9 +105,10 @@
       "debt_classification": "required_before_release",
       "evidence": [
         "RRP-3.1 adds pnpm --workspace-root test:rrp3-process-loss to the existing VSIX check script that CI invokes, making the real process-loss E2E CI-required without changing .github/workflows/ci.yml.",
+        "RRP-4 adds durable schema release-readiness evidence and store tests, but direct .github workflow wiring remains blocked by missing OAuth workflow scope.",
         "RRD-1 already wires the Runtime release readiness guard into the VSIX check path that CI invokes.",
         "The Runtime release readiness guard supports audit-driven convergence: open Runtime P0/P1 debt keeps runtime_release_ready=false, closed Runtime blockers must be removed from release_ready_blocked_by, and all closed Runtime blockers require runtime_release_ready=true.",
-        "Direct .github workflow wiring remains blocked by missing OAuth workflow scope, and full CI Release Gate hardening remains a later P0 closure phase for frozen install, fmt, audit/SBOM/secret/dependency, and complete release gate policy coverage."
+        "Full CI Release Gate hardening remains a later P0 closure phase for frozen install, fmt, audit/SBOM/secret/dependency, and complete release gate policy coverage."
       ],
       "next_action": "Close direct workflow wiring and remaining full CI release-gate hardening in the dedicated CI phase when workflow-scope credentials are available."
     },
