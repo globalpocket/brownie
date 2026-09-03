@@ -6087,7 +6087,7 @@ pub struct LedgerPayloadEnvelope {
     pub instance_shape_fingerprint: String,
 }
 
-pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 2;
+pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 3;
 pub const LEDGER_PAYLOAD_SHAPE_VERSION: u64 = LEDGER_PAYLOAD_SCHEMA_VERSION;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6127,7 +6127,9 @@ pub fn ledger_payload_schema_classification(
     kind: &LedgerEventKind,
 ) -> LedgerPayloadSchemaClassification {
     match kind {
-        LedgerEventKind::TaskCompleted => LedgerPayloadSchemaClassification::TypedKnownFieldsOpen,
+        LedgerEventKind::TaskCompleted
+        | LedgerEventKind::TaskFailed
+        | LedgerEventKind::TaskCancelled => LedgerPayloadSchemaClassification::StrictTyped,
         _ => LedgerPayloadSchemaClassification::VersionedOpen,
     }
 }
@@ -6198,6 +6200,11 @@ fn validate_ledger_event_payload_contract(
             validate_ledger_payload_schema(&event.kind, payload)
         }
         (Some(_), None) => bail!("ledger event payload is missing payload_envelope"),
+        (Some(payload), Some(envelope))
+            if !require_current && envelope.schema_version < LEDGER_PAYLOAD_SCHEMA_VERSION =>
+        {
+            validate_legacy_ledger_payload_envelope(&event.kind, payload, envelope)
+        }
         (Some(payload), Some(envelope)) => {
             validate_ledger_payload_schema(&event.kind, payload)?;
             validate_ledger_payload_envelope(&event.kind, payload, envelope)
@@ -6214,7 +6221,7 @@ fn validate_ledger_payload_schema(
             bail!("{kind:?} ledger event does not accept a payload");
         }
         LedgerPayloadSchemaClassification::StrictTyped => {
-            bail!("{kind:?} strict ledger payload schema is not registered");
+            validate_strict_ledger_payload_schema(kind, payload)?;
         }
         LedgerPayloadSchemaClassification::TypedKnownFieldsOpen => {
             validate_task_completed_payload_schema(payload)?;
@@ -6232,36 +6239,156 @@ fn validate_ledger_payload_schema(
 }
 
 fn validate_task_completed_payload_schema(payload: &serde_json::Value) -> Result<()> {
+    validate_terminal_task_payload_schema(&LedgerEventKind::TaskCompleted, payload)
+}
+
+fn validate_strict_ledger_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    match kind {
+        LedgerEventKind::TaskCompleted
+        | LedgerEventKind::TaskFailed
+        | LedgerEventKind::TaskCancelled => validate_terminal_task_payload_schema(kind, payload),
+        _ => bail!("{kind:?} strict ledger payload schema is not registered"),
+    }
+}
+
+fn validate_terminal_task_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
     let object = payload
         .as_object()
-        .context("TaskCompleted ledger payload must be a JSON object")?;
-    if !TASK_COMPLETED_KNOWN_PAYLOAD_FIELDS
+        .with_context(|| format!("{kind:?} ledger payload must be a JSON object"))?;
+    for field in object.keys() {
+        if !TERMINAL_TASK_KNOWN_PAYLOAD_FIELDS.contains(&field.as_str()) {
+            bail!("{kind:?} ledger payload field {field} is not allowed by strict terminal task schema");
+        }
+    }
+    if !TERMINAL_TASK_KNOWN_PAYLOAD_FIELDS
         .iter()
         .any(|field| object.contains_key(*field))
     {
-        bail!("TaskCompleted ledger payload must include at least one known bounded terminal evidence field");
+        bail!("{kind:?} ledger payload must include at least one known bounded terminal evidence field");
     }
+
     validate_optional_payload_string_field(object, "status")?;
+    validate_optional_payload_string_field(object, "reason")?;
     validate_optional_payload_object_field(object, "completion_evidence")?;
     validate_optional_payload_bool_field(object, "late_tool_response")?;
     validate_optional_payload_bool_field(object, "terminal_process_loss")?;
     validate_optional_payload_string_field(object, "terminal_race_candidate")?;
+    validate_optional_payload_string_field(object, "verification_completion_gate_status")?;
+    validate_optional_payload_string_field(object, "verification_recovery_repair_gate_status")?;
+    validate_optional_payload_u64_field(object, "required_verifier_count")?;
+    validate_optional_payload_u64_field(object, "passed_verifier_count")?;
+    validate_optional_payload_u64_field(object, "failed_verifier_count")?;
+    validate_optional_payload_string_array_field(object, "required_verifier_tool_ids")?;
+    validate_optional_payload_string_array_field(object, "passed_verifier_tool_ids")?;
+    validate_optional_payload_string_array_field(object, "failed_verifier_tool_ids")?;
+    validate_optional_payload_string_array_field(object, "missing_verifier_tool_ids")?;
+    validate_optional_payload_string_array_field(object, "failure_reasons")?;
+    validate_optional_payload_string_field(object, "next_action")?;
+    validate_optional_payload_array_field(object, "bounded_cargo_diagnostics")?;
+    validate_optional_payload_string_field(object, "verification_requirement_id")?;
+    validate_optional_payload_string_field(object, "verification_requirement_source_kind")?;
+    validate_optional_payload_string_field(object, "source_apply_id")?;
+    validate_optional_payload_string_field(object, "verification_requirement_fingerprint")?;
+    validate_optional_payload_string_field(object, "requirement_fingerprint")?;
+    validate_optional_payload_bool_field(object, "verification_recovery_repair")?;
+    validate_optional_payload_string_field(object, "source_task_id")?;
+    validate_optional_payload_string_field(object, "source_run_id")?;
+    validate_optional_payload_string_field(object, "recovery_task_id")?;
+    validate_optional_payload_string_field(object, "recovery_run_id")?;
+    validate_optional_payload_string_field(object, "failure_fingerprint")?;
+    validate_optional_payload_u64_field(object, "proposal_count")?;
+    validate_optional_payload_bool_field(object, "apply_enabled")?;
+    validate_optional_payload_string_field(object, "proposal_id")?;
+    validate_optional_payload_string_field(object, "failure_reason")?;
+    validate_optional_payload_string_field(object, "cancel_status")?;
+    validate_optional_payload_string_field(object, "cancel_id")?;
+    validate_optional_payload_string_field(object, "cancel_fingerprint")?;
+    validate_optional_payload_string_field(object, "request_fingerprint_version")?;
+    validate_optional_payload_string_field(object, "task_id")?;
+    validate_optional_payload_string_field(object, "run_id")?;
+    validate_optional_payload_string_field(object, "previous_status")?;
+    validate_optional_payload_string_field(object, "expected_task_updated_at")?;
+    validate_optional_payload_bool_field(object, "caller_authorized")?;
+    validate_optional_payload_bool_field(object, "terminal_evidence")?;
     validate_optional_payload_object_field(object, "mcp")?;
     validate_optional_payload_object_field(object, "git")?;
     validate_optional_payload_object_field(object, "runtime_deadline")?;
+
+    if let Some(status) = object.get("status").and_then(serde_json::Value::as_str) {
+        let expected = match kind {
+            LedgerEventKind::TaskCompleted => "Completed",
+            LedgerEventKind::TaskFailed => "Failed",
+            LedgerEventKind::TaskCancelled => "Cancelled",
+            _ => unreachable!("terminal task payload validator only accepts terminal task events"),
+        };
+        if status != expected {
+            bail!("{kind:?} ledger payload status must be {expected}");
+        }
+    }
+    if let Some(cancel_status) = object
+        .get("cancel_status")
+        .and_then(serde_json::Value::as_str)
+    {
+        if *kind != LedgerEventKind::TaskCancelled || cancel_status != "Cancelled" {
+            bail!("{kind:?} ledger payload cancel_status is only valid for TaskCancelled");
+        }
+    }
     Ok(())
 }
 
-const TASK_COMPLETED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+const TERMINAL_TASK_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "caller_authorized",
+    "cancel_fingerprint",
+    "cancel_id",
+    "cancel_status",
     "completion_evidence",
+    "expected_task_updated_at",
+    "apply_enabled",
+    "bounded_cargo_diagnostics",
+    "failed_verifier_count",
+    "failed_verifier_tool_ids",
+    "failure_fingerprint",
+    "failure_reason",
+    "failure_reasons",
     "git",
     "late_tool_response",
+    "missing_verifier_tool_ids",
     "mcp",
+    "next_action",
+    "passed_verifier_count",
+    "passed_verifier_tool_ids",
+    "previous_status",
+    "proposal_count",
+    "proposal_id",
+    "reason",
+    "recovery_run_id",
+    "recovery_task_id",
+    "request_fingerprint_version",
+    "required_verifier_count",
+    "required_verifier_tool_ids",
+    "requirement_fingerprint",
+    "run_id",
     "runtime_deadline",
     "status",
+    "task_id",
+    "terminal_evidence",
     "terminal_process_loss",
     "terminal_race_candidate",
+    "source_apply_id",
+    "source_run_id",
+    "source_task_id",
     "verification_completion_gate_status",
+    "verification_recovery_repair",
+    "verification_recovery_repair_gate_status",
+    "verification_requirement_fingerprint",
+    "verification_requirement_id",
+    "verification_requirement_source_kind",
 ];
 
 fn validate_optional_payload_string_field(
@@ -6295,6 +6422,45 @@ fn validate_optional_payload_object_field(
     if let Some(value) = object.get(field) {
         if !value.is_object() {
             bail!("ledger payload field {field} must be an object");
+        }
+    }
+    Ok(())
+}
+
+fn validate_optional_payload_u64_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    if let Some(value) = object.get(field) {
+        if value.as_u64().is_none() {
+            bail!("ledger payload field {field} must be an unsigned integer");
+        }
+    }
+    Ok(())
+}
+
+fn validate_optional_payload_string_array_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    if let Some(value) = object.get(field) {
+        let Some(values) = value.as_array() else {
+            bail!("ledger payload field {field} must be an array");
+        };
+        if values.iter().any(|entry| !entry.is_string()) {
+            bail!("ledger payload field {field} must contain only strings");
+        }
+    }
+    Ok(())
+}
+
+fn validate_optional_payload_array_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    if let Some(value) = object.get(field) {
+        if !value.is_array() {
+            bail!("ledger payload field {field} must be an array");
         }
     }
     Ok(())
@@ -6339,6 +6505,51 @@ fn validate_ledger_payload_envelope(
     Ok(())
 }
 
+fn validate_legacy_ledger_payload_envelope(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+    envelope: &LedgerPayloadEnvelope,
+) -> Result<()> {
+    if envelope.schema_version == 1 && envelope.schema_id.is_empty() {
+        let expected_shape_id = ledger_payload_legacy_v1_shape_id(kind);
+        if envelope.shape_id != expected_shape_id {
+            bail!("legacy ledger payload envelope shape_id mismatch");
+        }
+        let expected_shape_fingerprint =
+            ledger_payload_legacy_v1_shape_fingerprint_for_value(kind, payload);
+        if envelope.shape_fingerprint != expected_shape_fingerprint {
+            bail!("legacy ledger payload envelope shape_fingerprint mismatch");
+        }
+        return Ok(());
+    }
+
+    if envelope.schema_version == 2 {
+        let expected_schema_id = format!("ledger_payload.{kind:?}.v2");
+        if envelope.schema_id != expected_schema_id || envelope.shape_id != expected_schema_id {
+            bail!("legacy ledger payload envelope schema_id mismatch");
+        }
+        let expected_schema_fingerprint = stable_ledger_payload_fingerprint(&format!(
+            "{kind:?}:payload_schema_v2:descriptor:{}",
+            ledger_payload_legacy_v2_schema_descriptor(kind)
+        ));
+        if envelope.schema_fingerprint != expected_schema_fingerprint
+            || envelope.shape_fingerprint != expected_schema_fingerprint
+        {
+            bail!("legacy ledger payload envelope schema_fingerprint mismatch");
+        }
+        let expected_instance_fingerprint = stable_ledger_payload_fingerprint(&format!(
+            "{kind:?}:payload_instance_shape_v2:descriptor:{}",
+            ledger_payload_shape_descriptor(payload)
+        ));
+        if envelope.instance_shape_fingerprint != expected_instance_fingerprint {
+            bail!("legacy ledger payload envelope instance_shape_fingerprint mismatch");
+        }
+        return Ok(());
+    }
+
+    bail!("unsupported legacy ledger payload envelope schema_version");
+}
+
 fn ledger_payload_schema_fingerprint_input(kind: &LedgerEventKind) -> String {
     format!(
         "{kind:?}:payload_schema_v{LEDGER_PAYLOAD_SCHEMA_VERSION}:descriptor:{}",
@@ -6347,6 +6558,21 @@ fn ledger_payload_schema_fingerprint_input(kind: &LedgerEventKind) -> String {
 }
 
 fn ledger_payload_schema_descriptor(kind: &LedgerEventKind) -> String {
+    match kind {
+        LedgerEventKind::TaskCompleted => terminal_task_payload_schema_descriptor("Completed"),
+        LedgerEventKind::TaskFailed => terminal_task_payload_schema_descriptor("Failed"),
+        LedgerEventKind::TaskCancelled => terminal_task_payload_schema_descriptor("Cancelled"),
+        _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
+    }
+}
+
+fn terminal_task_payload_schema_descriptor(status: &str) -> String {
+    format!(
+        "strict_typed{{payload_optional:true;known_optional_fields:apply_enabled:boolean,bounded_cargo_diagnostics:array,caller_authorized:boolean,cancel_fingerprint:string,cancel_id:string,cancel_status:string,completion_evidence:object,expected_task_updated_at:string,failed_verifier_count:u64,failed_verifier_tool_ids:array<string>,failure_fingerprint:string,failure_reason:string,failure_reasons:array<string>,git:object,late_tool_response:boolean,mcp:object,missing_verifier_tool_ids:array<string>,next_action:string,passed_verifier_count:u64,passed_verifier_tool_ids:array<string>,previous_status:string,proposal_count:u64,proposal_id:string,reason:string,recovery_run_id:string,recovery_task_id:string,request_fingerprint_version:string,required_verifier_count:u64,required_verifier_tool_ids:array<string>,requirement_fingerprint:string,run_id:string,runtime_deadline:object,source_apply_id:string,source_run_id:string,source_task_id:string,status:string,task_id:string,terminal_evidence:boolean,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:string,verification_recovery_repair:boolean,verification_recovery_repair_gate_status:string,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;known_field_required:true;additional_fields:false;terminal_status:{status}}}"
+    )
+}
+
+fn ledger_payload_legacy_v2_schema_descriptor(kind: &LedgerEventKind) -> String {
     match kind {
         LedgerEventKind::TaskCompleted => "typed_known_fields_open{known_optional_fields:completion_evidence:object,git:object,late_tool_response:boolean,mcp:object,runtime_deadline:object,status:string,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:legacy_open;known_field_required:true;additional_fields:true;strict_typed_payload_required_before_release:true}".to_string(),
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
@@ -7208,22 +7434,19 @@ mod tests {
     fn ledger_payload_schema_classification_inventory_marks_open_payload_debt() {
         let task_completed_classification =
             ledger_payload_schema_classification(&LedgerEventKind::TaskCompleted);
-        assert_eq!(
-            task_completed_classification.as_str(),
-            "typed_known_fields_open"
-        );
-        assert_eq!(task_completed_classification.contract_status(), "partial");
-        assert!(task_completed_classification.release_blocking());
+        assert_eq!(task_completed_classification.as_str(), "strict_typed");
+        assert_eq!(task_completed_classification.contract_status(), "closed");
+        assert!(!task_completed_classification.release_blocking());
         assert!(
             ledger_payload_schema_descriptor(&LedgerEventKind::TaskCompleted)
-                .contains("strict_typed_payload_required_before_release:true")
+                .contains("additional_fields:false")
         );
 
         let task_cancelled_classification =
             ledger_payload_schema_classification(&LedgerEventKind::TaskCancelled);
-        assert_eq!(task_cancelled_classification.as_str(), "versioned_open");
-        assert_eq!(task_cancelled_classification.contract_status(), "partial");
-        assert!(task_cancelled_classification.release_blocking());
+        assert_eq!(task_cancelled_classification.as_str(), "strict_typed");
+        assert_eq!(task_cancelled_classification.contract_status(), "closed");
+        assert!(!task_cancelled_classification.release_blocking());
         assert!(
             !ledger_payload_schema_descriptor(&LedgerEventKind::TaskCancelled).starts_with("any{")
         );
@@ -7291,7 +7514,7 @@ mod tests {
                 )],
             )
             .expect_err("unknown-only TaskCompleted payload should fail closed");
-        assert!(format!("{unknown_only:#}").contains("known bounded terminal evidence"));
+        assert!(format!("{unknown_only:#}").contains("not allowed by strict terminal task schema"));
 
         let malformed_object_field = store
             .append_task_events_with_payloads(
@@ -7303,6 +7526,49 @@ mod tests {
             )
             .expect_err("malformed TaskCompleted mcp payload should fail closed");
         assert!(format!("{malformed_object_field:#}").contains("mcp must be an object"));
+
+        store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::TaskFailed,
+                    Some(serde_json::json!({
+                        "status": "Failed",
+                        "verification_completion_gate_status": "Failed",
+                        "required_verifier_count": 1,
+                        "passed_verifier_count": 0,
+                        "failed_verifier_count": 1,
+                        "required_verifier_tool_ids": ["verification.cargo_check"],
+                        "passed_verifier_tool_ids": [],
+                        "failed_verifier_tool_ids": ["verification.cargo_check"],
+                        "failure_reasons": ["cargo check failed"],
+                        "requirement_fingerprint": format!("sha256:{}", "e".repeat(64))
+                    })),
+                )],
+            )
+            .expect("strict TaskFailed verifier payload should pass");
+
+        store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::TaskCancelled,
+                    Some(serde_json::json!({
+                        "cancel_status": "Cancelled",
+                        "cancel_id": "cancel_001",
+                        "cancel_fingerprint": format!("sha256:{}", "c".repeat(64)),
+                        "request_fingerprint_version": "v1",
+                        "task_id": record.task_id,
+                        "run_id": record.run_id,
+                        "previous_status": "Running",
+                        "expected_task_updated_at": record.updated_at,
+                        "caller_authorized": true,
+                        "terminal_evidence": true,
+                        "reason": "Runtime admitted an explicit caller-authorized cancel command for this task/run."
+                    })),
+                )],
+            )
+            .expect("strict TaskCancelled cancel payload should pass");
     }
 
     #[test]

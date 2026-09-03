@@ -299,13 +299,13 @@ test('rejects ledger payload descriptors that retain an any fallback', () => {
   assert(errors.some((error) => error.includes('payload schema descriptor must not use any fallback')));
 });
 
-test('rejects TaskCompleted payload descriptors without a known evidence field requirement', () => {
+test('rejects strict terminal payload descriptors without closed-field evidence requirements', () => {
   const contract = readSemanticContract();
   const taskCompleted = contract.durable_event_migration_coupling.event_payload_schema_fingerprints.find(
     (entry) => entry.ledger_event_kind === 'TaskCompleted'
   );
   taskCompleted.payload_schema_descriptor = taskCompleted.payload_schema_descriptor.replace(
-    ';known_field_required:true',
+    ';additional_fields:false',
     ''
   );
 
@@ -316,7 +316,7 @@ test('rejects TaskCompleted payload descriptors without a known evidence field r
     skipRustGeneratedContractCheck: true
   });
 
-  assert(errors.some((error) => error.includes('known bounded terminal evidence field')));
+  assert(errors.some((error) => error.includes('reject additional fields')));
 });
 
 test('rejects full ledger payload closure claims while open payload classifications remain', () => {
