@@ -504,7 +504,9 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
       `${contractPath} ${eventKind} strict typed payload schema must be closed and non-release-blocking.`
     );
     requireValue(
-      entry?.payload_schema_descriptor?.includes(descriptorToken) &&
+      descriptorToken
+        .split(';')
+        .every((token) => entry?.payload_schema_descriptor?.includes(token)) &&
         entry?.payload_schema_descriptor?.includes('additional_fields:false'),
       errors,
       `${contractPath} ${eventKind} payload schema descriptor must capture ${descriptorToken} and reject additional fields.`
