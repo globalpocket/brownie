@@ -175,7 +175,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
   requireValue(contract.contract_id === 'runtime-semantic-protocol-contract-v1', errors, `${contractPath} contract_id must identify the Runtime semantic protocol contract.`);
   requireValue(contract.campaign === 'runtime-release-readiness-p0-p1-finite-closure', errors, `${contractPath} campaign must match Runtime release readiness.`);
-  requireValue(contract.phase === 'RRP-5.5', errors, `${contractPath} phase must be RRP-5.5.`);
+  requireValue(contract.phase === 'RRP-5.6', errors, `${contractPath} phase must be RRP-5.6.`);
   requireValue(contract.owner === 'runtime', errors, `${contractPath} owner must be runtime.`);
   requireValue(contract.runtime_release_debt_id === 'protocol-event-canonization', errors, `${contractPath} must bind to protocol-event-canonization.`);
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must not declare Runtime Release Ready.`);
@@ -412,6 +412,11 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
     fingerprintByKind.get('TaskCompleted')?.payload_schema_classification === 'typed_known_fields_open',
     errors,
     `${contractPath} TaskCompleted must be classified as typed_known_fields_open until it rejects unknown fields.`
+  );
+  requireValue(
+    fingerprintByKind.get('TaskCompleted')?.payload_schema_descriptor?.includes('known_field_required:true'),
+    errors,
+    `${contractPath} TaskCompleted payload schema descriptor must require at least one known bounded terminal evidence field.`
   );
   const schemaFixtures = Array.isArray(durableCoupling.payload_schema_fixtures) ? durableCoupling.payload_schema_fixtures : [];
   const taskCompletedFixtures = schemaFixtures.filter((fixture) => fixture?.ledger_event_kind === 'TaskCompleted');

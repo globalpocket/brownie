@@ -1287,8 +1287,8 @@
         "ledger_event_kind": "TaskCompleted",
         "payload_schema_classification": "typed_known_fields_open",
         "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "typed_known_fields_open{known_optional_fields:git:object,late_tool_response:boolean,mcp:object,runtime_deadline:object,status:string,terminal_process_loss:boolean,terminal_race_candidate:string;additional_fields:true;strict_typed_payload_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:a57aa83bf466e8b5",
+        "payload_schema_descriptor": "typed_known_fields_open{known_optional_fields:completion_evidence:object,git:object,late_tool_response:boolean,mcp:object,runtime_deadline:object,status:string,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:legacy_open;known_field_required:true;additional_fields:true;strict_typed_payload_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:21e033e379f437a0",
         "payload_schema_id": "ledger_payload.TaskCompleted.v2",
         "payload_schema_version": 2,
         "release_blocking_until_typed": true,
@@ -1343,7 +1343,7 @@
         "payload_instance_shape_fingerprint": "shape-fnv1a64:fc1e9a8c4121e9f1",
         "payload_schema_classification": "typed_known_fields_open",
         "payload_schema_contract_status": "partial",
-        "payload_schema_fingerprint": "shape-fnv1a64:a57aa83bf466e8b5",
+        "payload_schema_fingerprint": "shape-fnv1a64:21e033e379f437a0",
         "payload_schema_id": "ledger_payload.TaskCompleted.v2"
       },
       {
@@ -1356,7 +1356,7 @@
         "payload_instance_shape_fingerprint": "shape-fnv1a64:104e3bf6bf2b6ad0",
         "payload_schema_classification": "typed_known_fields_open",
         "payload_schema_contract_status": "partial",
-        "payload_schema_fingerprint": "shape-fnv1a64:a57aa83bf466e8b5",
+        "payload_schema_fingerprint": "shape-fnv1a64:21e033e379f437a0",
         "payload_schema_id": "ledger_payload.TaskCompleted.v2"
       }
     ],
@@ -1566,10 +1566,10 @@
       },
       "payload_envelope": {
         "instance_shape_fingerprint": "shape-fnv1a64:fc1e9a8c4121e9f1",
-        "schema_fingerprint": "shape-fnv1a64:a57aa83bf466e8b5",
+        "schema_fingerprint": "shape-fnv1a64:21e033e379f437a0",
         "schema_id": "ledger_payload.TaskCompleted.v2",
         "schema_version": 2,
-        "shape_fingerprint": "shape-fnv1a64:a57aa83bf466e8b5",
+        "shape_fingerprint": "shape-fnv1a64:21e033e379f437a0",
         "shape_id": "ledger_payload.TaskCompleted.v2"
       },
       "run_id": "run_1",
@@ -9210,7 +9210,7 @@
     "policy": "Every explicit Runtime method in the canonical map must have a semantic method contract."
   },
   "owner": "runtime",
-  "phase": "RRP-5.5",
+  "phase": "RRP-5.6",
   "recursive_json_schema_coverage": {
     "coverage": "Every method param/result type has a recursive Rust-derived JSON Schema document with nested struct and enum definitions.",
     "definition_keyword": "$defs",

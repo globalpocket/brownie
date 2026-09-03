@@ -6003,10 +6003,14 @@ fn validate_task_completed_payload_schema(payload: &serde_json::Value) -> Result
     let object = payload
         .as_object()
         .context("TaskCompleted ledger payload must be a JSON object")?;
-    if object.is_empty() {
-        bail!("TaskCompleted ledger payload must include bounded terminal evidence");
+    if !TASK_COMPLETED_KNOWN_PAYLOAD_FIELDS
+        .iter()
+        .any(|field| object.contains_key(*field))
+    {
+        bail!("TaskCompleted ledger payload must include at least one known bounded terminal evidence field");
     }
     validate_optional_payload_string_field(object, "status")?;
+    validate_optional_payload_object_field(object, "completion_evidence")?;
     validate_optional_payload_bool_field(object, "late_tool_response")?;
     validate_optional_payload_bool_field(object, "terminal_process_loss")?;
     validate_optional_payload_string_field(object, "terminal_race_candidate")?;
@@ -6015,6 +6019,18 @@ fn validate_task_completed_payload_schema(payload: &serde_json::Value) -> Result
     validate_optional_payload_object_field(object, "runtime_deadline")?;
     Ok(())
 }
+
+const TASK_COMPLETED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "completion_evidence",
+    "git",
+    "late_tool_response",
+    "mcp",
+    "runtime_deadline",
+    "status",
+    "terminal_process_loss",
+    "terminal_race_candidate",
+    "verification_completion_gate_status",
+];
 
 fn validate_optional_payload_string_field(
     object: &serde_json::Map<String, serde_json::Value>,
@@ -6100,7 +6116,7 @@ fn ledger_payload_schema_fingerprint_input(kind: &LedgerEventKind) -> String {
 
 fn ledger_payload_schema_descriptor(kind: &LedgerEventKind) -> String {
     match kind {
-        LedgerEventKind::TaskCompleted => "typed_known_fields_open{known_optional_fields:git:object,late_tool_response:boolean,mcp:object,runtime_deadline:object,status:string,terminal_process_loss:boolean,terminal_race_candidate:string;additional_fields:true;strict_typed_payload_required_before_release:true}".to_string(),
+        LedgerEventKind::TaskCompleted => "typed_known_fields_open{known_optional_fields:completion_evidence:object,git:object,late_tool_response:boolean,mcp:object,runtime_deadline:object,status:string,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:legacy_open;known_field_required:true;additional_fields:true;strict_typed_payload_required_before_release:true}".to_string(),
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
 }
@@ -7032,7 +7048,18 @@ mod tests {
                 vec![(LedgerEventKind::TaskCompleted, Some(serde_json::json!({})))],
             )
             .expect_err("empty TaskCompleted payload should fail closed");
-        assert!(format!("{empty:#}").contains("bounded terminal evidence"));
+        assert!(format!("{empty:#}").contains("known bounded terminal evidence"));
+
+        let unknown_only = store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::TaskCompleted,
+                    Some(serde_json::json!({"completely_unknown_field": true})),
+                )],
+            )
+            .expect_err("unknown-only TaskCompleted payload should fail closed");
+        assert!(format!("{unknown_only:#}").contains("known bounded terminal evidence"));
 
         let malformed_object_field = store
             .append_task_events_with_payloads(
