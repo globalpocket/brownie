@@ -627,6 +627,23 @@ pub fn runtime_semantic_protocol_contract() -> Value {
         "terminal_evidence": true,
         "reason": "Runtime admitted an explicit caller-authorized cancel command for this task/run."
     });
+    let permission_checked_payload = json!({
+        "mode_id": "default",
+        "action": "ReadWorkspace",
+        "allowed": true,
+        "reason": "allowed by policy"
+    });
+    let permission_denied_payload = json!({
+        "scope": "workspace.write",
+        "tool_id": "workspace.write",
+        "path": "src/lib.rs",
+        "operation": "replace_file",
+        "mode_id": "default",
+        "required_action": "WriteWorkspace",
+        "workspace_write_scope_count": 0,
+        "allowed": false,
+        "reason": "path outside allowed workspace write scopes"
+    });
     let event_payload_schema_classifications = ledger_event_kinds
         .iter()
         .map(|kind| {
@@ -689,13 +706,33 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&task_cancelled_payload),
             "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("TaskCancelled", &task_cancelled_payload)
         }),
+        json!({
+            "ledger_event_kind": "PermissionChecked",
+            "payload": permission_checked_payload,
+            "payload_schema_classification": ledger_payload_schema_classification("PermissionChecked"),
+            "payload_schema_contract_status": ledger_payload_schema_contract_status(ledger_payload_schema_classification("PermissionChecked")),
+            "payload_schema_id": ledger_payload_schema_id("PermissionChecked"),
+            "payload_schema_fingerprint": ledger_payload_schema_fingerprint("PermissionChecked"),
+            "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&permission_checked_payload),
+            "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("PermissionChecked", &permission_checked_payload)
+        }),
+        json!({
+            "ledger_event_kind": "PermissionDenied",
+            "payload": permission_denied_payload,
+            "payload_schema_classification": ledger_payload_schema_classification("PermissionDenied"),
+            "payload_schema_contract_status": ledger_payload_schema_contract_status(ledger_payload_schema_classification("PermissionDenied")),
+            "payload_schema_id": ledger_payload_schema_id("PermissionDenied"),
+            "payload_schema_fingerprint": ledger_payload_schema_fingerprint("PermissionDenied"),
+            "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&permission_denied_payload),
+            "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("PermissionDenied", &permission_denied_payload)
+        }),
     ];
 
     json!({
-        "schema_version": 6,
+        "schema_version": 7,
         "contract_id": "runtime-semantic-protocol-contract-v1",
         "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-        "phase": "RRP-5.7",
+        "phase": "RRP-5.8",
         "owner": "runtime",
         "runtime_release_debt_id": "protocol-event-canonization",
         "runtime_release_ready": false,
@@ -800,8 +837,8 @@ pub fn runtime_semantic_protocol_contract() -> Value {
                 "ledger_event_payload_inventory": "closed",
                 "ledger_event_payload_typed_schema_coverage": "partial"
             },
-            "ledger_payload_schema_classification_policy": "Every LedgerEventKind must carry an explicit payload schema classification. versioned_open and typed_known_fields_open are allowed only as required-before-release debt evidence and must not be treated as fully typed ledger payload schemas. TaskCompleted, TaskFailed, and TaskCancelled are the first strict typed terminal task payload family.",
-            "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Versioned-open payload classifications keep protocol-event-canonization partial until every payload-bearing event has a strict typed schema, an explicit payload_absent contract, or a legacy-only compatibility entry. Current v3 terminal task payload schemas preserve v1 and v2 read compatibility while requiring strict field validation for new terminal task payload appends.",
+            "ledger_payload_schema_classification_policy": "Every LedgerEventKind must carry an explicit payload schema classification. versioned_open and typed_known_fields_open are allowed only as required-before-release debt evidence and must not be treated as fully typed ledger payload schemas. TaskCompleted, TaskFailed, TaskCancelled, PermissionChecked, and PermissionDenied are strict typed payload families.",
+            "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Versioned-open payload classifications keep protocol-event-canonization partial until every payload-bearing event has a strict typed schema, an explicit payload_absent contract, or a legacy-only compatibility entry. Current v4 terminal task and permission payload schemas preserve v1, v2, and v3 read compatibility while requiring strict field validation for new terminal task and permission payload appends.",
             "guard": "guard:protocol-event-canonization",
             "event_payload_schema_classification_count": event_payload_schema_classifications.len(),
             "event_payload_schema_classifications": event_payload_schema_classifications,
@@ -1503,7 +1540,7 @@ fn canonical_value(value: &Value) -> Value {
     }
 }
 
-const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 3;
+const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 4;
 
 fn ledger_payload_schema_id(kind: &str) -> String {
     format!("ledger_payload.{kind}.v{LEDGER_PAYLOAD_SCHEMA_VERSION}")
@@ -1518,7 +1555,8 @@ fn ledger_payload_schema_fingerprint(kind: &str) -> String {
 
 fn ledger_payload_schema_classification(kind: &str) -> &'static str {
     match kind {
-        "TaskCompleted" | "TaskFailed" | "TaskCancelled" => "strict_typed",
+        "TaskCompleted" | "TaskFailed" | "TaskCancelled" | "PermissionChecked"
+        | "PermissionDenied" => "strict_typed",
         _ => "versioned_open",
     }
 }
@@ -1541,6 +1579,7 @@ fn ledger_payload_schema_descriptor(kind: &str) -> String {
         "TaskCompleted" => terminal_task_payload_schema_descriptor("Completed"),
         "TaskFailed" => terminal_task_payload_schema_descriptor("Failed"),
         "TaskCancelled" => terminal_task_payload_schema_descriptor("Cancelled"),
+        "PermissionChecked" | "PermissionDenied" => permission_payload_schema_descriptor(),
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
 }
@@ -1549,6 +1588,10 @@ fn terminal_task_payload_schema_descriptor(status: &str) -> String {
     format!(
         "strict_typed{{payload_optional:true;known_optional_fields:apply_enabled:boolean,bounded_cargo_diagnostics:array,caller_authorized:boolean,cancel_fingerprint:string,cancel_id:string,cancel_status:string,completion_evidence:object,expected_task_updated_at:string,failed_verifier_count:u64,failed_verifier_tool_ids:array<string>,failure_fingerprint:string,failure_reason:string,failure_reasons:array<string>,git:object,late_tool_response:boolean,mcp:object,missing_verifier_tool_ids:array<string>,next_action:string,passed_verifier_count:u64,passed_verifier_tool_ids:array<string>,previous_status:string,proposal_count:u64,proposal_id:string,reason:string,recovery_run_id:string,recovery_task_id:string,request_fingerprint_version:string,required_verifier_count:u64,required_verifier_tool_ids:array<string>,requirement_fingerprint:string,run_id:string,runtime_deadline:object,source_apply_id:string,source_run_id:string,source_task_id:string,status:string,task_id:string,terminal_evidence:boolean,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:string,verification_recovery_repair:boolean,verification_recovery_repair_gate_status:string,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;known_field_required:true;additional_fields:false;terminal_status:{status}}}"
     )
+}
+
+fn permission_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:allowed:boolean,mode_id:string,reason:string;one_of_required:action:string|required_action:string;known_optional_fields:action:string,apply_id:string,operation:string,path:string,proposal_id:string,required_action:string,scope:string,tool_id:string,workspace_write_scope_count:u64;additional_fields:false;permission_decision_payload:true}".to_string()
 }
 
 fn ledger_payload_instance_shape_fingerprint_for_value(kind: &str, payload: &Value) -> String {

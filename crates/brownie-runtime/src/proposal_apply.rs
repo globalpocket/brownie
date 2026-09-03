@@ -188,6 +188,7 @@ fn append_apply_write_permission_check(
                 "apply_id": apply_result.apply_id,
                 "proposal_id": apply_result.proposal_id,
                 "operation": apply_result.operation,
+                "mode_id": task.mode_id.as_deref().unwrap_or("unresolved"),
                 "required_action": "WriteWorkspace",
                 "allowed": false,
                 "reason": reason,
@@ -224,18 +225,20 @@ fn append_apply_write_permission_check(
     if !decision.allowed {
         apply_result.apply_reason = decision.reason.clone();
     }
-    let payload = json!({
+    let mut payload = json!({
         "scope": "proposal.apply",
         "apply_id": apply_result.apply_id,
         "proposal_id": apply_result.proposal_id,
         "operation": apply_result.operation,
         "mode_id": policy.mode_id,
         "required_action": "WriteWorkspace",
-        "path": path,
         "workspace_write_scope_count": policy.workspace_write_scopes.len(),
         "allowed": decision.allowed,
         "reason": decision.reason,
     });
+    if let Some(path) = path {
+        payload["path"] = json!(path);
+    }
     store
         .tasks()
         .append_task_event_with_payload(
