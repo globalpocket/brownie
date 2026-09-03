@@ -700,6 +700,65 @@ pub fn runtime_semantic_protocol_contract() -> Value {
         "status": "Denied",
         "reason": "denied by policy"
     });
+    let mcp_tool_execution_approved_payload = json!({
+        "approval_schema_version": 1,
+        "task_id": "task_1",
+        "run_id": "run_1",
+        "tool_id": "mcp.server.tool",
+        "server_id": "server",
+        "tool_name": "tool",
+        "request_fingerprint": format!("sha256:{}", "e".repeat(64)),
+        "catalog_provenance": {
+            "server_id": "server",
+            "tool_name": "tool",
+            "catalog_fingerprint": format!("sha256:{}", "f".repeat(64))
+        },
+        "mcp_safety_policy": null,
+        "approval_fingerprint": format!("sha256:{}", "1".repeat(64)),
+        "status": "approved",
+        "approval_state_fingerprint": format!("sha256:{}", "2".repeat(64))
+    });
+    let tool_execution_completed_payload = json!({
+        "tool_id": "workspace.read",
+        "status": "Completed",
+        "output_preview": "bounded output",
+        "bytes_read": 14,
+        "truncated": false
+    });
+    let tool_execution_failed_payload = json!({
+        "tool_id": "mcp.server.tool",
+        "status": "Failed",
+        "reason": "MCP tool returned error.",
+        "mcp": {
+            "server_id": "server",
+            "tool_name": "tool",
+            "request_fingerprint": format!("sha256:{}", "3".repeat(64)),
+            "result_fingerprint": format!("sha256:{}", "4".repeat(64)),
+            "execution_status": "tool_returned_error"
+        },
+        "catalog_provenance": {
+            "server_id": "server",
+            "tool_name": "tool",
+            "catalog_fingerprint": format!("sha256:{}", "5".repeat(64))
+        },
+        "mcp_safety_policy": null,
+        "mcp_approval_binding": {
+            "approval_schema_version": 1,
+            "task_id": "task_1",
+            "run_id": "run_1",
+            "tool_id": "mcp.server.tool",
+            "server_id": "server",
+            "tool_name": "tool",
+            "request_fingerprint": format!("sha256:{}", "3".repeat(64)),
+            "catalog_provenance": {},
+            "mcp_safety_policy": null,
+            "approval_fingerprint": format!("sha256:{}", "6".repeat(64)),
+            "status": "consumed",
+            "approval_state_fingerprint": format!("sha256:{}", "7".repeat(64)),
+            "outcome": "tool_returned_error",
+            "outcome_fingerprint": format!("sha256:{}", "4".repeat(64))
+        }
+    });
     let event_payload_schema_classifications = ledger_event_kinds
         .iter()
         .map(|kind| {
@@ -832,13 +891,43 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&tool_execution_denied_payload),
             "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("ToolExecutionDenied", &tool_execution_denied_payload)
         }),
+        json!({
+            "ledger_event_kind": "McpToolExecutionApproved",
+            "payload": mcp_tool_execution_approved_payload,
+            "payload_schema_classification": ledger_payload_schema_classification("McpToolExecutionApproved"),
+            "payload_schema_contract_status": ledger_payload_schema_contract_status(ledger_payload_schema_classification("McpToolExecutionApproved")),
+            "payload_schema_id": ledger_payload_schema_id("McpToolExecutionApproved"),
+            "payload_schema_fingerprint": ledger_payload_schema_fingerprint("McpToolExecutionApproved"),
+            "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&mcp_tool_execution_approved_payload),
+            "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("McpToolExecutionApproved", &mcp_tool_execution_approved_payload)
+        }),
+        json!({
+            "ledger_event_kind": "ToolExecutionCompleted",
+            "payload": tool_execution_completed_payload,
+            "payload_schema_classification": ledger_payload_schema_classification("ToolExecutionCompleted"),
+            "payload_schema_contract_status": ledger_payload_schema_contract_status(ledger_payload_schema_classification("ToolExecutionCompleted")),
+            "payload_schema_id": ledger_payload_schema_id("ToolExecutionCompleted"),
+            "payload_schema_fingerprint": ledger_payload_schema_fingerprint("ToolExecutionCompleted"),
+            "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&tool_execution_completed_payload),
+            "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("ToolExecutionCompleted", &tool_execution_completed_payload)
+        }),
+        json!({
+            "ledger_event_kind": "ToolExecutionFailed",
+            "payload": tool_execution_failed_payload,
+            "payload_schema_classification": ledger_payload_schema_classification("ToolExecutionFailed"),
+            "payload_schema_contract_status": ledger_payload_schema_contract_status(ledger_payload_schema_classification("ToolExecutionFailed")),
+            "payload_schema_id": ledger_payload_schema_id("ToolExecutionFailed"),
+            "payload_schema_fingerprint": ledger_payload_schema_fingerprint("ToolExecutionFailed"),
+            "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&tool_execution_failed_payload),
+            "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("ToolExecutionFailed", &tool_execution_failed_payload)
+        }),
     ];
 
     json!({
-        "schema_version": 8,
+        "schema_version": 9,
         "contract_id": "runtime-semantic-protocol-contract-v1",
         "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-        "phase": "RRP-5.9",
+        "phase": "RRP-5.10",
         "owner": "runtime",
         "runtime_release_debt_id": "protocol-event-canonization",
         "runtime_release_ready": false,
@@ -943,8 +1032,8 @@ pub fn runtime_semantic_protocol_contract() -> Value {
                 "ledger_event_payload_inventory": "closed",
                 "ledger_event_payload_typed_schema_coverage": "partial"
             },
-            "ledger_payload_schema_classification_policy": "Every LedgerEventKind must carry an explicit payload schema classification. versioned_open and typed_known_fields_open are allowed only as required-before-release debt evidence and must not be treated as fully typed ledger payload schemas. TaskCompleted, TaskFailed, TaskCancelled, PermissionChecked, PermissionDenied, ToolPermissionChecked, ToolPlanApproved, ToolPlanDenied, ToolIntentPermissionChecked, ToolIntentApproved, ToolIntentDenied, ToolExecutionRequested, ToolExecutionPermissionChecked, and ToolExecutionDenied are strict typed payload families.",
-            "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Versioned-open payload classifications keep protocol-event-canonization partial until every payload-bearing event has a strict typed schema, an explicit payload_absent contract, or a legacy-only compatibility entry. Current v5 terminal task, permission, and selected tool payload schemas preserve v1, v2, v3, and v4 read compatibility while requiring strict field validation for new terminal task, permission, tool planning, tool intent, and selected tool execution appends.",
+            "ledger_payload_schema_classification_policy": "Every LedgerEventKind must carry an explicit payload schema classification. versioned_open and typed_known_fields_open are allowed only as required-before-release debt evidence and must not be treated as fully typed ledger payload schemas. TaskCompleted, TaskFailed, TaskCancelled, PermissionChecked, PermissionDenied, ToolPermissionChecked, ToolPlanApproved, ToolPlanDenied, ToolIntentPermissionChecked, ToolIntentApproved, ToolIntentDenied, ToolExecutionRequested, McpToolExecutionApproved, ToolExecutionPermissionChecked, ToolExecutionCompleted, ToolExecutionDenied, and ToolExecutionFailed are strict typed payload families.",
+            "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Versioned-open payload classifications keep protocol-event-canonization partial until every payload-bearing event has a strict typed schema, an explicit payload_absent contract, or a legacy-only compatibility entry. Current v6 terminal task, permission, selected tool, MCP approval, and tool terminal payload schemas preserve v1, v2, v3, v4, and v5 read compatibility while requiring strict field validation for new terminal task, permission, tool planning, tool intent, selected tool execution, MCP approval, and tool terminal appends.",
             "guard": "guard:protocol-event-canonization",
             "event_payload_schema_classification_count": event_payload_schema_classifications.len(),
             "event_payload_schema_classifications": event_payload_schema_classifications,
@@ -1646,7 +1735,7 @@ fn canonical_value(value: &Value) -> Value {
     }
 }
 
-const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 5;
+const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 6;
 
 fn ledger_payload_schema_id(kind: &str) -> String {
     format!("ledger_payload.{kind}.v{LEDGER_PAYLOAD_SCHEMA_VERSION}")
@@ -1673,8 +1762,11 @@ fn ledger_payload_schema_classification(kind: &str) -> &'static str {
         | "ToolIntentApproved"
         | "ToolIntentDenied"
         | "ToolExecutionRequested"
+        | "McpToolExecutionApproved"
         | "ToolExecutionPermissionChecked"
-        | "ToolExecutionDenied" => "strict_typed",
+        | "ToolExecutionCompleted"
+        | "ToolExecutionDenied"
+        | "ToolExecutionFailed" => "strict_typed",
         _ => "versioned_open",
     }
 }
@@ -1705,8 +1797,11 @@ fn ledger_payload_schema_descriptor(kind: &str) -> String {
             tool_intent_payload_schema_descriptor()
         }
         "ToolExecutionRequested" => tool_execution_requested_payload_schema_descriptor(),
+        "McpToolExecutionApproved" => mcp_tool_execution_approved_payload_schema_descriptor(),
         "ToolExecutionPermissionChecked" => tool_execution_permission_payload_schema_descriptor(),
+        "ToolExecutionCompleted" => tool_execution_terminal_payload_schema_descriptor("Completed"),
         "ToolExecutionDenied" => tool_execution_terminal_payload_schema_descriptor("Denied"),
+        "ToolExecutionFailed" => tool_execution_terminal_payload_schema_descriptor("Failed"),
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
 }
@@ -1737,9 +1832,17 @@ fn tool_execution_permission_payload_schema_descriptor() -> String {
     "strict_typed{payload_optional:false;required_fields:allowed:boolean,reason:string,required_action:string,tool_id:string;known_optional_fields:mcp_safety_policy:object_or_null,request_fingerprint:string,server_id:string,source_apply_id:string,tool_name:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_execution_permission_payload:true}".to_string()
 }
 
+fn mcp_tool_execution_approved_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:approval_fingerprint:string,approval_schema_version:u64,approval_state_fingerprint:string,catalog_provenance:object,mcp_safety_policy:object_or_null,request_fingerprint:string,run_id:string,server_id:string,status:string,task_id:string,tool_id:string,tool_name:string;known_optional_fields:approval_id_fingerprint:string,outcome:string,outcome_fingerprint:string,recovery_fingerprint:string,recovery_reason:string,recovery_source_state_fingerprint:string;additional_fields:false;mcp_tool_execution_approval_payload:true}".to_string()
+}
+
 fn tool_execution_terminal_payload_schema_descriptor(status: &str) -> String {
+    let required_fields = match status {
+        "Completed" => "required_fields:status:string,tool_id:string",
+        _ => "required_fields:reason:string,status:string,tool_id:string",
+    };
     format!(
-        "strict_typed{{payload_optional:false;required_fields:reason:string,status:string,tool_id:string;known_optional_fields:source_apply_id:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_execution_terminal_payload:true;terminal_status:{status}}}"
+        "strict_typed{{payload_optional:false;{required_fields};known_optional_fields:absolute_paths_redacted:boolean,ambient_index_ignored:boolean,authorized_change_set_fingerprint:string,authorized_path_count:u64,bounded_cargo_diagnostics:array,bytes_read:u64,captured_bytes:u64,cargo_dependency_fetch_offline:boolean,catalog_provenance:object,check_id:string,cleanup_succeeded:boolean,commit_id:string,committed_tree_fingerprint:string,compile_time_code_sandboxed:boolean,duration_ms:u64,exit_code:integer_or_null,expected_parent_head:string,failed_git_operation:string,git:object,git_environment_hardened:boolean,git_optional_locks_disabled:boolean,git_process_count:u64,git_processes_bounded:boolean,git_prompts_disabled:boolean,line_count:u64,logical_invocation_fingerprint:string,mcp:object,mcp_approval_binding:object,mcp_safety_policy:object_or_null,message_fingerprint:string,mutation_process_launched:boolean,operation:string,os_network_isolated:boolean,output_oversized:boolean,output_preview:string,output_redacted:boolean,output_truncated:boolean,process_launched:boolean,process_tree_kill_attempted:boolean,process_tree_kill_reason:string,process_tree_kill_succeeded:boolean,process_tree_timeout_supported:boolean,raw_diff_redacted:boolean,raw_file_content_redacted:boolean,raw_message_redacted:boolean,reason:string,reader_thread_joined:boolean,replayed:boolean,repository_hooks_bypassed:boolean,runtime_authorization_required:boolean,source_apply_id:string,standard_error_bytes:u64,standard_error_truncated:boolean,standard_output_bytes:u64,standard_output_truncated:boolean,target_dir_isolated:boolean,temporary_index_cleaned:boolean,test_code_executed:boolean,timed_out:boolean,truncated:boolean,trusted_workspace_required:boolean,used_git_plumbing:boolean,used_temporary_index:boolean,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string,verification_status:string,workspace_write_scope_fingerprint:string;additional_fields:false;tool_execution_terminal_payload:true;terminal_status:{status}}}"
     )
 }
 

@@ -6087,7 +6087,7 @@ pub struct LedgerPayloadEnvelope {
     pub instance_shape_fingerprint: String,
 }
 
-pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 5;
+pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 6;
 pub const LEDGER_PAYLOAD_SHAPE_VERSION: u64 = LEDGER_PAYLOAD_SCHEMA_VERSION;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6139,7 +6139,10 @@ pub fn ledger_payload_schema_classification(
         | LedgerEventKind::ToolIntentApproved
         | LedgerEventKind::ToolIntentDenied
         | LedgerEventKind::ToolExecutionRequested
+        | LedgerEventKind::McpToolExecutionApproved
         | LedgerEventKind::ToolExecutionPermissionChecked
+        | LedgerEventKind::ToolExecutionCompleted
+        | LedgerEventKind::ToolExecutionFailed
         | LedgerEventKind::ToolExecutionDenied => LedgerPayloadSchemaClassification::StrictTyped,
         _ => LedgerPayloadSchemaClassification::VersionedOpen,
     }
@@ -6276,8 +6279,17 @@ fn validate_strict_ledger_payload_schema(
         LedgerEventKind::ToolExecutionPermissionChecked => {
             validate_tool_execution_permission_payload_schema(kind, payload)
         }
+        LedgerEventKind::McpToolExecutionApproved => {
+            validate_mcp_tool_execution_approved_payload_schema(kind, payload)
+        }
+        LedgerEventKind::ToolExecutionCompleted => {
+            validate_tool_execution_terminal_payload_schema(kind, payload, "Completed")
+        }
         LedgerEventKind::ToolExecutionDenied => {
             validate_tool_execution_terminal_payload_schema(kind, payload, "Denied")
+        }
+        LedgerEventKind::ToolExecutionFailed => {
+            validate_tool_execution_terminal_payload_schema(kind, payload, "Failed")
         }
         _ => bail!("{kind:?} strict ledger payload schema is not registered"),
     }
@@ -6538,22 +6550,155 @@ fn validate_tool_execution_terminal_payload_schema(
 ) -> Result<()> {
     let object =
         validate_known_payload_object(kind, payload, TOOL_EXECUTION_TERMINAL_KNOWN_PAYLOAD_FIELDS)?;
-    for field in ["tool_id", "status", "reason"] {
+    for field in ["tool_id", "status"] {
         if !object.contains_key(field) {
             bail!("{kind:?} ledger payload must include {field}");
         }
     }
+    if matches!(
+        kind,
+        LedgerEventKind::ToolExecutionDenied | LedgerEventKind::ToolExecutionFailed
+    ) && !object.contains_key("reason")
+    {
+        bail!("{kind:?} ledger payload must include reason");
+    }
     validate_required_payload_string_field(object, "tool_id")?;
     validate_required_payload_string_field(object, "status")?;
-    validate_required_payload_string_field(object, "reason")?;
+    validate_optional_payload_string_field(object, "reason")?;
     if object.get("status").and_then(serde_json::Value::as_str) != Some(expected_status) {
         bail!("{kind:?} ledger payload status must be {expected_status}");
     }
+    validate_optional_payload_string_field(object, "output_preview")?;
+    validate_optional_payload_u64_field(object, "bytes_read")?;
+    validate_optional_payload_bool_field(object, "truncated")?;
+    validate_optional_payload_string_field(object, "check_id")?;
+    validate_optional_payload_string_field(object, "verification_status")?;
+    validate_optional_payload_bool_field(object, "process_launched")?;
+    validate_optional_payload_i64_or_null_field(object, "exit_code")?;
+    validate_optional_payload_bool_field(object, "timed_out")?;
+    validate_optional_payload_u64_field(object, "duration_ms")?;
+    validate_optional_payload_u64_field(object, "standard_output_bytes")?;
+    validate_optional_payload_u64_field(object, "standard_error_bytes")?;
+    validate_optional_payload_bool_field(object, "standard_output_truncated")?;
+    validate_optional_payload_bool_field(object, "standard_error_truncated")?;
+    validate_optional_payload_bool_field(object, "output_redacted")?;
+    validate_optional_payload_bool_field(object, "target_dir_isolated")?;
+    validate_optional_payload_bool_field(object, "cleanup_succeeded")?;
+    validate_optional_payload_bool_field(object, "cargo_dependency_fetch_offline")?;
+    validate_optional_payload_bool_field(object, "os_network_isolated")?;
+    validate_optional_payload_bool_field(object, "compile_time_code_sandboxed")?;
+    validate_optional_payload_bool_field(object, "test_code_executed")?;
+    validate_optional_payload_bool_field(object, "trusted_workspace_required")?;
+    validate_optional_payload_bool_field(object, "process_tree_timeout_supported")?;
+    validate_optional_payload_bool_field(object, "process_tree_kill_attempted")?;
+    validate_optional_payload_bool_field(object, "process_tree_kill_succeeded")?;
+    validate_optional_payload_string_field(object, "process_tree_kill_reason")?;
+    validate_optional_payload_string_field(object, "operation")?;
+    validate_optional_payload_u64_field(object, "line_count")?;
+    validate_optional_payload_u64_field(object, "captured_bytes")?;
+    validate_optional_payload_bool_field(object, "output_truncated")?;
+    validate_optional_payload_bool_field(object, "output_oversized")?;
+    validate_optional_payload_bool_field(object, "reader_thread_joined")?;
+    validate_optional_payload_bool_field(object, "git_environment_hardened")?;
+    validate_optional_payload_bool_field(object, "git_prompts_disabled")?;
+    validate_optional_payload_bool_field(object, "git_optional_locks_disabled")?;
+    validate_optional_payload_bool_field(object, "raw_diff_redacted")?;
+    validate_optional_payload_bool_field(object, "raw_file_content_redacted")?;
+    validate_optional_payload_bool_field(object, "absolute_paths_redacted")?;
+    validate_optional_payload_bool_field(object, "raw_message_redacted")?;
+    validate_optional_payload_string_field(object, "message_fingerprint")?;
+    validate_optional_payload_string_field(object, "expected_parent_head")?;
+    validate_optional_payload_string_field(object, "authorized_change_set_fingerprint")?;
+    validate_optional_payload_string_field(object, "workspace_write_scope_fingerprint")?;
+    validate_optional_payload_string_field(object, "logical_invocation_fingerprint")?;
+    validate_optional_payload_u64_field(object, "authorized_path_count")?;
+    validate_optional_payload_string_field(object, "committed_tree_fingerprint")?;
+    validate_optional_payload_string_field(object, "commit_id")?;
+    validate_optional_payload_bool_field(object, "replayed")?;
+    validate_optional_payload_bool_field(object, "mutation_process_launched")?;
+    validate_optional_payload_u64_field(object, "git_process_count")?;
+    validate_optional_payload_bool_field(object, "git_processes_bounded")?;
+    validate_optional_payload_bool_field(object, "ambient_index_ignored")?;
+    validate_optional_payload_bool_field(object, "used_temporary_index")?;
+    validate_optional_payload_bool_field(object, "temporary_index_cleaned")?;
+    validate_optional_payload_bool_field(object, "used_git_plumbing")?;
+    validate_optional_payload_bool_field(object, "repository_hooks_bypassed")?;
+    validate_optional_payload_bool_field(object, "runtime_authorization_required")?;
+    validate_optional_payload_string_field(object, "failed_git_operation")?;
+    validate_optional_payload_array_field(object, "bounded_cargo_diagnostics")?;
+    validate_optional_payload_object_field(object, "git")?;
+    validate_optional_payload_object_field(object, "mcp")?;
+    validate_optional_payload_object_field(object, "catalog_provenance")?;
+    validate_optional_payload_object_or_null_field(object, "mcp_safety_policy")?;
+    validate_optional_payload_object_field(object, "mcp_approval_binding")?;
     validate_optional_payload_string_field(object, "source_apply_id")?;
     validate_optional_payload_string_field(object, "verification_requirement_fingerprint")?;
     validate_optional_payload_string_field(object, "verification_requirement_id")?;
     validate_optional_payload_string_field(object, "verification_requirement_source_kind")?;
     validate_optional_payload_bool_field(object, "verification_recovery_retry")?;
+    Ok(())
+}
+
+fn validate_mcp_tool_execution_approved_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        MCP_TOOL_EXECUTION_APPROVED_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "approval_schema_version",
+        "task_id",
+        "run_id",
+        "tool_id",
+        "server_id",
+        "tool_name",
+        "request_fingerprint",
+        "catalog_provenance",
+        "mcp_safety_policy",
+        "approval_fingerprint",
+        "status",
+        "approval_state_fingerprint",
+    ] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    validate_required_payload_u64_field(object, "approval_schema_version")?;
+    validate_required_payload_string_field(object, "task_id")?;
+    validate_required_payload_string_field(object, "run_id")?;
+    validate_required_payload_string_field(object, "tool_id")?;
+    validate_required_payload_string_field(object, "server_id")?;
+    validate_required_payload_string_field(object, "tool_name")?;
+    validate_required_payload_string_field(object, "request_fingerprint")?;
+    validate_required_payload_object_field(object, "catalog_provenance")?;
+    validate_optional_payload_object_or_null_field(object, "mcp_safety_policy")?;
+    validate_required_payload_string_field(object, "approval_fingerprint")?;
+    validate_required_payload_string_field(object, "status")?;
+    validate_required_payload_string_field(object, "approval_state_fingerprint")?;
+    validate_optional_payload_string_field(object, "approval_id_fingerprint")?;
+    validate_optional_payload_string_field(object, "outcome")?;
+    validate_optional_payload_string_field(object, "outcome_fingerprint")?;
+    validate_optional_payload_string_field(object, "recovery_fingerprint")?;
+    validate_optional_payload_string_field(object, "recovery_reason")?;
+    validate_optional_payload_string_field(object, "recovery_source_state_fingerprint")?;
+    if let Some(status) = object.get("status").and_then(serde_json::Value::as_str) {
+        let accepted = [
+            "requested",
+            "approved",
+            "executing",
+            "consumed",
+            "rejected",
+            "expired",
+            "invalidated",
+            "outcome_unknown",
+        ];
+        if !accepted.contains(&status) {
+            bail!("{kind:?} ledger payload status is not a known MCP approval state");
+        }
+    }
     Ok(())
 }
 
@@ -6622,14 +6767,98 @@ const TOOL_EXECUTION_PERMISSION_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
 ];
 
 const TOOL_EXECUTION_TERMINAL_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "absolute_paths_redacted",
+    "ambient_index_ignored",
+    "authorized_change_set_fingerprint",
+    "authorized_path_count",
+    "bounded_cargo_diagnostics",
+    "bytes_read",
+    "captured_bytes",
+    "cargo_dependency_fetch_offline",
+    "catalog_provenance",
+    "check_id",
+    "cleanup_succeeded",
+    "commit_id",
+    "committed_tree_fingerprint",
+    "compile_time_code_sandboxed",
+    "duration_ms",
+    "exit_code",
+    "expected_parent_head",
+    "failed_git_operation",
+    "git",
+    "git_environment_hardened",
+    "git_optional_locks_disabled",
+    "git_process_count",
+    "git_processes_bounded",
+    "git_prompts_disabled",
+    "line_count",
+    "logical_invocation_fingerprint",
+    "mcp",
+    "mcp_approval_binding",
+    "mcp_safety_policy",
+    "message_fingerprint",
+    "mutation_process_launched",
+    "operation",
+    "os_network_isolated",
+    "output_oversized",
+    "output_preview",
+    "output_redacted",
+    "output_truncated",
+    "process_launched",
+    "process_tree_kill_attempted",
+    "process_tree_kill_reason",
+    "process_tree_kill_succeeded",
+    "process_tree_timeout_supported",
+    "raw_diff_redacted",
+    "raw_file_content_redacted",
+    "raw_message_redacted",
     "reason",
+    "reader_thread_joined",
+    "replayed",
+    "repository_hooks_bypassed",
+    "runtime_authorization_required",
     "source_apply_id",
+    "standard_error_bytes",
+    "standard_error_truncated",
+    "standard_output_bytes",
+    "standard_output_truncated",
     "status",
+    "target_dir_isolated",
+    "temporary_index_cleaned",
+    "test_code_executed",
+    "timed_out",
     "tool_id",
+    "truncated",
+    "trusted_workspace_required",
+    "used_git_plumbing",
+    "used_temporary_index",
     "verification_requirement_fingerprint",
     "verification_requirement_id",
     "verification_requirement_source_kind",
     "verification_recovery_retry",
+    "verification_status",
+    "workspace_write_scope_fingerprint",
+];
+
+const MCP_TOOL_EXECUTION_APPROVED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "approval_fingerprint",
+    "approval_id_fingerprint",
+    "approval_schema_version",
+    "approval_state_fingerprint",
+    "catalog_provenance",
+    "mcp_safety_policy",
+    "outcome",
+    "outcome_fingerprint",
+    "recovery_fingerprint",
+    "recovery_reason",
+    "recovery_source_state_fingerprint",
+    "request_fingerprint",
+    "run_id",
+    "server_id",
+    "status",
+    "task_id",
+    "tool_id",
+    "tool_name",
 ];
 
 const TERMINAL_TASK_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
@@ -6732,6 +6961,19 @@ fn validate_required_payload_object_field(
     Ok(())
 }
 
+fn validate_required_payload_u64_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    let Some(value) = object.get(field) else {
+        bail!("ledger payload field {field} is required");
+    };
+    if value.as_u64().is_none() {
+        bail!("ledger payload field {field} must be an unsigned integer");
+    }
+    Ok(())
+}
+
 fn validate_optional_payload_bool_field(
     object: &serde_json::Map<String, serde_json::Value>,
     field: &str,
@@ -6775,6 +7017,18 @@ fn validate_optional_payload_u64_field(
     if let Some(value) = object.get(field) {
         if value.as_u64().is_none() {
             bail!("ledger payload field {field} must be an unsigned integer");
+        }
+    }
+    Ok(())
+}
+
+fn validate_optional_payload_i64_or_null_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    if let Some(value) = object.get(field) {
+        if !value.is_null() && value.as_i64().is_none() && value.as_u64().is_none() {
+            bail!("ledger payload field {field} must be an integer or null");
         }
     }
     Ok(())
@@ -6918,11 +7172,20 @@ fn ledger_payload_schema_descriptor(kind: &LedgerEventKind) -> String {
         LedgerEventKind::ToolExecutionRequested => {
             tool_execution_requested_payload_schema_descriptor()
         }
+        LedgerEventKind::McpToolExecutionApproved => {
+            mcp_tool_execution_approved_payload_schema_descriptor()
+        }
         LedgerEventKind::ToolExecutionPermissionChecked => {
             tool_execution_permission_payload_schema_descriptor()
         }
+        LedgerEventKind::ToolExecutionCompleted => {
+            tool_execution_terminal_payload_schema_descriptor("Completed")
+        }
         LedgerEventKind::ToolExecutionDenied => {
             tool_execution_terminal_payload_schema_descriptor("Denied")
+        }
+        LedgerEventKind::ToolExecutionFailed => {
+            tool_execution_terminal_payload_schema_descriptor("Failed")
         }
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
@@ -6954,9 +7217,17 @@ fn tool_execution_permission_payload_schema_descriptor() -> String {
     "strict_typed{payload_optional:false;required_fields:allowed:boolean,reason:string,required_action:string,tool_id:string;known_optional_fields:mcp_safety_policy:object_or_null,request_fingerprint:string,server_id:string,source_apply_id:string,tool_name:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_execution_permission_payload:true}".to_string()
 }
 
+fn mcp_tool_execution_approved_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:approval_fingerprint:string,approval_schema_version:u64,approval_state_fingerprint:string,catalog_provenance:object,mcp_safety_policy:object_or_null,request_fingerprint:string,run_id:string,server_id:string,status:string,task_id:string,tool_id:string,tool_name:string;known_optional_fields:approval_id_fingerprint:string,outcome:string,outcome_fingerprint:string,recovery_fingerprint:string,recovery_reason:string,recovery_source_state_fingerprint:string;additional_fields:false;mcp_tool_execution_approval_payload:true}".to_string()
+}
+
 fn tool_execution_terminal_payload_schema_descriptor(status: &str) -> String {
+    let required_fields = match status {
+        "Completed" => "required_fields:status:string,tool_id:string",
+        _ => "required_fields:reason:string,status:string,tool_id:string",
+    };
     format!(
-        "strict_typed{{payload_optional:false;required_fields:reason:string,status:string,tool_id:string;known_optional_fields:source_apply_id:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_execution_terminal_payload:true;terminal_status:{status}}}"
+        "strict_typed{{payload_optional:false;{required_fields};known_optional_fields:absolute_paths_redacted:boolean,ambient_index_ignored:boolean,authorized_change_set_fingerprint:string,authorized_path_count:u64,bounded_cargo_diagnostics:array,bytes_read:u64,captured_bytes:u64,cargo_dependency_fetch_offline:boolean,catalog_provenance:object,check_id:string,cleanup_succeeded:boolean,commit_id:string,committed_tree_fingerprint:string,compile_time_code_sandboxed:boolean,duration_ms:u64,exit_code:integer_or_null,expected_parent_head:string,failed_git_operation:string,git:object,git_environment_hardened:boolean,git_optional_locks_disabled:boolean,git_process_count:u64,git_processes_bounded:boolean,git_prompts_disabled:boolean,line_count:u64,logical_invocation_fingerprint:string,mcp:object,mcp_approval_binding:object,mcp_safety_policy:object_or_null,message_fingerprint:string,mutation_process_launched:boolean,operation:string,os_network_isolated:boolean,output_oversized:boolean,output_preview:string,output_redacted:boolean,output_truncated:boolean,process_launched:boolean,process_tree_kill_attempted:boolean,process_tree_kill_reason:string,process_tree_kill_succeeded:boolean,process_tree_timeout_supported:boolean,raw_diff_redacted:boolean,raw_file_content_redacted:boolean,raw_message_redacted:boolean,reason:string,reader_thread_joined:boolean,replayed:boolean,repository_hooks_bypassed:boolean,runtime_authorization_required:boolean,source_apply_id:string,standard_error_bytes:u64,standard_error_truncated:boolean,standard_output_bytes:u64,standard_output_truncated:boolean,target_dir_isolated:boolean,temporary_index_cleaned:boolean,test_code_executed:boolean,timed_out:boolean,truncated:boolean,trusted_workspace_required:boolean,used_git_plumbing:boolean,used_temporary_index:boolean,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string,verification_status:string,workspace_write_scope_fingerprint:string;additional_fields:false;tool_execution_terminal_payload:true;terminal_status:{status}}}"
     )
 }
 
@@ -8225,6 +8496,92 @@ mod tests {
             .append_task_events_with_payloads(
                 &record,
                 vec![(
+                    LedgerEventKind::McpToolExecutionApproved,
+                    Some(serde_json::json!({
+                        "approval_schema_version": 1,
+                        "task_id": record.task_id,
+                        "run_id": record.run_id,
+                        "tool_id": "mcp.server.tool",
+                        "server_id": "server",
+                        "tool_name": "tool",
+                        "request_fingerprint": format!("sha256:{}", "e".repeat(64)),
+                        "catalog_provenance": {
+                            "server_id": "server",
+                            "tool_name": "tool",
+                            "catalog_fingerprint": format!("sha256:{}", "f".repeat(64))
+                        },
+                        "mcp_safety_policy": null,
+                        "approval_fingerprint": format!("sha256:{}", "1".repeat(64)),
+                        "status": "executing",
+                        "approval_state_fingerprint": format!("sha256:{}", "2".repeat(64))
+                    })),
+                )],
+            )
+            .expect("strict McpToolExecutionApproved payload should pass");
+
+        store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::ToolExecutionCompleted,
+                    Some(serde_json::json!({
+                        "tool_id": "workspace.read",
+                        "status": "Completed",
+                        "output_preview": "bounded output",
+                        "bytes_read": 14,
+                        "truncated": false
+                    })),
+                )],
+            )
+            .expect("strict ToolExecutionCompleted payload should pass without reason");
+
+        store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::ToolExecutionFailed,
+                    Some(serde_json::json!({
+                        "tool_id": "mcp.server.tool",
+                        "status": "Failed",
+                        "reason": "MCP tool returned error.",
+                        "mcp": {
+                            "server_id": "server",
+                            "tool_name": "tool",
+                            "request_fingerprint": format!("sha256:{}", "3".repeat(64)),
+                            "result_fingerprint": format!("sha256:{}", "4".repeat(64)),
+                            "execution_status": "tool_returned_error"
+                        },
+                        "catalog_provenance": {
+                            "server_id": "server",
+                            "tool_name": "tool",
+                            "catalog_fingerprint": format!("sha256:{}", "5".repeat(64))
+                        },
+                        "mcp_safety_policy": null,
+                        "mcp_approval_binding": {
+                            "approval_schema_version": 1,
+                            "task_id": record.task_id,
+                            "run_id": record.run_id,
+                            "tool_id": "mcp.server.tool",
+                            "server_id": "server",
+                            "tool_name": "tool",
+                            "request_fingerprint": format!("sha256:{}", "3".repeat(64)),
+                            "catalog_provenance": {},
+                            "mcp_safety_policy": null,
+                            "approval_fingerprint": format!("sha256:{}", "6".repeat(64)),
+                            "status": "consumed",
+                            "approval_state_fingerprint": format!("sha256:{}", "7".repeat(64)),
+                            "outcome": "tool_returned_error",
+                            "outcome_fingerprint": format!("sha256:{}", "4".repeat(64))
+                        }
+                    })),
+                )],
+            )
+            .expect("strict ToolExecutionFailed MCP terminal payload should pass");
+
+        store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
                     LedgerEventKind::ToolExecutionDenied,
                     Some(serde_json::json!({
                         "tool_id": "workspace.write",
@@ -8281,6 +8638,58 @@ mod tests {
             )
             .expect_err("tool execution denied payload with wrong status should fail closed");
         assert!(format!("{malformed_status:#}").contains("status must be Denied"));
+
+        let missing_mcp_approval_state = store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::McpToolExecutionApproved,
+                    Some(serde_json::json!({
+                        "approval_schema_version": 1,
+                        "task_id": record.task_id,
+                        "run_id": record.run_id,
+                        "tool_id": "mcp.server.tool",
+                        "server_id": "server",
+                        "tool_name": "tool",
+                        "request_fingerprint": format!("sha256:{}", "e".repeat(64)),
+                        "catalog_provenance": {},
+                        "mcp_safety_policy": null,
+                        "approval_fingerprint": format!("sha256:{}", "1".repeat(64)),
+                        "status": "approved"
+                    })),
+                )],
+            )
+            .expect_err("MCP approval payload without state fingerprint should fail closed");
+        assert!(format!("{missing_mcp_approval_state:#}").contains("approval_state_fingerprint"));
+
+        let completed_unknown_field = store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::ToolExecutionCompleted,
+                    Some(serde_json::json!({
+                        "tool_id": "workspace.read",
+                        "status": "Completed",
+                        "raw_output": "not allowed"
+                    })),
+                )],
+            )
+            .expect_err("ToolExecutionCompleted payload with unknown raw field should fail closed");
+        assert!(format!("{completed_unknown_field:#}").contains("strict tool schema"));
+
+        let failed_without_reason = store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::ToolExecutionFailed,
+                    Some(serde_json::json!({
+                        "tool_id": "workspace.read",
+                        "status": "Failed"
+                    })),
+                )],
+            )
+            .expect_err("ToolExecutionFailed payload without reason should fail closed");
+        assert!(format!("{failed_without_reason:#}").contains("must include reason"));
     }
 
     #[test]
