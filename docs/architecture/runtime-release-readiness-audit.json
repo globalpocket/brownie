@@ -1,14 +1,13 @@
 {
   "schema_version": 1,
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-  "phase": "RRP-6",
-  "phase_title": "Runtime Module Decomposition Reevaluation",
+  "phase": "RRP-7",
+  "phase_title": "Platform, Deadline, and Durability Hardening",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "19d4d81ba365fbaa9f8801473dc59606644a04f6",
+  "audited_main_commit": "ba6fb62eb12a63e48bcd5b64072e3314efbc53bc",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
-    "runtime-release-guard-ci",
-    "platform-deadline-durability-hardening"
+    "runtime-release-guard-ci"
   ],
   "owner_decisions": [
     {
@@ -106,6 +105,7 @@
         "RRP-4 adds durable schema release-readiness evidence and store tests, but direct .github workflow wiring remains blocked by missing OAuth workflow scope.",
         "RRP-5 adds guard:protocol-event-canonization to the existing CI-invoked VSIX check path.",
         "RRP-6 adds guard:runtime-module-decomposition to the existing CI-invoked VSIX check path and makes the Runtime release-readiness guard require that VSIX command.",
+        "RRP-7 adds guard:platform-deadline-durability to the existing CI-invoked VSIX check path and makes the Runtime release-readiness guard require that VSIX command.",
         "RRD-1 already wires the Runtime release readiness guard into the VSIX check path that CI invokes.",
         "Full CI Release Gate hardening remains a later P0 closure phase for frozen install, fmt, audit/SBOM/secret/dependency, and complete release gate policy coverage."
       ],
@@ -174,14 +174,17 @@
       "id": "platform-deadline-durability-hardening",
       "title": "Platform, deadline, and durability hardening",
       "priority": "P1",
-      "status": "partial",
+      "status": "implemented_sufficient",
       "responsibility_domain": "runtime",
-      "debt_classification": "required_before_release",
+      "debt_classification": "closed",
       "evidence": [
-        "Runtime owns execution budgets, stale conflict behavior, recovery probes, and durable state boundaries.",
-        "Release needs a bounded audit and tests for deadline propagation, crash-safe write ordering, fsync/atomicity assumptions, platform path handling, and failure classification within local Runtime scope."
+        "RRP-7 adds docs/architecture/runtime-platform-deadline-durability-hardening.json as the finite closure assessment for local Runtime platform/deadline/durability scope.",
+        "TaskStore::write_task_state now uses the shared write_file_atomically helper, so task state writes use a sibling temporary file, create_new, file write, file sync, atomic rename, and parent-directory sync like other durable store state.",
+        "write_file_atomically now treats Unix parent-directory sync as a checked durability step rather than best-effort ignored evidence, while non-Unix remains an explicit local Runtime boundary no-op.",
+        "scripts/guard-platform-deadline-durability.mjs validates task-state durable write ordering, the atomic helper's file and parent sync contract, existing MCP stdio process-tree timeout cleanup, and timeout terminal-state coverage; its tests fail closed on raw task-state writes, missing parent sync, missing process-group setup, and runtime_release_ready claims.",
+        "extensions/brownie-vsix/package.json now invokes pnpm --workspace-root guard:platform-deadline-durability through the existing CI-invoked VSIX check path."
       ],
-      "next_action": "Harden only Runtime-owned local durability and deadline semantics, not hosted platform products."
+      "next_action": "Use the guarded RRP-7 local durability/deadline baseline while closing the remaining CI release-gate blocker."
     },
     {
       "id": "hosted-scheduler-daemon-worker-fleet",

@@ -16,7 +16,8 @@ const cargoText = 'license = "UNLICENSED"\npublish = false\n';
 const vsixPackageText = [
   'pnpm --workspace-root guard:runtime-release-readiness',
   'pnpm --workspace-root guard:protocol-event-canonization',
-  'pnpm --workspace-root guard:runtime-module-decomposition'
+  'pnpm --workspace-root guard:runtime-module-decomposition',
+  'pnpm --workspace-root guard:platform-deadline-durability'
 ].join('\n');
 
 function item(overrides) {
@@ -319,6 +320,15 @@ test('rejects CI or VSIX check path that omits release readiness guard coverage'
     ].join('\n')
   });
   assert(moduleGuardErrors.some((error) => error.includes('guard:runtime-module-decomposition')));
+
+  const platformGuardErrors = validate(validAudit(), {
+    vsixPackageText: [
+      'pnpm --workspace-root guard:runtime-release-readiness',
+      'pnpm --workspace-root guard:protocol-event-canonization',
+      'pnpm --workspace-root guard:runtime-module-decomposition'
+    ].join('\n')
+  });
+  assert(platformGuardErrors.some((error) => error.includes('guard:platform-deadline-durability')));
 });
 
 test('accepts canonical Runtime boundary contract', () => {

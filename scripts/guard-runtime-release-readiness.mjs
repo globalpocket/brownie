@@ -62,7 +62,8 @@ const requiredCiCommands = [
 const requiredVsixCheckCommands = [
   'pnpm --workspace-root guard:runtime-release-readiness',
   'pnpm --workspace-root guard:protocol-event-canonization',
-  'pnpm --workspace-root guard:runtime-module-decomposition'
+  'pnpm --workspace-root guard:runtime-module-decomposition',
+  'pnpm --workspace-root guard:platform-deadline-durability'
 ];
 
 const requiredBoundarySurfaceIds = [
