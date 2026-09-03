@@ -22,7 +22,21 @@ const canonicalMapPath = resolve(__dirname, '../../../../docs/architecture/runti
 
 interface SemanticProtocolContract {
   phase: string;
-  method_contracts: Array<{ method: string; param_type: string | null; request_schema: unknown; result_schema: unknown }>;
+  method_contracts: Array<{
+    method: string;
+    param_type: string | null;
+    result_type: string;
+    request_schema: unknown;
+    result_schema: unknown;
+    request_schema_ref?: string | null;
+    result_schema_ref?: string;
+    request_recursive_schema_fingerprint?: string | null;
+    result_recursive_schema_fingerprint?: string;
+  }>;
+  type_schemas: Record<string, {
+    properties?: Record<string, unknown>;
+    $defs?: Record<string, unknown>;
+  }>;
   golden_fixtures: Record<string, unknown>;
   unknown_field_policy: {
     rust_public_params: Array<{ type: string; deny_unknown_fields: boolean }>;
@@ -31,6 +45,7 @@ interface SemanticProtocolContract {
     ledger_payload_envelope_type: string;
     ledger_payload_envelope_field: string;
     event_shape_fingerprint_count: number;
+    payload_shape_fixtures: Array<{ ledger_event_kind: string; payload_shape_fingerprint: string }>;
   };
 }
 
@@ -63,10 +78,23 @@ describe('Runtime semantic protocol contract', () => {
     const mappedMethods = new Set(readCanonicalMap().protocol_method_groups.flatMap((group) => group.methods));
     const contractedMethods = new Set(contract.method_contracts.map((method) => method.method));
 
-    expect(contract.phase).toBe('RRP-5.2');
+    expect(contract.phase).toBe('RRP-5.3');
     expect(contractedMethods).toEqual(mappedMethods);
     expect(contract.method_contracts.every((method) => method.request_schema && method.result_schema)).toBe(true);
+    expect(contract.method_contracts.every((method) => method.result_schema_ref === `#/type_schemas/${method.result_type}`)).toBe(true);
+    expect(contract.method_contracts.every((method) => method.result_recursive_schema_fingerprint?.startsWith('shape-fnv1a64:'))).toBe(true);
     expect(contract.unknown_field_policy.rust_public_params.every((entry) => entry.deny_unknown_fields)).toBe(true);
+  });
+
+  it('exposes recursive nested schemas for complex Runtime results', () => {
+    const contract = readContract();
+    const replaceActive = contract.type_schemas.ModePackReplaceActiveResult;
+
+    expect(replaceActive.$defs?.ModePackActiveSnapshotSummary).toBeTruthy();
+    expect(replaceActive.$defs?.ModePackApprovedCandidateSummary).toBeTruthy();
+    expect(replaceActive.properties?.previous_snapshot).toMatchObject({
+      $ref: '#/$defs/ModePackActiveSnapshotSummary',
+    });
   });
 
   it('validates Rust semantic contract fixtures at the VSIX boundary', () => {
@@ -94,6 +122,8 @@ describe('Runtime semantic protocol contract', () => {
     expect(coupling.ledger_payload_envelope_type).toBe('LedgerPayloadEnvelope');
     expect(coupling.ledger_payload_envelope_field).toBe('payload_envelope');
     expect(coupling.event_shape_fingerprint_count).toBeGreaterThan(0);
+    const taskCompleted = coupling.payload_shape_fixtures.filter((fixture) => fixture.ledger_event_kind === 'TaskCompleted');
+    expect(new Set(taskCompleted.map((fixture) => fixture.payload_shape_fingerprint)).size).toBeGreaterThan(1);
   });
 
   it('rejects unknown fields from semantic contract fixtures', () => {
