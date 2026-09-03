@@ -14407,6 +14407,57 @@ mod tests {
             .expect("ledger events")
     }
 
+    fn legacy_v1_payload_shape_descriptor(value: &serde_json::Value) -> String {
+        match value {
+            serde_json::Value::Null => "null".to_string(),
+            serde_json::Value::Bool(_) => "boolean".to_string(),
+            serde_json::Value::Number(number) if number.is_i64() || number.is_u64() => {
+                "integer".to_string()
+            }
+            serde_json::Value::Number(_) => "number".to_string(),
+            serde_json::Value::String(_) => "string".to_string(),
+            serde_json::Value::Array(values) => {
+                if values.is_empty() {
+                    "array<empty>".to_string()
+                } else {
+                    let mut item_shapes = values
+                        .iter()
+                        .map(legacy_v1_payload_shape_descriptor)
+                        .collect::<Vec<_>>();
+                    item_shapes.sort();
+                    item_shapes.dedup();
+                    format!("array<{}>", item_shapes.join("|"))
+                }
+            }
+            serde_json::Value::Object(object) => {
+                let fields = object
+                    .iter()
+                    .map(|(key, value)| {
+                        format!("{key}:{}", legacy_v1_payload_shape_descriptor(value))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("object{{{fields}}}")
+            }
+        }
+    }
+
+    fn legacy_v1_payload_shape_fingerprint(
+        kind: &brownie_store::LedgerEventKind,
+        payload: &serde_json::Value,
+    ) -> String {
+        let input = format!(
+            "{kind:?}:payload_shape_v1:descriptor:{}",
+            legacy_v1_payload_shape_descriptor(payload)
+        );
+        let mut hash = 0xcbf29ce484222325u64;
+        for byte in input.as_bytes() {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        format!("shape-fnv1a64:{hash:016x}")
+    }
+
     #[test]
     fn task_cancel_authorized_request_marks_created_task_cancelled_and_replays() {
         let _guard = ENV_LOCK.lock().expect("env lock");
@@ -21469,11 +21520,48 @@ modes:
                 TaskStatus::Completed,
                 LedgerEventKind::TaskCompleted,
                 Some(json!({
-                    "verification_completion_gate_status": 42,
+                    "status": "Completed",
                     "required_verifier_count": 1
                 })),
             )
-            .expect("complete with malformed gate");
+            .expect("complete with current strict payload");
+        let malformed_payload = json!({
+            "verification_completion_gate_status": 42,
+            "required_verifier_count": 1
+        });
+        let legacy_event = brownie_store::LedgerEvent {
+            event_id: "evt_legacy_malformed_gate".to_string(),
+            task_id: completed.task_id.clone(),
+            run_id: completed.run_id.clone(),
+            kind: LedgerEventKind::TaskCompleted,
+            timestamp: completed.updated_at.clone(),
+            payload: Some(malformed_payload.clone()),
+            payload_envelope: Some(brownie_store::LedgerPayloadEnvelope {
+                schema_version: 1,
+                shape_id: "ledger_payload.TaskCompleted.v1".to_string(),
+                shape_fingerprint: legacy_v1_payload_shape_fingerprint(
+                    &LedgerEventKind::TaskCompleted,
+                    &malformed_payload,
+                ),
+                schema_id: String::new(),
+                schema_fingerprint: String::new(),
+                instance_shape_fingerprint: String::new(),
+            }),
+        };
+        let ledger_path = temp
+            .path()
+            .join(".brownie")
+            .join("runs")
+            .join(&completed.run_id)
+            .join("ledger.jsonl");
+        std::fs::write(
+            &ledger_path,
+            format!(
+                "{}\n",
+                serde_json::to_string(&legacy_event).expect("serialize legacy event")
+            ),
+        )
+        .expect("rewrite legacy malformed ledger");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
         let inspect = parse_line(&format!(
