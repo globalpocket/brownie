@@ -43,6 +43,51 @@ checks validate that artifact so the public Runtime protocol, CLI projection,
 VSIX validators, run inspection, and task runtime documentation cannot silently
 drift from the v0 boundary contract.
 
+The guarded canonical protocol/event ownership map lives in
+`docs/architecture/runtime-protocol-event-canonical-map.json`. RRP-5 binds that
+map to Rust Runtime JSON-RPC constants and dispatch, Rust protocol structs,
+durable ledger event variants, the CLI transport subset, VSIX TypeScript
+validators, and this specification.
+
+Canonical Runtime JSON-RPC method groups:
+
+- Runtime observability: `runtime.status`, `llm.status`, `llm.health`,
+  `runtime.config.get`, and `runtime.diagnostics.get`.
+- Task lifecycle: `task.start`, `task.get`, `task.cancel`, `task.run`,
+  `task.inspect`, and `task.list`.
+- Headless control: `headless.continue_once`, `headless.run.advance`,
+  `headless.run.drive`, and `headless.run.recovery_probe`.
+- Mode and Mode Pack policy: `mode.list`, `mode.get`, `modepack.activate`,
+  `modepack.fetchCandidate`, `modepack.selectRegistryUpdate`,
+  `modepack.approveCandidate`, `modepack.trustSigner`,
+  `modepack.revokeSigner`, `modepack.verifyCandidateProvenance`,
+  `modepack.replaceActive`, and `modepack.rollbackActive`.
+- Permission and tools: `permission.check`, `tool.list`, `tool.plan`,
+  `tool.intent.parse`, `tool.execute`, and `mcp.tool.approve`.
+- Run and codebase inspection: `run.events`, `run.inspect`,
+  `codebase.index.build`, and `codebase.index.query`.
+- Proposal and review: `proposal.list`, `proposal.inspect`,
+  `proposal.approve`, `proposal.reject`, `proposal.preflight`,
+  `proposal.readiness`, `proposal.applyCapability`,
+  `proposal.applyDryRun`, `proposal.apply`, `proposal.applyDryRunHistory`,
+  `proposal.auditTrail`, `proposal.reviewBundle`,
+  `proposal.reviewVerdict`, `proposal.reviewReport`, `proposal.reviewQueue`,
+  and the generated bounded `proposal.reviewQueueDiagnostics*`
+  compatibility family.
+
+Canonical event domains are `Runtime`, `Task`, `Llm`, `Tool`, `File`,
+`Subtask`, `Index`, and `ModePack`. Durable ledger events are Runtime-owned
+bounded evidence records; `TaskStarted`, `TaskCancelled`,
+`ToolExecutionRequested`, `McpToolExecutionApproved`,
+`ToolExecutionCompleted`, `ToolExecutionDenied`, `ToolExecutionFailed`,
+`HeadlessRunSessionAdvanced`, and `HeadlessRunCompletionFinalized` are
+representative release-critical variants, and the map covers the remaining
+variants by named Runtime-owned prefixes. Event payloads remain sanitized
+summaries and do not make raw prompts, provider responses, file content,
+absolute paths, canonical paths, secrets, environment values, executable
+content, process output, MCP metadata, CLI validation, VSIX validation, prose,
+or model output authoritative.
+
 ## Framing
 
 The runtime reads stdin one line at a time. Each non-empty line is one complete JSON-RPC request. For every request line, the runtime writes exactly one JSON-RPC response line to stdout and flushes stdout before reading the next request.
