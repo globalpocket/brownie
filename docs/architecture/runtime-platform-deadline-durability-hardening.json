@@ -1,16 +1,18 @@
 {
   "schema_version": 1,
-  "assessment_id": "runtime-platform-deadline-durability-hardening-v1",
-  "phase": "RRP-7",
-  "phase_title": "Platform, Deadline, and Durability Hardening",
+  "assessment_id": "runtime-platform-deadline-durability-hardening-v2",
+  "phase": "RRP-7.1",
+  "phase_title": "Deadline, Cross-Platform, and Failure Injection Hardening",
   "runtime_release_debt_id": "platform-deadline-durability-hardening",
-  "base_commit": "ba6fb62eb12a63e48bcd5b64072e3314efbc53bc",
+  "base_commit": "db3a217cf0b38475ea7fb614bb2541f14325b544",
   "runtime_release_ready": false,
   "scope": [
     "local Runtime durable task-state write ordering",
     "local atomic write file fsync and parent directory sync assumptions",
-    "MCP stdio deadline and timeout cleanup evidence",
-    "Runtime timeout terminal-state coverage"
+    "MCP stdio absolute deadline accounting across response wait and child-exit wait",
+    "task terminal mutation freshness checks before completion/cancel overwrite",
+    "durable write failure injection for disk-full, rename denial, and truncated temporary state",
+    "cross-platform process and directory-sync boundaries recorded without claiming unsupported hosted behavior"
   ],
   "source_checks": [
     {
@@ -24,6 +26,16 @@
       "requirement": "write_file_atomically creates a sibling temporary file with create_new, writes and fsyncs the file, renames it into place, and fails closed if the Unix parent directory sync fails."
     },
     {
+      "id": "runtime-deadline-absolute-budget-reconstruction",
+      "source_path": "crates/brownie-runtime/src/mcp_client.rs",
+      "requirement": "RuntimeDeadline carries an absolute expiration instant and reconstructs remaining timeout budget instead of resetting the budget between stdio response wait and child-exit wait."
+    },
+    {
+      "id": "late-child-exit-covered-by-deadline",
+      "source_path": "crates/brownie-runtime/src/mcp_client.rs",
+      "requirement": "stdio_request waits for the MCP child to exit only until the remaining RuntimeDeadline and then records process-tree kill evidence on timeout."
+    },
+    {
       "id": "mcp-stdio-timeout-kills-process-tree",
       "source_path": "crates/brownie-runtime/src/mcp_client.rs",
       "requirement": "MCP stdio subprocesses run in their own Unix process group, timeout handling terminates the process tree, and timeout errors expose bounded process-tree cleanup evidence."
@@ -32,18 +44,34 @@
       "id": "runtime-timeout-tests-cover-cleanup-and-terminal-state",
       "source_path": "crates/brownie-runtime/src/lib.rs",
       "requirement": "Runtime tests cover MCP stdio timeout cleanup and approval timeout terminalization without approval reuse."
+    },
+    {
+      "id": "task-terminal-race-checked-before-overwrite",
+      "source_path": "crates/brownie-store/src/lib.rs",
+      "requirement": "Task terminal status updates can require expected current status and updated_at freshness before appending terminal completion or cancellation evidence."
+    },
+    {
+      "id": "durable-write-failure-injection",
+      "source_path": "crates/brownie-store/src/lib.rs",
+      "requirement": "Test-only durable write failpoints cover disk_full_before_write, truncated_state_before_rename, and rename_denied_after_sync without replacing committed state or leaking temporary files."
+    },
+    {
+      "id": "cross-platform-boundaries-recorded",
+      "source_path": "crates/brownie-runtime/src/mcp_client.rs",
+      "requirement": "Unix process-group cleanup remains the enforced local process-tree implementation and non-Unix directory sync remains an explicit bounded no-op rather than claimed durability parity."
     }
   ],
   "closure": {
     "status": "implemented_sufficient",
     "debt_classification": "closed",
     "runtime_authority_retained_by": "Rust Runtime",
-    "summary": "RRP-7 closes the local Runtime platform/deadline/durability blocker by requiring task state to use the shared synced atomic write helper, by making parent-directory sync failures fail closed where supported, and by guarding the existing MCP process-tree timeout evidence."
+    "summary": "RRP-7.1 closes the reopened local Runtime platform/deadline/durability blocker by sharing one absolute MCP stdio deadline across response and child-exit waits, killing late-exit process trees with bounded evidence, adding checked terminal-state freshness before completion/cancel overwrites, and proving durable-write fail-closed behavior under deterministic disk-full, rename-denial, and truncated-temp failpoints."
   },
   "non_goals": [
     "hosted scheduler, daemon, worker fleet, and generic shell execution remain out of scope",
     "direct GitHub workflow hardening remains in runtime-release-guard-ci",
+    "semantic protocol/event contract generation remains in RRP-5.1",
     "license, publish, tag, release, and release asset decisions remain owner-controlled",
-    "runtime_release_ready remains false until the CI blocker and owner decisions close"
+    "runtime_release_ready remains false until the CI blocker, protocol semantic contract blocker, and owner decisions close"
   ]
 }

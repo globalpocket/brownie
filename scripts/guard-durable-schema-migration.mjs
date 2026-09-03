@@ -78,9 +78,18 @@ export function validateDurableSchemaMigration({ storeText, audit, packageText, 
   }
 
   const blockedBy = new Set(Array.isArray(audit.release_ready_blocked_by) ? audit.release_ready_blocked_by : []);
-  for (const id of ['runtime-release-guard-ci', 'protocol-event-canonization', 'platform-deadline-durability-hardening']) {
+  for (const id of ['runtime-release-guard-ci', 'protocol-event-canonization']) {
     requireValue(blockedBy.has(id), errors, `release_ready_blocked_by must include reopened blocker ${id}.`);
   }
+  const platformDeadline = byId.get('platform-deadline-durability-hardening');
+  const platformDeadlineClosed =
+    platformDeadline?.status === 'implemented_sufficient' &&
+    platformDeadline?.debt_classification === 'closed';
+  requireValue(
+    platformDeadlineClosed || blockedBy.has('platform-deadline-durability-hardening'),
+    errors,
+    'release_ready_blocked_by must include platform-deadline-durability-hardening unless RRP-7.1 has closed it.'
+  );
   requireValue(audit.runtime_release_ready === false, errors, 'runtime_release_ready must remain false.');
 
   requireValue(

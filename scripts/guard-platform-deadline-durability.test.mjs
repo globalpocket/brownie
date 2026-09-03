@@ -62,6 +62,54 @@ test('dropping process-tree timeout evidence fails closed', () => {
   );
 });
 
+test('dropping absolute runtime deadline evidence fails closed', () => {
+  const temp = copyFixture();
+  const mcpPath = path.join(temp, 'crates/brownie-runtime/src/mcp_client.rs');
+  const text = fs.readFileSync(mcpPath, 'utf8').replace('struct RuntimeDeadline', 'struct RemovedDeadline');
+  fs.writeFileSync(mcpPath, text);
+  assert.throws(
+    () => validatePlatformDeadlineDurabilityHardening(temp),
+    /missing MCP timeout hardening token struct RuntimeDeadline/,
+  );
+});
+
+test('dropping late child exit deadline test fails closed', () => {
+  const temp = copyFixture();
+  const mcpPath = path.join(temp, 'crates/brownie-runtime/src/mcp_client.rs');
+  const text = fs
+    .readFileSync(mcpPath, 'utf8')
+    .replace('mcp_stdio_deadline_covers_child_exit_after_response_line', 'mcp_stdio_late_exit_removed');
+  fs.writeFileSync(mcpPath, text);
+  assert.throws(
+    () => validatePlatformDeadlineDurabilityHardening(temp),
+    /missing timeout\/durability\/race test mcp_stdio_deadline_covers_child_exit_after_response_line/,
+  );
+});
+
+test('dropping durable write failure injection evidence fails closed', () => {
+  const temp = copyFixture();
+  const storePath = path.join(temp, 'crates/brownie-store/src/lib.rs');
+  const text = fs.readFileSync(storePath, 'utf8').replaceAll('disk_full_before_write', 'disk_full_removed');
+  fs.writeFileSync(storePath, text);
+  assert.throws(
+    () => validatePlatformDeadlineDurabilityHardening(temp),
+    /write_file_atomically missing durable_write_failpoint_matches\("disk_full_before_write"\)|missing timeout\/durability\/race test durable_write_failure_injection_disk_full/,
+  );
+});
+
+test('dropping checked terminal status update fails closed', () => {
+  const temp = copyFixture();
+  const storePath = path.join(temp, 'crates/brownie-store/src/lib.rs');
+  const text = fs
+    .readFileSync(storePath, 'utf8')
+    .replace('pub fn update_task_status_with_payload_checked', 'pub fn update_task_status_with_payload_unchecked');
+  fs.writeFileSync(storePath, text);
+  assert.throws(
+    () => validatePlatformDeadlineDurabilityHardening(temp),
+    /missing durable failure\/race evidence token pub fn update_task_status_with_payload_checked/,
+  );
+});
+
 test('assessment cannot claim Runtime Release Ready', () => {
   const temp = copyFixture();
   const assessmentPath = path.join(temp, 'docs/architecture/runtime-platform-deadline-durability-hardening.json');

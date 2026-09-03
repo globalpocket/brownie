@@ -66,6 +66,11 @@ const DURABLE_SCHEMA_MIGRATION_CHILD_ROOT_ENV: &str = "BROWNIE_STORE_SCHEMA_MIGR
 const DURABLE_SCHEMA_MIGRATION_FAILPOINT_AFTER_IN_PROGRESS: &str = "after_in_progress_marker";
 const DURABLE_SCHEMA_MIGRATION_FAILPOINT_AFTER_LAYOUT: &str = "after_layout_marker";
 const DURABLE_SCHEMA_MIGRATION_FAILPOINT_AFTER_CURRENT_V2: &str = "after_current_v2_manifest";
+#[cfg(test)]
+thread_local! {
+    static DURABLE_WRITE_FAILPOINT: std::cell::RefCell<Option<&'static str>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -3083,11 +3088,36 @@ fn write_file_atomically(path: &std::path::Path, body: &[u8]) -> Result<()> {
             .create_new(true)
             .open(&tmp_path)
             .with_context(|| format!("failed to create temporary file {}", tmp_path.display()))?;
+        #[cfg(test)]
+        if durable_write_failpoint_matches("disk_full_before_write") {
+            bail!("simulated durable write failure: disk_full_before_write");
+        }
+        #[cfg(test)]
+        if durable_write_failpoint_matches("truncated_state_before_rename") {
+            let partial_len = body.len().min(1);
+            file.write_all(&body[..partial_len]).with_context(|| {
+                format!(
+                    "failed to write partial temporary file {}",
+                    tmp_path.display()
+                )
+            })?;
+            file.sync_all().with_context(|| {
+                format!(
+                    "failed to sync partial temporary file {}",
+                    tmp_path.display()
+                )
+            })?;
+            bail!("simulated durable write failure: truncated_state_before_rename");
+        }
         file.write_all(body)
             .with_context(|| format!("failed to write temporary file {}", tmp_path.display()))?;
         file.sync_all()
             .with_context(|| format!("failed to sync temporary file {}", tmp_path.display()))?;
         drop(file);
+        #[cfg(test)]
+        if durable_write_failpoint_matches("rename_denied_after_sync") {
+            bail!("simulated durable write failure: rename_denied_after_sync");
+        }
         fs::rename(&tmp_path, path).with_context(|| {
             format!(
                 "failed to atomically replace {} from {}",
@@ -3103,6 +3133,31 @@ fn write_file_atomically(path: &std::path::Path, body: &[u8]) -> Result<()> {
         let _ = fs::remove_file(&tmp_path);
     }
     write_result
+}
+
+#[cfg(test)]
+fn durable_write_failpoint_matches(expected: &str) -> bool {
+    DURABLE_WRITE_FAILPOINT.with(|failpoint| failpoint.borrow().as_deref() == Some(expected))
+}
+
+#[cfg(test)]
+fn set_durable_write_failpoint(failpoint: &'static str) -> DurableWriteFailpointGuard {
+    DURABLE_WRITE_FAILPOINT.with(|current| {
+        *current.borrow_mut() = Some(failpoint);
+    });
+    DurableWriteFailpointGuard
+}
+
+#[cfg(test)]
+struct DurableWriteFailpointGuard;
+
+#[cfg(test)]
+impl Drop for DurableWriteFailpointGuard {
+    fn drop(&mut self) {
+        DURABLE_WRITE_FAILPOINT.with(|current| {
+            *current.borrow_mut() = None;
+        });
+    }
 }
 
 #[cfg(unix)]
@@ -3983,6 +4038,35 @@ impl TaskStore {
         let Some(mut record) = self.get_task(task_id)? else {
             bail!("task not found: {task_id}");
         };
+
+        record.status = status;
+        record.updated_at = timestamp()?;
+        self.write_task_state(&record)?;
+        self.append_task_event_with_payload(&record, event_kind, payload)?;
+        Ok(record)
+    }
+
+    pub fn update_task_status_with_payload_checked(
+        &self,
+        task_id: &str,
+        expected_status: TaskStatus,
+        expected_updated_at: &str,
+        status: TaskStatus,
+        event_kind: LedgerEventKind,
+        payload: Option<serde_json::Value>,
+    ) -> Result<TaskRecord> {
+        let Some(mut record) = self.get_task(task_id)? else {
+            bail!("task not found: {task_id}");
+        };
+        if record.status != expected_status || record.updated_at != expected_updated_at {
+            bail!(
+                "task terminal status race: expected {:?} at {} but found {:?} at {}",
+                expected_status,
+                expected_updated_at,
+                record.status,
+                record.updated_at
+            );
+        }
 
         record.status = status;
         record.updated_at = timestamp()?;
@@ -6001,6 +6085,167 @@ mod tests {
         assert_v1_fixture_preserved_and_resumable(temp.path(), &fixture);
     }
 
+    #[test]
+    fn durable_write_failure_injection_disk_full_fails_closed_before_task_state() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = TaskStore::new(temp.path());
+        store
+            .ensure_durable_schema()
+            .expect("schema before failpoint");
+        let _failpoint = set_durable_write_failpoint("disk_full_before_write");
+
+        let error = store
+            .start_task(TaskStartParams {
+                goal: "disk full failpoint".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect_err("disk full failpoint should fail closed");
+
+        let error_text = format!("{error:?}");
+        assert!(error_text.contains("disk_full_before_write"));
+        assert!(!temp
+            .path()
+            .join(WORKSPACE_STATE_DIR)
+            .join(RUNS_DIR)
+            .join("ledger.jsonl")
+            .exists());
+        assert_no_durable_write_temps(temp.path());
+    }
+
+    #[test]
+    fn durable_write_failure_injection_rename_denied_cleans_temporary_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = TaskStore::new(temp.path());
+        store
+            .ensure_durable_schema()
+            .expect("schema before failpoint");
+        let _failpoint = set_durable_write_failpoint("rename_denied_after_sync");
+
+        let error = store
+            .start_task(TaskStartParams {
+                goal: "rename denied failpoint".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect_err("rename failpoint should fail closed");
+
+        let error_text = format!("{error:?}");
+        assert!(error_text.contains("rename_denied_after_sync"));
+        assert_no_durable_write_temps(temp.path());
+        assert!(store
+            .list_tasks()
+            .expect("list after failed write")
+            .is_empty());
+    }
+
+    #[test]
+    fn durable_write_failure_injection_truncated_state_does_not_replace_existing_state() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = TaskStore::new(temp.path());
+        let record = store
+            .start_task(TaskStartParams {
+                goal: "preserve old state".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start task");
+        let state_path = store.run_dir(&record.run_id).join("state.json");
+        let original_state = fs::read(&state_path).expect("read original state");
+        let _failpoint = set_durable_write_failpoint("truncated_state_before_rename");
+
+        let error = store
+            .update_task_status(
+                &record.task_id,
+                TaskStatus::Running,
+                LedgerEventKind::TaskRunning,
+            )
+            .expect_err("truncated temp failpoint should fail closed");
+
+        let error_text = format!("{error:?}");
+        assert!(error_text.contains("truncated_state_before_rename"));
+        assert_eq!(
+            fs::read(&state_path).expect("read state after failed write"),
+            original_state
+        );
+        assert_no_durable_write_temps(temp.path());
+        let events = store
+            .read_ledger_events(&record.run_id)
+            .expect("ledger after failed write");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, LedgerEventKind::TaskStarted);
+    }
+
+    #[test]
+    fn task_terminal_status_race_fails_closed_before_late_completion_overwrites_cancel() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = TaskStore::new(temp.path());
+        let record = store
+            .start_task(TaskStartParams {
+                goal: "late terminal race".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start task");
+        let running = store
+            .update_task_status(
+                &record.task_id,
+                TaskStatus::Running,
+                LedgerEventKind::TaskRunning,
+            )
+            .expect("mark running");
+        store
+            .update_task_status(
+                &record.task_id,
+                TaskStatus::Cancelled,
+                LedgerEventKind::TaskCancelled,
+            )
+            .expect("concurrent cancel wins");
+
+        let error = store
+            .update_task_status_with_payload_checked(
+                &record.task_id,
+                TaskStatus::Running,
+                &running.updated_at,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+                Some(serde_json::json!({"late_tool_response": true})),
+            )
+            .expect_err("late completion should not overwrite cancel");
+
+        assert!(error.to_string().contains("task terminal status race"));
+        let current = store
+            .get_task(&record.task_id)
+            .expect("task lookup")
+            .expect("task");
+        assert_eq!(current.status, TaskStatus::Cancelled);
+        let events = store
+            .read_ledger_events(&record.run_id)
+            .expect("ledger after race");
+        assert!(events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskCancelled));
+        assert!(!events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskCompleted));
+    }
+
     fn legacy_v1_durable_schema_manifest(migration: &str) -> DurableStoreSchemaManifest {
         DurableStoreSchemaManifest {
             schema_id: DURABLE_STORE_SCHEMA_ID.to_string(),
@@ -6233,6 +6478,33 @@ mod tests {
             .expect("read resumed ledger");
         assert_eq!(resumed_events.len(), 3);
         assert_eq!(resumed_events[2].kind, LedgerEventKind::TaskCompleted);
+    }
+
+    fn assert_no_durable_write_temps(root: &Path) {
+        let state_dir = root.join(WORKSPACE_STATE_DIR);
+        if !state_dir.exists() {
+            return;
+        }
+        let mut stack = vec![state_dir];
+        while let Some(dir) = stack.pop() {
+            for entry in fs::read_dir(&dir).expect("read dir") {
+                let entry = entry.expect("dir entry");
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                let name = path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("");
+                assert!(
+                    !name.contains(".tmp-"),
+                    "durable write temporary file leaked: {}",
+                    path.display()
+                );
+            }
+        }
     }
 
     #[test]
