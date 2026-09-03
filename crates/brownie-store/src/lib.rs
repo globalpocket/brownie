@@ -5062,6 +5062,7 @@ impl TaskStore {
         kind: LedgerEventKind,
         payload: Option<serde_json::Value>,
     ) -> Result<LedgerEvent> {
+        let payload_envelope = ledger_payload_envelope(&kind, payload.as_ref());
         Ok(LedgerEvent {
             event_id: format!("event_{}", Uuid::new_v4()),
             task_id: record.task_id.clone(),
@@ -5069,6 +5070,7 @@ impl TaskStore {
             kind,
             timestamp: timestamp()?,
             payload,
+            payload_envelope,
         })
     }
 
@@ -5835,6 +5837,46 @@ fn terminal_status_event_kind(status: &TaskStatus) -> Result<LedgerEventKind> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct LedgerPayloadEnvelope {
+    pub schema_version: u64,
+    pub shape_id: String,
+    pub shape_fingerprint: String,
+}
+
+pub const LEDGER_PAYLOAD_SHAPE_VERSION: u64 = 1;
+
+pub fn ledger_payload_shape_id(kind: &LedgerEventKind) -> String {
+    format!("ledger_payload.{kind:?}.v{LEDGER_PAYLOAD_SHAPE_VERSION}")
+}
+
+pub fn ledger_payload_shape_fingerprint(kind: &LedgerEventKind) -> String {
+    stable_ledger_payload_fingerprint(&format!(
+        "{kind:?}:payload_shape_v{LEDGER_PAYLOAD_SHAPE_VERSION}"
+    ))
+}
+
+fn ledger_payload_envelope(
+    kind: &LedgerEventKind,
+    payload: Option<&serde_json::Value>,
+) -> Option<LedgerPayloadEnvelope> {
+    payload.map(|_| LedgerPayloadEnvelope {
+        schema_version: LEDGER_PAYLOAD_SHAPE_VERSION,
+        shape_id: ledger_payload_shape_id(kind),
+        shape_fingerprint: ledger_payload_shape_fingerprint(kind),
+    })
+}
+
+fn stable_ledger_payload_fingerprint(input: &str) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in input.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("shape-fnv1a64:{hash:016x}")
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LedgerEvent {
     pub event_id: String,
     pub task_id: String,
@@ -5843,6 +5885,8 @@ pub struct LedgerEvent {
     pub timestamp: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_envelope: Option<LedgerPayloadEnvelope>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

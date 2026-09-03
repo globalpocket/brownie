@@ -82,6 +82,7 @@ pub struct ToolIntentParserConfigSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct LlmHealthParams {
     pub allow_network: bool,
     pub timeout_ms: Option<u64>,
@@ -166,11 +167,13 @@ pub struct ModeListResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ModeGetParams {
     pub mode_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct PermissionCheckParams {
     pub mode_id: String,
     pub action: RuntimeActionName,
@@ -185,11 +188,13 @@ pub struct PermissionCheckResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ModePackActivateParams {
     pub authorize: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ModePackReplaceActiveParams {
     pub authorize_replacement: bool,
     pub expected_current_activation_fingerprint: String,
@@ -214,6 +219,7 @@ pub struct ModePackReplaceActiveParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ModePackUpdateAdmissionParams {
     pub authorize_update: bool,
     pub expected_current_modepack_name: String,
@@ -227,6 +233,7 @@ pub struct ModePackUpdateAdmissionParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ModePackRollbackActiveParams {
     pub authorize_rollback: bool,
     pub expected_current_activation_fingerprint: String,
@@ -234,6 +241,7 @@ pub struct ModePackRollbackActiveParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ModePackFetchCandidateParams {
     pub authorize_fetch: bool,
     pub url: String,
@@ -241,6 +249,7 @@ pub struct ModePackFetchCandidateParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ModePackSelectRegistryUpdateParams {
     pub authorize_registry_selection: bool,
     pub authorize_registry_trust: bool,
@@ -367,6 +376,7 @@ pub struct ModePackSelectedActiveRollbackTarget {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ModePackApproveCandidateParams {
     pub authorize_trust: bool,
     pub expected_content_sha256: String,
@@ -378,6 +388,7 @@ pub struct ModePackApproveCandidateParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ModePackTrustSignerParams {
     pub authorize_trust: bool,
     pub signer_fingerprint: String,
@@ -386,12 +397,14 @@ pub struct ModePackTrustSignerParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ModePackRevokeSignerParams {
     pub authorize_revocation: bool,
     pub signer_fingerprint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ModePackVerifyCandidateProvenanceParams {
     pub authorize_provenance_verification: bool,
     pub expected_content_sha256: String,
@@ -663,6 +676,7 @@ pub enum RuntimeActionName {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ToolPlanParams {
     pub task_id: String,
 }
@@ -684,6 +698,7 @@ pub struct ToolPlanDecisionSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ToolIntentParseParams {
     pub assistant_content: String,
     pub mode_id: String,
@@ -1874,17 +1889,20 @@ pub struct CodebaseIndexFileEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalListParams {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalInspectParams {
     pub run_id: String,
     pub proposal_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalApproveParams {
     pub run_id: String,
     pub proposal_id: String,
@@ -1892,6 +1910,7 @@ pub struct ProposalApproveParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalRejectParams {
     pub run_id: String,
     pub proposal_id: String,
@@ -1899,24 +1918,28 @@ pub struct ProposalRejectParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalPreflightParams {
     pub run_id: String,
     pub proposal_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReadinessParams {
     pub run_id: String,
     pub proposal_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalApplyCapabilityParams {
     pub run_id: String,
     pub proposal_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalApplyDryRunParams {
     pub run_id: String,
     pub proposal_id: String,
@@ -1968,261 +1991,307 @@ pub struct ProposalApplyParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalApplyDryRunHistoryParams {
     pub run_id: String,
     pub proposal_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalAuditTrailParams {
     pub run_id: String,
     pub proposal_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewBundleParams {
     pub run_id: String,
     pub proposal_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewVerdictParams {
     pub run_id: String,
     pub proposal_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewReportParams {
     pub run_id: String,
     pub proposal_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueParams {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsParams {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsHistoryParams {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsReportParams {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestParams {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestHistoryParams {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportParams {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportHistoryParams {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictParams {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictHistoryParams {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportParams {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryParams {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestParams {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryParams {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportParams {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryParams
 {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TaskInspectParams {
     pub task_id: String,
 }
@@ -3262,6 +3331,7 @@ pub struct RecoveryCycleBudgetOutcome {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TaskListParams {
     #[serde(default)]
     pub bounds: Option<TaskListBounds>,
@@ -5486,6 +5556,7 @@ mod semantic_contract_tests {
     use super::*;
     use serde::de::DeserializeOwned;
     use serde_json::{json, Value};
+    use std::collections::BTreeSet;
 
     fn rejects_unknown_field<T>(mut value: Value)
     where
@@ -5512,6 +5583,75 @@ mod semantic_contract_tests {
             semantic_contract::runtime_semantic_protocol_contract(),
             expected,
             "update docs/architecture/runtime-semantic-protocol-contract.json with `cargo run -p brownie-protocol --bin brownie-protocol-semantic-contract -- --write docs/architecture/runtime-semantic-protocol-contract.json`"
+        );
+    }
+
+    #[test]
+    fn semantic_contract_covers_all_explicit_runtime_methods() {
+        let canonical_map = serde_json::from_str::<Value>(include_str!(
+            "../../../docs/architecture/runtime-protocol-event-canonical-map.json"
+        ))
+        .expect("canonical map parses");
+        let mapped_methods = canonical_map
+            .get("protocol_method_groups")
+            .and_then(Value::as_array)
+            .expect("protocol method groups")
+            .iter()
+            .flat_map(|group| {
+                group
+                    .get("methods")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+            })
+            .collect::<BTreeSet<_>>();
+        let semantic_methods = semantic_contract::explicit_runtime_method_set();
+        assert_eq!(
+            semantic_methods, mapped_methods,
+            "semantic contract method specs must match every explicit Runtime method in the canonical map"
+        );
+
+        let contract = semantic_contract::runtime_semantic_protocol_contract();
+        let contract_methods = contract
+            .get("method_contracts")
+            .and_then(Value::as_array)
+            .expect("method contracts")
+            .iter()
+            .filter_map(|method| method.get("method").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            contract_methods, mapped_methods,
+            "generated artifact must include one method contract per explicit Runtime method"
+        );
+    }
+
+    #[test]
+    fn semantic_contract_records_all_public_param_deny_unknown_policies() {
+        let missing = semantic_contract::public_param_types_without_deny_unknown_fields();
+        assert!(
+            missing.is_empty(),
+            "public Runtime params missing deny_unknown_fields: {missing:?}"
+        );
+
+        let contract = semantic_contract::runtime_semantic_protocol_contract();
+        let policy_params = contract
+            .get("unknown_field_policy")
+            .and_then(|policy| policy.get("rust_public_params"))
+            .and_then(Value::as_array)
+            .expect("rust public params policy")
+            .iter()
+            .filter_map(|entry| entry.get("type").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>();
+        let public_params = semantic_contract::public_param_types()
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            policy_params, public_params,
+            "semantic contract must record unknown-field policy for every public *Params type"
         );
     }
 

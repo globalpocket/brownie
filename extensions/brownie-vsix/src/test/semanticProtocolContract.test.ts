@@ -18,9 +18,24 @@ import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
 const contractPath = resolve(__dirname, '../../../../docs/architecture/runtime-semantic-protocol-contract.json');
+const canonicalMapPath = resolve(__dirname, '../../../../docs/architecture/runtime-protocol-event-canonical-map.json');
 
 interface SemanticProtocolContract {
+  phase: string;
+  method_contracts: Array<{ method: string; param_type: string | null; request_schema: unknown; result_schema: unknown }>;
   golden_fixtures: Record<string, unknown>;
+  unknown_field_policy: {
+    rust_public_params: Array<{ type: string; deny_unknown_fields: boolean }>;
+  };
+  durable_event_migration_coupling: {
+    ledger_payload_envelope_type: string;
+    ledger_payload_envelope_field: string;
+    event_shape_fingerprint_count: number;
+  };
+}
+
+interface CanonicalProtocolMap {
+  protocol_method_groups: Array<{ methods: string[] }>;
 }
 
 class SemanticContractTransport implements RuntimeTransport {
@@ -38,7 +53,22 @@ function readContract(): SemanticProtocolContract {
   return JSON.parse(readFileSync(contractPath, 'utf8')) as SemanticProtocolContract;
 }
 
+function readCanonicalMap(): CanonicalProtocolMap {
+  return JSON.parse(readFileSync(canonicalMapPath, 'utf8')) as CanonicalProtocolMap;
+}
+
 describe('Runtime semantic protocol contract', () => {
+  it('covers every explicit Runtime method from the canonical map', () => {
+    const contract = readContract();
+    const mappedMethods = new Set(readCanonicalMap().protocol_method_groups.flatMap((group) => group.methods));
+    const contractedMethods = new Set(contract.method_contracts.map((method) => method.method));
+
+    expect(contract.phase).toBe('RRP-5.2');
+    expect(contractedMethods).toEqual(mappedMethods);
+    expect(contract.method_contracts.every((method) => method.request_schema && method.result_schema)).toBe(true);
+    expect(contract.unknown_field_policy.rust_public_params.every((entry) => entry.deny_unknown_fields)).toBe(true);
+  });
+
   it('validates Rust semantic contract fixtures at the VSIX boundary', () => {
     const fixtures = readContract().golden_fixtures;
 
@@ -50,6 +80,20 @@ describe('Runtime semantic protocol contract', () => {
     expect(isTaskRunParams(fixtures.task_run_minimal_params)).toBe(true);
     expect(isTaskRunParams(fixtures.task_run_explicit_null_params)).toBe(true);
     expect(isLedgerEventSummary(fixtures.ledger_event_summary)).toBe(true);
+    expect(fixtures.ledger_event_with_payload_envelope).toMatchObject({
+      payload_envelope: {
+        schema_version: 1,
+        shape_id: 'ledger_payload.TaskCompleted.v1',
+      },
+    });
+  });
+
+  it('records durable ledger payload shape migration coupling', () => {
+    const coupling = readContract().durable_event_migration_coupling;
+
+    expect(coupling.ledger_payload_envelope_type).toBe('LedgerPayloadEnvelope');
+    expect(coupling.ledger_payload_envelope_field).toBe('payload_envelope');
+    expect(coupling.event_shape_fingerprint_count).toBeGreaterThan(0);
   });
 
   it('rejects unknown fields from semantic contract fixtures', () => {

@@ -1721,6 +1721,7 @@ mod tests {
                 kind: LedgerEventKind::TaskStarted,
                 timestamp: "2026-01-01T00:00:00Z".into(),
                 payload: None,
+                payload_envelope: None,
             }],
             child_completion_summaries: vec![],
             selected_index_context: None,
@@ -1824,6 +1825,7 @@ mod tests {
                     kind: kind.clone(),
                     timestamp: "2026-01-01T00:00:00Z".into(),
                     payload: None,
+                    payload_envelope: None,
                 })
                 .collect(),
             child_completion_summaries: vec![],
@@ -1873,6 +1875,7 @@ mod tests {
             kind: kind.clone(),
             timestamp: "2026-01-01T00:00:00Z".into(),
             payload: None,
+            payload_envelope: None,
         })
         .collect::<Vec<_>>();
         let empty_ledger_prompt =
@@ -1959,6 +1962,7 @@ mod tests {
                         }]
                     }]
                 })),
+                payload_envelope: None,
             }],
             child_completion_summaries: vec![],
             selected_index_context: None,
@@ -2031,6 +2035,7 @@ mod tests {
                         }]
                     }
                 })),
+                payload_envelope: None,
             }],
             child_completion_summaries: vec![],
             selected_index_context: None,
@@ -2127,6 +2132,7 @@ mod tests {
                         ]
                     }
                 })),
+                payload_envelope: None,
             }],
             child_completion_summaries: vec![],
             selected_index_context: None,
@@ -2164,6 +2170,7 @@ mod tests {
                     "allowed": false,
                     "reason": "Mode orchestrator does not allow workspace writes."
                 })),
+                payload_envelope: None,
             }],
             child_completion_summaries: vec![],
             selected_index_context: None,
@@ -2195,6 +2202,7 @@ mod tests {
                     kind: LedgerEventKind::ToolIntentPermissionChecked,
                     timestamp: "2026-01-01T00:00:00Z".into(),
                     payload: Some(serde_json::json!({"tool_id":"workspace.read","allowed":true})),
+                    payload_envelope: None,
                 },
                 LedgerEvent {
                     event_id: "event_2".into(),
@@ -2205,6 +2213,7 @@ mod tests {
                     payload: Some(
                         serde_json::json!({"tool_id":"unknown.tool","reason":"Unknown tool id."}),
                     ),
+                    payload_envelope: None,
                 },
             ],
             child_completion_summaries: vec![],
@@ -2237,6 +2246,7 @@ mod tests {
                     "truncated": false,
                     "output_preview": "# Brownie"
                 })),
+                payload_envelope: None,
             }],
             child_completion_summaries: vec![],
             selected_index_context: None,
@@ -2288,6 +2298,7 @@ mod tests {
                         }]
                     }
                 })),
+                payload_envelope: None,
             }],
             child_completion_summaries: vec![],
             selected_index_context: None,
@@ -2332,6 +2343,7 @@ mod tests {
                             "field_count": 2
                         }
                     })),
+                    payload_envelope: None,
                 },
                 LedgerEvent {
                     event_id: "event_2".into(),
@@ -2346,6 +2358,7 @@ mod tests {
                         "execution_enabled": false,
                         "next_action": "await_future_runtime_scheduler"
                     })),
+                    payload_envelope: None,
                 },
                 LedgerEvent {
                     event_id: "event_3".into(),
@@ -2361,6 +2374,7 @@ mod tests {
                         "dispatch_enabled": false,
                         "next_action": "await_runtime_scheduler_dispatch"
                     })),
+                    payload_envelope: None,
                 },
                 LedgerEvent {
                     event_id: "event_4".into(),
@@ -2376,6 +2390,7 @@ mod tests {
                         "dispatch_enabled": false,
                         "next_action": "await_runtime_subtask_dispatcher"
                     })),
+                    payload_envelope: None,
                 },
                 LedgerEvent {
                     event_id: "event_5".into(),
@@ -2392,6 +2407,7 @@ mod tests {
                         "dispatch_enabled": false,
                         "next_action": "await_dispatch_contract_implementation"
                     })),
+                    payload_envelope: None,
                 },
                 LedgerEvent {
                     event_id: "event_6".into(),
@@ -2408,6 +2424,7 @@ mod tests {
                         "dispatch_enabled": false,
                         "next_action": "await_dispatch_admission_preconditions"
                     })),
+                    payload_envelope: None,
                 },
                 LedgerEvent {
                     event_id: "event_7".into(),
@@ -2425,6 +2442,7 @@ mod tests {
                         "fingerprint_input_count": 12,
                         "next_action": "await_dispatch_readiness_snapshot_handoff"
                     })),
+                    payload_envelope: None,
                 },
                 LedgerEvent {
                     event_id: "event_8".into(),
@@ -2442,6 +2460,7 @@ mod tests {
                         "snapshot_validity_status": "Current",
                         "next_action": "await_dispatcher_guard_preconditions"
                     })),
+                    payload_envelope: None,
                 },
                 LedgerEvent {
                     event_id: "event_9".into(),
@@ -2459,6 +2478,7 @@ mod tests {
                         "dispatch_enabled": false,
                         "next_action": "await_dispatch_decision_preconditions"
                     })),
+                    payload_envelope: None,
                 },
                 LedgerEvent {
                     event_id: "event_10".into(),
@@ -2476,6 +2496,7 @@ mod tests {
                         "dispatch_enabled": false,
                         "next_action": "await_dispatch_candidate_manifest_preconditions"
                     })),
+                    payload_envelope: None,
                 },
                 LedgerEvent {
                     event_id: "event_11".into(),
@@ -2493,6 +2514,7 @@ mod tests {
                         "dispatch_enabled": false,
                         "next_action": "await_dispatch_handoff_envelope_preconditions"
                     })),
+                    payload_envelope: None,
                 },
             ],
             child_completion_summaries: vec![],
@@ -2574,6 +2596,7 @@ mod tests {
                     "execution_enabled": false,
                     "next_action": "await_future_runtime_scheduler"
                 })),
+                            payload_envelope: None,
             }],
             child_completion_summaries: vec![
                 "completed_child task_id=task_child source_candidate_id=subtask_1 completion_summary_preview=done".into(),

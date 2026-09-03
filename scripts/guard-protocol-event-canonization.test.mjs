@@ -98,6 +98,20 @@ test('rejects a stale semantic protocol contract artifact', () => {
   assert(errors.some((error) => error.includes('contract_id')));
 });
 
+test('rejects a semantic protocol contract missing an explicit Runtime method', () => {
+  const contract = readSemanticContract();
+  contract.method_contracts = contract.method_contracts.filter((method) => method.method !== 'headless.continue_once');
+
+  const errors = validateRuntimeSemanticProtocolContract(contract, readMap(), {
+    repoRoot,
+    contractPath: semanticContractPath,
+    mapPath,
+    skipRustGeneratedContractCheck: true
+  });
+
+  assert(errors.some((error) => error.includes('method_contracts must include headless.continue_once')));
+});
+
 test('rejects missing Rust deny-unknown semantic evidence', () => {
   const protocolPath = 'crates/brownie-protocol/src/lib.rs';
   const errors = validateRuntimeSemanticProtocolContract(readSemanticContract(), readMap(), {
@@ -111,6 +125,20 @@ test('rejects missing Rust deny-unknown semantic evidence', () => {
   });
 
   assert(errors.some((error) => error.includes('TaskStartParams must deny unknown fields')));
+});
+
+test('rejects missing semantic contract deny-unknown policy evidence', () => {
+  const contract = readSemanticContract();
+  contract.unknown_field_policy.rust_public_params = contract.unknown_field_policy.rust_public_params.filter((entry) => entry.type !== 'TaskStartParams');
+
+  const errors = validateRuntimeSemanticProtocolContract(contract, readMap(), {
+    repoRoot,
+    contractPath: semanticContractPath,
+    mapPath,
+    skipRustGeneratedContractCheck: true
+  });
+
+  assert(errors.some((error) => error.includes('rust_public_params must cover every public Runtime *Params type')));
 });
 
 test('rejects missing VSIX semantic golden tests', () => {
@@ -140,4 +168,36 @@ test('rejects protocol closure without durable event migration coupling', () => 
   });
 
   assert(errors.some((error) => error.includes('durable event changes must require migration policy')));
+});
+
+test('rejects protocol closure without durable ledger payload envelope evidence', () => {
+  const storePath = 'crates/brownie-store/src/lib.rs';
+  const errors = validateRuntimeSemanticProtocolContract(readSemanticContract(), readMap(), {
+    repoRoot,
+    contractPath: semanticContractPath,
+    mapPath,
+    skipRustGeneratedContractCheck: true,
+    textByPath: {
+      [storePath]: read(storePath).replaceAll('LedgerPayloadEnvelope', 'LedgerPayloadEnvelopeDrift')
+    }
+  });
+
+  assert(errors.some((error) => error.includes('LedgerPayloadEnvelope')));
+});
+
+test('rejects missing ledger event shape fingerprint evidence', () => {
+  const contract = readSemanticContract();
+  contract.durable_event_migration_coupling.event_shape_fingerprints =
+    contract.durable_event_migration_coupling.event_shape_fingerprints.filter((entry) => entry.ledger_event_kind !== 'TaskCancelled');
+  contract.durable_event_migration_coupling.event_shape_fingerprint_count =
+    contract.durable_event_migration_coupling.event_shape_fingerprints.length;
+
+  const errors = validateRuntimeSemanticProtocolContract(contract, readMap(), {
+    repoRoot,
+    contractPath: semanticContractPath,
+    mapPath,
+    skipRustGeneratedContractCheck: true
+  });
+
+  assert(errors.some((error) => error.includes('event_shape_fingerprints must include TaskCancelled')));
 });
