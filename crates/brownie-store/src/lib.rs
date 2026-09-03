@@ -6087,7 +6087,7 @@ pub struct LedgerPayloadEnvelope {
     pub instance_shape_fingerprint: String,
 }
 
-pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 4;
+pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 5;
 pub const LEDGER_PAYLOAD_SHAPE_VERSION: u64 = LEDGER_PAYLOAD_SCHEMA_VERSION;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6131,7 +6131,16 @@ pub fn ledger_payload_schema_classification(
         | LedgerEventKind::TaskFailed
         | LedgerEventKind::TaskCancelled
         | LedgerEventKind::PermissionChecked
-        | LedgerEventKind::PermissionDenied => LedgerPayloadSchemaClassification::StrictTyped,
+        | LedgerEventKind::PermissionDenied
+        | LedgerEventKind::ToolPermissionChecked
+        | LedgerEventKind::ToolPlanApproved
+        | LedgerEventKind::ToolPlanDenied
+        | LedgerEventKind::ToolIntentPermissionChecked
+        | LedgerEventKind::ToolIntentApproved
+        | LedgerEventKind::ToolIntentDenied
+        | LedgerEventKind::ToolExecutionRequested
+        | LedgerEventKind::ToolExecutionPermissionChecked
+        | LedgerEventKind::ToolExecutionDenied => LedgerPayloadSchemaClassification::StrictTyped,
         _ => LedgerPayloadSchemaClassification::VersionedOpen,
     }
 }
@@ -6254,6 +6263,21 @@ fn validate_strict_ledger_payload_schema(
         | LedgerEventKind::TaskCancelled => validate_terminal_task_payload_schema(kind, payload),
         LedgerEventKind::PermissionChecked | LedgerEventKind::PermissionDenied => {
             validate_permission_payload_schema(kind, payload)
+        }
+        LedgerEventKind::ToolPermissionChecked
+        | LedgerEventKind::ToolPlanApproved
+        | LedgerEventKind::ToolPlanDenied => validate_tool_plan_payload_schema(kind, payload),
+        LedgerEventKind::ToolIntentPermissionChecked
+        | LedgerEventKind::ToolIntentApproved
+        | LedgerEventKind::ToolIntentDenied => validate_tool_intent_payload_schema(kind, payload),
+        LedgerEventKind::ToolExecutionRequested => {
+            validate_tool_execution_requested_payload_schema(kind, payload)
+        }
+        LedgerEventKind::ToolExecutionPermissionChecked => {
+            validate_tool_execution_permission_payload_schema(kind, payload)
+        }
+        LedgerEventKind::ToolExecutionDenied => {
+            validate_tool_execution_terminal_payload_schema(kind, payload, "Denied")
         }
         _ => bail!("{kind:?} strict ledger payload schema is not registered"),
     }
@@ -6400,6 +6424,214 @@ const PERMISSION_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "workspace_write_scope_count",
 ];
 
+fn validate_tool_plan_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(kind, payload, TOOL_PLAN_KNOWN_PAYLOAD_FIELDS)?;
+    for field in ["tool_id", "required_action", "allowed", "reason"] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    validate_required_payload_string_field(object, "tool_id")?;
+    validate_required_payload_string_field(object, "required_action")?;
+    validate_required_payload_bool_field(object, "allowed")?;
+    validate_required_payload_string_field(object, "reason")?;
+    Ok(())
+}
+
+fn validate_tool_intent_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(kind, payload, TOOL_INTENT_KNOWN_PAYLOAD_FIELDS)?;
+    for field in [
+        "tool_id",
+        "required_action",
+        "allowed",
+        "reason",
+        "request_reason",
+        "input_summary",
+    ] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    validate_required_payload_string_field(object, "tool_id")?;
+    validate_required_payload_string_field(object, "required_action")?;
+    validate_required_payload_bool_field(object, "allowed")?;
+    validate_required_payload_string_field(object, "reason")?;
+    validate_required_payload_string_field(object, "request_reason")?;
+    validate_required_payload_object_field(object, "input_summary")?;
+    validate_optional_payload_string_field(object, "mode_id")?;
+    validate_optional_payload_string_field(object, "requested_mode_id")?;
+    validate_optional_payload_string_field(object, "source_apply_id")?;
+    validate_optional_payload_string_field(object, "source_run_id")?;
+    validate_optional_payload_string_field(object, "source_task_id")?;
+    validate_optional_payload_string_field(object, "verification_requirement_fingerprint")?;
+    validate_optional_payload_string_field(object, "verification_requirement_id")?;
+    validate_optional_payload_string_field(object, "verification_requirement_source_kind")?;
+    validate_optional_payload_bool_field(object, "verification_recovery_retry")?;
+    Ok(())
+}
+
+fn validate_tool_execution_requested_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        TOOL_EXECUTION_REQUESTED_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in ["tool_id", "input_summary"] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    validate_required_payload_string_field(object, "tool_id")?;
+    validate_required_payload_object_field(object, "input_summary")?;
+    validate_optional_payload_string_field(object, "request_fingerprint")?;
+    validate_optional_payload_string_field(object, "source_apply_id")?;
+    validate_optional_payload_string_field(object, "verification_requirement_fingerprint")?;
+    validate_optional_payload_string_field(object, "verification_requirement_id")?;
+    validate_optional_payload_string_field(object, "verification_requirement_source_kind")?;
+    validate_optional_payload_bool_field(object, "verification_recovery_retry")?;
+    Ok(())
+}
+
+fn validate_tool_execution_permission_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        TOOL_EXECUTION_PERMISSION_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in ["tool_id", "required_action", "allowed", "reason"] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    validate_required_payload_string_field(object, "tool_id")?;
+    validate_required_payload_string_field(object, "required_action")?;
+    validate_required_payload_bool_field(object, "allowed")?;
+    validate_required_payload_string_field(object, "reason")?;
+    validate_optional_payload_string_field(object, "server_id")?;
+    validate_optional_payload_string_field(object, "tool_name")?;
+    validate_optional_payload_string_field(object, "request_fingerprint")?;
+    validate_optional_payload_object_or_null_field(object, "mcp_safety_policy")?;
+    validate_optional_payload_string_field(object, "source_apply_id")?;
+    validate_optional_payload_string_field(object, "verification_requirement_fingerprint")?;
+    validate_optional_payload_string_field(object, "verification_requirement_id")?;
+    validate_optional_payload_string_field(object, "verification_requirement_source_kind")?;
+    validate_optional_payload_bool_field(object, "verification_recovery_retry")?;
+    Ok(())
+}
+
+fn validate_tool_execution_terminal_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+    expected_status: &str,
+) -> Result<()> {
+    let object =
+        validate_known_payload_object(kind, payload, TOOL_EXECUTION_TERMINAL_KNOWN_PAYLOAD_FIELDS)?;
+    for field in ["tool_id", "status", "reason"] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    validate_required_payload_string_field(object, "tool_id")?;
+    validate_required_payload_string_field(object, "status")?;
+    validate_required_payload_string_field(object, "reason")?;
+    if object.get("status").and_then(serde_json::Value::as_str) != Some(expected_status) {
+        bail!("{kind:?} ledger payload status must be {expected_status}");
+    }
+    validate_optional_payload_string_field(object, "source_apply_id")?;
+    validate_optional_payload_string_field(object, "verification_requirement_fingerprint")?;
+    validate_optional_payload_string_field(object, "verification_requirement_id")?;
+    validate_optional_payload_string_field(object, "verification_requirement_source_kind")?;
+    validate_optional_payload_bool_field(object, "verification_recovery_retry")?;
+    Ok(())
+}
+
+fn validate_known_payload_object<'a>(
+    kind: &LedgerEventKind,
+    payload: &'a serde_json::Value,
+    allowed_fields: &[&str],
+) -> Result<&'a serde_json::Map<String, serde_json::Value>> {
+    let object = payload
+        .as_object()
+        .with_context(|| format!("{kind:?} ledger payload must be a JSON object"))?;
+    for field in object.keys() {
+        if !allowed_fields.contains(&field.as_str()) {
+            bail!("{kind:?} ledger payload field {field} is not allowed by strict tool schema");
+        }
+    }
+    Ok(object)
+}
+
+const TOOL_PLAN_KNOWN_PAYLOAD_FIELDS: &[&str] =
+    &["allowed", "reason", "required_action", "tool_id"];
+
+const TOOL_INTENT_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "allowed",
+    "input_summary",
+    "mode_id",
+    "reason",
+    "request_reason",
+    "requested_mode_id",
+    "required_action",
+    "source_apply_id",
+    "source_run_id",
+    "source_task_id",
+    "tool_id",
+    "verification_requirement_fingerprint",
+    "verification_requirement_id",
+    "verification_requirement_source_kind",
+    "verification_recovery_retry",
+];
+
+const TOOL_EXECUTION_REQUESTED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "input_summary",
+    "request_fingerprint",
+    "source_apply_id",
+    "tool_id",
+    "verification_requirement_fingerprint",
+    "verification_requirement_id",
+    "verification_requirement_source_kind",
+    "verification_recovery_retry",
+];
+
+const TOOL_EXECUTION_PERMISSION_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "allowed",
+    "mcp_safety_policy",
+    "reason",
+    "request_fingerprint",
+    "required_action",
+    "server_id",
+    "source_apply_id",
+    "tool_id",
+    "tool_name",
+    "verification_requirement_fingerprint",
+    "verification_requirement_id",
+    "verification_requirement_source_kind",
+    "verification_recovery_retry",
+];
+
+const TOOL_EXECUTION_TERMINAL_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "reason",
+    "source_apply_id",
+    "status",
+    "tool_id",
+    "verification_requirement_fingerprint",
+    "verification_requirement_id",
+    "verification_requirement_source_kind",
+    "verification_recovery_retry",
+];
+
 const TERMINAL_TASK_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "caller_authorized",
     "cancel_fingerprint",
@@ -6487,6 +6719,19 @@ fn validate_required_payload_bool_field(
     Ok(())
 }
 
+fn validate_required_payload_object_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    let Some(value) = object.get(field) else {
+        bail!("ledger payload field {field} is required");
+    };
+    if !value.is_object() {
+        bail!("ledger payload field {field} must be an object");
+    }
+    Ok(())
+}
+
 fn validate_optional_payload_bool_field(
     object: &serde_json::Map<String, serde_json::Value>,
     field: &str,
@@ -6494,6 +6739,18 @@ fn validate_optional_payload_bool_field(
     if let Some(value) = object.get(field) {
         if !value.is_boolean() {
             bail!("ledger payload field {field} must be a boolean");
+        }
+    }
+    Ok(())
+}
+
+fn validate_optional_payload_object_or_null_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    if let Some(value) = object.get(field) {
+        if !value.is_object() && !value.is_null() {
+            bail!("ledger payload field {field} must be an object or null");
         }
     }
     Ok(())
@@ -6607,7 +6864,8 @@ fn validate_legacy_ledger_payload_envelope(
         return Ok(());
     }
 
-    if envelope.schema_version == 2 || envelope.schema_version == 3 {
+    if envelope.schema_version == 2 || envelope.schema_version == 3 || envelope.schema_version == 4
+    {
         let expected_schema_id = format!("ledger_payload.{kind:?}.v{}", envelope.schema_version);
         if envelope.schema_id != expected_schema_id || envelope.shape_id != expected_schema_id {
             bail!("legacy ledger payload envelope schema_id mismatch");
@@ -6651,6 +6909,21 @@ fn ledger_payload_schema_descriptor(kind: &LedgerEventKind) -> String {
         LedgerEventKind::PermissionChecked | LedgerEventKind::PermissionDenied => {
             permission_payload_schema_descriptor()
         }
+        LedgerEventKind::ToolPermissionChecked
+        | LedgerEventKind::ToolPlanApproved
+        | LedgerEventKind::ToolPlanDenied => tool_plan_payload_schema_descriptor(),
+        LedgerEventKind::ToolIntentPermissionChecked
+        | LedgerEventKind::ToolIntentApproved
+        | LedgerEventKind::ToolIntentDenied => tool_intent_payload_schema_descriptor(),
+        LedgerEventKind::ToolExecutionRequested => {
+            tool_execution_requested_payload_schema_descriptor()
+        }
+        LedgerEventKind::ToolExecutionPermissionChecked => {
+            tool_execution_permission_payload_schema_descriptor()
+        }
+        LedgerEventKind::ToolExecutionDenied => {
+            tool_execution_terminal_payload_schema_descriptor("Denied")
+        }
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
 }
@@ -6663,6 +6936,28 @@ fn terminal_task_payload_schema_descriptor(status: &str) -> String {
 
 fn permission_payload_schema_descriptor() -> String {
     "strict_typed{payload_optional:false;required_fields:allowed:boolean,mode_id:string,reason:string;one_of_required:action:string|required_action:string;known_optional_fields:action:string,apply_id:string,operation:string,path:string,proposal_id:string,required_action:string,scope:string,tool_id:string,workspace_write_scope_count:u64;additional_fields:false;permission_decision_payload:true}".to_string()
+}
+
+fn tool_plan_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:allowed:boolean,reason:string,required_action:string,tool_id:string;additional_fields:false;tool_plan_decision_payload:true}".to_string()
+}
+
+fn tool_intent_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:allowed:boolean,input_summary:object,reason:string,request_reason:string,required_action:string,tool_id:string;known_optional_fields:mode_id:string,requested_mode_id:string,source_apply_id:string,source_run_id:string,source_task_id:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_intent_decision_payload:true}".to_string()
+}
+
+fn tool_execution_requested_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:input_summary:object,tool_id:string;known_optional_fields:request_fingerprint:string,source_apply_id:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_execution_request_payload:true}".to_string()
+}
+
+fn tool_execution_permission_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:allowed:boolean,reason:string,required_action:string,tool_id:string;known_optional_fields:mcp_safety_policy:object_or_null,request_fingerprint:string,server_id:string,source_apply_id:string,tool_name:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_execution_permission_payload:true}".to_string()
+}
+
+fn tool_execution_terminal_payload_schema_descriptor(status: &str) -> String {
+    format!(
+        "strict_typed{{payload_optional:false;required_fields:reason:string,status:string,tool_id:string;known_optional_fields:source_apply_id:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_execution_terminal_payload:true;terminal_status:{status}}}"
+    )
 }
 
 fn ledger_payload_legacy_schema_descriptor(kind: &LedgerEventKind, schema_version: u64) -> String {
@@ -7569,6 +7864,27 @@ mod tests {
             ledger_payload_schema_descriptor(&LedgerEventKind::PermissionChecked)
                 .contains("permission_decision_payload:true")
         );
+
+        for kind in [
+            LedgerEventKind::ToolPermissionChecked,
+            LedgerEventKind::ToolPlanApproved,
+            LedgerEventKind::ToolPlanDenied,
+            LedgerEventKind::ToolIntentPermissionChecked,
+            LedgerEventKind::ToolIntentApproved,
+            LedgerEventKind::ToolIntentDenied,
+            LedgerEventKind::ToolExecutionRequested,
+            LedgerEventKind::ToolExecutionPermissionChecked,
+            LedgerEventKind::ToolExecutionDenied,
+        ] {
+            let classification = ledger_payload_schema_classification(&kind);
+            assert_eq!(classification.as_str(), "strict_typed", "{kind:?}");
+            assert_eq!(classification.contract_status(), "closed", "{kind:?}");
+            assert!(!classification.release_blocking(), "{kind:?}");
+            assert!(
+                ledger_payload_schema_descriptor(&kind).contains("additional_fields:false"),
+                "{kind:?}"
+            );
+        }
     }
 
     #[test]
@@ -7788,6 +8104,183 @@ mod tests {
             )
             .expect_err("permission payload with unknown field should fail closed");
         assert!(format!("{unknown_field:#}").contains("strict permission schema"));
+    }
+
+    #[test]
+    fn ledger_payload_write_rejects_malformed_tool_payloads() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = TaskStore::new(temp.path());
+        let record = store
+            .start_task(TaskStartParams {
+                goal: "tool payload validation".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start task");
+
+        for kind in [
+            LedgerEventKind::ToolPermissionChecked,
+            LedgerEventKind::ToolPlanApproved,
+            LedgerEventKind::ToolPlanDenied,
+        ] {
+            store
+                .append_task_events_with_payloads(
+                    &record,
+                    vec![(
+                        kind.clone(),
+                        Some(serde_json::json!({
+                            "tool_id": "workspace.read",
+                            "required_action": "ReadWorkspace",
+                            "allowed": true,
+                            "reason": "allowed by policy"
+                        })),
+                    )],
+                )
+                .unwrap_or_else(|error| panic!("strict {kind:?} payload should pass: {error:#}"));
+        }
+
+        for kind in [
+            LedgerEventKind::ToolIntentPermissionChecked,
+            LedgerEventKind::ToolIntentApproved,
+            LedgerEventKind::ToolIntentDenied,
+        ] {
+            store
+                .append_task_events_with_payloads(
+                    &record,
+                    vec![(
+                        kind.clone(),
+                        Some(serde_json::json!({
+                            "tool_id": "workspace.read",
+                            "required_action": "ReadWorkspace",
+                            "allowed": true,
+                            "reason": "allowed by policy",
+                            "request_reason": "Need context.",
+                            "input_summary": {
+                                "summary_schema": "tool_intent_input_v1",
+                                "field_count": 1,
+                                "string_field_count": 1,
+                                "object_field_count": 0,
+                                "array_field_count": 0,
+                                "bool_field_count": 0,
+                                "numeric_field_count": 0,
+                                "null_field_count": 0,
+                                "other_field_count": 0,
+                                "fingerprint": format!("sha256:{}", "a".repeat(64))
+                            }
+                        })),
+                    )],
+                )
+                .unwrap_or_else(|error| panic!("strict {kind:?} payload should pass: {error:#}"));
+        }
+
+        store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::ToolExecutionRequested,
+                    Some(serde_json::json!({
+                        "tool_id": "workspace.read",
+                        "request_fingerprint": format!("sha256:{}", "b".repeat(64)),
+                        "input_summary": {
+                            "summary_schema": "tool_intent_input_v1",
+                            "field_count": 1,
+                            "string_field_count": 1,
+                            "object_field_count": 0,
+                            "array_field_count": 0,
+                            "bool_field_count": 0,
+                            "numeric_field_count": 0,
+                            "null_field_count": 0,
+                            "other_field_count": 0,
+                            "fingerprint": format!("sha256:{}", "c".repeat(64))
+                        }
+                    })),
+                )],
+            )
+            .expect("strict ToolExecutionRequested payload should pass");
+
+        store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::ToolExecutionPermissionChecked,
+                    Some(serde_json::json!({
+                        "tool_id": "mcp.server.tool",
+                        "required_action": "ReadWorkspace",
+                        "allowed": true,
+                        "reason": "allowed by policy",
+                        "server_id": "server",
+                        "tool_name": "tool",
+                        "request_fingerprint": format!("sha256:{}", "d".repeat(64)),
+                        "mcp_safety_policy": null
+                    })),
+                )],
+            )
+            .expect("strict ToolExecutionPermissionChecked payload should pass");
+
+        store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::ToolExecutionDenied,
+                    Some(serde_json::json!({
+                        "tool_id": "workspace.write",
+                        "status": "Denied",
+                        "reason": "denied by policy"
+                    })),
+                )],
+            )
+            .expect("strict ToolExecutionDenied payload should pass");
+
+        let unknown_field = store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::ToolIntentApproved,
+                    Some(serde_json::json!({
+                        "tool_id": "workspace.read",
+                        "required_action": "ReadWorkspace",
+                        "allowed": true,
+                        "reason": "allowed by policy",
+                        "request_reason": "Need context.",
+                        "input_summary": {},
+                        "raw_input": "not allowed"
+                    })),
+                )],
+            )
+            .expect_err("tool intent payload with unknown field should fail closed");
+        assert!(format!("{unknown_field:#}").contains("strict tool schema"));
+
+        let missing_input_summary = store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::ToolExecutionRequested,
+                    Some(serde_json::json!({
+                        "tool_id": "workspace.read"
+                    })),
+                )],
+            )
+            .expect_err("tool execution request without input_summary should fail closed");
+        assert!(format!("{missing_input_summary:#}").contains("input_summary"));
+
+        let malformed_status = store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::ToolExecutionDenied,
+                    Some(serde_json::json!({
+                        "tool_id": "workspace.write",
+                        "status": "Completed",
+                        "reason": "denied by policy"
+                    })),
+                )],
+            )
+            .expect_err("tool execution denied payload with wrong status should fail closed");
+        assert!(format!("{malformed_status:#}").contains("status must be Denied"));
     }
 
     #[test]

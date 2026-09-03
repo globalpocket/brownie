@@ -644,6 +644,62 @@ pub fn runtime_semantic_protocol_contract() -> Value {
         "allowed": false,
         "reason": "path outside allowed workspace write scopes"
     });
+    let tool_plan_payload = json!({
+        "tool_id": "workspace.read",
+        "required_action": "ReadWorkspace",
+        "allowed": true,
+        "reason": "allowed by policy"
+    });
+    let tool_intent_payload = json!({
+        "tool_id": "workspace.read",
+        "required_action": "ReadWorkspace",
+        "allowed": true,
+        "reason": "allowed by policy",
+        "request_reason": "Need context.",
+        "input_summary": {
+            "summary_schema": "tool_intent_input_v1",
+            "field_count": 1,
+            "string_field_count": 1,
+            "object_field_count": 0,
+            "array_field_count": 0,
+            "bool_field_count": 0,
+            "numeric_field_count": 0,
+            "null_field_count": 0,
+            "other_field_count": 0,
+            "fingerprint": format!("sha256:{}", "a".repeat(64))
+        }
+    });
+    let tool_execution_requested_payload = json!({
+        "tool_id": "workspace.read",
+        "request_fingerprint": format!("sha256:{}", "b".repeat(64)),
+        "input_summary": {
+            "summary_schema": "tool_intent_input_v1",
+            "field_count": 1,
+            "string_field_count": 1,
+            "object_field_count": 0,
+            "array_field_count": 0,
+            "bool_field_count": 0,
+            "numeric_field_count": 0,
+            "null_field_count": 0,
+            "other_field_count": 0,
+            "fingerprint": format!("sha256:{}", "c".repeat(64))
+        }
+    });
+    let tool_execution_permission_payload = json!({
+        "tool_id": "mcp.server.tool",
+        "required_action": "ReadWorkspace",
+        "allowed": true,
+        "reason": "allowed by policy",
+        "server_id": "server",
+        "tool_name": "tool",
+        "request_fingerprint": format!("sha256:{}", "d".repeat(64)),
+        "mcp_safety_policy": null
+    });
+    let tool_execution_denied_payload = json!({
+        "tool_id": "workspace.write",
+        "status": "Denied",
+        "reason": "denied by policy"
+    });
     let event_payload_schema_classifications = ledger_event_kinds
         .iter()
         .map(|kind| {
@@ -726,13 +782,63 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&permission_denied_payload),
             "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("PermissionDenied", &permission_denied_payload)
         }),
+        json!({
+            "ledger_event_kind": "ToolPermissionChecked",
+            "payload": tool_plan_payload,
+            "payload_schema_classification": ledger_payload_schema_classification("ToolPermissionChecked"),
+            "payload_schema_contract_status": ledger_payload_schema_contract_status(ledger_payload_schema_classification("ToolPermissionChecked")),
+            "payload_schema_id": ledger_payload_schema_id("ToolPermissionChecked"),
+            "payload_schema_fingerprint": ledger_payload_schema_fingerprint("ToolPermissionChecked"),
+            "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&tool_plan_payload),
+            "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("ToolPermissionChecked", &tool_plan_payload)
+        }),
+        json!({
+            "ledger_event_kind": "ToolIntentPermissionChecked",
+            "payload": tool_intent_payload,
+            "payload_schema_classification": ledger_payload_schema_classification("ToolIntentPermissionChecked"),
+            "payload_schema_contract_status": ledger_payload_schema_contract_status(ledger_payload_schema_classification("ToolIntentPermissionChecked")),
+            "payload_schema_id": ledger_payload_schema_id("ToolIntentPermissionChecked"),
+            "payload_schema_fingerprint": ledger_payload_schema_fingerprint("ToolIntentPermissionChecked"),
+            "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&tool_intent_payload),
+            "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("ToolIntentPermissionChecked", &tool_intent_payload)
+        }),
+        json!({
+            "ledger_event_kind": "ToolExecutionRequested",
+            "payload": tool_execution_requested_payload,
+            "payload_schema_classification": ledger_payload_schema_classification("ToolExecutionRequested"),
+            "payload_schema_contract_status": ledger_payload_schema_contract_status(ledger_payload_schema_classification("ToolExecutionRequested")),
+            "payload_schema_id": ledger_payload_schema_id("ToolExecutionRequested"),
+            "payload_schema_fingerprint": ledger_payload_schema_fingerprint("ToolExecutionRequested"),
+            "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&tool_execution_requested_payload),
+            "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("ToolExecutionRequested", &tool_execution_requested_payload)
+        }),
+        json!({
+            "ledger_event_kind": "ToolExecutionPermissionChecked",
+            "payload": tool_execution_permission_payload,
+            "payload_schema_classification": ledger_payload_schema_classification("ToolExecutionPermissionChecked"),
+            "payload_schema_contract_status": ledger_payload_schema_contract_status(ledger_payload_schema_classification("ToolExecutionPermissionChecked")),
+            "payload_schema_id": ledger_payload_schema_id("ToolExecutionPermissionChecked"),
+            "payload_schema_fingerprint": ledger_payload_schema_fingerprint("ToolExecutionPermissionChecked"),
+            "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&tool_execution_permission_payload),
+            "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("ToolExecutionPermissionChecked", &tool_execution_permission_payload)
+        }),
+        json!({
+            "ledger_event_kind": "ToolExecutionDenied",
+            "payload": tool_execution_denied_payload,
+            "payload_schema_classification": ledger_payload_schema_classification("ToolExecutionDenied"),
+            "payload_schema_contract_status": ledger_payload_schema_contract_status(ledger_payload_schema_classification("ToolExecutionDenied")),
+            "payload_schema_id": ledger_payload_schema_id("ToolExecutionDenied"),
+            "payload_schema_fingerprint": ledger_payload_schema_fingerprint("ToolExecutionDenied"),
+            "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&tool_execution_denied_payload),
+            "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("ToolExecutionDenied", &tool_execution_denied_payload)
+        }),
     ];
 
     json!({
-        "schema_version": 7,
+        "schema_version": 8,
         "contract_id": "runtime-semantic-protocol-contract-v1",
         "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-        "phase": "RRP-5.8",
+        "phase": "RRP-5.9",
         "owner": "runtime",
         "runtime_release_debt_id": "protocol-event-canonization",
         "runtime_release_ready": false,
@@ -837,8 +943,8 @@ pub fn runtime_semantic_protocol_contract() -> Value {
                 "ledger_event_payload_inventory": "closed",
                 "ledger_event_payload_typed_schema_coverage": "partial"
             },
-            "ledger_payload_schema_classification_policy": "Every LedgerEventKind must carry an explicit payload schema classification. versioned_open and typed_known_fields_open are allowed only as required-before-release debt evidence and must not be treated as fully typed ledger payload schemas. TaskCompleted, TaskFailed, TaskCancelled, PermissionChecked, and PermissionDenied are strict typed payload families.",
-            "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Versioned-open payload classifications keep protocol-event-canonization partial until every payload-bearing event has a strict typed schema, an explicit payload_absent contract, or a legacy-only compatibility entry. Current v4 terminal task and permission payload schemas preserve v1, v2, and v3 read compatibility while requiring strict field validation for new terminal task and permission payload appends.",
+            "ledger_payload_schema_classification_policy": "Every LedgerEventKind must carry an explicit payload schema classification. versioned_open and typed_known_fields_open are allowed only as required-before-release debt evidence and must not be treated as fully typed ledger payload schemas. TaskCompleted, TaskFailed, TaskCancelled, PermissionChecked, PermissionDenied, ToolPermissionChecked, ToolPlanApproved, ToolPlanDenied, ToolIntentPermissionChecked, ToolIntentApproved, ToolIntentDenied, ToolExecutionRequested, ToolExecutionPermissionChecked, and ToolExecutionDenied are strict typed payload families.",
+            "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Versioned-open payload classifications keep protocol-event-canonization partial until every payload-bearing event has a strict typed schema, an explicit payload_absent contract, or a legacy-only compatibility entry. Current v5 terminal task, permission, and selected tool payload schemas preserve v1, v2, v3, and v4 read compatibility while requiring strict field validation for new terminal task, permission, tool planning, tool intent, and selected tool execution appends.",
             "guard": "guard:protocol-event-canonization",
             "event_payload_schema_classification_count": event_payload_schema_classifications.len(),
             "event_payload_schema_classifications": event_payload_schema_classifications,
@@ -1540,7 +1646,7 @@ fn canonical_value(value: &Value) -> Value {
     }
 }
 
-const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 4;
+const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 5;
 
 fn ledger_payload_schema_id(kind: &str) -> String {
     format!("ledger_payload.{kind}.v{LEDGER_PAYLOAD_SCHEMA_VERSION}")
@@ -1555,8 +1661,20 @@ fn ledger_payload_schema_fingerprint(kind: &str) -> String {
 
 fn ledger_payload_schema_classification(kind: &str) -> &'static str {
     match kind {
-        "TaskCompleted" | "TaskFailed" | "TaskCancelled" | "PermissionChecked"
-        | "PermissionDenied" => "strict_typed",
+        "TaskCompleted"
+        | "TaskFailed"
+        | "TaskCancelled"
+        | "PermissionChecked"
+        | "PermissionDenied"
+        | "ToolPermissionChecked"
+        | "ToolPlanApproved"
+        | "ToolPlanDenied"
+        | "ToolIntentPermissionChecked"
+        | "ToolIntentApproved"
+        | "ToolIntentDenied"
+        | "ToolExecutionRequested"
+        | "ToolExecutionPermissionChecked"
+        | "ToolExecutionDenied" => "strict_typed",
         _ => "versioned_open",
     }
 }
@@ -1580,6 +1698,15 @@ fn ledger_payload_schema_descriptor(kind: &str) -> String {
         "TaskFailed" => terminal_task_payload_schema_descriptor("Failed"),
         "TaskCancelled" => terminal_task_payload_schema_descriptor("Cancelled"),
         "PermissionChecked" | "PermissionDenied" => permission_payload_schema_descriptor(),
+        "ToolPermissionChecked" | "ToolPlanApproved" | "ToolPlanDenied" => {
+            tool_plan_payload_schema_descriptor()
+        }
+        "ToolIntentPermissionChecked" | "ToolIntentApproved" | "ToolIntentDenied" => {
+            tool_intent_payload_schema_descriptor()
+        }
+        "ToolExecutionRequested" => tool_execution_requested_payload_schema_descriptor(),
+        "ToolExecutionPermissionChecked" => tool_execution_permission_payload_schema_descriptor(),
+        "ToolExecutionDenied" => tool_execution_terminal_payload_schema_descriptor("Denied"),
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
 }
@@ -1592,6 +1719,28 @@ fn terminal_task_payload_schema_descriptor(status: &str) -> String {
 
 fn permission_payload_schema_descriptor() -> String {
     "strict_typed{payload_optional:false;required_fields:allowed:boolean,mode_id:string,reason:string;one_of_required:action:string|required_action:string;known_optional_fields:action:string,apply_id:string,operation:string,path:string,proposal_id:string,required_action:string,scope:string,tool_id:string,workspace_write_scope_count:u64;additional_fields:false;permission_decision_payload:true}".to_string()
+}
+
+fn tool_plan_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:allowed:boolean,reason:string,required_action:string,tool_id:string;additional_fields:false;tool_plan_decision_payload:true}".to_string()
+}
+
+fn tool_intent_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:allowed:boolean,input_summary:object,reason:string,request_reason:string,required_action:string,tool_id:string;known_optional_fields:mode_id:string,requested_mode_id:string,source_apply_id:string,source_run_id:string,source_task_id:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_intent_decision_payload:true}".to_string()
+}
+
+fn tool_execution_requested_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:input_summary:object,tool_id:string;known_optional_fields:request_fingerprint:string,source_apply_id:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_execution_request_payload:true}".to_string()
+}
+
+fn tool_execution_permission_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:allowed:boolean,reason:string,required_action:string,tool_id:string;known_optional_fields:mcp_safety_policy:object_or_null,request_fingerprint:string,server_id:string,source_apply_id:string,tool_name:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_execution_permission_payload:true}".to_string()
+}
+
+fn tool_execution_terminal_payload_schema_descriptor(status: &str) -> String {
+    format!(
+        "strict_typed{{payload_optional:false;required_fields:reason:string,status:string,tool_id:string;known_optional_fields:source_apply_id:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_execution_terminal_payload:true;terminal_status:{status}}}"
+    )
 }
 
 fn ledger_payload_instance_shape_fingerprint_for_value(kind: &str, payload: &Value) -> String {

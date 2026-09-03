@@ -339,6 +339,26 @@ test('rejects strict permission payload descriptors without permission evidence 
   assert(errors.some((error) => error.includes('bounded permission evidence')));
 });
 
+test('rejects strict tool payload descriptors without tool evidence requirements', () => {
+  const contract = readSemanticContract();
+  const toolExecutionPermission = contract.durable_event_migration_coupling.event_payload_schema_fingerprints.find(
+    (entry) => entry.ledger_event_kind === 'ToolExecutionPermissionChecked'
+  );
+  toolExecutionPermission.payload_schema_descriptor = toolExecutionPermission.payload_schema_descriptor.replace(
+    ';tool_execution_permission_payload:true',
+    ''
+  );
+
+  const errors = validateRuntimeSemanticProtocolContract(contract, readMap(), {
+    repoRoot,
+    contractPath: semanticContractPath,
+    mapPath,
+    skipRustGeneratedContractCheck: true
+  });
+
+  assert(errors.some((error) => error.includes('tool_execution_permission_payload:true')));
+});
+
 test('rejects full ledger payload closure claims while open payload classifications remain', () => {
   const contract = readSemanticContract();
   contract.durable_event_migration_coupling.ledger_payload_contract_scope.ledger_event_payload_typed_schema_coverage = 'closed';
