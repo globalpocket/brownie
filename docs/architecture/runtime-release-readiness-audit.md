@@ -2,7 +2,7 @@
 
 This audit is the bounded source of truth for the Runtime Release Readiness P0/P1 finite closure campaign. It does not declare Brownie Runtime release-ready; it records the remaining Runtime-owned blockers and keeps external platform, adapter, commercial, BDK, Enterprise, and Assurance work outside the Runtime release gate.
 
-Audited main: `34bb0f34d1f9819d1da95e9772cf24d9fed68fe3`
+Audited main: `8bb07b05dea8a8ab348b12ad8f48301ef793b822`
 
 RRP-1 adds the guarded canonical Runtime boundary contract at
 `docs/architecture/runtime-boundary-canonical-contract.json`. The Runtime
@@ -57,7 +57,9 @@ metadata only; they do not ledger raw prompts, provider responses, file
 contents, paths, secrets, environment values, executable contents, or process
 output.
 
-RRP-5/RRP-5.1/RRP-5.2/RRP-5.3/RRP-5.4 closes the protocol/event canonization blocker. The canonical
+RRP-5/RRP-5.1/RRP-5.2/RRP-5.3/RRP-5.4 close the JSON-RPC and
+payload-fingerprint portions of protocol/event canonization, while RRP-5.5
+keeps full ledger payload typing open as release-blocking debt. The canonical
 ownership map at
 `docs/architecture/runtime-protocol-event-canonical-map.json` now binds Runtime
 JSON-RPC method groups, the generated proposal diagnostics compatibility family,
@@ -81,13 +83,19 @@ payload instance diagnostics: `LedgerPayloadEnvelope` v2 uses fixed
 `schema_id`/`schema_fingerprint` values per event-kind/version payload schema,
 keeps `shape_id`/`shape_fingerprint` as compatibility aliases for that schema,
 and records `instance_shape_fingerprint` separately from the concrete persisted
-payload structure. Run ledger append rejects payload-bearing events without a
-current envelope, read validates v2 schema and instance fingerprints, verified
-legacy v1 envelopes remain readable, and typed `TaskCompleted` payload fields
-fail closed when malformed. VSIX tests consume the same artifact to prove
-canonical method coverage, nested type schema refs, client projection,
-validator semantics, and payload schema/instance fixture evidence. The existing
-CI-invoked VSIX check path runs this guard.
+payload structure. RRP-5.5 adds one explicit payload schema classification per
+`LedgerEventKind`, records open classifications as release-blocking, and
+removes the previous `any{...}` descriptor fallback from generated evidence.
+Run ledger append rejects payload-bearing events without a current envelope,
+read validates v2 schema and instance fingerprints, verified legacy v1 envelopes
+remain readable, and `TaskCompleted` known fields fail closed when malformed or
+empty. `TaskCompleted` remains classified as `typed_known_fields_open`, while
+the other current ledger payload families remain `versioned_open`; both are
+partial required-before-release states rather than full typed schema coverage.
+VSIX tests consume the same artifact to prove canonical method coverage, nested
+type schema refs, client projection, validator semantics, and payload
+schema/instance fixture evidence. The existing CI-invoked VSIX check path runs
+this guard.
 
 RRP-6 closes runtime module decomposition reevaluation: the finite assessment
 at `docs/architecture/runtime-module-decomposition-assessment.json` records
@@ -127,10 +135,10 @@ process management, direct workflow hardening, or Runtime Release Ready.
 | `explicit-cancel-command` | P0 | Cancel semantics | implemented sufficient | Runtime | closed | RRP-2 adds `task.cancel` as a caller-authorized Runtime boundary with task/run identity, freshness checks, bounded cancel fingerprinting, single `TaskCancelled` terminal evidence, exact replay semantics, and VSIX thin validation. | Use `task.cancel` as the explicit cancellation boundary while closing the remaining blockers. |
 | `real-process-loss-recovery-e2e` | P0 | Real process loss Recovery E2E | implemented sufficient | Runtime | closed | RRP-3.1 keeps the RRP-3 real process-loss baseline and adds execution-scoped lock retention across live `tools/call`, latest-state terminal append validation, nonblocking recovery skip for live owners, concurrent recovery no-duplicate coverage, live recovery no-op coverage, and CI-required execution through the existing VSIX check path. | Use RRP-3/RRP-3.1 process-loss and race-safety evidence as the local Runtime recovery baseline while closing the remaining Runtime Release Readiness blockers. |
 | `durable-schema-version-and-migration` | P0 | Durable schema version/migration | implemented sufficient | Runtime | closed | RRP-4.1 adds an explicit v1-to-v2 migration registry, `migration_in_progress` crash marker, v2 `store-layout.json` marker, real process-loss migration resume at each durable checkpoint, v1 task/run/ledger fixture preservation, and partial migration conflict rejection before task/run/journey/checkpoint/ledger mutation. | Use the RRP-4.1 durable schema migration and interrupted recovery baseline while closing RRP-5.1 and then the CI release gate. |
-| `runtime-release-guard-ci` | P0 | CI Release Gate | partial | Runtime | required before release | RRP-3.1 adds the process-loss E2E to the existing VSIX check script that CI invokes; RRP-4.1 adds durable schema migration behavior tests plus a guard that detects deletion/drift of the migration evidence, but direct `.github` workflow wiring remains blocked by missing OAuth `workflow` scope; RRP-5/RRP-5.1/RRP-5.2/RRP-5.3/RRP-5.4, RRP-6, RRP-7, and RRP-7.1 add full protocol/event semantic contracts, recursive nested wire schemas, ledger payload schema/instance fingerprint split evidence, module-decomposition, platform/deadline/durability, absolute deadline, failure-injection, and terminal-race guards to that same CI-invoked path. Full release-gate hardening remains open for frozen install, fmt, audit/SBOM/secret/dependency, and complete release policy coverage. | Close direct workflow wiring and remaining full CI release-gate hardening only after workflow-scope credentials or an owner-approved equivalent CI-hardening path are available. |
+| `runtime-release-guard-ci` | P0 | CI Release Gate | partial | Runtime | required before release | RRP-3.1 adds the process-loss E2E to the existing VSIX check script that CI invokes; RRP-4.1 adds durable schema migration behavior tests plus a guard that detects deletion/drift of the migration evidence, but direct `.github` workflow wiring remains blocked by missing OAuth `workflow` scope; RRP-5/RRP-5.1/RRP-5.2/RRP-5.3/RRP-5.4/RRP-5.5, RRP-6, RRP-7, and RRP-7.1 add full protocol method semantic contracts, recursive nested wire schemas, ledger payload schema/instance fingerprint split evidence, explicit per-event payload classification debt, module-decomposition, platform/deadline/durability, absolute deadline, failure-injection, and terminal-race guards to that same CI-invoked path. Full release-gate hardening remains open for frozen install, fmt, audit/SBOM/secret/dependency, and complete release policy coverage. | Close direct workflow wiring and remaining full CI release-gate hardening only after workflow-scope credentials or an owner-approved equivalent CI-hardening path are available. |
 | `mcp-runtime-safety-policy` | P0 | MCP Runtime Safety Policy finite closure | implemented sufficient | closed | A follow-on MCP safety campaign is registered without replacing the MCP-first architecture; MCP-S1 result semantics, MCP-S1.1 protocol-conformance correction, MCP-S2 tool-level Brownie safety policy, MCP-S3 annotation provenance/drift checks, MCP-S4 tool-level approval binding, MCP-S4.1 approval consumption/retry safety, MCP-S5 runtime input/output schema validation, MCP-S6 secret reference contract, and MCP-S7 executable identity are closed. MCP stdio execution is now result-safe, policy-bound, annotation/catalog drift checked, approval-state-bound, schema-validated, secret-reference scoped, and executable-identity pinned before launch. | Use this closed MCP safety baseline while continuing the other Runtime Release Readiness P0/P1 blockers. |
 | `oss-release-technical-basis` | P1 | OSS Release technical basis | owner decision waiting | Owner | owner decision | Cargo workspace remains `UNLICENSED` and `publish = false`. | Owner must decide license/publish posture before OSS Release Ready. |
-| `protocol-event-canonization` | P1 | Protocol/Event canonization | implemented sufficient | Runtime | closed | RRP-5 adds a canonical ownership/drift map; RRP-5.1 adds a Rust-generated semantic protocol contract artifact; RRP-5.2 expands it to all 51 explicit Runtime methods and all public Runtime params unknown-field evidence; RRP-5.3 adds recursive `schemars` JSON Schema `type_schemas` with nested `$defs`, method schema refs/fingerprints and VSIX nested-schema coverage; RRP-5.4 separates fixed ledger payload schema fingerprints from diagnostic instance-shape fingerprints, validates v2 envelopes on append/read, and preserves verified legacy v1 envelope compatibility. | Use the RRP-5/RRP-5.1/RRP-5.2/RRP-5.3/RRP-5.4 canonical map plus recursive semantic contract and ledger payload schema/instance split as the guarded protocol/event release baseline. |
+| `protocol-event-canonization` | P1 | Protocol/Event canonization | partial | Runtime | required before release | RRP-5 adds a canonical ownership/drift map; RRP-5.1 adds a Rust-generated semantic protocol contract artifact; RRP-5.2 expands it to all 51 explicit Runtime methods and all public Runtime params unknown-field evidence; RRP-5.3 adds recursive `schemars` JSON Schema `type_schemas` with nested `$defs`, method schema refs/fingerprints and VSIX nested-schema coverage; RRP-5.4 separates fixed ledger payload schema fingerprints from diagnostic instance-shape fingerprints, validates v2 envelopes on append/read, and preserves verified legacy v1 envelope compatibility; RRP-5.5 records one payload schema classification per `LedgerEventKind` and blocks release while `typed_known_fields_open` or `versioned_open` classifications remain. | Assign strict typed, payload-absent, or legacy-compatibility schemas to every payload-bearing `LedgerEventKind` before treating this blocker as closed. |
 | `runtime-module-decomposition-reevaluation` | P1 | Runtime module decomposition reevaluation | implemented sufficient | Runtime | closed | RRP-6 adds a finite module-decomposition assessment with source metrics and hotspot counts, physically moves `task.list` transport-bound ownership into `task_progress.rs`, and adds a guard/test suite that fails closed on metric drift, missing boundary tokens, or task-list ownership regressions. | Use the guarded RRP-6 module decomposition assessment as the release baseline while closing the remaining Runtime-owned blockers. |
 | `platform-deadline-durability-hardening` | P1 | Platform/deadline/durability hardening | partial | Runtime | required before release | RRP-7.1 shares one process-local monotonic MCP stdio deadline across response and child-exit waits, bounds late child exits with Unix process-tree kill evidence, serializes terminal task mutations with a per-run lock, repairs the terminal state/ledger process-loss window with `terminal-transition.json`, and adds deterministic durable write failure-injection tests for disk-full, truncated-temp, and rename-denial cases. Runtime-wide persisted deadlines, Windows process-tree termination, Windows stale-lock recovery, Windows atomic replace/directory durability, reparse point handling, macOS Runtime CI, Windows Runtime CI, and the remaining MCP response-after-receive/terminal-before-record process-loss window remain open. | Keep this blocker in `release_ready_blocked_by`; close the remaining cross-platform durability, Runtime-wide deadline, and MCP crash-window evidence gaps before release. |
 | `hosted-scheduler-daemon-worker-fleet` | P2 | Hosted control plane | runtime-outside | External Control Plane | post-v0 | Scheduler, daemon, queue, worker fleet, leases, hosted isolation, metrics, alerts, SLA, and billing remain outside Runtime release. | Track outside Runtime Release Readiness. |
@@ -138,5 +146,5 @@ process management, direct workflow hardening, or Runtime Release Ready.
 | `enterprise-commercial-readiness` | P2 | Enterprise/commercial readiness | runtime-outside | Commercial Solution | post-v0 | Tenant admin, SSO/RBAC server, customer admin UI, certified stack, continuity assurance, and BDK/Enterprise/Assurance products are outside this campaign. | Do not block Brownie Runtime release on these items. |
 
 Runtime Release Ready remains `false` while the remaining required-before-release
-Runtime P0/P1 items remain open: `runtime-release-guard-ci` and
-`platform-deadline-durability-hardening`.
+Runtime P0/P1 items remain open: `protocol-event-canonization`,
+`runtime-release-guard-ci`, and `platform-deadline-durability-hardening`.

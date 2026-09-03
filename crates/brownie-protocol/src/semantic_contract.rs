@@ -602,10 +602,33 @@ pub fn runtime_semantic_protocol_contract() -> Value {
     let task_completed_payload = json!({"status": "Completed"});
     let task_completed_late_response_payload =
         json!({"status": "Completed", "late_tool_response": true});
+    let event_payload_schema_classifications = ledger_event_kinds
+        .iter()
+        .map(|kind| {
+            let classification = ledger_payload_schema_classification(kind);
+            json!({
+                "ledger_event_kind": kind,
+                "payload_schema_classification": classification,
+                "payload_schema_contract_status": ledger_payload_schema_contract_status(classification),
+                "release_blocking_until_typed": ledger_payload_schema_release_blocking(classification)
+            })
+        })
+        .collect::<Vec<_>>();
+    let release_blocking_open_payload_count = event_payload_schema_classifications
+        .iter()
+        .filter(|entry| {
+            entry
+                .get("release_blocking_until_typed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .count();
     let payload_schema_fixtures = vec![
         json!({
             "ledger_event_kind": "TaskCompleted",
             "payload": task_completed_payload,
+            "payload_schema_classification": ledger_payload_schema_classification("TaskCompleted"),
+            "payload_schema_contract_status": ledger_payload_schema_contract_status(ledger_payload_schema_classification("TaskCompleted")),
             "payload_schema_id": ledger_payload_schema_id("TaskCompleted"),
             "payload_schema_fingerprint": ledger_payload_schema_fingerprint("TaskCompleted"),
             "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&task_completed_payload),
@@ -614,6 +637,8 @@ pub fn runtime_semantic_protocol_contract() -> Value {
         json!({
             "ledger_event_kind": "TaskCompleted",
             "payload": task_completed_late_response_payload,
+            "payload_schema_classification": ledger_payload_schema_classification("TaskCompleted"),
+            "payload_schema_contract_status": ledger_payload_schema_contract_status(ledger_payload_schema_classification("TaskCompleted")),
             "payload_schema_id": ledger_payload_schema_id("TaskCompleted"),
             "payload_schema_fingerprint": ledger_payload_schema_fingerprint("TaskCompleted"),
             "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&task_completed_late_response_payload),
@@ -622,10 +647,10 @@ pub fn runtime_semantic_protocol_contract() -> Value {
     ];
 
     json!({
-        "schema_version": 4,
+        "schema_version": 5,
         "contract_id": "runtime-semantic-protocol-contract-v1",
         "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-        "phase": "RRP-5.4",
+        "phase": "RRP-5.5",
         "owner": "runtime",
         "runtime_release_debt_id": "protocol-event-canonization",
         "runtime_release_ready": false,
@@ -724,16 +749,30 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             "ledger_payload_shape_version_source": "LEDGER_PAYLOAD_SHAPE_VERSION",
             "ledger_payload_schema_fingerprint_basis": "LedgerEventKind plus the fixed Runtime-owned payload schema descriptor for that event-kind/version. It is stable across optional field presence, null-vs-value choices, and other individual payload instance variation.",
             "ledger_payload_instance_shape_fingerprint_basis": "LedgerEventKind plus the canonical structural shape of the actual persisted payload value. This is diagnostic instance evidence, not the durable contract schema fingerprint.",
-            "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint.",
+            "ledger_payload_contract_scope": {
+                "jsonrpc_request_result_contract": "closed",
+                "schema_and_instance_fingerprint_split": "closed",
+                "ledger_event_payload_inventory": "closed",
+                "ledger_event_payload_typed_schema_coverage": "partial"
+            },
+            "ledger_payload_schema_classification_policy": "Every LedgerEventKind must carry an explicit payload schema classification. versioned_open and typed_known_fields_open are allowed only as required-before-release debt evidence and must not be treated as fully typed ledger payload schemas.",
+            "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Versioned-open payload classifications keep protocol-event-canonization partial until every payload-bearing event has a strict typed schema, an explicit payload_absent contract, or a legacy-only compatibility entry.",
             "guard": "guard:protocol-event-canonization",
+            "event_payload_schema_classification_count": event_payload_schema_classifications.len(),
+            "event_payload_schema_classifications": event_payload_schema_classifications,
+            "release_blocking_open_payload_count": release_blocking_open_payload_count,
             "event_payload_schema_fingerprint_count": ledger_event_kinds.len(),
             "event_payload_schema_fingerprints": ledger_event_kinds
                 .iter()
                 .map(|kind| {
                     let schema_id = ledger_payload_schema_id(kind);
+                    let classification = ledger_payload_schema_classification(kind);
                     json!({
                         "ledger_event_kind": kind,
                         "payload_schema_id": schema_id,
+                        "payload_schema_classification": classification,
+                        "payload_schema_contract_status": ledger_payload_schema_contract_status(classification),
+                        "release_blocking_until_typed": ledger_payload_schema_release_blocking(classification),
                         "payload_schema_version": LEDGER_PAYLOAD_SCHEMA_VERSION,
                         "payload_schema_fingerprint": ledger_payload_schema_fingerprint(kind),
                         "payload_schema_descriptor": ledger_payload_schema_descriptor(kind),
@@ -1432,10 +1471,30 @@ fn ledger_payload_schema_fingerprint(kind: &str) -> String {
     ))
 }
 
+fn ledger_payload_schema_classification(kind: &str) -> &'static str {
+    match kind {
+        "TaskCompleted" => "typed_known_fields_open",
+        _ => "versioned_open",
+    }
+}
+
+fn ledger_payload_schema_contract_status(classification: &str) -> &'static str {
+    match classification {
+        "payload_absent" | "strict_typed" => "closed",
+        "typed_known_fields_open" | "versioned_open" => "partial",
+        "legacy_compatibility_only" => "legacy_only",
+        _ => "unknown",
+    }
+}
+
+fn ledger_payload_schema_release_blocking(classification: &str) -> bool {
+    matches!(classification, "typed_known_fields_open" | "versioned_open")
+}
+
 fn ledger_payload_schema_descriptor(kind: &str) -> String {
     match kind {
-        "TaskCompleted" => "object{known_optional_fields:late_tool_response:boolean,status:string,terminal_process_loss:boolean,terminal_race_candidate:string;additional_fields:true}".to_string(),
-        _ => "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}".to_string(),
+        "TaskCompleted" => "typed_known_fields_open{known_optional_fields:git:object,late_tool_response:boolean,mcp:object,runtime_deadline:object,status:string,terminal_process_loss:boolean,terminal_race_candidate:string;additional_fields:true;strict_typed_payload_required_before_release:true}".to_string(),
+        _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
 }
 
