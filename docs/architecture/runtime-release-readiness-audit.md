@@ -84,19 +84,24 @@ validates the assessment against live source, required boundary tokens, lib.rs
 ceilings, task-progress ownership, and non-authority rules, and the existing
 CI-invoked VSIX check path runs this guard.
 
-RRP-7.1 closes the reopened local Runtime platform/deadline/durability blocker:
-`TaskStore::write_task_state` uses the shared synced atomic write helper, Unix
-parent-directory sync is a checked durable-write step, MCP stdio response wait
-and child-exit wait share one absolute `RuntimeDeadline`, late child exits are
+RRP-7.1 closes a Unix/local corrective slice of the reopened Runtime
+platform/deadline/durability blocker, but the broad blocker remains required
+before release. `TaskStore::write_task_state` uses the shared synced atomic write
+helper, Unix parent-directory sync is a checked durable-write step, run ledger
+append syncs terminal evidence, MCP stdio response wait and child-exit wait
+share one process-local monotonic `McpStdioDeadline`, late child exits are
 bounded by the same timeout budget and record process-tree kill evidence, task
-terminal updates can require current status plus `updated_at` freshness before
-completion/cancel overwrites, and deterministic durable write failpoints cover
-disk-full, truncated-temp, and rename-denial cases. The
+terminal updates acquire a per-run lock and require current status plus
+`updated_at` freshness before completion/cancel overwrites, and
+`terminal-transition.json` repairs the state-written/ledger-missing
+process-loss window. Deterministic durable write failpoints cover disk-full,
+truncated-temp, and rename-denial cases. The
 `guard:platform-deadline-durability` check now requires those implementation
-tokens, behavior tests, and bounded cross-platform boundary statements through
-the existing CI-invoked VSIX check path. This does not claim Windows/macOS
-durability parity, hosted process management, direct workflow hardening, or
-Runtime Release Ready.
+tokens and behavior tests through the existing CI-invoked VSIX check path. This
+does not claim Runtime-wide persisted deadlines, Windows process-tree
+termination, Windows stale-lock recovery, Windows atomic replace/directory
+durability, reparse point handling, macOS Runtime CI, Windows Runtime CI, hosted
+process management, direct workflow hardening, or Runtime Release Ready.
 
 | ID | Priority | Classification | Status | Responsibility | Release classification | Evidence summary | Next action |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -110,11 +115,11 @@ Runtime Release Ready.
 | `oss-release-technical-basis` | P1 | OSS Release technical basis | owner decision waiting | Owner | owner decision | Cargo workspace remains `UNLICENSED` and `publish = false`. | Owner must decide license/publish posture before OSS Release Ready. |
 | `protocol-event-canonization` | P1 | Protocol/Event canonization | partial | Runtime | required before release | RRP-5 adds a canonical ownership/drift map, but RRP-5.1 is still required for machine-readable Rust-generated semantic protocol schema, golden Rust-to-TypeScript contracts, payload semantics, compatibility, unknown-field policy, and durable event migration coupling. | Close RRP-5.1 after RRP-7.1. |
 | `runtime-module-decomposition-reevaluation` | P1 | Runtime module decomposition reevaluation | implemented sufficient | Runtime | closed | RRP-6 adds a finite module-decomposition assessment with source metrics and hotspot counts, physically moves `task.list` transport-bound ownership into `task_progress.rs`, and adds a guard/test suite that fails closed on metric drift, missing boundary tokens, or task-list ownership regressions. | Use the guarded RRP-6 module decomposition assessment as the release baseline while closing the remaining Runtime-owned blockers. |
-| `platform-deadline-durability-hardening` | P1 | Platform/deadline/durability hardening | implemented sufficient | Runtime | closed | RRP-7.1 shares one absolute MCP stdio deadline across response and child-exit waits, bounds late child exits with process-tree kill evidence, checks task terminal status freshness before completion/cancel overwrites, and adds deterministic durable write failure-injection tests for disk-full, truncated-temp, and rename-denial cases. | Use the guarded RRP-7.1 baseline while closing RRP-5.1 before the CI release gate. |
+| `platform-deadline-durability-hardening` | P1 | Platform/deadline/durability hardening | partial | Runtime | required before release | RRP-7.1 shares one process-local monotonic MCP stdio deadline across response and child-exit waits, bounds late child exits with Unix process-tree kill evidence, serializes terminal task mutations with a per-run lock, repairs the terminal state/ledger process-loss window with `terminal-transition.json`, and adds deterministic durable write failure-injection tests for disk-full, truncated-temp, and rename-denial cases. Runtime-wide persisted deadlines, Windows process-tree termination, Windows stale-lock recovery, Windows atomic replace/directory durability, reparse point handling, macOS Runtime CI, and Windows Runtime CI remain open. | Keep this blocker in `release_ready_blocked_by`; close the remaining cross-platform and Runtime-wide deadline gaps before release. |
 | `hosted-scheduler-daemon-worker-fleet` | P2 | Hosted control plane | runtime-outside | External Control Plane | post-v0 | Scheduler, daemon, queue, worker fleet, leases, hosted isolation, metrics, alerts, SLA, and billing remain outside Runtime release. | Track outside Runtime Release Readiness. |
 | `forge-notification-adapters` | P2 | Forge/notification adapters | runtime-outside | External Adapter | post-v0 | GitHub/GitLab App, PR workflows, Slack/Teams/email, SIEM, OTel, and customer integrations remain external adapter readiness. | Track outside Runtime Release Readiness. |
 | `enterprise-commercial-readiness` | P2 | Enterprise/commercial readiness | runtime-outside | Commercial Solution | post-v0 | Tenant admin, SSO/RBAC server, customer admin UI, certified stack, continuity assurance, and BDK/Enterprise/Assurance products are outside this campaign. | Do not block Brownie Runtime release on these items. |
 
 Runtime Release Ready remains `false` while the remaining required-before-release
 Runtime P0/P1 items remain open: `runtime-release-guard-ci`,
-and `protocol-event-canonization`.
+`protocol-event-canonization`, and `platform-deadline-durability-hardening`.

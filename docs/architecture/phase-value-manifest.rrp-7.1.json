@@ -10,7 +10,7 @@
   "strategic_capability_mapping": [
     {
       "capability": "headless_autonomous_development",
-      "relationship": "Closes the reopened local Runtime platform/deadline/durability blocker by making MCP stdio deadlines absolute across response and child-exit waits and by proving durable write failure behavior under deterministic failpoints."
+      "relationship": "Closes the Unix/local MCP stdio deadline, terminal mutation, and durable-write failure-injection corrective slice while keeping the broad platform/deadline/durability blocker open by using one process-local monotonic MCP stdio deadline across response and child-exit waits, serializing terminal mutations, recovering terminal state/ledger gaps, and proving durable write failure behavior under deterministic failpoints."
     },
     {
       "capability": "runtime_permission_enforcement",
@@ -25,15 +25,15 @@
     "required": true,
     "answers": {
       "strategic_capabilities": "Advances headless_autonomous_development, runtime_permission_enforcement, and controlled_workspace_tools by closing the reopened local Runtime platform/deadline/durability blocker with concrete deadline, race, and durable write failure evidence.",
-      "new_capability": "MCP stdio requests now share one absolute RuntimeDeadline across response wait and child-exit wait, terminal task updates can require status plus updated_at freshness, and durable writes have deterministic failpoints proving fail-closed behavior for disk-full, truncated-temp, and rename-denial cases.",
+      "new_capability": "MCP stdio requests now share one process-local monotonic McpStdioDeadline across response wait and child-exit wait, terminal task updates acquire a per-run mutation lock, persist terminal-transition markers, and require status plus updated_at freshness, and durable writes have deterministic failpoints proving fail-closed behavior for disk-full, truncated-temp, and rename-denial cases.",
       "why_existing_functionality_is_insufficient": "RRP-7 covered task-state atomic writes and existing timeout cleanup tokens, but review found missing evidence for deadline budget reset after response, late child exit cleanup, timeout/cancel/tool-response races, and durable failure injection.",
       "product_gap_if_skipped": "A Runtime subprocess could answer and then linger beyond the intended timeout budget, a late completion could overwrite a concurrent cancel, and durable failure cases would remain unproven before release.",
-      "non_duplicative": "This is the RRP-7.1 corrective for deadline, cross-platform boundary, and failure-injection evidence; it is not durable schema migration, MCP approval retry safety, protocol/event semantic contracts, module decomposition, or direct CI workflow hardening.",
+      "non_duplicative": "This is the RRP-7.1 corrective for Unix/local MCP stdio deadline, terminal mutation, and failure-injection evidence; it is not durable schema migration, MCP approval retry safety, protocol/event semantic contracts, module decomposition, or direct CI workflow hardening.",
       "no_new_rpc": "Yes. RRP-7.1 adds no JSON-RPC method and preserves existing Runtime protocol, CLI, VSIX, MCP, replay, ledger, and Product DoD surfaces.",
       "no_new_summary": "Yes. The updated artifacts are release-readiness assessment and guard evidence, not runtime diagnostic endpoints, report wrappers, dashboards, or user-facing summary features.",
-      "runtime_behavior_change": "MCP stdio response handling now waits for child exit only within the original absolute timeout budget before process-tree cleanup; terminal task completion/cancel paths can reject stale state; test-only durable write failpoints prove fail-closed behavior without changing production APIs beyond the checked store mutation helper.",
-      "headless_autonomous_contribution": "Headless controllers get stronger local Runtime guarantees that stdio subprocesses cannot extend timeout budget after answering, terminal task races fail closed, and durable write failures do not silently replace or corrupt task state.",
-      "milestone_progress": "Closes the reopened P1 platform-deadline-durability-hardening blocker while keeping Runtime Release Ready false until RRP-5.1, runtime-release-guard-ci, and owner license/publish/release decisions are resolved."
+      "runtime_behavior_change": "MCP stdio response handling now waits for child exit only within the original process-local monotonic timeout budget before process-tree cleanup; terminal task completion/cancel paths are serialized by a per-run lock and can reject stale state; test-only durable write failpoints prove fail-closed behavior without changing production APIs beyond the checked store mutation helper.",
+      "headless_autonomous_contribution": "Headless controllers get stronger local Runtime guarantees that stdio subprocesses cannot extend timeout budget after answering, terminal task races and state-ledger process-loss windows fail closed or recover deterministically, and durable write failures do not silently replace or corrupt task state.",
+      "milestone_progress": "Closes a Unix/local corrective slice while leaving the broad P1 platform-deadline-durability-hardening blocker required-before-release while keeping Runtime Release Ready false until RRP-5.1, runtime-release-guard-ci, and owner license/publish/release decisions are resolved."
     },
     "questions": [
       {
@@ -82,7 +82,7 @@
     {
       "surface": "Absolute MCP stdio deadline accounting",
       "classification": "implemented_sufficient",
-      "evidence": "RuntimeDeadline carries an absolute expiration instant and stdio_request uses deadline.remaining_or_zero() for response wait plus wait_for_stdio_child_exit_or_timeout for post-response child exit."
+      "evidence": "McpStdioDeadline carries an absolute expiration instant and stdio_request uses deadline.remaining_or_zero() for response wait plus wait_for_stdio_child_exit_or_timeout for post-response child exit."
     },
     {
       "surface": "Late child process cleanup",
@@ -92,7 +92,7 @@
     {
       "surface": "Task terminal race prevention",
       "classification": "implemented_sufficient",
-      "evidence": "TaskStore::update_task_status_with_payload_checked rereads task state and rejects status or updated_at drift before terminal completion/cancel evidence can overwrite a concurrent state transition."
+      "evidence": "TaskStore terminal mutation acquires a per-run lock, rereads task state inside the lock, writes terminal-transition.json before state mutation, and rejects status or updated_at drift before terminal completion/cancel evidence can overwrite a concurrent state transition."
     },
     {
       "surface": "Durable write failure injection",
@@ -108,9 +108,9 @@
   "review_value_gate": {
     "reject_when": [
       "phase claims Runtime Release Ready or changes license/publish/release metadata",
-      "MCP stdio deadlines reset after a response line instead of using one absolute Runtime deadline budget",
+      "MCP stdio deadlines reset after a response line instead of using one process-local monotonic MCP stdio deadline budget",
       "late child process exits are allowed to linger without bounded process-tree cleanup evidence",
-      "terminal task completion can overwrite a concurrent cancel or stale task status without a checked freshness failure",
+      "terminal task completion can overwrite a concurrent cancel, or process loss can leave terminal state without terminal ledger evidence",
       "durable write failure injection is removed or no longer proves disk-full, truncated-temp, and rename-denial fail-closed behavior",
       "guard:platform-deadline-durability stops requiring the new RRP-7.1 implementation and test evidence",
       "hosted scheduler, daemon, worker fleet, generic shell, arbitrary process execution, remote Git expansion, signing, release assets, or external platform products are added",
@@ -121,7 +121,7 @@
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "RRP-7.1 changes guard-engine files, the current phase manifest, and Runtime release-readiness audit while closing the reopened platform-deadline-durability-hardening blocker. Review must confirm the absolute RuntimeDeadline budget spans response and child-exit waits, late child exits are killed with bounded evidence, terminal task races fail closed, durable write failure injection proves disk-full/truncated-temp/rename-denial behavior, guard negative tests fail closed, and Runtime Release Ready remains false.",
+    "review_intent": "RRP-7.1 changes guard-engine files, the current phase manifest, and Runtime release-readiness audit while closing the reopened platform-deadline-durability-hardening blocker. Review must confirm the process-local monotonic McpStdioDeadline budget spans response and child-exit waits, late child exits are killed with bounded evidence, terminal task races and state-ledger process-loss windows fail closed or recover deterministically, durable write failure injection proves disk-full/truncated-temp/rename-denial behavior, guard negative tests fail closed, and Runtime Release Ready remains false.",
     "changed_files": [
       "crates/brownie-runtime/src/lib.rs",
       "crates/brownie-runtime/src/mcp_client.rs",
@@ -145,18 +145,18 @@
     ]
   },
   "exit_criteria": [
-    "MCP stdio response wait and child-exit wait share one absolute RuntimeDeadline budget.",
+    "MCP stdio response wait and child-exit wait share one process-local monotonic McpStdioDeadline budget.",
     "Late child exit after a valid stdio response is bounded by the same timeout and produces process-tree cleanup evidence.",
-    "Task terminal completion/cancel paths can fail closed when expected status or updated_at freshness no longer matches.",
+    "Task terminal completion/cancel paths hold a per-run terminal lock, can fail closed when expected status or updated_at freshness no longer matches, and recover a terminal state/ledger process-loss gap from terminal-transition.json.",
     "Durable write failpoints cover disk-full-before-write, truncated-temp-before-rename, and rename-denied-after-sync behavior without committed-state replacement or temp leakage.",
     "guard:platform-deadline-durability fails when RRP-7.1 deadline, failure-injection, checked-terminal-race, or runtime_release_ready evidence is removed.",
     "Runtime Release Ready remains false and runtime-release-guard-ci plus RRP-5.1 remain open."
   ],
   "behavior_evidence": [
-    "cargo test -p brownie-runtime runtime_deadline_reconstructs_remaining_budget_from_absolute_deadline -- --test-threads=1",
+    "cargo test -p brownie-runtime mcp_stdio_deadline_reconstructs_remaining_monotonic_budget -- --test-threads=1",
     "cargo test -p brownie-runtime mcp_stdio_deadline_covers_child_exit_after_response_line -- --test-threads=1",
     "cargo test -p brownie-store durable_write_failure_injection -- --test-threads=1",
-    "cargo test -p brownie-store task_terminal_status_race -- --test-threads=1",
+    "cargo test -p brownie-store task_terminal -- --test-threads=1",
     "pnpm guard:platform-deadline-durability validates RRP-7.1 source-level evidence.",
     "pnpm guard:platform-deadline-durability:test covers deadline, late-exit, durable failpoint, checked terminal update, and runtime_release_ready negative cases."
   ],
@@ -164,14 +164,14 @@
     "required": true,
     "product_completion_claim": false,
     "accepted_capability": [
-      "MCP stdio uses an absolute Runtime deadline across response and child-exit waits.",
+      "MCP stdio uses an process-local monotonic MCP stdio deadline across response and child-exit waits.",
       "Late child exits after a response are killed within the original timeout budget with bounded evidence.",
-      "Terminal task state races can fail closed before stale completion/cancel overwrite.",
+      "Terminal task state races are serialized under a run lock and process-loss terminal state/ledger gaps recover deterministically.",
       "Durable write failure injection proves fail-closed behavior for disk-full, truncated-temp, and rename-denial cases."
     ],
     "behavior_evidence": [
-      "Focused brownie-runtime tests cover RuntimeDeadline reconstruction and real late-child-exit cleanup.",
-      "Focused brownie-store tests cover durable write failpoints and stale terminal status rejection.",
+      "Focused brownie-runtime tests cover McpStdioDeadline reconstruction and real late-child-exit cleanup.",
+      "Focused brownie-store tests cover durable write failpoints, concurrent terminal status rejection, and process-loss repair for missing terminal ledger evidence.",
       "guard:platform-deadline-durability and its tests enforce RRP-7.1 evidence through the existing VSIX check path."
     ],
     "safety_boundary": [
@@ -192,7 +192,7 @@
       "Rejected new timeout RPCs because the existing MCP stdio boundary can carry the stronger absolute deadline semantics without protocol expansion."
     ],
     "technical_debt": [
-      "platform-deadline-durability-hardening is closed by RRP-7.1.",
+      "platform-deadline-durability-hardening remains required-before-release after RRP-7.1 because Runtime-wide deadline and Windows/cross-platform gaps remain open.",
       "protocol-event-canonization remains open for RRP-5.1 semantic protocol contracts.",
       "runtime-release-guard-ci remains open Runtime-owned debt.",
       "Owner license/publish/release decisions remain required before OSS Release Ready."
@@ -202,7 +202,7 @@
     ],
     "release_readiness_scope": {
       "runtime_release_dod": [
-        "RRP-7.1 closes the reopened local Runtime platform/deadline/durability blocker with concrete deadline, race, and durable write failure evidence.",
+        "RRP-7.1 closes a Unix/local corrective slice with concrete MCP stdio deadline, terminal race/recovery, and durable write failure evidence while keeping broad platform-deadline-durability required-before-release.",
         "Runtime Release Ready remains false until RRP-5.1, the remaining Runtime CI blocker, and owner license/publish/release decisions are resolved."
       ],
       "runtime_boundary_contracts": [

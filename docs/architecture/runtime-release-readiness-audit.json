@@ -7,8 +7,9 @@
   "audited_main_commit": "db3a217cf0b38475ea7fb614bb2541f14325b544",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
-    "runtime-release-guard-ci",
-    "protocol-event-canonization"
+    "platform-deadline-durability-hardening",
+    "protocol-event-canonization",
+    "runtime-release-guard-ci"
   ],
   "owner_decisions": [
     {
@@ -180,20 +181,21 @@
       "id": "platform-deadline-durability-hardening",
       "title": "Platform, deadline, and durability hardening",
       "priority": "P1",
-      "status": "implemented_sufficient",
+      "status": "partial",
       "responsibility_domain": "runtime",
-      "debt_classification": "closed",
+      "debt_classification": "required_before_release",
       "evidence": [
-        "RRP-7 adds docs/architecture/runtime-platform-deadline-durability-hardening.json as the finite closure assessment for local Runtime platform/deadline/durability scope.",
-        "TaskStore::write_task_state now uses the shared write_file_atomically helper, so task state writes use a sibling temporary file, create_new, file write, file sync, atomic rename, and parent-directory sync like other durable store state.",
-        "write_file_atomically treats Unix parent-directory sync as a checked durability step rather than best-effort ignored evidence, while non-Unix remains an explicit local Runtime boundary no-op.",
-        "RRP-7.1 introduces RuntimeDeadline so MCP stdio response wait and child-exit wait share one absolute timeout budget rather than resetting the budget after a response line.",
-        "MCP stdio late-child-exit handling now waits only until the remaining RuntimeDeadline and then records bounded process-tree kill evidence with timeout_budget_ms, process_tree_kill_attempted, process_tree_kill_succeeded, and process_tree_kill_reason.",
-        "Task terminal completion and cancellation paths can require expected current status plus updated_at freshness, preventing a late completion or tool response from overwriting a concurrent cancel before terminal ledger evidence.",
+        "RRP-7 adds docs/architecture/runtime-platform-deadline-durability-hardening.json as the finite local Unix Runtime durability assessment, but the broad platform/deadline/durability blocker remains required_before_release.",
+        "TaskStore::write_task_state uses the shared write_file_atomically helper, so task state writes use a sibling temporary file, create_new, file write, file sync, atomic rename, and parent-directory sync on Unix.",
+        "RunLedger::append_many now fsyncs appended ledger evidence and syncs the run directory before terminal transition markers are removed.",
+        "RRP-7.1 introduces McpStdioDeadline so a single process-local monotonic MCP stdio budget spans response wait and child-exit wait rather than resetting after a response line.",
+        "MCP stdio late-child-exit handling now waits only until the remaining McpStdioDeadline and then records bounded process-tree kill evidence with timeout_budget_ms, process_tree_kill_attempted, process_tree_kill_succeeded, and process_tree_kill_reason.",
+        "Task terminal completion and cancellation paths acquire a per-run terminal-mutation lock, re-read current state inside the lock, and require expected status plus updated_at freshness so stale completion cannot overwrite a concurrent cancel.",
+        "Terminal transitions persist terminal-transition.json before terminal state mutation and recover the process-loss window where state is terminal but the terminal ledger event is missing.",
         "Deterministic durable write failpoints cover disk_full_before_write, truncated_state_before_rename, and rename_denied_after_sync, proving failure closes before committed state replacement, terminal ledger append, or temporary-file leakage.",
-        "guard:platform-deadline-durability now requires the RRP-7.1 implementation tokens, behavior test names, and assessment source checks; guard tests fail closed when deadline, late-exit, failure-injection, checked-terminal-update, or runtime_release_ready evidence is removed."
+        "Windows process-tree termination, Windows stale-lock recovery, Windows atomic replace/directory durability, reparse point handling, macOS Runtime CI, Windows Runtime CI, and Runtime-wide persisted wall-clock task/run deadline propagation remain required-before-release gaps."
       ],
-      "next_action": "Use the guarded RRP-7.1 platform/deadline/durability baseline while closing RRP-5.1 before the CI release gate."
+      "next_action": "Keep platform-deadline-durability-hardening in release_ready_blocked_by; close the remaining Windows/cross-platform and Runtime-wide deadline gaps after this Unix/local corrective slice, while continuing RRP-5.1 before the CI release gate if ordered by the controller."
     },
     {
       "id": "hosted-scheduler-daemon-worker-fleet",

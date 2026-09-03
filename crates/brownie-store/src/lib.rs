@@ -59,13 +59,22 @@ const DURABLE_STORE_SCHEMA_MIGRATION_V1_TO_V2: &str = "v1-to-v2-layout-marker";
 const DURABLE_STORE_LAYOUT_ID: &str = "brownie-runtime-durable-store-layout";
 const DURABLE_STORE_LAYOUT_VERSION: u64 = 1;
 const DURABLE_STORE_LAYOUT_CURRENT: &str = "runtime-store-v2-bounded-local-layout";
+const RUN_TERMINAL_MUTATION_LOCK: &str = "terminal-mutation.lock";
+const RUN_TERMINAL_TRANSITION_MARKER: &str = "terminal-transition.json";
 #[cfg(test)]
 const DURABLE_SCHEMA_MIGRATION_FAILPOINT_ENV: &str = "BROWNIE_STORE_SCHEMA_MIGRATION_FAILPOINT";
 #[cfg(test)]
 const DURABLE_SCHEMA_MIGRATION_CHILD_ROOT_ENV: &str = "BROWNIE_STORE_SCHEMA_MIGRATION_CHILD_ROOT";
+#[cfg(test)]
+const TERMINAL_TRANSITION_FAILPOINT_ENV: &str = "BROWNIE_STORE_TERMINAL_TRANSITION_FAILPOINT";
+#[cfg(test)]
+const TERMINAL_TRANSITION_CHILD_ROOT_ENV: &str = "BROWNIE_STORE_TERMINAL_TRANSITION_CHILD_ROOT";
 const DURABLE_SCHEMA_MIGRATION_FAILPOINT_AFTER_IN_PROGRESS: &str = "after_in_progress_marker";
 const DURABLE_SCHEMA_MIGRATION_FAILPOINT_AFTER_LAYOUT: &str = "after_layout_marker";
 const DURABLE_SCHEMA_MIGRATION_FAILPOINT_AFTER_CURRENT_V2: &str = "after_current_v2_manifest";
+const TERMINAL_TRANSITION_FAILPOINT_AFTER_MARKER: &str = "after_terminal_transition_marker";
+const TERMINAL_TRANSITION_FAILPOINT_AFTER_STATE: &str = "after_terminal_state";
+const TERMINAL_TRANSITION_FAILPOINT_AFTER_LEDGER: &str = "after_terminal_ledger";
 #[cfg(test)]
 thread_local! {
     static DURABLE_WRITE_FAILPOINT: std::cell::RefCell<Option<&'static str>> =
@@ -3057,6 +3066,16 @@ fn durable_schema_migration_test_failpoint(point: &str) {
 #[cfg(not(test))]
 fn durable_schema_migration_test_failpoint(_point: &str) {}
 
+#[cfg(test)]
+fn terminal_transition_test_failpoint(point: &str) {
+    if std::env::var(TERMINAL_TRANSITION_FAILPOINT_ENV).as_deref() == Ok(point) {
+        std::process::abort();
+    }
+}
+
+#[cfg(not(test))]
+fn terminal_transition_test_failpoint(_point: &str) {}
+
 #[cfg(unix)]
 fn process_is_alive(pid: u32) -> bool {
     if pid == 0 || pid > i32::MAX as u32 {
@@ -3171,6 +3190,69 @@ fn sync_dir(path: &std::path::Path) -> Result<()> {
 #[cfg(not(unix))]
 fn sync_dir(_path: &std::path::Path) -> Result<()> {
     Ok(())
+}
+
+#[cfg(unix)]
+fn reclaim_stale_process_lock(lock_path: &Path, expected_lock_file: &str) -> Result<bool> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+    let mut file = match OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(lock_path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(true),
+        Err(error) if error.raw_os_error() == Some(libc::ELOOP) => return Ok(false),
+        Err(error) => return Err(error).context("failed to inspect process lock"),
+    };
+    let lock_result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if lock_result != 0 {
+        let error = std::io::Error::last_os_error();
+        if matches!(
+            error.raw_os_error(),
+            Some(code) if code == libc::EWOULDBLOCK || code == libc::EAGAIN
+        ) {
+            return Ok(false);
+        }
+        return Err(error).context("failed to claim process lock");
+    }
+    let _claim = FlockGuard {
+        fd: file.as_raw_fd(),
+    };
+
+    let lock_metadata = file.metadata().context("failed to inspect process lock")?;
+    if !lock_metadata.is_file() {
+        return Ok(false);
+    }
+    let mut before = String::new();
+    file.read_to_string(&mut before)
+        .context("failed to read process lock")?;
+    let owner = BuildLockOwner::parse(&before);
+    if !owner.is_reclaimable_after_process_exit(expected_lock_file) {
+        return Ok(false);
+    }
+
+    let path_metadata = match fs::symlink_metadata(lock_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(true),
+        Err(error) => return Err(error).context("failed to reinspect process lock"),
+    };
+    if path_metadata.dev() != lock_metadata.dev() || path_metadata.ino() != lock_metadata.ino() {
+        return Ok(false);
+    }
+    fs::remove_file(lock_path).context("failed to reclaim stale process lock")?;
+    if let Some(parent) = lock_path.parent() {
+        sync_dir(parent)?;
+    }
+    Ok(true)
+}
+
+#[cfg(not(unix))]
+fn reclaim_stale_process_lock(_lock_path: &Path, _expected_lock_file: &str) -> Result<bool> {
+    Ok(false)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4035,6 +4117,12 @@ impl TaskStore {
         event_kind: LedgerEventKind,
         payload: Option<serde_json::Value>,
     ) -> Result<TaskRecord> {
+        if task_status_is_terminal(&status) {
+            return self.update_terminal_task_status_with_payload(
+                task_id, None, status, event_kind, payload,
+            );
+        }
+
         let Some(mut record) = self.get_task(task_id)? else {
             bail!("task not found: {task_id}");
         };
@@ -4055,23 +4143,82 @@ impl TaskStore {
         event_kind: LedgerEventKind,
         payload: Option<serde_json::Value>,
     ) -> Result<TaskRecord> {
-        let Some(mut record) = self.get_task(task_id)? else {
-            bail!("task not found: {task_id}");
-        };
-        if record.status != expected_status || record.updated_at != expected_updated_at {
-            bail!(
-                "task terminal status race: expected {:?} at {} but found {:?} at {}",
-                expected_status,
-                expected_updated_at,
-                record.status,
-                record.updated_at
-            );
+        self.update_terminal_task_status_with_payload(
+            task_id,
+            Some((expected_status, expected_updated_at.to_string())),
+            status,
+            event_kind,
+            payload,
+        )
+    }
+
+    fn update_terminal_task_status_with_payload(
+        &self,
+        task_id: &str,
+        expected: Option<(TaskStatus, String)>,
+        status: TaskStatus,
+        event_kind: LedgerEventKind,
+        payload: Option<serde_json::Value>,
+    ) -> Result<TaskRecord> {
+        if !task_status_is_terminal(&status) {
+            bail!("terminal task mutation requires a terminal target status");
+        }
+        if !ledger_event_kind_is_terminal_task(&event_kind) {
+            bail!("terminal task mutation requires a terminal ledger event kind");
         }
 
-        record.status = status;
+        let Some(initial_record) = self.get_task(task_id)? else {
+            bail!("task not found: {task_id}");
+        };
+        let run_id = initial_record.run_id.clone();
+        let _lock = self.acquire_run_terminal_mutation_lock(&run_id)?;
+        self.recover_terminal_transition_marker_for_run_locked(&run_id)?;
+        let Some(mut record) = self.read_task_state_by_run_id_raw(&run_id)? else {
+            bail!("task not found after terminal mutation lock: {task_id}");
+        };
+        if record.task_id != task_id {
+            bail!("task id changed during terminal mutation: {task_id}");
+        }
+        if record.run_id != run_id {
+            bail!("task run id changed during terminal mutation: {task_id}");
+        }
+        if let Some((expected_status, expected_updated_at)) = expected.as_ref() {
+            if record.status != *expected_status || record.updated_at != *expected_updated_at {
+                if task_status_is_terminal(&record.status) && record.status == status {
+                    return Ok(record);
+                }
+                bail!(
+                    "task terminal status race: expected {:?} at {} but found {:?} at {}",
+                    expected_status,
+                    expected_updated_at,
+                    record.status,
+                    record.updated_at
+                );
+            }
+        }
+
+        let expected_status = record.status.clone();
+        let expected_updated_at = record.updated_at.clone();
+        record.status = status.clone();
         record.updated_at = timestamp()?;
+        let ledger_event = self.build_task_ledger_event(&record, event_kind, payload)?;
+        let marker = TerminalTransitionMarker {
+            marker_version: 1,
+            task_id: record.task_id.clone(),
+            run_id: record.run_id.clone(),
+            expected_status,
+            expected_updated_at,
+            terminal_status: status,
+            state_updated_at: record.updated_at.clone(),
+            ledger_event,
+        };
+        self.write_terminal_transition_marker(&marker)?;
+        terminal_transition_test_failpoint(TERMINAL_TRANSITION_FAILPOINT_AFTER_MARKER);
         self.write_task_state(&record)?;
-        self.append_task_event_with_payload(&record, event_kind, payload)?;
+        terminal_transition_test_failpoint(TERMINAL_TRANSITION_FAILPOINT_AFTER_STATE);
+        RunLedger::new(self.run_dir(&record.run_id)).append(&marker.ledger_event)?;
+        terminal_transition_test_failpoint(TERMINAL_TRANSITION_FAILPOINT_AFTER_LEDGER);
+        self.remove_terminal_transition_marker(&record.run_id)?;
         Ok(record)
     }
 
@@ -4366,6 +4513,7 @@ impl TaskStore {
         if !runs_dir.exists() {
             return Ok(Vec::new());
         }
+        self.recover_terminal_transition_markers()?;
 
         let mut tasks = Vec::new();
         for entry in fs::read_dir(&runs_dir)
@@ -4418,6 +4566,47 @@ impl TaskStore {
         })
     }
 
+    fn read_task_state_by_run_id_raw(&self, run_id: &str) -> Result<Option<TaskRecord>> {
+        let state_path = self.run_dir(run_id).join("state.json");
+        match fs::read_to_string(&state_path) {
+            Ok(content) => serde_json::from_str(&content)
+                .with_context(|| format!("failed to parse {}", state_path.display()))
+                .map(Some),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => {
+                Err(error).with_context(|| format!("failed to read {}", state_path.display()))
+            }
+        }
+    }
+
+    fn terminal_transition_marker_path(&self, run_id: &str) -> PathBuf {
+        self.run_dir(run_id).join(RUN_TERMINAL_TRANSITION_MARKER)
+    }
+
+    fn write_terminal_transition_marker(&self, marker: &TerminalTransitionMarker) -> Result<()> {
+        let run_dir = self.run_dir(&marker.run_id);
+        fs::create_dir_all(&run_dir)
+            .with_context(|| format!("failed to create {}", run_dir.display()))?;
+        let body = serde_json::to_vec_pretty(marker)
+            .context("failed to serialize terminal transition marker")?;
+        write_file_atomically(&run_dir.join(RUN_TERMINAL_TRANSITION_MARKER), &body)
+            .context("failed to write terminal transition marker")
+    }
+
+    fn remove_terminal_transition_marker(&self, run_id: &str) -> Result<()> {
+        let marker_path = self.terminal_transition_marker_path(run_id);
+        match fs::remove_file(&marker_path) {
+            Ok(()) => {
+                if let Some(parent) = marker_path.parent() {
+                    sync_dir(parent)?;
+                }
+                Ok(())
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error).context("failed to remove terminal transition marker"),
+        }
+    }
+
     pub fn append_task_event(&self, record: &TaskRecord, kind: LedgerEventKind) -> Result<()> {
         self.append_task_event_with_payload(record, kind, None)
     }
@@ -4433,6 +4622,7 @@ impl TaskStore {
 
     pub fn read_ledger_events(&self, run_id: &str) -> Result<Vec<LedgerEvent>> {
         self.ensure_durable_schema()?;
+        self.recover_terminal_transition_marker_for_run(run_id)?;
         RunLedger::new(self.run_dir(run_id)).read_events()
     }
 
@@ -4861,18 +5051,117 @@ impl TaskStore {
         self.ensure_durable_schema()?;
         let ledger_events = events
             .into_iter()
-            .map(|(kind, payload)| {
-                Ok(LedgerEvent {
-                    event_id: format!("event_{}", Uuid::new_v4()),
-                    task_id: record.task_id.clone(),
-                    run_id: record.run_id.clone(),
-                    kind,
-                    timestamp: timestamp()?,
-                    payload,
-                })
-            })
+            .map(|(kind, payload)| self.build_task_ledger_event(record, kind, payload))
             .collect::<Result<Vec<_>>>()?;
         RunLedger::new(self.run_dir(&record.run_id)).append_many(&ledger_events)
+    }
+
+    fn build_task_ledger_event(
+        &self,
+        record: &TaskRecord,
+        kind: LedgerEventKind,
+        payload: Option<serde_json::Value>,
+    ) -> Result<LedgerEvent> {
+        Ok(LedgerEvent {
+            event_id: format!("event_{}", Uuid::new_v4()),
+            task_id: record.task_id.clone(),
+            run_id: record.run_id.clone(),
+            kind,
+            timestamp: timestamp()?,
+            payload,
+        })
+    }
+
+    fn recover_terminal_transition_markers(&self) -> Result<()> {
+        let runs_dir = self.runs_dir();
+        if !runs_dir.exists() {
+            return Ok(());
+        }
+        for entry in fs::read_dir(&runs_dir)
+            .with_context(|| format!("failed to read {}", runs_dir.display()))?
+        {
+            let entry = entry.context("failed to read run directory entry")?;
+            if !entry
+                .file_type()
+                .context("failed to read run entry type")?
+                .is_dir()
+            {
+                continue;
+            }
+            let Some(run_id) = entry.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
+            self.recover_terminal_transition_marker_for_run(&run_id)?;
+        }
+        Ok(())
+    }
+
+    fn recover_terminal_transition_marker_for_run(&self, run_id: &str) -> Result<()> {
+        let marker_path = self.terminal_transition_marker_path(run_id);
+        if !marker_path.exists() {
+            return Ok(());
+        }
+        let _lock = self.acquire_run_terminal_mutation_lock(run_id)?;
+        self.recover_terminal_transition_marker_for_run_locked(run_id)
+    }
+
+    fn recover_terminal_transition_marker_for_run_locked(&self, run_id: &str) -> Result<()> {
+        let marker_path = self.terminal_transition_marker_path(run_id);
+        let body = match fs::read_to_string(&marker_path) {
+            Ok(body) => body,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("failed to read {}", marker_path.display()))
+            }
+        };
+        let marker: TerminalTransitionMarker = serde_json::from_str(&body)
+            .with_context(|| format!("failed to parse {}", marker_path.display()))?;
+        if marker.marker_version != 1 {
+            bail!("unsupported terminal transition marker version");
+        }
+        if marker.run_id != run_id || marker.ledger_event.run_id != run_id {
+            bail!("terminal transition marker run id mismatch");
+        }
+        if marker.ledger_event.task_id != marker.task_id {
+            bail!("terminal transition marker task id mismatch");
+        }
+        if marker.ledger_event.kind != terminal_status_event_kind(&marker.terminal_status)? {
+            bail!("terminal transition marker event kind mismatch");
+        }
+        let ledger = RunLedger::new(self.run_dir(run_id));
+        let events = ledger.read_events()?;
+        let ledger_has_marker_event = events
+            .iter()
+            .any(|event| event.event_id == marker.ledger_event.event_id);
+        let state = self.read_task_state_by_run_id_raw(run_id)?;
+        match state {
+            Some(record)
+                if record.task_id == marker.task_id
+                    && record.status == marker.terminal_status
+                    && record.updated_at == marker.state_updated_at =>
+            {
+                if !ledger_has_marker_event {
+                    ledger.append(&marker.ledger_event)?;
+                }
+                self.remove_terminal_transition_marker(run_id)?;
+            }
+            Some(record)
+                if record.task_id == marker.task_id
+                    && record.status == marker.expected_status
+                    && record.updated_at == marker.expected_updated_at
+                    && !ledger_has_marker_event =>
+            {
+                self.remove_terminal_transition_marker(run_id)?;
+            }
+            _ if ledger_has_marker_event => {
+                bail!("terminal transition marker has ledger event but task state is inconsistent");
+            }
+            _ => {
+                bail!("terminal transition marker conflicts with current task state");
+            }
+        }
+        Ok(())
     }
 
     fn acquire_run_admission_lock(&self, run_id: &str) -> Result<RunAdmissionLock> {
@@ -4902,6 +5191,53 @@ impl TaskStore {
         }
         bail!(
             "run admission lock remained busy after {} attempts: {}",
+            RUN_ADMISSION_LOCK_RETRIES,
+            lock_path.display()
+        )
+    }
+
+    fn acquire_run_terminal_mutation_lock(&self, run_id: &str) -> Result<RunAdmissionLock> {
+        let run_dir = self.run_dir(run_id);
+        fs::create_dir_all(&run_dir)
+            .with_context(|| format!("failed to create {}", run_dir.display()))?;
+        let lock_path = run_dir.join(RUN_TERMINAL_MUTATION_LOCK);
+        for _ in 0..RUN_ADMISSION_LOCK_RETRIES {
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&lock_path)
+            {
+                Ok(mut file) => {
+                    let nonce = Uuid::new_v4();
+                    writeln!(file, "pid={}", std::process::id())
+                        .context("failed to write terminal mutation lock heartbeat")?;
+                    writeln!(file, "created_at={}", timestamp()?)
+                        .context("failed to write terminal mutation lock heartbeat")?;
+                    writeln!(file, "nonce={nonce}")
+                        .context("failed to write terminal mutation lock heartbeat")?;
+                    writeln!(file, "lock_file={RUN_TERMINAL_MUTATION_LOCK}")
+                        .context("failed to write terminal mutation lock heartbeat")?;
+                    file.sync_all()
+                        .context("failed to sync terminal mutation lock")?;
+                    sync_dir(&run_dir)?;
+                    return Ok(RunAdmissionLock { path: lock_path });
+                }
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                    if reclaim_stale_process_lock(&lock_path, RUN_TERMINAL_MUTATION_LOCK)
+                        .context("failed to inspect terminal mutation lock")?
+                    {
+                        continue;
+                    }
+                    thread::sleep(RUN_ADMISSION_LOCK_SLEEP);
+                }
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("failed to acquire {}", lock_path.display()));
+                }
+            }
+        }
+        bail!(
+            "terminal mutation lock remained busy after {} attempts: {}",
             RUN_ADMISSION_LOCK_RETRIES,
             lock_path.display()
         )
@@ -5353,6 +5689,9 @@ struct RunAdmissionLock {
 impl Drop for RunAdmissionLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
+        if let Some(parent) = self.path.parent() {
+            let _ = sync_dir(parent);
+        }
     }
 }
 
@@ -5388,6 +5727,9 @@ impl RunLedger {
             .context("failed to open run ledger")?;
         file.write_all(&buffer)
             .context("failed to append run ledger events")?;
+        file.sync_all()
+            .context("failed to sync run ledger events")?;
+        sync_dir(&self.run_dir)?;
         Ok(())
     }
 
@@ -5467,6 +5809,31 @@ fn parent_join_continuation_fingerprint_consumed_in_events(
     })
 }
 
+fn task_status_is_terminal(status: &TaskStatus) -> bool {
+    matches!(
+        status,
+        TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
+    )
+}
+
+fn ledger_event_kind_is_terminal_task(kind: &LedgerEventKind) -> bool {
+    matches!(
+        kind,
+        LedgerEventKind::TaskCompleted
+            | LedgerEventKind::TaskFailed
+            | LedgerEventKind::TaskCancelled
+    )
+}
+
+fn terminal_status_event_kind(status: &TaskStatus) -> Result<LedgerEventKind> {
+    match status {
+        TaskStatus::Completed => Ok(LedgerEventKind::TaskCompleted),
+        TaskStatus::Failed => Ok(LedgerEventKind::TaskFailed),
+        TaskStatus::Cancelled => Ok(LedgerEventKind::TaskCancelled),
+        _ => bail!("task status is not terminal"),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LedgerEvent {
     pub event_id: String,
@@ -5476,6 +5843,19 @@ pub struct LedgerEvent {
     pub timestamp: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct TerminalTransitionMarker {
+    marker_version: u64,
+    task_id: String,
+    run_id: String,
+    expected_status: TaskStatus,
+    expected_updated_at: String,
+    terminal_status: TaskStatus,
+    state_updated_at: String,
+    ledger_event: LedgerEvent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -6246,6 +6626,242 @@ mod tests {
             .any(|event| event.kind == LedgerEventKind::TaskCompleted));
     }
 
+    #[test]
+    fn task_terminal_status_stale_same_terminal_replays_without_duplicate_event() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = TaskStore::new(temp.path());
+        let record = store
+            .start_task(TaskStartParams {
+                goal: "duplicate terminal completion".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start task");
+        let running = store
+            .update_task_status(
+                &record.task_id,
+                TaskStatus::Running,
+                LedgerEventKind::TaskRunning,
+            )
+            .expect("mark running");
+        let completed = store
+            .update_task_status_with_payload_checked(
+                &record.task_id,
+                TaskStatus::Running,
+                &running.updated_at,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+                Some(serde_json::json!({"terminal_race_candidate": "first"})),
+            )
+            .expect("first completion");
+
+        let replayed = store
+            .update_task_status_with_payload_checked(
+                &record.task_id,
+                TaskStatus::Running,
+                &running.updated_at,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+                Some(serde_json::json!({"terminal_race_candidate": "duplicate"})),
+            )
+            .expect("duplicate same-terminal completion should replay");
+
+        assert_eq!(replayed.status, TaskStatus::Completed);
+        assert_eq!(replayed.updated_at, completed.updated_at);
+        let events = store
+            .read_ledger_events(&record.run_id)
+            .expect("ledger after duplicate same terminal");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskCompleted)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn task_terminal_status_race_serialized_by_run_terminal_mutation_lock() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = std::sync::Arc::new(TaskStore::new(temp.path()));
+        let record = store
+            .start_task(TaskStartParams {
+                goal: "concurrent terminal race".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start task");
+        let running = store
+            .update_task_status(
+                &record.task_id,
+                TaskStatus::Running,
+                LedgerEventKind::TaskRunning,
+            )
+            .expect("mark running");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let completion_store = std::sync::Arc::clone(&store);
+        let completion_barrier = std::sync::Arc::clone(&barrier);
+        let completion_task_id = record.task_id.clone();
+        let completion_updated_at = running.updated_at.clone();
+        let completion = std::thread::spawn(move || {
+            completion_barrier.wait();
+            completion_store.update_task_status_with_payload_checked(
+                &completion_task_id,
+                TaskStatus::Running,
+                &completion_updated_at,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+                Some(serde_json::json!({"terminal_race_candidate": "completion"})),
+            )
+        });
+        let cancel_store = std::sync::Arc::clone(&store);
+        let cancel_barrier = std::sync::Arc::clone(&barrier);
+        let cancel_task_id = record.task_id.clone();
+        let cancel_updated_at = running.updated_at.clone();
+        let cancel = std::thread::spawn(move || {
+            cancel_barrier.wait();
+            cancel_store.update_task_status_with_payload_checked(
+                &cancel_task_id,
+                TaskStatus::Running,
+                &cancel_updated_at,
+                TaskStatus::Cancelled,
+                LedgerEventKind::TaskCancelled,
+                Some(serde_json::json!({"terminal_race_candidate": "cancel"})),
+            )
+        });
+        barrier.wait();
+
+        let outcomes = vec![
+            completion.join().expect("completion thread"),
+            cancel.join().expect("cancel thread"),
+        ];
+        assert_eq!(
+            outcomes.iter().filter(|outcome| outcome.is_ok()).count(),
+            1,
+            "exactly one terminal mutation should win the run lock"
+        );
+        assert_eq!(
+            outcomes.iter().filter(|outcome| outcome.is_err()).count(),
+            1,
+            "the stale terminal mutation should fail closed"
+        );
+        assert!(outcomes
+            .iter()
+            .filter_map(|outcome| outcome.as_ref().err())
+            .any(|error| error.to_string().contains("task terminal status race")));
+
+        let current = store
+            .get_task(&record.task_id)
+            .expect("task lookup")
+            .expect("task");
+        assert!(matches!(
+            current.status,
+            TaskStatus::Completed | TaskStatus::Cancelled
+        ));
+        let events = store
+            .read_ledger_events(&record.run_id)
+            .expect("ledger after concurrent race");
+        let terminal_events = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.kind,
+                    LedgerEventKind::TaskCompleted | LedgerEventKind::TaskCancelled
+                )
+            })
+            .count();
+        assert_eq!(terminal_events, 1);
+        assert!(!store
+            .terminal_transition_marker_path(&record.run_id)
+            .exists());
+        assert!(!store
+            .run_dir(&record.run_id)
+            .join(RUN_TERMINAL_MUTATION_LOCK)
+            .exists());
+    }
+
+    #[test]
+    fn task_terminal_transition_process_loss_repairs_missing_terminal_ledger_event() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let failed =
+            run_terminal_transition_child(temp.path(), TERMINAL_TRANSITION_FAILPOINT_AFTER_STATE);
+        assert!(
+            !failed.success(),
+            "terminal transition child unexpectedly survived failpoint"
+        );
+
+        let store = TaskStore::new(temp.path());
+        let tasks = store.list_tasks().expect("recover and list tasks");
+        assert_eq!(tasks.len(), 1);
+        let recovered = &tasks[0];
+        assert_eq!(recovered.status, TaskStatus::Completed);
+        let events = store
+            .read_ledger_events(&recovered.run_id)
+            .expect("recovered ledger");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskCompleted)
+                .count(),
+            1
+        );
+        assert!(!store
+            .terminal_transition_marker_path(&recovered.run_id)
+            .exists());
+        assert!(!store
+            .run_dir(&recovered.run_id)
+            .join(RUN_TERMINAL_MUTATION_LOCK)
+            .exists());
+    }
+
+    #[test]
+    #[ignore]
+    fn terminal_transition_process_failpoint_child() {
+        let Some(root) = std::env::var_os(TERMINAL_TRANSITION_CHILD_ROOT_ENV) else {
+            return;
+        };
+        let store = TaskStore::new(Path::new(&root));
+        let record = store
+            .start_task(TaskStartParams {
+                goal: "terminal process loss".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start task");
+        let running = store
+            .update_task_status(
+                &record.task_id,
+                TaskStatus::Running,
+                LedgerEventKind::TaskRunning,
+            )
+            .expect("mark running");
+        store
+            .update_task_status_with_payload_checked(
+                &record.task_id,
+                TaskStatus::Running,
+                &running.updated_at,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+                Some(serde_json::json!({"terminal_process_loss": true})),
+            )
+            .expect("terminal transition");
+        if std::env::var_os(TERMINAL_TRANSITION_FAILPOINT_ENV).is_some() {
+            panic!("terminal transition failpoint did not abort the child process");
+        }
+    }
+
     fn legacy_v1_durable_schema_manifest(migration: &str) -> DurableStoreSchemaManifest {
         DurableStoreSchemaManifest {
             schema_id: DURABLE_STORE_SCHEMA_ID.to_string(),
@@ -6376,6 +6992,17 @@ mod tests {
             command.env(DURABLE_SCHEMA_MIGRATION_FAILPOINT_ENV, failpoint);
         }
         command.status().expect("run migration child")
+    }
+
+    fn run_terminal_transition_child(root: &Path, failpoint: &str) -> std::process::ExitStatus {
+        std::process::Command::new(std::env::current_exe().expect("test exe"))
+            .arg("--ignored")
+            .arg("--nocapture")
+            .arg("terminal_transition_process_failpoint_child")
+            .env(TERMINAL_TRANSITION_CHILD_ROOT_ENV, root)
+            .env(TERMINAL_TRANSITION_FAILPOINT_ENV, failpoint)
+            .status()
+            .expect("run terminal transition child")
     }
 
     fn assert_interrupted_migration_checkpoint(root: &Path, failpoint: &str) {

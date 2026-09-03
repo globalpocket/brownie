@@ -1,18 +1,18 @@
 {
   "schema_version": 1,
-  "assessment_id": "runtime-platform-deadline-durability-hardening-v2",
+  "assessment_id": "runtime-platform-deadline-durability-hardening-v3",
   "phase": "RRP-7.1",
-  "phase_title": "Deadline, Cross-Platform, and Failure Injection Hardening",
+  "phase_title": "Unix MCP Stdio Deadline, Terminal Mutation, and Failure Injection Hardening",
   "runtime_release_debt_id": "platform-deadline-durability-hardening",
   "base_commit": "db3a217cf0b38475ea7fb614bb2541f14325b544",
   "runtime_release_ready": false,
   "scope": [
     "local Runtime durable task-state write ordering",
     "local atomic write file fsync and parent directory sync assumptions",
-    "MCP stdio absolute deadline accounting across response wait and child-exit wait",
-    "task terminal mutation freshness checks before completion/cancel overwrite",
+    "MCP stdio process-local monotonic deadline accounting across response wait and child-exit wait",
+    "task terminal mutation lock, freshness checks, and terminal state/ledger transition recovery",
     "durable write failure injection for disk-full, rename denial, and truncated temporary state",
-    "cross-platform process and directory-sync boundaries recorded without claiming unsupported hosted behavior"
+    "cross-platform process, directory-sync, and Runtime-wide deadline gaps remain recorded as required-before-release rather than claimed closed"
   ],
   "source_checks": [
     {
@@ -26,14 +26,19 @@
       "requirement": "write_file_atomically creates a sibling temporary file with create_new, writes and fsyncs the file, renames it into place, and fails closed if the Unix parent directory sync fails."
     },
     {
-      "id": "runtime-deadline-absolute-budget-reconstruction",
+      "id": "run-ledger-append-fsyncs-file-and-parent-directory",
+      "source_path": "crates/brownie-store/src/lib.rs",
+      "requirement": "RunLedger::append_many fsyncs appended terminal evidence and syncs the run directory before terminal transition markers are removed."
+    },
+    {
+      "id": "mcp-stdio-monotonic-budget-reconstruction",
       "source_path": "crates/brownie-runtime/src/mcp_client.rs",
-      "requirement": "RuntimeDeadline carries an absolute expiration instant and reconstructs remaining timeout budget instead of resetting the budget between stdio response wait and child-exit wait."
+      "requirement": "McpStdioDeadline carries a process-local monotonic expiration instant and reconstructs remaining timeout budget instead of resetting the budget between stdio response wait and child-exit wait."
     },
     {
       "id": "late-child-exit-covered-by-deadline",
       "source_path": "crates/brownie-runtime/src/mcp_client.rs",
-      "requirement": "stdio_request waits for the MCP child to exit only until the remaining RuntimeDeadline and then records process-tree kill evidence on timeout."
+      "requirement": "stdio_request waits for the MCP child to exit only until the remaining McpStdioDeadline and then records process-tree kill evidence on timeout."
     },
     {
       "id": "mcp-stdio-timeout-kills-process-tree",
@@ -46,9 +51,14 @@
       "requirement": "Runtime tests cover MCP stdio timeout cleanup and approval timeout terminalization without approval reuse."
     },
     {
-      "id": "task-terminal-race-checked-before-overwrite",
+      "id": "task-terminal-mutation-serialized-by-run-lock",
       "source_path": "crates/brownie-store/src/lib.rs",
-      "requirement": "Task terminal status updates can require expected current status and updated_at freshness before appending terminal completion or cancellation evidence."
+      "requirement": "Task terminal status updates acquire a per-run terminal-mutation lock, re-read latest state inside the lock, and require expected current status plus updated_at freshness before terminal completion or cancellation evidence."
+    },
+    {
+      "id": "terminal-transition-marker-recovers-state-ledger-gap",
+      "source_path": "crates/brownie-store/src/lib.rs",
+      "requirement": "Terminal status transitions persist terminal-transition.json before state mutation, append a prebuilt terminal ledger event, and recover a state-written/ledger-missing process-loss window on restart."
     },
     {
       "id": "durable-write-failure-injection",
@@ -56,17 +66,27 @@
       "requirement": "Test-only durable write failpoints cover disk_full_before_write, truncated_state_before_rename, and rename_denied_after_sync without replacing committed state or leaking temporary files."
     },
     {
-      "id": "cross-platform-boundaries-recorded",
+      "id": "cross-platform-gaps-remain-required-before-release",
       "source_path": "crates/brownie-runtime/src/mcp_client.rs",
-      "requirement": "Unix process-group cleanup remains the enforced local process-tree implementation and non-Unix directory sync remains an explicit bounded no-op rather than claimed durability parity."
+      "requirement": "Unix process-group cleanup remains the enforced local process-tree implementation; Windows process-tree termination, stale-lock recovery, atomic-replace durability, directory durability, reparse point handling, macOS CI, Windows CI, and Runtime-wide persisted deadlines remain required-before-release gaps."
     }
   ],
   "closure": {
-    "status": "implemented_sufficient",
-    "debt_classification": "closed",
+    "status": "partial",
+    "debt_classification": "required_before_release",
     "runtime_authority_retained_by": "Rust Runtime",
-    "summary": "RRP-7.1 closes the reopened local Runtime platform/deadline/durability blocker by sharing one absolute MCP stdio deadline across response and child-exit waits, killing late-exit process trees with bounded evidence, adding checked terminal-state freshness before completion/cancel overwrites, and proving durable-write fail-closed behavior under deterministic disk-full, rename-denial, and truncated-temp failpoints."
+    "implemented_scope": "Unix/local MCP stdio monotonic deadline accounting, process-tree cleanup evidence, durable write failure injection, and crash-consistent terminal task state/ledger transition recovery.",
+    "summary": "RRP-7.1 no longer claims broad platform/deadline/durability closure. It closes the local Unix MCP stdio deadline and terminal mutation corrective slice by sharing one process-local monotonic MCP stdio deadline across response and child-exit waits, killing late-exit Unix process trees with bounded evidence, serializing terminal task mutations under a per-run lock, persisting terminal-transition markers before terminal state writes, recovering missing terminal ledger evidence after process loss, and proving durable-write fail-closed behavior under deterministic disk-full, rename-denial, and truncated-temp failpoints."
   },
+  "remaining_required_before_release": [
+    "Runtime-wide persisted wall-clock task/run deadline propagation and resume-time expiry checks",
+    "Windows process tree termination",
+    "Windows stale migration and terminal mutation lock recovery",
+    "Windows atomic replace and directory durability semantics",
+    "junction/reparse point and symlink/path canonicalization hardening",
+    "macOS Runtime CI",
+    "Windows Runtime CI"
+  ],
   "non_goals": [
     "hosted scheduler, daemon, worker fleet, and generic shell execution remain out of scope",
     "direct GitHub workflow hardening remains in runtime-release-guard-ci",

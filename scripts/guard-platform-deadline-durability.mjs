@@ -73,8 +73,13 @@ export function validatePlatformDeadlineDurabilityHardening(root = REPO_ROOT) {
   );
   assert(assessment.runtime_release_ready === false, 'assessment must keep runtime_release_ready false', errors);
   assert(
-    assessment.closure?.debt_classification === 'closed',
-    'platform/deadline/durability closure must be explicit',
+    assessment.closure?.status === 'partial',
+    'platform/deadline/durability assessment must remain partial until non-Unix and Runtime-wide deadline gaps close',
+    errors,
+  );
+  assert(
+    assessment.closure?.debt_classification === 'required_before_release',
+    'platform/deadline/durability broad blocker must remain required_before_release',
     errors,
   );
   assert(
@@ -119,7 +124,13 @@ export function validatePlatformDeadlineDurabilityHardening(root = REPO_ROOT) {
     'fn set_durable_write_failpoint',
     'fn durable_write_failpoint_matches',
     'pub fn update_task_status_with_payload_checked',
+    'RUN_TERMINAL_MUTATION_LOCK',
+    'RUN_TERMINAL_TRANSITION_MARKER',
+    'fn acquire_run_terminal_mutation_lock',
+    'fn recover_terminal_transition_marker_for_run_locked',
+    'fn write_terminal_transition_marker',
     'task terminal status race',
+    'terminal transition marker',
   ]) {
     assert(storeText.includes(token), `${STORE_PATH}: missing durable failure/race evidence token ${token}`, errors);
   }
@@ -132,7 +143,7 @@ export function validatePlatformDeadlineDurabilityHardening(root = REPO_ROOT) {
   assert(storeText.includes('#[cfg(not(unix))]\nfn sync_dir'), `${STORE_PATH}: sync_dir must document non-Unix boundary behavior`, errors);
 
   for (const token of [
-    'struct RuntimeDeadline',
+    'struct McpStdioDeadline',
     'fn remaining_or_zero',
     'wait_for_stdio_child_exit_or_timeout(&mut child, deadline)?',
     'rx.recv_timeout(deadline.remaining_or_zero())',
@@ -148,13 +159,16 @@ export function validatePlatformDeadlineDurabilityHardening(root = REPO_ROOT) {
   }
   for (const testName of [
     'mcp_stdio_timeout_cleans_up_process_without_accumulating_children',
-    'runtime_deadline_reconstructs_remaining_budget_from_absolute_deadline',
+    'mcp_stdio_deadline_reconstructs_remaining_monotonic_budget',
     'mcp_stdio_deadline_covers_child_exit_after_response_line',
     'mcp_tool_timeout_after_approval_records_outcome_unknown_and_blocks_reuse',
     'durable_write_failure_injection_disk_full_fails_closed_before_task_state',
     'durable_write_failure_injection_rename_denied_cleans_temporary_file',
     'durable_write_failure_injection_truncated_state_does_not_replace_existing_state',
     'task_terminal_status_race_fails_closed_before_late_completion_overwrites_cancel',
+    'task_terminal_status_stale_same_terminal_replays_without_duplicate_event',
+    'task_terminal_status_race_serialized_by_run_terminal_mutation_lock',
+    'task_terminal_transition_process_loss_repairs_missing_terminal_ledger_event',
   ]) {
     const testSource = testName.startsWith('durable_write_') || testName.startsWith('task_terminal_')
       ? storeText
@@ -166,13 +180,15 @@ export function validatePlatformDeadlineDurabilityHardening(root = REPO_ROOT) {
   for (const id of [
     'task-state-uses-synced-atomic-helper',
     'atomic-helper-fsyncs-file-and-parent-directory',
-    'runtime-deadline-absolute-budget-reconstruction',
+    'run-ledger-append-fsyncs-file-and-parent-directory',
+    'mcp-stdio-monotonic-budget-reconstruction',
     'late-child-exit-covered-by-deadline',
     'mcp-stdio-timeout-kills-process-tree',
     'runtime-timeout-tests-cover-cleanup-and-terminal-state',
-    'task-terminal-race-checked-before-overwrite',
+    'task-terminal-mutation-serialized-by-run-lock',
+    'terminal-transition-marker-recovers-state-ledger-gap',
     'durable-write-failure-injection',
-    'cross-platform-boundaries-recorded',
+    'cross-platform-gaps-remain-required-before-release',
   ]) {
     assert(sourceChecks.some((check) => check.id === id), `${ASSESSMENT_PATH}: missing source check ${id}`, errors);
   }

@@ -34,12 +34,12 @@ const MAX_MCP_SECRET_VALUE_BYTES: usize = 8_192;
 const MAX_MCP_EXECUTABLE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy)]
-struct RuntimeDeadline {
+struct McpStdioDeadline {
     expires_at: Instant,
     total_budget: Duration,
 }
 
-impl RuntimeDeadline {
+impl McpStdioDeadline {
     fn after(total_budget: Duration) -> Self {
         Self {
             expires_at: Instant::now() + total_budget,
@@ -277,7 +277,7 @@ pub fn list_tools_with_secret_resolver(
     secret_resolver: &dyn McpSecretResolver,
 ) -> Result<McpToolCatalog> {
     let executable_identity = materialize_mcp_executable_identity(config)?;
-    let deadline = RuntimeDeadline::after(Duration::from_millis(MCP_STDIO_TIMEOUT_MS));
+    let deadline = McpStdioDeadline::after(Duration::from_millis(MCP_STDIO_TIMEOUT_MS));
     let response = stdio_request(
         config,
         secret_resolver,
@@ -434,7 +434,7 @@ pub fn call_tool_with_secret_resolver(
             }),
         ));
     }
-    let deadline = RuntimeDeadline::after(Duration::from_millis(MCP_STDIO_TIMEOUT_MS));
+    let deadline = McpStdioDeadline::after(Duration::from_millis(MCP_STDIO_TIMEOUT_MS));
     let response = stdio_request(
         config,
         secret_resolver,
@@ -675,7 +675,7 @@ fn stdio_request(
     config: &ModePackMcpServerConfig,
     secret_resolver: &dyn McpSecretResolver,
     expected_executable_identity: Option<&McpExecutableIdentity>,
-    deadline: RuntimeDeadline,
+    deadline: McpStdioDeadline,
     request: Value,
 ) -> Result<Value> {
     if config.transport != "stdio" {
@@ -748,7 +748,7 @@ fn stdio_request(
 
 fn wait_for_stdio_child_exit_or_timeout(
     child: &mut Child,
-    deadline: RuntimeDeadline,
+    deadline: McpStdioDeadline,
 ) -> Result<()> {
     loop {
         if child
@@ -1551,13 +1551,13 @@ mod tests {
     }
 
     #[test]
-    fn runtime_deadline_reconstructs_remaining_budget_from_absolute_deadline() {
-        let deadline = RuntimeDeadline::after(Duration::from_millis(250));
+    fn mcp_stdio_deadline_reconstructs_remaining_monotonic_budget() {
+        let deadline = McpStdioDeadline::after(Duration::from_millis(250));
 
         assert!(deadline.remaining().expect("remaining") <= deadline.total_budget);
         assert!(!deadline.is_expired());
 
-        let expired = RuntimeDeadline {
+        let expired = McpStdioDeadline {
             expires_at: Instant::now() - Duration::from_millis(1),
             total_budget: Duration::from_millis(250),
         };
@@ -1598,7 +1598,7 @@ sleep 5
             &config,
             &EnvMcpSecretResolver,
             None,
-            RuntimeDeadline::after(Duration::from_millis(3_000)),
+            McpStdioDeadline::after(Duration::from_millis(3_000)),
             json!({
                 "jsonrpc": "2.0",
                 "id": 1,

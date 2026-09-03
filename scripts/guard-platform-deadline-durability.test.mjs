@@ -62,14 +62,27 @@ test('dropping process-tree timeout evidence fails closed', () => {
   );
 });
 
-test('dropping absolute runtime deadline evidence fails closed', () => {
+test('dropping MCP stdio monotonic deadline evidence fails closed', () => {
   const temp = copyFixture();
   const mcpPath = path.join(temp, 'crates/brownie-runtime/src/mcp_client.rs');
-  const text = fs.readFileSync(mcpPath, 'utf8').replace('struct RuntimeDeadline', 'struct RemovedDeadline');
+  const text = fs.readFileSync(mcpPath, 'utf8').replace('struct McpStdioDeadline', 'struct RemovedDeadline');
   fs.writeFileSync(mcpPath, text);
   assert.throws(
     () => validatePlatformDeadlineDurabilityHardening(temp),
-    /missing MCP timeout hardening token struct RuntimeDeadline/,
+    /missing MCP timeout hardening token struct McpStdioDeadline/,
+  );
+});
+
+test('claiming broad platform closure fails closed', () => {
+  const temp = copyFixture();
+  const assessmentPath = path.join(temp, 'docs/architecture/runtime-platform-deadline-durability-hardening.json');
+  const assessment = JSON.parse(fs.readFileSync(assessmentPath, 'utf8'));
+  assessment.closure.status = 'implemented_sufficient';
+  assessment.closure.debt_classification = 'closed';
+  fs.writeFileSync(assessmentPath, JSON.stringify(assessment, null, 2) + '\n');
+  assert.throws(
+    () => validatePlatformDeadlineDurabilityHardening(temp),
+    /must remain partial|must remain required_before_release/,
   );
 });
 
@@ -107,6 +120,35 @@ test('dropping checked terminal status update fails closed', () => {
   assert.throws(
     () => validatePlatformDeadlineDurabilityHardening(temp),
     /missing durable failure\/race evidence token pub fn update_task_status_with_payload_checked/,
+  );
+});
+
+test('dropping terminal mutation lock evidence fails closed', () => {
+  const temp = copyFixture();
+  const storePath = path.join(temp, 'crates/brownie-store/src/lib.rs');
+  const text = fs
+    .readFileSync(storePath, 'utf8')
+    .replaceAll('RUN_TERMINAL_MUTATION_LOCK', 'RUN_TERMINAL_LOCK_REMOVED');
+  fs.writeFileSync(storePath, text);
+  assert.throws(
+    () => validatePlatformDeadlineDurabilityHardening(temp),
+    /missing durable failure\/race evidence token RUN_TERMINAL_MUTATION_LOCK/,
+  );
+});
+
+test('dropping terminal transition process-loss test fails closed', () => {
+  const temp = copyFixture();
+  const storePath = path.join(temp, 'crates/brownie-store/src/lib.rs');
+  const text = fs
+    .readFileSync(storePath, 'utf8')
+    .replace(
+      'task_terminal_transition_process_loss_repairs_missing_terminal_ledger_event',
+      'task_terminal_transition_process_loss_removed',
+    );
+  fs.writeFileSync(storePath, text);
+  assert.throws(
+    () => validatePlatformDeadlineDurabilityHardening(temp),
+    /missing timeout\/durability\/race test task_terminal_transition_process_loss_repairs_missing_terminal_ledger_event/,
   );
 });
 
