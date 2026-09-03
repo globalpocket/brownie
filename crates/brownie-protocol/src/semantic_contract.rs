@@ -759,6 +759,143 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             "outcome_fingerprint": format!("sha256:{}", "4".repeat(64))
         }
     });
+    let codebase_index_permission_payload = json!({
+        "mode_id": "orchestrator",
+        "action": "IndexCodebase",
+        "allowed": true,
+        "reason": "mode permits bounded codebase indexing",
+        "request_kind": "query",
+        "query_fingerprint": format!("sha256:{}", "8".repeat(64)),
+        "query_length_chars": 7,
+        "query_token_count": 1,
+        "max_results": 10,
+        "file_kind_filter": "Rust"
+    });
+    let codebase_index_snapshot_payload = json!({
+        "index_id": "idx_1234567890abcdef",
+        "mode_id": "orchestrator",
+        "root": ".",
+        "workspace_fingerprint": format!("sha256:{}", "9".repeat(64)),
+        "snapshot_fingerprint": format!("sha256:{}", "a".repeat(64)),
+        "built_at": "2026-09-04T00:00:00Z",
+        "indexed_files": 1,
+        "walked_directories": 1,
+        "skipped_protected": 0,
+        "skipped_ignored": 0,
+        "skipped_sensitive": 0,
+        "skipped_symlink": 0,
+        "skipped_too_large": 0,
+        "skipped_binary_like": 0,
+        "skipped_unreadable": 0,
+        "skipped_unsafe_path": 0,
+        "skipped_other": 0,
+        "truncated_entries": 0,
+        "visited_entries": 1,
+        "truncated_directories": 0,
+        "ignore_rule_files_loaded": 0,
+        "ignore_rule_count": 0,
+        "sensitive_finding_count": 0,
+        "truncated": false,
+        "max_files": 1000,
+        "max_directories": 100,
+        "max_path_chars": 1024,
+        "max_file_bytes": 32768,
+        "max_visited_entries": 2000,
+        "max_directory_entries": 200,
+        "requested_force_refresh": false,
+        "next_action": "build_bounded_index_query_file_selection"
+    });
+    let codebase_index_query_payload = json!({
+        "mode_id": "orchestrator",
+        "query_id": "query_1234567890abcdef",
+        "selection_id": "selection_1234567890abcdef",
+        "query_fingerprint": format!("sha256:{}", "b".repeat(64)),
+        "selection_fingerprint": format!("sha256:{}", "c".repeat(64)),
+        "index_id": "idx_1234567890abcdef",
+        "workspace_fingerprint": format!("sha256:{}", "d".repeat(64)),
+        "snapshot_fingerprint": format!("sha256:{}", "e".repeat(64)),
+        "snapshot_truncated": false,
+        "matched_entry_count": 2,
+        "returned_entry_count": 1,
+        "skipped_entry_count": 1,
+        "max_results": 10,
+        "file_kind_filter": "Rust",
+        "match_reason_counts": {"file_name": 1},
+        "next_action": "read_selected_files_with_controlled_workspace_read"
+    });
+    let codebase_index_selection_read_payload = json!({
+        "mode_id": "orchestrator",
+        "tool_id": "codebase.index.selection.read",
+        "query_id": "query_1234567890abcdef",
+        "selection_id": "selection_1234567890abcdef",
+        "query_fingerprint": format!("sha256:{}", "f".repeat(64)),
+        "selection_fingerprint": format!("sha256:{}", "0".repeat(64)),
+        "index_id": "idx_1234567890abcdef",
+        "workspace_fingerprint": format!("sha256:{}", "1".repeat(64)),
+        "snapshot_fingerprint": format!("sha256:{}", "2".repeat(64)),
+        "snapshot_truncated": false,
+        "read_path_fingerprint": format!("sha256:{}", "3".repeat(64)),
+        "file_kind": "Rust",
+        "byte_length": 42,
+        "bytes_read": 42,
+        "truncated": false,
+        "content_sha256": format!("sha256:{}", "4".repeat(64)),
+        "content_hash_verified": true,
+        "entry_count": 1,
+        "max_results": 10,
+        "file_kind_filter": "Rust",
+        "next_action": "use_selected_file_context_for_prompt_materialization"
+    });
+    let codebase_index_prompt_context_payload = json!({
+        "mode_id": "orchestrator",
+        "task_id": "task_1",
+        "run_id": "run_1",
+        "prompt_context_id": "ctx_1234567890abcdef",
+        "source_event_id": "event_1234567890abcdef",
+        "source_event_kind": "CodebaseIndexSelectionReadCompleted",
+        "query_id": "query_1234567890abcdef",
+        "selection_id": "selection_1234567890abcdef",
+        "query_fingerprint": format!("sha256:{}", "5".repeat(64)),
+        "selection_fingerprint": format!("sha256:{}", "6".repeat(64)),
+        "index_id": "idx_1234567890abcdef",
+        "workspace_fingerprint": format!("sha256:{}", "7".repeat(64)),
+        "snapshot_fingerprint": format!("sha256:{}", "8".repeat(64)),
+        "read_path_fingerprint": format!("sha256:{}", "9".repeat(64)),
+        "file_kind": "Rust",
+        "bytes_read": 42,
+        "content_char_count": 42,
+        "content_sha256": format!("sha256:{}", "a".repeat(64)),
+        "content_hash_verified": true,
+        "prompt_preview_redacted": true,
+        "next_action": "continue_task_execution_with_materialized_context"
+    });
+    let verification_recovery_context_payload = json!({
+        "verification_recovery_context_read": true,
+        "context_read_id": "ctx_abcdef1234567890",
+        "source_task_id": "task_source",
+        "source_run_id": "run_source",
+        "recovery_task_id": "task_recovery",
+        "recovery_run_id": "run_recovery",
+        "failure_fingerprint": format!("sha256:{}", "b".repeat(64)),
+        "diagnostic_index": 0,
+        "tool_id": "verification.recovery.context.read",
+        "check_id": "check_cargo_test",
+        "diagnostic_kind": "compile_error",
+        "severity": "error",
+        "test_name_hash": null,
+        "read_path_fingerprint": format!("sha256:{}", "c".repeat(64)),
+        "line": 12,
+        "column": null,
+        "excerpt_start_line": 10,
+        "excerpt_end_line": 14,
+        "excerpt_bytes": 120,
+        "excerpt_sha256": format!("sha256:{}", "d".repeat(64)),
+        "excerpt_truncated": false,
+        "prompt_preview_redacted": true,
+        "mode_id": "orchestrator",
+        "required_action": "ReadWorkspace",
+        "next_action": "run_recovery_task_with_context"
+    });
     let event_payload_schema_classifications = ledger_event_kinds
         .iter()
         .map(|kind| {
@@ -921,13 +1058,34 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&tool_execution_failed_payload),
             "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("ToolExecutionFailed", &tool_execution_failed_payload)
         }),
+        payload_schema_fixture(
+            "CodebaseIndexPermissionChecked",
+            &codebase_index_permission_payload,
+        ),
+        payload_schema_fixture(
+            "CodebaseIndexSnapshotBuilt",
+            &codebase_index_snapshot_payload,
+        ),
+        payload_schema_fixture("CodebaseIndexQueryCompleted", &codebase_index_query_payload),
+        payload_schema_fixture(
+            "CodebaseIndexSelectionReadCompleted",
+            &codebase_index_selection_read_payload,
+        ),
+        payload_schema_fixture(
+            "CodebaseIndexPromptContextMaterialized",
+            &codebase_index_prompt_context_payload,
+        ),
+        payload_schema_fixture(
+            "VerificationRecoveryContextReadMaterialized",
+            &verification_recovery_context_payload,
+        ),
     ];
 
     json!({
-        "schema_version": 9,
+        "schema_version": 10,
         "contract_id": "runtime-semantic-protocol-contract-v1",
         "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-        "phase": "RRP-5.10",
+        "phase": "RRP-5.11",
         "owner": "runtime",
         "runtime_release_debt_id": "protocol-event-canonization",
         "runtime_release_ready": false,
@@ -1032,8 +1190,8 @@ pub fn runtime_semantic_protocol_contract() -> Value {
                 "ledger_event_payload_inventory": "closed",
                 "ledger_event_payload_typed_schema_coverage": "partial"
             },
-            "ledger_payload_schema_classification_policy": "Every LedgerEventKind must carry an explicit payload schema classification. versioned_open and typed_known_fields_open are allowed only as required-before-release debt evidence and must not be treated as fully typed ledger payload schemas. TaskCompleted, TaskFailed, TaskCancelled, PermissionChecked, PermissionDenied, ToolPermissionChecked, ToolPlanApproved, ToolPlanDenied, ToolIntentPermissionChecked, ToolIntentApproved, ToolIntentDenied, ToolExecutionRequested, McpToolExecutionApproved, ToolExecutionPermissionChecked, ToolExecutionCompleted, ToolExecutionDenied, and ToolExecutionFailed are strict typed payload families.",
-            "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Versioned-open payload classifications keep protocol-event-canonization partial until every payload-bearing event has a strict typed schema, an explicit payload_absent contract, or a legacy-only compatibility entry. Current v6 terminal task, permission, selected tool, MCP approval, and tool terminal payload schemas preserve v1, v2, v3, v4, and v5 read compatibility while requiring strict field validation for new terminal task, permission, tool planning, tool intent, selected tool execution, MCP approval, and tool terminal appends.",
+            "ledger_payload_schema_classification_policy": "Every LedgerEventKind must carry an explicit payload schema classification. versioned_open and typed_known_fields_open are allowed only as required-before-release debt evidence and must not be treated as fully typed ledger payload schemas. TaskCompleted, TaskFailed, TaskCancelled, PermissionChecked, PermissionDenied, ToolPermissionChecked, ToolPlanApproved, ToolPlanDenied, ToolIntentPermissionChecked, ToolIntentApproved, ToolIntentDenied, ToolExecutionRequested, McpToolExecutionApproved, ToolExecutionPermissionChecked, ToolExecutionCompleted, ToolExecutionDenied, ToolExecutionFailed, CodebaseIndexPermissionChecked, CodebaseIndexSnapshotBuilt, CodebaseIndexQueryCompleted, CodebaseIndexSelectionReadCompleted, CodebaseIndexPromptContextMaterialized, and VerificationRecoveryContextReadMaterialized are strict typed payload families.",
+            "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Versioned-open payload classifications keep protocol-event-canonization partial until every payload-bearing event has a strict typed schema, an explicit payload_absent contract, or a legacy-only compatibility entry. Current v7 terminal task, permission, selected tool, MCP approval, tool terminal, codebase index, and verification recovery context payload schemas preserve v1 through v6 read compatibility while requiring strict field validation for new terminal task, permission, tool planning, tool intent, selected tool execution, MCP approval, tool terminal, codebase index, and verification recovery context appends.",
             "guard": "guard:protocol-event-canonization",
             "event_payload_schema_classification_count": event_payload_schema_classifications.len(),
             "event_payload_schema_classifications": event_payload_schema_classifications,
@@ -1059,6 +1217,19 @@ pub fn runtime_semantic_protocol_contract() -> Value {
                 .collect::<Vec<_>>(),
             "payload_schema_fixtures": payload_schema_fixtures
         }
+    })
+}
+
+fn payload_schema_fixture(kind: &str, payload: &Value) -> Value {
+    json!({
+        "ledger_event_kind": kind,
+        "payload": payload,
+        "payload_schema_classification": ledger_payload_schema_classification(kind),
+        "payload_schema_contract_status": ledger_payload_schema_contract_status(ledger_payload_schema_classification(kind)),
+        "payload_schema_id": ledger_payload_schema_id(kind),
+        "payload_schema_fingerprint": ledger_payload_schema_fingerprint(kind),
+        "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(payload),
+        "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value(kind, payload)
     })
 }
 
@@ -1735,7 +1906,7 @@ fn canonical_value(value: &Value) -> Value {
     }
 }
 
-const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 6;
+const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 7;
 
 fn ledger_payload_schema_id(kind: &str) -> String {
     format!("ledger_payload.{kind}.v{LEDGER_PAYLOAD_SCHEMA_VERSION}")
@@ -1766,7 +1937,13 @@ fn ledger_payload_schema_classification(kind: &str) -> &'static str {
         | "ToolExecutionPermissionChecked"
         | "ToolExecutionCompleted"
         | "ToolExecutionDenied"
-        | "ToolExecutionFailed" => "strict_typed",
+        | "ToolExecutionFailed"
+        | "CodebaseIndexPermissionChecked"
+        | "CodebaseIndexSnapshotBuilt"
+        | "CodebaseIndexQueryCompleted"
+        | "CodebaseIndexSelectionReadCompleted"
+        | "CodebaseIndexPromptContextMaterialized"
+        | "VerificationRecoveryContextReadMaterialized" => "strict_typed",
         _ => "versioned_open",
     }
 }
@@ -1802,6 +1979,18 @@ fn ledger_payload_schema_descriptor(kind: &str) -> String {
         "ToolExecutionCompleted" => tool_execution_terminal_payload_schema_descriptor("Completed"),
         "ToolExecutionDenied" => tool_execution_terminal_payload_schema_descriptor("Denied"),
         "ToolExecutionFailed" => tool_execution_terminal_payload_schema_descriptor("Failed"),
+        "CodebaseIndexPermissionChecked" => codebase_index_permission_payload_schema_descriptor(),
+        "CodebaseIndexSnapshotBuilt" => codebase_index_snapshot_built_payload_schema_descriptor(),
+        "CodebaseIndexQueryCompleted" => codebase_index_query_completed_payload_schema_descriptor(),
+        "CodebaseIndexSelectionReadCompleted" => {
+            codebase_index_selection_read_completed_payload_schema_descriptor()
+        }
+        "CodebaseIndexPromptContextMaterialized" => {
+            codebase_index_prompt_context_materialized_payload_schema_descriptor()
+        }
+        "VerificationRecoveryContextReadMaterialized" => {
+            verification_recovery_context_read_payload_schema_descriptor()
+        }
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
 }
@@ -1844,6 +2033,30 @@ fn tool_execution_terminal_payload_schema_descriptor(status: &str) -> String {
     format!(
         "strict_typed{{payload_optional:false;{required_fields};known_optional_fields:absolute_paths_redacted:boolean,ambient_index_ignored:boolean,authorized_change_set_fingerprint:string,authorized_path_count:u64,bounded_cargo_diagnostics:array,bytes_read:u64,captured_bytes:u64,cargo_dependency_fetch_offline:boolean,catalog_provenance:object,check_id:string,cleanup_succeeded:boolean,commit_id:string,committed_tree_fingerprint:string,compile_time_code_sandboxed:boolean,duration_ms:u64,exit_code:integer_or_null,expected_parent_head:string,failed_git_operation:string,git:object,git_environment_hardened:boolean,git_optional_locks_disabled:boolean,git_process_count:u64,git_processes_bounded:boolean,git_prompts_disabled:boolean,line_count:u64,logical_invocation_fingerprint:string,mcp:object,mcp_approval_binding:object,mcp_safety_policy:object_or_null,message_fingerprint:string,mutation_process_launched:boolean,operation:string,os_network_isolated:boolean,output_oversized:boolean,output_preview:string,output_redacted:boolean,output_truncated:boolean,process_launched:boolean,process_tree_kill_attempted:boolean,process_tree_kill_reason:string,process_tree_kill_succeeded:boolean,process_tree_timeout_supported:boolean,raw_diff_redacted:boolean,raw_file_content_redacted:boolean,raw_message_redacted:boolean,reason:string,reader_thread_joined:boolean,replayed:boolean,repository_hooks_bypassed:boolean,runtime_authorization_required:boolean,source_apply_id:string,standard_error_bytes:u64,standard_error_truncated:boolean,standard_output_bytes:u64,standard_output_truncated:boolean,target_dir_isolated:boolean,temporary_index_cleaned:boolean,test_code_executed:boolean,timed_out:boolean,truncated:boolean,trusted_workspace_required:boolean,used_git_plumbing:boolean,used_temporary_index:boolean,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string,verification_status:string,workspace_write_scope_fingerprint:string;additional_fields:false;tool_execution_terminal_payload:true;terminal_status:{status}}}"
     )
+}
+
+fn codebase_index_permission_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:action:string,allowed:boolean,mode_id:string,reason:string;known_optional_fields:entry_count:u64,file_kind_filter:string,index_id:string,max_results:u64,query_fingerprint:string,query_id:string,query_length_chars:u64,query_token_count:u64,request_kind:string,requested_force_refresh:boolean,requested_root_present:boolean,selection_fingerprint:string,selection_id:string,snapshot_fingerprint:string,workspace_fingerprint:string;additional_fields:false;codebase_index_permission_payload:true;action:IndexCodebase}".to_string()
+}
+
+fn codebase_index_snapshot_built_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:built_at:string,ignore_rule_count:u64,ignore_rule_files_loaded:u64,index_id:string,indexed_files:u64,max_directories:u64,max_directory_entries:u64,max_file_bytes:u64,max_files:u64,max_path_chars:u64,max_visited_entries:u64,mode_id:string,next_action:string,requested_force_refresh:boolean,root:string,sensitive_finding_count:u64,skipped_binary_like:u64,skipped_ignored:u64,skipped_other:u64,skipped_protected:u64,skipped_sensitive:u64,skipped_symlink:u64,skipped_too_large:u64,skipped_unreadable:u64,skipped_unsafe_path:u64,snapshot_fingerprint:string,truncated:boolean,truncated_directories:u64,truncated_entries:u64,visited_entries:u64,walked_directories:u64,workspace_fingerprint:string;additional_fields:false;codebase_index_snapshot_payload:true;next_action:build_bounded_index_query_file_selection}".to_string()
+}
+
+fn codebase_index_query_completed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:file_kind_filter:string,index_id:string,match_reason_counts:object,matched_entry_count:u64,max_results:u64,mode_id:string,next_action:string,query_fingerprint:string,query_id:string,returned_entry_count:u64,selection_fingerprint:string,selection_id:string,skipped_entry_count:u64,snapshot_fingerprint:string,snapshot_truncated:boolean,workspace_fingerprint:string;additional_fields:false;codebase_index_query_payload:true;next_action:read_selected_files_with_controlled_workspace_read}".to_string()
+}
+
+fn codebase_index_selection_read_completed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:byte_length:u64,bytes_read:u64,content_hash_verified:boolean,content_sha256:string,entry_count:u64,file_kind:string,file_kind_filter:string,index_id:string,max_results:u64,mode_id:string,next_action:string,query_fingerprint:string,query_id:string,read_path_fingerprint:string,selection_fingerprint:string,selection_id:string,snapshot_fingerprint:string,snapshot_truncated:boolean,tool_id:string,truncated:boolean,workspace_fingerprint:string;additional_fields:false;codebase_index_selection_read_payload:true;tool_id:codebase.index.selection.read;content_hash_verified:true;next_action:use_selected_file_context_for_prompt_materialization}".to_string()
+}
+
+fn codebase_index_prompt_context_materialized_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:bytes_read:u64,content_char_count:u64,content_hash_verified:boolean,content_sha256:string,file_kind:string,index_id:string,mode_id:string,next_action:string,prompt_context_id:string,prompt_preview_redacted:boolean,query_fingerprint:string,query_id:string,read_path_fingerprint:string,run_id:string,selection_fingerprint:string,selection_id:string,snapshot_fingerprint:string,source_event_id:string,source_event_kind:string,task_id:string,workspace_fingerprint:string;additional_fields:false;codebase_index_prompt_context_payload:true;source_event_kind:CodebaseIndexSelectionReadCompleted;content_hash_verified:true;prompt_preview_redacted:true;next_action:continue_task_execution_with_materialized_context}".to_string()
+}
+
+fn verification_recovery_context_read_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:check_id:string,column:u64_or_null,context_read_id:string,diagnostic_index:u64,diagnostic_kind:string,excerpt_bytes:u64,excerpt_end_line:u64,excerpt_sha256:string,excerpt_start_line:u64,excerpt_truncated:boolean,failure_fingerprint:string,line:u64_or_null,mode_id:string,next_action:string,prompt_preview_redacted:boolean,read_path_fingerprint:string,recovery_run_id:string,recovery_task_id:string,required_action:string,severity:string,source_run_id:string,source_task_id:string,test_name_hash:string_or_null,tool_id:string,verification_recovery_context_read:boolean;additional_fields:false;verification_recovery_context_read_payload:true;required_action:ReadWorkspace;verification_recovery_context_read:true;prompt_preview_redacted:true;next_action:run_recovery_task_with_context}".to_string()
 }
 
 fn ledger_payload_instance_shape_fingerprint_for_value(kind: &str, payload: &Value) -> String {

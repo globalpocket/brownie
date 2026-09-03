@@ -31928,9 +31928,27 @@ modes:
                 &task,
                 LedgerEventKind::CodebaseIndexPromptContextMaterialized,
                 Some(json!({
-                    "selected_index_context_present": true,
-                    "selected_entry_count": 1,
-                    "content_hash_verified": true
+                    "mode_id": "orchestrator",
+                    "task_id": task.task_id,
+                    "run_id": task.run_id,
+                    "prompt_context_id": "ctx_progress_123456",
+                    "source_event_id": "event_selection_123456",
+                    "source_event_kind": "CodebaseIndexSelectionReadCompleted",
+                    "query_id": "query_progress_123456",
+                    "selection_id": "selection_progress_123456",
+                    "query_fingerprint": format!("sha256:{}", "1".repeat(64)),
+                    "selection_fingerprint": format!("sha256:{}", "2".repeat(64)),
+                    "index_id": "idx_progress_123456",
+                    "workspace_fingerprint": format!("sha256:{}", "3".repeat(64)),
+                    "snapshot_fingerprint": format!("sha256:{}", "4".repeat(64)),
+                    "read_path_fingerprint": format!("sha256:{}", "5".repeat(64)),
+                    "file_kind": "Rust",
+                    "bytes_read": 42,
+                    "content_char_count": 42,
+                    "content_sha256": format!("sha256:{}", "6".repeat(64)),
+                    "content_hash_verified": true,
+                    "prompt_preview_redacted": true,
+                    "next_action": "continue_task_execution_with_materialized_context"
                 })),
             )
             .expect("append bounded state change");
@@ -32135,9 +32153,27 @@ modes:
                 &task,
                 LedgerEventKind::CodebaseIndexPromptContextMaterialized,
                 Some(json!({
-                    "selected_index_context_present": true,
-                    "selected_entry_count": 1,
-                    "content_hash_verified": true
+                    "mode_id": "orchestrator",
+                    "task_id": task.task_id,
+                    "run_id": task.run_id,
+                    "prompt_context_id": "ctx_progress_123456",
+                    "source_event_id": "event_selection_123456",
+                    "source_event_kind": "CodebaseIndexSelectionReadCompleted",
+                    "query_id": "query_progress_123456",
+                    "selection_id": "selection_progress_123456",
+                    "query_fingerprint": format!("sha256:{}", "1".repeat(64)),
+                    "selection_fingerprint": format!("sha256:{}", "2".repeat(64)),
+                    "index_id": "idx_progress_123456",
+                    "workspace_fingerprint": format!("sha256:{}", "3".repeat(64)),
+                    "snapshot_fingerprint": format!("sha256:{}", "4".repeat(64)),
+                    "read_path_fingerprint": format!("sha256:{}", "5".repeat(64)),
+                    "file_kind": "Rust",
+                    "bytes_read": 42,
+                    "content_char_count": 42,
+                    "content_sha256": format!("sha256:{}", "6".repeat(64)),
+                    "content_hash_verified": true,
+                    "prompt_preview_redacted": true,
+                    "next_action": "continue_task_execution_with_materialized_context"
                 })),
             )
             .expect("append index context");

@@ -2748,6 +2748,7 @@ impl CodebaseIndexStore {
         kind: LedgerEventKind,
         payload: serde_json::Value,
     ) -> Result<CodebaseIndexLedgerEvent> {
+        validate_ledger_payload_schema(&kind, &payload)?;
         let event = CodebaseIndexLedgerEvent {
             event_id: format!("event_{}", Uuid::new_v4()),
             kind,
@@ -2787,10 +2788,10 @@ impl CodebaseIndexStore {
             if line.trim().is_empty() {
                 continue;
             }
-            events.push(
-                serde_json::from_str(&line)
-                    .with_context(|| format!("failed to parse {}", ledger_path.display()))?,
-            );
+            let event: CodebaseIndexLedgerEvent = serde_json::from_str(&line)
+                .with_context(|| format!("failed to parse {}", ledger_path.display()))?;
+            validate_ledger_payload_schema(&event.kind, &event.payload)?;
+            events.push(event);
         }
         Ok(events)
     }
@@ -6087,7 +6088,7 @@ pub struct LedgerPayloadEnvelope {
     pub instance_shape_fingerprint: String,
 }
 
-pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 6;
+pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 7;
 pub const LEDGER_PAYLOAD_SHAPE_VERSION: u64 = LEDGER_PAYLOAD_SCHEMA_VERSION;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6143,7 +6144,15 @@ pub fn ledger_payload_schema_classification(
         | LedgerEventKind::ToolExecutionPermissionChecked
         | LedgerEventKind::ToolExecutionCompleted
         | LedgerEventKind::ToolExecutionFailed
-        | LedgerEventKind::ToolExecutionDenied => LedgerPayloadSchemaClassification::StrictTyped,
+        | LedgerEventKind::ToolExecutionDenied
+        | LedgerEventKind::CodebaseIndexPermissionChecked
+        | LedgerEventKind::CodebaseIndexSnapshotBuilt
+        | LedgerEventKind::CodebaseIndexQueryCompleted
+        | LedgerEventKind::CodebaseIndexSelectionReadCompleted
+        | LedgerEventKind::CodebaseIndexPromptContextMaterialized
+        | LedgerEventKind::VerificationRecoveryContextReadMaterialized => {
+            LedgerPayloadSchemaClassification::StrictTyped
+        }
         _ => LedgerPayloadSchemaClassification::VersionedOpen,
     }
 }
@@ -6290,6 +6299,24 @@ fn validate_strict_ledger_payload_schema(
         }
         LedgerEventKind::ToolExecutionFailed => {
             validate_tool_execution_terminal_payload_schema(kind, payload, "Failed")
+        }
+        LedgerEventKind::CodebaseIndexPermissionChecked => {
+            validate_codebase_index_permission_payload_schema(kind, payload)
+        }
+        LedgerEventKind::CodebaseIndexSnapshotBuilt => {
+            validate_codebase_index_snapshot_built_payload_schema(kind, payload)
+        }
+        LedgerEventKind::CodebaseIndexQueryCompleted => {
+            validate_codebase_index_query_completed_payload_schema(kind, payload)
+        }
+        LedgerEventKind::CodebaseIndexSelectionReadCompleted => {
+            validate_codebase_index_selection_read_completed_payload_schema(kind, payload)
+        }
+        LedgerEventKind::CodebaseIndexPromptContextMaterialized => {
+            validate_codebase_index_prompt_context_materialized_payload_schema(kind, payload)
+        }
+        LedgerEventKind::VerificationRecoveryContextReadMaterialized => {
+            validate_verification_recovery_context_read_materialized_payload_schema(kind, payload)
         }
         _ => bail!("{kind:?} strict ledger payload schema is not registered"),
     }
@@ -6702,6 +6729,467 @@ fn validate_mcp_tool_execution_approved_payload_schema(
     Ok(())
 }
 
+fn validate_codebase_index_permission_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        CODEBASE_INDEX_PERMISSION_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in ["mode_id", "action", "allowed", "reason"] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    validate_required_payload_string_field(object, "mode_id")?;
+    validate_required_payload_string_field(object, "action")?;
+    validate_required_payload_bool_field(object, "allowed")?;
+    validate_required_payload_string_field(object, "reason")?;
+    validate_optional_payload_bool_field(object, "requested_root_present")?;
+    validate_optional_payload_bool_field(object, "requested_force_refresh")?;
+    validate_optional_payload_string_field(object, "request_kind")?;
+    validate_optional_payload_string_field(object, "query_fingerprint")?;
+    validate_optional_payload_u64_field(object, "query_length_chars")?;
+    validate_optional_payload_u64_field(object, "query_token_count")?;
+    validate_optional_payload_u64_field(object, "max_results")?;
+    validate_optional_payload_string_field(object, "file_kind_filter")?;
+    validate_optional_payload_string_field(object, "query_id")?;
+    validate_optional_payload_string_field(object, "selection_id")?;
+    validate_optional_payload_string_field(object, "selection_fingerprint")?;
+    validate_optional_payload_string_field(object, "index_id")?;
+    validate_optional_payload_string_field(object, "workspace_fingerprint")?;
+    validate_optional_payload_string_field(object, "snapshot_fingerprint")?;
+    validate_optional_payload_u64_field(object, "entry_count")?;
+    if object.get("action").and_then(serde_json::Value::as_str) != Some("IndexCodebase") {
+        bail!("{kind:?} ledger payload action must be IndexCodebase");
+    }
+    if let Some(request_kind) = object
+        .get("request_kind")
+        .and_then(serde_json::Value::as_str)
+    {
+        if !matches!(request_kind, "query" | "selection_read") {
+            bail!("{kind:?} ledger payload request_kind is not supported");
+        }
+    }
+    Ok(())
+}
+
+fn validate_codebase_index_snapshot_built_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        CODEBASE_INDEX_SNAPSHOT_BUILT_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "index_id",
+        "mode_id",
+        "root",
+        "workspace_fingerprint",
+        "snapshot_fingerprint",
+        "built_at",
+        "indexed_files",
+        "walked_directories",
+        "skipped_protected",
+        "skipped_ignored",
+        "skipped_sensitive",
+        "skipped_symlink",
+        "skipped_too_large",
+        "skipped_binary_like",
+        "skipped_unreadable",
+        "skipped_unsafe_path",
+        "skipped_other",
+        "truncated_entries",
+        "visited_entries",
+        "truncated_directories",
+        "ignore_rule_files_loaded",
+        "ignore_rule_count",
+        "sensitive_finding_count",
+        "truncated",
+        "max_files",
+        "max_directories",
+        "max_path_chars",
+        "max_file_bytes",
+        "max_visited_entries",
+        "max_directory_entries",
+        "requested_force_refresh",
+        "next_action",
+    ] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    for field in [
+        "index_id",
+        "mode_id",
+        "root",
+        "workspace_fingerprint",
+        "snapshot_fingerprint",
+        "built_at",
+        "next_action",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    for field in [
+        "indexed_files",
+        "walked_directories",
+        "skipped_protected",
+        "skipped_ignored",
+        "skipped_sensitive",
+        "skipped_symlink",
+        "skipped_too_large",
+        "skipped_binary_like",
+        "skipped_unreadable",
+        "skipped_unsafe_path",
+        "skipped_other",
+        "truncated_entries",
+        "visited_entries",
+        "truncated_directories",
+        "ignore_rule_files_loaded",
+        "ignore_rule_count",
+        "sensitive_finding_count",
+        "max_files",
+        "max_directories",
+        "max_path_chars",
+        "max_file_bytes",
+        "max_visited_entries",
+        "max_directory_entries",
+    ] {
+        validate_required_payload_u64_field(object, field)?;
+    }
+    validate_required_payload_bool_field(object, "truncated")?;
+    validate_required_payload_bool_field(object, "requested_force_refresh")?;
+    if object
+        .get("next_action")
+        .and_then(serde_json::Value::as_str)
+        != Some("build_bounded_index_query_file_selection")
+    {
+        bail!("{kind:?} ledger payload next_action is not supported");
+    }
+    Ok(())
+}
+
+fn validate_codebase_index_query_completed_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        CODEBASE_INDEX_QUERY_COMPLETED_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "mode_id",
+        "query_id",
+        "selection_id",
+        "query_fingerprint",
+        "selection_fingerprint",
+        "index_id",
+        "workspace_fingerprint",
+        "snapshot_fingerprint",
+        "snapshot_truncated",
+        "matched_entry_count",
+        "returned_entry_count",
+        "skipped_entry_count",
+        "max_results",
+        "file_kind_filter",
+        "match_reason_counts",
+        "next_action",
+    ] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    for field in [
+        "mode_id",
+        "query_id",
+        "selection_id",
+        "query_fingerprint",
+        "selection_fingerprint",
+        "index_id",
+        "workspace_fingerprint",
+        "snapshot_fingerprint",
+        "file_kind_filter",
+        "next_action",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    validate_required_payload_bool_field(object, "snapshot_truncated")?;
+    for field in [
+        "matched_entry_count",
+        "returned_entry_count",
+        "skipped_entry_count",
+        "max_results",
+    ] {
+        validate_required_payload_u64_field(object, field)?;
+    }
+    validate_required_payload_object_field(object, "match_reason_counts")?;
+    if object
+        .get("next_action")
+        .and_then(serde_json::Value::as_str)
+        != Some("read_selected_files_with_controlled_workspace_read")
+    {
+        bail!("{kind:?} ledger payload next_action is not supported");
+    }
+    Ok(())
+}
+
+fn validate_codebase_index_selection_read_completed_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        CODEBASE_INDEX_SELECTION_READ_COMPLETED_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "mode_id",
+        "tool_id",
+        "query_id",
+        "selection_id",
+        "query_fingerprint",
+        "selection_fingerprint",
+        "index_id",
+        "workspace_fingerprint",
+        "snapshot_fingerprint",
+        "snapshot_truncated",
+        "read_path_fingerprint",
+        "file_kind",
+        "byte_length",
+        "bytes_read",
+        "truncated",
+        "content_sha256",
+        "content_hash_verified",
+        "entry_count",
+        "max_results",
+        "file_kind_filter",
+        "next_action",
+    ] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    for field in [
+        "mode_id",
+        "tool_id",
+        "query_id",
+        "selection_id",
+        "query_fingerprint",
+        "selection_fingerprint",
+        "index_id",
+        "workspace_fingerprint",
+        "snapshot_fingerprint",
+        "read_path_fingerprint",
+        "file_kind",
+        "content_sha256",
+        "file_kind_filter",
+        "next_action",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    for field in ["byte_length", "bytes_read", "entry_count", "max_results"] {
+        validate_required_payload_u64_field(object, field)?;
+    }
+    validate_required_payload_bool_field(object, "snapshot_truncated")?;
+    validate_required_payload_bool_field(object, "truncated")?;
+    validate_required_payload_bool_field(object, "content_hash_verified")?;
+    if object.get("tool_id").and_then(serde_json::Value::as_str)
+        != Some("codebase.index.selection.read")
+    {
+        bail!("{kind:?} ledger payload tool_id is not supported");
+    }
+    if object.get("content_hash_verified") != Some(&serde_json::Value::Bool(true)) {
+        bail!("{kind:?} ledger payload content_hash_verified must be true");
+    }
+    if object
+        .get("next_action")
+        .and_then(serde_json::Value::as_str)
+        != Some("use_selected_file_context_for_prompt_materialization")
+    {
+        bail!("{kind:?} ledger payload next_action is not supported");
+    }
+    Ok(())
+}
+
+fn validate_codebase_index_prompt_context_materialized_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        CODEBASE_INDEX_PROMPT_CONTEXT_MATERIALIZED_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "mode_id",
+        "task_id",
+        "run_id",
+        "prompt_context_id",
+        "source_event_id",
+        "source_event_kind",
+        "query_id",
+        "selection_id",
+        "query_fingerprint",
+        "selection_fingerprint",
+        "index_id",
+        "workspace_fingerprint",
+        "snapshot_fingerprint",
+        "read_path_fingerprint",
+        "file_kind",
+        "bytes_read",
+        "content_char_count",
+        "content_sha256",
+        "content_hash_verified",
+        "prompt_preview_redacted",
+        "next_action",
+    ] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    for field in [
+        "mode_id",
+        "task_id",
+        "run_id",
+        "prompt_context_id",
+        "source_event_id",
+        "source_event_kind",
+        "query_id",
+        "selection_id",
+        "query_fingerprint",
+        "selection_fingerprint",
+        "index_id",
+        "workspace_fingerprint",
+        "snapshot_fingerprint",
+        "read_path_fingerprint",
+        "file_kind",
+        "content_sha256",
+        "next_action",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    validate_required_payload_u64_field(object, "bytes_read")?;
+    validate_required_payload_u64_field(object, "content_char_count")?;
+    validate_required_payload_bool_field(object, "content_hash_verified")?;
+    validate_required_payload_bool_field(object, "prompt_preview_redacted")?;
+    if object
+        .get("source_event_kind")
+        .and_then(serde_json::Value::as_str)
+        != Some("CodebaseIndexSelectionReadCompleted")
+    {
+        bail!("{kind:?} ledger payload source_event_kind is not supported");
+    }
+    if object.get("content_hash_verified") != Some(&serde_json::Value::Bool(true))
+        || object.get("prompt_preview_redacted") != Some(&serde_json::Value::Bool(true))
+    {
+        bail!("{kind:?} ledger payload materialization booleans must be true");
+    }
+    if object
+        .get("next_action")
+        .and_then(serde_json::Value::as_str)
+        != Some("continue_task_execution_with_materialized_context")
+    {
+        bail!("{kind:?} ledger payload next_action is not supported");
+    }
+    Ok(())
+}
+
+fn validate_verification_recovery_context_read_materialized_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        VERIFICATION_RECOVERY_CONTEXT_READ_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "verification_recovery_context_read",
+        "context_read_id",
+        "source_task_id",
+        "source_run_id",
+        "recovery_task_id",
+        "recovery_run_id",
+        "failure_fingerprint",
+        "diagnostic_index",
+        "tool_id",
+        "check_id",
+        "diagnostic_kind",
+        "severity",
+        "test_name_hash",
+        "read_path_fingerprint",
+        "line",
+        "column",
+        "excerpt_start_line",
+        "excerpt_end_line",
+        "excerpt_bytes",
+        "excerpt_sha256",
+        "excerpt_truncated",
+        "prompt_preview_redacted",
+        "mode_id",
+        "required_action",
+        "next_action",
+    ] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    validate_required_payload_bool_field(object, "verification_recovery_context_read")?;
+    for field in [
+        "context_read_id",
+        "source_task_id",
+        "source_run_id",
+        "recovery_task_id",
+        "recovery_run_id",
+        "failure_fingerprint",
+        "tool_id",
+        "check_id",
+        "diagnostic_kind",
+        "severity",
+        "read_path_fingerprint",
+        "excerpt_sha256",
+        "mode_id",
+        "required_action",
+        "next_action",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    validate_required_payload_string_or_null_field(object, "test_name_hash")?;
+    validate_required_payload_u64_field(object, "diagnostic_index")?;
+    validate_required_payload_u64_or_null_field(object, "line")?;
+    validate_required_payload_u64_or_null_field(object, "column")?;
+    validate_required_payload_u64_field(object, "excerpt_start_line")?;
+    validate_required_payload_u64_field(object, "excerpt_end_line")?;
+    validate_required_payload_u64_field(object, "excerpt_bytes")?;
+    validate_required_payload_bool_field(object, "excerpt_truncated")?;
+    validate_required_payload_bool_field(object, "prompt_preview_redacted")?;
+    if object.get("verification_recovery_context_read") != Some(&serde_json::Value::Bool(true))
+        || object.get("prompt_preview_redacted") != Some(&serde_json::Value::Bool(true))
+    {
+        bail!("{kind:?} ledger payload recovery context booleans must be true");
+    }
+    if object
+        .get("required_action")
+        .and_then(serde_json::Value::as_str)
+        != Some("ReadWorkspace")
+    {
+        bail!("{kind:?} ledger payload required_action must be ReadWorkspace");
+    }
+    if object
+        .get("next_action")
+        .and_then(serde_json::Value::as_str)
+        != Some("run_recovery_task_with_context")
+    {
+        bail!("{kind:?} ledger payload next_action is not supported");
+    }
+    Ok(())
+}
+
 fn validate_known_payload_object<'a>(
     kind: &LedgerEventKind,
     payload: &'a serde_json::Value,
@@ -6861,6 +7349,158 @@ const MCP_TOOL_EXECUTION_APPROVED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "tool_name",
 ];
 
+const CODEBASE_INDEX_PERMISSION_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "action",
+    "allowed",
+    "entry_count",
+    "file_kind_filter",
+    "index_id",
+    "max_results",
+    "mode_id",
+    "query_fingerprint",
+    "query_id",
+    "query_length_chars",
+    "query_token_count",
+    "reason",
+    "request_kind",
+    "requested_force_refresh",
+    "requested_root_present",
+    "selection_fingerprint",
+    "selection_id",
+    "snapshot_fingerprint",
+    "workspace_fingerprint",
+];
+
+const CODEBASE_INDEX_SNAPSHOT_BUILT_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "built_at",
+    "ignore_rule_count",
+    "ignore_rule_files_loaded",
+    "index_id",
+    "indexed_files",
+    "max_directories",
+    "max_directory_entries",
+    "max_file_bytes",
+    "max_files",
+    "max_path_chars",
+    "max_visited_entries",
+    "mode_id",
+    "next_action",
+    "requested_force_refresh",
+    "root",
+    "sensitive_finding_count",
+    "skipped_binary_like",
+    "skipped_ignored",
+    "skipped_other",
+    "skipped_protected",
+    "skipped_sensitive",
+    "skipped_symlink",
+    "skipped_too_large",
+    "skipped_unreadable",
+    "skipped_unsafe_path",
+    "snapshot_fingerprint",
+    "truncated",
+    "truncated_directories",
+    "truncated_entries",
+    "visited_entries",
+    "walked_directories",
+    "workspace_fingerprint",
+];
+
+const CODEBASE_INDEX_QUERY_COMPLETED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "file_kind_filter",
+    "index_id",
+    "match_reason_counts",
+    "matched_entry_count",
+    "max_results",
+    "mode_id",
+    "next_action",
+    "query_fingerprint",
+    "query_id",
+    "returned_entry_count",
+    "selection_fingerprint",
+    "selection_id",
+    "skipped_entry_count",
+    "snapshot_fingerprint",
+    "snapshot_truncated",
+    "workspace_fingerprint",
+];
+
+const CODEBASE_INDEX_SELECTION_READ_COMPLETED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "byte_length",
+    "bytes_read",
+    "content_hash_verified",
+    "content_sha256",
+    "entry_count",
+    "file_kind",
+    "file_kind_filter",
+    "index_id",
+    "max_results",
+    "mode_id",
+    "next_action",
+    "query_fingerprint",
+    "query_id",
+    "read_path_fingerprint",
+    "selection_fingerprint",
+    "selection_id",
+    "snapshot_fingerprint",
+    "snapshot_truncated",
+    "tool_id",
+    "truncated",
+    "workspace_fingerprint",
+];
+
+const CODEBASE_INDEX_PROMPT_CONTEXT_MATERIALIZED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "bytes_read",
+    "content_char_count",
+    "content_hash_verified",
+    "content_sha256",
+    "file_kind",
+    "index_id",
+    "mode_id",
+    "next_action",
+    "prompt_context_id",
+    "prompt_preview_redacted",
+    "query_fingerprint",
+    "query_id",
+    "read_path_fingerprint",
+    "run_id",
+    "selection_fingerprint",
+    "selection_id",
+    "snapshot_fingerprint",
+    "source_event_id",
+    "source_event_kind",
+    "task_id",
+    "workspace_fingerprint",
+];
+
+const VERIFICATION_RECOVERY_CONTEXT_READ_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "check_id",
+    "column",
+    "context_read_id",
+    "diagnostic_index",
+    "diagnostic_kind",
+    "excerpt_bytes",
+    "excerpt_end_line",
+    "excerpt_sha256",
+    "excerpt_start_line",
+    "excerpt_truncated",
+    "failure_fingerprint",
+    "line",
+    "mode_id",
+    "next_action",
+    "prompt_preview_redacted",
+    "read_path_fingerprint",
+    "recovery_run_id",
+    "recovery_task_id",
+    "required_action",
+    "severity",
+    "source_run_id",
+    "source_task_id",
+    "test_name_hash",
+    "tool_id",
+    "verification_recovery_context_read",
+];
+
 const TERMINAL_TASK_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "caller_authorized",
     "cancel_fingerprint",
@@ -6935,6 +7575,19 @@ fn validate_required_payload_string_field(
     Ok(())
 }
 
+fn validate_required_payload_string_or_null_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    let Some(value) = object.get(field) else {
+        bail!("ledger payload field {field} is required");
+    };
+    if !value.is_string() && !value.is_null() {
+        bail!("ledger payload field {field} must be a string or null");
+    }
+    Ok(())
+}
+
 fn validate_required_payload_bool_field(
     object: &serde_json::Map<String, serde_json::Value>,
     field: &str,
@@ -6970,6 +7623,19 @@ fn validate_required_payload_u64_field(
     };
     if value.as_u64().is_none() {
         bail!("ledger payload field {field} must be an unsigned integer");
+    }
+    Ok(())
+}
+
+fn validate_required_payload_u64_or_null_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    let Some(value) = object.get(field) else {
+        bail!("ledger payload field {field} is required");
+    };
+    if !value.is_null() && value.as_u64().is_none() {
+        bail!("ledger payload field {field} must be an unsigned integer or null");
     }
     Ok(())
 }
@@ -7118,8 +7784,7 @@ fn validate_legacy_ledger_payload_envelope(
         return Ok(());
     }
 
-    if envelope.schema_version == 2 || envelope.schema_version == 3 || envelope.schema_version == 4
-    {
+    if (2..LEDGER_PAYLOAD_SCHEMA_VERSION).contains(&envelope.schema_version) {
         let expected_schema_id = format!("ledger_payload.{kind:?}.v{}", envelope.schema_version);
         if envelope.schema_id != expected_schema_id || envelope.shape_id != expected_schema_id {
             bail!("legacy ledger payload envelope schema_id mismatch");
@@ -7187,6 +7852,24 @@ fn ledger_payload_schema_descriptor(kind: &LedgerEventKind) -> String {
         LedgerEventKind::ToolExecutionFailed => {
             tool_execution_terminal_payload_schema_descriptor("Failed")
         }
+        LedgerEventKind::CodebaseIndexPermissionChecked => {
+            codebase_index_permission_payload_schema_descriptor()
+        }
+        LedgerEventKind::CodebaseIndexSnapshotBuilt => {
+            codebase_index_snapshot_built_payload_schema_descriptor()
+        }
+        LedgerEventKind::CodebaseIndexQueryCompleted => {
+            codebase_index_query_completed_payload_schema_descriptor()
+        }
+        LedgerEventKind::CodebaseIndexSelectionReadCompleted => {
+            codebase_index_selection_read_completed_payload_schema_descriptor()
+        }
+        LedgerEventKind::CodebaseIndexPromptContextMaterialized => {
+            codebase_index_prompt_context_materialized_payload_schema_descriptor()
+        }
+        LedgerEventKind::VerificationRecoveryContextReadMaterialized => {
+            verification_recovery_context_read_payload_schema_descriptor()
+        }
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
 }
@@ -7231,6 +7914,30 @@ fn tool_execution_terminal_payload_schema_descriptor(status: &str) -> String {
     )
 }
 
+fn codebase_index_permission_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:action:string,allowed:boolean,mode_id:string,reason:string;known_optional_fields:entry_count:u64,file_kind_filter:string,index_id:string,max_results:u64,query_fingerprint:string,query_id:string,query_length_chars:u64,query_token_count:u64,request_kind:string,requested_force_refresh:boolean,requested_root_present:boolean,selection_fingerprint:string,selection_id:string,snapshot_fingerprint:string,workspace_fingerprint:string;additional_fields:false;codebase_index_permission_payload:true;action:IndexCodebase}".to_string()
+}
+
+fn codebase_index_snapshot_built_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:built_at:string,ignore_rule_count:u64,ignore_rule_files_loaded:u64,index_id:string,indexed_files:u64,max_directories:u64,max_directory_entries:u64,max_file_bytes:u64,max_files:u64,max_path_chars:u64,max_visited_entries:u64,mode_id:string,next_action:string,requested_force_refresh:boolean,root:string,sensitive_finding_count:u64,skipped_binary_like:u64,skipped_ignored:u64,skipped_other:u64,skipped_protected:u64,skipped_sensitive:u64,skipped_symlink:u64,skipped_too_large:u64,skipped_unreadable:u64,skipped_unsafe_path:u64,snapshot_fingerprint:string,truncated:boolean,truncated_directories:u64,truncated_entries:u64,visited_entries:u64,walked_directories:u64,workspace_fingerprint:string;additional_fields:false;codebase_index_snapshot_payload:true;next_action:build_bounded_index_query_file_selection}".to_string()
+}
+
+fn codebase_index_query_completed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:file_kind_filter:string,index_id:string,match_reason_counts:object,matched_entry_count:u64,max_results:u64,mode_id:string,next_action:string,query_fingerprint:string,query_id:string,returned_entry_count:u64,selection_fingerprint:string,selection_id:string,skipped_entry_count:u64,snapshot_fingerprint:string,snapshot_truncated:boolean,workspace_fingerprint:string;additional_fields:false;codebase_index_query_payload:true;next_action:read_selected_files_with_controlled_workspace_read}".to_string()
+}
+
+fn codebase_index_selection_read_completed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:byte_length:u64,bytes_read:u64,content_hash_verified:boolean,content_sha256:string,entry_count:u64,file_kind:string,file_kind_filter:string,index_id:string,max_results:u64,mode_id:string,next_action:string,query_fingerprint:string,query_id:string,read_path_fingerprint:string,selection_fingerprint:string,selection_id:string,snapshot_fingerprint:string,snapshot_truncated:boolean,tool_id:string,truncated:boolean,workspace_fingerprint:string;additional_fields:false;codebase_index_selection_read_payload:true;tool_id:codebase.index.selection.read;content_hash_verified:true;next_action:use_selected_file_context_for_prompt_materialization}".to_string()
+}
+
+fn codebase_index_prompt_context_materialized_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:bytes_read:u64,content_char_count:u64,content_hash_verified:boolean,content_sha256:string,file_kind:string,index_id:string,mode_id:string,next_action:string,prompt_context_id:string,prompt_preview_redacted:boolean,query_fingerprint:string,query_id:string,read_path_fingerprint:string,run_id:string,selection_fingerprint:string,selection_id:string,snapshot_fingerprint:string,source_event_id:string,source_event_kind:string,task_id:string,workspace_fingerprint:string;additional_fields:false;codebase_index_prompt_context_payload:true;source_event_kind:CodebaseIndexSelectionReadCompleted;content_hash_verified:true;prompt_preview_redacted:true;next_action:continue_task_execution_with_materialized_context}".to_string()
+}
+
+fn verification_recovery_context_read_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:check_id:string,column:u64_or_null,context_read_id:string,diagnostic_index:u64,diagnostic_kind:string,excerpt_bytes:u64,excerpt_end_line:u64,excerpt_sha256:string,excerpt_start_line:u64,excerpt_truncated:boolean,failure_fingerprint:string,line:u64_or_null,mode_id:string,next_action:string,prompt_preview_redacted:boolean,read_path_fingerprint:string,recovery_run_id:string,recovery_task_id:string,required_action:string,severity:string,source_run_id:string,source_task_id:string,test_name_hash:string_or_null,tool_id:string,verification_recovery_context_read:boolean;additional_fields:false;verification_recovery_context_read_payload:true;required_action:ReadWorkspace;verification_recovery_context_read:true;prompt_preview_redacted:true;next_action:run_recovery_task_with_context}".to_string()
+}
+
 fn ledger_payload_legacy_schema_descriptor(kind: &LedgerEventKind, schema_version: u64) -> String {
     match kind {
         LedgerEventKind::TaskCompleted
@@ -7245,6 +7952,43 @@ fn ledger_payload_legacy_schema_descriptor(kind: &LedgerEventKind, schema_versio
                 _ => unreachable!(),
             };
             terminal_task_payload_schema_descriptor(status)
+        }
+        LedgerEventKind::PermissionChecked | LedgerEventKind::PermissionDenied
+            if schema_version >= 4 =>
+        {
+            permission_payload_schema_descriptor()
+        }
+        LedgerEventKind::ToolPermissionChecked
+        | LedgerEventKind::ToolPlanApproved
+        | LedgerEventKind::ToolPlanDenied
+            if schema_version >= 5 =>
+        {
+            tool_plan_payload_schema_descriptor()
+        }
+        LedgerEventKind::ToolIntentPermissionChecked
+        | LedgerEventKind::ToolIntentApproved
+        | LedgerEventKind::ToolIntentDenied
+            if schema_version >= 5 =>
+        {
+            tool_intent_payload_schema_descriptor()
+        }
+        LedgerEventKind::ToolExecutionRequested if schema_version >= 5 => {
+            tool_execution_requested_payload_schema_descriptor()
+        }
+        LedgerEventKind::ToolExecutionPermissionChecked if schema_version >= 5 => {
+            tool_execution_permission_payload_schema_descriptor()
+        }
+        LedgerEventKind::ToolExecutionDenied if schema_version >= 5 => {
+            tool_execution_terminal_payload_schema_descriptor("Denied")
+        }
+        LedgerEventKind::McpToolExecutionApproved if schema_version >= 6 => {
+            mcp_tool_execution_approved_payload_schema_descriptor()
+        }
+        LedgerEventKind::ToolExecutionCompleted if schema_version >= 6 => {
+            tool_execution_terminal_payload_schema_descriptor("Completed")
+        }
+        LedgerEventKind::ToolExecutionFailed if schema_version >= 6 => {
+            tool_execution_terminal_payload_schema_descriptor("Failed")
         }
         LedgerEventKind::TaskCompleted => "typed_known_fields_open{known_optional_fields:completion_evidence:object,git:object,late_tool_response:boolean,mcp:object,runtime_deadline:object,status:string,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:legacy_open;known_field_required:true;additional_fields:true;strict_typed_payload_required_before_release:true}".to_string(),
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
@@ -8693,6 +9437,131 @@ mod tests {
     }
 
     #[test]
+    fn ledger_payload_write_rejects_malformed_codebase_and_verification_payloads() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "codebase payload validation".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start task");
+
+        store
+            .codebase_index()
+            .append_event(
+                LedgerEventKind::CodebaseIndexPermissionChecked,
+                serde_json::json!({
+                    "mode_id": "orchestrator",
+                    "action": "IndexCodebase",
+                    "allowed": true,
+                    "reason": "allowed by policy",
+                    "request_kind": "query",
+                    "query_fingerprint": format!("sha256:{}", "1".repeat(64)),
+                    "query_length_chars": 8,
+                    "query_token_count": 1,
+                    "max_results": 10,
+                    "file_kind_filter": "Rust"
+                }),
+            )
+            .expect("strict CodebaseIndexPermissionChecked payload should pass");
+
+        let malformed_permission = store.codebase_index().append_event(
+            LedgerEventKind::CodebaseIndexPermissionChecked,
+            serde_json::json!({
+                "mode_id": "orchestrator",
+                "action": "ReadWorkspace",
+                "allowed": true,
+                "reason": "wrong action"
+            }),
+        );
+        assert!(format!(
+            "{:#}",
+            malformed_permission.expect_err("wrong codebase action should fail")
+        )
+        .contains("action must be IndexCodebase"));
+
+        let snapshot_manifest = test_index_manifest("idx_1234567890abcdef", "d");
+        let mut snapshot_payload = test_codebase_index_snapshot_payload(&snapshot_manifest, false);
+        snapshot_payload
+            .as_object_mut()
+            .expect("snapshot object")
+            .insert(
+                "unexpected_raw_path".to_string(),
+                serde_json::json!("src/lib.rs"),
+            );
+        let malformed_snapshot = store.codebase_index().append_event(
+            LedgerEventKind::CodebaseIndexSnapshotBuilt,
+            snapshot_payload,
+        );
+        assert!(format!(
+            "{:#}",
+            malformed_snapshot.expect_err("unknown codebase snapshot field should fail")
+        )
+        .contains("not allowed by strict tool schema"));
+
+        let recovery_payload = serde_json::json!({
+            "verification_recovery_context_read": true,
+            "context_read_id": "ctx_abcdef1234567890",
+            "source_task_id": "task_source",
+            "source_run_id": "run_source",
+            "recovery_task_id": record.task_id,
+            "recovery_run_id": record.run_id,
+            "failure_fingerprint": format!("sha256:{}", "2".repeat(64)),
+            "diagnostic_index": 0,
+            "tool_id": "verification.recovery.context.read",
+            "check_id": "check_cargo_test",
+            "diagnostic_kind": "compile_error",
+            "severity": "error",
+            "test_name_hash": null,
+            "read_path_fingerprint": format!("sha256:{}", "3".repeat(64)),
+            "line": 12,
+            "column": null,
+            "excerpt_start_line": 10,
+            "excerpt_end_line": 14,
+            "excerpt_bytes": 120,
+            "excerpt_sha256": format!("sha256:{}", "4".repeat(64)),
+            "excerpt_truncated": false,
+            "prompt_preview_redacted": true,
+            "mode_id": "orchestrator",
+            "required_action": "ReadWorkspace",
+            "next_action": "run_recovery_task_with_context"
+        });
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &record,
+                LedgerEventKind::VerificationRecoveryContextReadMaterialized,
+                Some(recovery_payload.clone()),
+            )
+            .expect("strict VerificationRecoveryContextReadMaterialized payload should pass");
+
+        let mut malformed_recovery = recovery_payload;
+        malformed_recovery
+            .as_object_mut()
+            .expect("recovery object")
+            .insert(
+                "required_action".to_string(),
+                serde_json::json!("WriteWorkspace"),
+            );
+        let recovery_error = store
+            .tasks()
+            .append_task_event_with_payload(
+                &record,
+                LedgerEventKind::VerificationRecoveryContextReadMaterialized,
+                Some(malformed_recovery),
+            )
+            .expect_err("wrong recovery required_action should fail");
+        assert!(format!("{recovery_error:#}").contains("required_action must be ReadWorkspace"));
+    }
+
+    #[test]
     fn ledger_read_rejects_mismatched_payload_envelope() {
         let temp = tempfile::tempdir().expect("tempdir");
         let run_dir = temp.path().join("runs").join("run_1");
@@ -9391,13 +10260,7 @@ mod tests {
             .codebase_index()
             .append_event(
                 LedgerEventKind::CodebaseIndexSnapshotBuilt,
-                serde_json::json!({
-                    "index_id": "idx_abc",
-                    "snapshot_fingerprint": manifest.snapshot.snapshot_fingerprint,
-                    "indexed_files": 1,
-                    "truncated": false,
-                    "next_action": "build_bounded_index_query_file_selection"
-                }),
+                test_codebase_index_snapshot_payload(&manifest, false),
             )
             .expect("append event");
         assert_eq!(event.kind, LedgerEventKind::CodebaseIndexSnapshotBuilt);
@@ -9424,7 +10287,7 @@ mod tests {
         let locked = store.codebase_index().commit_current_snapshot(
             &next,
             LedgerEventKind::CodebaseIndexSnapshotBuilt,
-            serde_json::json!({"index_id": "idx_next"}),
+            test_codebase_index_snapshot_payload(&next, false),
         );
         assert!(locked.is_err());
         assert_eq!(
@@ -9442,7 +10305,7 @@ mod tests {
         let ledger_failed = store.codebase_index().commit_current_snapshot(
             &next,
             LedgerEventKind::CodebaseIndexSnapshotBuilt,
-            serde_json::json!({"index_id": "idx_next"}),
+            test_codebase_index_snapshot_payload(&next, false),
         );
         assert!(ledger_failed.is_err());
         assert_eq!(
@@ -9488,7 +10351,7 @@ mod tests {
             .commit_current_snapshot(
                 &next,
                 LedgerEventKind::CodebaseIndexSnapshotBuilt,
-                serde_json::json!({"index_id": "idx_next"}),
+                test_codebase_index_snapshot_payload(&next, false),
             )
             .expect("reclaimed commit");
 
@@ -9552,6 +10415,46 @@ mod tests {
                 content_sha256: Some(format!("sha256:{}", fingerprint_seed.repeat(64))),
             }],
         }
+    }
+
+    fn test_codebase_index_snapshot_payload(
+        manifest: &CodebaseIndexSnapshotManifest,
+        requested_force_refresh: bool,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "index_id": manifest.snapshot.index_id,
+            "mode_id": "orchestrator",
+            "root": manifest.snapshot.root,
+            "workspace_fingerprint": manifest.snapshot.workspace_fingerprint,
+            "snapshot_fingerprint": manifest.snapshot.snapshot_fingerprint,
+            "built_at": manifest.snapshot.built_at,
+            "indexed_files": manifest.snapshot.counts.indexed_files,
+            "walked_directories": manifest.snapshot.counts.walked_directories,
+            "skipped_protected": manifest.snapshot.counts.skipped_protected,
+            "skipped_ignored": manifest.snapshot.counts.skipped_ignored,
+            "skipped_sensitive": manifest.snapshot.counts.skipped_sensitive,
+            "skipped_symlink": manifest.snapshot.counts.skipped_symlink,
+            "skipped_too_large": manifest.snapshot.counts.skipped_too_large,
+            "skipped_binary_like": manifest.snapshot.counts.skipped_binary_like,
+            "skipped_unreadable": manifest.snapshot.counts.skipped_unreadable,
+            "skipped_unsafe_path": manifest.snapshot.counts.skipped_unsafe_path,
+            "skipped_other": manifest.snapshot.counts.skipped_other,
+            "truncated_entries": manifest.snapshot.counts.truncated_entries,
+            "visited_entries": manifest.snapshot.counts.visited_entries,
+            "truncated_directories": manifest.snapshot.counts.truncated_directories,
+            "ignore_rule_files_loaded": manifest.snapshot.counts.ignore_rule_files_loaded,
+            "ignore_rule_count": manifest.snapshot.counts.ignore_rule_count,
+            "sensitive_finding_count": manifest.snapshot.counts.sensitive_finding_count,
+            "truncated": manifest.snapshot.truncated,
+            "max_files": manifest.snapshot.limits.max_files,
+            "max_directories": manifest.snapshot.limits.max_directories,
+            "max_path_chars": manifest.snapshot.limits.max_path_chars,
+            "max_file_bytes": manifest.snapshot.limits.max_file_bytes,
+            "max_visited_entries": manifest.snapshot.limits.max_visited_entries,
+            "max_directory_entries": manifest.snapshot.limits.max_directory_entries,
+            "requested_force_refresh": requested_force_refresh,
+            "next_action": "build_bounded_index_query_file_selection",
+        })
     }
 
     #[test]
