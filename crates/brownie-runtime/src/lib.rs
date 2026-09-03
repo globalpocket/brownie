@@ -29853,7 +29853,15 @@ modes:
                 &task,
                 LedgerEventKind::ToolIntentPermissionChecked,
                 Some(json!({
-                    "tool_id": "verification.cargo_check"
+                    "tool_id": "verification.cargo_check",
+                    "required_action": "RunVerificationTool",
+                    "allowed": true,
+                    "reason": "verification tool allowed for verifier mode",
+                    "request_reason": "Run required verification.",
+                    "input_summary": {
+                        "field_count": 0,
+                        "has_path": false
+                    }
                 })),
             )
             .expect("append verifier intent");
@@ -30541,7 +30549,15 @@ modes:
                 &task,
                 LedgerEventKind::ToolIntentPermissionChecked,
                 Some(json!({
-                    "tool_id": "verification.cargo_check"
+                    "tool_id": "verification.cargo_check",
+                    "required_action": "RunVerificationTool",
+                    "allowed": true,
+                    "reason": "verification tool allowed for verifier mode",
+                    "request_reason": "Run required verification.",
+                    "input_summary": {
+                        "field_count": 0,
+                        "has_path": false
+                    }
                 })),
             )
             .expect("append verifier intent");
