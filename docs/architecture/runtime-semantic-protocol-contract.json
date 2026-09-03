@@ -1,0 +1,385 @@
+{
+  "campaign": "runtime-release-readiness-p0-p1-finite-closure",
+  "contract_id": "runtime-semantic-protocol-contract-v1",
+  "durable_event_migration_coupling": {
+    "guard": "guard:protocol-event-canonization",
+    "layout_marker_path": ".brownie/store-layout.json",
+    "ledger_event_kind_source": "crates/brownie-store/src/lib.rs",
+    "policy": "Durable event kind or shape changes require an explicit brownie-store schema migration or compatibility entry before Runtime release.",
+    "schema_manifest_path": ".brownie/store-schema.json",
+    "store_schema_version": 2
+  },
+  "enum_contracts": [
+    {
+      "type": "TaskStatus",
+      "unknown_variant_policy": "reject",
+      "values": [
+        "Created",
+        "Queued",
+        "Running",
+        "Completed",
+        "Failed",
+        "Cancelled"
+      ]
+    },
+    {
+      "type": "ToolExecuteStatus",
+      "unknown_variant_policy": "reject",
+      "values": [
+        "Completed",
+        "Denied",
+        "Failed"
+      ]
+    }
+  ],
+  "generated_by": {
+    "binary": "brownie-protocol-semantic-contract",
+    "command": "cargo run -p brownie-protocol --bin brownie-protocol-semantic-contract -- --write docs/architecture/runtime-semantic-protocol-contract.json",
+    "crate": "brownie-protocol",
+    "module": "brownie_protocol::semantic_contract"
+  },
+  "golden_fixtures": {
+    "ledger_event_summary": {
+      "event_id": "evt_1",
+      "kind": "TaskCancelled",
+      "payload": null,
+      "run_id": "run_1",
+      "task_id": "task_1",
+      "timestamp": "2026-09-03T00:00:00Z"
+    },
+    "run_events_params": {
+      "run_id": "run_1"
+    },
+    "task_cancel_params": {
+      "authorize_cancel": true,
+      "cancel_id": "cancel_1",
+      "expected_status": "Running",
+      "expected_task_updated_at": "2026-09-03T00:00:00Z",
+      "run_id": "run_1",
+      "task_id": "task_1"
+    },
+    "task_cancel_result": {
+      "cancel_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "cancel_id": "cancel_1",
+      "ledger_event_kind": "TaskCancelled",
+      "next_action": "inspect_cancelled_task",
+      "replayed": false,
+      "run_id": "run_1",
+      "status": "Cancelled",
+      "task_id": "task_1"
+    },
+    "task_run_explicit_null_params": {
+      "completion_acceptance": null,
+      "context_budget": null,
+      "selected_index_context": null,
+      "task_id": "task_1",
+      "verification_recovery_context_read": null
+    },
+    "task_run_minimal_params": {
+      "task_id": "task_1"
+    },
+    "task_start_result": {
+      "run_id": "run_1",
+      "status": "Created",
+      "task_id": "task_1"
+    },
+    "task_start_vsix_client_input": {
+      "goal": "ship bounded release evidence",
+      "modeId": "orchestrator"
+    },
+    "task_start_wire_params": {
+      "goal": "ship bounded release evidence",
+      "mode_id": "orchestrator"
+    },
+    "task_status_values": [
+      "Created",
+      "Queued",
+      "Running",
+      "Completed",
+      "Failed",
+      "Cancelled"
+    ]
+  },
+  "jsonrpc_error_contract": {
+    "error_fields": [
+      "code",
+      "message"
+    ],
+    "error_response": "error_only",
+    "invalid_params_code": -32602,
+    "success_response": "result_only",
+    "unknown_method_code": -32601
+  },
+  "method_contracts": [
+    {
+      "enum_fields": [],
+      "method": "task.start",
+      "nullable_fields": [],
+      "optional_fields": [
+        "mode_id",
+        "verification_recovery_source",
+        "patch_apply_recovery_source",
+        "verification_recovery_retry_source",
+        "llm_provider_failure_retry_source",
+        "product_continuation_source"
+      ],
+      "param_type": "TaskStartParams",
+      "required_fields": [
+        "goal"
+      ],
+      "result_required_fields": [
+        "task_id",
+        "run_id",
+        "status"
+      ],
+      "result_type": "TaskStartResult",
+      "unknown_field_policy": "rust_deny_unknown_fields_and_vsix_hasOnlyFields",
+      "vsix_client_input_type": "TaskStartParams",
+      "vsix_client_wire_transform": {
+        "llmProviderFailureRetrySource": "llm_provider_failure_retry_source",
+        "modeId": "mode_id",
+        "patchApplyRecoverySource": "patch_apply_recovery_source",
+        "productContinuationSource": "product_continuation_source",
+        "verificationRecoveryRetrySource": "verification_recovery_retry_source",
+        "verificationRecoverySource": "verification_recovery_source"
+      }
+    },
+    {
+      "enum_fields": [
+        "expected_status"
+      ],
+      "method": "task.cancel",
+      "nullable_fields": [],
+      "optional_fields": [],
+      "param_type": "TaskCancelParams",
+      "required_fields": [
+        "task_id",
+        "run_id",
+        "expected_status",
+        "expected_task_updated_at",
+        "cancel_id",
+        "authorize_cancel"
+      ],
+      "result_required_fields": [
+        "task_id",
+        "run_id",
+        "status",
+        "replayed",
+        "cancel_id",
+        "cancel_fingerprint",
+        "ledger_event_kind",
+        "next_action"
+      ],
+      "result_type": "TaskCancelResult",
+      "unknown_field_policy": "rust_deny_unknown_fields_and_vsix_hasOnlyFields",
+      "vsix_client_input_type": "TaskCancelParams",
+      "vsix_client_wire_transform": "identity"
+    },
+    {
+      "enum_fields": [],
+      "method": "task.run",
+      "nullable_fields": [
+        "selected_index_context",
+        "verification_recovery_context_read",
+        "context_budget",
+        "completion_acceptance"
+      ],
+      "optional_fields": [
+        "selected_index_context",
+        "verification_recovery_context_read",
+        "context_budget",
+        "completion_acceptance"
+      ],
+      "param_type": "TaskRunParams",
+      "required_fields": [
+        "task_id"
+      ],
+      "result_required_fields": [
+        "task_id",
+        "run_id",
+        "status"
+      ],
+      "result_type": "TaskRunResult",
+      "unknown_field_policy": "rust_deny_unknown_fields_and_vsix_hasOnlyFields",
+      "vsix_client_input_type": "TaskRunParams",
+      "vsix_client_wire_transform": "taskId_to_task_id_and_optional_selected_index_context"
+    },
+    {
+      "enum_fields": [],
+      "method": "headless.run.drive",
+      "nullable_fields": [],
+      "optional_fields": [
+        "expected_start_session_sequence",
+        "max_advances",
+        "max_steps_per_advance"
+      ],
+      "param_type": "HeadlessRunDriveParams",
+      "required_fields": [
+        "authorize",
+        "session_id",
+        "drive_id"
+      ],
+      "result_required_fields": [
+        "status",
+        "session_id",
+        "drive_id"
+      ],
+      "result_type": "HeadlessRunDriveResult",
+      "unknown_field_policy": "rust_deny_unknown_fields_and_vsix_hasOnlyFields",
+      "vsix_client_input_type": "HeadlessRunDriveParams",
+      "vsix_client_wire_transform": "identity"
+    },
+    {
+      "enum_fields": [],
+      "method": "tool.execute",
+      "nullable_fields": [],
+      "optional_fields": [],
+      "param_type": "ToolExecuteParams",
+      "required_fields": [
+        "mode_id",
+        "tool_id",
+        "task_id",
+        "input"
+      ],
+      "result_required_fields": [
+        "status"
+      ],
+      "result_type": "ToolExecuteResult",
+      "unknown_field_policy": "rust_deny_unknown_fields",
+      "vsix_client_input_type": "ToolExecuteParams",
+      "vsix_client_wire_transform": "identity"
+    },
+    {
+      "enum_fields": [],
+      "method": "mcp.tool.approve",
+      "nullable_fields": [],
+      "optional_fields": [],
+      "param_type": "McpToolApprovalApproveParams",
+      "required_fields": [
+        "mode_id",
+        "task_id",
+        "tool_id",
+        "input",
+        "approve",
+        "approval_id"
+      ],
+      "result_required_fields": [
+        "approval_id",
+        "status"
+      ],
+      "result_type": "McpToolApprovalApproveResult",
+      "unknown_field_policy": "rust_deny_unknown_fields",
+      "vsix_client_input_type": "McpToolApprovalApproveParams",
+      "vsix_client_wire_transform": "identity"
+    },
+    {
+      "enum_fields": [],
+      "method": "run.events",
+      "nullable_fields": [],
+      "optional_fields": [],
+      "param_type": "RunEventsParams",
+      "required_fields": [
+        "run_id"
+      ],
+      "result_required_fields": [
+        "run_id",
+        "events"
+      ],
+      "result_type": "RunEventsResult",
+      "unknown_field_policy": "rust_deny_unknown_fields",
+      "vsix_client_input_type": "RunEventsParams",
+      "vsix_client_wire_transform": "runId_to_run_id"
+    },
+    {
+      "enum_fields": [],
+      "method": "proposal.apply",
+      "nullable_fields": [
+        "expected_target_sha256",
+        "expected_target_absent",
+        "replacement_content"
+      ],
+      "optional_fields": [
+        "expected_target_sha256",
+        "expected_target_absent",
+        "replacement_content",
+        "patch_old_text",
+        "patch_new_text",
+        "patch_hunks",
+        "transaction_items",
+        "transaction_recovery_source"
+      ],
+      "param_type": "ProposalApplyParams",
+      "required_fields": [
+        "run_id",
+        "proposal_id",
+        "authorize"
+      ],
+      "result_required_fields": [
+        "run_id",
+        "proposal_id",
+        "status"
+      ],
+      "result_type": "ProposalApplyResult",
+      "unknown_field_policy": "rust_deny_unknown_fields",
+      "vsix_client_input_type": "ProposalApplyParams",
+      "vsix_client_wire_transform": "method_specific_identity_or_transaction_projection"
+    }
+  ],
+  "owner": "runtime",
+  "phase": "RRP-5.1",
+  "runtime_release_debt_id": "protocol-event-canonization",
+  "runtime_release_ready": false,
+  "schema_version": 1,
+  "sources": [
+    {
+      "path": "crates/brownie-protocol/src/lib.rs",
+      "role": "Runtime JSON-RPC wire types and Rust serde semantics"
+    },
+    {
+      "path": "crates/brownie-protocol/src/semantic_contract.rs",
+      "role": "Runtime-owned semantic protocol contract generator"
+    },
+    {
+      "path": "extensions/brownie-vsix/src/runtime/protocol.ts",
+      "role": "VSIX client-side validator semantics"
+    },
+    {
+      "path": "extensions/brownie-vsix/src/runtime/runtimeClient.ts",
+      "role": "VSIX JSON-RPC request projection semantics"
+    },
+    {
+      "path": "extensions/brownie-vsix/src/test/semanticProtocolContract.test.ts",
+      "role": "VSIX golden fixture and unknown-field contract tests"
+    },
+    {
+      "path": "crates/brownie-store/src/lib.rs",
+      "role": "Durable ledger and schema migration coupling"
+    }
+  ],
+  "unknown_field_policy": {
+    "rust_params_deny_unknown_fields": [
+      "TaskStartParams",
+      "TaskCancelParams",
+      "TaskRunParams",
+      "HeadlessRunDriveParams",
+      "ToolExecuteParams",
+      "McpToolApprovalApproveParams",
+      "RunEventsParams",
+      "ProposalApplyParams"
+    ],
+    "tests": [
+      "semantic_contract_artifact_matches_rust_generator",
+      "public_runtime_params_reject_unknown_fields",
+      "semantic_contract_fixtures_match_rust_serialization_semantics",
+      "validates Rust semantic contract fixtures at the VSIX boundary",
+      "rejects unknown fields from semantic contract fixtures"
+    ],
+    "vsix_validators_use_hasOnlyFields": [
+      "isTaskStartParams",
+      "isTaskCancelParams",
+      "isTaskRunParams",
+      "isHeadlessRunDriveParams",
+      "isTaskCancelResult"
+    ]
+  }
+}

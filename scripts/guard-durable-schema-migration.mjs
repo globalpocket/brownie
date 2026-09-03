@@ -78,8 +78,18 @@ export function validateDurableSchemaMigration({ storeText, audit, packageText, 
   }
 
   const blockedBy = new Set(Array.isArray(audit.release_ready_blocked_by) ? audit.release_ready_blocked_by : []);
-  for (const id of ['runtime-release-guard-ci', 'protocol-event-canonization']) {
-    requireValue(blockedBy.has(id), errors, `release_ready_blocked_by must include reopened blocker ${id}.`);
+  requireValue(blockedBy.has('runtime-release-guard-ci'), errors, 'release_ready_blocked_by must include reopened blocker runtime-release-guard-ci.');
+  const protocolCanonization = byId.get('protocol-event-canonization');
+  const protocolCanonizationClosed =
+    protocolCanonization?.status === 'implemented_sufficient' &&
+    protocolCanonization?.debt_classification === 'closed';
+  if (protocolCanonizationClosed) {
+    const protocolEvidence = evidenceText(protocolCanonization);
+    for (const token of ['RRP-5.1', 'runtime-semantic-protocol-contract.json', 'unknown-field', 'durable event migration coupling']) {
+      requireValue(protocolEvidence.includes(token), errors, `closed protocol-event-canonization evidence must mention ${token}.`);
+    }
+  } else {
+    requireValue(blockedBy.has('protocol-event-canonization'), errors, 'release_ready_blocked_by must include reopened blocker protocol-event-canonization until RRP-5.1 closes it.');
   }
   const platformDeadline = byId.get('platform-deadline-durability-hardening');
   const platformDeadlineClosed =

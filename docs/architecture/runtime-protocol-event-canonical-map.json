@@ -18,6 +18,11 @@
       "role": "Rust protocol request, response, and bounded summary types"
     },
     {
+      "path": "crates/brownie-protocol/src/semantic_contract.rs",
+      "owner": "runtime",
+      "role": "Rust-generated semantic protocol contract source for RRP-5.1"
+    },
+    {
       "path": "crates/brownie-store/src/lib.rs",
       "owner": "runtime",
       "role": "Durable ledger event kinds and store-backed event persistence"
@@ -46,6 +51,21 @@
       "path": "docs/specifications/runtime-protocol-spec-v0.md",
       "owner": "runtime_docs",
       "role": "Human-readable canonical protocol/event inventory"
+    },
+    {
+      "path": "crates/brownie-protocol/src/bin/brownie-protocol-semantic-contract.rs",
+      "owner": "runtime",
+      "role": "Rust binary that writes/checks the semantic protocol contract artifact"
+    },
+    {
+      "path": "extensions/brownie-vsix/src/test/semanticProtocolContract.test.ts",
+      "owner": "vsix_thin_projection",
+      "role": "VSIX golden fixture and unknown-field contract tests"
+    },
+    {
+      "path": "docs/architecture/runtime-semantic-protocol-contract.json",
+      "owner": "runtime_docs",
+      "role": "Machine-readable Rust-generated semantic protocol contract artifact"
     }
   ],
   "protocol_method_groups": [
@@ -131,6 +151,22 @@
             "export function isTaskRunResult",
             "export function isTaskInspectResult",
             "export function isTaskListResult"
+          ]
+        },
+        {
+          "path": "crates/brownie-protocol/src/semantic_contract.rs",
+          "tokens": [
+            "runtime-semantic-protocol-contract-v1",
+            "task.start",
+            "task.cancel",
+            "task.run"
+          ]
+        },
+        {
+          "path": "extensions/brownie-vsix/src/test/semanticProtocolContract.test.ts",
+          "tokens": [
+            "validates Rust semantic contract fixtures at the VSIX boundary",
+            "rejects unknown fields from semantic contract fixtures"
           ]
         }
       ]
