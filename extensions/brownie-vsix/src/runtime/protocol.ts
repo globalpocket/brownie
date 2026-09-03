@@ -609,8 +609,14 @@ export interface TaskRunContextBudget {
   max_selected_index_chars: number;
 }
 
+export interface RuntimeDeadline {
+  deadline_id: string;
+  expires_at: string;
+}
+
 export interface TaskRunParams {
   task_id: string;
+  runtime_deadline?: RuntimeDeadline | null;
   selected_index_context?: TaskRunSelectedIndexContext | null;
   verification_recovery_context_read?: TaskRunVerificationRecoveryContextRead | null;
   context_budget?: TaskRunContextBudget | null;
@@ -2037,6 +2043,7 @@ export interface TaskRecord {
   product_continuation_provenance?: ProductContinuationProvenance | null;
   product_objective_continuation_provenance?: ProductObjectiveContinuationProvenance | null;
   product_loop_stop_recovery_provenance?: ProductLoopStopRecoveryProvenance | null;
+  runtime_deadline?: RuntimeDeadline | null;
   created_at: string;
   updated_at: string;
 }
@@ -6232,13 +6239,25 @@ export function isTaskCancelResult(value: unknown): value is TaskCancelResult {
 export function isTaskRunParams(value: unknown): value is TaskRunParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['task_id', 'selected_index_context', 'verification_recovery_context_read', 'context_budget', 'completion_acceptance']) &&
+    hasOnlyFields(value, ['task_id', 'runtime_deadline', 'selected_index_context', 'verification_recovery_context_read', 'context_budget', 'completion_acceptance']) &&
     typeof value.task_id === 'string' &&
     value.task_id.trim().length > 0 &&
+    (value.runtime_deadline === undefined || value.runtime_deadline === null || isRuntimeDeadline(value.runtime_deadline)) &&
     (value.selected_index_context === undefined || value.selected_index_context === null || isCodebaseIndexSelectionReadResult(value.selected_index_context)) &&
     (value.verification_recovery_context_read === undefined || value.verification_recovery_context_read === null || isTaskRunVerificationRecoveryContextRead(value.verification_recovery_context_read)) &&
     (value.context_budget === undefined || value.context_budget === null || isTaskRunContextBudget(value.context_budget)) &&
     (value.completion_acceptance === undefined || value.completion_acceptance === null || isTaskRunCompletionAcceptanceRequest(value.completion_acceptance))
+  );
+}
+
+export function isRuntimeDeadline(value: unknown): value is RuntimeDeadline {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['deadline_id', 'expires_at']) &&
+    typeof value.deadline_id === 'string' &&
+    value.deadline_id.trim().length > 0 &&
+    typeof value.expires_at === 'string' &&
+    value.expires_at.trim().length > 0
   );
 }
 
@@ -9131,6 +9150,7 @@ export function isTaskRecord(value: unknown): value is TaskRecord {
     (value.llm_provider_failure_retry_provenance === undefined || value.llm_provider_failure_retry_provenance === null || isLlmProviderFailureRetryProvenance(value.llm_provider_failure_retry_provenance)) &&
     (value.product_continuation_provenance === undefined || value.product_continuation_provenance === null || isProductContinuationProvenance(value.product_continuation_provenance)) &&
     (value.product_loop_stop_recovery_provenance === undefined || value.product_loop_stop_recovery_provenance === null || isProductLoopStopRecoveryProvenance(value.product_loop_stop_recovery_provenance)) &&
+    (value.runtime_deadline === undefined || value.runtime_deadline === null || isRuntimeDeadline(value.runtime_deadline)) &&
     typeof value.created_at === 'string' &&
     typeof value.updated_at === 'string'
   );

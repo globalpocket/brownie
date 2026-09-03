@@ -2456,10 +2456,10 @@
       "required_fields": [
         "task_id"
       ],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:8a26aa5ba343442c",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:95ca67dc3d1b5653",
       "result_schema": {
         "deny_unknown_fields": false,
-        "field_shape_fingerprint": "shape-fnv1a64:3b046c0bfdabf97c",
+        "field_shape_fingerprint": "shape-fnv1a64:c403e977c6508e17",
         "fields": [
           {
             "name": "task_id",
@@ -2622,6 +2622,14 @@
             "semantic_type": "object_or_enum_ref"
           },
           {
+            "name": "runtime_deadline",
+            "nullable": true,
+            "repeated": false,
+            "required": false,
+            "rust_type": "Option<RuntimeDeadline>",
+            "semantic_type": "object_or_enum_ref"
+          },
+          {
             "name": "created_at",
             "nullable": false,
             "repeated": false,
@@ -2654,7 +2662,8 @@
           "product_continuation_provenance",
           "product_objective_continuation_provenance",
           "product_loop_stop_recovery_provenance",
-          "headless_run_recovery_identity"
+          "headless_run_recovery_identity",
+          "runtime_deadline"
         ],
         "optional_fields": [
           "mode_id",
@@ -2672,7 +2681,8 @@
           "product_continuation_provenance",
           "product_objective_continuation_provenance",
           "product_loop_stop_recovery_provenance",
-          "headless_run_recovery_identity"
+          "headless_run_recovery_identity",
+          "runtime_deadline"
         ],
         "required_fields": [
           "task_id",
@@ -2687,7 +2697,7 @@
       "result_schema_ref": "#/type_schemas/TaskRecord",
       "result_semantics": "TaskRecord",
       "result_type": "TaskRecord",
-      "schema_fingerprint": "shape-fnv1a64:84246836b4baa66a",
+      "schema_fingerprint": "shape-fnv1a64:54ff6adda58a9b0d",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -2876,16 +2886,17 @@
       "group_id": "task-lifecycle",
       "method": "task.run",
       "optional_fields": [
+        "runtime_deadline",
         "selected_index_context",
         "verification_recovery_context_read",
         "context_budget",
         "completion_acceptance"
       ],
       "param_type": "TaskRunParams",
-      "request_recursive_schema_fingerprint": "shape-fnv1a64:cd96facee9e2cd9e",
+      "request_recursive_schema_fingerprint": "shape-fnv1a64:8f44ca7ef662fc8d",
       "request_schema": {
         "deny_unknown_fields": true,
-        "field_shape_fingerprint": "shape-fnv1a64:111275b0466ee244",
+        "field_shape_fingerprint": "shape-fnv1a64:1ae93e06b7ab1d67",
         "fields": [
           {
             "name": "task_id",
@@ -2894,6 +2905,14 @@
             "required": true,
             "rust_type": "String",
             "semantic_type": "string"
+          },
+          {
+            "name": "runtime_deadline",
+            "nullable": true,
+            "repeated": false,
+            "required": false,
+            "rust_type": "Option<RuntimeDeadline>",
+            "semantic_type": "object_or_enum_ref"
           },
           {
             "name": "selected_index_context",
@@ -2929,12 +2948,14 @@
           }
         ],
         "nullable_fields": [
+          "runtime_deadline",
           "selected_index_context",
           "verification_recovery_context_read",
           "context_budget",
           "completion_acceptance"
         ],
         "optional_fields": [
+          "runtime_deadline",
           "selected_index_context",
           "verification_recovery_context_read",
           "context_budget",
@@ -3133,7 +3154,7 @@
       "result_schema_ref": "#/type_schemas/TaskRunResult",
       "result_semantics": "TaskRunResult",
       "result_type": "TaskRunResult",
-      "schema_fingerprint": "shape-fnv1a64:8aaafdb12d09ad3a",
+      "schema_fingerprint": "shape-fnv1a64:7d2287af7037ac06",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "cli_task_id_projection_or_identity"
     },
@@ -3173,7 +3194,7 @@
       "required_fields": [
         "task_id"
       ],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:b23dcc182b7dc781",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:11e11688aa94d376",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:f8daecb217ef1613",
@@ -3228,7 +3249,7 @@
       "result_schema_ref": "#/type_schemas/TaskInspectResult",
       "result_semantics": "TaskInspectResult",
       "result_type": "TaskInspectResult",
-      "schema_fingerprint": "shape-fnv1a64:694548f9aaa2d12f",
+      "schema_fingerprint": "shape-fnv1a64:37277cc48556df4d",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -3270,7 +3291,7 @@
       "request_schema_ref": "#/type_schemas/TaskListParams",
       "request_semantics": "List bounded task progress overview",
       "required_fields": [],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:605ac89b013fa3f1",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:2ee880bcd44f0310",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:25faeef432d4903f",
@@ -3303,7 +3324,7 @@
       "result_schema_ref": "#/type_schemas/TaskListResult",
       "result_semantics": "TaskListResult",
       "result_type": "TaskListResult",
-      "schema_fingerprint": "shape-fnv1a64:72848e9dd15f5dee",
+      "schema_fingerprint": "shape-fnv1a64:2b7411e2d137a75c",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity_with_optional_bounds"
     },
@@ -30941,6 +30962,22 @@
           ],
           "type": "string"
         },
+        "RuntimeDeadline": {
+          "additionalProperties": false,
+          "properties": {
+            "deadline_id": {
+              "type": "string"
+            },
+            "expires_at": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "deadline_id",
+            "expires_at"
+          ],
+          "type": "object"
+        },
         "TaskRecord": {
           "properties": {
             "created_at": {
@@ -31045,6 +31082,16 @@
             },
             "run_id": {
               "type": "string"
+            },
+            "runtime_deadline": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RuntimeDeadline"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "source_candidate_id": {
               "type": [
@@ -32049,6 +32096,22 @@
           ],
           "type": "string"
         },
+        "RuntimeDeadline": {
+          "additionalProperties": false,
+          "properties": {
+            "deadline_id": {
+              "type": "string"
+            },
+            "expires_at": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "deadline_id",
+            "expires_at"
+          ],
+          "type": "object"
+        },
         "TaskListHeadlessRouteCandidate": {
           "properties": {
             "aggregate_sequence": {
@@ -32549,6 +32612,16 @@
             },
             "run_id": {
               "type": "string"
+            },
+            "runtime_deadline": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RuntimeDeadline"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "source_candidate_id": {
               "type": [
@@ -33417,6 +33490,22 @@
           ],
           "type": "string"
         },
+        "RuntimeDeadline": {
+          "additionalProperties": false,
+          "properties": {
+            "deadline_id": {
+              "type": "string"
+            },
+            "expires_at": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "deadline_id",
+            "expires_at"
+          ],
+          "type": "object"
+        },
         "TaskStatus": {
           "enum": [
             "Created",
@@ -33729,6 +33818,16 @@
         "run_id": {
           "type": "string"
         },
+        "runtime_deadline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeDeadline"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "source_candidate_id": {
           "type": [
             "string",
@@ -33830,6 +33929,22 @@
             "snapshot_fingerprint",
             "truncated",
             "workspace_fingerprint"
+          ],
+          "type": "object"
+        },
+        "RuntimeDeadline": {
+          "additionalProperties": false,
+          "properties": {
+            "deadline_id": {
+              "type": "string"
+            },
+            "expires_at": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "deadline_id",
+            "expires_at"
           ],
           "type": "object"
         },
@@ -34007,6 +34122,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/TaskRunContextBudget"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "runtime_deadline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeDeadline"
             },
             {
               "type": "null"
@@ -37082,8 +37207,9 @@
       },
       {
         "deny_unknown_fields": true,
-        "field_count": 5,
+        "field_count": 6,
         "optional_fields": [
+          "runtime_deadline",
           "selected_index_context",
           "verification_recovery_context_read",
           "context_budget",

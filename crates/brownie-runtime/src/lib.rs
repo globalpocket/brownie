@@ -185,22 +185,22 @@ use brownie_protocol::{
     ProposalReviewVerdictResult, RecoveryCycleBudgetOutcome, RecoveryCycleChildProvenance,
     RunEventsParams, RunEventsResult, RunInspectConsumedParentJoinRecoverySummary,
     RunInspectParams, RunInspectParentJoinReadinessSummary, RunInspectResult, RunInspectSummary,
-    RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult,
-    RuntimeState, RuntimeStatus, TaskCancelParams, TaskCancelResult, TaskGetParams,
-    TaskInspectParams, TaskInspectResult, TaskListBounds, TaskListHeadlessRouteCandidate,
-    TaskListParams, TaskListProgressBlockedSet, TaskListProgressNextActionSet,
-    TaskListProgressOverview, TaskListProgressStageCount, TaskListResult, TaskProgressGraphEdge,
-    TaskProgressGraphNode, TaskRecord, TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome,
-    TaskRunCompletionAcceptance, TaskRunCompletionAcceptanceRequest, TaskRunCompletionEvidence,
-    TaskRunContextBudget, TaskRunContextBudgetSummary, TaskRunParams,
-    TaskRunParentJoinReadinessOutcome, TaskRunPatchApplyRecoveryRepairOutcome, TaskRunResult,
-    TaskRunSelectedIndexContext, TaskRunSelectedIndexPromptContextSummary,
-    TaskRunVerificationCompletionGate, TaskRunVerificationRecoveryContextRead,
-    TaskRunVerificationRecoveryContextReadSummary, TaskRunVerificationRecoveryRepairOutcome,
-    TaskRunVerificationRecoveryRetryOutcome, TaskStartParams, TaskStartResult, TaskStatus,
-    TaskStatusCounts, TechnicalDebtCarryForward, TechnicalDebtCarryForwardItem,
-    TechnicalDebtTransition, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus,
-    ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
+    RuntimeActionName, RuntimeConfigGetResult, RuntimeDeadline, RuntimeDiagnostic,
+    RuntimeDiagnosticsResult, RuntimeState, RuntimeStatus, TaskCancelParams, TaskCancelResult,
+    TaskGetParams, TaskInspectParams, TaskInspectResult, TaskListBounds,
+    TaskListHeadlessRouteCandidate, TaskListParams, TaskListProgressBlockedSet,
+    TaskListProgressNextActionSet, TaskListProgressOverview, TaskListProgressStageCount,
+    TaskListResult, TaskProgressGraphEdge, TaskProgressGraphNode, TaskRecord,
+    TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome, TaskRunCompletionAcceptance,
+    TaskRunCompletionAcceptanceRequest, TaskRunCompletionEvidence, TaskRunContextBudget,
+    TaskRunContextBudgetSummary, TaskRunParams, TaskRunParentJoinReadinessOutcome,
+    TaskRunPatchApplyRecoveryRepairOutcome, TaskRunResult, TaskRunSelectedIndexContext,
+    TaskRunSelectedIndexPromptContextSummary, TaskRunVerificationCompletionGate,
+    TaskRunVerificationRecoveryContextRead, TaskRunVerificationRecoveryContextReadSummary,
+    TaskRunVerificationRecoveryRepairOutcome, TaskRunVerificationRecoveryRetryOutcome,
+    TaskStartParams, TaskStartResult, TaskStatus, TaskStatusCounts, TechnicalDebtCarryForward,
+    TechnicalDebtCarryForwardItem, TechnicalDebtTransition, ToolExecuteParams, ToolExecuteResult,
+    ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
     ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
     ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
     ToolPlanResult, ToolSummary, VerificationRecoveryAdmission, VerificationRecoveryApplyTarget,
@@ -1566,6 +1566,20 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         Ok(None) => return error_response(id, -32602, "invalid params: task not found"),
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
+    let runtime_deadline =
+        match task_run_runtime_deadline(&record, params.runtime_deadline.as_ref()) {
+            Ok(deadline) => deadline,
+            Err(message) => return error_response(id, -32602, &message),
+        };
+    if let Some(deadline) = runtime_deadline.as_ref() {
+        match runtime_deadline_is_expired(deadline) {
+            Ok(true) if !runtime_task_status_is_terminal(&record.status) => {
+                return fail_task_run_due_to_runtime_deadline(id, &store, &record, deadline);
+            }
+            Ok(_) => {}
+            Err(message) => return error_response(id, -32602, &message),
+        }
+    }
     if params.completion_acceptance.is_some() {
         return match handle_task_run_completion_acceptance(&store, &params) {
             Ok(result) => result_response(id, json!(result)),
@@ -2078,10 +2092,11 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
         },
         None if resume_interrupted_mcp_second_pass => record.clone(),
-        None => match store.tasks().update_task_status(
+        None => match store.tasks().update_task_status_with_runtime_deadline(
             &record.task_id,
             TaskStatus::Running,
             LedgerEventKind::TaskRunning,
+            runtime_deadline.clone(),
         ) {
             Ok(record) => record,
             Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
@@ -2334,6 +2349,28 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 -32603,
                 "internal error: simulated crash after MCP tool execution before second-pass prompt",
             );
+        }
+    }
+    #[cfg(test)]
+    if std::env::var_os("BROWNIE_TEST_ABORT_AFTER_MCP_TOOL_EXECUTION_BEFORE_TERMINAL_RECORD")
+        .is_some()
+    {
+        let mcp_completed = store
+            .tasks()
+            .read_ledger_events(&running.run_id)
+            .map(|events| {
+                events.iter().any(|event| {
+                    event.kind == LedgerEventKind::ToolExecutionCompleted
+                        && event
+                            .payload
+                            .as_ref()
+                            .and_then(|payload| payload.get("mcp"))
+                            .is_some()
+                })
+            })
+            .unwrap_or(false);
+        if mcp_completed {
+            std::process::abort();
         }
     }
     let verification_recovery_repair = if is_verification_recovery_task {
@@ -10756,6 +10793,128 @@ fn task_run_completion_evidence(
     }
 }
 
+fn task_run_runtime_deadline(
+    record: &TaskRecord,
+    requested: Option<&RuntimeDeadline>,
+) -> Result<Option<RuntimeDeadline>, String> {
+    if let Some(deadline) = record.runtime_deadline.as_ref() {
+        validate_runtime_deadline(deadline)?;
+    }
+    if let Some(deadline) = requested {
+        validate_runtime_deadline(deadline)?;
+    }
+    match (record.runtime_deadline.as_ref(), requested) {
+        (Some(existing), Some(requested)) if existing != requested => {
+            Err("invalid params: runtime deadline mismatch for resumed task/run".to_string())
+        }
+        (Some(existing), _) => Ok(Some(existing.clone())),
+        (None, Some(requested)) => Ok(Some(requested.clone())),
+        (None, None) => Ok(None),
+    }
+}
+
+fn validate_runtime_deadline(deadline: &RuntimeDeadline) -> Result<(), String> {
+    if deadline.deadline_id.trim().is_empty() {
+        return Err("invalid params: runtime_deadline.deadline_id must not be empty".to_string());
+    }
+    parse_runtime_deadline_expires_at(deadline).map(|_| ())
+}
+
+fn parse_runtime_deadline_expires_at(
+    deadline: &RuntimeDeadline,
+) -> Result<time::OffsetDateTime, String> {
+    time::OffsetDateTime::parse(
+        &deadline.expires_at,
+        &time::format_description::well_known::Rfc3339,
+    )
+    .map_err(|_| "invalid params: runtime_deadline.expires_at must be RFC3339".to_string())
+}
+
+fn runtime_deadline_is_expired(deadline: &RuntimeDeadline) -> Result<bool, String> {
+    Ok(parse_runtime_deadline_expires_at(deadline)? <= time::OffsetDateTime::now_utc())
+}
+
+fn runtime_task_status_is_terminal(status: &TaskStatus) -> bool {
+    matches!(
+        status,
+        TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
+    )
+}
+
+fn fail_task_run_due_to_runtime_deadline(
+    id: Value,
+    store: &BrownieStore,
+    record: &TaskRecord,
+    deadline: &RuntimeDeadline,
+) -> JsonRpcResponse<Value> {
+    let summary = format!(
+        "Runtime task/run deadline expired before resume; deadline_id={}.",
+        deadline.deadline_id
+    );
+    let completion_result_fingerprint =
+        completion_result_fingerprint(AgentLoopState::Failed, &summary, "");
+    let completion_evidence = task_run_completion_evidence(
+        AgentLoopState::Failed,
+        TaskStatus::Failed,
+        completion_result_fingerprint,
+        &summary,
+        "",
+        false,
+    );
+    let mut terminal_payload = task_run_terminal_payload(Some(&completion_evidence), None, None)
+        .unwrap_or_else(|| {
+            json!({
+                "final_state": "Failed",
+                "task_status": "Failed"
+            })
+        });
+    if let Some(object) = terminal_payload.as_object_mut() {
+        object.insert(
+            "runtime_deadline".to_string(),
+            json!({
+                "deadline_id": deadline.deadline_id,
+                "expires_at": deadline.expires_at,
+                "expired_before_resume": true
+            }),
+        );
+    }
+    match store.tasks().update_task_status_with_payload_checked(
+        &record.task_id,
+        record.status.clone(),
+        &record.updated_at,
+        TaskStatus::Failed,
+        LedgerEventKind::TaskFailed,
+        Some(terminal_payload),
+    ) {
+        Ok(record) => result_response(
+            id,
+            json!(TaskRunResult {
+                task_id: record.task_id,
+                run_id: record.run_id,
+                status: record.status,
+                agent_loop: TaskRunAgentLoopSummary {
+                    final_state: "Failed".to_string(),
+                    completion_summary: summary,
+                },
+                completion_evidence: Some(completion_evidence),
+                completion_acceptance: None,
+                llm_provider_failure: None,
+                selected_index_prompt_context: None,
+                verification_recovery_context_read: None,
+                context_budget: None,
+                verification_completion_gate: None,
+                verification_recovery_repair: None,
+                patch_apply_recovery_repair: None,
+                verification_recovery_retry: None,
+                recovery_cycle_budget_outcome: None,
+                child_orchestration_outcome: None,
+                parent_join_readiness_outcome: None,
+            }),
+        ),
+        Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
+    }
+}
+
 fn system_time_unix_ms(time: std::time::SystemTime) -> Option<i64> {
     time.duration_since(std::time::UNIX_EPOCH)
         .ok()
@@ -14312,6 +14471,137 @@ mod tests {
         assert_eq!(payload["cancel_fingerprint"], first["cancel_fingerprint"]);
         assert_eq!(payload["caller_authorized"], true);
         assert_eq!(payload["terminal_evidence"], true);
+    }
+
+    #[test]
+    fn task_run_resume_fails_closed_when_persisted_runtime_deadline_expired() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let store = BrownieStore::new(temp.path());
+        let task = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "expired runtime deadline".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("task");
+        let deadline = RuntimeDeadline {
+            deadline_id: "deadline_expired_resume".to_string(),
+            expires_at: "2000-01-01T00:00:00Z".to_string(),
+        };
+        let running = store
+            .tasks()
+            .update_task_status_with_runtime_deadline(
+                &task.task_id,
+                TaskStatus::Running,
+                LedgerEventKind::TaskRunning,
+                Some(deadline.clone()),
+            )
+            .expect("persist runtime deadline");
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            running.task_id
+        ))
+        .result
+        .expect("deadline failure result");
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+
+        assert_eq!(run["status"], "Failed");
+        assert_eq!(
+            run["agent_loop"]["completion_summary"],
+            "Runtime task/run deadline expired before resume; deadline_id=deadline_expired_resume."
+        );
+        let current = store
+            .tasks()
+            .get_task(&task.task_id)
+            .expect("task lookup")
+            .expect("task");
+        assert_eq!(current.status, TaskStatus::Failed);
+        assert_eq!(current.runtime_deadline, Some(deadline));
+        let events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("events");
+        let failed = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::TaskFailed)
+            .expect("deadline terminal event");
+        assert_eq!(
+            failed
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("runtime_deadline"))
+                .and_then(|value| value.get("expired_before_resume")),
+            Some(&json!(true))
+        );
+    }
+
+    #[test]
+    fn task_run_rejects_runtime_deadline_mismatch_before_resume_mutation() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let store = BrownieStore::new(temp.path());
+        let task = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "deadline mismatch".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("task");
+        store
+            .tasks()
+            .update_task_status_with_runtime_deadline(
+                &task.task_id,
+                TaskStatus::Running,
+                LedgerEventKind::TaskRunning,
+                Some(RuntimeDeadline {
+                    deadline_id: "deadline_original".to_string(),
+                    expires_at: "2099-01-01T00:00:00Z".to_string(),
+                }),
+            )
+            .expect("persist runtime deadline");
+
+        let rejected = parse_line(&format!(
+            r#"{{
+                "jsonrpc":"2.0",
+                "id":2,
+                "method":"task.run",
+                "params":{{
+                    "task_id":"{}",
+                    "runtime_deadline":{{
+                        "deadline_id":"deadline_changed",
+                        "expires_at":"2099-01-01T00:00:00Z"
+                    }}
+                }}
+            }}"#,
+            task.task_id
+        ));
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+
+        assert!(rejected
+            .error
+            .expect("mismatch rejected")
+            .message
+            .contains("runtime deadline mismatch"));
+        let current = store
+            .tasks()
+            .get_task(&task.task_id)
+            .expect("task lookup")
+            .expect("task");
+        assert_eq!(current.status, TaskStatus::Running);
     }
 
     #[test]
@@ -60627,6 +60917,8 @@ mod phase_2_3_tests {
                 "BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK",
                 "BROWNIE_TEST_LLM_API_KEY",
                 "BROWNIE_TEST_CRASH_AFTER_MCP_TOOL_EXECUTION_BEFORE_SECOND_PASS",
+                "BROWNIE_TEST_ABORT_AFTER_MCP_TOOL_EXECUTION_BEFORE_TERMINAL_RECORD",
+                "BROWNIE_TEST_MCP_TERMINAL_RECORD_CHILD",
                 "BROWNIE_TEST_CRASH_AFTER_HEADLESS_TASK_PERSIST_BEFORE_JOURNEY_CHECKPOINT",
                 "BROWNIE_TEST_CRASH_AFTER_HEADLESS_JOURNEY_CHECKPOINT_BEFORE_OBJECTIVE_ADMISSION_CHECKPOINT",
                 "BROWNIE_TEST_CRASH_AFTER_OBJECTIVE_ADMISSION_CHECKPOINT_BEFORE_JOURNEY_EVENT",
@@ -60649,6 +60941,8 @@ mod phase_2_3_tests {
                 "BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK",
                 "BROWNIE_TEST_LLM_API_KEY",
                 "BROWNIE_TEST_CRASH_AFTER_MCP_TOOL_EXECUTION_BEFORE_SECOND_PASS",
+                "BROWNIE_TEST_ABORT_AFTER_MCP_TOOL_EXECUTION_BEFORE_TERMINAL_RECORD",
+                "BROWNIE_TEST_MCP_TERMINAL_RECORD_CHILD",
                 "BROWNIE_TEST_CRASH_AFTER_HEADLESS_TASK_PERSIST_BEFORE_JOURNEY_CHECKPOINT",
                 "BROWNIE_TEST_CRASH_AFTER_HEADLESS_JOURNEY_CHECKPOINT_BEFORE_OBJECTIVE_ADMISSION_CHECKPOINT",
                 "BROWNIE_TEST_CRASH_AFTER_OBJECTIVE_ADMISSION_CHECKPOINT_BEFORE_JOURNEY_EVENT",
@@ -62890,6 +63184,120 @@ content-length: {}
             })
             .count();
         assert_eq!(completed_count, 1);
+    }
+
+    #[test]
+    #[ignore]
+    fn task_run_abort_after_mcp_tool_execution_before_terminal_record_child() {
+        if std::env::var_os("BROWNIE_TEST_MCP_TERMINAL_RECORD_CHILD").is_none() {
+            return;
+        }
+        let root = std::env::var_os("BROWNIE_WORKSPACE_ROOT").expect("workspace root");
+        let root = std::path::PathBuf::from(root);
+        let _cwd = super::tests::CwdGuard::enter(&root);
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Abort after durable MCP tool evidence before terminal task record","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id");
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        panic!("expected abort before terminal task record, got {run:?}");
+    }
+
+    #[test]
+    fn task_run_replays_mcp_tool_result_after_terminal_record_process_loss() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "counting");
+        write_mcp_modepack(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        let status = std::process::Command::new(std::env::current_exe().expect("test exe"))
+            .arg("--ignored")
+            .arg("--exact")
+            .arg("--nocapture")
+            .arg("phase_2_3_tests::task_run_abort_after_mcp_tool_execution_before_terminal_record_child")
+            .env("BROWNIE_WORKSPACE_ROOT", temp.path())
+            .env("BROWNIE_LLM_PROVIDER", "fake")
+            .env(
+                "BROWNIE_TEST_MCP_TERMINAL_RECORD_CHILD",
+                "rrp7_2_terminal_record_process_loss",
+            )
+            .env(
+                "BROWNIE_TEST_ABORT_AFTER_MCP_TOOL_EXECUTION_BEFORE_TERMINAL_RECORD",
+                "1",
+            )
+            .status()
+            .expect("run process-loss child");
+        assert!(
+            !status.success(),
+            "child must abort after MCP tool completion and before terminal task record"
+        );
+
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "fake");
+        let store = BrownieStore::new(temp.path());
+        let tasks = store.tasks().list_tasks().expect("tasks after abort");
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].status, TaskStatus::Running);
+        let task_id = tasks[0].task_id.clone();
+        let run_id = tasks[0].run_id.clone();
+        let pre_resume_events = store.tasks().read_ledger_events(&run_id).expect("events");
+        assert!(pre_resume_events.iter().any(|event| {
+            event.kind == LedgerEventKind::ToolExecutionCompleted
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("tool_id"))
+                    == Some(&json!("mcp.github.search_code"))
+        }));
+        assert!(!pre_resume_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskCompleted));
+
+        let replay = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        if replay.error.is_some() {
+            panic!("replay error: {:?}", replay.error);
+        }
+        assert_eq!(
+            replay.result.expect("replay result")["status"],
+            json!("Completed")
+        );
+
+        let mcp_log = std::fs::read_to_string(temp.path().join("mcp-count.log")).expect("mcp log");
+        assert_eq!(
+            mcp_log
+                .lines()
+                .filter(|line| *line == "tools/call:search_code")
+                .count(),
+            1
+        );
+        let events = store.tasks().read_ledger_events(&run_id).expect("events");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::ToolExecutionCompleted)
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskCompleted)
+                .count(),
+            1
+        );
     }
 
     #[test]
