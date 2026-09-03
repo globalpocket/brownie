@@ -1,14 +1,13 @@
 {
   "schema_version": 1,
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-  "phase": "RRP-5",
-  "phase_title": "Protocol/Event Canonization",
+  "phase": "RRP-6",
+  "phase_title": "Runtime Module Decomposition Reevaluation",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "c0ce34fa53a098d1cd51b2ff09afcab68ade4d48",
+  "audited_main_commit": "19d4d81ba365fbaa9f8801473dc59606644a04f6",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
     "runtime-release-guard-ci",
-    "runtime-module-decomposition-reevaluation",
     "platform-deadline-durability-hardening"
   ],
   "owner_decisions": [
@@ -105,8 +104,9 @@
       "evidence": [
         "RRP-3.1 adds pnpm --workspace-root test:rrp3-process-loss to the existing VSIX check script that CI invokes, making the real process-loss E2E CI-required without changing .github/workflows/ci.yml.",
         "RRP-4 adds durable schema release-readiness evidence and store tests, but direct .github workflow wiring remains blocked by missing OAuth workflow scope.",
+        "RRP-5 adds guard:protocol-event-canonization to the existing CI-invoked VSIX check path.",
+        "RRP-6 adds guard:runtime-module-decomposition to the existing CI-invoked VSIX check path and makes the Runtime release-readiness guard require that VSIX command.",
         "RRD-1 already wires the Runtime release readiness guard into the VSIX check path that CI invokes.",
-        "The Runtime release readiness guard supports audit-driven convergence: open Runtime P0/P1 debt keeps runtime_release_ready=false, closed Runtime blockers must be removed from release_ready_blocked_by, and all closed Runtime blockers require runtime_release_ready=true.",
         "Full CI Release Gate hardening remains a later P0 closure phase for frozen install, fmt, audit/SBOM/secret/dependency, and complete release gate policy coverage."
       ],
       "next_action": "Close direct workflow wiring and remaining full CI release-gate hardening in the dedicated CI phase when workflow-scope credentials are available."
@@ -159,14 +159,16 @@
       "id": "runtime-module-decomposition-reevaluation",
       "title": "Runtime module decomposition reevaluation",
       "priority": "P1",
-      "status": "partial",
+      "status": "implemented_sufficient",
       "responsibility_domain": "runtime",
-      "debt_classification": "required_before_release",
+      "debt_classification": "closed",
       "evidence": [
-        "M64.15 explicitly left runtime-module-decomposition open after partial closure.",
-        "crates/brownie-runtime/src/lib.rs remains very large and owns multiple release-critical protocol, admission, execution, recovery, and completion seams."
+        "RRP-6 adds docs/architecture/runtime-module-decomposition-assessment.json as the finite closure assessment for Runtime module decomposition, with exact source metrics for line counts, production/test split, public/private items, state mutation, durable write, permission, recovery, RPC dispatch, approval, MCP, Product DoD, and diagnostics hotspots.",
+        "RRP-6 physically moves the task.list handler and task-list transport-bound helpers from crates/brownie-runtime/src/lib.rs into crates/brownie-runtime/src/task_progress.rs, colocating task-list transport bounds with task progress overview and parent-join projection authority without changing JSON-RPC behavior.",
+        "scripts/guard-runtime-module-decomposition.mjs validates the assessment against live source metrics, lib.rs production/test ceilings, required boundary tokens, task_progress ownership, and non-authority rules; its tests fail closed for task.list drifting back into lib.rs, missing task_progress ownership, and metric tampering.",
+        "extensions/brownie-vsix/package.json now invokes pnpm --workspace-root guard:runtime-module-decomposition through the existing CI-invoked VSIX check path, and scripts/guard-runtime-release-readiness.mjs requires that invocation."
       ],
-      "next_action": "Reevaluate module boundaries with behavior-preserving extraction only where it reduces release risk."
+      "next_action": "Use the guarded RRP-6 module decomposition assessment as the release baseline while closing the remaining Runtime-owned blockers."
     },
     {
       "id": "platform-deadline-durability-hardening",
