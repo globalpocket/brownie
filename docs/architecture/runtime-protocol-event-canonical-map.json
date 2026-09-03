@@ -20,7 +20,7 @@
     {
       "path": "crates/brownie-protocol/src/semantic_contract.rs",
       "owner": "runtime",
-      "role": "Rust-generated semantic protocol contract source for RRP-5.1"
+      "role": "Rust-generated semantic protocol contract source for RRP-5.2"
     },
     {
       "path": "crates/brownie-store/src/lib.rs",

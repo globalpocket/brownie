@@ -72,6 +72,16 @@ function extractEnumVariants(text, enumName) {
     .filter((line) => /^[A-Z][A-Za-z0-9_]*$/.test(line));
 }
 
+function extractPublicParamStructs(text) {
+  const params = new Set();
+  const re = /pub\s+struct\s+([A-Za-z0-9]+Params)\b/g;
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    params.add(match[1]);
+  }
+  return params;
+}
+
 function collectMappedMethods(map) {
   const methods = new Set();
   const prefixes = [];
@@ -113,6 +123,10 @@ function isVariantCovered(variant, groups) {
 
 function hasToken(text, token) {
   return isNonEmptyString(token) && text.includes(token);
+}
+
+function hasIdentifier(text, token) {
+  return isNonEmptyString(token) && new RegExp(`\\b${token}\\b`).test(text);
 }
 
 function hasDenyUnknownForStruct(text, structName) {
@@ -161,7 +175,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
   requireValue(contract.contract_id === 'runtime-semantic-protocol-contract-v1', errors, `${contractPath} contract_id must identify the Runtime semantic protocol contract.`);
   requireValue(contract.campaign === 'runtime-release-readiness-p0-p1-finite-closure', errors, `${contractPath} campaign must match Runtime release readiness.`);
-  requireValue(contract.phase === 'RRP-5.1', errors, `${contractPath} phase must be RRP-5.1.`);
+  requireValue(contract.phase === 'RRP-5.2', errors, `${contractPath} phase must be RRP-5.2.`);
   requireValue(contract.owner === 'runtime', errors, `${contractPath} owner must be runtime.`);
   requireValue(contract.runtime_release_debt_id === 'protocol-event-canonization', errors, `${contractPath} must bind to protocol-event-canonization.`);
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must not declare Runtime Release Ready.`);
@@ -190,29 +204,38 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
 
   const { methods: mappedMethods, prefixes: mappedPrefixes } = collectMappedMethods(map);
   const contractMethods = new Map((Array.isArray(contract.method_contracts) ? contract.method_contracts : []).map((method) => [method?.method, method]));
-  for (const method of ['task.start', 'task.cancel', 'task.run', 'headless.run.drive', 'tool.execute', 'mcp.tool.approve', 'run.events', 'proposal.apply']) {
+  requireValue(contractMethods.size === mappedMethods.size, errors, `${contractPath} method_contracts must cover exactly ${mappedMethods.size} explicit Runtime methods from ${mapPath}.`);
+  for (const method of mappedMethods) {
     requireValue(contractMethods.has(method), errors, `${contractPath} method_contracts must include ${method}.`);
     requireValue(isMethodCovered(method, mappedMethods, mappedPrefixes), errors, `${contractPath} method ${method} must also be covered by ${mapPath}.`);
   }
+  for (const method of contractMethods.keys()) {
+    requireValue(mappedMethods.has(method), errors, `${contractPath} method_contracts must not include non-explicit Runtime method ${method}.`);
+  }
 
   for (const [method, contractMethod] of contractMethods.entries()) {
-    requireValue(isNonEmptyString(contractMethod?.param_type), errors, `${contractPath} ${method} param_type must be non-empty.`);
+    const paramType = contractMethod?.param_type;
+    requireValue(paramType === null || isNonEmptyString(paramType), errors, `${contractPath} ${method} param_type must be a non-empty string or null.`);
+    if (paramType === null) {
+      requireValue(contractMethod?.unknown_field_policy === 'no_params', errors, `${contractPath} ${method} no-param methods must declare no_params unknown-field policy.`);
+    } else {
+      requireValue(contractMethod?.unknown_field_policy === 'rust_deny_unknown_fields', errors, `${contractPath} ${method} params must declare rust_deny_unknown_fields.`);
+    }
     requireValue(Array.isArray(contractMethod?.required_fields), errors, `${contractPath} ${method} required_fields must be an array.`);
     requireValue(isNonEmptyString(contractMethod?.unknown_field_policy), errors, `${contractPath} ${method} unknown_field_policy must be explicit.`);
+    requireValue(contractMethod?.request_schema && typeof contractMethod.request_schema === 'object', errors, `${contractPath} ${method} request_schema must be present.`);
+    requireValue(contractMethod?.result_schema && typeof contractMethod.result_schema === 'object', errors, `${contractPath} ${method} result_schema must be present.`);
+    requireValue(isNonEmptyString(contractMethod?.schema_fingerprint), errors, `${contractPath} ${method} schema_fingerprint must be present.`);
+    if (paramType !== null) {
+      requireValue(isNonEmptyString(contractMethod?.request_schema?.field_shape_fingerprint), errors, `${contractPath} ${method} request_schema must include field_shape_fingerprint.`);
+    }
+    requireValue(isNonEmptyString(contractMethod?.result_schema?.field_shape_fingerprint), errors, `${contractPath} ${method} result_schema must include field_shape_fingerprint.`);
   }
 
   const protocolText = textByPath.get('crates/brownie-protocol/src/lib.rs') ?? '';
   requireValue(protocolText.includes('pub mod semantic_contract;'), errors, 'brownie-protocol must expose the semantic_contract module.');
-  for (const structName of [
-    'TaskStartParams',
-    'TaskCancelParams',
-    'TaskRunParams',
-    'HeadlessRunDriveParams',
-    'ToolExecuteParams',
-    'McpToolApprovalApproveParams',
-    'RunEventsParams',
-    'ProposalApplyParams',
-  ]) {
+  const publicParams = extractPublicParamStructs(protocolText);
+  for (const structName of publicParams) {
     requireValue(hasDenyUnknownForStruct(protocolText, structName), errors, `brownie-protocol ${structName} must deny unknown fields.`);
   }
 
@@ -239,11 +262,15 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   }
 
   const unknownPolicy = contract.unknown_field_policy ?? {};
-  for (const structName of ['TaskStartParams', 'TaskCancelParams', 'TaskRunParams', 'HeadlessRunDriveParams']) {
+  const contractPublicParams = new Map(
+    (Array.isArray(unknownPolicy.rust_public_params) ? unknownPolicy.rust_public_params : []).map((entry) => [entry?.type, entry])
+  );
+  requireValue(contractPublicParams.size === publicParams.size, errors, `${contractPath} unknown_field_policy.rust_public_params must cover every public Runtime *Params type.`);
+  for (const structName of publicParams) {
     requireValue(
-      Array.isArray(unknownPolicy.rust_params_deny_unknown_fields) && unknownPolicy.rust_params_deny_unknown_fields.includes(structName),
+      contractPublicParams.get(structName)?.deny_unknown_fields === true,
       errors,
-      `${contractPath} unknown_field_policy must include Rust evidence for ${structName}.`
+      `${contractPath} unknown_field_policy.rust_public_params must include deny_unknown_fields evidence for ${structName}.`
     );
   }
   for (const testName of ['semantic_contract_artifact_matches_rust_generator', 'public_runtime_params_reject_unknown_fields', 'rejects unknown fields from semantic contract fixtures']) {
@@ -264,6 +291,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
     'task_run_minimal_params',
     'task_run_explicit_null_params',
     'ledger_event_summary',
+    'ledger_event_with_payload_envelope',
     'task_status_values',
   ]) {
     requireValue(fixtures[fixtureName] !== undefined, errors, `${contractPath} golden_fixtures must include ${fixtureName}.`);
@@ -273,9 +301,28 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   requireValue(Array.isArray(fixtures.task_status_values) && fixtures.task_status_values.includes('Cancelled'), errors, `${contractPath} must cover TaskStatus values.`);
 
   const durableCoupling = contract.durable_event_migration_coupling ?? {};
+  const storeText = textByPath.get('crates/brownie-store/src/lib.rs') ?? '';
+  const ledgerVariants = extractEnumVariants(storeText, 'LedgerEventKind');
   requireValue(durableCoupling.store_schema_version === 2, errors, `${contractPath} durable_event_migration_coupling.store_schema_version must be 2.`);
   requireValue(durableCoupling.ledger_event_kind_source === 'crates/brownie-store/src/lib.rs', errors, `${contractPath} must bind durable event kinds to brownie-store.`);
+  requireValue(durableCoupling.ledger_payload_envelope_type === 'LedgerPayloadEnvelope', errors, `${contractPath} must bind durable event payloads to LedgerPayloadEnvelope.`);
+  requireValue(durableCoupling.ledger_payload_envelope_field === 'payload_envelope', errors, `${contractPath} must bind durable event payloads to payload_envelope.`);
+  requireValue(durableCoupling.ledger_payload_shape_version_source === 'LEDGER_PAYLOAD_SHAPE_VERSION', errors, `${contractPath} must bind durable event payload shape versions to LEDGER_PAYLOAD_SHAPE_VERSION.`);
+  for (const token of ['LedgerPayloadEnvelope', 'payload_envelope', 'LEDGER_PAYLOAD_SHAPE_VERSION', 'ledger_payload_shape_fingerprint']) {
+    requireValue(hasIdentifier(storeText, token), errors, `brownie-store durable ledger payload shape evidence must retain ${token}.`);
+  }
   requireValue(typeof durableCoupling.policy === 'string' && durableCoupling.policy.includes('schema migration'), errors, `${contractPath} durable event changes must require migration policy.`);
+  requireValue(durableCoupling.event_shape_fingerprint_count === ledgerVariants.length, errors, `${contractPath} durable event shape fingerprint count must match LedgerEventKind variants.`);
+  const fingerprintByKind = new Map(
+    (Array.isArray(durableCoupling.event_shape_fingerprints) ? durableCoupling.event_shape_fingerprints : []).map((entry) => [entry?.ledger_event_kind, entry])
+  );
+  for (const variant of ledgerVariants) {
+    const entry = fingerprintByKind.get(variant);
+    requireValue(Boolean(entry), errors, `${contractPath} durable_event_migration_coupling.event_shape_fingerprints must include ${variant}.`);
+    requireValue(entry?.payload_shape_version === 1, errors, `${contractPath} ${variant} payload_shape_version must be 1.`);
+    requireValue(entry?.store_schema_version === durableCoupling.store_schema_version, errors, `${contractPath} ${variant} store_schema_version must match durable coupling schema version.`);
+    requireValue(isNonEmptyString(entry?.payload_shape_fingerprint), errors, `${contractPath} ${variant} payload_shape_fingerprint must be present.`);
+  }
 
   if (options.skipRustGeneratedContractCheck !== true) {
     runRustSemanticContractCheck(repoRoot, contractPath, errors);
