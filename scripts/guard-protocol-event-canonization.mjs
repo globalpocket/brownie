@@ -175,7 +175,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
   requireValue(contract.contract_id === 'runtime-semantic-protocol-contract-v1', errors, `${contractPath} contract_id must identify the Runtime semantic protocol contract.`);
   requireValue(contract.campaign === 'runtime-release-readiness-p0-p1-finite-closure', errors, `${contractPath} campaign must match Runtime release readiness.`);
-  requireValue(contract.phase === 'RRP-5.2', errors, `${contractPath} phase must be RRP-5.2.`);
+  requireValue(contract.phase === 'RRP-5.3', errors, `${contractPath} phase must be RRP-5.3.`);
   requireValue(contract.owner === 'runtime', errors, `${contractPath} owner must be runtime.`);
   requireValue(contract.runtime_release_debt_id === 'protocol-event-canonization', errors, `${contractPath} must bind to protocol-event-canonization.`);
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must not declare Runtime Release Ready.`);
@@ -204,6 +204,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
 
   const { methods: mappedMethods, prefixes: mappedPrefixes } = collectMappedMethods(map);
   const contractMethods = new Map((Array.isArray(contract.method_contracts) ? contract.method_contracts : []).map((method) => [method?.method, method]));
+  const typeSchemas = contract.type_schemas && typeof contract.type_schemas === 'object' ? contract.type_schemas : {};
   requireValue(contractMethods.size === mappedMethods.size, errors, `${contractPath} method_contracts must cover exactly ${mappedMethods.size} explicit Runtime methods from ${mapPath}.`);
   for (const method of mappedMethods) {
     requireValue(contractMethods.has(method), errors, `${contractPath} method_contracts must include ${method}.`);
@@ -227,10 +228,30 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
     requireValue(contractMethod?.result_schema && typeof contractMethod.result_schema === 'object', errors, `${contractPath} ${method} result_schema must be present.`);
     requireValue(isNonEmptyString(contractMethod?.schema_fingerprint), errors, `${contractPath} ${method} schema_fingerprint must be present.`);
     if (paramType !== null) {
+      requireValue(contractMethod?.request_schema_ref === `#/type_schemas/${paramType}`, errors, `${contractPath} ${method} must reference its recursive request type schema.`);
+      requireValue(Boolean(typeSchemas[paramType]), errors, `${contractPath} type_schemas must include request type ${paramType}.`);
+      requireValue(isNonEmptyString(contractMethod?.request_recursive_schema_fingerprint), errors, `${contractPath} ${method} must fingerprint its recursive request schema.`);
+    }
+    requireValue(contractMethod?.result_schema_ref === `#/type_schemas/${contractMethod?.result_type}`, errors, `${contractPath} ${method} must reference its recursive result type schema.`);
+    requireValue(Boolean(typeSchemas[contractMethod?.result_type]), errors, `${contractPath} type_schemas must include result type ${contractMethod?.result_type}.`);
+    requireValue(isNonEmptyString(contractMethod?.result_recursive_schema_fingerprint), errors, `${contractPath} ${method} must fingerprint its recursive result schema.`);
+    if (paramType !== null) {
       requireValue(isNonEmptyString(contractMethod?.request_schema?.field_shape_fingerprint), errors, `${contractPath} ${method} request_schema must include field_shape_fingerprint.`);
     }
     requireValue(isNonEmptyString(contractMethod?.result_schema?.field_shape_fingerprint), errors, `${contractPath} ${method} result_schema must include field_shape_fingerprint.`);
   }
+
+  const recursiveCoverage = contract.recursive_json_schema_coverage ?? {};
+  requireValue(recursiveCoverage.generator === 'schemars', errors, `${contractPath} recursive_json_schema_coverage.generator must be schemars.`);
+  requireValue(recursiveCoverage.definition_keyword === '$defs', errors, `${contractPath} recursive schema definitions must use $defs.`);
+  requireValue(Object.keys(typeSchemas).length >= contractMethods.size, errors, `${contractPath} type_schemas must cover method param/result types.`);
+  const replaceActiveSchema = typeSchemas.ModePackReplaceActiveResult ?? {};
+  requireValue(Boolean(replaceActiveSchema.$defs?.ModePackActiveSnapshotSummary), errors, `${contractPath} must recursively define nested ModePackActiveSnapshotSummary.`);
+  requireValue(
+    replaceActiveSchema.properties?.previous_snapshot?.$ref === '#/$defs/ModePackActiveSnapshotSummary',
+    errors,
+    `${contractPath} ModePackReplaceActiveResult.previous_snapshot must reference its nested schema definition.`
+  );
 
   const protocolText = textByPath.get('crates/brownie-protocol/src/lib.rs') ?? '';
   requireValue(protocolText.includes('pub mod semantic_contract;'), errors, 'brownie-protocol must expose the semantic_contract module.');
@@ -308,10 +329,16 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   requireValue(durableCoupling.ledger_payload_envelope_type === 'LedgerPayloadEnvelope', errors, `${contractPath} must bind durable event payloads to LedgerPayloadEnvelope.`);
   requireValue(durableCoupling.ledger_payload_envelope_field === 'payload_envelope', errors, `${contractPath} must bind durable event payloads to payload_envelope.`);
   requireValue(durableCoupling.ledger_payload_shape_version_source === 'LEDGER_PAYLOAD_SHAPE_VERSION', errors, `${contractPath} must bind durable event payload shape versions to LEDGER_PAYLOAD_SHAPE_VERSION.`);
-  for (const token of ['LedgerPayloadEnvelope', 'payload_envelope', 'LEDGER_PAYLOAD_SHAPE_VERSION', 'ledger_payload_shape_fingerprint']) {
+  for (const token of ['LedgerPayloadEnvelope', 'payload_envelope', 'LEDGER_PAYLOAD_SHAPE_VERSION', 'ledger_payload_shape_fingerprint', 'ledger_payload_shape_descriptor']) {
     requireValue(hasIdentifier(storeText, token), errors, `brownie-store durable ledger payload shape evidence must retain ${token}.`);
   }
   requireValue(typeof durableCoupling.policy === 'string' && durableCoupling.policy.includes('schema migration'), errors, `${contractPath} durable event changes must require migration policy.`);
+  requireValue(
+    typeof durableCoupling.ledger_payload_shape_fingerprint_basis === 'string' &&
+      durableCoupling.ledger_payload_shape_fingerprint_basis.includes('actual persisted payload value'),
+    errors,
+    `${contractPath} durable coupling must state that payload fingerprints are based on concrete payload structure.`
+  );
   requireValue(durableCoupling.event_shape_fingerprint_count === ledgerVariants.length, errors, `${contractPath} durable event shape fingerprint count must match LedgerEventKind variants.`);
   const fingerprintByKind = new Map(
     (Array.isArray(durableCoupling.event_shape_fingerprints) ? durableCoupling.event_shape_fingerprints : []).map((entry) => [entry?.ledger_event_kind, entry])
@@ -322,7 +349,16 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
     requireValue(entry?.payload_shape_version === 1, errors, `${contractPath} ${variant} payload_shape_version must be 1.`);
     requireValue(entry?.store_schema_version === durableCoupling.store_schema_version, errors, `${contractPath} ${variant} store_schema_version must match durable coupling schema version.`);
     requireValue(isNonEmptyString(entry?.payload_shape_fingerprint), errors, `${contractPath} ${variant} payload_shape_fingerprint must be present.`);
+    requireValue(isNonEmptyString(entry?.payload_shape_descriptor), errors, `${contractPath} ${variant} payload_shape_descriptor must be present.`);
   }
+  const shapeFixtures = Array.isArray(durableCoupling.payload_shape_fixtures) ? durableCoupling.payload_shape_fixtures : [];
+  const taskCompletedFixtures = shapeFixtures.filter((fixture) => fixture?.ledger_event_kind === 'TaskCompleted');
+  requireValue(taskCompletedFixtures.length >= 2, errors, `${contractPath} must include TaskCompleted payload shape drift fixtures.`);
+  requireValue(
+    new Set(taskCompletedFixtures.map((fixture) => fixture?.payload_shape_fingerprint)).size >= 2,
+    errors,
+    `${contractPath} payload shape fixtures must prove field-shape changes alter fingerprints.`
+  );
 
   if (options.skipRustGeneratedContractCheck !== true) {
     runRustSemanticContractCheck(repoRoot, contractPath, errors);

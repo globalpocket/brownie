@@ -1,11 +1,12 @@
 //! JSON-RPC protocol types for Brownie VSIX/runtime communication.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub mod semantic_contract;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
     pub id: Value,
@@ -14,7 +15,7 @@ pub struct JsonRpcRequest {
     pub params: Option<Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct JsonRpcResponse<T> {
     pub jsonrpc: String,
     pub id: Value,
@@ -24,13 +25,13 @@ pub struct JsonRpcResponse<T> {
     pub error: Option<JsonRpcError>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct JsonRpcError {
     pub code: i64,
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct LlmRequestBudgetSummary {
     pub max_prompt_chars: usize,
     pub max_messages: usize,
@@ -38,7 +39,7 @@ pub struct LlmRequestBudgetSummary {
     pub response_preview_chars: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct LlmStatusResult {
     pub provider: String,
     pub enabled: bool,
@@ -54,7 +55,7 @@ pub struct LlmStatusResult {
     pub sensitive_guard: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct RuntimeConfigGetResult {
     pub config_source: String,
     pub config_path: Option<String>,
@@ -62,7 +63,7 @@ pub struct RuntimeConfigGetResult {
     pub llm_status: LlmStatusResult,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct RuntimeDiagnosticsResult {
     pub config_source: String,
     pub active_profile: Option<String>,
@@ -71,7 +72,7 @@ pub struct RuntimeDiagnosticsResult {
     pub diagnostics: Vec<RuntimeDiagnostic>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ToolIntentParserConfigSummary {
     pub max_blocks: usize,
     pub max_block_bytes: usize,
@@ -81,14 +82,14 @@ pub struct ToolIntentParserConfigSummary {
     pub max_workspace_write_content_chars: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct LlmHealthParams {
     pub allow_network: bool,
     pub timeout_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct LlmHealthResult {
     pub provider: String,
     pub config_source: String,
@@ -105,7 +106,7 @@ pub struct LlmHealthResult {
     pub diagnostics: Vec<RuntimeDiagnostic>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct RuntimeDiagnostic {
     pub severity: DiagnosticSeverity,
     pub code: String,
@@ -113,21 +114,21 @@ pub struct RuntimeDiagnostic {
     pub subject: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub enum DiagnosticSeverity {
     Info,
     Warning,
     Error,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct RuntimeStatus {
     pub name: String,
     pub version: String,
     pub status: RuntimeState,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub enum RuntimeState {
     Ready,
     Starting,
@@ -135,7 +136,7 @@ pub enum RuntimeState {
     Error,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModeSummary {
     pub mode_id: String,
     pub display_name: String,
@@ -143,7 +144,7 @@ pub struct ModeSummary {
     pub permissions: ModePermissionsSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModePermissionsSummary {
     pub read_only: bool,
     pub workspace_write: bool,
@@ -161,25 +162,25 @@ pub struct ModePermissionsSummary {
     pub mcp_tool_access: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModeListResult {
     pub modes: Vec<ModeSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModeGetParams {
     pub mode_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct PermissionCheckParams {
     pub mode_id: String,
     pub action: RuntimeActionName,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct PermissionCheckResult {
     pub mode_id: String,
     pub action: RuntimeActionName,
@@ -187,13 +188,13 @@ pub struct PermissionCheckResult {
     pub reason: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModePackActivateParams {
     pub authorize: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModePackReplaceActiveParams {
     pub authorize_replacement: bool,
@@ -218,7 +219,7 @@ pub struct ModePackReplaceActiveParams {
     pub update_admission: Option<ModePackUpdateAdmissionParams>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModePackUpdateAdmissionParams {
     pub authorize_update: bool,
@@ -232,7 +233,7 @@ pub struct ModePackUpdateAdmissionParams {
     pub expected_trusted_signer_event_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModePackRollbackActiveParams {
     pub authorize_rollback: bool,
@@ -240,7 +241,7 @@ pub struct ModePackRollbackActiveParams {
     pub expected_rollback_activation_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModePackFetchCandidateParams {
     pub authorize_fetch: bool,
@@ -248,7 +249,7 @@ pub struct ModePackFetchCandidateParams {
     pub expected_content_sha256: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModePackSelectRegistryUpdateParams {
     pub authorize_registry_selection: bool,
@@ -265,7 +266,7 @@ pub struct ModePackSelectRegistryUpdateParams {
     pub registry_provenance_public_key_base64: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModePackRegistryUpdateSelectionTarget {
     pub authorize_modepack_registry_update_selection: bool,
@@ -282,7 +283,7 @@ pub struct ModePackRegistryUpdateSelectionTarget {
     pub registry_provenance_public_key_base64: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModePackSelectedCandidateFetchTarget {
     pub authorize_selected_candidate_fetch: bool,
@@ -298,7 +299,7 @@ pub struct ModePackSelectedCandidateFetchTarget {
     pub expected_current_activation_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModePackSelectedCandidateProvenanceVerificationTarget {
     pub authorize_selected_candidate_provenance_verification: bool,
@@ -318,7 +319,7 @@ pub struct ModePackSelectedCandidateProvenanceVerificationTarget {
     pub provenance_public_key_base64: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModePackSelectedCandidateApprovalTarget {
     pub authorize_selected_candidate_approval: bool,
@@ -339,7 +340,7 @@ pub struct ModePackSelectedCandidateApprovalTarget {
     pub expected_current_activation_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModePackSelectedApprovedCandidateReplacementTarget {
     pub authorize_selected_candidate_replacement: bool,
@@ -366,7 +367,7 @@ pub struct ModePackSelectedApprovedCandidateReplacementTarget {
     pub expected_approved_candidate_approval_event_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModePackSelectedActiveRollbackTarget {
     pub authorize_selected_active_modepack_rollback: bool,
@@ -375,7 +376,7 @@ pub struct ModePackSelectedActiveRollbackTarget {
     pub expected_rollback_activation_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModePackApproveCandidateParams {
     pub authorize_trust: bool,
@@ -387,7 +388,7 @@ pub struct ModePackApproveCandidateParams {
     pub expected_statement_sha256: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModePackTrustSignerParams {
     pub authorize_trust: bool,
@@ -396,14 +397,14 @@ pub struct ModePackTrustSignerParams {
     pub expires_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModePackRevokeSignerParams {
     pub authorize_revocation: bool,
     pub signer_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModePackVerifyCandidateProvenanceParams {
     pub authorize_provenance_verification: bool,
@@ -415,7 +416,7 @@ pub struct ModePackVerifyCandidateProvenanceParams {
     pub provenance_public_key_base64: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModePackDnsBindingSummary {
     pub resolution_fingerprint: String,
     pub pinned_address_fingerprint: String,
@@ -423,7 +424,7 @@ pub struct ModePackDnsBindingSummary {
     pub pinned_address_family: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModePackActiveSnapshotSummary {
     pub activation_id: String,
     pub activation_fingerprint: String,
@@ -440,14 +441,14 @@ pub struct ModePackActiveSnapshotSummary {
     pub activation_event_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModePackActivateResult {
     pub activated: bool,
     pub replayed: bool,
     pub snapshot: ModePackActiveSnapshotSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModePackReplaceActiveResult {
     pub replaced: bool,
     pub replayed: bool,
@@ -460,7 +461,7 @@ pub struct ModePackReplaceActiveResult {
     pub update_admission: Option<ModePackUpdateAdmissionSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModePackRollbackActiveResult {
     pub rolled_back: bool,
     pub replayed: bool,
@@ -469,7 +470,7 @@ pub struct ModePackRollbackActiveResult {
     pub rollback_event_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModePackCandidateSummary {
     pub candidate_id: String,
     pub source_kind: String,
@@ -489,7 +490,7 @@ pub struct ModePackCandidateSummary {
     pub cache_event_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModePackApprovedCandidateSummary {
     pub approval_id: String,
     pub candidate_id: String,
@@ -517,7 +518,7 @@ pub struct ModePackApprovedCandidateSummary {
     pub consumed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModePackTrustedSignerSummary {
     pub trust_id: String,
     pub signer_fingerprint: String,
@@ -527,7 +528,7 @@ pub struct ModePackTrustedSignerSummary {
     pub trust_event_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModePackRevokedSignerSummary {
     pub revocation_id: String,
     pub signer_fingerprint: String,
@@ -537,7 +538,7 @@ pub struct ModePackRevokedSignerSummary {
     pub revocation_event_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModePackUpdateAdmissionSummary {
     pub update_id: String,
     pub current_activation_fingerprint: String,
@@ -561,7 +562,7 @@ pub struct ModePackUpdateAdmissionSummary {
     pub admission_event_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModePackCandidateProvenanceSummary {
     pub provenance_id: String,
     pub candidate_id: String,
@@ -583,7 +584,7 @@ pub struct ModePackCandidateProvenanceSummary {
     pub provenance_event_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModePackFetchCandidateResult {
     pub fetched: bool,
     pub replayed: bool,
@@ -591,7 +592,7 @@ pub struct ModePackFetchCandidateResult {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModePackRegistryUpdateSelectionSummary {
     pub selection_id: String,
     pub registry_url_host: String,
@@ -619,7 +620,7 @@ pub struct ModePackRegistryUpdateSelectionSummary {
     pub selection_event_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModePackSelectRegistryUpdateResult {
     pub selected: bool,
     pub replayed: bool,
@@ -627,7 +628,7 @@ pub struct ModePackSelectRegistryUpdateResult {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModePackApproveCandidateResult {
     pub approved: bool,
     pub replayed: bool,
@@ -635,7 +636,7 @@ pub struct ModePackApproveCandidateResult {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModePackTrustSignerResult {
     pub trusted: bool,
     pub replayed: bool,
@@ -643,7 +644,7 @@ pub struct ModePackTrustSignerResult {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModePackRevokeSignerResult {
     pub revoked: bool,
     pub replayed: bool,
@@ -651,7 +652,7 @@ pub struct ModePackRevokeSignerResult {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ModePackVerifyCandidateProvenanceResult {
     pub verified: bool,
     pub replayed: bool,
@@ -659,7 +660,7 @@ pub struct ModePackVerifyCandidateProvenanceResult {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub enum RuntimeActionName {
     ReadWorkspace,
     WriteWorkspace,
@@ -675,13 +676,13 @@ pub enum RuntimeActionName {
     UseGitCapability,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ToolPlanParams {
     pub task_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ToolPlanResult {
     pub task_id: String,
     pub run_id: String,
@@ -689,7 +690,7 @@ pub struct ToolPlanResult {
     pub items: Vec<ToolPlanDecisionSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ToolPlanDecisionSummary {
     pub tool_id: String,
     pub required_action: RuntimeActionName,
@@ -697,7 +698,7 @@ pub struct ToolPlanDecisionSummary {
     pub reason: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ToolIntentParseParams {
     pub assistant_content: String,
@@ -706,7 +707,7 @@ pub struct ToolIntentParseParams {
     pub task_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ToolIntentParseResult {
     pub mode_id: String,
     pub parser: ToolIntentParserSummary,
@@ -714,7 +715,7 @@ pub struct ToolIntentParseResult {
     pub rejected: Vec<ToolIntentRejectedSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ToolIntentParserSummary {
     pub found_blocks: usize,
     pub accepted_blocks: usize,
@@ -728,13 +729,13 @@ pub struct ToolIntentParserSummary {
     pub max_workspace_write_content_chars: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ToolIntentInputSummary {
     pub has_path: bool,
     pub field_count: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ToolIntentDecisionSummary {
     pub tool_id: String,
     pub required_action: RuntimeActionName,
@@ -744,19 +745,19 @@ pub struct ToolIntentDecisionSummary {
     pub input_summary: ToolIntentInputSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ToolIntentRejectedSummary {
     pub tool_id: Option<String>,
     pub reason: String,
     pub code: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ToolListResult {
     pub tools: Vec<ToolSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ToolSummary {
     pub tool_id: String,
     pub display_name: String,
@@ -764,7 +765,7 @@ pub struct ToolSummary {
     pub required_action: RuntimeActionName,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ToolExecuteParams {
     pub mode_id: String,
@@ -774,14 +775,14 @@ pub struct ToolExecuteParams {
     pub input: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ToolExecuteResult {
     pub tool_id: String,
     pub status: ToolExecuteStatus,
     pub output: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct McpToolApprovalApproveParams {
     pub mode_id: String,
@@ -792,21 +793,21 @@ pub struct McpToolApprovalApproveParams {
     pub approval_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct McpToolApprovalApproveResult {
     pub tool_id: String,
     pub status: String,
     pub mcp_approval_binding: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub enum ToolExecuteStatus {
     Completed,
     Denied,
     Failed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskStartParams {
     pub goal: String,
@@ -823,7 +824,7 @@ pub struct TaskStartParams {
     pub product_continuation_source: Option<ProductContinuationSource>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct VerificationRecoverySource {
     pub source_task_id: String,
     pub source_run_id: String,
@@ -831,7 +832,7 @@ pub struct VerificationRecoverySource {
     pub authorize_recovery: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct PatchApplyRecoverySource {
     pub source_run_id: String,
     pub source_proposal_id: String,
@@ -841,7 +842,7 @@ pub struct PatchApplyRecoverySource {
     pub authorize_patch_apply_recovery: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct PatchApplyRecoveryRunTarget {
     pub recovery_task_id: String,
     pub recovery_run_id: String,
@@ -853,7 +854,7 @@ pub struct PatchApplyRecoveryRunTarget {
     pub authorize_patch_apply_recovery_run: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct PatchApplyRecoveryApplyTarget {
     pub recovery_task_id: String,
     pub recovery_run_id: String,
@@ -873,7 +874,7 @@ pub struct PatchApplyRecoveryApplyTarget {
     pub authorize_patch_apply_recovery_apply: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct VerificationRecoveryRetrySource {
     pub source_task_id: String,
     pub source_run_id: String,
@@ -886,7 +887,7 @@ pub struct VerificationRecoveryRetrySource {
     pub authorize_verification_retry: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct VerificationRecoveryRunTarget {
     pub recovery_task_id: String,
     pub recovery_run_id: String,
@@ -896,7 +897,7 @@ pub struct VerificationRecoveryRunTarget {
     pub authorize_recovery_run: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct VerificationRecoveryApplyTarget {
     pub source_task_id: String,
     pub source_run_id: String,
@@ -910,7 +911,7 @@ pub struct VerificationRecoveryApplyTarget {
     pub authorize_recovery_apply: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct VerificationRecoveryRetryRunTarget {
     pub retry_task_id: String,
     pub retry_run_id: String,
@@ -921,7 +922,7 @@ pub struct VerificationRecoveryRetryRunTarget {
     pub authorize_verification_retry_run: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct LlmProviderFailureRetryRunTarget {
     pub retry_task_id: String,
     pub retry_run_id: String,
@@ -931,7 +932,7 @@ pub struct LlmProviderFailureRetryRunTarget {
     pub authorize_provider_failure_retry_run: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct LlmProviderFailureRetrySource {
     pub source_task_id: String,
     pub source_run_id: String,
@@ -939,7 +940,7 @@ pub struct LlmProviderFailureRetrySource {
     pub authorize_provider_failure_retry: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProductContinuationSource {
     pub source_task_id: String,
     pub source_run_id: String,
@@ -952,7 +953,7 @@ pub struct ProductContinuationSource {
     pub authorize_product_continuation: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProductContinuationAdmissionTarget {
     pub authorize_product_continuation_admission: bool,
@@ -964,7 +965,7 @@ pub struct ProductContinuationAdmissionTarget {
     pub runtime_derived_objective: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProductContinuationRunTarget {
     pub authorize_product_continuation_run: bool,
@@ -980,7 +981,7 @@ pub struct ProductContinuationRunTarget {
     pub expected_admission_request_fingerprint: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProductContinuationDerivedTarget {
     pub authorize_product_continuation_target_derivation: bool,
@@ -990,7 +991,7 @@ pub struct ProductContinuationDerivedTarget {
     pub continuation_mode_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProductLoopStopRecoveryTarget {
     pub authorize_product_loop_stop_recovery: bool,
@@ -1008,7 +1009,7 @@ pub struct ProductLoopStopRecoveryTarget {
     pub recovery_mode_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskStartResult {
     pub task_id: String,
     pub run_id: String,
@@ -1025,7 +1026,7 @@ pub struct TaskStartResult {
     pub product_continuation_admission: Option<ProductContinuationAdmission>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct VerificationRecoveryAdmission {
     pub source_task_id: String,
     pub source_run_id: String,
@@ -1037,7 +1038,7 @@ pub struct VerificationRecoveryAdmission {
     pub replayed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct PatchApplyRecoveryAdmission {
     pub source_run_id: String,
     pub source_proposal_id: String,
@@ -1051,7 +1052,7 @@ pub struct PatchApplyRecoveryAdmission {
     pub replayed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct VerificationRecoveryRetryAdmission {
     pub source_task_id: String,
     pub source_run_id: String,
@@ -1068,7 +1069,7 @@ pub struct VerificationRecoveryRetryAdmission {
     pub replayed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct LlmProviderFailureRetryAdmission {
     pub source_task_id: String,
     pub source_run_id: String,
@@ -1082,7 +1083,7 @@ pub struct LlmProviderFailureRetryAdmission {
     pub replayed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProductContinuationAdmission {
     pub source_task_id: String,
     pub source_run_id: String,
@@ -1096,13 +1097,13 @@ pub struct ProductContinuationAdmission {
     pub replayed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskGetParams {
     pub task_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskCancelParams {
     pub task_id: String,
@@ -1113,7 +1114,7 @@ pub struct TaskCancelParams {
     pub authorize_cancel: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskCancelResult {
     pub task_id: String,
     pub run_id: String,
@@ -1125,7 +1126,7 @@ pub struct TaskCancelResult {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRunParams {
     pub task_id: String,
@@ -1139,7 +1140,7 @@ pub struct TaskRunParams {
     pub completion_acceptance: Option<TaskRunCompletionAcceptanceRequest>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRunCompletionAcceptanceRequest {
     pub authorize_completion_acceptance: bool,
@@ -1148,7 +1149,7 @@ pub struct TaskRunCompletionAcceptanceRequest {
     pub expected_completion_result_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRunVerificationRecoveryContextRead {
     pub authorize: bool,
@@ -1159,7 +1160,7 @@ pub struct TaskRunVerificationRecoveryContextRead {
     pub max_excerpt_bytes: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRunContextBudget {
     pub max_prompt_chars: usize,
@@ -1167,7 +1168,7 @@ pub struct TaskRunContextBudget {
     pub max_selected_index_chars: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ParentJoinRunTarget {
     pub authorize_parent_join_run: bool,
@@ -1179,7 +1180,7 @@ pub struct ParentJoinRunTarget {
     pub expected_terminal_failed_child_count: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectiveProposalAuthorizationPreflightTarget {
     pub authorize_objective_proposal_preflight: bool,
@@ -1202,7 +1203,7 @@ pub struct ObjectiveProposalAuthorizationPreflightTarget {
     pub authorization_token_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectiveProposalApplyTarget {
     pub authorize_objective_proposal_apply: bool,
@@ -1231,7 +1232,7 @@ pub struct ObjectiveProposalApplyTarget {
     pub replacement_content: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectiveApplyVerificationTarget {
     pub authorize_objective_apply_verification: bool,
@@ -1252,7 +1253,7 @@ pub struct ObjectiveApplyVerificationTarget {
     pub expected_post_write_sha256: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectiveCompletionAcceptanceTarget {
     pub authorize_objective_completion_acceptance: bool,
@@ -1277,7 +1278,7 @@ pub struct ObjectiveCompletionAcceptanceTarget {
     pub expected_verification_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HeadlessContinueOnceParams {
     pub authorize: bool,
@@ -1365,7 +1366,7 @@ pub struct HeadlessContinueOnceParams {
     pub modepack_selected_active_rollback_target: Option<ModePackSelectedActiveRollbackTarget>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HeadlessContinueScope {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1382,7 +1383,7 @@ pub struct HeadlessContinueScope {
     pub latest_matching_session: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HeadlessRunAdvanceParams {
     pub authorize: bool,
@@ -1425,7 +1426,7 @@ pub struct HeadlessRunAdvanceParams {
         Option<ModePackSelectedApprovedCandidateReplacementTarget>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HeadlessRunDriveParams {
     pub authorize: bool,
@@ -1480,7 +1481,7 @@ pub struct HeadlessRunDriveParams {
     pub journey_execution: Option<HeadlessRunJourneyExecution>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HeadlessRunProductCompletionDecisionRequest {
     pub authorize_product_completion_decision: bool,
@@ -1511,7 +1512,7 @@ pub struct HeadlessRunProductCompletionDecisionRequest {
     pub technical_debt_transitions: Option<Vec<TechnicalDebtTransition>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HeadlessRunProductEvidenceDerivationRequest {
     pub authorize_product_evidence_derivation: bool,
@@ -1526,7 +1527,7 @@ pub struct HeadlessRunProductEvidenceDerivationRequest {
     pub artifacts: Vec<HeadlessRunProductEvidenceArtifactSource>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HeadlessRunSelectedProductGapClosureRequest {
     pub authorize_selected_product_gap_closure: bool,
@@ -1541,7 +1542,7 @@ pub struct HeadlessRunSelectedProductGapClosureRequest {
     pub expected_completion_closure_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunSelectedProductGapClosureEvidence {
     pub closure_id: String,
     pub task_id: String,
@@ -1561,14 +1562,14 @@ pub struct HeadlessRunSelectedProductGapClosureEvidence {
     pub replayed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HeadlessRunProductEvidenceArtifactSource {
     pub path: String,
     pub expected_sha256: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HeadlessRunJourneyAdmission {
     pub journey_id: String,
@@ -1583,7 +1584,7 @@ pub struct HeadlessRunJourneyAdmission {
     pub product_objective_continuation_source: Option<ProductObjectiveContinuationJourneySource>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HeadlessRunJourneyRouteResume {
     pub journey_id: String,
@@ -1593,7 +1594,7 @@ pub struct HeadlessRunJourneyRouteResume {
     pub expected_source_checkpoint_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HeadlessRunJourneyClosure {
     pub journey_id: String,
@@ -1603,7 +1604,7 @@ pub struct HeadlessRunJourneyClosure {
     pub expected_replacement_resume_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HeadlessRunJourneyExecution {
     pub journey_id: String,
@@ -1616,7 +1617,7 @@ pub struct HeadlessRunJourneyExecution {
     pub expected_execution_checkpoint_fingerprint: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HeadlessRunJourneyTaskStartEnvelope {
     pub goal: String,
@@ -1624,7 +1625,7 @@ pub struct HeadlessRunJourneyTaskStartEnvelope {
     pub mode_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HeadlessRunRecoveryProbeParams {
     pub authorize_recovery_probe: bool,
@@ -1634,7 +1635,7 @@ pub struct HeadlessRunRecoveryProbeParams {
     pub objective_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunRecoveryProbeResult {
     pub admission_state: String,
     pub session_id: String,
@@ -1652,7 +1653,7 @@ pub struct HeadlessRunRecoveryProbeResult {
     pub next_runtime_invocation: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProductObjectiveContinuationJourneySource {
     pub continuation_task_id: String,
@@ -1673,7 +1674,7 @@ pub struct ProductObjectiveContinuationJourneySource {
     pub authorize_product_objective_journey_admission: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HeadlessRunJourneyObjectiveContext {
     pub authorize_objective_context_admission: bool,
@@ -1682,7 +1683,7 @@ pub struct HeadlessRunJourneyObjectiveContext {
     pub selected_index_context: TaskRunSelectedIndexContext,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRunSelectedIndexContext {
     pub query_id: String,
@@ -1702,19 +1703,19 @@ pub struct TaskRunSelectedIndexContext {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct RunEventsParams {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct RunInspectParams {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct CodebaseIndexBuildParams {
     #[serde(default)]
@@ -1737,7 +1738,7 @@ pub struct CodebaseIndexBuildParams {
     pub max_directory_entries: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct CodebaseIndexBuildResult {
     pub snapshot: CodebaseIndexSnapshotSummary,
     pub persisted: bool,
@@ -1746,7 +1747,7 @@ pub struct CodebaseIndexBuildResult {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct CodebaseIndexQueryParams {
     pub mode_id: String,
@@ -1757,7 +1758,7 @@ pub struct CodebaseIndexQueryParams {
     pub file_kind: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct CodebaseIndexQueryResult {
     pub query_id: String,
     pub selection_id: String,
@@ -1772,7 +1773,7 @@ pub struct CodebaseIndexQueryResult {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct CodebaseIndexSelectionReadParams {
     pub query_id: String,
@@ -1786,7 +1787,7 @@ pub struct CodebaseIndexSelectionReadParams {
     pub read_path: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct CodebaseIndexSelectionReadResult {
     pub query_id: String,
     pub selection_id: String,
@@ -1805,7 +1806,7 @@ pub struct CodebaseIndexSelectionReadResult {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct CodebaseIndexQuerySnapshotSummary {
     pub index_id: String,
     pub root: String,
@@ -1815,7 +1816,7 @@ pub struct CodebaseIndexQuerySnapshotSummary {
     pub truncated: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct CodebaseIndexSelectedEntry {
     pub path: String,
     pub file_kind: String,
@@ -1828,13 +1829,13 @@ pub struct CodebaseIndexSelectedEntry {
     pub match_reasons: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct CodebaseIndexSnapshotManifest {
     pub snapshot: CodebaseIndexSnapshotSummary,
     pub entries: Vec<CodebaseIndexFileEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct CodebaseIndexSnapshotSummary {
     pub index_id: String,
     pub root: String,
@@ -1846,7 +1847,7 @@ pub struct CodebaseIndexSnapshotSummary {
     pub truncated: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct CodebaseIndexCountsSummary {
     pub indexed_files: usize,
     pub walked_directories: usize,
@@ -1867,7 +1868,7 @@ pub struct CodebaseIndexCountsSummary {
     pub sensitive_finding_count: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct CodebaseIndexLimitsSummary {
     pub max_files: usize,
     pub max_directories: usize,
@@ -1877,7 +1878,7 @@ pub struct CodebaseIndexLimitsSummary {
     pub max_directory_entries: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct CodebaseIndexFileEntry {
     pub path: String,
     pub file_kind: String,
@@ -1888,20 +1889,20 @@ pub struct CodebaseIndexFileEntry {
     pub content_sha256: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalListParams {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalInspectParams {
     pub run_id: String,
     pub proposal_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalApproveParams {
     pub run_id: String,
@@ -1909,7 +1910,7 @@ pub struct ProposalApproveParams {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalRejectParams {
     pub run_id: String,
@@ -1917,35 +1918,35 @@ pub struct ProposalRejectParams {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalPreflightParams {
     pub run_id: String,
     pub proposal_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReadinessParams {
     pub run_id: String,
     pub proposal_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalApplyCapabilityParams {
     pub run_id: String,
     pub proposal_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalApplyDryRunParams {
     pub run_id: String,
     pub proposal_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalApplyTransactionItem {
     pub proposal_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1955,7 +1956,7 @@ pub struct ProposalApplyTransactionItem {
     pub replacement_content: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalApplyTransactionRecoverySource {
     pub source_run_id: String,
     pub source_apply_id: String,
@@ -1963,13 +1964,13 @@ pub struct ProposalApplyTransactionRecoverySource {
     pub expected_source_transaction_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalPatchHunk {
     pub old_text: String,
     pub new_text: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalApplyParams {
     pub run_id: String,
@@ -1990,313 +1991,313 @@ pub struct ProposalApplyParams {
     pub transaction_recovery_source: Option<ProposalApplyTransactionRecoverySource>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalApplyDryRunHistoryParams {
     pub run_id: String,
     pub proposal_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalAuditTrailParams {
     pub run_id: String,
     pub proposal_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewBundleParams {
     pub run_id: String,
     pub proposal_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewVerdictParams {
     pub run_id: String,
     pub proposal_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewReportParams {
     pub run_id: String,
     pub proposal_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueParams {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsParams {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsHistoryParams {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsReportParams {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestParams {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestHistoryParams {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportParams {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportHistoryParams {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictParams {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictHistoryParams {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportParams {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryParams {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestParams {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryParams {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportParams {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryParams
 {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskInspectParams {
     pub task_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct LlmProviderFailureOutcome {
     pub provider: String,
     pub model: String,
@@ -2312,7 +2313,7 @@ pub struct LlmProviderFailureOutcome {
     pub http_status: Option<u16>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskRunResult {
     pub task_id: String,
     pub run_id: String,
@@ -2346,7 +2347,7 @@ pub struct TaskRunResult {
     pub parent_join_readiness_outcome: Option<TaskRunParentJoinReadinessOutcome>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskRunVerificationRecoveryContextReadSummary {
     pub context_read_id: String,
     pub source_task_id: String,
@@ -2374,7 +2375,7 @@ pub struct TaskRunVerificationRecoveryContextReadSummary {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum HeadlessContinueOnceStatus {
     StaleProgress,
@@ -2383,7 +2384,7 @@ pub enum HeadlessContinueOnceStatus {
     TaskExecuted,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum HeadlessContinueRouteKind {
     InspectProgressOverview,
@@ -2409,7 +2410,7 @@ pub enum HeadlessContinueRouteKind {
     RefreshProgressOverview,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessContinueRoute {
     pub kind: HeadlessContinueRouteKind,
     pub reason: String,
@@ -2432,7 +2433,7 @@ pub struct HeadlessContinueRoute {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessContinueOnceResult {
     pub status: HeadlessContinueOnceStatus,
     pub decision_id: Option<String>,
@@ -2492,7 +2493,7 @@ pub struct HeadlessContinueOnceResult {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessContinueStepResult {
     pub step_index: u8,
     pub status: HeadlessContinueOnceStatus,
@@ -2516,13 +2517,13 @@ pub struct HeadlessContinueStepResult {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunProgressCheckpoint {
     pub progress_fingerprint: String,
     pub aggregate_sequence: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum HeadlessRunCompletionClosureStatus {
     Complete,
@@ -2534,7 +2535,7 @@ pub enum HeadlessRunCompletionClosureStatus {
     UnknownNonterminal,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunCompletionClosure {
     pub status: HeadlessRunCompletionClosureStatus,
     pub stop_reason: String,
@@ -2557,7 +2558,7 @@ pub struct HeadlessRunCompletionClosure {
     pub closure_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunCompletionFinalization {
     pub status: String,
     pub session_id: String,
@@ -2580,7 +2581,7 @@ pub struct HeadlessRunCompletionFinalization {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunObjectiveProposalCandidate {
     pub status: String,
     pub journey_id: String,
@@ -2612,7 +2613,7 @@ pub struct HeadlessRunObjectiveProposalCandidate {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunObjectiveProposalAuthorizationPreflight {
     pub status: String,
     pub journey_id: String,
@@ -2640,7 +2641,7 @@ pub struct HeadlessRunObjectiveProposalAuthorizationPreflight {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunObjectiveApplyVerification {
     pub verification_status: String,
     pub journey_id: String,
@@ -2661,7 +2662,7 @@ pub struct HeadlessRunObjectiveApplyVerification {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunObjectiveCompletionAcceptance {
     pub acceptance_status: String,
     pub journey_id: String,
@@ -2683,7 +2684,7 @@ pub struct HeadlessRunObjectiveCompletionAcceptance {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunAcceptedCompletion {
     pub task_id: String,
     pub run_id: String,
@@ -2696,7 +2697,7 @@ pub struct HeadlessRunAcceptedCompletion {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunAdvanceResult {
     pub status: HeadlessContinueOnceStatus,
     pub session_id: String,
@@ -2721,7 +2722,7 @@ pub struct HeadlessRunAdvanceResult {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunDriveResult {
     pub status: HeadlessContinueOnceStatus,
     pub session_id: String,
@@ -2769,7 +2770,7 @@ pub struct HeadlessRunDriveResult {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunProductCompletionDecision {
     pub decision_id: String,
     pub task_id: String,
@@ -2803,7 +2804,7 @@ pub struct HeadlessRunProductCompletionDecision {
     pub replayed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TechnicalDebtCarryForwardItem {
     pub debt_id: String,
@@ -2823,14 +2824,14 @@ pub struct TechnicalDebtCarryForwardItem {
     pub closure_evidence_fingerprint: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TechnicalDebtCarryForward {
     pub fingerprint: String,
     pub items: Vec<TechnicalDebtCarryForwardItem>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TechnicalDebtTransition {
     pub debt_id: String,
@@ -2848,7 +2849,7 @@ fn default_technical_debt_responsibility_domain() -> String {
     "runtime".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunProductEvidenceMatrix {
     pub derivation_id: String,
     pub task_id: String,
@@ -2884,7 +2885,7 @@ pub struct HeadlessRunProductEvidenceMatrix {
     pub replayed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HeadlessRunProductRemainingGapSelection {
     pub gap_id: String,
@@ -2903,13 +2904,13 @@ fn default_product_remaining_gap_responsibility_domain() -> String {
     "runtime".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunProductEvidenceArtifact {
     pub path: String,
     pub sha256: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunJourneyMetadata {
     pub journey_id: String,
     pub task_id: String,
@@ -2934,7 +2935,7 @@ pub struct HeadlessRunJourneyMetadata {
     pub proposal_candidate: Option<HeadlessRunObjectiveProposalCandidate>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HeadlessRunJourneyObjectiveContextMetadata {
     pub objective_id: String,
@@ -2959,7 +2960,7 @@ pub struct HeadlessRunJourneyObjectiveContextMetadata {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunJourneyRouteResumeMetadata {
     pub journey_id: String,
     pub task_id: String,
@@ -2984,7 +2985,7 @@ pub struct HeadlessRunJourneyRouteResumeMetadata {
     pub resume_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunJourneyClosureMetadata {
     pub journey_id: String,
     pub task_id: String,
@@ -3009,7 +3010,7 @@ pub struct HeadlessRunJourneyClosureMetadata {
     pub journey_closure_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunJourneyExecutionBoundaryMetadata {
     pub boundary: String,
     pub drive_id: String,
@@ -3024,7 +3025,7 @@ pub struct HeadlessRunJourneyExecutionBoundaryMetadata {
     pub replayed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunJourneyExecutionMetadata {
     pub journey_id: String,
     pub task_id: String,
@@ -3039,7 +3040,7 @@ pub struct HeadlessRunJourneyExecutionMetadata {
     pub execution_checkpoint_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskRunSelectedIndexPromptContextSummary {
     pub prompt_context_id: String,
     pub source_event_id: String,
@@ -3062,7 +3063,7 @@ pub struct TaskRunSelectedIndexPromptContextSummary {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskRunContextBudgetSummary {
     pub requested: bool,
     pub max_prompt_chars: usize,
@@ -3080,13 +3081,13 @@ pub struct TaskRunContextBudgetSummary {
     pub prompt_within_budget: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskRunAgentLoopSummary {
     pub final_state: String,
     pub completion_summary: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskRunCompletionEvidence {
     pub final_state: String,
     pub task_status: TaskStatus,
@@ -3099,7 +3100,7 @@ pub struct TaskRunCompletionEvidence {
     pub replayed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskRunCompletionAcceptance {
     pub acceptance_id: String,
     pub task_id: String,
@@ -3112,7 +3113,7 @@ pub struct TaskRunCompletionAcceptance {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct BoundedCargoDiagnostic {
     pub tool_id: String,
     pub check_id: String,
@@ -3131,7 +3132,7 @@ pub struct BoundedCargoDiagnostic {
     pub truncated: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskRunVerificationCompletionGate {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3156,7 +3157,7 @@ pub struct TaskRunVerificationCompletionGate {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskRunVerificationRecoveryRepairOutcome {
     pub gate_status: String,
     pub source_task_id: String,
@@ -3175,7 +3176,7 @@ pub struct TaskRunVerificationRecoveryRepairOutcome {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskRunPatchApplyRecoveryRepairOutcome {
     pub gate_status: String,
     pub source_run_id: String,
@@ -3194,7 +3195,7 @@ pub struct TaskRunPatchApplyRecoveryRepairOutcome {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskRunVerificationRecoveryRetryOutcome {
     pub source_task_id: String,
     pub source_run_id: String,
@@ -3214,7 +3215,7 @@ pub struct TaskRunVerificationRecoveryRetryOutcome {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskRunChildOrchestrationOutcome {
     pub parent_run_id: String,
     pub materialized_child_task_ids: Vec<String>,
@@ -3225,7 +3226,7 @@ pub struct TaskRunChildOrchestrationOutcome {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskRunParentJoinReadinessOutcome {
     pub parent_task_id: String,
     pub parent_run_id: String,
@@ -3252,7 +3253,7 @@ pub struct TaskRunParentJoinReadinessOutcome {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct RunInspectParentJoinReadinessSummary {
     pub parent_task_id: String,
     pub parent_run_id: String,
@@ -3266,7 +3267,7 @@ pub struct RunInspectParentJoinReadinessSummary {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct RunInspectConsumedParentJoinRecoverySummary {
     pub parent_task_id: String,
     pub parent_run_id: String,
@@ -3282,7 +3283,7 @@ pub struct RunInspectConsumedParentJoinRecoverySummary {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ChildInspectParentJoinReadinessSummary {
     pub parent_task_id: String,
     pub parent_run_id: String,
@@ -3299,7 +3300,7 @@ pub struct ChildInspectParentJoinReadinessSummary {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ChildInspectConsumedParentJoinRecoverySummary {
     pub parent_task_id: String,
     pub parent_run_id: String,
@@ -3318,7 +3319,7 @@ pub struct ChildInspectConsumedParentJoinRecoverySummary {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct RecoveryCycleBudgetOutcome {
     pub recovery_cycle_budget_status: String,
     pub parent_join_admission_id: String,
@@ -3330,14 +3331,14 @@ pub struct RecoveryCycleBudgetOutcome {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskListParams {
     #[serde(default)]
     pub bounds: Option<TaskListBounds>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskListBounds {
     #[serde(default)]
     pub max_tasks: Option<usize>,
@@ -3357,13 +3358,13 @@ pub struct TaskListBounds {
     pub max_edges: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskListResult {
     pub tasks: Vec<TaskRecord>,
     pub progress_overview: TaskListProgressOverview,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskListProgressOverview {
     pub source_fingerprint: String,
     pub aggregate_sequence: u64,
@@ -3392,7 +3393,7 @@ pub struct TaskListProgressOverview {
     pub edges: Vec<TaskProgressGraphEdge>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskListHeadlessRouteCandidate {
     pub kind: HeadlessContinueRouteKind,
     pub reason: String,
@@ -3423,7 +3424,7 @@ pub struct TaskListHeadlessRouteCandidate {
     pub next_action: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskStatusCounts {
     pub created: usize,
     pub queued: usize,
@@ -3433,20 +3434,20 @@ pub struct TaskStatusCounts {
     pub cancelled: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskListProgressStageCount {
     pub current_stage: ProgressCurrentStage,
     pub task_count: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskListProgressNextActionSet {
     pub next_action: ProgressNextAction,
     pub task_count: usize,
     pub task_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskListProgressBlockedSet {
     pub current_stage: ProgressCurrentStage,
     pub next_action: ProgressNextAction,
@@ -3454,7 +3455,7 @@ pub struct TaskListProgressBlockedSet {
     pub task_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskProgressGraphNode {
     pub task_id: String,
     pub run_id: String,
@@ -3469,7 +3470,7 @@ pub struct TaskProgressGraphNode {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskProgressGraphEdge {
     pub parent_task_id: String,
     pub parent_run_id: String,
@@ -3479,18 +3480,18 @@ pub struct TaskProgressGraphEdge {
     pub source_handoff_envelope_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct RunEventsResult {
     pub run_id: String,
     pub events: Vec<LedgerEventSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct RunInspectResult {
     pub run: RunInspectSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchProposalSummary {
     pub proposal_id: String,
     pub path: String,
@@ -3516,7 +3517,7 @@ pub struct WorkspacePatchProposalSummary {
     pub latest_snapshot: Option<WorkspacePatchPreflightSnapshotSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchPreflightSnapshotSummary {
     pub proposal_id: String,
     pub snapshot_id: String,
@@ -3532,7 +3533,7 @@ pub struct WorkspacePatchPreflightSnapshotSummary {
     pub stale_reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchApplyPlanSummary {
     pub proposal_id: String,
     pub plan_id: String,
@@ -3540,14 +3541,14 @@ pub struct WorkspacePatchApplyPlanSummary {
     pub checklist: Vec<WorkspacePatchApplyCheckSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchApplyCheckSummary {
     pub name: String,
     pub status: String,
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReadinessReportSummary {
     pub proposal_id: String,
     pub report_id: String,
@@ -3560,14 +3561,14 @@ pub struct WorkspacePatchReadinessReportSummary {
     pub summary: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReadinessCheckSummary {
     pub name: String,
     pub status: String,
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchApplyCapabilitySummary {
     pub proposal_id: String,
     pub capability_id: String,
@@ -3584,14 +3585,14 @@ pub struct WorkspacePatchApplyCapabilitySummary {
     pub checklist: Vec<WorkspacePatchApplyCapabilityCheckSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchApplyCapabilityCheckSummary {
     pub name: String,
     pub status: String,
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchApplyDryRunSummary {
     pub proposal_id: String,
     pub dry_run_id: String,
@@ -3608,14 +3609,14 @@ pub struct WorkspacePatchApplyDryRunSummary {
     pub checklist: Vec<WorkspacePatchApplyDryRunCheckSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchApplyDryRunCheckSummary {
     pub name: String,
     pub status: String,
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchApplyTransactionItemResultSummary {
     pub proposal_id: String,
     pub apply_status: String,
@@ -3639,7 +3640,7 @@ pub struct WorkspacePatchApplyTransactionItemResultSummary {
     pub temp_file_cleaned: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchTransactionRecoverySourceSummary {
     pub source_run_id: String,
     pub source_apply_id: String,
@@ -3651,7 +3652,7 @@ pub struct WorkspacePatchTransactionRecoverySourceSummary {
     pub source_recovery_item_count: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchApplyResultSummary {
     pub proposal_id: String,
     pub apply_id: String,
@@ -3692,14 +3693,14 @@ pub struct WorkspacePatchApplyResultSummary {
     pub transaction_recovery_status: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchApplyResultCheckSummary {
     pub name: String,
     pub status: String,
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchApplyDryRunHistoryEntry {
     pub proposal_id: String,
     pub dry_run_id: String,
@@ -3715,7 +3716,7 @@ pub struct WorkspacePatchApplyDryRunHistoryEntry {
     pub workspace_files_changed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchApplyDryRunHistorySummary {
     pub proposal_id: String,
     pub dry_run_count: usize,
@@ -3724,7 +3725,7 @@ pub struct WorkspacePatchApplyDryRunHistorySummary {
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchAuditTrailEntry {
     pub event_id: String,
     pub audit_event: String,
@@ -3735,7 +3736,7 @@ pub struct WorkspacePatchAuditTrailEntry {
     pub metadata: Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchAuditTrailSummary {
     pub proposal_id: String,
     pub event_count: usize,
@@ -3744,7 +3745,7 @@ pub struct WorkspacePatchAuditTrailSummary {
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewSignalSummary {
     pub status: String,
     pub reason: Option<String>,
@@ -3752,7 +3753,7 @@ pub struct WorkspacePatchReviewSignalSummary {
     pub source_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewBundleSummary {
     pub proposal_id: String,
     pub review_status: String,
@@ -3766,7 +3767,7 @@ pub struct WorkspacePatchReviewBundleSummary {
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewVerdictSummary {
     pub proposal_id: String,
     pub verdict_status: String,
@@ -3779,7 +3780,7 @@ pub struct WorkspacePatchReviewVerdictSummary {
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewReportSummary {
     pub proposal_id: String,
     pub report_status: String,
@@ -3793,7 +3794,7 @@ pub struct WorkspacePatchReviewReportSummary {
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueItemSummary {
     pub proposal_id: String,
     pub path: String,
@@ -3810,7 +3811,7 @@ pub struct WorkspacePatchReviewQueueItemSummary {
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueSummary {
     pub run_id: String,
     pub queue_status: String,
@@ -3824,14 +3825,14 @@ pub struct WorkspacePatchReviewQueueSummary {
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsCheckSummary {
     pub name: String,
     pub status: String,
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsSummary {
     pub run_id: String,
     pub diagnostics_status: String,
@@ -3850,7 +3851,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsSummary {
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsHistoryEntrySummary {
     pub diagnostics_id: String,
     pub diagnostics_status: String,
@@ -3866,7 +3867,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsHistoryEntrySummary {
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsHistorySummary {
     pub run_id: String,
     pub history_status: String,
@@ -3878,7 +3879,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsHistorySummary {
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsReportSummary {
     pub run_id: String,
     pub report_status: String,
@@ -3898,7 +3899,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsReportSummary {
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestSummary {
     pub run_id: String,
     pub digest_status: String,
@@ -3917,7 +3918,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestSummary {
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestHistoryEntrySummary {
     pub digest_id: String,
     pub digest_status: String,
@@ -3935,7 +3936,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestHistoryEntrySummary {
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestHistorySummary {
     pub run_id: String,
     pub history_status: String,
@@ -3947,7 +3948,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestHistorySummary {
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportSummary {
     pub run_id: String,
     pub report_status: String,
@@ -3968,7 +3969,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportSummary {
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportHistoryEntrySummary {
     pub report_id: String,
     pub report_status: String,
@@ -3987,7 +3988,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportHistoryEntrySummary {
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportHistorySummary {
     pub run_id: String,
     pub history_status: String,
@@ -3999,7 +4000,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportHistorySummary {
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictSummary {
     pub run_id: String,
     pub verdict_status: String,
@@ -4019,7 +4020,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictSummary {
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictHistoryEntrySummary {
     pub verdict_id: String,
     pub verdict_status: String,
@@ -4038,7 +4039,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictHistoryEntrySu
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictHistorySummary {
     pub run_id: String,
     pub history_status: String,
@@ -4051,7 +4052,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictHistorySummary
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportSummary {
     pub run_id: String,
     pub report_status: String,
@@ -4073,7 +4074,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportSummary 
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryEntrySummary {
     pub report_id: String,
     pub report_status: String,
@@ -4092,7 +4093,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryE
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistorySummary {
     pub run_id: String,
     pub history_status: String,
@@ -4106,7 +4107,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryS
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestSummary {
     pub run_id: String,
     pub digest_status: String,
@@ -4126,7 +4127,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryEntrySummary
 {
     pub digest_id: String,
@@ -4146,7 +4147,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistorySummary {
     pub run_id: String,
     pub history_status: String,
@@ -4160,7 +4161,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportSummary {
     pub run_id: String,
     pub report_status: String,
@@ -4182,7 +4183,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryEntrySummary
 {
     pub report_id: String,
@@ -4202,7 +4203,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistorySummary {
     pub run_id: String,
     pub history_status: String,
@@ -4216,7 +4217,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestSummary
 {
     pub run_id: String,
@@ -4237,7 +4238,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryEntrySummary
 {
     pub digest_id: String,
@@ -4257,7 +4258,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistorySummary
 {
     pub run_id: String,
@@ -4272,7 +4273,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportSummary
 {
     pub run_id: String,
@@ -4295,7 +4296,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryEntrySummary
 {
     pub report_id: String,
@@ -4315,7 +4316,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistorySummary
 {
     pub run_id: String,
@@ -4330,7 +4331,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestSummary
 {
     pub run_id: String,
@@ -4350,7 +4351,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryEntrySummary
 {
     pub digest_id: String,
@@ -4369,7 +4370,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistorySummary
 {
     pub run_id: String,
@@ -4384,7 +4385,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportSummary
 {
     pub run_id: String,
@@ -4407,7 +4408,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryEntrySummary
 {
     pub report_id: String,
@@ -4427,7 +4428,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistorySummary
 {
     pub run_id: String,
@@ -4442,7 +4443,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestSummary
 {
     pub run_id: String,
@@ -4462,7 +4463,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryEntrySummary
 {
     pub digest_id: String,
@@ -4481,7 +4482,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistorySummary
 {
     pub run_id: String,
@@ -4496,7 +4497,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportSummary
 {
     pub run_id: String,
@@ -4519,7 +4520,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryEntrySummary
 {
     pub report_id: String,
@@ -4539,7 +4540,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistorySummary
 {
     pub run_id: String,
@@ -4554,7 +4555,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestSummary
 {
     pub run_id: String,
@@ -4574,7 +4575,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryEntrySummary
 {
     pub digest_id: String,
@@ -4593,7 +4594,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistorySummary
 {
     pub run_id: String,
@@ -4608,7 +4609,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportSummary
 {
     pub run_id: String,
@@ -4630,7 +4631,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryEntrySummary
 {
     pub report_id: String,
@@ -4649,7 +4650,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistorySummary
 {
     pub run_id: String,
@@ -4664,7 +4665,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestSummary
 {
     pub run_id: String,
@@ -4684,7 +4685,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryEntrySummary
 {
     pub digest_id: String,
@@ -4703,7 +4704,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistorySummary
 {
     pub run_id: String,
@@ -4718,7 +4719,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportSummary
 {
     pub run_id: String,
@@ -4740,7 +4741,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryEntrySummary
 {
     pub report_id: String,
@@ -4759,7 +4760,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistorySummary
 {
     pub run_id: String,
@@ -4774,7 +4775,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestSummary
 {
     pub run_id: String,
@@ -4794,7 +4795,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryEntrySummary
 {
     pub digest_id: String,
@@ -4813,7 +4814,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportSummary {
     pub run_id: String,
     pub report_status: String,
@@ -4834,7 +4835,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryEntrySummary
 {
     pub report_id: String,
@@ -4853,7 +4854,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistorySummary
 {
     pub run_id: String,
@@ -4868,7 +4869,7 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistorySummary
 {
     pub run_id: String,
@@ -4883,325 +4884,325 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryD
     pub generated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalListResult {
     pub run_id: String,
     pub proposals: Vec<WorkspacePatchProposalSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalInspectResult {
     pub proposal: WorkspacePatchProposalSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalApproveResult {
     pub proposal: WorkspacePatchProposalSummary,
     pub apply_plan: WorkspacePatchApplyPlanSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalRejectResult {
     pub proposal: WorkspacePatchProposalSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalPreflightResult {
     pub proposal: WorkspacePatchProposalSummary,
     pub snapshot: WorkspacePatchPreflightSnapshotSummary,
     pub apply_plan: WorkspacePatchApplyPlanSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReadinessResult {
     pub proposal: WorkspacePatchProposalSummary,
     pub report: WorkspacePatchReadinessReportSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalApplyCapabilityResult {
     pub proposal: WorkspacePatchProposalSummary,
     pub capability: WorkspacePatchApplyCapabilitySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalApplyDryRunResult {
     pub proposal: WorkspacePatchProposalSummary,
     pub dry_run: WorkspacePatchApplyDryRunSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalApplyResult {
     pub proposal: WorkspacePatchProposalSummary,
     pub apply_result: WorkspacePatchApplyResultSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalApplyDryRunHistoryResult {
     pub proposal: WorkspacePatchProposalSummary,
     pub history: WorkspacePatchApplyDryRunHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalAuditTrailResult {
     pub proposal: WorkspacePatchProposalSummary,
     pub audit_trail: WorkspacePatchAuditTrailSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewBundleResult {
     pub proposal: WorkspacePatchProposalSummary,
     pub review_bundle: WorkspacePatchReviewBundleSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewVerdictResult {
     pub proposal: WorkspacePatchProposalSummary,
     pub review_verdict: WorkspacePatchReviewVerdictSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewReportResult {
     pub proposal: WorkspacePatchProposalSummary,
     pub review_report: WorkspacePatchReviewReportSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueResult {
     pub review_queue: WorkspacePatchReviewQueueSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsResult {
     pub review_queue_diagnostics: WorkspacePatchReviewQueueDiagnosticsSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsHistoryResult {
     pub review_queue_diagnostics_history: WorkspacePatchReviewQueueDiagnosticsHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsReportResult {
     pub review_queue_diagnostics_report: WorkspacePatchReviewQueueDiagnosticsReportSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestResult {
     pub review_queue_diagnostics_digest: WorkspacePatchReviewQueueDiagnosticsDigestSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestHistoryResult {
     pub review_queue_diagnostics_digest_history:
         WorkspacePatchReviewQueueDiagnosticsDigestHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportResult {
     pub review_queue_diagnostics_digest_report:
         WorkspacePatchReviewQueueDiagnosticsDigestReportSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportHistoryResult {
     pub review_queue_diagnostics_digest_report_history:
         WorkspacePatchReviewQueueDiagnosticsDigestReportHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictResult {
     pub review_queue_diagnostics_digest_report_verdict:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictHistoryResult {
     pub review_queue_diagnostics_digest_report_verdict_history:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportResult {
     pub review_queue_diagnostics_digest_report_verdict_report:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistorySummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskInspectResult {
     pub task: TaskRecord,
     pub run: RunInspectSummary,
@@ -5212,7 +5213,7 @@ pub struct TaskInspectResult {
         Option<ChildInspectConsumedParentJoinRecoverySummary>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct RunInspectSummary {
     pub run_id: String,
     pub task_id: Option<String>,
@@ -5256,7 +5257,7 @@ pub struct RunInspectSummary {
     pub timeline: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProgressSnapshot {
     pub lifecycle_phase: ProgressLifecyclePhase,
     pub current_stage: ProgressCurrentStage,
@@ -5279,7 +5280,7 @@ pub struct ProgressSnapshot {
     pub selected_index_context_count: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProgressLifecyclePhase {
     Created,
@@ -5290,7 +5291,7 @@ pub enum ProgressLifecyclePhase {
     Unknown,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProgressCurrentStage {
     Created,
@@ -5305,7 +5306,7 @@ pub enum ProgressCurrentStage {
     Unknown,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProgressNextAction {
     RunTaskExplicitly,
@@ -5317,7 +5318,7 @@ pub enum ProgressNextAction {
     InspectTask,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProgressVerificationState {
     NotRequired,
@@ -5327,7 +5328,7 @@ pub enum ProgressVerificationState {
     Unknown,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ChildTaskInspectSummary {
     pub task_id: String,
     pub run_id: String,
@@ -5353,7 +5354,7 @@ pub struct ChildTaskInspectSummary {
     pub final_response_preview: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ChildTaskSourceIntentSummary {
     pub tool_id: String,
     pub required_action: RuntimeActionName,
@@ -5363,7 +5364,7 @@ pub struct ChildTaskSourceIntentSummary {
     pub input_summary: ToolIntentInputSummary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct RecoveryCycleChildProvenance {
     pub parent_join_admission_id: String,
     pub parent_join_child_completion_fingerprint: String,
@@ -5374,7 +5375,7 @@ pub struct RecoveryCycleChildProvenance {
     pub parent_join_recovery_cycle_depth: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct VerificationRecoveryProvenance {
     pub source_task_id: String,
     pub source_run_id: String,
@@ -5388,7 +5389,7 @@ pub struct VerificationRecoveryProvenance {
     pub bounded_cargo_diagnostics: Vec<BoundedCargoDiagnostic>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct PatchApplyRecoveryProvenance {
     pub source_run_id: String,
     pub source_proposal_id: String,
@@ -5402,7 +5403,7 @@ pub struct PatchApplyRecoveryProvenance {
     pub hunk_fingerprint: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct VerificationRecoveryRetryProvenance {
     pub source_task_id: String,
     pub source_run_id: String,
@@ -5415,7 +5416,7 @@ pub struct VerificationRecoveryRetryProvenance {
     pub retried_verifier_tool_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct LlmProviderFailureRetryProvenance {
     pub source_task_id: String,
     pub source_run_id: String,
@@ -5427,7 +5428,7 @@ pub struct LlmProviderFailureRetryProvenance {
     pub retryable: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProductContinuationProvenance {
     pub source_task_id: String,
     pub source_run_id: String,
@@ -5449,7 +5450,7 @@ pub struct ProductContinuationProvenance {
     pub technical_debt_carry_forward: Option<TechnicalDebtCarryForward>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProductObjectiveContinuationProvenance {
     pub source_task_id: String,
     pub source_run_id: String,
@@ -5474,7 +5475,7 @@ pub struct ProductObjectiveContinuationProvenance {
     pub derivation_version: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProductLoopStopRecoveryProvenance {
     pub source_session_id: String,
     pub source_drive_id: String,
@@ -5488,7 +5489,7 @@ pub struct ProductLoopStopRecoveryProvenance {
     pub recovery_boundary_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HeadlessRunRecoveryIdentityEvidence {
     pub session_id: String,
     pub drive_id: String,
@@ -5496,7 +5497,7 @@ pub struct HeadlessRunRecoveryIdentityEvidence {
     pub objective_fingerprint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct LedgerEventSummary {
     pub event_id: String,
     pub task_id: String,
@@ -5506,7 +5507,7 @@ pub struct LedgerEventSummary {
     pub payload: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TaskRecord {
     pub task_id: String,
     pub run_id: String,
@@ -5541,7 +5542,7 @@ pub struct TaskRecord {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub enum TaskStatus {
     Created,
     Queued,
@@ -5652,6 +5653,67 @@ mod semantic_contract_tests {
         assert_eq!(
             policy_params, public_params,
             "semantic contract must record unknown-field policy for every public *Params type"
+        );
+    }
+
+    #[test]
+    fn semantic_contract_records_recursive_nested_wire_schemas() {
+        let contract = semantic_contract::runtime_semantic_protocol_contract();
+        assert_eq!(
+            contract.get("phase").and_then(Value::as_str),
+            Some("RRP-5.3")
+        );
+
+        let type_schemas = contract
+            .get("type_schemas")
+            .and_then(Value::as_object)
+            .expect("recursive type schemas");
+        let replace_active = type_schemas
+            .get("ModePackReplaceActiveResult")
+            .and_then(Value::as_object)
+            .expect("ModePackReplaceActiveResult schema");
+        let defs = replace_active
+            .get("$defs")
+            .and_then(Value::as_object)
+            .expect("nested schema definitions");
+        assert!(
+            defs.contains_key("ModePackActiveSnapshotSummary"),
+            "nested ModePackActiveSnapshotSummary must be recursively defined"
+        );
+        assert!(
+            defs.contains_key("ModePackApprovedCandidateSummary"),
+            "nested candidate summary must be recursively defined"
+        );
+        let previous_snapshot = replace_active
+            .get("properties")
+            .and_then(|properties| properties.get("previous_snapshot"))
+            .and_then(|value| value.get("$ref"))
+            .and_then(Value::as_str);
+        assert_eq!(
+            previous_snapshot,
+            Some("#/$defs/ModePackActiveSnapshotSummary"),
+            "method result schemas must expose machine-checkable nested refs"
+        );
+
+        let method = contract
+            .get("method_contracts")
+            .and_then(Value::as_array)
+            .expect("method contracts")
+            .iter()
+            .find(|method| {
+                method.get("method").and_then(Value::as_str) == Some("modepack.replaceActive")
+            })
+            .expect("modepack.replaceActive contract");
+        assert_eq!(
+            method.get("result_schema_ref").and_then(Value::as_str),
+            Some("#/type_schemas/ModePackReplaceActiveResult")
+        );
+        assert!(
+            method
+                .get("result_recursive_schema_fingerprint")
+                .and_then(Value::as_str)
+                .is_some_and(|fingerprint| fingerprint.starts_with("shape-fnv1a64:")),
+            "method contract must fingerprint the recursive result schema"
         );
     }
 

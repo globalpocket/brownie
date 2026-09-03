@@ -1,3 +1,5 @@
+use crate::*;
+use schemars::{schema_for, JsonSchema};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -579,9 +581,10 @@ pub fn runtime_semantic_protocol_contract() -> Value {
     let struct_schemas = parse_public_struct_schemas(PROTOCOL_SOURCE);
     let enum_schemas = parse_public_enum_schemas(PROTOCOL_SOURCE);
     let ledger_event_kinds = parse_public_enum_values(STORE_SOURCE, "LedgerEventKind", false);
+    let type_schemas = method_type_schemas();
     let method_contracts = METHOD_SPECS
         .iter()
-        .map(|spec| method_contract_json(spec, &struct_schemas))
+        .map(|spec| method_contract_json(spec, &struct_schemas, &type_schemas))
         .collect::<Vec<_>>();
     let params_policy = struct_schemas
         .values()
@@ -598,10 +601,10 @@ pub fn runtime_semantic_protocol_contract() -> Value {
         .collect::<Vec<_>>();
 
     json!({
-        "schema_version": 2,
+        "schema_version": 3,
         "contract_id": "runtime-semantic-protocol-contract-v1",
         "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-        "phase": "RRP-5.2",
+        "phase": "RRP-5.3",
         "owner": "runtime",
         "runtime_release_debt_id": "protocol-event-canonization",
         "runtime_release_ready": false,
@@ -642,6 +645,15 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             }
         ],
         "method_contracts": method_contracts,
+        "type_schemas": type_schemas,
+        "recursive_json_schema_coverage": {
+            "generator": "schemars",
+            "definition_keyword": "$defs",
+            "type_schema_count": method_type_names().len(),
+            "coverage": "Every method param/result type has a recursive Rust-derived JSON Schema document with nested struct and enum definitions.",
+            "method_reference_policy": "Each method contract records request_schema_ref/result_schema_ref and request/result recursive schema fingerprints derived from type_schemas.",
+            "drift_detection": "Nested field, enum, required, nullable, array, object, and referenced type shape changes alter the recursive schema fingerprint and require artifact regeneration."
+        },
         "method_coverage": {
             "explicit_runtime_method_count": METHOD_SPECS.len(),
             "coverage_source": "docs/architecture/runtime-protocol-event-canonical-map.json protocol_method_groups[].methods",
@@ -688,7 +700,8 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             "ledger_payload_envelope_type": "LedgerPayloadEnvelope",
             "ledger_payload_envelope_field": "payload_envelope",
             "ledger_payload_shape_version_source": "LEDGER_PAYLOAD_SHAPE_VERSION",
-            "policy": "Durable event kind or typed payload shape changes require an explicit brownie-store schema migration or compatibility entry before Runtime release.",
+            "ledger_payload_shape_fingerprint_basis": "LedgerEventKind plus the canonical structural shape of the actual persisted payload value: object field names, value kinds, nested arrays/objects, nullability, and primitive kinds.",
+            "policy": "Durable event kind or typed payload shape changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes fingerprint concrete payload structure, not only event-kind version labels.",
             "guard": "guard:protocol-event-canonization",
             "event_shape_fingerprint_count": ledger_event_kinds.len(),
             "event_shape_fingerprints": ledger_event_kinds
@@ -699,16 +712,35 @@ pub fn runtime_semantic_protocol_contract() -> Value {
                         "ledger_event_kind": kind,
                         "payload_shape_id": shape_id,
                         "payload_shape_version": 1,
-                        "payload_shape_fingerprint": stable_fingerprint(&format!("{}:{}", kind, "payload_shape_v1")),
+                        "payload_shape_fingerprint": ledger_payload_shape_fingerprint_for_descriptor(kind, "payload:none"),
+                        "payload_shape_descriptor": "payload:none",
                         "store_schema_version": 2
                     })
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
+            "payload_shape_fixtures": [
+                {
+                    "ledger_event_kind": "TaskCompleted",
+                    "payload": {"status": "Completed"},
+                    "payload_shape_descriptor": ledger_payload_shape_descriptor(&json!({"status": "Completed"})),
+                    "payload_shape_fingerprint": ledger_payload_shape_fingerprint_for_value("TaskCompleted", &json!({"status": "Completed"}))
+                },
+                {
+                    "ledger_event_kind": "TaskCompleted",
+                    "payload": {"status": "Completed", "late_tool_response": true},
+                    "payload_shape_descriptor": ledger_payload_shape_descriptor(&json!({"status": "Completed", "late_tool_response": true})),
+                    "payload_shape_fingerprint": ledger_payload_shape_fingerprint_for_value("TaskCompleted", &json!({"status": "Completed", "late_tool_response": true}))
+                }
+            ]
         }
     })
 }
 
-fn method_contract_json(spec: &MethodSpec, structs: &BTreeMap<String, StructSchema>) -> Value {
+fn method_contract_json(
+    spec: &MethodSpec,
+    structs: &BTreeMap<String, StructSchema>,
+    type_schemas: &BTreeMap<String, Value>,
+) -> Value {
     let param_schema = spec.param_type.and_then(|name| structs.get(name));
     let request_schema = match spec.param_type {
         Some(name) => struct_schema_json(
@@ -727,6 +759,13 @@ fn method_contract_json(spec: &MethodSpec, structs: &BTreeMap<String, StructSche
             .get(spec.result_type)
             .unwrap_or_else(|| panic!("missing semantic result schema for {}", spec.result_type)),
     );
+    let request_schema_ref = spec.param_type.map(|name| format!("#/type_schemas/{name}"));
+    let request_recursive_schema_fingerprint = spec
+        .param_type
+        .map(|name| type_schema_fingerprint(type_schemas, name));
+    let result_schema_ref = format!("#/type_schemas/{}", spec.result_type);
+    let result_recursive_schema_fingerprint =
+        type_schema_fingerprint(type_schemas, spec.result_type);
     json!({
         "method": spec.method,
         "group_id": spec.group_id,
@@ -741,13 +780,176 @@ fn method_contract_json(spec: &MethodSpec, structs: &BTreeMap<String, StructSche
         "optional_fields": param_schema.map(optional_field_names).unwrap_or_default(),
         "request_schema": request_schema,
         "result_schema": result_schema,
+        "request_schema_ref": request_schema_ref,
+        "result_schema_ref": result_schema_ref,
+        "request_recursive_schema_fingerprint": request_recursive_schema_fingerprint,
+        "result_recursive_schema_fingerprint": result_recursive_schema_fingerprint,
         "schema_fingerprint": stable_fingerprint(&format!(
-            "{}:{}:{}",
+            "{}:{}:{}:{}:{}",
             spec.method,
             spec.param_type.unwrap_or("NoParams"),
-            spec.result_type
+            spec.result_type,
+            request_recursive_schema_fingerprint.unwrap_or_else(|| "no_params".to_string()),
+            result_recursive_schema_fingerprint
         ))
     })
+}
+
+macro_rules! insert_method_type_schema {
+    ($schemas:ident, $ty:ty) => {
+        insert_type_schema::<$ty>(&mut $schemas, stringify!($ty));
+    };
+}
+
+fn method_type_schemas() -> BTreeMap<String, Value> {
+    let mut schemas = BTreeMap::new();
+    insert_method_type_schema!(schemas, CodebaseIndexBuildParams);
+    insert_method_type_schema!(schemas, CodebaseIndexBuildResult);
+    insert_method_type_schema!(schemas, CodebaseIndexQueryParams);
+    insert_method_type_schema!(schemas, CodebaseIndexQueryResult);
+    insert_method_type_schema!(schemas, HeadlessContinueOnceParams);
+    insert_method_type_schema!(schemas, HeadlessContinueOnceResult);
+    insert_method_type_schema!(schemas, HeadlessRunAdvanceParams);
+    insert_method_type_schema!(schemas, HeadlessRunAdvanceResult);
+    insert_method_type_schema!(schemas, HeadlessRunDriveParams);
+    insert_method_type_schema!(schemas, HeadlessRunDriveResult);
+    insert_method_type_schema!(schemas, HeadlessRunRecoveryProbeParams);
+    insert_method_type_schema!(schemas, HeadlessRunRecoveryProbeResult);
+    insert_method_type_schema!(schemas, LlmHealthParams);
+    insert_method_type_schema!(schemas, LlmHealthResult);
+    insert_method_type_schema!(schemas, LlmStatusResult);
+    insert_method_type_schema!(schemas, McpToolApprovalApproveParams);
+    insert_method_type_schema!(schemas, McpToolApprovalApproveResult);
+    insert_method_type_schema!(schemas, ModeGetParams);
+    insert_method_type_schema!(schemas, ModeListResult);
+    insert_method_type_schema!(schemas, ModePackActivateParams);
+    insert_method_type_schema!(schemas, ModePackActivateResult);
+    insert_method_type_schema!(schemas, ModePackApproveCandidateParams);
+    insert_method_type_schema!(schemas, ModePackApproveCandidateResult);
+    insert_method_type_schema!(schemas, ModePackFetchCandidateParams);
+    insert_method_type_schema!(schemas, ModePackFetchCandidateResult);
+    insert_method_type_schema!(schemas, ModePackReplaceActiveParams);
+    insert_method_type_schema!(schemas, ModePackReplaceActiveResult);
+    insert_method_type_schema!(schemas, ModePackRevokeSignerParams);
+    insert_method_type_schema!(schemas, ModePackRevokeSignerResult);
+    insert_method_type_schema!(schemas, ModePackRollbackActiveParams);
+    insert_method_type_schema!(schemas, ModePackRollbackActiveResult);
+    insert_method_type_schema!(schemas, ModePackSelectRegistryUpdateParams);
+    insert_method_type_schema!(schemas, ModePackSelectRegistryUpdateResult);
+    insert_method_type_schema!(schemas, ModePackTrustSignerParams);
+    insert_method_type_schema!(schemas, ModePackTrustSignerResult);
+    insert_method_type_schema!(schemas, ModePackVerifyCandidateProvenanceParams);
+    insert_method_type_schema!(schemas, ModePackVerifyCandidateProvenanceResult);
+    insert_method_type_schema!(schemas, ModeSummary);
+    insert_method_type_schema!(schemas, PermissionCheckParams);
+    insert_method_type_schema!(schemas, PermissionCheckResult);
+    insert_method_type_schema!(schemas, ProposalApplyCapabilityParams);
+    insert_method_type_schema!(schemas, ProposalApplyCapabilityResult);
+    insert_method_type_schema!(schemas, ProposalApplyDryRunHistoryParams);
+    insert_method_type_schema!(schemas, ProposalApplyDryRunHistoryResult);
+    insert_method_type_schema!(schemas, ProposalApplyDryRunParams);
+    insert_method_type_schema!(schemas, ProposalApplyDryRunResult);
+    insert_method_type_schema!(schemas, ProposalApplyParams);
+    insert_method_type_schema!(schemas, ProposalApplyResult);
+    insert_method_type_schema!(schemas, ProposalApproveParams);
+    insert_method_type_schema!(schemas, ProposalApproveResult);
+    insert_method_type_schema!(schemas, ProposalAuditTrailParams);
+    insert_method_type_schema!(schemas, ProposalAuditTrailResult);
+    insert_method_type_schema!(schemas, ProposalInspectParams);
+    insert_method_type_schema!(schemas, ProposalInspectResult);
+    insert_method_type_schema!(schemas, ProposalListParams);
+    insert_method_type_schema!(schemas, ProposalListResult);
+    insert_method_type_schema!(schemas, ProposalPreflightParams);
+    insert_method_type_schema!(schemas, ProposalPreflightResult);
+    insert_method_type_schema!(schemas, ProposalReadinessParams);
+    insert_method_type_schema!(schemas, ProposalReadinessResult);
+    insert_method_type_schema!(schemas, ProposalRejectParams);
+    insert_method_type_schema!(schemas, ProposalRejectResult);
+    insert_method_type_schema!(schemas, ProposalReviewBundleParams);
+    insert_method_type_schema!(schemas, ProposalReviewBundleResult);
+    insert_method_type_schema!(schemas, ProposalReviewQueueParams);
+    insert_method_type_schema!(schemas, ProposalReviewQueueResult);
+    insert_method_type_schema!(schemas, ProposalReviewReportParams);
+    insert_method_type_schema!(schemas, ProposalReviewReportResult);
+    insert_method_type_schema!(schemas, ProposalReviewVerdictParams);
+    insert_method_type_schema!(schemas, ProposalReviewVerdictResult);
+    insert_method_type_schema!(schemas, RunEventsParams);
+    insert_method_type_schema!(schemas, RunEventsResult);
+    insert_method_type_schema!(schemas, RunInspectParams);
+    insert_method_type_schema!(schemas, RunInspectResult);
+    insert_method_type_schema!(schemas, RuntimeConfigGetResult);
+    insert_method_type_schema!(schemas, RuntimeDiagnosticsResult);
+    insert_method_type_schema!(schemas, RuntimeStatus);
+    insert_method_type_schema!(schemas, TaskCancelParams);
+    insert_method_type_schema!(schemas, TaskCancelResult);
+    insert_method_type_schema!(schemas, TaskGetParams);
+    insert_method_type_schema!(schemas, TaskInspectParams);
+    insert_method_type_schema!(schemas, TaskInspectResult);
+    insert_method_type_schema!(schemas, TaskListParams);
+    insert_method_type_schema!(schemas, TaskListResult);
+    insert_method_type_schema!(schemas, TaskRecord);
+    insert_method_type_schema!(schemas, TaskRunParams);
+    insert_method_type_schema!(schemas, TaskRunResult);
+    insert_method_type_schema!(schemas, TaskStartParams);
+    insert_method_type_schema!(schemas, TaskStartResult);
+    insert_method_type_schema!(schemas, ToolExecuteParams);
+    insert_method_type_schema!(schemas, ToolExecuteResult);
+    insert_method_type_schema!(schemas, ToolIntentParseParams);
+    insert_method_type_schema!(schemas, ToolIntentParseResult);
+    insert_method_type_schema!(schemas, ToolListResult);
+    insert_method_type_schema!(schemas, ToolPlanParams);
+    insert_method_type_schema!(schemas, ToolPlanResult);
+    schemas
+}
+
+fn method_type_names() -> BTreeSet<String> {
+    METHOD_SPECS
+        .iter()
+        .flat_map(|spec| [spec.param_type, Some(spec.result_type)])
+        .flatten()
+        .map(str::to_string)
+        .collect()
+}
+
+fn insert_type_schema<T: JsonSchema>(schemas: &mut BTreeMap<String, Value>, name: &str) {
+    schemas.insert(name.to_string(), normalized_json_schema::<T>());
+}
+
+fn normalized_json_schema<T: JsonSchema>() -> Value {
+    let mut value = serde_json::to_value(schema_for!(T)).expect("serialize JSON Schema");
+    normalize_json_schema_refs(&mut value);
+    value
+}
+
+fn normalize_json_schema_refs(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            if let Some(definitions) = object.remove("definitions") {
+                object.insert("$defs".to_string(), definitions);
+            }
+            for nested in object.values_mut() {
+                normalize_json_schema_refs(nested);
+            }
+        }
+        Value::Array(values) => {
+            for nested in values {
+                normalize_json_schema_refs(nested);
+            }
+        }
+        Value::String(value) => {
+            if let Some(rest) = value.strip_prefix("#/definitions/") {
+                *value = format!("#/$defs/{rest}");
+            }
+        }
+        _ => {}
+    }
+}
+
+fn type_schema_fingerprint(type_schemas: &BTreeMap<String, Value>, type_name: &str) -> String {
+    let schema = type_schemas
+        .get(type_name)
+        .unwrap_or_else(|| panic!("missing recursive JSON Schema for {type_name}"));
+    stable_fingerprint(&canonical_json(schema))
 }
 
 fn struct_schema_json(schema: &StructSchema) -> Value {
@@ -806,8 +1008,9 @@ fn optional_field_names(schema: &StructSchema) -> Vec<String> {
 }
 
 fn golden_fixtures() -> Value {
+    let task_completed_payload = json!({"status": "Completed"});
     let task_completed_payload_shape_fingerprint =
-        stable_fingerprint("TaskCompleted:payload_shape_v1");
+        ledger_payload_shape_fingerprint_for_value("TaskCompleted", &task_completed_payload);
     json!({
         "task_start_vsix_client_input": {
             "goal": "ship bounded release evidence",
@@ -867,7 +1070,7 @@ fn golden_fixtures() -> Value {
             "run_id": "run_1",
             "kind": "TaskCompleted",
             "timestamp": "2026-09-03T00:00:01Z",
-            "payload": {"status": "Completed"},
+            "payload": task_completed_payload,
             "payload_envelope": {
                 "schema_version": 1,
                 "shape_id": "ledger_payload.TaskCompleted.v1",
@@ -1179,6 +1382,63 @@ fn stable_fingerprint(input: &str) -> String {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     format!("shape-fnv1a64:{hash:016x}")
+}
+
+fn canonical_json(value: &Value) -> String {
+    serde_json::to_string(&canonical_value(value)).expect("serialize canonical JSON")
+}
+
+fn canonical_value(value: &Value) -> Value {
+    match value {
+        Value::Object(object) => Value::Object(
+            object
+                .iter()
+                .map(|(key, value)| (key.clone(), canonical_value(value)))
+                .collect(),
+        ),
+        Value::Array(values) => Value::Array(values.iter().map(canonical_value).collect()),
+        _ => value.clone(),
+    }
+}
+
+fn ledger_payload_shape_fingerprint_for_value(kind: &str, payload: &Value) -> String {
+    ledger_payload_shape_fingerprint_for_descriptor(kind, &ledger_payload_shape_descriptor(payload))
+}
+
+fn ledger_payload_shape_fingerprint_for_descriptor(kind: &str, descriptor: &str) -> String {
+    stable_fingerprint(&format!("{kind}:payload_shape_v1:descriptor:{descriptor}"))
+}
+
+fn ledger_payload_shape_descriptor(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_string(),
+        Value::Bool(_) => "boolean".to_string(),
+        Value::Number(number) if number.is_i64() || number.is_u64() => "integer".to_string(),
+        Value::Number(_) => "number".to_string(),
+        Value::String(_) => "string".to_string(),
+        Value::Array(values) => {
+            if values.is_empty() {
+                "array<empty>".to_string()
+            } else {
+                let item_shapes = values
+                    .iter()
+                    .map(ledger_payload_shape_descriptor)
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>()
+                    .join("|");
+                format!("array<{item_shapes}>")
+            }
+        }
+        Value::Object(object) => {
+            let fields = object
+                .iter()
+                .map(|(key, value)| format!("{key}:{}", ledger_payload_shape_descriptor(value)))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("object{{{fields}}}")
+        }
+    }
 }
 
 pub fn explicit_runtime_methods() -> Vec<&'static str> {

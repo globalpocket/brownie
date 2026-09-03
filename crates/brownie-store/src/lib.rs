@@ -5851,8 +5851,19 @@ pub fn ledger_payload_shape_id(kind: &LedgerEventKind) -> String {
 }
 
 pub fn ledger_payload_shape_fingerprint(kind: &LedgerEventKind) -> String {
-    stable_ledger_payload_fingerprint(&format!(
-        "{kind:?}:payload_shape_v{LEDGER_PAYLOAD_SHAPE_VERSION}"
+    stable_ledger_payload_fingerprint(&ledger_payload_shape_fingerprint_input(
+        kind,
+        "payload:none",
+    ))
+}
+
+pub fn ledger_payload_shape_fingerprint_for_value(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> String {
+    stable_ledger_payload_fingerprint(&ledger_payload_shape_fingerprint_input(
+        kind,
+        &ledger_payload_shape_descriptor(payload),
     ))
 }
 
@@ -5860,11 +5871,48 @@ fn ledger_payload_envelope(
     kind: &LedgerEventKind,
     payload: Option<&serde_json::Value>,
 ) -> Option<LedgerPayloadEnvelope> {
-    payload.map(|_| LedgerPayloadEnvelope {
+    payload.map(|payload| LedgerPayloadEnvelope {
         schema_version: LEDGER_PAYLOAD_SHAPE_VERSION,
         shape_id: ledger_payload_shape_id(kind),
-        shape_fingerprint: ledger_payload_shape_fingerprint(kind),
+        shape_fingerprint: ledger_payload_shape_fingerprint_for_value(kind, payload),
     })
+}
+
+fn ledger_payload_shape_fingerprint_input(kind: &LedgerEventKind, descriptor: &str) -> String {
+    format!("{kind:?}:payload_shape_v{LEDGER_PAYLOAD_SHAPE_VERSION}:descriptor:{descriptor}")
+}
+
+fn ledger_payload_shape_descriptor(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => "null".to_string(),
+        serde_json::Value::Bool(_) => "boolean".to_string(),
+        serde_json::Value::Number(number) if number.is_i64() || number.is_u64() => {
+            "integer".to_string()
+        }
+        serde_json::Value::Number(_) => "number".to_string(),
+        serde_json::Value::String(_) => "string".to_string(),
+        serde_json::Value::Array(values) => {
+            if values.is_empty() {
+                "array<empty>".to_string()
+            } else {
+                let mut item_shapes = values
+                    .iter()
+                    .map(ledger_payload_shape_descriptor)
+                    .collect::<Vec<_>>();
+                item_shapes.sort();
+                item_shapes.dedup();
+                format!("array<{}>", item_shapes.join("|"))
+            }
+        }
+        serde_json::Value::Object(object) => {
+            let fields = object
+                .iter()
+                .map(|(key, value)| format!("{key}:{}", ledger_payload_shape_descriptor(value)))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("object{{{fields}}}")
+        }
+    }
 }
 
 fn stable_ledger_payload_fingerprint(input: &str) -> String {
@@ -6610,6 +6658,42 @@ mod tests {
             .expect("ledger after failed write");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].kind, LedgerEventKind::TaskStarted);
+    }
+
+    #[test]
+    fn ledger_payload_shape_fingerprint_tracks_concrete_payload_structure() {
+        let base_payload = serde_json::json!({"status": "Completed"});
+        let added_field_payload =
+            serde_json::json!({"status": "Completed", "late_tool_response": true});
+        let nested_payload =
+            serde_json::json!({"status": "Completed", "evidence": {"attempts": [1, 2]}});
+
+        let base = ledger_payload_shape_fingerprint_for_value(
+            &LedgerEventKind::TaskCompleted,
+            &base_payload,
+        );
+        let added_field = ledger_payload_shape_fingerprint_for_value(
+            &LedgerEventKind::TaskCompleted,
+            &added_field_payload,
+        );
+        let nested = ledger_payload_shape_fingerprint_for_value(
+            &LedgerEventKind::TaskCompleted,
+            &nested_payload,
+        );
+
+        assert_ne!(
+            base, added_field,
+            "adding a payload field must change the envelope shape fingerprint"
+        );
+        assert_ne!(
+            base, nested,
+            "nested payload structure must participate in the shape fingerprint"
+        );
+        assert_ne!(
+            base,
+            ledger_payload_shape_fingerprint(&LedgerEventKind::TaskCompleted),
+            "concrete payload fingerprints must not collapse to the event-kind version label"
+        );
     }
 
     #[test]

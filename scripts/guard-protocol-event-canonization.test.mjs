@@ -141,6 +141,35 @@ test('rejects missing semantic contract deny-unknown policy evidence', () => {
   assert(errors.some((error) => error.includes('rust_public_params must cover every public Runtime *Params type')));
 });
 
+test('rejects missing recursive nested type schema evidence', () => {
+  const contract = readSemanticContract();
+  delete contract.type_schemas.ModePackReplaceActiveResult.$defs.ModePackActiveSnapshotSummary;
+
+  const errors = validateRuntimeSemanticProtocolContract(contract, readMap(), {
+    repoRoot,
+    contractPath: semanticContractPath,
+    mapPath,
+    skipRustGeneratedContractCheck: true
+  });
+
+  assert(errors.some((error) => error.includes('recursively define nested ModePackActiveSnapshotSummary')));
+});
+
+test('rejects method contract without recursive schema refs', () => {
+  const contract = readSemanticContract();
+  const method = contract.method_contracts.find((entry) => entry.method === 'modepack.replaceActive');
+  delete method.result_schema_ref;
+
+  const errors = validateRuntimeSemanticProtocolContract(contract, readMap(), {
+    repoRoot,
+    contractPath: semanticContractPath,
+    mapPath,
+    skipRustGeneratedContractCheck: true
+  });
+
+  assert(errors.some((error) => error.includes('modepack.replaceActive must reference its recursive result type schema')));
+});
+
 test('rejects missing VSIX semantic golden tests', () => {
   const vsixTestPath = 'extensions/brownie-vsix/src/test/semanticProtocolContract.test.ts';
   const errors = validateRuntimeSemanticProtocolContract(readSemanticContract(), readMap(), {
@@ -183,6 +212,23 @@ test('rejects protocol closure without durable ledger payload envelope evidence'
   });
 
   assert(errors.some((error) => error.includes('LedgerPayloadEnvelope')));
+});
+
+test('rejects payload shape fingerprints that do not vary with concrete payload fields', () => {
+  const contract = readSemanticContract();
+  const fixtures = contract.durable_event_migration_coupling.payload_shape_fixtures.filter(
+    (fixture) => fixture.ledger_event_kind === 'TaskCompleted'
+  );
+  fixtures[1].payload_shape_fingerprint = fixtures[0].payload_shape_fingerprint;
+
+  const errors = validateRuntimeSemanticProtocolContract(contract, readMap(), {
+    repoRoot,
+    contractPath: semanticContractPath,
+    mapPath,
+    skipRustGeneratedContractCheck: true
+  });
+
+  assert(errors.some((error) => error.includes('payload shape fixtures must prove field-shape changes alter fingerprints')));
 });
 
 test('rejects missing ledger event shape fingerprint evidence', () => {
