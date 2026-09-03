@@ -15,6 +15,8 @@
     "guard:product-completion:test": "node --test scripts/guard-product-completion.test.mjs",
     "guard:protocol-event-canonization": "node scripts/guard-protocol-event-canonization.mjs",
     "guard:protocol-event-canonization:test": "node --test scripts/guard-protocol-event-canonization.test.mjs",
+    "guard:runtime-module-decomposition": "node scripts/guard-runtime-module-decomposition.mjs",
+    "guard:runtime-module-decomposition:test": "node --test scripts/guard-runtime-module-decomposition.test.mjs",
     "guard:runtime-release-readiness": "node scripts/guard-runtime-release-readiness.mjs",
     "guard:runtime-release-readiness:test": "node --test scripts/guard-runtime-release-readiness.test.mjs",
     "install:cli": "node scripts/install-brownie-cli.mjs",

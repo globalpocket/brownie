@@ -1,5 +1,182 @@
 use super::*;
 
+pub(super) fn handle_task_list(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params = match params {
+        Some(params) => match serde_json::from_value::<TaskListParams>(params) {
+            Ok(params) => Some(params),
+            Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
+        },
+        None => None,
+    };
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+
+    match store.tasks().list_tasks() {
+        Ok(tasks) => {
+            let progress_overview = match task_list_progress_overview(&store, &tasks) {
+                Ok(progress_overview) => progress_overview,
+                Err(message) => {
+                    return error_response(id, -32603, &format!("internal error: {message}"))
+                }
+            };
+            let mut result = TaskListResult {
+                tasks,
+                progress_overview,
+            };
+            apply_task_list_transport_bounds(
+                &mut result,
+                params.as_ref().and_then(|p| p.bounds.as_ref()),
+            );
+            result_response(id, json!(result))
+        }
+        Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
+    }
+}
+
+fn apply_task_list_transport_bounds(result: &mut TaskListResult, bounds: Option<&TaskListBounds>) {
+    let Some(bounds) = bounds else {
+        return;
+    };
+
+    truncate_to_bound(
+        &mut result.progress_overview.headless_route_candidates,
+        bounds.max_headless_route_candidates,
+        MAX_TASK_LIST_TRANSPORT_ROUTE_CANDIDATES,
+    );
+    truncate_task_rows_preserving_route_candidates(
+        &mut result.tasks,
+        &result.progress_overview.headless_route_candidates,
+        bounds.max_tasks,
+        MAX_TASK_LIST_TRANSPORT_TASKS,
+    );
+    truncate_task_goal_fields(
+        &mut result.tasks,
+        bounds.max_task_goal_chars,
+        MAX_TASK_LIST_TRANSPORT_GOAL_CHARS,
+    );
+    truncate_to_bound(
+        &mut result.progress_overview.root_task_ids,
+        bounds.max_task_ids,
+        MAX_TASK_LIST_TRANSPORT_IDS,
+    );
+    truncate_to_bound(
+        &mut result.progress_overview.runnable_task_ids,
+        bounds.max_task_ids,
+        MAX_TASK_LIST_TRANSPORT_IDS,
+    );
+    truncate_to_bound(
+        &mut result.progress_overview.blocked_task_ids,
+        bounds.max_task_ids,
+        MAX_TASK_LIST_TRANSPORT_IDS,
+    );
+    truncate_to_bound(
+        &mut result.progress_overview.terminal_task_ids,
+        bounds.max_task_ids,
+        MAX_TASK_LIST_TRANSPORT_IDS,
+    );
+    truncate_to_bound(
+        &mut result.progress_overview.parent_join_ready_task_ids,
+        bounds.max_task_ids,
+        MAX_TASK_LIST_TRANSPORT_IDS,
+    );
+    truncate_to_bound(
+        &mut result.progress_overview.stage_counts,
+        bounds.max_groups,
+        MAX_TASK_LIST_TRANSPORT_GROUPS,
+    );
+    truncate_to_bound(
+        &mut result.progress_overview.next_action_sets,
+        bounds.max_groups,
+        MAX_TASK_LIST_TRANSPORT_GROUPS,
+    );
+    for set in &mut result.progress_overview.next_action_sets {
+        truncate_to_bound(
+            &mut set.task_ids,
+            bounds.max_group_task_ids,
+            MAX_TASK_LIST_TRANSPORT_GROUP_IDS,
+        );
+    }
+    truncate_to_bound(
+        &mut result.progress_overview.blocked_sets,
+        bounds.max_groups,
+        MAX_TASK_LIST_TRANSPORT_GROUPS,
+    );
+    for set in &mut result.progress_overview.blocked_sets {
+        truncate_to_bound(
+            &mut set.task_ids,
+            bounds.max_group_task_ids,
+            MAX_TASK_LIST_TRANSPORT_GROUP_IDS,
+        );
+    }
+    truncate_to_bound(
+        &mut result.progress_overview.nodes,
+        bounds.max_nodes,
+        MAX_TASK_LIST_TRANSPORT_NODES,
+    );
+    truncate_to_bound(
+        &mut result.progress_overview.edges,
+        bounds.max_edges,
+        MAX_TASK_LIST_TRANSPORT_EDGES,
+    );
+}
+
+fn truncate_to_bound<T>(items: &mut Vec<T>, requested: Option<usize>, ceiling: usize) {
+    if let Some(requested) = requested {
+        items.truncate(requested.min(ceiling));
+    }
+}
+
+fn truncate_task_goal_fields(tasks: &mut [TaskRecord], requested: Option<usize>, ceiling: usize) {
+    let Some(requested) = requested else {
+        return;
+    };
+    let limit = requested.min(ceiling);
+    for task in tasks {
+        task.goal = task.goal.chars().take(limit).collect();
+    }
+}
+
+fn truncate_task_rows_preserving_route_candidates(
+    tasks: &mut Vec<TaskRecord>,
+    route_candidates: &[TaskListHeadlessRouteCandidate],
+    requested: Option<usize>,
+    ceiling: usize,
+) {
+    let Some(requested) = requested else {
+        return;
+    };
+    let limit = requested.min(ceiling);
+    if tasks.len() <= limit {
+        return;
+    }
+
+    let mut candidate_keys = BTreeSet::new();
+    for candidate in route_candidates {
+        if let (Some(task_id), Some(run_id)) = (&candidate.task_id, &candidate.run_id) {
+            candidate_keys.insert((task_id.clone(), run_id.clone()));
+        }
+    }
+    if candidate_keys.is_empty() {
+        tasks.truncate(limit);
+        return;
+    }
+
+    let mut selected = Vec::new();
+    let mut remaining = Vec::new();
+    for task in std::mem::take(tasks) {
+        if candidate_keys.contains(&(task.task_id.clone(), task.run_id.clone())) {
+            selected.push(task);
+        } else {
+            remaining.push(task);
+        }
+    }
+    selected.extend(remaining);
+    selected.truncate(limit);
+    *tasks = selected;
+}
+
 pub(super) fn headless_continue_once_candidate_task_ids(
     progress_overview: &TaskListProgressOverview,
 ) -> Vec<String> {

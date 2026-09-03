@@ -1,0 +1,388 @@
+{
+  "schema_version": 1,
+  "assessment_id": "runtime-module-decomposition-reevaluation-v1",
+  "phase": "RRP-6",
+  "phase_title": "Runtime Module Decomposition Reevaluation",
+  "runtime_release_debt_id": "runtime-module-decomposition-reevaluation",
+  "runtime_release_ready": false,
+  "base_commit": "19d4d81ba365fbaa9f8801473dc59606644a04f6",
+  "source_paths": [
+    "crates/brownie-runtime/src/lib.rs",
+    "crates/brownie-runtime/src/codebase_index.rs",
+    "crates/brownie-runtime/src/controlled_tool_execution.rs",
+    "crates/brownie-runtime/src/headless_continue.rs",
+    "crates/brownie-runtime/src/headless_journey.rs",
+    "crates/brownie-runtime/src/llm_provider.rs",
+    "crates/brownie-runtime/src/mcp_client.rs",
+    "crates/brownie-runtime/src/modepack.rs",
+    "crates/brownie-runtime/src/objective_proposal.rs",
+    "crates/brownie-runtime/src/objective_verification.rs",
+    "crates/brownie-runtime/src/product_completion.rs",
+    "crates/brownie-runtime/src/product_continuation.rs",
+    "crates/brownie-runtime/src/proposal_apply.rs",
+    "crates/brownie-runtime/src/task_admission.rs",
+    "crates/brownie-runtime/src/task_progress.rs",
+    "crates/brownie-runtime/src/verification_recovery.rs"
+  ],
+  "thresholds": {
+    "lib_rs_production_line_ceiling": 14500,
+    "lib_rs_test_line_ceiling": 52000
+  },
+  "metrics": {
+    "files": {
+      "crates/brownie-runtime/src/lib.rs": {
+        "line_count": 65411,
+        "public_items": 3,
+        "private_items": 481,
+        "production_line_count": 14203,
+        "test_line_count": 51208,
+        "state_mutation_mentions": 299,
+        "durable_write_mentions": 223,
+        "permission_decision_mentions": 175,
+        "recovery_mentions": 2206,
+        "rpc_dispatch_mentions": 90,
+        "approval_mentions": 522,
+        "mcp_mentions": 575,
+        "product_dod_mentions": 898,
+        "diagnostics_mentions": 1814
+      },
+      "crates/brownie-runtime/src/codebase_index.rs": {
+        "line_count": 1581,
+        "public_items": 13,
+        "private_items": 35,
+        "state_mutation_mentions": 2,
+        "durable_write_mentions": 2,
+        "permission_decision_mentions": 21,
+        "recovery_mentions": 0,
+        "rpc_dispatch_mentions": 0,
+        "approval_mentions": 0,
+        "mcp_mentions": 0,
+        "product_dod_mentions": 0,
+        "diagnostics_mentions": 0
+      },
+      "crates/brownie-runtime/src/controlled_tool_execution.rs": {
+        "line_count": 5160,
+        "public_items": 71,
+        "private_items": 54,
+        "state_mutation_mentions": 38,
+        "durable_write_mentions": 38,
+        "permission_decision_mentions": 44,
+        "recovery_mentions": 75,
+        "rpc_dispatch_mentions": 0,
+        "approval_mentions": 214,
+        "mcp_mentions": 355,
+        "product_dod_mentions": 8,
+        "diagnostics_mentions": 14
+      },
+      "crates/brownie-runtime/src/headless_continue.rs": {
+        "line_count": 6692,
+        "public_items": 20,
+        "private_items": 36,
+        "state_mutation_mentions": 17,
+        "durable_write_mentions": 17,
+        "permission_decision_mentions": 0,
+        "recovery_mentions": 708,
+        "rpc_dispatch_mentions": 0,
+        "approval_mentions": 50,
+        "mcp_mentions": 4,
+        "product_dod_mentions": 136,
+        "diagnostics_mentions": 2
+      },
+      "crates/brownie-runtime/src/headless_journey.rs": {
+        "line_count": 6038,
+        "public_items": 16,
+        "private_items": 62,
+        "state_mutation_mentions": 18,
+        "durable_write_mentions": 17,
+        "permission_decision_mentions": 2,
+        "recovery_mentions": 53,
+        "rpc_dispatch_mentions": 0,
+        "approval_mentions": 113,
+        "mcp_mentions": 6,
+        "product_dod_mentions": 137,
+        "diagnostics_mentions": 0
+      },
+      "crates/brownie-runtime/src/llm_provider.rs": {
+        "line_count": 972,
+        "public_items": 13,
+        "private_items": 12,
+        "state_mutation_mentions": 0,
+        "durable_write_mentions": 0,
+        "permission_decision_mentions": 0,
+        "recovery_mentions": 0,
+        "rpc_dispatch_mentions": 0,
+        "approval_mentions": 0,
+        "mcp_mentions": 0,
+        "product_dod_mentions": 0,
+        "diagnostics_mentions": 96
+      },
+      "crates/brownie-runtime/src/mcp_client.rs": {
+        "line_count": 1766,
+        "public_items": 19,
+        "private_items": 59,
+        "state_mutation_mentions": 0,
+        "durable_write_mentions": 0,
+        "permission_decision_mentions": 0,
+        "recovery_mentions": 0,
+        "rpc_dispatch_mentions": 0,
+        "approval_mentions": 0,
+        "mcp_mentions": 271,
+        "product_dod_mentions": 0,
+        "diagnostics_mentions": 0
+      },
+      "crates/brownie-runtime/src/modepack.rs": {
+        "line_count": 5331,
+        "public_items": 91,
+        "private_items": 2,
+        "state_mutation_mentions": 10,
+        "durable_write_mentions": 10,
+        "permission_decision_mentions": 16,
+        "recovery_mentions": 0,
+        "rpc_dispatch_mentions": 0,
+        "approval_mentions": 147,
+        "mcp_mentions": 20,
+        "product_dod_mentions": 12,
+        "diagnostics_mentions": 0
+      },
+      "crates/brownie-runtime/src/objective_proposal.rs": {
+        "line_count": 1427,
+        "public_items": 7,
+        "private_items": 21,
+        "state_mutation_mentions": 3,
+        "durable_write_mentions": 3,
+        "permission_decision_mentions": 0,
+        "recovery_mentions": 4,
+        "rpc_dispatch_mentions": 0,
+        "approval_mentions": 38,
+        "mcp_mentions": 0,
+        "product_dod_mentions": 4,
+        "diagnostics_mentions": 0
+      },
+      "crates/brownie-runtime/src/objective_verification.rs": {
+        "line_count": 953,
+        "public_items": 4,
+        "private_items": 12,
+        "state_mutation_mentions": 4,
+        "durable_write_mentions": 4,
+        "permission_decision_mentions": 0,
+        "recovery_mentions": 3,
+        "rpc_dispatch_mentions": 0,
+        "approval_mentions": 0,
+        "mcp_mentions": 0,
+        "product_dod_mentions": 4,
+        "diagnostics_mentions": 0
+      },
+      "crates/brownie-runtime/src/product_completion.rs": {
+        "line_count": 2214,
+        "public_items": 14,
+        "private_items": 34,
+        "state_mutation_mentions": 3,
+        "durable_write_mentions": 3,
+        "permission_decision_mentions": 0,
+        "recovery_mentions": 0,
+        "rpc_dispatch_mentions": 0,
+        "approval_mentions": 0,
+        "mcp_mentions": 0,
+        "product_dod_mentions": 403,
+        "diagnostics_mentions": 0
+      },
+      "crates/brownie-runtime/src/product_continuation.rs": {
+        "line_count": 2774,
+        "public_items": 50,
+        "private_items": 0,
+        "state_mutation_mentions": 3,
+        "durable_write_mentions": 3,
+        "permission_decision_mentions": 0,
+        "recovery_mentions": 256,
+        "rpc_dispatch_mentions": 0,
+        "approval_mentions": 0,
+        "mcp_mentions": 0,
+        "product_dod_mentions": 515,
+        "diagnostics_mentions": 0
+      },
+      "crates/brownie-runtime/src/proposal_apply.rs": {
+        "line_count": 6453,
+        "public_items": 4,
+        "private_items": 46,
+        "state_mutation_mentions": 6,
+        "durable_write_mentions": 6,
+        "permission_decision_mentions": 29,
+        "recovery_mentions": 317,
+        "rpc_dispatch_mentions": 0,
+        "approval_mentions": 37,
+        "mcp_mentions": 0,
+        "product_dod_mentions": 0,
+        "diagnostics_mentions": 0
+      },
+      "crates/brownie-runtime/src/task_admission.rs": {
+        "line_count": 1007,
+        "public_items": 20,
+        "private_items": 8,
+        "state_mutation_mentions": 1,
+        "durable_write_mentions": 1,
+        "permission_decision_mentions": 0,
+        "recovery_mentions": 41,
+        "rpc_dispatch_mentions": 0,
+        "approval_mentions": 0,
+        "mcp_mentions": 0,
+        "product_dod_mentions": 0,
+        "diagnostics_mentions": 0
+      },
+      "crates/brownie-runtime/src/task_progress.rs": {
+        "line_count": 2342,
+        "public_items": 33,
+        "private_items": 20,
+        "state_mutation_mentions": 0,
+        "durable_write_mentions": 0,
+        "permission_decision_mentions": 0,
+        "recovery_mentions": 45,
+        "rpc_dispatch_mentions": 0,
+        "approval_mentions": 0,
+        "mcp_mentions": 0,
+        "product_dod_mentions": 7,
+        "diagnostics_mentions": 0
+      },
+      "crates/brownie-runtime/src/verification_recovery.rs": {
+        "line_count": 2544,
+        "public_items": 43,
+        "private_items": 16,
+        "state_mutation_mentions": 6,
+        "durable_write_mentions": 6,
+        "permission_decision_mentions": 9,
+        "recovery_mentions": 466,
+        "rpc_dispatch_mentions": 0,
+        "approval_mentions": 0,
+        "mcp_mentions": 0,
+        "product_dod_mentions": 28,
+        "diagnostics_mentions": 58
+      }
+    }
+  },
+  "module_boundaries": [
+    {
+      "id": "task-progress-and-list-transport",
+      "source_path": "crates/brownie-runtime/src/task_progress.rs",
+      "owns": [
+        "task.list handler",
+        "task list transport bounds",
+        "progress graph projection",
+        "parent-join readiness projection"
+      ],
+      "required_tokens": [
+        "pub(super) fn handle_task_list",
+        "fn apply_task_list_transport_bounds",
+        "fn task_list_progress_overview",
+        "fn parent_join_readiness_summary_for_child_inspection"
+      ],
+      "forbidden_tokens_in_lib_rs": [
+        "fn handle_task_list(",
+        "fn apply_task_list_transport_bounds("
+      ]
+    },
+    {
+      "id": "controlled-tool-execution",
+      "source_path": "crates/brownie-runtime/src/controlled_tool_execution.rs",
+      "owns": [
+        "tool.list/tool.plan/tool.intent.parse/tool.execute handlers",
+        "MCP tools/call approval consumption",
+        "tool-intent evidence",
+        "workspace-write proposal admission"
+      ],
+      "required_tokens": [
+        "pub(super) fn handle_tool_execute",
+        "pub(super) fn handle_mcp_tool_approve",
+        "fn execute_mcp_tool",
+        "MCP_APPROVAL_CLAIM_LOCK_RETRIES"
+      ]
+    },
+    {
+      "id": "modepack-runtime-boundary",
+      "source_path": "crates/brownie-runtime/src/modepack.rs",
+      "owns": [
+        "Mode Pack activation",
+        "trusted signer mutation",
+        "active snapshot replacement and rollback"
+      ],
+      "required_tokens": [
+        "pub(super) fn handle_modepack_activate",
+        "pub(super) fn handle_modepack_replace_active",
+        "pub(super) fn handle_modepack_rollback_active"
+      ]
+    },
+    {
+      "id": "product-completion-and-continuation",
+      "source_path": "crates/brownie-runtime/src/product_completion.rs",
+      "owns": [
+        "Product completion evidence",
+        "technical debt carry-forward",
+        "completion-decision append helpers"
+      ],
+      "required_tokens": [
+        "pub(super) fn headless_run_product_completion_decision",
+        "pub(super) fn technical_debt_carry_forward_from_items",
+        "pub(super) fn append_headless_product_completion_decision_event_if_missing"
+      ]
+    },
+    {
+      "id": "headless-continue-orchestration",
+      "source_path": "crates/brownie-runtime/src/headless_continue.rs",
+      "owns": [
+        "headless.continue_once",
+        "headless.run.advance",
+        "recovery route admission",
+        "session advance orchestration"
+      ],
+      "required_tokens": [
+        "pub(super) fn handle_headless_continue_once",
+        "pub(super) fn handle_headless_run_advance",
+        "fn append_headless_run_session_advanced_events"
+      ]
+    },
+    {
+      "id": "verification-recovery",
+      "source_path": "crates/brownie-runtime/src/verification_recovery.rs",
+      "owns": [
+        "verification retry admission",
+        "bounded cargo diagnostic projection",
+        "recovery provenance and fingerprints"
+      ],
+      "required_tokens": [
+        "pub(super) fn revalidate_verification_recovery_task_for_run",
+        "pub(super) fn push_bounded_cargo_diagnostics",
+        "pub(super) fn verification_recovery_provenance_for_source"
+      ]
+    }
+  ],
+  "physical_extractions": [
+    {
+      "id": "rrp-6-task-list-transport-bounds",
+      "from": "crates/brownie-runtime/src/lib.rs",
+      "to": "crates/brownie-runtime/src/task_progress.rs",
+      "moved_symbols": [
+        "handle_task_list",
+        "apply_task_list_transport_bounds",
+        "truncate_to_bound",
+        "truncate_task_goal_fields",
+        "truncate_task_rows_preserving_route_candidates"
+      ],
+      "behavior": "preserved",
+      "authority": "Rust Runtime remains the task-list, progress projection, transport-bound, and store-read authority."
+    }
+  ],
+  "closure": {
+    "debt_classification": "closed",
+    "status": "implemented_sufficient",
+    "runtime_authority_retained_by": "Rust Runtime",
+    "rationale": "The release-critical Runtime authority clusters already extracted through M64.1-M64.15 remain physically separated, RRP-6 moves the remaining task.list transport-bound helper into the task_progress boundary, and this assessment guard now makes future module concentration drift fail closed. The remaining large lib.rs body is primarily JSON-RPC dispatch glue, shared helpers, compatibility diagnostics chain, and the existing behavior-test corpus; further broad splitting would be refactor-risk without new release-blocking evidence.",
+    "remaining_risks": [
+      "The lib.rs behavior-test corpus remains large and should be split opportunistically with future behavior changes, but it is not treated as a Runtime-owned release blocker after this guarded assessment.",
+      "The generated proposal review diagnostics compatibility chain remains in lib.rs because moving it would be a high-churn compatibility refactor without reducing Runtime authority risk in this release phase."
+    ]
+  },
+  "non_authority_rules": [
+    "CLI and VSIX are transport/projection only",
+    "module extraction cannot move Runtime permission authority out of Rust Runtime",
+    "runtime_release_ready remains false until remaining blockers and owner decisions close",
+    "raw prompt/provider response/file content/absolute path/canonical path/secret/environment values/process output are not decomposition evidence"
+  ]
+}
