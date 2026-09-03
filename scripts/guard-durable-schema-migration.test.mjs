@@ -39,6 +39,14 @@ function validFixture() {
           ]
         },
         {
+          id: 'protocol-event-canonization',
+          status: 'implemented_sufficient',
+          debt_classification: 'closed',
+          evidence: [
+            'RRP-5.1 closes protocol-event-canonization with runtime-semantic-protocol-contract.json, unknown-field policy checks, and durable event migration coupling.'
+          ]
+        },
+        {
           id: 'platform-deadline-durability-hardening',
           status: 'implemented_sufficient',
           debt_classification: 'closed',
@@ -83,18 +91,29 @@ test('guard fails when v1 durable artifact preservation evidence is absent', () 
   assert.match(validateDurableSchemaMigration(fixture).join('\n'), /v1_fixture_preserves/);
 });
 
-test('guard fails when later reopened blockers are hidden', () => {
+test('guard fails when protocol blocker is hidden before RRP-5.1 closure', () => {
   const fixture = validFixture();
+  fixture.audit.classifications.find((item) => item.id === 'protocol-event-canonization').status = 'partial';
+  fixture.audit.classifications.find((item) => item.id === 'protocol-event-canonization').debt_classification = 'required_before_release';
   fixture.audit.release_ready_blocked_by = ['runtime-release-guard-ci'];
 
   assert.match(validateDurableSchemaMigration(fixture).join('\n'), /protocol-event-canonization/);
+});
+
+test('guard fails when protocol closure omits semantic contract evidence', () => {
+  const fixture = validFixture();
+  fixture.audit.classifications.find((item) => item.id === 'protocol-event-canonization').evidence = [
+    'RRP-5 closes the canonical ownership map.'
+  ];
+
+  assert.match(validateDurableSchemaMigration(fixture).join('\n'), /runtime-semantic-protocol-contract/);
 });
 
 test('guard fails when platform deadline blocker is hidden before RRP-7.1 closure', () => {
   const fixture = validFixture();
   fixture.audit.classifications.find((item) => item.id === 'platform-deadline-durability-hardening').status = 'partial';
   fixture.audit.classifications.find((item) => item.id === 'platform-deadline-durability-hardening').debt_classification = 'required_before_release';
-  fixture.audit.release_ready_blocked_by = ['runtime-release-guard-ci', 'protocol-event-canonization'];
+  fixture.audit.release_ready_blocked_by = ['runtime-release-guard-ci'];
 
   assert.match(validateDurableSchemaMigration(fixture).join('\n'), /platform-deadline-durability-hardening/);
 });

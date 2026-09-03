@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod semantic_contract;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
@@ -748,6 +750,7 @@ pub struct ToolSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ToolExecuteParams {
     pub mode_id: String,
     pub tool_id: String,
@@ -764,6 +767,7 @@ pub struct ToolExecuteResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct McpToolApprovalApproveParams {
     pub mode_id: String,
     pub task_id: String,
@@ -788,6 +792,7 @@ pub enum ToolExecuteStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TaskStartParams {
     pub goal: String,
     pub mode_id: Option<String>,
@@ -1077,6 +1082,7 @@ pub struct ProductContinuationAdmission {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TaskGetParams {
     pub task_id: String,
 }
@@ -1682,11 +1688,13 @@ pub struct TaskRunSelectedIndexContext {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct RunEventsParams {
     pub run_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct RunInspectParams {
     pub run_id: String,
 }
@@ -1939,6 +1947,7 @@ pub struct ProposalPatchHunk {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProposalApplyParams {
     pub run_id: String,
     pub proposal_id: String,
@@ -5470,4 +5479,155 @@ pub enum TaskStatus {
     Completed,
     Failed,
     Cancelled,
+}
+
+#[cfg(test)]
+mod semantic_contract_tests {
+    use super::*;
+    use serde::de::DeserializeOwned;
+    use serde_json::{json, Value};
+
+    fn rejects_unknown_field<T>(mut value: Value)
+    where
+        T: DeserializeOwned + std::fmt::Debug,
+    {
+        value
+            .as_object_mut()
+            .expect("object fixture")
+            .insert("unexpected".to_string(), json!(true));
+        let error = serde_json::from_value::<T>(value).expect_err("unknown field rejected");
+        assert!(
+            error.to_string().contains("unknown field"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn semantic_contract_artifact_matches_rust_generator() {
+        let expected = serde_json::from_str::<Value>(include_str!(
+            "../../../docs/architecture/runtime-semantic-protocol-contract.json"
+        ))
+        .expect("semantic contract artifact parses");
+        assert_eq!(
+            semantic_contract::runtime_semantic_protocol_contract(),
+            expected,
+            "update docs/architecture/runtime-semantic-protocol-contract.json with `cargo run -p brownie-protocol --bin brownie-protocol-semantic-contract -- --write docs/architecture/runtime-semantic-protocol-contract.json`"
+        );
+    }
+
+    #[test]
+    fn public_runtime_params_reject_unknown_fields() {
+        rejects_unknown_field::<TaskStartParams>(json!({
+            "goal": "ship bounded release evidence",
+            "mode_id": "orchestrator"
+        }));
+        rejects_unknown_field::<TaskCancelParams>(json!({
+            "task_id": "task_1",
+            "run_id": "run_1",
+            "expected_status": "Running",
+            "expected_task_updated_at": "2026-09-03T00:00:00Z",
+            "cancel_id": "cancel_1",
+            "authorize_cancel": true
+        }));
+        rejects_unknown_field::<TaskRunParams>(json!({
+            "task_id": "task_1",
+            "selected_index_context": null,
+            "verification_recovery_context_read": null,
+            "context_budget": null,
+            "completion_acceptance": null
+        }));
+        rejects_unknown_field::<HeadlessRunDriveParams>(json!({
+            "authorize": true,
+            "session_id": "session_1",
+            "drive_id": "drive_1",
+            "expected_start_session_sequence": 1,
+            "max_advances": 1,
+            "max_steps_per_advance": 1
+        }));
+        rejects_unknown_field::<ToolExecuteParams>(json!({
+            "mode_id": "orchestrator",
+            "tool_id": "workspace.read",
+            "task_id": "task_1",
+            "input": {"path": "README.md"}
+        }));
+        rejects_unknown_field::<McpToolApprovalApproveParams>(json!({
+            "mode_id": "orchestrator",
+            "task_id": "task_1",
+            "tool_id": "mcp.search",
+            "input": {"query": "safe"},
+            "approve": true,
+            "approval_id": "approval_1"
+        }));
+        rejects_unknown_field::<RunEventsParams>(json!({
+            "run_id": "run_1"
+        }));
+        rejects_unknown_field::<ProposalApplyParams>(json!({
+            "run_id": "run_1",
+            "proposal_id": "proposal_1",
+            "expected_target_sha256": null,
+            "expected_target_absent": true,
+            "replacement_content": "bounded content",
+            "authorize": true
+        }));
+    }
+
+    #[test]
+    fn semantic_contract_fixtures_match_rust_serialization_semantics() {
+        let contract = semantic_contract::runtime_semantic_protocol_contract();
+        let fixtures = contract
+            .get("golden_fixtures")
+            .and_then(Value::as_object)
+            .expect("golden fixtures object");
+
+        let task_start = TaskStartParams {
+            goal: "ship bounded release evidence".to_string(),
+            mode_id: Some("orchestrator".to_string()),
+            verification_recovery_source: None,
+            patch_apply_recovery_source: None,
+            verification_recovery_retry_source: None,
+            llm_provider_failure_retry_source: None,
+            product_continuation_source: None,
+        };
+        assert_eq!(
+            fixtures.get("task_start_wire_params"),
+            Some(&serde_json::to_value(task_start).expect("serialize task start"))
+        );
+
+        let task_cancel = TaskCancelParams {
+            task_id: "task_1".to_string(),
+            run_id: "run_1".to_string(),
+            expected_status: TaskStatus::Running,
+            expected_task_updated_at: "2026-09-03T00:00:00Z".to_string(),
+            cancel_id: "cancel_1".to_string(),
+            authorize_cancel: true,
+        };
+        assert_eq!(
+            fixtures.get("task_cancel_params"),
+            Some(&serde_json::to_value(task_cancel).expect("serialize task cancel"))
+        );
+
+        let task_run = TaskRunParams {
+            task_id: "task_1".to_string(),
+            selected_index_context: None,
+            verification_recovery_context_read: None,
+            context_budget: None,
+            completion_acceptance: None,
+        };
+        assert_eq!(
+            fixtures.get("task_run_minimal_params"),
+            Some(&serde_json::to_value(task_run).expect("serialize task run"))
+        );
+
+        assert_eq!(
+            fixtures.get("task_status_values"),
+            Some(&json!([
+                "Created",
+                "Queued",
+                "Running",
+                "Completed",
+                "Failed",
+                "Cancelled"
+            ]))
+        );
+    }
 }

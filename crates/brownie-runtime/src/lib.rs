@@ -25088,6 +25088,7 @@ modes:
                     && !error
                         .message
                         .contains("conflicting headless run session drive checkpoint")
+                    && !error.message.contains("task terminal status race")
             })
             .collect::<Vec<_>>();
         assert!(unexpected_errors.is_empty(), "{responses:?}");

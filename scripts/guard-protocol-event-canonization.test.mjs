@@ -6,13 +6,15 @@ import { fileURLToPath } from 'node:url';
 
 import {
   runProtocolEventCanonizationGuard,
-  validateRuntimeProtocolEventCanonicalMap
+  validateRuntimeProtocolEventCanonicalMap,
+  validateRuntimeSemanticProtocolContract
 } from './guard-protocol-event-canonization.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const mapPath = 'docs/architecture/runtime-protocol-event-canonical-map.json';
+const semanticContractPath = 'docs/architecture/runtime-semantic-protocol-contract.json';
 
 function read(relativePath) {
   return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
@@ -22,8 +24,12 @@ function readMap() {
   return JSON.parse(read(mapPath));
 }
 
+function readSemanticContract() {
+  return JSON.parse(read(semanticContractPath));
+}
+
 test('validates the repository Runtime protocol/event canonical map', () => {
-  assert.deepEqual(runProtocolEventCanonizationGuard({ repoRoot }).errors, []);
+  assert.deepEqual(runProtocolEventCanonizationGuard({ repoRoot, skipRustGeneratedContractCheck: true }).errors, []);
 });
 
 test('rejects an unowned Runtime JSON-RPC method', () => {
@@ -76,4 +82,62 @@ test('rejects VSIX client projection drift for projected methods', () => {
   });
 
   assert(errors.some((error) => error.includes('VSIX client must project task.cancel')));
+});
+
+test('rejects a stale semantic protocol contract artifact', () => {
+  const contract = readSemanticContract();
+  contract.contract_id = 'runtime-semantic-protocol-contract-drift';
+
+  const errors = validateRuntimeSemanticProtocolContract(contract, readMap(), {
+    repoRoot,
+    contractPath: semanticContractPath,
+    mapPath,
+    skipRustGeneratedContractCheck: true
+  });
+
+  assert(errors.some((error) => error.includes('contract_id')));
+});
+
+test('rejects missing Rust deny-unknown semantic evidence', () => {
+  const protocolPath = 'crates/brownie-protocol/src/lib.rs';
+  const errors = validateRuntimeSemanticProtocolContract(readSemanticContract(), readMap(), {
+    repoRoot,
+    contractPath: semanticContractPath,
+    mapPath,
+    skipRustGeneratedContractCheck: true,
+    textByPath: {
+      [protocolPath]: read(protocolPath).replace(/#\[serde\(deny_unknown_fields\)\]\s*pub struct TaskStartParams/, 'pub struct TaskStartParams')
+    }
+  });
+
+  assert(errors.some((error) => error.includes('TaskStartParams must deny unknown fields')));
+});
+
+test('rejects missing VSIX semantic golden tests', () => {
+  const vsixTestPath = 'extensions/brownie-vsix/src/test/semanticProtocolContract.test.ts';
+  const errors = validateRuntimeSemanticProtocolContract(readSemanticContract(), readMap(), {
+    repoRoot,
+    contractPath: semanticContractPath,
+    mapPath,
+    skipRustGeneratedContractCheck: true,
+    textByPath: {
+      [vsixTestPath]: read(vsixTestPath).replace('rejects unknown fields from semantic contract fixtures', 'rejects drifted fixture fields')
+    }
+  });
+
+  assert(errors.some((error) => error.includes('rejects unknown fields from semantic contract fixtures')));
+});
+
+test('rejects protocol closure without durable event migration coupling', () => {
+  const contract = readSemanticContract();
+  contract.durable_event_migration_coupling.policy = 'event kind changes are documented';
+
+  const errors = validateRuntimeSemanticProtocolContract(contract, readMap(), {
+    repoRoot,
+    contractPath: semanticContractPath,
+    mapPath,
+    skipRustGeneratedContractCheck: true
+  });
+
+  assert(errors.some((error) => error.includes('durable event changes must require migration policy')));
 });

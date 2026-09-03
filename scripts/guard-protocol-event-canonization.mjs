@@ -1,20 +1,25 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const defaultRepoRoot = path.resolve(__dirname, '..');
 const defaultMapPath = 'docs/architecture/runtime-protocol-event-canonical-map.json';
+const defaultSemanticContractPath = 'docs/architecture/runtime-semantic-protocol-contract.json';
 
 const requiredSourcePaths = [
   'crates/brownie-runtime/src/lib.rs',
   'crates/brownie-protocol/src/lib.rs',
+  'crates/brownie-protocol/src/semantic_contract.rs',
+  'crates/brownie-protocol/src/bin/brownie-protocol-semantic-contract.rs',
   'crates/brownie-store/src/lib.rs',
   'crates/brownie-events/src/lib.rs',
   'crates/brownie-cli/src/runtime_client.rs',
   'extensions/brownie-vsix/src/runtime/protocol.ts',
   'extensions/brownie-vsix/src/runtime/runtimeClient.ts',
+  'extensions/brownie-vsix/src/test/semanticProtocolContract.test.ts',
   'docs/specifications/runtime-protocol-spec-v0.md'
 ];
 
@@ -108,6 +113,175 @@ function isVariantCovered(variant, groups) {
 
 function hasToken(text, token) {
   return isNonEmptyString(token) && text.includes(token);
+}
+
+function hasDenyUnknownForStruct(text, structName) {
+  return new RegExp(`#\\[serde\\(deny_unknown_fields\\)\\]\\s*pub\\s+struct\\s+${structName}\\b`).test(text);
+}
+
+function runRustSemanticContractCheck(repoRoot, contractPath, errors) {
+  const result = spawnSync(
+    'cargo',
+    [
+      'run',
+      '-p',
+      'brownie-protocol',
+      '--bin',
+      'brownie-protocol-semantic-contract',
+      '--',
+      '--check',
+      contractPath,
+    ],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      env: { ...process.env, CARGO_TERM_COLOR: 'never' },
+    }
+  );
+
+  if (result.status !== 0) {
+    const output = `${result.stderr ?? ''}${result.stdout ?? ''}`.trim();
+    errors.push(`${contractPath} must match the Rust semantic contract generator.${output ? ` ${output}` : ''}`);
+  }
+}
+
+export function validateRuntimeSemanticProtocolContract(contract, map, options = {}) {
+  const repoRoot = options.repoRoot ?? defaultRepoRoot;
+  const contractPath = options.contractPath ?? defaultSemanticContractPath;
+  const mapPath = options.mapPath ?? defaultMapPath;
+  const readErrors = [];
+  const textByPath = new Map();
+  const errors = [];
+
+  for (const sourcePath of requiredSourcePaths) {
+    textByPath.set(sourcePath, options.textByPath?.[sourcePath] ?? readText(repoRoot, sourcePath, readErrors));
+  }
+
+  errors.push(...readErrors);
+  requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
+  requireValue(contract.contract_id === 'runtime-semantic-protocol-contract-v1', errors, `${contractPath} contract_id must identify the Runtime semantic protocol contract.`);
+  requireValue(contract.campaign === 'runtime-release-readiness-p0-p1-finite-closure', errors, `${contractPath} campaign must match Runtime release readiness.`);
+  requireValue(contract.phase === 'RRP-5.1', errors, `${contractPath} phase must be RRP-5.1.`);
+  requireValue(contract.owner === 'runtime', errors, `${contractPath} owner must be runtime.`);
+  requireValue(contract.runtime_release_debt_id === 'protocol-event-canonization', errors, `${contractPath} must bind to protocol-event-canonization.`);
+  requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must not declare Runtime Release Ready.`);
+
+  const generatedBy = contract.generated_by ?? {};
+  requireValue(generatedBy.crate === 'brownie-protocol', errors, `${contractPath} generated_by.crate must be brownie-protocol.`);
+  requireValue(generatedBy.module === 'brownie_protocol::semantic_contract', errors, `${contractPath} generated_by.module must be Runtime-owned.`);
+  requireValue(generatedBy.binary === 'brownie-protocol-semantic-contract', errors, `${contractPath} generated_by.binary must name the Rust generator.`);
+  requireValue(
+    typeof generatedBy.command === 'string' && generatedBy.command.includes('--write docs/architecture/runtime-semantic-protocol-contract.json'),
+    errors,
+    `${contractPath} generated_by.command must include the regeneration command.`
+  );
+
+  const sources = new Set((Array.isArray(contract.sources) ? contract.sources : []).map((source) => source?.path));
+  for (const sourcePath of [
+    'crates/brownie-protocol/src/lib.rs',
+    'crates/brownie-protocol/src/semantic_contract.rs',
+    'extensions/brownie-vsix/src/runtime/protocol.ts',
+    'extensions/brownie-vsix/src/runtime/runtimeClient.ts',
+    'extensions/brownie-vsix/src/test/semanticProtocolContract.test.ts',
+    'crates/brownie-store/src/lib.rs',
+  ]) {
+    requireValue(sources.has(sourcePath), errors, `${contractPath} sources must include ${sourcePath}.`);
+  }
+
+  const { methods: mappedMethods, prefixes: mappedPrefixes } = collectMappedMethods(map);
+  const contractMethods = new Map((Array.isArray(contract.method_contracts) ? contract.method_contracts : []).map((method) => [method?.method, method]));
+  for (const method of ['task.start', 'task.cancel', 'task.run', 'headless.run.drive', 'tool.execute', 'mcp.tool.approve', 'run.events', 'proposal.apply']) {
+    requireValue(contractMethods.has(method), errors, `${contractPath} method_contracts must include ${method}.`);
+    requireValue(isMethodCovered(method, mappedMethods, mappedPrefixes), errors, `${contractPath} method ${method} must also be covered by ${mapPath}.`);
+  }
+
+  for (const [method, contractMethod] of contractMethods.entries()) {
+    requireValue(isNonEmptyString(contractMethod?.param_type), errors, `${contractPath} ${method} param_type must be non-empty.`);
+    requireValue(Array.isArray(contractMethod?.required_fields), errors, `${contractPath} ${method} required_fields must be an array.`);
+    requireValue(isNonEmptyString(contractMethod?.unknown_field_policy), errors, `${contractPath} ${method} unknown_field_policy must be explicit.`);
+  }
+
+  const protocolText = textByPath.get('crates/brownie-protocol/src/lib.rs') ?? '';
+  requireValue(protocolText.includes('pub mod semantic_contract;'), errors, 'brownie-protocol must expose the semantic_contract module.');
+  for (const structName of [
+    'TaskStartParams',
+    'TaskCancelParams',
+    'TaskRunParams',
+    'HeadlessRunDriveParams',
+    'ToolExecuteParams',
+    'McpToolApprovalApproveParams',
+    'RunEventsParams',
+    'ProposalApplyParams',
+  ]) {
+    requireValue(hasDenyUnknownForStruct(protocolText, structName), errors, `brownie-protocol ${structName} must deny unknown fields.`);
+  }
+
+  const semanticText = textByPath.get('crates/brownie-protocol/src/semantic_contract.rs') ?? '';
+  requireValue(semanticText.includes('runtime_semantic_protocol_contract'), errors, 'semantic_contract.rs must retain the Rust generator entrypoint.');
+  requireValue(semanticText.includes('runtime-semantic-protocol-contract-v1'), errors, 'semantic_contract.rs must retain the contract id.');
+
+  const binText = textByPath.get('crates/brownie-protocol/src/bin/brownie-protocol-semantic-contract.rs') ?? '';
+  requireValue(binText.includes('--check') && binText.includes('--write'), errors, 'brownie-protocol semantic contract binary must support --check and --write.');
+
+  const vsixProtocolText = textByPath.get('extensions/brownie-vsix/src/runtime/protocol.ts') ?? '';
+  for (const token of ['isTaskStartParams', 'isTaskCancelParams', 'isTaskRunParams', 'isHeadlessRunDriveParams', 'hasOnlyFields']) {
+    requireValue(vsixProtocolText.includes(token), errors, `VSIX protocol validators must retain ${token}.`);
+  }
+
+  const vsixTestText = textByPath.get('extensions/brownie-vsix/src/test/semanticProtocolContract.test.ts') ?? '';
+  for (const token of [
+    'runtime-semantic-protocol-contract.json',
+    'validates Rust semantic contract fixtures at the VSIX boundary',
+    'rejects unknown fields from semantic contract fixtures',
+    'projects VSIX camelCase task.start input to the Rust wire shape',
+  ]) {
+    requireValue(vsixTestText.includes(token), errors, `VSIX semantic protocol test must retain ${token}.`);
+  }
+
+  const unknownPolicy = contract.unknown_field_policy ?? {};
+  for (const structName of ['TaskStartParams', 'TaskCancelParams', 'TaskRunParams', 'HeadlessRunDriveParams']) {
+    requireValue(
+      Array.isArray(unknownPolicy.rust_params_deny_unknown_fields) && unknownPolicy.rust_params_deny_unknown_fields.includes(structName),
+      errors,
+      `${contractPath} unknown_field_policy must include Rust evidence for ${structName}.`
+    );
+  }
+  for (const testName of ['semantic_contract_artifact_matches_rust_generator', 'public_runtime_params_reject_unknown_fields', 'rejects unknown fields from semantic contract fixtures']) {
+    requireValue(
+      Array.isArray(unknownPolicy.tests) && unknownPolicy.tests.includes(testName),
+      errors,
+      `${contractPath} unknown_field_policy.tests must include ${testName}.`
+    );
+  }
+
+  const fixtures = contract.golden_fixtures ?? {};
+  for (const fixtureName of [
+    'task_start_vsix_client_input',
+    'task_start_wire_params',
+    'task_start_result',
+    'task_cancel_params',
+    'task_cancel_result',
+    'task_run_minimal_params',
+    'task_run_explicit_null_params',
+    'ledger_event_summary',
+    'task_status_values',
+  ]) {
+    requireValue(fixtures[fixtureName] !== undefined, errors, `${contractPath} golden_fixtures must include ${fixtureName}.`);
+  }
+  requireValue(fixtures.task_start_wire_params?.mode_id === 'orchestrator', errors, `${contractPath} task_start wire fixture must use mode_id.`);
+  requireValue(fixtures.task_start_vsix_client_input?.modeId === 'orchestrator', errors, `${contractPath} task_start VSIX fixture must use modeId.`);
+  requireValue(Array.isArray(fixtures.task_status_values) && fixtures.task_status_values.includes('Cancelled'), errors, `${contractPath} must cover TaskStatus values.`);
+
+  const durableCoupling = contract.durable_event_migration_coupling ?? {};
+  requireValue(durableCoupling.store_schema_version === 2, errors, `${contractPath} durable_event_migration_coupling.store_schema_version must be 2.`);
+  requireValue(durableCoupling.ledger_event_kind_source === 'crates/brownie-store/src/lib.rs', errors, `${contractPath} must bind durable event kinds to brownie-store.`);
+  requireValue(typeof durableCoupling.policy === 'string' && durableCoupling.policy.includes('schema migration'), errors, `${contractPath} durable event changes must require migration policy.`);
+
+  if (options.skipRustGeneratedContractCheck !== true) {
+    runRustSemanticContractCheck(repoRoot, contractPath, errors);
+  }
+
+  return errors;
 }
 
 export function validateRuntimeProtocolEventCanonicalMap(map, options = {}) {
@@ -226,13 +400,22 @@ export function validateRuntimeProtocolEventCanonicalMap(map, options = {}) {
 export function runProtocolEventCanonizationGuard(options = {}) {
   const repoRoot = options.repoRoot ?? defaultRepoRoot;
   const mapPath = options.mapPath ?? process.env.BROWNIE_PROTOCOL_EVENT_CANONICAL_MAP ?? defaultMapPath;
+  const semanticContractPath = options.semanticContractPath ?? process.env.BROWNIE_SEMANTIC_PROTOCOL_CONTRACT ?? defaultSemanticContractPath;
   const readErrors = [];
   const map = options.map ?? readJson(repoRoot, mapPath, readErrors);
+  const semanticContract = options.semanticContract ?? readJson(repoRoot, semanticContractPath, readErrors);
   const errors = [
     ...readErrors,
-    ...validateRuntimeProtocolEventCanonicalMap(map, { repoRoot, mapPath, textByPath: options.textByPath })
+    ...validateRuntimeProtocolEventCanonicalMap(map, { repoRoot, mapPath, textByPath: options.textByPath }),
+    ...validateRuntimeSemanticProtocolContract(semanticContract, map, {
+      repoRoot,
+      contractPath: semanticContractPath,
+      mapPath,
+      textByPath: options.textByPath,
+      skipRustGeneratedContractCheck: options.skipRustGeneratedContractCheck,
+    })
   ];
-  return { errors, mapPath };
+  return { errors, mapPath, semanticContractPath };
 }
 
 function isMainModule() {
@@ -249,5 +432,5 @@ if (isMainModule()) {
     process.exit(1);
   }
 
-  console.log(`Protocol/event canonization guard passed for ${result.mapPath}.`);
+  console.log(`Protocol/event canonization guard passed for ${result.mapPath} and ${result.semanticContractPath}.`);
 }
