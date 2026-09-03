@@ -372,81 +372,81 @@
       },
       {
         "ledger_event_kind": "AgentLoopStarted",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "AgentLoopCompleted",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "TaskCompletionAccepted",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "PromptBuilt",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "PromptSensitiveScanCompleted",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "PromptSensitiveScanFailed",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "LlmRequestCreated",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "LlmRequestFailed",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "LlmResponseReceived",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "SecondPassPromptBuilt",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "SecondPassLlmRequestCreated",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "SecondPassLlmRequestFailed",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "SecondPassLlmResponseReceived",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "TaskCompleted",
@@ -474,9 +474,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:action:string,allowed:boolean,mode_id:string,reason:string;known_optional_fields:entry_count:u64,file_kind_filter:string,index_id:string,max_results:u64,query_fingerprint:string,query_id:string,query_length_chars:u64,query_token_count:u64,request_kind:string,requested_force_refresh:boolean,requested_root_present:boolean,selection_fingerprint:string,selection_id:string,snapshot_fingerprint:string,workspace_fingerprint:string;additional_fields:false;codebase_index_permission_payload:true;action:IndexCodebase}",
-        "payload_schema_fingerprint": "shape-fnv1a64:bc4a604b04ae6c4b",
-        "payload_schema_id": "ledger_payload.CodebaseIndexPermissionChecked.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:7ca3c420df7e01ea",
+        "payload_schema_id": "ledger_payload.CodebaseIndexPermissionChecked.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -485,9 +485,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:built_at:string,ignore_rule_count:u64,ignore_rule_files_loaded:u64,index_id:string,indexed_files:u64,max_directories:u64,max_directory_entries:u64,max_file_bytes:u64,max_files:u64,max_path_chars:u64,max_visited_entries:u64,mode_id:string,next_action:string,requested_force_refresh:boolean,root:string,sensitive_finding_count:u64,skipped_binary_like:u64,skipped_ignored:u64,skipped_other:u64,skipped_protected:u64,skipped_sensitive:u64,skipped_symlink:u64,skipped_too_large:u64,skipped_unreadable:u64,skipped_unsafe_path:u64,snapshot_fingerprint:string,truncated:boolean,truncated_directories:u64,truncated_entries:u64,visited_entries:u64,walked_directories:u64,workspace_fingerprint:string;additional_fields:false;codebase_index_snapshot_payload:true;next_action:build_bounded_index_query_file_selection}",
-        "payload_schema_fingerprint": "shape-fnv1a64:ae106abb587292a7",
-        "payload_schema_id": "ledger_payload.CodebaseIndexSnapshotBuilt.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:331798b981195bd2",
+        "payload_schema_id": "ledger_payload.CodebaseIndexSnapshotBuilt.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -496,9 +496,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:file_kind_filter:string,index_id:string,match_reason_counts:object,matched_entry_count:u64,max_results:u64,mode_id:string,next_action:string,query_fingerprint:string,query_id:string,returned_entry_count:u64,selection_fingerprint:string,selection_id:string,skipped_entry_count:u64,snapshot_fingerprint:string,snapshot_truncated:boolean,workspace_fingerprint:string;additional_fields:false;codebase_index_query_payload:true;next_action:read_selected_files_with_controlled_workspace_read}",
-        "payload_schema_fingerprint": "shape-fnv1a64:f6f919400349669a",
-        "payload_schema_id": "ledger_payload.CodebaseIndexQueryCompleted.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:db8b88739b0eb249",
+        "payload_schema_id": "ledger_payload.CodebaseIndexQueryCompleted.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -507,9 +507,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:byte_length:u64,bytes_read:u64,content_hash_verified:boolean,content_sha256:string,entry_count:u64,file_kind:string,file_kind_filter:string,index_id:string,max_results:u64,mode_id:string,next_action:string,query_fingerprint:string,query_id:string,read_path_fingerprint:string,selection_fingerprint:string,selection_id:string,snapshot_fingerprint:string,snapshot_truncated:boolean,tool_id:string,truncated:boolean,workspace_fingerprint:string;additional_fields:false;codebase_index_selection_read_payload:true;tool_id:codebase.index.selection.read;content_hash_verified:true;next_action:use_selected_file_context_for_prompt_materialization}",
-        "payload_schema_fingerprint": "shape-fnv1a64:bc830a9d77b5e633",
-        "payload_schema_id": "ledger_payload.CodebaseIndexSelectionReadCompleted.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:b443f19ae42e6098",
+        "payload_schema_id": "ledger_payload.CodebaseIndexSelectionReadCompleted.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -518,9 +518,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:bytes_read:u64,content_char_count:u64,content_hash_verified:boolean,content_sha256:string,file_kind:string,index_id:string,mode_id:string,next_action:string,prompt_context_id:string,prompt_preview_redacted:boolean,query_fingerprint:string,query_id:string,read_path_fingerprint:string,run_id:string,selection_fingerprint:string,selection_id:string,snapshot_fingerprint:string,source_event_id:string,source_event_kind:string,task_id:string,workspace_fingerprint:string;additional_fields:false;codebase_index_prompt_context_payload:true;source_event_kind:CodebaseIndexSelectionReadCompleted;content_hash_verified:true;prompt_preview_redacted:true;next_action:continue_task_execution_with_materialized_context}",
-        "payload_schema_fingerprint": "shape-fnv1a64:ad5aa8d914e0e6af",
-        "payload_schema_id": "ledger_payload.CodebaseIndexPromptContextMaterialized.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:ca5cc391d826db02",
+        "payload_schema_id": "ledger_payload.CodebaseIndexPromptContextMaterialized.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -529,9 +529,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:check_id:string,column:u64_or_null,context_read_id:string,diagnostic_index:u64,diagnostic_kind:string,excerpt_bytes:u64,excerpt_end_line:u64,excerpt_sha256:string,excerpt_start_line:u64,excerpt_truncated:boolean,failure_fingerprint:string,line:u64_or_null,mode_id:string,next_action:string,prompt_preview_redacted:boolean,read_path_fingerprint:string,recovery_run_id:string,recovery_task_id:string,required_action:string,severity:string,source_run_id:string,source_task_id:string,test_name_hash:string_or_null,tool_id:string,verification_recovery_context_read:boolean;additional_fields:false;verification_recovery_context_read_payload:true;required_action:ReadWorkspace;verification_recovery_context_read:true;prompt_preview_redacted:true;next_action:run_recovery_task_with_context}",
-        "payload_schema_fingerprint": "shape-fnv1a64:22e04f45fe1d8f5c",
-        "payload_schema_id": "ledger_payload.VerificationRecoveryContextReadMaterialized.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:9f0073c1d4ae3d29",
+        "payload_schema_id": "ledger_payload.VerificationRecoveryContextReadMaterialized.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -540,9 +540,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:093134e91fce971f",
-        "payload_schema_id": "ledger_payload.TaskStarted.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:1ceeb69837b82ee6",
+        "payload_schema_id": "ledger_payload.TaskStarted.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -551,9 +551,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:6efd373b464fc83c",
-        "payload_schema_id": "ledger_payload.ModeResolved.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:c7e1a49262aa19c9",
+        "payload_schema_id": "ledger_payload.ModeResolved.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -562,9 +562,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:a3aea6cddc8e0158",
-        "payload_schema_id": "ledger_payload.ExternalModePackChildProvenanceDenied.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:970270d81577288d",
+        "payload_schema_id": "ledger_payload.ExternalModePackChildProvenanceDenied.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -573,9 +573,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:d834e7bacfaf05a3",
-        "payload_schema_id": "ledger_payload.ExternalModePackTaskProvenanceDenied.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:4607bb028a9b31e2",
+        "payload_schema_id": "ledger_payload.ExternalModePackTaskProvenanceDenied.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -584,9 +584,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:allowed:boolean,mode_id:string,reason:string;one_of_required:action:string|required_action:string;known_optional_fields:action:string,apply_id:string,operation:string,path:string,proposal_id:string,required_action:string,scope:string,tool_id:string,workspace_write_scope_count:u64;additional_fields:false;permission_decision_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:d9d58e9b69422f1b",
-        "payload_schema_id": "ledger_payload.PermissionChecked.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:dc7b8853096d9e5e",
+        "payload_schema_id": "ledger_payload.PermissionChecked.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -595,9 +595,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:allowed:boolean,mode_id:string,reason:string;one_of_required:action:string|required_action:string;known_optional_fields:action:string,apply_id:string,operation:string,path:string,proposal_id:string,required_action:string,scope:string,tool_id:string,workspace_write_scope_count:u64;additional_fields:false;permission_decision_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:7294df5f3bc208ad",
-        "payload_schema_id": "ledger_payload.PermissionDenied.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:82f587ca4f98e62c",
+        "payload_schema_id": "ledger_payload.PermissionDenied.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -606,9 +606,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:d6c0033d2e25eec9",
-        "payload_schema_id": "ledger_payload.ToolPlanned.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:7ddb95e611cb9d3c",
+        "payload_schema_id": "ledger_payload.ToolPlanned.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -617,9 +617,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:allowed:boolean,reason:string,required_action:string,tool_id:string;additional_fields:false;tool_plan_decision_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:25af67e55c564241",
-        "payload_schema_id": "ledger_payload.ToolPermissionChecked.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:23d523f66c487228",
+        "payload_schema_id": "ledger_payload.ToolPermissionChecked.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -628,9 +628,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:allowed:boolean,reason:string,required_action:string,tool_id:string;additional_fields:false;tool_plan_decision_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:c739f11f93b539b3",
-        "payload_schema_id": "ledger_payload.ToolPlanApproved.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:b3394f4d12e675ae",
+        "payload_schema_id": "ledger_payload.ToolPlanApproved.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -639,9 +639,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:allowed:boolean,reason:string,required_action:string,tool_id:string;additional_fields:false;tool_plan_decision_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:c842fade20e9d5e7",
-        "payload_schema_id": "ledger_payload.ToolPlanDenied.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:4e6c6a782dd897ba",
+        "payload_schema_id": "ledger_payload.ToolPlanDenied.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -650,9 +650,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:73367b17cd1a1fca",
-        "payload_schema_id": "ledger_payload.ToolIntentParsed.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:a15907f5e449903b",
+        "payload_schema_id": "ledger_payload.ToolIntentParsed.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -661,9 +661,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:ea9ce72cb800e49d",
-        "payload_schema_id": "ledger_payload.ToolIntentRejected.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:c04683e9e373e428",
+        "payload_schema_id": "ledger_payload.ToolIntentRejected.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -672,9 +672,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:allowed:boolean,input_summary:object,reason:string,request_reason:string,required_action:string,tool_id:string;known_optional_fields:mode_id:string,requested_mode_id:string,source_apply_id:string,source_run_id:string,source_task_id:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_intent_decision_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:7643ce7669e378ce",
-        "payload_schema_id": "ledger_payload.ToolIntentPermissionChecked.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:cfa30b60a7e08d4f",
+        "payload_schema_id": "ledger_payload.ToolIntentPermissionChecked.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -683,9 +683,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:allowed:boolean,input_summary:object,reason:string,request_reason:string,required_action:string,tool_id:string;known_optional_fields:mode_id:string,requested_mode_id:string,source_apply_id:string,source_run_id:string,source_task_id:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_intent_decision_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:8e66305338091d1f",
-        "payload_schema_id": "ledger_payload.ToolIntentApproved.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:ff443a5e29e0bd5e",
+        "payload_schema_id": "ledger_payload.ToolIntentApproved.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -694,9 +694,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:allowed:boolean,input_summary:object,reason:string,request_reason:string,required_action:string,tool_id:string;known_optional_fields:mode_id:string,requested_mode_id:string,source_apply_id:string,source_run_id:string,source_task_id:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_intent_decision_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:8137a49938bfde23",
-        "payload_schema_id": "ledger_payload.ToolIntentDenied.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:a432e95f56f3ddba",
+        "payload_schema_id": "ledger_payload.ToolIntentDenied.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -705,9 +705,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:99326fec6ce4c65e",
-        "payload_schema_id": "ledger_payload.SubtaskOrchestrationQueued.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:af3bb1bcd2a45d87",
+        "payload_schema_id": "ledger_payload.SubtaskOrchestrationQueued.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -716,9 +716,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:a426acf11a5dc7d5",
-        "payload_schema_id": "ledger_payload.SubtaskHandoffPrepared.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:8f809708308e3110",
+        "payload_schema_id": "ledger_payload.SubtaskHandoffPrepared.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -727,9 +727,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:69c054c53ff3e119",
-        "payload_schema_id": "ledger_payload.SubtaskSchedulerReadinessRecorded.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:ae6aecc7499cf84c",
+        "payload_schema_id": "ledger_payload.SubtaskSchedulerReadinessRecorded.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -738,9 +738,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:82809a0f32b4d212",
-        "payload_schema_id": "ledger_payload.SubtaskDispatchPlanPrepared.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:b297c8857d266453",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchPlanPrepared.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -749,9 +749,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:beac9608b3266137",
-        "payload_schema_id": "ledger_payload.SubtaskDispatchContractPrepared.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:c5818d505912b98e",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchContractPrepared.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -760,9 +760,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:3b5d11f77941d642",
-        "payload_schema_id": "ledger_payload.SubtaskDispatchAdmissionEvaluated.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:803bd29ac2464483",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchAdmissionEvaluated.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -771,9 +771,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:1ce689d9585a3204",
-        "payload_schema_id": "ledger_payload.SubtaskDispatchReadinessSnapshotRecorded.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:d97c51e40897fba1",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchReadinessSnapshotRecorded.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -782,9 +782,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:ffbe25d8d04e35e9",
-        "payload_schema_id": "ledger_payload.SubtaskDispatcherGuardVerdictRecorded.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:0c30627af443035c",
+        "payload_schema_id": "ledger_payload.SubtaskDispatcherGuardVerdictRecorded.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -793,9 +793,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:499d90cbef786102",
-        "payload_schema_id": "ledger_payload.SubtaskDispatchDecisionRecorded.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:7d0a63585630b943",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchDecisionRecorded.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -804,9 +804,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:a4665b7e50354918",
-        "payload_schema_id": "ledger_payload.SubtaskDispatchCandidateManifestRecorded.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:f46b66e80963214d",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchCandidateManifestRecorded.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -815,9 +815,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:7477a0a7b4b7efca",
-        "payload_schema_id": "ledger_payload.SubtaskDispatchHandoffEnvelopeRecorded.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:a29a2d85cbe7603b",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchHandoffEnvelopeRecorded.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -826,9 +826,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:9018fec5c9dde71e",
-        "payload_schema_id": "ledger_payload.ParentJoinContinuationFingerprintConsumed.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:ef5d087c9f47a447",
+        "payload_schema_id": "ledger_payload.ParentJoinContinuationFingerprintConsumed.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -837,9 +837,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:input_summary:object,tool_id:string;known_optional_fields:request_fingerprint:string,source_apply_id:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_execution_request_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:0955bc92def784ae",
-        "payload_schema_id": "ledger_payload.ToolExecutionRequested.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:4bb7b349c7c87f81",
+        "payload_schema_id": "ledger_payload.ToolExecutionRequested.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -848,9 +848,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:approval_fingerprint:string,approval_schema_version:u64,approval_state_fingerprint:string,catalog_provenance:object,mcp_safety_policy:object_or_null,request_fingerprint:string,run_id:string,server_id:string,status:string,task_id:string,tool_id:string,tool_name:string;known_optional_fields:approval_id_fingerprint:string,outcome:string,outcome_fingerprint:string,recovery_fingerprint:string,recovery_reason:string,recovery_source_state_fingerprint:string;additional_fields:false;mcp_tool_execution_approval_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:b0169e54753119f8",
-        "payload_schema_id": "ledger_payload.McpToolExecutionApproved.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:15400875a6c70b71",
+        "payload_schema_id": "ledger_payload.McpToolExecutionApproved.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -859,9 +859,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:allowed:boolean,reason:string,required_action:string,tool_id:string;known_optional_fields:mcp_safety_policy:object_or_null,request_fingerprint:string,server_id:string,source_apply_id:string,tool_name:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_execution_permission_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:8df3302623da91ce",
-        "payload_schema_id": "ledger_payload.ToolExecutionPermissionChecked.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:cdc882ae389b8d35",
+        "payload_schema_id": "ledger_payload.ToolExecutionPermissionChecked.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -870,9 +870,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:status:string,tool_id:string;known_optional_fields:absolute_paths_redacted:boolean,ambient_index_ignored:boolean,authorized_change_set_fingerprint:string,authorized_path_count:u64,bounded_cargo_diagnostics:array,bytes_read:u64,captured_bytes:u64,cargo_dependency_fetch_offline:boolean,catalog_provenance:object,check_id:string,cleanup_succeeded:boolean,commit_id:string,committed_tree_fingerprint:string,compile_time_code_sandboxed:boolean,duration_ms:u64,exit_code:integer_or_null,expected_parent_head:string,failed_git_operation:string,git:object,git_environment_hardened:boolean,git_optional_locks_disabled:boolean,git_process_count:u64,git_processes_bounded:boolean,git_prompts_disabled:boolean,line_count:u64,logical_invocation_fingerprint:string,mcp:object,mcp_approval_binding:object,mcp_safety_policy:object_or_null,message_fingerprint:string,mutation_process_launched:boolean,operation:string,os_network_isolated:boolean,output_oversized:boolean,output_preview:string,output_redacted:boolean,output_truncated:boolean,process_launched:boolean,process_tree_kill_attempted:boolean,process_tree_kill_reason:string,process_tree_kill_succeeded:boolean,process_tree_timeout_supported:boolean,raw_diff_redacted:boolean,raw_file_content_redacted:boolean,raw_message_redacted:boolean,reason:string,reader_thread_joined:boolean,replayed:boolean,repository_hooks_bypassed:boolean,runtime_authorization_required:boolean,source_apply_id:string,standard_error_bytes:u64,standard_error_truncated:boolean,standard_output_bytes:u64,standard_output_truncated:boolean,target_dir_isolated:boolean,temporary_index_cleaned:boolean,test_code_executed:boolean,timed_out:boolean,truncated:boolean,trusted_workspace_required:boolean,used_git_plumbing:boolean,used_temporary_index:boolean,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string,verification_status:string,workspace_write_scope_fingerprint:string;additional_fields:false;tool_execution_terminal_payload:true;terminal_status:Completed}",
-        "payload_schema_fingerprint": "shape-fnv1a64:5b35d35c060e797e",
-        "payload_schema_id": "ledger_payload.ToolExecutionCompleted.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:a00c8207b84ef707",
+        "payload_schema_id": "ledger_payload.ToolExecutionCompleted.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -881,9 +881,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:reason:string,status:string,tool_id:string;known_optional_fields:absolute_paths_redacted:boolean,ambient_index_ignored:boolean,authorized_change_set_fingerprint:string,authorized_path_count:u64,bounded_cargo_diagnostics:array,bytes_read:u64,captured_bytes:u64,cargo_dependency_fetch_offline:boolean,catalog_provenance:object,check_id:string,cleanup_succeeded:boolean,commit_id:string,committed_tree_fingerprint:string,compile_time_code_sandboxed:boolean,duration_ms:u64,exit_code:integer_or_null,expected_parent_head:string,failed_git_operation:string,git:object,git_environment_hardened:boolean,git_optional_locks_disabled:boolean,git_process_count:u64,git_processes_bounded:boolean,git_prompts_disabled:boolean,line_count:u64,logical_invocation_fingerprint:string,mcp:object,mcp_approval_binding:object,mcp_safety_policy:object_or_null,message_fingerprint:string,mutation_process_launched:boolean,operation:string,os_network_isolated:boolean,output_oversized:boolean,output_preview:string,output_redacted:boolean,output_truncated:boolean,process_launched:boolean,process_tree_kill_attempted:boolean,process_tree_kill_reason:string,process_tree_kill_succeeded:boolean,process_tree_timeout_supported:boolean,raw_diff_redacted:boolean,raw_file_content_redacted:boolean,raw_message_redacted:boolean,reason:string,reader_thread_joined:boolean,replayed:boolean,repository_hooks_bypassed:boolean,runtime_authorization_required:boolean,source_apply_id:string,standard_error_bytes:u64,standard_error_truncated:boolean,standard_output_bytes:u64,standard_output_truncated:boolean,target_dir_isolated:boolean,temporary_index_cleaned:boolean,test_code_executed:boolean,timed_out:boolean,truncated:boolean,trusted_workspace_required:boolean,used_git_plumbing:boolean,used_temporary_index:boolean,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string,verification_status:string,workspace_write_scope_fingerprint:string;additional_fields:false;tool_execution_terminal_payload:true;terminal_status:Denied}",
-        "payload_schema_fingerprint": "shape-fnv1a64:dae126aa8eab3baf",
-        "payload_schema_id": "ledger_payload.ToolExecutionDenied.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:8f1cbf0dec080980",
+        "payload_schema_id": "ledger_payload.ToolExecutionDenied.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -892,9 +892,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:reason:string,status:string,tool_id:string;known_optional_fields:absolute_paths_redacted:boolean,ambient_index_ignored:boolean,authorized_change_set_fingerprint:string,authorized_path_count:u64,bounded_cargo_diagnostics:array,bytes_read:u64,captured_bytes:u64,cargo_dependency_fetch_offline:boolean,catalog_provenance:object,check_id:string,cleanup_succeeded:boolean,commit_id:string,committed_tree_fingerprint:string,compile_time_code_sandboxed:boolean,duration_ms:u64,exit_code:integer_or_null,expected_parent_head:string,failed_git_operation:string,git:object,git_environment_hardened:boolean,git_optional_locks_disabled:boolean,git_process_count:u64,git_processes_bounded:boolean,git_prompts_disabled:boolean,line_count:u64,logical_invocation_fingerprint:string,mcp:object,mcp_approval_binding:object,mcp_safety_policy:object_or_null,message_fingerprint:string,mutation_process_launched:boolean,operation:string,os_network_isolated:boolean,output_oversized:boolean,output_preview:string,output_redacted:boolean,output_truncated:boolean,process_launched:boolean,process_tree_kill_attempted:boolean,process_tree_kill_reason:string,process_tree_kill_succeeded:boolean,process_tree_timeout_supported:boolean,raw_diff_redacted:boolean,raw_file_content_redacted:boolean,raw_message_redacted:boolean,reason:string,reader_thread_joined:boolean,replayed:boolean,repository_hooks_bypassed:boolean,runtime_authorization_required:boolean,source_apply_id:string,standard_error_bytes:u64,standard_error_truncated:boolean,standard_output_bytes:u64,standard_output_truncated:boolean,target_dir_isolated:boolean,temporary_index_cleaned:boolean,test_code_executed:boolean,timed_out:boolean,truncated:boolean,trusted_workspace_required:boolean,used_git_plumbing:boolean,used_temporary_index:boolean,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string,verification_status:string,workspace_write_scope_fingerprint:string;additional_fields:false;tool_execution_terminal_payload:true;terminal_status:Failed}",
-        "payload_schema_fingerprint": "shape-fnv1a64:44cda079ab0f7217",
-        "payload_schema_id": "ledger_payload.ToolExecutionFailed.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:1b5903abbe66f4b8",
+        "payload_schema_id": "ledger_payload.ToolExecutionFailed.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -903,9 +903,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:3ebadd0a562024a0",
-        "payload_schema_id": "ledger_payload.WorkspacePatchProposed.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:ef5270d095446065",
+        "payload_schema_id": "ledger_payload.WorkspacePatchProposed.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -914,9 +914,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:5c626d4bd08fd047",
-        "payload_schema_id": "ledger_payload.WorkspacePatchApprovalRequested.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:fd1e6394fb26131e",
+        "payload_schema_id": "ledger_payload.WorkspacePatchApprovalRequested.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -925,9 +925,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:103423613607e169",
-        "payload_schema_id": "ledger_payload.WorkspacePatchApproved.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:1ca6600359fcaedc",
+        "payload_schema_id": "ledger_payload.WorkspacePatchApproved.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -936,9 +936,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:2959890838830d70",
-        "payload_schema_id": "ledger_payload.WorkspacePatchRejected.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:bf9f0712c9be0c35",
+        "payload_schema_id": "ledger_payload.WorkspacePatchRejected.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -947,9 +947,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:98033b7bf80083d3",
-        "payload_schema_id": "ledger_payload.WorkspacePatchPreflightSnapshotCreated.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:67ec0d05ad8ef192",
+        "payload_schema_id": "ledger_payload.WorkspacePatchPreflightSnapshotCreated.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -958,9 +958,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:58b77a0b00c09b73",
-        "payload_schema_id": "ledger_payload.WorkspacePatchApplyPlanCreated.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:5d35120091e20eb2",
+        "payload_schema_id": "ledger_payload.WorkspacePatchApplyPlanCreated.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -969,9 +969,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:b493a038a2e639dd",
-        "payload_schema_id": "ledger_payload.WorkspacePatchApplyCapabilityChecked.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:49cfb72d0faaf568",
+        "payload_schema_id": "ledger_payload.WorkspacePatchApplyCapabilityChecked.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -980,9 +980,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:9ac9d5c81a44ac65",
-        "payload_schema_id": "ledger_payload.WorkspacePatchApplyDryRunChecked.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:ea324201db2070a0",
+        "payload_schema_id": "ledger_payload.WorkspacePatchApplyDryRunChecked.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -991,9 +991,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:269d7bbabe200537",
-        "payload_schema_id": "ledger_payload.WorkspacePatchApplyResultRecorded.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:2d727302640c5d8e",
+        "payload_schema_id": "ledger_payload.WorkspacePatchApplyResultRecorded.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1002,9 +1002,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:0b2da609bfa1dcf4",
-        "payload_schema_id": "ledger_payload.WorkspacePatchReadinessReportCreated.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:104119cf8728ffd1",
+        "payload_schema_id": "ledger_payload.WorkspacePatchReadinessReportCreated.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1013,9 +1013,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:3e6e23452a31f2f9",
-        "payload_schema_id": "ledger_payload.HeadlessContinuationDecisionRecorded.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:09f8a84afe63c0ac",
+        "payload_schema_id": "ledger_payload.HeadlessContinuationDecisionRecorded.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1024,9 +1024,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:7037efcbe626ad65",
-        "payload_schema_id": "ledger_payload.HeadlessRunSessionAdvanced.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:bfa05c05a70271a0",
+        "payload_schema_id": "ledger_payload.HeadlessRunSessionAdvanced.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1035,9 +1035,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:84f034dec55d501e",
-        "payload_schema_id": "ledger_payload.HeadlessRunSessionDriveCompleted.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:e4343e959ac70d47",
+        "payload_schema_id": "ledger_payload.HeadlessRunSessionDriveCompleted.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1046,9 +1046,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:868ab469448fb885",
-        "payload_schema_id": "ledger_payload.HeadlessRunProductEvidenceMatrixDerived.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:fccbc7947400dbc0",
+        "payload_schema_id": "ledger_payload.HeadlessRunProductEvidenceMatrixDerived.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1057,9 +1057,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:33e486dfaacd4146",
-        "payload_schema_id": "ledger_payload.HeadlessRunSelectedProductGapClosureRecorded.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:86edaaad8dd8faff",
+        "payload_schema_id": "ledger_payload.HeadlessRunSelectedProductGapClosureRecorded.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1068,9 +1068,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:f2592834082143c0",
-        "payload_schema_id": "ledger_payload.HeadlessRunProductCompletionDecisionRecorded.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:7c181508d8b02085",
+        "payload_schema_id": "ledger_payload.HeadlessRunProductCompletionDecisionRecorded.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1079,9 +1079,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:5860a6e6e5990755",
-        "payload_schema_id": "ledger_payload.HeadlessJourneyStarted.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:43ba90fdfbc97090",
+        "payload_schema_id": "ledger_payload.HeadlessJourneyStarted.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1090,9 +1090,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:bc4e60a7cd7deb8a",
-        "payload_schema_id": "ledger_payload.HeadlessJourneyRouteResumed.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:273ef39e85bde0fb",
+        "payload_schema_id": "ledger_payload.HeadlessJourneyRouteResumed.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1101,9 +1101,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:674a8bf7392015bc",
-        "payload_schema_id": "ledger_payload.HeadlessJourneyClosed.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:c02ef94e557a6749",
+        "payload_schema_id": "ledger_payload.HeadlessJourneyClosed.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1112,9 +1112,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:5e4a478c731d5191",
-        "payload_schema_id": "ledger_payload.HeadlessJourneyExecuted.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:fa919af304b377b4",
+        "payload_schema_id": "ledger_payload.HeadlessJourneyExecuted.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1123,9 +1123,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:f4e261ac8ff70cbb",
-        "payload_schema_id": "ledger_payload.HeadlessRunCompletionFinalized.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:c6bfd4ce78c79c4a",
+        "payload_schema_id": "ledger_payload.HeadlessRunCompletionFinalized.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1134,153 +1134,153 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:da7799bda29412c9",
-        "payload_schema_id": "ledger_payload.TaskRunning.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:81932c668639c13c",
+        "payload_schema_id": "ledger_payload.TaskRunning.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "AgentLoopStarted",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:fafd2727c93d19ef",
-        "payload_schema_id": "ledger_payload.AgentLoopStarted.v7",
-        "payload_schema_version": 7,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:entrypoint:string,state:string;known_optional_fields:verification_recovery_retry:boolean;additional_fields:false;agent_loop_started_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:88da86b568faff10",
+        "payload_schema_id": "ledger_payload.AgentLoopStarted.v8",
+        "payload_schema_version": 8,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "AgentLoopCompleted",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:f425f5bfb65c6343",
-        "payload_schema_id": "ledger_payload.AgentLoopCompleted.v7",
-        "payload_schema_version": 7,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:completion_summary:string,final_state:string;known_optional_fields:completion_result_fingerprint:string,final_response_chars:u64,final_response_present:boolean,verification_recovery_retry:boolean;additional_fields:false;agent_loop_completed_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:14e8437e4f2378e5",
+        "payload_schema_id": "ledger_payload.AgentLoopCompleted.v8",
+        "payload_schema_version": 8,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "TaskCompletionAccepted",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:1c10916daa5b0001",
-        "payload_schema_id": "ledger_payload.TaskCompletionAccepted.v7",
-        "payload_schema_version": 7,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:acceptance_fingerprint:string,acceptance_id:string,next_action:string,replayed:boolean,run_id:string,status:string,task_id:string,terminal_completion_fingerprint:string,verifier_gate_status:string;additional_fields:false;task_completion_accepted_payload:true;status:AcceptedComplete;next_action:inspect_accepted_completion}",
+        "payload_schema_fingerprint": "shape-fnv1a64:6e9f79c314814ccb",
+        "payload_schema_id": "ledger_payload.TaskCompletionAccepted.v8",
+        "payload_schema_version": 8,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "PromptBuilt",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:6988df0b2037b4ff",
-        "payload_schema_id": "ledger_payload.PromptBuilt.v7",
-        "payload_schema_version": 7,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;known_optional_fields:context_budget_max_ledger_events:u64,context_budget_max_prompt_chars:u64,context_budget_max_selected_index_chars:u64,context_budget_prompt_chars:u64,context_budget_prompt_within_budget:boolean,context_budget_protected_context_chars:u64,context_budget_requested:boolean,context_budget_selected_index_content_chars:u64,context_budget_selected_index_context_present:boolean,context_budget_selected_index_materialized_chars:u64,context_budget_selected_index_truncated:boolean,context_first_included_event:string,context_included_events:u64,context_last_included_event:string,context_max_events:u64,context_omitted_events:u64,context_total_events:u64,context_window_bounded:boolean,max_prompt_chars:u64,message_count:u64,prompt_preview:string,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string;known_field_required:true;additional_fields:false;prompt_built_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:5c547a33852f9b2c",
+        "payload_schema_id": "ledger_payload.PromptBuilt.v8",
+        "payload_schema_version": 8,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "PromptSensitiveScanCompleted",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:626cb8347af645db",
-        "payload_schema_id": "ledger_payload.PromptSensitiveScanCompleted.v7",
-        "payload_schema_version": 7,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:categories:array<string>,finding_count:u64,message_indexes:array<u64>,mode:string,sensitive_guard:string;additional_fields:false;prompt_sensitive_scan_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:71e88065778d1b1c",
+        "payload_schema_id": "ledger_payload.PromptSensitiveScanCompleted.v8",
+        "payload_schema_version": 8,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "PromptSensitiveScanFailed",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:a779205a15288107",
-        "payload_schema_id": "ledger_payload.PromptSensitiveScanFailed.v7",
-        "payload_schema_version": 7,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:categories:array<string>,finding_count:u64,message_indexes:array<u64>,mode:string,sensitive_guard:string;additional_fields:false;prompt_sensitive_scan_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:5d6e2be1928673c8",
+        "payload_schema_id": "ledger_payload.PromptSensitiveScanFailed.v8",
+        "payload_schema_version": 8,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "LlmRequestCreated",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:17e1cfd8f316c225",
-        "payload_schema_id": "ledger_payload.LlmRequestCreated.v7",
-        "payload_schema_version": 7,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:base_url:string_or_null,message_count:u64,model:string,provider:string,strict:boolean;additional_fields:false;llm_request_created_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:3899fa456fe21bfd",
+        "payload_schema_id": "ledger_payload.LlmRequestCreated.v8",
+        "payload_schema_version": 8,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "LlmRequestFailed",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:e0f5aaf96fbf4272",
-        "payload_schema_id": "ledger_payload.LlmRequestFailed.v7",
-        "payload_schema_version": 7,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;known_optional_fields:base_url:string_or_null,llm_provider_failure:object,model:string,provider:string,reason:string,reason_chars:u64,reason_sha256:string,reason_truncated:boolean,sensitive_guard:string,strict:boolean;known_field_required:true;additional_fields:false;llm_request_failed_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:71a6bce9e31379d5",
+        "payload_schema_id": "ledger_payload.LlmRequestFailed.v8",
+        "payload_schema_version": 8,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "LlmResponseReceived",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:81918afeb1a95fa2",
-        "payload_schema_id": "ledger_payload.LlmResponseReceived.v7",
-        "payload_schema_version": 7,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:provider:string;one_of_required:content_preview:string|content_preview_redacted:boolean;known_optional_fields:content_preview:string,content_preview_redacted:boolean,content_preview_redaction_reason:string,response_preview_chars:u64;additional_fields:false;llm_response_received_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:343597c1e8f9c8f7",
+        "payload_schema_id": "ledger_payload.LlmResponseReceived.v8",
+        "payload_schema_version": 8,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SecondPassPromptBuilt",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:b66e6b5bd8de9818",
-        "payload_schema_id": "ledger_payload.SecondPassPromptBuilt.v7",
-        "payload_schema_version": 7,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;known_optional_fields:context_budget_max_ledger_events:u64,context_budget_max_prompt_chars:u64,context_budget_max_selected_index_chars:u64,context_budget_prompt_chars:u64,context_budget_prompt_within_budget:boolean,context_budget_protected_context_chars:u64,context_budget_requested:boolean,context_budget_selected_index_content_chars:u64,context_budget_selected_index_context_present:boolean,context_budget_selected_index_materialized_chars:u64,context_budget_selected_index_truncated:boolean,context_first_included_event:string,context_included_events:u64,context_last_included_event:string,context_max_events:u64,context_omitted_events:u64,context_total_events:u64,context_window_bounded:boolean,max_prompt_chars:u64,message_count:u64,prompt_preview:string,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string;known_field_required:true;additional_fields:false;prompt_built_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:7bd776e9ab6cb011",
+        "payload_schema_id": "ledger_payload.SecondPassPromptBuilt.v8",
+        "payload_schema_version": 8,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SecondPassLlmRequestCreated",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:bcdf3b11040bfa7a",
-        "payload_schema_id": "ledger_payload.SecondPassLlmRequestCreated.v7",
-        "payload_schema_version": 7,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:base_url:string_or_null,message_count:u64,model:string,provider:string,strict:boolean;additional_fields:false;llm_request_created_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:6a27aac4e071ce24",
+        "payload_schema_id": "ledger_payload.SecondPassLlmRequestCreated.v8",
+        "payload_schema_version": 8,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SecondPassLlmRequestFailed",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:74a9b1cec0a074c3",
-        "payload_schema_id": "ledger_payload.SecondPassLlmRequestFailed.v7",
-        "payload_schema_version": 7,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;known_optional_fields:base_url:string_or_null,llm_provider_failure:object,model:string,provider:string,reason:string,reason_chars:u64,reason_sha256:string,reason_truncated:boolean,sensitive_guard:string,strict:boolean;known_field_required:true;additional_fields:false;llm_request_failed_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:06188d0bf22e7dc8",
+        "payload_schema_id": "ledger_payload.SecondPassLlmRequestFailed.v8",
+        "payload_schema_version": 8,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SecondPassLlmResponseReceived",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:a9b1d8c72e28788d",
-        "payload_schema_id": "ledger_payload.SecondPassLlmResponseReceived.v7",
-        "payload_schema_version": 7,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:provider:string;one_of_required:content_preview:string|content_preview_redacted:boolean;known_optional_fields:content_preview:string,content_preview_redacted:boolean,content_preview_redaction_reason:string,response_preview_chars:u64;additional_fields:false;llm_response_received_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:680db30dcb6a95bc",
+        "payload_schema_id": "ledger_payload.SecondPassLlmResponseReceived.v8",
+        "payload_schema_version": 8,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
@@ -1288,9 +1288,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:true;known_optional_fields:apply_enabled:boolean,bounded_cargo_diagnostics:array,caller_authorized:boolean,cancel_fingerprint:string,cancel_id:string,cancel_status:string,completion_evidence:object,expected_task_updated_at:string,failed_verifier_count:u64,failed_verifier_tool_ids:array<string>,failure_fingerprint:string,failure_reason:string,failure_reasons:array<string>,git:object,late_tool_response:boolean,mcp:object,missing_verifier_tool_ids:array<string>,next_action:string,passed_verifier_count:u64,passed_verifier_tool_ids:array<string>,previous_status:string,proposal_count:u64,proposal_id:string,reason:string,recovery_run_id:string,recovery_task_id:string,request_fingerprint_version:string,required_verifier_count:u64,required_verifier_tool_ids:array<string>,requirement_fingerprint:string,run_id:string,runtime_deadline:object,source_apply_id:string,source_run_id:string,source_task_id:string,status:string,task_id:string,terminal_evidence:boolean,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:string,verification_recovery_repair:boolean,verification_recovery_repair_gate_status:string,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;known_field_required:true;additional_fields:false;terminal_status:Completed}",
-        "payload_schema_fingerprint": "shape-fnv1a64:38b9cd730851c3c9",
-        "payload_schema_id": "ledger_payload.TaskCompleted.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:218e33ec30ed205a",
+        "payload_schema_id": "ledger_payload.TaskCompleted.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1299,9 +1299,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:true;known_optional_fields:apply_enabled:boolean,bounded_cargo_diagnostics:array,caller_authorized:boolean,cancel_fingerprint:string,cancel_id:string,cancel_status:string,completion_evidence:object,expected_task_updated_at:string,failed_verifier_count:u64,failed_verifier_tool_ids:array<string>,failure_fingerprint:string,failure_reason:string,failure_reasons:array<string>,git:object,late_tool_response:boolean,mcp:object,missing_verifier_tool_ids:array<string>,next_action:string,passed_verifier_count:u64,passed_verifier_tool_ids:array<string>,previous_status:string,proposal_count:u64,proposal_id:string,reason:string,recovery_run_id:string,recovery_task_id:string,request_fingerprint_version:string,required_verifier_count:u64,required_verifier_tool_ids:array<string>,requirement_fingerprint:string,run_id:string,runtime_deadline:object,source_apply_id:string,source_run_id:string,source_task_id:string,status:string,task_id:string,terminal_evidence:boolean,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:string,verification_recovery_repair:boolean,verification_recovery_repair_gate_status:string,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;known_field_required:true;additional_fields:false;terminal_status:Failed}",
-        "payload_schema_fingerprint": "shape-fnv1a64:debfce35ef46c8ab",
-        "payload_schema_id": "ledger_payload.TaskFailed.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:d8057dc3f1f17332",
+        "payload_schema_id": "ledger_payload.TaskFailed.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1310,9 +1310,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:true;known_optional_fields:apply_enabled:boolean,bounded_cargo_diagnostics:array,caller_authorized:boolean,cancel_fingerprint:string,cancel_id:string,cancel_status:string,completion_evidence:object,expected_task_updated_at:string,failed_verifier_count:u64,failed_verifier_tool_ids:array<string>,failure_fingerprint:string,failure_reason:string,failure_reasons:array<string>,git:object,late_tool_response:boolean,mcp:object,missing_verifier_tool_ids:array<string>,next_action:string,passed_verifier_count:u64,passed_verifier_tool_ids:array<string>,previous_status:string,proposal_count:u64,proposal_id:string,reason:string,recovery_run_id:string,recovery_task_id:string,request_fingerprint_version:string,required_verifier_count:u64,required_verifier_tool_ids:array<string>,requirement_fingerprint:string,run_id:string,runtime_deadline:object,source_apply_id:string,source_run_id:string,source_task_id:string,status:string,task_id:string,terminal_evidence:boolean,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:string,verification_recovery_repair:boolean,verification_recovery_repair_gate_status:string,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;known_field_required:true;additional_fields:false;terminal_status:Cancelled}",
-        "payload_schema_fingerprint": "shape-fnv1a64:2ab5aa0d8b6d2f59",
-        "payload_schema_id": "ledger_payload.TaskCancelled.v7",
-        "payload_schema_version": 7,
+        "payload_schema_fingerprint": "shape-fnv1a64:2ad648700cba8aa2",
+        "payload_schema_id": "ledger_payload.TaskCancelled.v8",
+        "payload_schema_version": 8,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       }
@@ -1329,7 +1329,7 @@
     "ledger_payload_envelope_field": "payload_envelope",
     "ledger_payload_envelope_type": "LedgerPayloadEnvelope",
     "ledger_payload_instance_shape_fingerprint_basis": "LedgerEventKind plus the canonical structural shape of the actual persisted payload value. This is diagnostic instance evidence, not the durable contract schema fingerprint.",
-    "ledger_payload_schema_classification_policy": "Every LedgerEventKind must carry an explicit payload schema classification. versioned_open and typed_known_fields_open are allowed only as required-before-release debt evidence and must not be treated as fully typed ledger payload schemas. TaskCompleted, TaskFailed, TaskCancelled, PermissionChecked, PermissionDenied, ToolPermissionChecked, ToolPlanApproved, ToolPlanDenied, ToolIntentPermissionChecked, ToolIntentApproved, ToolIntentDenied, ToolExecutionRequested, McpToolExecutionApproved, ToolExecutionPermissionChecked, ToolExecutionCompleted, ToolExecutionDenied, ToolExecutionFailed, CodebaseIndexPermissionChecked, CodebaseIndexSnapshotBuilt, CodebaseIndexQueryCompleted, CodebaseIndexSelectionReadCompleted, CodebaseIndexPromptContextMaterialized, and VerificationRecoveryContextReadMaterialized are strict typed payload families.",
+    "ledger_payload_schema_classification_policy": "Every LedgerEventKind must carry an explicit payload schema classification. versioned_open and typed_known_fields_open are allowed only as required-before-release debt evidence and must not be treated as fully typed ledger payload schemas. TaskCompleted, TaskFailed, TaskCancelled, PermissionChecked, PermissionDenied, ToolPermissionChecked, ToolPlanApproved, ToolPlanDenied, ToolIntentPermissionChecked, ToolIntentApproved, ToolIntentDenied, ToolExecutionRequested, McpToolExecutionApproved, ToolExecutionPermissionChecked, ToolExecutionCompleted, ToolExecutionDenied, ToolExecutionFailed, CodebaseIndexPermissionChecked, CodebaseIndexSnapshotBuilt, CodebaseIndexQueryCompleted, CodebaseIndexSelectionReadCompleted, CodebaseIndexPromptContextMaterialized, VerificationRecoveryContextReadMaterialized, AgentLoopStarted, AgentLoopCompleted, TaskCompletionAccepted, PromptBuilt, PromptSensitiveScanCompleted, PromptSensitiveScanFailed, LlmRequestCreated, LlmRequestFailed, LlmResponseReceived, SecondPassPromptBuilt, SecondPassLlmRequestCreated, SecondPassLlmRequestFailed, and SecondPassLlmResponseReceived are strict typed payload families.",
     "ledger_payload_schema_fingerprint_basis": "LedgerEventKind plus the fixed Runtime-owned payload schema descriptor for that event-kind/version. It is stable across optional field presence, null-vs-value choices, and other individual payload instance variation.",
     "ledger_payload_schema_version_source": "LEDGER_PAYLOAD_SCHEMA_VERSION",
     "ledger_payload_shape_version_source": "LEDGER_PAYLOAD_SHAPE_VERSION",
@@ -1340,11 +1340,11 @@
           "status": "Completed"
         },
         "payload_instance_shape_descriptor": "object{status:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:72cc6184a4cfc6cc",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:834e5fc14ebe39af",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:38b9cd730851c3c9",
-        "payload_schema_id": "ledger_payload.TaskCompleted.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:218e33ec30ed205a",
+        "payload_schema_id": "ledger_payload.TaskCompleted.v8"
       },
       {
         "ledger_event_kind": "TaskCompleted",
@@ -1353,11 +1353,11 @@
           "status": "Completed"
         },
         "payload_instance_shape_descriptor": "object{late_tool_response:boolean,status:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:43510f886709c3bb",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:8d9d72ca6e31f51a",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:38b9cd730851c3c9",
-        "payload_schema_id": "ledger_payload.TaskCompleted.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:218e33ec30ed205a",
+        "payload_schema_id": "ledger_payload.TaskCompleted.v8"
       },
       {
         "ledger_event_kind": "TaskFailed",
@@ -1380,11 +1380,11 @@
           "verification_completion_gate_status": "Failed"
         },
         "payload_instance_shape_descriptor": "object{failed_verifier_count:integer,failed_verifier_tool_ids:array<string>,failure_reasons:array<string>,passed_verifier_count:integer,passed_verifier_tool_ids:array<empty>,required_verifier_count:integer,required_verifier_tool_ids:array<string>,requirement_fingerprint:string,status:string,verification_completion_gate_status:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:bcb9c1b35dc336eb",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:2898e4e31581c690",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:debfce35ef46c8ab",
-        "payload_schema_id": "ledger_payload.TaskFailed.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:d8057dc3f1f17332",
+        "payload_schema_id": "ledger_payload.TaskFailed.v8"
       },
       {
         "ledger_event_kind": "TaskCancelled",
@@ -1402,11 +1402,11 @@
           "terminal_evidence": true
         },
         "payload_instance_shape_descriptor": "object{caller_authorized:boolean,cancel_fingerprint:string,cancel_id:string,cancel_status:string,expected_task_updated_at:string,previous_status:string,reason:string,request_fingerprint_version:string,run_id:string,task_id:string,terminal_evidence:boolean}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:665926698fff4bcc",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:98aff26a27d5f235",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:2ab5aa0d8b6d2f59",
-        "payload_schema_id": "ledger_payload.TaskCancelled.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:2ad648700cba8aa2",
+        "payload_schema_id": "ledger_payload.TaskCancelled.v8"
       },
       {
         "ledger_event_kind": "PermissionChecked",
@@ -1417,11 +1417,11 @@
           "reason": "allowed by policy"
         },
         "payload_instance_shape_descriptor": "object{action:string,allowed:boolean,mode_id:string,reason:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:9ecf3e31179fb703",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:209abfc99f320172",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:d9d58e9b69422f1b",
-        "payload_schema_id": "ledger_payload.PermissionChecked.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:dc7b8853096d9e5e",
+        "payload_schema_id": "ledger_payload.PermissionChecked.v8"
       },
       {
         "ledger_event_kind": "PermissionDenied",
@@ -1437,11 +1437,11 @@
           "workspace_write_scope_count": 0
         },
         "payload_instance_shape_descriptor": "object{allowed:boolean,mode_id:string,operation:string,path:string,reason:string,required_action:string,scope:string,tool_id:string,workspace_write_scope_count:integer}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:5f4232010f19d22f",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:b2bf48aafd01042a",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:7294df5f3bc208ad",
-        "payload_schema_id": "ledger_payload.PermissionDenied.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:82f587ca4f98e62c",
+        "payload_schema_id": "ledger_payload.PermissionDenied.v8"
       },
       {
         "ledger_event_kind": "ToolPermissionChecked",
@@ -1452,11 +1452,11 @@
           "tool_id": "workspace.read"
         },
         "payload_instance_shape_descriptor": "object{allowed:boolean,reason:string,required_action:string,tool_id:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:6966625f28a1c894",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:8c15c0ba17972ddb",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:25af67e55c564241",
-        "payload_schema_id": "ledger_payload.ToolPermissionChecked.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:23d523f66c487228",
+        "payload_schema_id": "ledger_payload.ToolPermissionChecked.v8"
       },
       {
         "ledger_event_kind": "ToolIntentPermissionChecked",
@@ -1480,11 +1480,11 @@
           "tool_id": "workspace.read"
         },
         "payload_instance_shape_descriptor": "object{allowed:boolean,input_summary:object{array_field_count:integer,bool_field_count:integer,field_count:integer,fingerprint:string,null_field_count:integer,numeric_field_count:integer,object_field_count:integer,other_field_count:integer,string_field_count:integer,summary_schema:string},reason:string,request_reason:string,required_action:string,tool_id:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:bfe3273912a3e677",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:ee384cd00e670442",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:7643ce7669e378ce",
-        "payload_schema_id": "ledger_payload.ToolIntentPermissionChecked.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:cfa30b60a7e08d4f",
+        "payload_schema_id": "ledger_payload.ToolIntentPermissionChecked.v8"
       },
       {
         "ledger_event_kind": "ToolExecutionRequested",
@@ -1505,11 +1505,11 @@
           "tool_id": "workspace.read"
         },
         "payload_instance_shape_descriptor": "object{input_summary:object{array_field_count:integer,bool_field_count:integer,field_count:integer,fingerprint:string,null_field_count:integer,numeric_field_count:integer,object_field_count:integer,other_field_count:integer,string_field_count:integer,summary_schema:string},request_fingerprint:string,tool_id:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:8b0b22c418290877",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:b01f08c53e16a876",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:0955bc92def784ae",
-        "payload_schema_id": "ledger_payload.ToolExecutionRequested.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:4bb7b349c7c87f81",
+        "payload_schema_id": "ledger_payload.ToolExecutionRequested.v8"
       },
       {
         "ledger_event_kind": "ToolExecutionPermissionChecked",
@@ -1524,11 +1524,11 @@
           "tool_name": "tool"
         },
         "payload_instance_shape_descriptor": "object{allowed:boolean,mcp_safety_policy:null,reason:string,request_fingerprint:string,required_action:string,server_id:string,tool_id:string,tool_name:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:f0a29d1cea74e4bb",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:44f51ff2c0b3b22c",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:8df3302623da91ce",
-        "payload_schema_id": "ledger_payload.ToolExecutionPermissionChecked.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:cdc882ae389b8d35",
+        "payload_schema_id": "ledger_payload.ToolExecutionPermissionChecked.v8"
       },
       {
         "ledger_event_kind": "ToolExecutionDenied",
@@ -1538,11 +1538,11 @@
           "tool_id": "workspace.write"
         },
         "payload_instance_shape_descriptor": "object{reason:string,status:string,tool_id:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:ad152d3194e2db03",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:119ffc79bb1a48ae",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:dae126aa8eab3baf",
-        "payload_schema_id": "ledger_payload.ToolExecutionDenied.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:8f1cbf0dec080980",
+        "payload_schema_id": "ledger_payload.ToolExecutionDenied.v8"
       },
       {
         "ledger_event_kind": "McpToolExecutionApproved",
@@ -1565,11 +1565,11 @@
           "tool_name": "tool"
         },
         "payload_instance_shape_descriptor": "object{approval_fingerprint:string,approval_schema_version:integer,approval_state_fingerprint:string,catalog_provenance:object{catalog_fingerprint:string,server_id:string,tool_name:string},mcp_safety_policy:null,request_fingerprint:string,run_id:string,server_id:string,status:string,task_id:string,tool_id:string,tool_name:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:163687c29d4a97b7",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:bd56e5175f91c140",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:b0169e54753119f8",
-        "payload_schema_id": "ledger_payload.McpToolExecutionApproved.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:15400875a6c70b71",
+        "payload_schema_id": "ledger_payload.McpToolExecutionApproved.v8"
       },
       {
         "ledger_event_kind": "ToolExecutionCompleted",
@@ -1581,11 +1581,11 @@
           "truncated": false
         },
         "payload_instance_shape_descriptor": "object{bytes_read:integer,output_preview:string,status:string,tool_id:string,truncated:boolean}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:12aa64023177fb8f",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:813418d8ca5c6ba0",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:5b35d35c060e797e",
-        "payload_schema_id": "ledger_payload.ToolExecutionCompleted.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:a00c8207b84ef707",
+        "payload_schema_id": "ledger_payload.ToolExecutionCompleted.v8"
       },
       {
         "ledger_event_kind": "ToolExecutionFailed",
@@ -1624,11 +1624,11 @@
           "tool_id": "mcp.server.tool"
         },
         "payload_instance_shape_descriptor": "object{catalog_provenance:object{catalog_fingerprint:string,server_id:string,tool_name:string},mcp:object{execution_status:string,request_fingerprint:string,result_fingerprint:string,server_id:string,tool_name:string},mcp_approval_binding:object{approval_fingerprint:string,approval_schema_version:integer,approval_state_fingerprint:string,catalog_provenance:object{},mcp_safety_policy:null,outcome:string,outcome_fingerprint:string,request_fingerprint:string,run_id:string,server_id:string,status:string,task_id:string,tool_id:string,tool_name:string},mcp_safety_policy:null,reason:string,status:string,tool_id:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:122a2024f9bfd047",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:46c001839c751484",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:44cda079ab0f7217",
-        "payload_schema_id": "ledger_payload.ToolExecutionFailed.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:1b5903abbe66f4b8",
+        "payload_schema_id": "ledger_payload.ToolExecutionFailed.v8"
       },
       {
         "ledger_event_kind": "CodebaseIndexPermissionChecked",
@@ -1645,11 +1645,11 @@
           "request_kind": "query"
         },
         "payload_instance_shape_descriptor": "object{action:string,allowed:boolean,file_kind_filter:string,max_results:integer,mode_id:string,query_fingerprint:string,query_length_chars:integer,query_token_count:integer,reason:string,request_kind:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:3af840d3d098c6f9",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:7ce884340ea8a954",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:bc4a604b04ae6c4b",
-        "payload_schema_id": "ledger_payload.CodebaseIndexPermissionChecked.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:7ca3c420df7e01ea",
+        "payload_schema_id": "ledger_payload.CodebaseIndexPermissionChecked.v8"
       },
       {
         "ledger_event_kind": "CodebaseIndexSnapshotBuilt",
@@ -1688,11 +1688,11 @@
           "workspace_fingerprint": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
         },
         "payload_instance_shape_descriptor": "object{built_at:string,ignore_rule_count:integer,ignore_rule_files_loaded:integer,index_id:string,indexed_files:integer,max_directories:integer,max_directory_entries:integer,max_file_bytes:integer,max_files:integer,max_path_chars:integer,max_visited_entries:integer,mode_id:string,next_action:string,requested_force_refresh:boolean,root:string,sensitive_finding_count:integer,skipped_binary_like:integer,skipped_ignored:integer,skipped_other:integer,skipped_protected:integer,skipped_sensitive:integer,skipped_symlink:integer,skipped_too_large:integer,skipped_unreadable:integer,skipped_unsafe_path:integer,snapshot_fingerprint:string,truncated:boolean,truncated_directories:integer,truncated_entries:integer,visited_entries:integer,walked_directories:integer,workspace_fingerprint:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:a093091a5a9fa405",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:b39d45060e81b196",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:ae106abb587292a7",
-        "payload_schema_id": "ledger_payload.CodebaseIndexSnapshotBuilt.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:331798b981195bd2",
+        "payload_schema_id": "ledger_payload.CodebaseIndexSnapshotBuilt.v8"
       },
       {
         "ledger_event_kind": "CodebaseIndexQueryCompleted",
@@ -1717,11 +1717,11 @@
           "workspace_fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
         },
         "payload_instance_shape_descriptor": "object{file_kind_filter:string,index_id:string,match_reason_counts:object{file_name:integer},matched_entry_count:integer,max_results:integer,mode_id:string,next_action:string,query_fingerprint:string,query_id:string,returned_entry_count:integer,selection_fingerprint:string,selection_id:string,skipped_entry_count:integer,snapshot_fingerprint:string,snapshot_truncated:boolean,workspace_fingerprint:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:2a460922db761f92",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:a660ead7812f33ff",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:f6f919400349669a",
-        "payload_schema_id": "ledger_payload.CodebaseIndexQueryCompleted.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:db8b88739b0eb249",
+        "payload_schema_id": "ledger_payload.CodebaseIndexQueryCompleted.v8"
       },
       {
         "ledger_event_kind": "CodebaseIndexSelectionReadCompleted",
@@ -1749,11 +1749,11 @@
           "workspace_fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
         },
         "payload_instance_shape_descriptor": "object{byte_length:integer,bytes_read:integer,content_hash_verified:boolean,content_sha256:string,entry_count:integer,file_kind:string,file_kind_filter:string,index_id:string,max_results:integer,mode_id:string,next_action:string,query_fingerprint:string,query_id:string,read_path_fingerprint:string,selection_fingerprint:string,selection_id:string,snapshot_fingerprint:string,snapshot_truncated:boolean,tool_id:string,truncated:boolean,workspace_fingerprint:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:b548bda95c129ac5",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:9916d50c0ed1a70e",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:bc830a9d77b5e633",
-        "payload_schema_id": "ledger_payload.CodebaseIndexSelectionReadCompleted.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:b443f19ae42e6098",
+        "payload_schema_id": "ledger_payload.CodebaseIndexSelectionReadCompleted.v8"
       },
       {
         "ledger_event_kind": "CodebaseIndexPromptContextMaterialized",
@@ -1781,11 +1781,11 @@
           "workspace_fingerprint": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
         },
         "payload_instance_shape_descriptor": "object{bytes_read:integer,content_char_count:integer,content_hash_verified:boolean,content_sha256:string,file_kind:string,index_id:string,mode_id:string,next_action:string,prompt_context_id:string,prompt_preview_redacted:boolean,query_fingerprint:string,query_id:string,read_path_fingerprint:string,run_id:string,selection_fingerprint:string,selection_id:string,snapshot_fingerprint:string,source_event_id:string,source_event_kind:string,task_id:string,workspace_fingerprint:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:5c596ec222ecc3d7",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:d6155226902afe6e",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:ad5aa8d914e0e6af",
-        "payload_schema_id": "ledger_payload.CodebaseIndexPromptContextMaterialized.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:ca5cc391d826db02",
+        "payload_schema_id": "ledger_payload.CodebaseIndexPromptContextMaterialized.v8"
       },
       {
         "ledger_event_kind": "VerificationRecoveryContextReadMaterialized",
@@ -1817,15 +1817,252 @@
           "verification_recovery_context_read": true
         },
         "payload_instance_shape_descriptor": "object{check_id:string,column:null,context_read_id:string,diagnostic_index:integer,diagnostic_kind:string,excerpt_bytes:integer,excerpt_end_line:integer,excerpt_sha256:string,excerpt_start_line:integer,excerpt_truncated:boolean,failure_fingerprint:string,line:integer,mode_id:string,next_action:string,prompt_preview_redacted:boolean,read_path_fingerprint:string,recovery_run_id:string,recovery_task_id:string,required_action:string,severity:string,source_run_id:string,source_task_id:string,test_name_hash:null,tool_id:string,verification_recovery_context_read:boolean}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:d4ada21a8063ec1e",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:bd0c8e3dd544b783",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:22e04f45fe1d8f5c",
-        "payload_schema_id": "ledger_payload.VerificationRecoveryContextReadMaterialized.v7"
+        "payload_schema_fingerprint": "shape-fnv1a64:9f0073c1d4ae3d29",
+        "payload_schema_id": "ledger_payload.VerificationRecoveryContextReadMaterialized.v8"
+      },
+      {
+        "ledger_event_kind": "AgentLoopStarted",
+        "payload": {
+          "entrypoint": "task.run",
+          "state": "BuildingContext"
+        },
+        "payload_instance_shape_descriptor": "object{entrypoint:string,state:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:64d2eeede0fe52c3",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:88da86b568faff10",
+        "payload_schema_id": "ledger_payload.AgentLoopStarted.v8"
+      },
+      {
+        "ledger_event_kind": "AgentLoopCompleted",
+        "payload": {
+          "completion_result_fingerprint": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "completion_summary": "Bounded task run completed.",
+          "final_response_chars": 42,
+          "final_response_present": true,
+          "final_state": "Completed"
+        },
+        "payload_instance_shape_descriptor": "object{completion_result_fingerprint:string,completion_summary:string,final_response_chars:integer,final_response_present:boolean,final_state:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:f244d6e650a16da3",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:14e8437e4f2378e5",
+        "payload_schema_id": "ledger_payload.AgentLoopCompleted.v8"
+      },
+      {
+        "ledger_event_kind": "TaskCompletionAccepted",
+        "payload": {
+          "acceptance_fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "acceptance_id": "acceptance_1234567890abcdef",
+          "next_action": "inspect_accepted_completion",
+          "replayed": false,
+          "run_id": "run_1",
+          "status": "AcceptedComplete",
+          "task_id": "task_1",
+          "terminal_completion_fingerprint": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "verifier_gate_status": "NotRequired"
+        },
+        "payload_instance_shape_descriptor": "object{acceptance_fingerprint:string,acceptance_id:string,next_action:string,replayed:boolean,run_id:string,status:string,task_id:string,terminal_completion_fingerprint:string,verifier_gate_status:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:a75f2f2de42d8290",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:6e9f79c314814ccb",
+        "payload_schema_id": "ledger_payload.TaskCompletionAccepted.v8"
+      },
+      {
+        "ledger_event_kind": "PromptBuilt",
+        "payload": {
+          "context_included_events": 5,
+          "context_max_events": 120,
+          "context_omitted_events": 0,
+          "context_total_events": 5,
+          "context_window_bounded": false,
+          "max_prompt_chars": 32000,
+          "message_count": 2,
+          "prompt_preview_redacted": true,
+          "prompt_preview_redaction_reason": "selected_index_context_present"
+        },
+        "payload_instance_shape_descriptor": "object{context_included_events:integer,context_max_events:integer,context_omitted_events:integer,context_total_events:integer,context_window_bounded:boolean,max_prompt_chars:integer,message_count:integer,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:9fcae1bd9fa52103",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:5c547a33852f9b2c",
+        "payload_schema_id": "ledger_payload.PromptBuilt.v8"
+      },
+      {
+        "ledger_event_kind": "SecondPassPromptBuilt",
+        "payload": {
+          "context_included_events": 5,
+          "context_max_events": 120,
+          "context_omitted_events": 0,
+          "context_total_events": 5,
+          "context_window_bounded": false,
+          "max_prompt_chars": 32000,
+          "message_count": 2,
+          "prompt_preview_redacted": true,
+          "prompt_preview_redaction_reason": "selected_index_context_present"
+        },
+        "payload_instance_shape_descriptor": "object{context_included_events:integer,context_max_events:integer,context_omitted_events:integer,context_total_events:integer,context_window_bounded:boolean,max_prompt_chars:integer,message_count:integer,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:4ae5c071432cd276",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:7bd776e9ab6cb011",
+        "payload_schema_id": "ledger_payload.SecondPassPromptBuilt.v8"
+      },
+      {
+        "ledger_event_kind": "PromptSensitiveScanCompleted",
+        "payload": {
+          "categories": [
+            "secret"
+          ],
+          "finding_count": 1,
+          "message_indexes": [
+            0
+          ],
+          "mode": "warn",
+          "sensitive_guard": "warn"
+        },
+        "payload_instance_shape_descriptor": "object{categories:array<string>,finding_count:integer,message_indexes:array<integer>,mode:string,sensitive_guard:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:991970d23b06c657",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:71e88065778d1b1c",
+        "payload_schema_id": "ledger_payload.PromptSensitiveScanCompleted.v8"
+      },
+      {
+        "ledger_event_kind": "PromptSensitiveScanFailed",
+        "payload": {
+          "categories": [
+            "secret"
+          ],
+          "finding_count": 1,
+          "message_indexes": [
+            0
+          ],
+          "mode": "warn",
+          "sensitive_guard": "warn"
+        },
+        "payload_instance_shape_descriptor": "object{categories:array<string>,finding_count:integer,message_indexes:array<integer>,mode:string,sensitive_guard:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:8d522c8a9d350d63",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:5d6e2be1928673c8",
+        "payload_schema_id": "ledger_payload.PromptSensitiveScanFailed.v8"
+      },
+      {
+        "ledger_event_kind": "LlmRequestCreated",
+        "payload": {
+          "base_url": null,
+          "message_count": 2,
+          "model": "mock-model",
+          "provider": "OpenAiCompatible",
+          "strict": true
+        },
+        "payload_instance_shape_descriptor": "object{base_url:null,message_count:integer,model:string,provider:string,strict:boolean}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:009322eb3cbac4bc",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:3899fa456fe21bfd",
+        "payload_schema_id": "ledger_payload.LlmRequestCreated.v8"
+      },
+      {
+        "ledger_event_kind": "SecondPassLlmRequestCreated",
+        "payload": {
+          "base_url": null,
+          "message_count": 2,
+          "model": "mock-model",
+          "provider": "OpenAiCompatible",
+          "strict": true
+        },
+        "payload_instance_shape_descriptor": "object{base_url:null,message_count:integer,model:string,provider:string,strict:boolean}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:53cf417e939f4585",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:6a27aac4e071ce24",
+        "payload_schema_id": "ledger_payload.SecondPassLlmRequestCreated.v8"
+      },
+      {
+        "ledger_event_kind": "LlmRequestFailed",
+        "payload": {
+          "base_url": null,
+          "llm_provider_failure": {
+            "request_phase": "initial",
+            "retryable": true
+          },
+          "model": "mock-model",
+          "provider": "OpenAiCompatible",
+          "reason": "bounded provider failure",
+          "reason_chars": 24,
+          "reason_sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "reason_truncated": false,
+          "sensitive_guard": "deny",
+          "strict": true
+        },
+        "payload_instance_shape_descriptor": "object{base_url:null,llm_provider_failure:object{request_phase:string,retryable:boolean},model:string,provider:string,reason:string,reason_chars:integer,reason_sha256:string,reason_truncated:boolean,sensitive_guard:string,strict:boolean}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:d2edc1dc0c145b27",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:71a6bce9e31379d5",
+        "payload_schema_id": "ledger_payload.LlmRequestFailed.v8"
+      },
+      {
+        "ledger_event_kind": "SecondPassLlmRequestFailed",
+        "payload": {
+          "base_url": null,
+          "llm_provider_failure": {
+            "request_phase": "initial",
+            "retryable": true
+          },
+          "model": "mock-model",
+          "provider": "OpenAiCompatible",
+          "reason": "bounded provider failure",
+          "reason_chars": 24,
+          "reason_sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "reason_truncated": false,
+          "sensitive_guard": "deny",
+          "strict": true
+        },
+        "payload_instance_shape_descriptor": "object{base_url:null,llm_provider_failure:object{request_phase:string,retryable:boolean},model:string,provider:string,reason:string,reason_chars:integer,reason_sha256:string,reason_truncated:boolean,sensitive_guard:string,strict:boolean}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:20bf3f547712dad0",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:06188d0bf22e7dc8",
+        "payload_schema_id": "ledger_payload.SecondPassLlmRequestFailed.v8"
+      },
+      {
+        "ledger_event_kind": "LlmResponseReceived",
+        "payload": {
+          "content_preview": "bounded model response",
+          "provider": "OpenAiCompatible",
+          "response_preview_chars": 2000
+        },
+        "payload_instance_shape_descriptor": "object{content_preview:string,provider:string,response_preview_chars:integer}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:f461da67e0038c68",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:343597c1e8f9c8f7",
+        "payload_schema_id": "ledger_payload.LlmResponseReceived.v8"
+      },
+      {
+        "ledger_event_kind": "SecondPassLlmResponseReceived",
+        "payload": {
+          "content_preview": "bounded model response",
+          "provider": "OpenAiCompatible",
+          "response_preview_chars": 2000
+        },
+        "payload_instance_shape_descriptor": "object{content_preview:string,provider:string,response_preview_chars:integer}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:2786313a35dd4a85",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:680db30dcb6a95bc",
+        "payload_schema_id": "ledger_payload.SecondPassLlmResponseReceived.v8"
       }
     ],
-    "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Versioned-open payload classifications keep protocol-event-canonization partial until every payload-bearing event has a strict typed schema, an explicit payload_absent contract, or a legacy-only compatibility entry. Current v7 terminal task, permission, selected tool, MCP approval, tool terminal, codebase index, and verification recovery context payload schemas preserve v1 through v6 read compatibility while requiring strict field validation for new terminal task, permission, tool planning, tool intent, selected tool execution, MCP approval, tool terminal, codebase index, and verification recovery context appends.",
-    "release_blocking_open_payload_count": 54,
+    "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Versioned-open payload classifications keep protocol-event-canonization partial until every payload-bearing event has a strict typed schema, an explicit payload_absent contract, or a legacy-only compatibility entry. Current v8 terminal task, permission, selected tool, MCP approval, tool terminal, codebase index, verification recovery context, agent loop, prompt, LLM request/response/failure, and completion-acceptance payload schemas preserve v1 through v7 read compatibility while requiring strict field validation for new appends.",
+    "release_blocking_open_payload_count": 41,
     "schema_manifest_path": ".brownie/store-schema.json",
     "store_schema_version": 2
   },
@@ -2029,12 +2266,12 @@
         "status": "Completed"
       },
       "payload_envelope": {
-        "instance_shape_fingerprint": "shape-fnv1a64:72cc6184a4cfc6cc",
-        "schema_fingerprint": "shape-fnv1a64:38b9cd730851c3c9",
-        "schema_id": "ledger_payload.TaskCompleted.v7",
-        "schema_version": 7,
-        "shape_fingerprint": "shape-fnv1a64:38b9cd730851c3c9",
-        "shape_id": "ledger_payload.TaskCompleted.v7"
+        "instance_shape_fingerprint": "shape-fnv1a64:834e5fc14ebe39af",
+        "schema_fingerprint": "shape-fnv1a64:218e33ec30ed205a",
+        "schema_id": "ledger_payload.TaskCompleted.v8",
+        "schema_version": 8,
+        "shape_fingerprint": "shape-fnv1a64:218e33ec30ed205a",
+        "shape_id": "ledger_payload.TaskCompleted.v8"
       },
       "run_id": "run_1",
       "task_id": "task_1",
@@ -9695,7 +9932,7 @@
     "policy": "Every explicit Runtime method in the canonical map must have a semantic method contract."
   },
   "owner": "runtime",
-  "phase": "RRP-5.11",
+  "phase": "RRP-5.12",
   "recursive_json_schema_coverage": {
     "coverage": "Every method param/result type has a recursive Rust-derived JSON Schema document with nested struct and enum definitions.",
     "definition_keyword": "$defs",

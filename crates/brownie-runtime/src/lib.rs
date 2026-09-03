@@ -29975,7 +29975,8 @@ modes:
                     "final_state": "Completed",
                     "completion_summary": "child completed",
                     "completion_result_fingerprint": format!("sha256:{}", "a".repeat(64)),
-                    "raw_provider_response": "must not be returned"
+                    "final_response_present": true,
+                    "final_response_chars": 24
                 })),
             )
             .expect("append child completion");
@@ -31635,7 +31636,8 @@ modes:
                     "final_state": "Completed",
                     "completion_summary": "child completed",
                     "completion_result_fingerprint": format!("sha256:{}", "a".repeat(64)),
-                    "raw_provider_response": "must not be returned"
+                    "final_response_present": true,
+                    "final_response_chars": 24
                 })),
             )
             .expect("append child completion");
@@ -31711,7 +31713,8 @@ modes:
                     "final_state": "Completed",
                     "completion_summary": "child completed",
                     "completion_result_fingerprint": format!("sha256:{}", "d".repeat(64)),
-                    "raw_provider_response": "must stay out of task.list progress overview"
+                    "final_response_present": true,
+                    "final_response_chars": 24
                 })),
             )
             .expect("append terminal child payload");
