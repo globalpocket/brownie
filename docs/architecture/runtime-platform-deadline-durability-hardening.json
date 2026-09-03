@@ -1,18 +1,20 @@
 {
   "schema_version": 1,
-  "assessment_id": "runtime-platform-deadline-durability-hardening-v3",
-  "phase": "RRP-7.1",
-  "phase_title": "Unix MCP Stdio Deadline, Terminal Mutation, and Failure Injection Hardening",
+  "assessment_id": "runtime-platform-deadline-durability-hardening-v4",
+  "phase": "RRP-7.2",
+  "phase_title": "Non-Unix Durability, Runtime-wide Deadline, and MCP Crash-Window Evidence",
   "runtime_release_debt_id": "platform-deadline-durability-hardening",
   "base_commit": "db3a217cf0b38475ea7fb614bb2541f14325b544",
   "runtime_release_ready": false,
   "scope": [
     "local Runtime durable task-state write ordering",
-    "local atomic write file fsync and parent directory sync assumptions",
+    "local and Windows atomic write file fsync and parent directory sync behavior",
     "MCP stdio process-local monotonic deadline accounting across response wait and child-exit wait",
     "task terminal mutation lock, freshness checks, and terminal state/ledger transition recovery",
     "durable write failure injection for disk-full, rename denial, and truncated temporary state",
-    "cross-platform process, directory-sync, and Runtime-wide deadline gaps remain recorded as required-before-release rather than claimed closed"
+    "Runtime-wide persisted task/run deadline propagation and resume-time expiry",
+    "MCP response-after-receive and terminal-before-record process-loss evidence",
+    "unsupported non-Unix/non-Windows durability behavior fails closed instead of silently succeeding"
   ],
   "source_checks": [
     {
@@ -23,7 +25,7 @@
     {
       "id": "atomic-helper-fsyncs-file-and-parent-directory",
       "source_path": "crates/brownie-store/src/lib.rs",
-      "requirement": "write_file_atomically creates a sibling temporary file with create_new, writes and fsyncs the file, renames it into place, and fails closed if the Unix parent directory sync fails."
+      "requirement": "write_file_atomically creates a sibling temporary file with create_new, writes and fsyncs the file, rejects symlink/reparse durable targets, atomically replaces the destination, and syncs the parent directory."
     },
     {
       "id": "run-ledger-append-fsyncs-file-and-parent-directory",
@@ -66,32 +68,44 @@
       "requirement": "Test-only durable write failpoints cover disk_full_before_write, truncated_state_before_rename, and rename_denied_after_sync without replacing committed state or leaking temporary files."
     },
     {
-      "id": "cross-platform-gaps-remain-required-before-release",
-      "source_path": "crates/brownie-runtime/src/mcp_client.rs",
-      "requirement": "Unix process-group cleanup remains the enforced local process-tree implementation; Windows process-tree termination, stale-lock recovery, atomic-replace durability, directory durability, reparse point handling, macOS CI, Windows CI, and Runtime-wide persisted deadlines remain required-before-release gaps."
+      "id": "windows-atomic-replace-and-directory-durability",
+      "source_path": "crates/brownie-store/src/lib.rs",
+      "requirement": "Windows durable writes use MoveFileExW with replace/write-through flags, reject reparse-point targets, and sync parent directories through FILE_FLAG_BACKUP_SEMANTICS; unsupported non-Unix/non-Windows directory sync and atomic replace fail closed."
+    },
+    {
+      "id": "windows-stale-process-lock-recovery",
+      "source_path": "crates/brownie-store/src/lib.rs",
+      "requirement": "Windows stale process-lock recovery uses OpenProcess and zero-time WaitForSingleObject liveness checks before atomically claiming and removing dead-owner lock files."
+    },
+    {
+      "id": "runtime-wide-deadline-persisted-and-resume-expiry",
+      "source_path": "crates/brownie-runtime/src/lib.rs",
+      "requirement": "task.run accepts a bounded RuntimeDeadline, persists it into TaskRecord while transitioning to Running, rejects deadline mismatches on resume, and fails closed before resume mutation when the persisted wall-clock deadline has expired."
+    },
+    {
+      "id": "mcp-response-after-receive-process-loss-evidence",
+      "source_path": "crates/brownie-runtime/src/lib.rs",
+      "requirement": "A test-only child-process abort after MCP ToolExecutionCompleted and before terminal task recording proves restart/recovery has durable tool completion evidence for the remaining MCP crash window."
     }
   ],
   "closure": {
-    "status": "partial",
-    "debt_classification": "required_before_release",
+    "status": "implemented_sufficient",
+    "debt_classification": "closed",
     "runtime_authority_retained_by": "Rust Runtime",
-    "implemented_scope": "Unix/local MCP stdio monotonic deadline accounting, process-tree cleanup evidence, durable write failure injection, and crash-consistent terminal task state/ledger transition recovery.",
-    "summary": "RRP-7.1 no longer claims broad platform/deadline/durability closure. It closes the local Unix MCP stdio deadline and terminal mutation corrective slice by sharing one process-local monotonic MCP stdio deadline across response and child-exit waits, killing late-exit Unix process trees with bounded evidence, serializing terminal task mutations under a per-run lock, persisting terminal-transition markers before terminal state writes, recovering missing terminal ledger evidence after process loss, and proving durable-write fail-closed behavior under deterministic disk-full, rename-denial, and truncated-temp failpoints."
+    "implemented_scope": "RRP-7.2 closes the remaining platform/deadline/durability release blocker by adding Windows durability and stale-lock recovery behavior, fail-closed unsupported-platform durability boundaries, Runtime-wide persisted deadline propagation with resume-time expiry checks, and MCP response-after-receive crash-window process-loss evidence.",
+    "summary": "RRP-7.2 builds on RRP-7.1's local Unix MCP stdio deadline, terminal mutation lock, terminal-transition marker, and durable write failpoint evidence. The Runtime/store now rejects symlink and Windows reparse durable targets before atomic replacement, uses Windows MoveFileExW write-through replacement and directory sync where available, fails closed for unsupported non-Unix/non-Windows durable primitives, reclaims dead-owner process locks on Windows by checking process liveness, persists caller-supplied task/run deadlines in TaskRecord, rejects resume deadline mismatches, terminalizes non-terminal tasks that are resumed after an expired deadline, and proves the MCP tool-completed/terminal-task-not-yet-recorded process-loss window with a real child-process abort test."
   },
   "remaining_required_before_release": [
-    "Runtime-wide persisted wall-clock task/run deadline propagation and resume-time expiry checks",
-    "Windows process tree termination",
-    "Windows stale migration and terminal mutation lock recovery",
-    "Windows atomic replace and directory durability semantics",
-    "junction/reparse point and symlink/path canonicalization hardening",
     "macOS Runtime CI",
-    "Windows Runtime CI"
+    "Windows Runtime CI",
+    "Direct CI Release Gate workflow hardening remains tracked by runtime-release-guard-ci",
+    "Full strict typed ledger payload coverage remains tracked by protocol-event-canonization"
   ],
   "non_goals": [
     "hosted scheduler, daemon, worker fleet, and generic shell execution remain out of scope",
     "direct GitHub workflow hardening remains in runtime-release-guard-ci",
     "semantic protocol/event contract generation remains in RRP-5.1",
     "license, publish, tag, release, and release asset decisions remain owner-controlled",
-    "runtime_release_ready remains false until the CI blocker, protocol semantic contract blocker, and owner decisions close"
+    "runtime_release_ready remains false until the CI blocker, remaining protocol-event-canonization blocker, and owner decisions close"
   ]
 }

@@ -10,6 +10,7 @@ const ASSESSMENT_PATH = 'docs/architecture/runtime-platform-deadline-durability-
 const STORE_PATH = 'crates/brownie-store/src/lib.rs';
 const MCP_CLIENT_PATH = 'crates/brownie-runtime/src/mcp_client.rs';
 const RUNTIME_TEST_PATH = 'crates/brownie-runtime/src/lib.rs';
+const PROTOCOL_PATH = 'crates/brownie-protocol/src/lib.rs';
 
 function readText(root, relativePath) {
   return fs.readFileSync(path.join(root, relativePath), 'utf8');
@@ -63,9 +64,10 @@ export function validatePlatformDeadlineDurabilityHardening(root = REPO_ROOT) {
   const storeText = readText(root, STORE_PATH);
   const mcpClientText = readText(root, MCP_CLIENT_PATH);
   const runtimeTestText = readText(root, RUNTIME_TEST_PATH);
+  const protocolText = readText(root, PROTOCOL_PATH);
 
   assert(assessment.schema_version === 1, 'assessment schema_version must be 1', errors);
-  assert(assessment.phase === 'RRP-7.1', 'assessment phase must be RRP-7.1', errors);
+  assert(assessment.phase === 'RRP-7.2', 'assessment phase must be RRP-7.2', errors);
   assert(
     assessment.runtime_release_debt_id === 'platform-deadline-durability-hardening',
     'assessment must target platform-deadline-durability-hardening',
@@ -73,13 +75,13 @@ export function validatePlatformDeadlineDurabilityHardening(root = REPO_ROOT) {
   );
   assert(assessment.runtime_release_ready === false, 'assessment must keep runtime_release_ready false', errors);
   assert(
-    assessment.closure?.status === 'partial',
-    'platform/deadline/durability assessment must remain partial until non-Unix and Runtime-wide deadline gaps close',
+    assessment.closure?.status === 'implemented_sufficient',
+    'platform/deadline/durability assessment must record RRP-7.2 implemented_sufficient closure',
     errors,
   );
   assert(
-    assessment.closure?.debt_classification === 'required_before_release',
-    'platform/deadline/durability broad blocker must remain required_before_release',
+    assessment.closure?.debt_classification === 'closed',
+    'platform/deadline/durability blocker must be closed only when RRP-7.2 evidence is present',
     errors,
   );
   assert(
@@ -113,7 +115,8 @@ export function validatePlatformDeadlineDurabilityHardening(root = REPO_ROOT) {
     'file.write_all(body)',
     'file.sync_all()',
     'durable_write_failpoint_matches("rename_denied_after_sync")',
-    'fs::rename(&tmp_path, path)',
+    'reject_durable_target_link_or_reparse_point(path)?',
+    'atomic_replace_file(&tmp_path, path)?',
     'sync_dir(parent)?',
   ]) {
     assert(writeFileAtomically.includes(token), `${STORE_PATH}: write_file_atomically missing ${token}`, errors);
@@ -131,6 +134,8 @@ export function validatePlatformDeadlineDurabilityHardening(root = REPO_ROOT) {
     'fn write_terminal_transition_marker',
     'task terminal status race',
     'terminal transition marker',
+    'pub fn update_task_status_with_runtime_deadline',
+    'fn reconcile_runtime_deadline',
   ]) {
     assert(storeText.includes(token), `${STORE_PATH}: missing durable failure/race evidence token ${token}`, errors);
   }
@@ -140,7 +145,27 @@ export function validatePlatformDeadlineDurabilityHardening(root = REPO_ROOT) {
     errors,
   );
   assert(storeText.includes('#[cfg(unix)]\nfn sync_dir'), `${STORE_PATH}: sync_dir must document Unix directory fsync behavior`, errors);
-  assert(storeText.includes('#[cfg(not(unix))]\nfn sync_dir'), `${STORE_PATH}: sync_dir must document non-Unix boundary behavior`, errors);
+  assert(storeText.includes('#[cfg(windows)]\nfn sync_dir'), `${STORE_PATH}: sync_dir must implement Windows directory sync`, errors);
+  assert(
+    storeText.includes('#[cfg(all(not(unix), not(windows)))]\nfn sync_dir') &&
+      storeText.includes('directory durability sync is unsupported on this platform'),
+    `${STORE_PATH}: non-Unix/non-Windows directory sync must fail closed`,
+    errors,
+  );
+  for (const token of [
+    '#[cfg(windows)]\nfn process_is_alive',
+    'OpenProcess',
+    'WaitForSingleObject',
+    '#[cfg(windows)]\nfn atomic_replace_file',
+    'MoveFileExW',
+    'MOVEFILE_REPLACE_EXISTING',
+    'MOVEFILE_WRITE_THROUGH',
+    'FILE_FLAG_BACKUP_SEMANTICS',
+    'FILE_ATTRIBUTE_REPARSE_POINT',
+    '#[cfg(windows)]\nfn reclaim_stale_process_lock',
+  ]) {
+    assert(storeText.includes(token), `${STORE_PATH}: missing Windows durability/lock evidence token ${token}`, errors);
+  }
 
   for (const token of [
     'struct McpStdioDeadline',
@@ -169,11 +194,29 @@ export function validatePlatformDeadlineDurabilityHardening(root = REPO_ROOT) {
     'task_terminal_status_stale_same_terminal_replays_without_duplicate_event',
     'task_terminal_status_race_serialized_by_run_terminal_mutation_lock',
     'task_terminal_transition_process_loss_repairs_missing_terminal_ledger_event',
+    'task_run_resume_fails_closed_when_persisted_runtime_deadline_expired',
+    'task_run_rejects_runtime_deadline_mismatch_before_resume_mutation',
+    'task_run_replays_mcp_tool_result_after_terminal_record_process_loss',
+    'BROWNIE_TEST_ABORT_AFTER_MCP_TOOL_EXECUTION_BEFORE_TERMINAL_RECORD',
   ]) {
     const testSource = testName.startsWith('durable_write_') || testName.startsWith('task_terminal_')
       ? storeText
       : runtimeTestText + mcpClientText;
     assert(testSource.includes(testName), `source tree: missing timeout/durability/race test ${testName}`, errors);
+  }
+  for (const token of [
+    'pub struct RuntimeDeadline',
+    'runtime_deadline: Option<RuntimeDeadline>',
+  ]) {
+    assert(protocolText.includes(token), `${PROTOCOL_PATH}: missing Runtime-wide deadline protocol token ${token}`, errors);
+  }
+  for (const token of [
+    'fn task_run_runtime_deadline',
+    'fn runtime_deadline_is_expired',
+    'fn fail_task_run_due_to_runtime_deadline',
+    'expired_before_resume',
+  ]) {
+    assert(runtimeTestText.includes(token), `${RUNTIME_TEST_PATH}: missing Runtime deadline resume token ${token}`, errors);
   }
 
   const sourceChecks = assessment.source_checks ?? [];
@@ -188,7 +231,10 @@ export function validatePlatformDeadlineDurabilityHardening(root = REPO_ROOT) {
     'task-terminal-mutation-serialized-by-run-lock',
     'terminal-transition-marker-recovers-state-ledger-gap',
     'durable-write-failure-injection',
-    'cross-platform-gaps-remain-required-before-release',
+    'windows-atomic-replace-and-directory-durability',
+    'windows-stale-process-lock-recovery',
+    'runtime-wide-deadline-persisted-and-resume-expiry',
+    'mcp-response-after-receive-process-loss-evidence',
   ]) {
     assert(sourceChecks.some((check) => check.id === id), `${ASSESSMENT_PATH}: missing source check ${id}`, errors);
   }

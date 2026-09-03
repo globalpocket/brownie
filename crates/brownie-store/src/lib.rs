@@ -21,7 +21,7 @@ use brownie_protocol::{
     ModePackUpdateAdmissionSummary, ModePackVerifyCandidateProvenanceResult,
     PatchApplyRecoveryProvenance, ProductContinuationProvenance, ProductLoopStopRecoveryProvenance,
     ProductObjectiveContinuationProvenance, ProposalApplyResult, RecoveryCycleChildProvenance,
-    TaskRecord, TaskStartParams, TaskStatus, VerificationRecoveryProvenance,
+    RuntimeDeadline, TaskRecord, TaskStartParams, TaskStatus, VerificationRecoveryProvenance,
     VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
@@ -3085,7 +3085,34 @@ fn process_is_alive(pid: u32) -> bool {
     result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn process_is_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    type Handle = *mut core::ffi::c_void;
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const WAIT_TIMEOUT: u32 = 0x0000_0102;
+    const ERROR_ACCESS_DENIED: i32 = 5;
+    unsafe extern "system" {
+        fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> Handle;
+        fn WaitForSingleObject(handle: Handle, milliseconds: u32) -> u32;
+        fn CloseHandle(handle: Handle) -> i32;
+    }
+
+    let handle = unsafe { OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        return std::io::Error::last_os_error().raw_os_error() == Some(ERROR_ACCESS_DENIED);
+    }
+    let wait = unsafe { WaitForSingleObject(handle, 0) };
+    unsafe {
+        CloseHandle(handle);
+    }
+    wait == WAIT_TIMEOUT
+}
+
+#[cfg(all(not(unix), not(windows)))]
 fn process_is_alive(_pid: u32) -> bool {
     true
 }
@@ -3137,13 +3164,8 @@ fn write_file_atomically(path: &std::path::Path, body: &[u8]) -> Result<()> {
         if durable_write_failpoint_matches("rename_denied_after_sync") {
             bail!("simulated durable write failure: rename_denied_after_sync");
         }
-        fs::rename(&tmp_path, path).with_context(|| {
-            format!(
-                "failed to atomically replace {} from {}",
-                path.display(),
-                tmp_path.display()
-            )
-        })?;
+        reject_durable_target_link_or_reparse_point(path)?;
+        atomic_replace_file(&tmp_path, path)?;
         sync_dir(parent)?;
         Ok(())
     })();
@@ -3152,6 +3174,93 @@ fn write_file_atomically(path: &std::path::Path, body: &[u8]) -> Result<()> {
         let _ = fs::remove_file(&tmp_path);
     }
     write_result
+}
+
+fn reject_durable_target_link_or_reparse_point(path: &std::path::Path) -> Result<()> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to inspect durable target {}", path.display()))
+        }
+    };
+    if metadata.file_type().is_symlink() {
+        bail!("durable target must not be a symlink: {}", path.display());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            bail!(
+                "durable target must not be a Windows reparse point: {}",
+                path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn atomic_replace_file(tmp_path: &std::path::Path, path: &std::path::Path) -> Result<()> {
+    fs::rename(tmp_path, path).with_context(|| {
+        format!(
+            "failed to atomically replace {} from {}",
+            path.display(),
+            tmp_path.display()
+        )
+    })
+}
+
+#[cfg(windows)]
+fn atomic_replace_file(tmp_path: &std::path::Path, path: &std::path::Path) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    const MOVEFILE_REPLACE_EXISTING: u32 = 0x0000_0001;
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x0000_0008;
+    unsafe extern "system" {
+        fn MoveFileExW(
+            existing_file_name: *const u16,
+            new_file_name: *const u16,
+            flags: u32,
+        ) -> i32;
+    }
+
+    let existing = tmp_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let new = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let moved = unsafe {
+        MoveFileExW(
+            existing.as_ptr(),
+            new.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if moved == 0 {
+        return Err(std::io::Error::last_os_error()).with_context(|| {
+            format!(
+                "failed to atomically replace {} from {}",
+                path.display(),
+                tmp_path.display()
+            )
+        });
+    }
+    Ok(())
+}
+
+#[cfg(all(not(unix), not(windows)))]
+fn atomic_replace_file(_tmp_path: &std::path::Path, path: &std::path::Path) -> Result<()> {
+    bail!(
+        "durable atomic replace is unsupported on this platform for {}",
+        path.display()
+    )
 }
 
 #[cfg(test)]
@@ -3187,9 +3296,25 @@ fn sync_dir(path: &std::path::Path) -> Result<()> {
         .with_context(|| format!("failed to sync directory {}", path.display()))
 }
 
-#[cfg(not(unix))]
-fn sync_dir(_path: &std::path::Path) -> Result<()> {
-    Ok(())
+#[cfg(windows)]
+fn sync_dir(path: &std::path::Path) -> Result<()> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .with_context(|| format!("failed to open directory {}", path.display()))?;
+    file.sync_all()
+        .with_context(|| format!("failed to sync directory {}", path.display()))
+}
+
+#[cfg(all(not(unix), not(windows)))]
+fn sync_dir(path: &std::path::Path) -> Result<()> {
+    bail!(
+        "directory durability sync is unsupported on this platform for {}",
+        path.display()
+    )
 }
 
 #[cfg(unix)]
@@ -3250,7 +3375,48 @@ fn reclaim_stale_process_lock(lock_path: &Path, expected_lock_file: &str) -> Res
     Ok(true)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn reclaim_stale_process_lock(lock_path: &Path, expected_lock_file: &str) -> Result<bool> {
+    reject_durable_target_link_or_reparse_point(lock_path)?;
+    let before = match fs::read_to_string(lock_path) {
+        Ok(body) => body,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(true),
+        Err(error) => return Err(error).context("failed to read process lock"),
+    };
+    let owner = BuildLockOwner::parse(&before);
+    if !owner.is_reclaimable_after_process_exit(expected_lock_file) {
+        return Ok(false);
+    }
+
+    let claim_path = lock_path.with_extension(format!(
+        "{}.reclaiming-{}",
+        expected_lock_file,
+        Uuid::new_v4().simple()
+    ));
+    match fs::rename(lock_path, &claim_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(true),
+        Err(_) => return Ok(false),
+    }
+    let claimed = match fs::read_to_string(&claim_path) {
+        Ok(body) => body,
+        Err(error) => {
+            let _ = fs::rename(&claim_path, lock_path);
+            return Err(error).context("failed to read claimed process lock");
+        }
+    };
+    if claimed != before {
+        let _ = fs::rename(&claim_path, lock_path);
+        return Ok(false);
+    }
+    fs::remove_file(&claim_path).context("failed to reclaim stale process lock")?;
+    if let Some(parent) = lock_path.parent() {
+        sync_dir(parent)?;
+    }
+    Ok(true)
+}
+
+#[cfg(all(not(unix), not(windows)))]
 fn reclaim_stale_process_lock(_lock_path: &Path, _expected_lock_file: &str) -> Result<bool> {
     Ok(false)
 }
@@ -3439,6 +3605,7 @@ impl TaskStore {
             product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: None,
             headless_run_recovery_identity,
+            runtime_deadline: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3493,6 +3660,7 @@ impl TaskStore {
             product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: None,
             headless_run_recovery_identity: None,
+            runtime_deadline: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3563,6 +3731,7 @@ impl TaskStore {
             product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: None,
             headless_run_recovery_identity: None,
+            runtime_deadline: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3642,6 +3811,7 @@ impl TaskStore {
             product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: None,
             headless_run_recovery_identity: None,
+            runtime_deadline: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3728,6 +3898,7 @@ impl TaskStore {
             product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: None,
             headless_run_recovery_identity: None,
+            runtime_deadline: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3833,6 +4004,7 @@ impl TaskStore {
             product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: None,
             headless_run_recovery_identity: None,
+            runtime_deadline: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3930,6 +4102,7 @@ impl TaskStore {
             product_objective_continuation_provenance: params.objective_continuation_provenance,
             product_loop_stop_recovery_provenance: None,
             headless_run_recovery_identity: None,
+            runtime_deadline: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -4036,6 +4209,7 @@ impl TaskStore {
             product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: Some(params.provenance),
             headless_run_recovery_identity: None,
+            runtime_deadline: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -4130,6 +4304,36 @@ impl TaskStore {
         record.status = status;
         record.updated_at = timestamp()?;
         self.write_task_state(&record)?;
+        self.append_task_event_with_payload(&record, event_kind, payload)?;
+        Ok(record)
+    }
+
+    pub fn update_task_status_with_runtime_deadline(
+        &self,
+        task_id: &str,
+        status: TaskStatus,
+        event_kind: LedgerEventKind,
+        runtime_deadline: Option<RuntimeDeadline>,
+    ) -> Result<TaskRecord> {
+        if task_status_is_terminal(&status) {
+            bail!("runtime deadline admission only applies before terminal mutation");
+        }
+        let Some(mut record) = self.get_task(task_id)? else {
+            bail!("task not found: {task_id}");
+        };
+        let runtime_deadline =
+            reconcile_runtime_deadline(record.runtime_deadline.as_ref(), runtime_deadline)?;
+        record.runtime_deadline = runtime_deadline.clone();
+        record.status = status;
+        record.updated_at = timestamp()?;
+        self.write_task_state(&record)?;
+        let payload = runtime_deadline.map(|deadline| {
+            serde_json::json!({
+                "runtime_deadline": deadline,
+                "deadline_scope": "task_run",
+                "deadline_persisted": true
+            })
+        });
         self.append_task_event_with_payload(&record, event_kind, payload)?;
         Ok(record)
     }
@@ -5821,6 +6025,34 @@ fn task_status_is_terminal(status: &TaskStatus) -> bool {
         status,
         TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
     )
+}
+
+fn validate_runtime_deadline(deadline: &RuntimeDeadline) -> Result<()> {
+    if deadline.deadline_id.trim().is_empty() {
+        bail!("runtime deadline id must not be empty");
+    }
+    OffsetDateTime::parse(&deadline.expires_at, &Rfc3339)
+        .context("runtime deadline expires_at must be RFC3339")?;
+    Ok(())
+}
+
+fn reconcile_runtime_deadline(
+    existing: Option<&RuntimeDeadline>,
+    requested: Option<RuntimeDeadline>,
+) -> Result<Option<RuntimeDeadline>> {
+    if let Some(deadline) = existing {
+        validate_runtime_deadline(deadline)?;
+    }
+    if let Some(deadline) = requested.as_ref() {
+        validate_runtime_deadline(deadline)?;
+    }
+    match (existing, requested) {
+        (Some(existing), Some(requested)) if existing != &requested => {
+            bail!("runtime deadline mismatch for resumed task/run");
+        }
+        (Some(existing), _) => Ok(Some(existing.clone())),
+        (None, requested) => Ok(requested),
+    }
 }
 
 fn ledger_event_kind_is_terminal_task(kind: &LedgerEventKind) -> bool {

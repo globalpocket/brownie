@@ -3459,6 +3459,8 @@ describe('protocol validation', () => {
     };
 
     expect(isTaskRunParams({ task_id: 'task_1' })).toBe(true);
+    expect(isTaskRunParams({ task_id: 'task_1', runtime_deadline: { deadline_id: 'deadline_1', expires_at: '2099-01-01T00:00:00Z' } })).toBe(true);
+    expect(isTaskRunParams({ task_id: 'task_1', runtime_deadline: { deadline_id: 'deadline_1', expires_at: '2099-01-01T00:00:00Z', raw_env: 'nope' } })).toBe(false);
     expect(isTaskRunParams({ task_id: 'task_1', selected_index_context: selectedContext })).toBe(true);
     expect(isTaskRunParams({ task_id: 'task_1', verification_recovery_context_read: recoveryContextRead })).toBe(true);
     expect(isTaskRunParams({ task_id: 'task_1', context_budget: { max_prompt_chars: 4096, max_ledger_events: 4, max_selected_index_chars: 1024 } })).toBe(true);

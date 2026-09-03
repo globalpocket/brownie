@@ -1132,6 +1132,8 @@ pub struct TaskCancelResult {
 pub struct TaskRunParams {
     pub task_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_deadline: Option<RuntimeDeadline>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_index_context: Option<TaskRunSelectedIndexContext>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_recovery_context_read: Option<TaskRunVerificationRecoveryContextRead>,
@@ -2296,6 +2298,13 @@ pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestH
 #[serde(deny_unknown_fields)]
 pub struct TaskInspectParams {
     pub task_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeDeadline {
+    pub deadline_id: String,
+    pub expires_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -5539,6 +5548,8 @@ pub struct TaskRecord {
     pub product_loop_stop_recovery_provenance: Option<ProductLoopStopRecoveryProvenance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headless_run_recovery_identity: Option<HeadlessRunRecoveryIdentityEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_deadline: Option<RuntimeDeadline>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -5811,6 +5822,7 @@ mod semantic_contract_tests {
 
         let task_run = TaskRunParams {
             task_id: "task_1".to_string(),
+            runtime_deadline: None,
             selected_index_context: None,
             verification_recovery_context_read: None,
             context_budget: None,

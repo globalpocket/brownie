@@ -15,6 +15,7 @@ function copyFixture() {
     'crates/brownie-store/src/lib.rs',
     'crates/brownie-runtime/src/mcp_client.rs',
     'crates/brownie-runtime/src/lib.rs',
+    'crates/brownie-protocol/src/lib.rs',
   ]) {
     const target = path.join(temp, relativePath);
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -73,16 +74,16 @@ test('dropping MCP stdio monotonic deadline evidence fails closed', () => {
   );
 });
 
-test('claiming broad platform closure fails closed', () => {
+test('reopening platform/deadline/durability closure fails closed', () => {
   const temp = copyFixture();
   const assessmentPath = path.join(temp, 'docs/architecture/runtime-platform-deadline-durability-hardening.json');
   const assessment = JSON.parse(fs.readFileSync(assessmentPath, 'utf8'));
-  assessment.closure.status = 'implemented_sufficient';
-  assessment.closure.debt_classification = 'closed';
+  assessment.closure.status = 'partial';
+  assessment.closure.debt_classification = 'required_before_release';
   fs.writeFileSync(assessmentPath, JSON.stringify(assessment, null, 2) + '\n');
   assert.throws(
     () => validatePlatformDeadlineDurabilityHardening(temp),
-    /must remain partial|must remain required_before_release/,
+    /implemented_sufficient closure|blocker must be closed/,
   );
 });
 
@@ -149,6 +150,57 @@ test('dropping terminal transition process-loss test fails closed', () => {
   assert.throws(
     () => validatePlatformDeadlineDurabilityHardening(temp),
     /missing timeout\/durability\/race test task_terminal_transition_process_loss_repairs_missing_terminal_ledger_event/,
+  );
+});
+
+test('dropping Windows atomic replace evidence fails closed', () => {
+  const temp = copyFixture();
+  const storePath = path.join(temp, 'crates/brownie-store/src/lib.rs');
+  const text = fs.readFileSync(storePath, 'utf8').replaceAll('MoveFileExW', 'MoveFileExRemoved');
+  fs.writeFileSync(storePath, text);
+  assert.throws(
+    () => validatePlatformDeadlineDurabilityHardening(temp),
+    /missing Windows durability\/lock evidence token MoveFileExW/,
+  );
+});
+
+test('dropping runtime deadline protocol evidence fails closed', () => {
+  const temp = copyFixture();
+  const protocolPath = path.join(temp, 'crates/brownie-protocol/src/lib.rs');
+  const text = fs.readFileSync(protocolPath, 'utf8').replace('pub struct RuntimeDeadline', 'pub struct RemovedDeadline');
+  fs.writeFileSync(protocolPath, text);
+  assert.throws(
+    () => validatePlatformDeadlineDurabilityHardening(temp),
+    /missing Runtime-wide deadline protocol token pub struct RuntimeDeadline/,
+  );
+});
+
+test('dropping MCP post-response process-loss failpoint evidence fails closed', () => {
+  const temp = copyFixture();
+  const runtimePath = path.join(temp, 'crates/brownie-runtime/src/lib.rs');
+  const text = fs
+    .readFileSync(runtimePath, 'utf8')
+    .replaceAll('BROWNIE_TEST_ABORT_AFTER_MCP_TOOL_EXECUTION_BEFORE_TERMINAL_RECORD', 'BROWNIE_TEST_ABORT_REMOVED');
+  fs.writeFileSync(runtimePath, text);
+  assert.throws(
+    () => validatePlatformDeadlineDurabilityHardening(temp),
+    /missing timeout\/durability\/race test BROWNIE_TEST_ABORT_AFTER_MCP_TOOL_EXECUTION_BEFORE_TERMINAL_RECORD/,
+  );
+});
+
+test('dropping MCP post-response process-loss behavior test fails closed', () => {
+  const temp = copyFixture();
+  const runtimePath = path.join(temp, 'crates/brownie-runtime/src/lib.rs');
+  const text = fs
+    .readFileSync(runtimePath, 'utf8')
+    .replaceAll(
+      'task_run_replays_mcp_tool_result_after_terminal_record_process_loss',
+      'removed_mcp_terminal_record_process_loss_behavior_test',
+    );
+  fs.writeFileSync(runtimePath, text);
+  assert.throws(
+    () => validatePlatformDeadlineDurabilityHardening(temp),
+    /missing timeout\/durability\/race test task_run_replays_mcp_tool_result_after_terminal_record_process_loss/,
   );
 });
 

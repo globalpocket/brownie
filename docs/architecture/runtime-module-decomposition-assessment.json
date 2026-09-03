@@ -31,19 +31,19 @@
   "metrics": {
     "files": {
       "crates/brownie-runtime/src/lib.rs": {
-        "line_count": 65418,
+        "line_count": 65826,
         "public_items": 3,
-        "private_items": 481,
-        "production_line_count": 14209,
-        "test_line_count": 51209,
-        "state_mutation_mentions": 299,
-        "durable_write_mentions": 223,
+        "private_items": 487,
+        "production_line_count": 14368,
+        "test_line_count": 51458,
+        "state_mutation_mentions": 303,
+        "durable_write_mentions": 224,
         "permission_decision_mentions": 175,
-        "recovery_mentions": 2206,
+        "recovery_mentions": 2217,
         "rpc_dispatch_mentions": 90,
         "approval_mentions": 522,
-        "mcp_mentions": 575,
-        "product_dod_mentions": 898,
+        "mcp_mentions": 599,
+        "product_dod_mentions": 901,
         "diagnostics_mentions": 1814
       },
       "crates/brownie-runtime/src/codebase_index.rs": {
@@ -378,7 +378,7 @@
       "The lib.rs behavior-test corpus remains large and should be split opportunistically with future behavior changes, but it is not treated as a Runtime-owned release blocker after this guarded assessment.",
       "The generated proposal review diagnostics compatibility chain remains in lib.rs because moving it would be a high-churn compatibility refactor without reducing Runtime authority risk in this release phase."
     ],
-    "summary": "RRP-6 remains closed after RRP-7.1 source growth; metrics were refreshed to include the bounded McpStdioDeadline, MCP late-child-exit, durable write failpoint, and checked terminal-status additions without moving Runtime authority out of Rust Runtime."
+    "summary": "RRP-6 remains closed after RRP-7.2 source growth; metrics were refreshed to include RuntimeDeadline persistence/resume checks, Windows durability and stale-lock evidence, and the MCP terminal-record process-loss test without moving Runtime authority out of Rust Runtime."
   },
   "non_authority_rules": [
     "CLI and VSIX are transport/projection only",
