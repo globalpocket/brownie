@@ -9,6 +9,8 @@
     "guard:control-plane-authority": "node scripts/guard-control-plane-authority.mjs",
     "guard:control-plane-authority:test": "node --test scripts/guard-control-plane-authority.test.mjs",
     "guard:diagnostics": "node scripts/guard-diagnostics-api.mjs",
+    "guard:durable-schema-migration": "node scripts/guard-durable-schema-migration.mjs",
+    "guard:durable-schema-migration:test": "node --test scripts/guard-durable-schema-migration.test.mjs",
     "guard:phase-value": "node scripts/guard-phase-value.mjs",
     "guard:phase-value:test": "node --test scripts/guard-phase-value.test.mjs",
     "guard:product-completion": "node scripts/guard-product-completion.mjs",

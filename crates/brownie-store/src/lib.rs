@@ -32,8 +32,9 @@ pub const WORKSPACE_STATE_DIR: &str = ".brownie";
 pub const RUNS_DIR: &str = "runs";
 pub const CODEBASE_INDEX_DIR: &str = "codebase-index";
 pub const DURABLE_STORE_SCHEMA_MANIFEST: &str = "store-schema.json";
-pub const DURABLE_STORE_SCHEMA_VERSION: u64 = 1;
+pub const DURABLE_STORE_SCHEMA_VERSION: u64 = 2;
 pub const DURABLE_STORE_SCHEMA_MIN_SUPPORTED_VERSION: u64 = 1;
+const DURABLE_STORE_LAYOUT_MANIFEST: &str = "store-layout.json";
 const HEADLESS_CONTINUATIONS_DIR: &str = "headless-continuations";
 const HEADLESS_OBJECTIVE_ADMISSIONS_DIR: &str = "headless-objective-admissions";
 const HEADLESS_JOURNEY_EXECUTIONS_DIR: &str = "headless-journey-executions";
@@ -49,8 +50,15 @@ const CODEBASE_INDEX_LOCK_STALE_AFTER_SECONDS: i64 = 30 * 60;
 const DURABLE_STORE_SCHEMA_ID: &str = "brownie-runtime-durable-store";
 const DURABLE_STORE_SCHEMA_MANIFEST_FORMAT_VERSION: u64 = 1;
 const DURABLE_STORE_SCHEMA_STATE_CURRENT: &str = "current";
-const DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED: &str = "initialized-v1";
+const DURABLE_STORE_SCHEMA_STATE_MIGRATION_IN_PROGRESS: &str = "migration_in_progress";
+const DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED: &str = "initialized-v2";
+const DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED_V1: &str = "initialized-v1";
 const DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED: &str = "adopted-missing-v1-layout";
+const DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED_V2: &str = "adopted-missing-v1-layout-to-v2";
+const DURABLE_STORE_SCHEMA_MIGRATION_V1_TO_V2: &str = "v1-to-v2-layout-marker";
+const DURABLE_STORE_LAYOUT_ID: &str = "brownie-runtime-durable-store-layout";
+const DURABLE_STORE_LAYOUT_VERSION: u64 = 1;
+const DURABLE_STORE_LAYOUT_CURRENT: &str = "runtime-store-v2-bounded-local-layout";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -61,6 +69,22 @@ pub struct DurableStoreSchemaManifest {
     pub minimum_runtime_store_schema_version: u64,
     pub state: String,
     pub migration: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub migration_from_store_schema_version: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub migration_to_store_schema_version: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct DurableStoreLayoutManifest {
+    schema_id: String,
+    manifest_format_version: u64,
+    store_schema_version: u64,
+    layout: String,
+    migration: String,
 }
 
 #[derive(Debug, Clone)]
@@ -3176,8 +3200,12 @@ impl TaskStore {
     pub fn ensure_durable_schema(&self) -> Result<DurableStoreSchemaManifest> {
         match self.read_durable_schema_manifest() {
             Ok(Some(manifest)) => {
-                validate_durable_schema_manifest(&manifest)?;
-                Ok(manifest)
+                if durable_schema_manifest_is_current(&manifest)? {
+                    validate_current_durable_schema_manifest(self, &manifest)?;
+                    Ok(manifest)
+                } else {
+                    self.migrate_durable_schema_manifest(manifest)
+                }
             }
             Ok(None) => self.initialize_or_adopt_durable_schema_manifest(),
             Err(error) => Err(error),
@@ -4878,20 +4906,104 @@ impl TaskStore {
         let state_dir_existed = self.workspace_state_dir().exists();
         let _lock = self.acquire_durable_schema_migration_lock()?;
         if let Some(manifest) = self.read_durable_schema_manifest()? {
-            validate_durable_schema_manifest(&manifest)?;
-            return Ok(manifest);
+            if durable_schema_manifest_is_current(&manifest)? {
+                validate_current_durable_schema_manifest(self, &manifest)?;
+                return Ok(manifest);
+            }
+            return self.migrate_durable_schema_manifest_locked(manifest);
         }
 
-        let manifest = current_durable_schema_manifest(if state_dir_existed {
-            DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED
+        let migration = if state_dir_existed {
+            DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED_V2
         } else {
             DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED
-        });
+        };
+        self.write_durable_store_layout_manifest(migration)?;
+        let manifest = current_durable_schema_manifest(migration);
         let body = serde_json::to_string_pretty(&manifest)
             .context("failed to serialize durable store schema manifest")?;
         write_file_atomically(&self.durable_schema_manifest_path(), body.as_bytes())
             .context("failed to write durable store schema manifest")?;
         Ok(manifest)
+    }
+
+    fn migrate_durable_schema_manifest(
+        &self,
+        manifest: DurableStoreSchemaManifest,
+    ) -> Result<DurableStoreSchemaManifest> {
+        let _lock = self.acquire_durable_schema_migration_lock()?;
+        if let Some(latest) = self.read_durable_schema_manifest()? {
+            if latest != manifest {
+                if durable_schema_manifest_is_current(&latest)? {
+                    validate_current_durable_schema_manifest(self, &latest)?;
+                    return Ok(latest);
+                }
+                return self.migrate_durable_schema_manifest_locked(latest);
+            }
+        }
+        self.migrate_durable_schema_manifest_locked(manifest)
+    }
+
+    fn migrate_durable_schema_manifest_locked(
+        &self,
+        manifest: DurableStoreSchemaManifest,
+    ) -> Result<DurableStoreSchemaManifest> {
+        let migration = durable_schema_migration_for_manifest(&manifest)?;
+        let in_progress = durable_schema_migration_in_progress_manifest(migration);
+        let body = serde_json::to_string_pretty(&in_progress)
+            .context("failed to serialize durable schema migration marker")?;
+        write_file_atomically(&self.durable_schema_manifest_path(), body.as_bytes())
+            .context("failed to write durable schema migration marker")?;
+
+        self.write_durable_store_layout_manifest(migration.id)?;
+        let completed = durable_schema_migration_completed_manifest(migration);
+        let body = serde_json::to_string_pretty(&completed)
+            .context("failed to serialize durable schema migration completion")?;
+        write_file_atomically(&self.durable_schema_manifest_path(), body.as_bytes())
+            .context("failed to write durable schema migration completion")?;
+        validate_current_durable_schema_manifest(self, &completed)?;
+        Ok(completed)
+    }
+
+    fn read_durable_store_layout_manifest(&self) -> Result<Option<DurableStoreLayoutManifest>> {
+        let path = self
+            .workspace_state_dir()
+            .join(DURABLE_STORE_LAYOUT_MANIFEST);
+        match fs::read_to_string(&path) {
+            Ok(body) => serde_json::from_str(&body)
+                .with_context(|| format!("failed to parse {}", path.display()))
+                .map(Some),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+        }
+    }
+
+    fn write_durable_store_layout_manifest(&self, migration: &str) -> Result<()> {
+        let layout = DurableStoreLayoutManifest {
+            schema_id: DURABLE_STORE_LAYOUT_ID.to_string(),
+            manifest_format_version: DURABLE_STORE_LAYOUT_VERSION,
+            store_schema_version: DURABLE_STORE_SCHEMA_VERSION,
+            layout: DURABLE_STORE_LAYOUT_CURRENT.to_string(),
+            migration: migration.to_string(),
+        };
+        if let Some(existing) = self.read_durable_store_layout_manifest()? {
+            validate_durable_store_layout_manifest(&existing)?;
+            if existing.layout == layout.layout
+                && existing.store_schema_version == layout.store_schema_version
+            {
+                return Ok(());
+            }
+            bail!("conflicting durable store layout migration marker");
+        }
+        let body = serde_json::to_string_pretty(&layout)
+            .context("failed to serialize durable store layout manifest")?;
+        write_file_atomically(
+            &self
+                .workspace_state_dir()
+                .join(DURABLE_STORE_LAYOUT_MANIFEST),
+            body.as_bytes(),
+        )
+        .context("failed to write durable store layout manifest")
     }
 
     fn acquire_durable_schema_migration_lock(&self) -> Result<RunAdmissionLock> {
@@ -5251,10 +5363,58 @@ fn current_durable_schema_manifest(migration: &str) -> DurableStoreSchemaManifes
         minimum_runtime_store_schema_version: DURABLE_STORE_SCHEMA_MIN_SUPPORTED_VERSION,
         state: DURABLE_STORE_SCHEMA_STATE_CURRENT.to_string(),
         migration: migration.to_string(),
+        layout: Some(DURABLE_STORE_LAYOUT_CURRENT.to_string()),
+        migration_from_store_schema_version: None,
+        migration_to_store_schema_version: None,
     }
 }
 
-fn validate_durable_schema_manifest(manifest: &DurableStoreSchemaManifest) -> Result<()> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DurableSchemaMigration {
+    id: &'static str,
+    from_version: u64,
+    to_version: u64,
+}
+
+const DURABLE_SCHEMA_MIGRATIONS: &[DurableSchemaMigration] = &[DurableSchemaMigration {
+    id: DURABLE_STORE_SCHEMA_MIGRATION_V1_TO_V2,
+    from_version: 1,
+    to_version: 2,
+}];
+
+fn durable_schema_migration_in_progress_manifest(
+    migration: DurableSchemaMigration,
+) -> DurableStoreSchemaManifest {
+    DurableStoreSchemaManifest {
+        schema_id: DURABLE_STORE_SCHEMA_ID.to_string(),
+        manifest_format_version: DURABLE_STORE_SCHEMA_MANIFEST_FORMAT_VERSION,
+        store_schema_version: migration.from_version,
+        minimum_runtime_store_schema_version: DURABLE_STORE_SCHEMA_MIN_SUPPORTED_VERSION,
+        state: DURABLE_STORE_SCHEMA_STATE_MIGRATION_IN_PROGRESS.to_string(),
+        migration: migration.id.to_string(),
+        layout: None,
+        migration_from_store_schema_version: Some(migration.from_version),
+        migration_to_store_schema_version: Some(migration.to_version),
+    }
+}
+
+fn durable_schema_migration_completed_manifest(
+    migration: DurableSchemaMigration,
+) -> DurableStoreSchemaManifest {
+    DurableStoreSchemaManifest {
+        schema_id: DURABLE_STORE_SCHEMA_ID.to_string(),
+        manifest_format_version: DURABLE_STORE_SCHEMA_MANIFEST_FORMAT_VERSION,
+        store_schema_version: migration.to_version,
+        minimum_runtime_store_schema_version: DURABLE_STORE_SCHEMA_MIN_SUPPORTED_VERSION,
+        state: DURABLE_STORE_SCHEMA_STATE_CURRENT.to_string(),
+        migration: migration.id.to_string(),
+        layout: Some(DURABLE_STORE_LAYOUT_CURRENT.to_string()),
+        migration_from_store_schema_version: Some(migration.from_version),
+        migration_to_store_schema_version: Some(migration.to_version),
+    }
+}
+
+fn validate_durable_schema_manifest_common(manifest: &DurableStoreSchemaManifest) -> Result<()> {
     if manifest.schema_id != DURABLE_STORE_SCHEMA_ID {
         bail!("unsupported durable store schema id");
     }
@@ -5279,16 +5439,117 @@ fn validate_durable_schema_manifest(manifest: &DurableStoreSchemaManifest) -> Re
             manifest.minimum_runtime_store_schema_version
         );
     }
+    Ok(())
+}
+
+fn durable_schema_manifest_is_current(manifest: &DurableStoreSchemaManifest) -> Result<bool> {
+    validate_durable_schema_manifest_common(manifest)?;
+    Ok(
+        manifest.store_schema_version == DURABLE_STORE_SCHEMA_VERSION
+            && manifest.state == DURABLE_STORE_SCHEMA_STATE_CURRENT,
+    )
+}
+
+fn validate_current_durable_schema_manifest(
+    store: &TaskStore,
+    manifest: &DurableStoreSchemaManifest,
+) -> Result<()> {
+    validate_durable_schema_manifest_common(manifest)?;
     if manifest.state != DURABLE_STORE_SCHEMA_STATE_CURRENT {
         bail!("durable store schema is not current");
     }
+    if manifest.store_schema_version != DURABLE_STORE_SCHEMA_VERSION {
+        bail!(
+            "durable store schema migration required from version {}",
+            manifest.store_schema_version
+        );
+    }
+    if manifest.layout.as_deref() != Some(DURABLE_STORE_LAYOUT_CURRENT) {
+        bail!("durable store schema layout marker is missing or unsupported");
+    }
     if !matches!(
         manifest.migration.as_str(),
-        DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED | DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED
+        DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED
+            | DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED_V2
+            | DURABLE_STORE_SCHEMA_MIGRATION_V1_TO_V2
     ) {
         bail!("unsupported durable store schema migration state");
     }
+    let layout = store
+        .read_durable_store_layout_manifest()?
+        .ok_or_else(|| anyhow::anyhow!("durable store layout marker is missing"))?;
+    validate_durable_store_layout_manifest(&layout)?;
     Ok(())
+}
+
+fn validate_durable_store_layout_manifest(manifest: &DurableStoreLayoutManifest) -> Result<()> {
+    if manifest.schema_id != DURABLE_STORE_LAYOUT_ID {
+        bail!("unsupported durable store layout schema id");
+    }
+    if manifest.manifest_format_version != DURABLE_STORE_LAYOUT_VERSION {
+        bail!("unsupported durable store layout manifest format version");
+    }
+    if manifest.store_schema_version != DURABLE_STORE_SCHEMA_VERSION {
+        bail!("unsupported durable store layout schema version");
+    }
+    if manifest.layout != DURABLE_STORE_LAYOUT_CURRENT {
+        bail!("unsupported durable store layout marker");
+    }
+    if !matches!(
+        manifest.migration.as_str(),
+        DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED
+            | DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED_V2
+            | DURABLE_STORE_SCHEMA_MIGRATION_V1_TO_V2
+    ) {
+        bail!("unsupported durable store layout migration state");
+    }
+    Ok(())
+}
+
+fn durable_schema_migration_for_manifest(
+    manifest: &DurableStoreSchemaManifest,
+) -> Result<DurableSchemaMigration> {
+    validate_durable_schema_manifest_common(manifest)?;
+    if manifest.state == DURABLE_STORE_SCHEMA_STATE_MIGRATION_IN_PROGRESS {
+        let migration = DURABLE_SCHEMA_MIGRATIONS
+            .iter()
+            .copied()
+            .find(|candidate| {
+                manifest.migration == candidate.id
+                    && manifest.migration_from_store_schema_version == Some(candidate.from_version)
+                    && manifest.migration_to_store_schema_version == Some(candidate.to_version)
+            })
+            .ok_or_else(|| anyhow::anyhow!("unsupported durable store schema migration marker"))?;
+        return Ok(migration);
+    }
+    if manifest.state != DURABLE_STORE_SCHEMA_STATE_CURRENT {
+        bail!("durable store schema is not current");
+    }
+    if manifest.store_schema_version == DURABLE_STORE_SCHEMA_VERSION {
+        bail!("durable store schema is already current");
+    }
+    if manifest.store_schema_version == 1
+        && !matches!(
+            manifest.migration.as_str(),
+            DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED_V1 | DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED
+        )
+    {
+        bail!("unsupported durable store schema migration state");
+    }
+    DURABLE_SCHEMA_MIGRATIONS
+        .iter()
+        .copied()
+        .find(|candidate| {
+            candidate.from_version == manifest.store_schema_version
+                && candidate.to_version == DURABLE_STORE_SCHEMA_VERSION
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "unsupported durable store schema migration path: {} -> {}",
+                manifest.store_schema_version,
+                DURABLE_STORE_SCHEMA_VERSION
+            )
+        })
 }
 
 fn timestamp() -> Result<String> {
@@ -5316,6 +5577,11 @@ mod tests {
             manifest,
             current_durable_schema_manifest(DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED)
         );
+        let layout = store
+            .read_durable_store_layout_manifest()
+            .expect("read layout")
+            .expect("layout");
+        assert_eq!(layout.layout, DURABLE_STORE_LAYOUT_CURRENT);
         assert!(temp
             .path()
             .join(WORKSPACE_STATE_DIR)
@@ -5339,8 +5605,119 @@ mod tests {
 
         assert_eq!(
             manifest,
-            current_durable_schema_manifest(DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED)
+            current_durable_schema_manifest(DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED_V2)
         );
+        assert_eq!(
+            store
+                .read_durable_store_layout_manifest()
+                .expect("read layout")
+                .expect("layout")
+                .migration,
+            DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED_V2
+        );
+    }
+
+    #[test]
+    fn durable_schema_v1_manifest_migrates_to_v2_layout() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_durable_schema_manifest_for_test(
+            temp.path(),
+            &legacy_v1_durable_schema_manifest(DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED_V1),
+        );
+        let store = TaskStore::new(temp.path());
+
+        let manifest = store.ensure_durable_schema().expect("migrated schema");
+
+        assert_eq!(
+            manifest,
+            durable_schema_migration_completed_manifest(DURABLE_SCHEMA_MIGRATIONS[0])
+        );
+        assert_eq!(
+            store
+                .read_durable_store_layout_manifest()
+                .expect("read layout")
+                .expect("layout")
+                .layout,
+            DURABLE_STORE_LAYOUT_CURRENT
+        );
+    }
+
+    #[test]
+    fn durable_schema_in_progress_migration_resumes_idempotently_without_layout_marker() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_durable_schema_manifest_for_test(
+            temp.path(),
+            &durable_schema_migration_in_progress_manifest(DURABLE_SCHEMA_MIGRATIONS[0]),
+        );
+        let store = TaskStore::new(temp.path());
+
+        let first = store.ensure_durable_schema().expect("first resume");
+        let second = store.ensure_durable_schema().expect("second resume");
+
+        assert_eq!(first, second);
+        assert_eq!(
+            first,
+            durable_schema_migration_completed_manifest(DURABLE_SCHEMA_MIGRATIONS[0])
+        );
+    }
+
+    #[test]
+    fn durable_schema_in_progress_migration_resumes_after_layout_marker_write() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_durable_schema_manifest_for_test(
+            temp.path(),
+            &durable_schema_migration_in_progress_manifest(DURABLE_SCHEMA_MIGRATIONS[0]),
+        );
+        let store = TaskStore::new(temp.path());
+        store
+            .write_durable_store_layout_manifest(DURABLE_STORE_SCHEMA_MIGRATION_V1_TO_V2)
+            .expect("layout marker");
+
+        let manifest = store.ensure_durable_schema().expect("resume");
+
+        assert_eq!(
+            manifest,
+            durable_schema_migration_completed_manifest(DURABLE_SCHEMA_MIGRATIONS[0])
+        );
+    }
+
+    #[test]
+    fn durable_schema_partial_migration_conflict_fails_closed_before_mutation() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_durable_schema_manifest_for_test(
+            temp.path(),
+            &durable_schema_migration_in_progress_manifest(DURABLE_SCHEMA_MIGRATIONS[0]),
+        );
+        let bad_layout = DurableStoreLayoutManifest {
+            schema_id: DURABLE_STORE_LAYOUT_ID.to_string(),
+            manifest_format_version: DURABLE_STORE_SCHEMA_MANIFEST_FORMAT_VERSION,
+            store_schema_version: DURABLE_STORE_SCHEMA_VERSION,
+            layout: "runtime-store-v2-conflicting-layout".to_string(),
+            migration: DURABLE_STORE_SCHEMA_MIGRATION_V1_TO_V2.to_string(),
+        };
+        write_durable_store_layout_manifest_for_test(temp.path(), &bad_layout);
+        let store = TaskStore::new(temp.path());
+
+        let error = store
+            .start_task(TaskStartParams {
+                goal: "must not mutate".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect_err("partial migration rejected");
+
+        assert!(error
+            .to_string()
+            .contains("unsupported durable store layout marker"));
+        assert!(!temp
+            .path()
+            .join(WORKSPACE_STATE_DIR)
+            .join(RUNS_DIR)
+            .exists());
     }
 
     #[test]
@@ -5421,6 +5798,45 @@ mod tests {
         assert!(error
             .to_string()
             .contains("durable store requires newer runtime schema support"));
+    }
+
+    fn legacy_v1_durable_schema_manifest(migration: &str) -> DurableStoreSchemaManifest {
+        DurableStoreSchemaManifest {
+            schema_id: DURABLE_STORE_SCHEMA_ID.to_string(),
+            manifest_format_version: DURABLE_STORE_SCHEMA_MANIFEST_FORMAT_VERSION,
+            store_schema_version: 1,
+            minimum_runtime_store_schema_version: 1,
+            state: DURABLE_STORE_SCHEMA_STATE_CURRENT.to_string(),
+            migration: migration.to_string(),
+            layout: None,
+            migration_from_store_schema_version: None,
+            migration_to_store_schema_version: None,
+        }
+    }
+
+    fn write_durable_schema_manifest_for_test(root: &Path, manifest: &DurableStoreSchemaManifest) {
+        let body = serde_json::to_string_pretty(manifest).expect("serialize manifest");
+        write_file_atomically(
+            &root
+                .join(WORKSPACE_STATE_DIR)
+                .join(DURABLE_STORE_SCHEMA_MANIFEST),
+            body.as_bytes(),
+        )
+        .expect("write manifest");
+    }
+
+    fn write_durable_store_layout_manifest_for_test(
+        root: &Path,
+        manifest: &DurableStoreLayoutManifest,
+    ) {
+        let body = serde_json::to_string_pretty(manifest).expect("serialize layout");
+        write_file_atomically(
+            &root
+                .join(WORKSPACE_STATE_DIR)
+                .join(DURABLE_STORE_LAYOUT_MANIFEST),
+            body.as_bytes(),
+        )
+        .expect("write layout");
     }
 
     #[test]

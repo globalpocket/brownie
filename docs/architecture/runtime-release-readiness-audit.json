@@ -1,13 +1,15 @@
 {
   "schema_version": 1,
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-  "phase": "RRP-7",
-  "phase_title": "Platform, Deadline, and Durability Hardening",
+  "phase": "RRP-4.1",
+  "phase_title": "Durable Schema Migration and Interrupted Recovery",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "ba6fb62eb12a63e48bcd5b64072e3314efbc53bc",
+  "audited_main_commit": "8439b1ef4aebe8cf3f0acda09f86aca31cdfc31d",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
-    "runtime-release-guard-ci"
+    "runtime-release-guard-ci",
+    "protocol-event-canonization",
+    "platform-deadline-durability-hardening"
   ],
   "owner_decisions": [
     {
@@ -85,13 +87,16 @@
       "responsibility_domain": "runtime",
       "debt_classification": "closed",
       "evidence": [
-        "RRP-4 adds .brownie/store-schema.json as the release-level durable store schema manifest for local Runtime state, with schema id, manifest format version, store schema version, minimum runtime schema version, current state, and bounded migration source only.",
-        "TaskStore::ensure_durable_schema creates v1 manifests for new stores and adopts missing-manifest v1-shaped .brownie layouts under an exclusive store-schema.lock before durable reads or writes continue.",
-        "Manifest parsing is strict and validation fails closed for malformed JSON, unknown fields, wrong schema id, non-current state, unsupported migration state, zero versions, future store schema versions, or minimum runtime schema versions newer than this Runtime.",
+        "RRP-4 added .brownie/store-schema.json as the release-level durable store schema manifest for local Runtime state, with schema id, manifest format version, store schema version, minimum runtime schema version, current state, and bounded migration source only.",
+        "RRP-4.1 advances the local durable store schema from v1 to v2 and adds an explicit Runtime/store-owned migration registry with a v1 to v2 migration path.",
+        "RRP-4.1 persists a bounded migration_in_progress marker before migration work, writes the v2 store-layout.json marker through the synced atomic helper, and replaces the schema manifest with current v2 only after the marker validates.",
+        "First-touch recovery resumes interrupted v1 to v2 migration idempotently after either the in-progress manifest write or the store-layout.json marker write, while conflicting partial migration layout state fails closed before task mutation.",
+        "Manifest parsing is strict and validation fails closed for malformed JSON, unknown fields, wrong schema id, unsupported migration state, zero versions, future store schema versions, newer minimum runtime versions, missing current v2 layout markers, or conflicting partial migration state.",
         "BrownieStore::from_env_or_cwd gates store-backed Runtime methods before durable JSON-RPC work proceeds, and task state, run ledger, headless continuation, run session, journey, objective admission, completion finalization, active ModePack, and ModePack candidate durable paths check schema before mutation through their read/write entrypoints. Store-free status remains outside the durable gate.",
-        "cargo test -p brownie-store durable_schema -- --test-threads=1 covers manifest creation, legacy adoption, malformed rejection, future-version rejection before mutation, and minimum-runtime-version rejection."
+        "cargo test -p brownie-store durable_schema -- --test-threads=1 covers v2 manifest creation, missing-manifest adoption, v1 manifest migration, interrupted migration resume before and after layout marker write, partial migration conflict rejection, malformed rejection, future-version rejection before mutation, and minimum-runtime-version rejection.",
+        "guard:durable-schema-migration checks that the v1 to v2 registry, migration_in_progress marker, store-layout.json marker, interruption tests, and reopened release blocker accounting remain present."
       ],
-      "next_action": "Use the RRP-4 durable schema gate as the local Runtime v1 migration baseline while closing the remaining Runtime Release Readiness blockers."
+      "next_action": "Use the RRP-4.1 durable schema migration and interrupted recovery baseline while closing the reopened protocol semantic contract and platform/deadline/failure-injection blockers before the CI release gate."
     },
     {
       "id": "runtime-release-guard-ci",
@@ -102,7 +107,7 @@
       "debt_classification": "required_before_release",
       "evidence": [
         "RRP-3.1 adds pnpm --workspace-root test:rrp3-process-loss to the existing VSIX check script that CI invokes, making the real process-loss E2E CI-required without changing .github/workflows/ci.yml.",
-        "RRP-4 adds durable schema release-readiness evidence and store tests, but direct .github workflow wiring remains blocked by missing OAuth workflow scope.",
+        "RRP-4.1 adds pnpm --workspace-root guard:durable-schema-migration to the existing VSIX check path and adds focused brownie-store interrupted migration tests, but direct .github workflow wiring remains blocked by missing OAuth workflow scope.",
         "RRP-5 adds guard:protocol-event-canonization to the existing CI-invoked VSIX check path.",
         "RRP-6 adds guard:runtime-module-decomposition to the existing CI-invoked VSIX check path and makes the Runtime release-readiness guard require that VSIX command.",
         "RRP-7 adds guard:platform-deadline-durability to the existing CI-invoked VSIX check path and makes the Runtime release-readiness guard require that VSIX command.",
@@ -145,15 +150,15 @@
       "id": "protocol-event-canonization",
       "title": "Protocol/Event canonization",
       "priority": "P1",
-      "status": "implemented_sufficient",
+      "status": "partial",
       "responsibility_domain": "runtime",
-      "debt_classification": "closed",
+      "debt_classification": "required_before_release",
       "evidence": [
         "RRP-5 adds docs/architecture/runtime-protocol-event-canonical-map.json as the canonical Runtime-owned protocol/event ownership map for JSON-RPC method groups, generated compatibility families, event domains, durable ledger variants, CLI transport subset, VSIX validators/client calls, and docs anchors.",
         "scripts/guard-protocol-event-canonization.mjs extracts Runtime METHOD_* constants and dispatch arms, EventKind variants, and LedgerEventKind variants, then fails when a method/event is unmapped or when declared Runtime, protocol, CLI, VSIX, or docs anchors drift.",
-        "extensions/brownie-vsix/package.json now invokes pnpm --workspace-root guard:protocol-event-canonization through the existing CI-invoked VSIX check path, and scripts/guard-protocol-event-canonization.test.mjs covers unowned method drift, missing dispatch, ledger variant drift, and VSIX projection drift."
+        "The latest release-readiness review reopens this blocker because RRP-5 canonized ownership and drift detection but did not add a machine-readable Rust-generated protocol schema, Rust serialize to JSON to TypeScript semantic golden contract, required/optional/null/enum/error-payload semantics, backward compatibility checks, unknown field or variant policy checks, or durable event migration coupling."
       ],
-      "next_action": "Use the canonical protocol/event map and drift guard as the release baseline while closing the remaining Runtime-owned blockers."
+      "next_action": "Close RRP-5.1 with semantic protocol contract evidence after RRP-4.1 and RRP-7.1."
     },
     {
       "id": "runtime-module-decomposition-reevaluation",
@@ -174,17 +179,16 @@
       "id": "platform-deadline-durability-hardening",
       "title": "Platform, deadline, and durability hardening",
       "priority": "P1",
-      "status": "implemented_sufficient",
+      "status": "partial",
       "responsibility_domain": "runtime",
-      "debt_classification": "closed",
+      "debt_classification": "required_before_release",
       "evidence": [
         "RRP-7 adds docs/architecture/runtime-platform-deadline-durability-hardening.json as the finite closure assessment for local Runtime platform/deadline/durability scope.",
         "TaskStore::write_task_state now uses the shared write_file_atomically helper, so task state writes use a sibling temporary file, create_new, file write, file sync, atomic rename, and parent-directory sync like other durable store state.",
         "write_file_atomically now treats Unix parent-directory sync as a checked durability step rather than best-effort ignored evidence, while non-Unix remains an explicit local Runtime boundary no-op.",
-        "scripts/guard-platform-deadline-durability.mjs validates task-state durable write ordering, the atomic helper's file and parent sync contract, existing MCP stdio process-tree timeout cleanup, and timeout terminal-state coverage; its tests fail closed on raw task-state writes, missing parent sync, missing process-group setup, and runtime_release_ready claims.",
-        "extensions/brownie-vsix/package.json now invokes pnpm --workspace-root guard:platform-deadline-durability through the existing CI-invoked VSIX check path."
+        "The latest release-readiness review reopens this blocker because RRP-7 covered only a narrow local subset and still lacks Runtime-wide deadline canonicalization, resume deadline reconstruction, timeout versus terminal append race coverage, cancel versus tool response race coverage, concurrent writer failure injection, disk-full/permission/rename/truncated-state cases, path canonicalization checks, Windows process tree cleanup, Windows atomic replace/directory durability, and macOS/Windows Runtime verification."
       ],
-      "next_action": "Use the guarded RRP-7 local durability/deadline baseline while closing the remaining CI release-gate blocker."
+      "next_action": "Close RRP-7.1 with deadline, cross-platform, and failure-injection evidence before RRP-5.1 and the CI release gate."
     },
     {
       "id": "hosted-scheduler-daemon-worker-fleet",

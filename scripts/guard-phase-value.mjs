@@ -28,6 +28,8 @@ const guardEngineFiles = [
   'scripts/guard-control-plane-authority.mjs',
   'scripts/guard-control-plane-authority.test.mjs',
   'scripts/guard-diagnostics-api.mjs',
+  'scripts/guard-durable-schema-migration.mjs',
+  'scripts/guard-durable-schema-migration.test.mjs',
   'scripts/guard-product-completion.mjs',
   'scripts/guard-product-completion.test.mjs',
   'scripts/guard-phase-value.mjs',
