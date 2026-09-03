@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-  "phase": "RRP-5.5",
-  "phase_title": "Ledger Payload Classification Inventory and Typed Payload Debt Guard",
+  "phase": "RRP-5.6",
+  "phase_title": "TaskCompleted Known Terminal Evidence Payload Guard",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "8bb07b05dea8a8ab348b12ad8f48301ef793b822",
+  "audited_main_commit": "c1758a6281ea044cb06e29f9f328d9f31853dabf",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
     "protocol-event-canonization",
@@ -110,7 +110,7 @@
         "RRP-3.1 adds pnpm --workspace-root test:rrp3-process-loss to the existing VSIX check script that CI invokes, making the real process-loss E2E CI-required without changing .github/workflows/ci.yml.",
         "RRP-4.1 adds pnpm --workspace-root guard:durable-schema-migration to the existing VSIX check path and adds focused brownie-store real process-loss migration and v1 durable fixture preservation tests, but direct .github workflow wiring remains blocked by missing OAuth workflow scope.",
         "RRP-5 adds guard:protocol-event-canonization to the existing CI-invoked VSIX check path, and RRP-5.1 extends that guard so CI-invoked checks require the Rust-generated semantic protocol contract, VSIX golden tests, unknown-field policy evidence, and durable event migration coupling.",
-        "RRP-5.3 extends guard:protocol-event-canonization so the CI-invoked checks require recursive JSON Schema type_schemas and method schema refs/fingerprints; RRP-5.4 further requires fixed ledger payload schema fingerprints, separate diagnostic instance-shape fingerprints, and write/read payload envelope validation evidence; RRP-5.5 requires per-event payload classification inventory and blocks release while any ledger payload remains versioned-open or typed-known-fields-open.",
+        "RRP-5.3 extends guard:protocol-event-canonization so the CI-invoked checks require recursive JSON Schema type_schemas and method schema refs/fingerprints; RRP-5.4 further requires fixed ledger payload schema fingerprints, separate diagnostic instance-shape fingerprints, and write/read payload envelope validation evidence; RRP-5.5 requires per-event payload classification inventory and blocks release while any ledger payload remains versioned-open or typed-known-fields-open; RRP-5.6 additionally requires TaskCompleted known terminal evidence before append and in generated descriptors.",
         "RRP-6 adds guard:runtime-module-decomposition to the existing CI-invoked VSIX check path and makes the Runtime release-readiness guard require that VSIX command.",
         "RRP-7 adds guard:platform-deadline-durability to the existing CI-invoked VSIX check path and makes the Runtime release-readiness guard require that VSIX command.",
         "RRP-7.1 extends guard:platform-deadline-durability so the CI-invoked VSIX check path also requires absolute MCP stdio deadline evidence, late-child-exit deadline coverage, durable write failure injection, and checked task terminal race evidence.",
@@ -163,11 +163,12 @@
         "RRP-5.3 adds recursive Rust-derived JSON Schema documents for method param/result types through schemars, including nested $defs, method request/result schema refs, and recursive schema fingerprints so nested object/enum/array shape drift changes generated evidence.",
         "RRP-5.4 separates ledger payload contract fingerprints from payload instance fingerprints and validates current v2 envelopes on append/read while accepting verified legacy v1 envelopes for compatibility.",
         "RRP-5.5 adds an explicit LedgerPayloadSchemaClassification inventory for every LedgerEventKind and records that JSON-RPC request/result contracts plus schema/instance fingerprint split are closed, while full typed ledger payload schema coverage remains partial.",
-        "TaskCompleted now uses typed-known-fields-open validation that rejects empty or malformed known fields before append, but deliberately remains release-blocking because additional fields are still accepted and the object is not yet a strict typed payload schema.",
+        "RRP-5.6 closes the TaskCompleted unknown-only payload gap by requiring at least one recognized bounded terminal evidence field before durable append and by making guard:protocol-event-canonization fail if generated descriptors omit known_field_required:true.",
+        "TaskCompleted now uses typed-known-fields-open validation that rejects empty, unknown-only, or malformed known-field payloads before append, but deliberately remains release-blocking because additional fields are still accepted and the object is not yet a strict typed payload schema.",
         "All other current LedgerEventKind payload families are classified as versioned_open release-blocking debt instead of an any fallback; guard:protocol-event-canonization fails if descriptors return to any{...}, if classifications are missing, or if full closure is claimed while open classifications remain.",
-        "The generated semantic contract records event_payload_schema_classifications, event_payload_schema_classification_count, release_blocking_open_payload_count, and per-event payload_schema_contract_status so the partial ledger-payload state is machine-auditable rather than hidden behind a closed claim."
+        "The generated semantic contract records event_payload_schema_classifications, event_payload_schema_classification_count, release_blocking_open_payload_count, per-event payload_schema_contract_status, and TaskCompleted known_field_required descriptor evidence so the partial ledger-payload state is machine-auditable rather than hidden behind a closed claim."
       ],
-      "next_action": "Close RRP-5.5 follow-on work by assigning strict typed, payload-absent, or legacy-compatibility schemas to every payload-bearing LedgerEventKind and failing release guards while any versioned-open or typed-known-fields-open payload remains."
+      "next_action": "Continue follow-on work by assigning strict typed, payload-absent, or legacy-compatibility schemas to every payload-bearing LedgerEventKind and failing release guards while any versioned-open or typed-known-fields-open payload remains."
     },
     {
       "id": "runtime-module-decomposition-reevaluation",

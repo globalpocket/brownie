@@ -5662,7 +5662,7 @@ mod semantic_contract_tests {
         let contract = semantic_contract::runtime_semantic_protocol_contract();
         assert_eq!(
             contract.get("phase").and_then(Value::as_str),
-            Some("RRP-5.5")
+            Some("RRP-5.6")
         );
 
         let type_schemas = contract

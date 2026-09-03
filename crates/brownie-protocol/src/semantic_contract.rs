@@ -650,7 +650,7 @@ pub fn runtime_semantic_protocol_contract() -> Value {
         "schema_version": 5,
         "contract_id": "runtime-semantic-protocol-contract-v1",
         "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-        "phase": "RRP-5.5",
+        "phase": "RRP-5.6",
         "owner": "runtime",
         "runtime_release_debt_id": "protocol-event-canonization",
         "runtime_release_ready": false,
@@ -1493,7 +1493,7 @@ fn ledger_payload_schema_release_blocking(classification: &str) -> bool {
 
 fn ledger_payload_schema_descriptor(kind: &str) -> String {
     match kind {
-        "TaskCompleted" => "typed_known_fields_open{known_optional_fields:git:object,late_tool_response:boolean,mcp:object,runtime_deadline:object,status:string,terminal_process_loss:boolean,terminal_race_candidate:string;additional_fields:true;strict_typed_payload_required_before_release:true}".to_string(),
+        "TaskCompleted" => "typed_known_fields_open{known_optional_fields:completion_evidence:object,git:object,late_tool_response:boolean,mcp:object,runtime_deadline:object,status:string,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:legacy_open;known_field_required:true;additional_fields:true;strict_typed_payload_required_before_release:true}".to_string(),
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
 }

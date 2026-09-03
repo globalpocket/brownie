@@ -299,6 +299,26 @@ test('rejects ledger payload descriptors that retain an any fallback', () => {
   assert(errors.some((error) => error.includes('payload schema descriptor must not use any fallback')));
 });
 
+test('rejects TaskCompleted payload descriptors without a known evidence field requirement', () => {
+  const contract = readSemanticContract();
+  const taskCompleted = contract.durable_event_migration_coupling.event_payload_schema_fingerprints.find(
+    (entry) => entry.ledger_event_kind === 'TaskCompleted'
+  );
+  taskCompleted.payload_schema_descriptor = taskCompleted.payload_schema_descriptor.replace(
+    ';known_field_required:true',
+    ''
+  );
+
+  const errors = validateRuntimeSemanticProtocolContract(contract, readMap(), {
+    repoRoot,
+    contractPath: semanticContractPath,
+    mapPath,
+    skipRustGeneratedContractCheck: true
+  });
+
+  assert(errors.some((error) => error.includes('known bounded terminal evidence field')));
+});
+
 test('rejects full ledger payload closure claims while open payload classifications remain', () => {
   const contract = readSemanticContract();
   contract.durable_event_migration_coupling.ledger_payload_contract_scope.ledger_event_payload_typed_schema_coverage = 'closed';
