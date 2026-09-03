@@ -32247,11 +32247,17 @@ modes:
 
     #[test]
     fn tool_execute_unknown_mode_returns_invalid_params() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
         let response = parse_line(
             r#"{"jsonrpc":"2.0","id":3,"method":"tool.execute","params":{"mode_id":"unknown","tool_id":"workspace.read","input":{"path":"README.md"}}}"#,
         );
 
         assert_eq!(response.error.expect("error").code, -32602);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]
@@ -54947,11 +54953,17 @@ modes:
 
     #[test]
     fn task_start_with_unknown_mode_returns_invalid_params() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
         let response = parse_line(
             r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Bad mode","mode_id":"unknown-mode"}}"#,
         );
         assert!(response.result.is_none());
         assert_eq!(response.error.expect("error").code, -32602);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]
@@ -59884,6 +59896,10 @@ modes:
 
     #[test]
     fn tool_intent_parse_returns_evaluated_decisions() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
         let response = parse_line(
             r#"{"jsonrpc":"2.0","id":1,"method":"tool.intent.parse","params":{"mode_id":"orchestrator","assistant_content":"```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\",\"input\":{\"path\":\"README.md\"}},{\"tool_id\":\"workspace.write\",\"reason\":\"Need edits.\",\"input\":{\"path\":\"README.md\",\"operation\":\"replace_file\",\"content\":\"new README content\"}}]}\n```"}}"#,
         );
@@ -59897,10 +59913,16 @@ modes:
         assert!(result["items"][0].get("input").is_none());
         assert_eq!(result["items"][1]["tool_id"], "workspace.write");
         assert_eq!(result["items"][1]["allowed"], false);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]
     fn tool_intent_parse_does_not_return_raw_input_or_suspicious_path() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
         let response = parse_line(
             r#"{"jsonrpc":"2.0","id":1,"method":"tool.intent.parse","params":{"mode_id":"orchestrator","assistant_content":"```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\",\"input\":{\"path\":\"../secret.txt\",\"extra\":\"do-not-return\"}}]}\n```"}}"#,
         );
@@ -59911,10 +59933,16 @@ modes:
         assert!(!result.to_string().contains("do-not-return"));
         assert!(result["items"].as_array().expect("items").is_empty());
         assert_eq!(result["rejected"][0]["code"], "invalid_input");
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]
     fn tool_intent_parse_adapts_agentmodes_new_task_without_raw_payload() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
         let response = parse_line(
             r#"{"jsonrpc":"2.0","id":1,"method":"tool.intent.parse","params":{"mode_id":"orchestrator","assistant_content":"new_task(\"reviewer\", \"Review SECRET_PACKET_123 and return findings.\")"}}"#,
         );
@@ -59931,10 +59959,16 @@ modes:
             .expect("items")
             .iter()
             .all(|item| item.get("input").is_none()));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]
     fn tool_intent_parse_rejected_response_omits_raw_input_json() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
         let response = parse_line(
             r#"{"jsonrpc":"2.0","id":1,"method":"tool.intent.parse","params":{"mode_id":"orchestrator","assistant_content":"```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.unknown\",\"reason\":\"Try unknown.\",\"input\":{\"path\":\"README.md\",\"secret\":\"Bearer abc123\"}}]}\n```"}}"#,
         );
@@ -59956,6 +59990,8 @@ modes:
             .expect("rejected")
             .iter()
             .all(|item| item.get("input").is_none()));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]
