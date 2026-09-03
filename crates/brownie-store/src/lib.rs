@@ -6088,7 +6088,7 @@ pub struct LedgerPayloadEnvelope {
     pub instance_shape_fingerprint: String,
 }
 
-pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 7;
+pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 8;
 pub const LEDGER_PAYLOAD_SHAPE_VERSION: u64 = LEDGER_PAYLOAD_SCHEMA_VERSION;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6150,7 +6150,20 @@ pub fn ledger_payload_schema_classification(
         | LedgerEventKind::CodebaseIndexQueryCompleted
         | LedgerEventKind::CodebaseIndexSelectionReadCompleted
         | LedgerEventKind::CodebaseIndexPromptContextMaterialized
-        | LedgerEventKind::VerificationRecoveryContextReadMaterialized => {
+        | LedgerEventKind::VerificationRecoveryContextReadMaterialized
+        | LedgerEventKind::AgentLoopStarted
+        | LedgerEventKind::AgentLoopCompleted
+        | LedgerEventKind::TaskCompletionAccepted
+        | LedgerEventKind::PromptBuilt
+        | LedgerEventKind::PromptSensitiveScanCompleted
+        | LedgerEventKind::PromptSensitiveScanFailed
+        | LedgerEventKind::LlmRequestCreated
+        | LedgerEventKind::LlmRequestFailed
+        | LedgerEventKind::LlmResponseReceived
+        | LedgerEventKind::SecondPassPromptBuilt
+        | LedgerEventKind::SecondPassLlmRequestCreated
+        | LedgerEventKind::SecondPassLlmRequestFailed
+        | LedgerEventKind::SecondPassLlmResponseReceived => {
             LedgerPayloadSchemaClassification::StrictTyped
         }
         _ => LedgerPayloadSchemaClassification::VersionedOpen,
@@ -6317,6 +6330,31 @@ fn validate_strict_ledger_payload_schema(
         }
         LedgerEventKind::VerificationRecoveryContextReadMaterialized => {
             validate_verification_recovery_context_read_materialized_payload_schema(kind, payload)
+        }
+        LedgerEventKind::AgentLoopStarted => {
+            validate_agent_loop_started_payload_schema(kind, payload)
+        }
+        LedgerEventKind::AgentLoopCompleted => {
+            validate_agent_loop_completed_payload_schema(kind, payload)
+        }
+        LedgerEventKind::TaskCompletionAccepted => {
+            validate_task_completion_accepted_payload_schema(kind, payload)
+        }
+        LedgerEventKind::PromptBuilt | LedgerEventKind::SecondPassPromptBuilt => {
+            validate_prompt_built_payload_schema(kind, payload)
+        }
+        LedgerEventKind::PromptSensitiveScanCompleted
+        | LedgerEventKind::PromptSensitiveScanFailed => {
+            validate_prompt_sensitive_scan_payload_schema(kind, payload)
+        }
+        LedgerEventKind::LlmRequestCreated | LedgerEventKind::SecondPassLlmRequestCreated => {
+            validate_llm_request_created_payload_schema(kind, payload)
+        }
+        LedgerEventKind::LlmRequestFailed | LedgerEventKind::SecondPassLlmRequestFailed => {
+            validate_llm_request_failed_payload_schema(kind, payload)
+        }
+        LedgerEventKind::LlmResponseReceived | LedgerEventKind::SecondPassLlmResponseReceived => {
+            validate_llm_response_received_payload_schema(kind, payload)
         }
         _ => bail!("{kind:?} strict ledger payload schema is not registered"),
     }
@@ -7190,6 +7228,210 @@ fn validate_verification_recovery_context_read_materialized_payload_schema(
     Ok(())
 }
 
+fn validate_agent_loop_started_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object =
+        validate_known_payload_object(kind, payload, AGENT_LOOP_STARTED_KNOWN_PAYLOAD_FIELDS)?;
+    for field in ["entrypoint", "state"] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    validate_required_payload_string_field(object, "entrypoint")?;
+    validate_required_payload_string_field(object, "state")?;
+    validate_optional_payload_bool_field(object, "verification_recovery_retry")?;
+    Ok(())
+}
+
+fn validate_agent_loop_completed_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object =
+        validate_known_payload_object(kind, payload, AGENT_LOOP_COMPLETED_KNOWN_PAYLOAD_FIELDS)?;
+    for field in ["final_state", "completion_summary"] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    validate_required_payload_string_field(object, "final_state")?;
+    validate_required_payload_string_field(object, "completion_summary")?;
+    validate_optional_payload_string_field(object, "completion_result_fingerprint")?;
+    validate_optional_payload_bool_field(object, "final_response_present")?;
+    validate_optional_payload_u64_field(object, "final_response_chars")?;
+    validate_optional_payload_bool_field(object, "verification_recovery_retry")?;
+    Ok(())
+}
+
+fn validate_task_completion_accepted_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        TASK_COMPLETION_ACCEPTED_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "acceptance_id",
+        "task_id",
+        "run_id",
+        "status",
+        "terminal_completion_fingerprint",
+        "acceptance_fingerprint",
+        "verifier_gate_status",
+        "replayed",
+        "next_action",
+    ] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    validate_required_payload_string_field(object, "acceptance_id")?;
+    validate_required_payload_string_field(object, "task_id")?;
+    validate_required_payload_string_field(object, "run_id")?;
+    validate_required_payload_string_field(object, "status")?;
+    validate_required_payload_string_field(object, "terminal_completion_fingerprint")?;
+    validate_required_payload_string_field(object, "acceptance_fingerprint")?;
+    validate_required_payload_string_field(object, "verifier_gate_status")?;
+    validate_required_payload_bool_field(object, "replayed")?;
+    validate_required_payload_string_field(object, "next_action")?;
+    if object.get("status").and_then(serde_json::Value::as_str) != Some("AcceptedComplete") {
+        bail!("{kind:?} ledger payload status must be AcceptedComplete");
+    }
+    if object
+        .get("next_action")
+        .and_then(serde_json::Value::as_str)
+        != Some("inspect_accepted_completion")
+    {
+        bail!("{kind:?} ledger payload next_action is not supported");
+    }
+    Ok(())
+}
+
+fn validate_prompt_built_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(kind, payload, PROMPT_BUILT_KNOWN_PAYLOAD_FIELDS)?;
+    validate_payload_has_known_field(kind, object)?;
+    validate_optional_payload_u64_field(object, "message_count")?;
+    validate_optional_payload_u64_field(object, "max_prompt_chars")?;
+    validate_optional_payload_u64_field(object, "context_total_events")?;
+    validate_optional_payload_u64_field(object, "context_included_events")?;
+    validate_optional_payload_u64_field(object, "context_omitted_events")?;
+    validate_optional_payload_u64_field(object, "context_max_events")?;
+    validate_optional_payload_bool_field(object, "context_window_bounded")?;
+    validate_optional_payload_string_field(object, "context_first_included_event")?;
+    validate_optional_payload_string_field(object, "context_last_included_event")?;
+    validate_optional_payload_bool_field(object, "context_budget_requested")?;
+    validate_optional_payload_u64_field(object, "context_budget_max_prompt_chars")?;
+    validate_optional_payload_u64_field(object, "context_budget_max_ledger_events")?;
+    validate_optional_payload_u64_field(object, "context_budget_max_selected_index_chars")?;
+    validate_optional_payload_u64_field(object, "context_budget_prompt_chars")?;
+    validate_optional_payload_u64_field(object, "context_budget_protected_context_chars")?;
+    validate_optional_payload_bool_field(object, "context_budget_prompt_within_budget")?;
+    validate_optional_payload_bool_field(object, "context_budget_selected_index_context_present")?;
+    validate_optional_payload_u64_field(object, "context_budget_selected_index_content_chars")?;
+    validate_optional_payload_u64_field(
+        object,
+        "context_budget_selected_index_materialized_chars",
+    )?;
+    validate_optional_payload_bool_field(object, "context_budget_selected_index_truncated")?;
+    validate_optional_payload_string_field(object, "prompt_preview")?;
+    validate_optional_payload_bool_field(object, "prompt_preview_redacted")?;
+    validate_optional_payload_string_field(object, "prompt_preview_redaction_reason")?;
+    Ok(())
+}
+
+fn validate_prompt_sensitive_scan_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object =
+        validate_known_payload_object(kind, payload, PROMPT_SENSITIVE_SCAN_KNOWN_PAYLOAD_FIELDS)?;
+    for field in [
+        "mode",
+        "sensitive_guard",
+        "finding_count",
+        "categories",
+        "message_indexes",
+    ] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    validate_required_payload_string_field(object, "mode")?;
+    validate_required_payload_string_field(object, "sensitive_guard")?;
+    validate_required_payload_u64_field(object, "finding_count")?;
+    validate_required_payload_string_array_field(object, "categories")?;
+    validate_required_payload_u64_array_field(object, "message_indexes")?;
+    Ok(())
+}
+
+fn validate_llm_request_created_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object =
+        validate_known_payload_object(kind, payload, LLM_REQUEST_CREATED_KNOWN_PAYLOAD_FIELDS)?;
+    for field in ["provider", "model", "message_count", "base_url", "strict"] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    validate_required_payload_string_field(object, "provider")?;
+    validate_required_payload_string_field(object, "model")?;
+    validate_required_payload_u64_field(object, "message_count")?;
+    validate_required_payload_string_or_null_field(object, "base_url")?;
+    validate_required_payload_bool_field(object, "strict")?;
+    Ok(())
+}
+
+fn validate_llm_request_failed_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object =
+        validate_known_payload_object(kind, payload, LLM_REQUEST_FAILED_KNOWN_PAYLOAD_FIELDS)?;
+    validate_payload_has_known_field(kind, object)?;
+    validate_optional_payload_string_field(object, "provider")?;
+    validate_optional_payload_string_field(object, "model")?;
+    validate_optional_payload_string_field(object, "reason")?;
+    validate_optional_payload_u64_field(object, "reason_chars")?;
+    validate_optional_payload_string_field(object, "reason_sha256")?;
+    validate_optional_payload_bool_field(object, "reason_truncated")?;
+    validate_optional_payload_string_or_null_field(object, "base_url")?;
+    validate_optional_payload_bool_field(object, "strict")?;
+    validate_optional_payload_string_field(object, "sensitive_guard")?;
+    validate_optional_payload_object_field(object, "llm_provider_failure")?;
+    Ok(())
+}
+
+fn validate_llm_response_received_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object =
+        validate_known_payload_object(kind, payload, LLM_RESPONSE_RECEIVED_KNOWN_PAYLOAD_FIELDS)?;
+    if !object.contains_key("provider")
+        || (!object.contains_key("content_preview")
+            && !object.contains_key("content_preview_redacted"))
+    {
+        bail!(
+            "{kind:?} ledger payload must include provider and bounded response preview evidence"
+        );
+    }
+    validate_required_payload_string_field(object, "provider")?;
+    validate_optional_payload_u64_field(object, "response_preview_chars")?;
+    validate_optional_payload_string_field(object, "content_preview")?;
+    validate_optional_payload_bool_field(object, "content_preview_redacted")?;
+    validate_optional_payload_string_field(object, "content_preview_redaction_reason")?;
+    Ok(())
+}
+
 fn validate_known_payload_object<'a>(
     kind: &LedgerEventKind,
     payload: &'a serde_json::Value,
@@ -7205,6 +7447,98 @@ fn validate_known_payload_object<'a>(
     }
     Ok(object)
 }
+
+fn validate_payload_has_known_field(
+    kind: &LedgerEventKind,
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    if object.is_empty() {
+        bail!("{kind:?} ledger payload must include at least one known field");
+    }
+    Ok(())
+}
+
+const AGENT_LOOP_STARTED_KNOWN_PAYLOAD_FIELDS: &[&str] =
+    &["entrypoint", "state", "verification_recovery_retry"];
+
+const AGENT_LOOP_COMPLETED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "completion_result_fingerprint",
+    "completion_summary",
+    "final_response_chars",
+    "final_response_present",
+    "final_state",
+    "verification_recovery_retry",
+];
+
+const TASK_COMPLETION_ACCEPTED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "acceptance_fingerprint",
+    "acceptance_id",
+    "next_action",
+    "replayed",
+    "run_id",
+    "status",
+    "task_id",
+    "terminal_completion_fingerprint",
+    "verifier_gate_status",
+];
+
+const PROMPT_BUILT_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "context_budget_max_ledger_events",
+    "context_budget_max_prompt_chars",
+    "context_budget_max_selected_index_chars",
+    "context_budget_prompt_chars",
+    "context_budget_prompt_within_budget",
+    "context_budget_protected_context_chars",
+    "context_budget_requested",
+    "context_budget_selected_index_content_chars",
+    "context_budget_selected_index_context_present",
+    "context_budget_selected_index_materialized_chars",
+    "context_budget_selected_index_truncated",
+    "context_first_included_event",
+    "context_included_events",
+    "context_last_included_event",
+    "context_max_events",
+    "context_omitted_events",
+    "context_total_events",
+    "context_window_bounded",
+    "max_prompt_chars",
+    "message_count",
+    "prompt_preview",
+    "prompt_preview_redacted",
+    "prompt_preview_redaction_reason",
+];
+
+const PROMPT_SENSITIVE_SCAN_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "categories",
+    "finding_count",
+    "message_indexes",
+    "mode",
+    "sensitive_guard",
+];
+
+const LLM_REQUEST_CREATED_KNOWN_PAYLOAD_FIELDS: &[&str] =
+    &["base_url", "message_count", "model", "provider", "strict"];
+
+const LLM_REQUEST_FAILED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "base_url",
+    "llm_provider_failure",
+    "model",
+    "provider",
+    "reason",
+    "reason_chars",
+    "reason_sha256",
+    "reason_truncated",
+    "sensitive_guard",
+    "strict",
+];
+
+const LLM_RESPONSE_RECEIVED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "content_preview",
+    "content_preview_redacted",
+    "content_preview_redaction_reason",
+    "provider",
+    "response_preview_chars",
+];
 
 const TOOL_PLAN_KNOWN_PAYLOAD_FIELDS: &[&str] =
     &["allowed", "reason", "required_action", "tool_id"];
@@ -7588,6 +7922,18 @@ fn validate_required_payload_string_or_null_field(
     Ok(())
 }
 
+fn validate_optional_payload_string_or_null_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    if let Some(value) = object.get(field) {
+        if !value.is_string() && !value.is_null() {
+            bail!("ledger payload field {field} must be a string or null");
+        }
+    }
+    Ok(())
+}
+
 fn validate_required_payload_bool_field(
     object: &serde_json::Map<String, serde_json::Value>,
     field: &str,
@@ -7711,6 +8057,38 @@ fn validate_optional_payload_string_array_field(
         if values.iter().any(|entry| !entry.is_string()) {
             bail!("ledger payload field {field} must contain only strings");
         }
+    }
+    Ok(())
+}
+
+fn validate_required_payload_string_array_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    let Some(value) = object.get(field) else {
+        bail!("ledger payload field {field} is required");
+    };
+    let Some(values) = value.as_array() else {
+        bail!("ledger payload field {field} must be an array");
+    };
+    if values.iter().any(|entry| !entry.is_string()) {
+        bail!("ledger payload field {field} must contain only strings");
+    }
+    Ok(())
+}
+
+fn validate_required_payload_u64_array_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    let Some(value) = object.get(field) else {
+        bail!("ledger payload field {field} is required");
+    };
+    let Some(values) = value.as_array() else {
+        bail!("ledger payload field {field} must be an array");
+    };
+    if values.iter().any(|entry| entry.as_u64().is_none()) {
+        bail!("ledger payload field {field} must contain only unsigned integers");
     }
     Ok(())
 }
@@ -7870,6 +8248,27 @@ fn ledger_payload_schema_descriptor(kind: &LedgerEventKind) -> String {
         LedgerEventKind::VerificationRecoveryContextReadMaterialized => {
             verification_recovery_context_read_payload_schema_descriptor()
         }
+        LedgerEventKind::AgentLoopStarted => agent_loop_started_payload_schema_descriptor(),
+        LedgerEventKind::AgentLoopCompleted => agent_loop_completed_payload_schema_descriptor(),
+        LedgerEventKind::TaskCompletionAccepted => {
+            task_completion_accepted_payload_schema_descriptor()
+        }
+        LedgerEventKind::PromptBuilt | LedgerEventKind::SecondPassPromptBuilt => {
+            prompt_built_payload_schema_descriptor()
+        }
+        LedgerEventKind::PromptSensitiveScanCompleted
+        | LedgerEventKind::PromptSensitiveScanFailed => {
+            prompt_sensitive_scan_payload_schema_descriptor()
+        }
+        LedgerEventKind::LlmRequestCreated | LedgerEventKind::SecondPassLlmRequestCreated => {
+            llm_request_created_payload_schema_descriptor()
+        }
+        LedgerEventKind::LlmRequestFailed | LedgerEventKind::SecondPassLlmRequestFailed => {
+            llm_request_failed_payload_schema_descriptor()
+        }
+        LedgerEventKind::LlmResponseReceived | LedgerEventKind::SecondPassLlmResponseReceived => {
+            llm_response_received_payload_schema_descriptor()
+        }
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
 }
@@ -7938,6 +8337,38 @@ fn verification_recovery_context_read_payload_schema_descriptor() -> String {
     "strict_typed{payload_optional:false;required_fields:check_id:string,column:u64_or_null,context_read_id:string,diagnostic_index:u64,diagnostic_kind:string,excerpt_bytes:u64,excerpt_end_line:u64,excerpt_sha256:string,excerpt_start_line:u64,excerpt_truncated:boolean,failure_fingerprint:string,line:u64_or_null,mode_id:string,next_action:string,prompt_preview_redacted:boolean,read_path_fingerprint:string,recovery_run_id:string,recovery_task_id:string,required_action:string,severity:string,source_run_id:string,source_task_id:string,test_name_hash:string_or_null,tool_id:string,verification_recovery_context_read:boolean;additional_fields:false;verification_recovery_context_read_payload:true;required_action:ReadWorkspace;verification_recovery_context_read:true;prompt_preview_redacted:true;next_action:run_recovery_task_with_context}".to_string()
 }
 
+fn agent_loop_started_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:entrypoint:string,state:string;known_optional_fields:verification_recovery_retry:boolean;additional_fields:false;agent_loop_started_payload:true}".to_string()
+}
+
+fn agent_loop_completed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:completion_summary:string,final_state:string;known_optional_fields:completion_result_fingerprint:string,final_response_chars:u64,final_response_present:boolean,verification_recovery_retry:boolean;additional_fields:false;agent_loop_completed_payload:true}".to_string()
+}
+
+fn task_completion_accepted_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:acceptance_fingerprint:string,acceptance_id:string,next_action:string,replayed:boolean,run_id:string,status:string,task_id:string,terminal_completion_fingerprint:string,verifier_gate_status:string;additional_fields:false;task_completion_accepted_payload:true;status:AcceptedComplete;next_action:inspect_accepted_completion}".to_string()
+}
+
+fn prompt_built_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;known_optional_fields:context_budget_max_ledger_events:u64,context_budget_max_prompt_chars:u64,context_budget_max_selected_index_chars:u64,context_budget_prompt_chars:u64,context_budget_prompt_within_budget:boolean,context_budget_protected_context_chars:u64,context_budget_requested:boolean,context_budget_selected_index_content_chars:u64,context_budget_selected_index_context_present:boolean,context_budget_selected_index_materialized_chars:u64,context_budget_selected_index_truncated:boolean,context_first_included_event:string,context_included_events:u64,context_last_included_event:string,context_max_events:u64,context_omitted_events:u64,context_total_events:u64,context_window_bounded:boolean,max_prompt_chars:u64,message_count:u64,prompt_preview:string,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string;known_field_required:true;additional_fields:false;prompt_built_payload:true}".to_string()
+}
+
+fn prompt_sensitive_scan_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:categories:array<string>,finding_count:u64,message_indexes:array<u64>,mode:string,sensitive_guard:string;additional_fields:false;prompt_sensitive_scan_payload:true}".to_string()
+}
+
+fn llm_request_created_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:base_url:string_or_null,message_count:u64,model:string,provider:string,strict:boolean;additional_fields:false;llm_request_created_payload:true}".to_string()
+}
+
+fn llm_request_failed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;known_optional_fields:base_url:string_or_null,llm_provider_failure:object,model:string,provider:string,reason:string,reason_chars:u64,reason_sha256:string,reason_truncated:boolean,sensitive_guard:string,strict:boolean;known_field_required:true;additional_fields:false;llm_request_failed_payload:true}".to_string()
+}
+
+fn llm_response_received_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:provider:string;one_of_required:content_preview:string|content_preview_redacted:boolean;known_optional_fields:content_preview:string,content_preview_redacted:boolean,content_preview_redaction_reason:string,response_preview_chars:u64;additional_fields:false;llm_response_received_payload:true}".to_string()
+}
+
 fn ledger_payload_legacy_schema_descriptor(kind: &LedgerEventKind, schema_version: u64) -> String {
     match kind {
         LedgerEventKind::TaskCompleted
@@ -7989,6 +8420,58 @@ fn ledger_payload_legacy_schema_descriptor(kind: &LedgerEventKind, schema_versio
         }
         LedgerEventKind::ToolExecutionFailed if schema_version >= 6 => {
             tool_execution_terminal_payload_schema_descriptor("Failed")
+        }
+        LedgerEventKind::CodebaseIndexPermissionChecked if schema_version >= 7 => {
+            codebase_index_permission_payload_schema_descriptor()
+        }
+        LedgerEventKind::CodebaseIndexSnapshotBuilt if schema_version >= 7 => {
+            codebase_index_snapshot_built_payload_schema_descriptor()
+        }
+        LedgerEventKind::CodebaseIndexQueryCompleted if schema_version >= 7 => {
+            codebase_index_query_completed_payload_schema_descriptor()
+        }
+        LedgerEventKind::CodebaseIndexSelectionReadCompleted if schema_version >= 7 => {
+            codebase_index_selection_read_completed_payload_schema_descriptor()
+        }
+        LedgerEventKind::CodebaseIndexPromptContextMaterialized if schema_version >= 7 => {
+            codebase_index_prompt_context_materialized_payload_schema_descriptor()
+        }
+        LedgerEventKind::VerificationRecoveryContextReadMaterialized if schema_version >= 7 => {
+            verification_recovery_context_read_payload_schema_descriptor()
+        }
+        LedgerEventKind::AgentLoopStarted if schema_version >= 8 => {
+            agent_loop_started_payload_schema_descriptor()
+        }
+        LedgerEventKind::AgentLoopCompleted if schema_version >= 8 => {
+            agent_loop_completed_payload_schema_descriptor()
+        }
+        LedgerEventKind::TaskCompletionAccepted if schema_version >= 8 => {
+            task_completion_accepted_payload_schema_descriptor()
+        }
+        LedgerEventKind::PromptBuilt | LedgerEventKind::SecondPassPromptBuilt
+            if schema_version >= 8 =>
+        {
+            prompt_built_payload_schema_descriptor()
+        }
+        LedgerEventKind::PromptSensitiveScanCompleted | LedgerEventKind::PromptSensitiveScanFailed
+            if schema_version >= 8 =>
+        {
+            prompt_sensitive_scan_payload_schema_descriptor()
+        }
+        LedgerEventKind::LlmRequestCreated | LedgerEventKind::SecondPassLlmRequestCreated
+            if schema_version >= 8 =>
+        {
+            llm_request_created_payload_schema_descriptor()
+        }
+        LedgerEventKind::LlmRequestFailed | LedgerEventKind::SecondPassLlmRequestFailed
+            if schema_version >= 8 =>
+        {
+            llm_request_failed_payload_schema_descriptor()
+        }
+        LedgerEventKind::LlmResponseReceived | LedgerEventKind::SecondPassLlmResponseReceived
+            if schema_version >= 8 =>
+        {
+            llm_response_received_payload_schema_descriptor()
         }
         LedgerEventKind::TaskCompleted => "typed_known_fields_open{known_optional_fields:completion_evidence:object,git:object,late_tool_response:boolean,mcp:object,runtime_deadline:object,status:string,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:legacy_open;known_field_required:true;additional_fields:true;strict_typed_payload_required_before_release:true}".to_string(),
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
@@ -8900,6 +9383,31 @@ mod tests {
                 "{kind:?}"
             );
         }
+
+        for kind in [
+            LedgerEventKind::AgentLoopStarted,
+            LedgerEventKind::AgentLoopCompleted,
+            LedgerEventKind::TaskCompletionAccepted,
+            LedgerEventKind::PromptBuilt,
+            LedgerEventKind::PromptSensitiveScanCompleted,
+            LedgerEventKind::PromptSensitiveScanFailed,
+            LedgerEventKind::LlmRequestCreated,
+            LedgerEventKind::LlmRequestFailed,
+            LedgerEventKind::LlmResponseReceived,
+            LedgerEventKind::SecondPassPromptBuilt,
+            LedgerEventKind::SecondPassLlmRequestCreated,
+            LedgerEventKind::SecondPassLlmRequestFailed,
+            LedgerEventKind::SecondPassLlmResponseReceived,
+        ] {
+            let classification = ledger_payload_schema_classification(&kind);
+            assert_eq!(classification.as_str(), "strict_typed", "{kind:?}");
+            assert_eq!(classification.contract_status(), "closed", "{kind:?}");
+            assert!(!classification.release_blocking(), "{kind:?}");
+            assert!(
+                ledger_payload_schema_descriptor(&kind).contains("additional_fields:false"),
+                "{kind:?}"
+            );
+        }
     }
 
     #[test]
@@ -9744,6 +10252,213 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn ledger_payload_write_rejects_malformed_lifecycle_payloads() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = TaskStore::new(temp.path());
+        let record = store
+            .start_task(TaskStartParams {
+                goal: "lifecycle payload schema".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start task");
+
+        for (kind, payload) in [
+            (
+                LedgerEventKind::AgentLoopStarted,
+                serde_json::json!({"entrypoint": "task.run"}),
+            ),
+            (
+                LedgerEventKind::AgentLoopCompleted,
+                serde_json::json!({"final_state": "Completed"}),
+            ),
+            (
+                LedgerEventKind::TaskCompletionAccepted,
+                serde_json::json!({
+                    "acceptance_id": "accept_1",
+                    "task_id": record.task_id,
+                    "run_id": record.run_id,
+                    "status": "Complete",
+                    "terminal_completion_fingerprint": "sha256:terminal",
+                    "acceptance_fingerprint": "sha256:acceptance",
+                    "verifier_gate_status": "NotRequired",
+                    "replayed": false,
+                    "next_action": "inspect_accepted_completion"
+                }),
+            ),
+            (LedgerEventKind::PromptBuilt, serde_json::json!({})),
+            (
+                LedgerEventKind::PromptSensitiveScanCompleted,
+                serde_json::json!({
+                    "mode": "warn",
+                    "sensitive_guard": "warn",
+                    "finding_count": 1,
+                    "categories": ["secret"],
+                    "message_indexes": ["zero"]
+                }),
+            ),
+            (
+                LedgerEventKind::LlmRequestCreated,
+                serde_json::json!({
+                    "provider": "Fake",
+                    "model": "mock",
+                    "message_count": 1,
+                    "base_url": {},
+                    "strict": false
+                }),
+            ),
+            (LedgerEventKind::LlmRequestFailed, serde_json::json!({})),
+            (
+                LedgerEventKind::LlmResponseReceived,
+                serde_json::json!({"provider": "Fake"}),
+            ),
+            (
+                LedgerEventKind::SecondPassPromptBuilt,
+                serde_json::json!({"prompt_preview": "ok", "raw_prompt": "forbidden"}),
+            ),
+            (
+                LedgerEventKind::SecondPassLlmRequestCreated,
+                serde_json::json!({
+                    "provider": "Fake",
+                    "model": "mock",
+                    "message_count": 1,
+                    "base_url": null
+                }),
+            ),
+            (
+                LedgerEventKind::SecondPassLlmRequestFailed,
+                serde_json::json!({"provider": 1}),
+            ),
+            (
+                LedgerEventKind::SecondPassLlmResponseReceived,
+                serde_json::json!({
+                    "provider": "Fake",
+                    "content_preview": "ok",
+                    "raw_response": "forbidden"
+                }),
+            ),
+        ] {
+            let error = store
+                .append_task_events_with_payloads(&record, vec![(kind.clone(), Some(payload))])
+                .expect_err("malformed lifecycle payload should fail closed");
+            assert!(
+                error.to_string().contains("ledger payload"),
+                "{kind:?}: {error}"
+            );
+        }
+
+        store
+            .append_task_events_with_payloads(
+                &record,
+                vec![
+                    (
+                        LedgerEventKind::AgentLoopStarted,
+                        Some(serde_json::json!({
+                            "entrypoint": "task.run",
+                            "state": "BuildingContext"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::AgentLoopCompleted,
+                        Some(serde_json::json!({
+                            "final_state": "Completed",
+                            "completion_summary": "done",
+                            "completion_result_fingerprint": "sha256:abc",
+                            "final_response_present": true,
+                            "final_response_chars": 3
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::TaskCompletionAccepted,
+                        Some(serde_json::json!({
+                            "acceptance_id": "accept_2",
+                            "task_id": "task_lifecycle",
+                            "run_id": "run_lifecycle",
+                            "status": "AcceptedComplete",
+                            "terminal_completion_fingerprint": "sha256:terminal",
+                            "acceptance_fingerprint": "sha256:acceptance",
+                            "verifier_gate_status": "NotRequired",
+                            "replayed": false,
+                            "next_action": "inspect_accepted_completion"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::PromptBuilt,
+                        Some(serde_json::json!({
+                            "message_count": 1,
+                            "prompt_preview_redacted": true
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::PromptSensitiveScanFailed,
+                        Some(serde_json::json!({
+                            "mode": "deny",
+                            "sensitive_guard": "deny",
+                            "finding_count": 1,
+                            "categories": [],
+                            "message_indexes": []
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::LlmRequestCreated,
+                        Some(serde_json::json!({
+                            "provider": "Fake",
+                            "model": "mock",
+                            "message_count": 1,
+                            "base_url": null,
+                            "strict": false
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::LlmRequestFailed,
+                        Some(serde_json::json!({
+                            "llm_provider_failure": {"request_phase": "initial"}
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::LlmResponseReceived,
+                        Some(serde_json::json!({
+                            "provider": "Fake",
+                            "content_preview": "ok"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::SecondPassPromptBuilt,
+                        Some(serde_json::json!({"prompt_preview": "ok"})),
+                    ),
+                    (
+                        LedgerEventKind::SecondPassLlmRequestCreated,
+                        Some(serde_json::json!({
+                            "provider": "Fake",
+                            "model": "mock",
+                            "message_count": 1,
+                            "base_url": null,
+                            "strict": false
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::SecondPassLlmRequestFailed,
+                        Some(serde_json::json!({
+                            "llm_provider_failure": {"request_phase": "second_pass"}
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::SecondPassLlmResponseReceived,
+                        Some(serde_json::json!({
+                            "provider": "Fake",
+                            "content_preview": "ok"
+                        })),
+                    ),
+                ],
+            )
+            .expect("valid lifecycle payloads should append");
     }
 
     #[test]

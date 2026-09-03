@@ -175,7 +175,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
   requireValue(contract.contract_id === 'runtime-semantic-protocol-contract-v1', errors, `${contractPath} contract_id must identify the Runtime semantic protocol contract.`);
   requireValue(contract.campaign === 'runtime-release-readiness-p0-p1-finite-closure', errors, `${contractPath} campaign must match Runtime release readiness.`);
-  requireValue(contract.phase === 'RRP-5.11', errors, `${contractPath} phase must be RRP-5.11.`);
+  requireValue(contract.phase === 'RRP-5.12', errors, `${contractPath} phase must be RRP-5.12.`);
   requireValue(contract.owner === 'runtime', errors, `${contractPath} owner must be runtime.`);
   requireValue(contract.runtime_release_debt_id === 'protocol-event-canonization', errors, `${contractPath} must bind to protocol-event-canonization.`);
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must not declare Runtime Release Ready.`);
@@ -392,7 +392,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   for (const variant of ledgerVariants) {
     const entry = fingerprintByKind.get(variant);
     requireValue(Boolean(entry), errors, `${contractPath} durable_event_migration_coupling.event_payload_schema_fingerprints must include ${variant}.`);
-    requireValue(entry?.payload_schema_version === 7, errors, `${contractPath} ${variant} payload_schema_version must be 7.`);
+    requireValue(entry?.payload_schema_version === 8, errors, `${contractPath} ${variant} payload_schema_version must be 8.`);
     requireValue(entry?.store_schema_version === durableCoupling.store_schema_version, errors, `${contractPath} ${variant} store_schema_version must match durable coupling schema version.`);
     requireValue(isNonEmptyString(entry?.payload_schema_id), errors, `${contractPath} ${variant} payload_schema_id must be present.`);
     requireValue(isNonEmptyString(entry?.payload_schema_fingerprint), errors, `${contractPath} ${variant} payload_schema_fingerprint must be present.`);
@@ -512,6 +512,41 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
       `${contractPath} ${eventKind} payload schema descriptor must capture ${descriptorToken} and reject additional fields.`
     );
   }
+  const lifecycleDescriptorRequirements = new Map([
+    ['AgentLoopStarted', 'agent_loop_started_payload:true'],
+    ['AgentLoopCompleted', 'agent_loop_completed_payload:true'],
+    ['TaskCompletionAccepted', 'task_completion_accepted_payload:true'],
+    ['PromptBuilt', 'prompt_built_payload:true'],
+    ['SecondPassPromptBuilt', 'prompt_built_payload:true'],
+    ['PromptSensitiveScanCompleted', 'prompt_sensitive_scan_payload:true'],
+    ['PromptSensitiveScanFailed', 'prompt_sensitive_scan_payload:true'],
+    ['LlmRequestCreated', 'llm_request_created_payload:true'],
+    ['SecondPassLlmRequestCreated', 'llm_request_created_payload:true'],
+    ['LlmRequestFailed', 'llm_request_failed_payload:true'],
+    ['SecondPassLlmRequestFailed', 'llm_request_failed_payload:true'],
+    ['LlmResponseReceived', 'llm_response_received_payload:true'],
+    ['SecondPassLlmResponseReceived', 'llm_response_received_payload:true'],
+  ]);
+  for (const [eventKind, descriptorToken] of lifecycleDescriptorRequirements) {
+    const entry = fingerprintByKind.get(eventKind);
+    requireValue(
+      entry?.payload_schema_classification === 'strict_typed',
+      errors,
+      `${contractPath} ${eventKind} must be classified as strict_typed.`
+    );
+    requireValue(
+      entry?.payload_schema_contract_status === 'closed' &&
+        entry?.release_blocking_until_typed === false,
+      errors,
+      `${contractPath} ${eventKind} strict typed lifecycle payload schema must be closed and non-release-blocking.`
+    );
+    requireValue(
+      entry?.payload_schema_descriptor?.includes(descriptorToken) &&
+        entry?.payload_schema_descriptor?.includes('additional_fields:false'),
+      errors,
+      `${contractPath} ${eventKind} payload schema descriptor must capture ${descriptorToken} and reject additional fields.`
+    );
+  }
   const schemaFixtures = Array.isArray(durableCoupling.payload_schema_fixtures) ? durableCoupling.payload_schema_fixtures : [];
   const taskCompletedFixtures = schemaFixtures.filter((fixture) => fixture?.ledger_event_kind === 'TaskCompleted');
   requireValue(taskCompletedFixtures.length >= 2, errors, `${contractPath} must include TaskCompleted payload schema/instance split fixtures.`);
@@ -544,6 +579,13 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
       schemaFixtures.some((fixture) => fixture?.ledger_event_kind === eventKind),
       errors,
       `${contractPath} must include ${eventKind} strict typed codebase/verification payload fixture.`
+    );
+  }
+  for (const eventKind of lifecycleDescriptorRequirements.keys()) {
+    requireValue(
+      schemaFixtures.some((fixture) => fixture?.ledger_event_kind === eventKind),
+      errors,
+      `${contractPath} must include ${eventKind} strict typed lifecycle payload fixture.`
     );
   }
   requireValue(

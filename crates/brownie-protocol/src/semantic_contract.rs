@@ -896,6 +896,73 @@ pub fn runtime_semantic_protocol_contract() -> Value {
         "required_action": "ReadWorkspace",
         "next_action": "run_recovery_task_with_context"
     });
+    let agent_loop_started_payload = json!({
+        "entrypoint": "task.run",
+        "state": "BuildingContext"
+    });
+    let agent_loop_completed_payload = json!({
+        "final_state": "Completed",
+        "completion_summary": "Bounded task run completed.",
+        "completion_result_fingerprint": format!("sha256:{}", "e".repeat(64)),
+        "final_response_present": true,
+        "final_response_chars": 42
+    });
+    let task_completion_accepted_payload = json!({
+        "acceptance_id": "acceptance_1234567890abcdef",
+        "task_id": "task_1",
+        "run_id": "run_1",
+        "status": "AcceptedComplete",
+        "terminal_completion_fingerprint": format!("sha256:{}", "f".repeat(64)),
+        "acceptance_fingerprint": format!("sha256:{}", "0".repeat(64)),
+        "verifier_gate_status": "NotRequired",
+        "replayed": false,
+        "next_action": "inspect_accepted_completion"
+    });
+    let prompt_built_payload = json!({
+        "message_count": 2,
+        "max_prompt_chars": 32000,
+        "context_total_events": 5,
+        "context_included_events": 5,
+        "context_omitted_events": 0,
+        "context_max_events": 120,
+        "context_window_bounded": false,
+        "prompt_preview_redacted": true,
+        "prompt_preview_redaction_reason": "selected_index_context_present"
+    });
+    let prompt_sensitive_scan_payload = json!({
+        "mode": "warn",
+        "sensitive_guard": "warn",
+        "finding_count": 1,
+        "categories": ["secret"],
+        "message_indexes": [0]
+    });
+    let llm_request_created_payload = json!({
+        "provider": "OpenAiCompatible",
+        "model": "mock-model",
+        "message_count": 2,
+        "base_url": null,
+        "strict": true
+    });
+    let llm_request_failed_payload = json!({
+        "provider": "OpenAiCompatible",
+        "model": "mock-model",
+        "reason": "bounded provider failure",
+        "reason_chars": 24,
+        "reason_sha256": format!("sha256:{}", "1".repeat(64)),
+        "reason_truncated": false,
+        "base_url": null,
+        "strict": true,
+        "sensitive_guard": "deny",
+        "llm_provider_failure": {
+            "request_phase": "initial",
+            "retryable": true
+        }
+    });
+    let llm_response_received_payload = json!({
+        "provider": "OpenAiCompatible",
+        "response_preview_chars": 2000,
+        "content_preview": "bounded model response"
+    });
     let event_payload_schema_classifications = ledger_event_kinds
         .iter()
         .map(|kind| {
@@ -1079,13 +1146,32 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             "VerificationRecoveryContextReadMaterialized",
             &verification_recovery_context_payload,
         ),
+        payload_schema_fixture("AgentLoopStarted", &agent_loop_started_payload),
+        payload_schema_fixture("AgentLoopCompleted", &agent_loop_completed_payload),
+        payload_schema_fixture("TaskCompletionAccepted", &task_completion_accepted_payload),
+        payload_schema_fixture("PromptBuilt", &prompt_built_payload),
+        payload_schema_fixture("SecondPassPromptBuilt", &prompt_built_payload),
+        payload_schema_fixture(
+            "PromptSensitiveScanCompleted",
+            &prompt_sensitive_scan_payload,
+        ),
+        payload_schema_fixture("PromptSensitiveScanFailed", &prompt_sensitive_scan_payload),
+        payload_schema_fixture("LlmRequestCreated", &llm_request_created_payload),
+        payload_schema_fixture("SecondPassLlmRequestCreated", &llm_request_created_payload),
+        payload_schema_fixture("LlmRequestFailed", &llm_request_failed_payload),
+        payload_schema_fixture("SecondPassLlmRequestFailed", &llm_request_failed_payload),
+        payload_schema_fixture("LlmResponseReceived", &llm_response_received_payload),
+        payload_schema_fixture(
+            "SecondPassLlmResponseReceived",
+            &llm_response_received_payload,
+        ),
     ];
 
     json!({
         "schema_version": 10,
         "contract_id": "runtime-semantic-protocol-contract-v1",
         "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-        "phase": "RRP-5.11",
+        "phase": "RRP-5.12",
         "owner": "runtime",
         "runtime_release_debt_id": "protocol-event-canonization",
         "runtime_release_ready": false,
@@ -1190,8 +1276,8 @@ pub fn runtime_semantic_protocol_contract() -> Value {
                 "ledger_event_payload_inventory": "closed",
                 "ledger_event_payload_typed_schema_coverage": "partial"
             },
-            "ledger_payload_schema_classification_policy": "Every LedgerEventKind must carry an explicit payload schema classification. versioned_open and typed_known_fields_open are allowed only as required-before-release debt evidence and must not be treated as fully typed ledger payload schemas. TaskCompleted, TaskFailed, TaskCancelled, PermissionChecked, PermissionDenied, ToolPermissionChecked, ToolPlanApproved, ToolPlanDenied, ToolIntentPermissionChecked, ToolIntentApproved, ToolIntentDenied, ToolExecutionRequested, McpToolExecutionApproved, ToolExecutionPermissionChecked, ToolExecutionCompleted, ToolExecutionDenied, ToolExecutionFailed, CodebaseIndexPermissionChecked, CodebaseIndexSnapshotBuilt, CodebaseIndexQueryCompleted, CodebaseIndexSelectionReadCompleted, CodebaseIndexPromptContextMaterialized, and VerificationRecoveryContextReadMaterialized are strict typed payload families.",
-            "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Versioned-open payload classifications keep protocol-event-canonization partial until every payload-bearing event has a strict typed schema, an explicit payload_absent contract, or a legacy-only compatibility entry. Current v7 terminal task, permission, selected tool, MCP approval, tool terminal, codebase index, and verification recovery context payload schemas preserve v1 through v6 read compatibility while requiring strict field validation for new terminal task, permission, tool planning, tool intent, selected tool execution, MCP approval, tool terminal, codebase index, and verification recovery context appends.",
+            "ledger_payload_schema_classification_policy": "Every LedgerEventKind must carry an explicit payload schema classification. versioned_open and typed_known_fields_open are allowed only as required-before-release debt evidence and must not be treated as fully typed ledger payload schemas. TaskCompleted, TaskFailed, TaskCancelled, PermissionChecked, PermissionDenied, ToolPermissionChecked, ToolPlanApproved, ToolPlanDenied, ToolIntentPermissionChecked, ToolIntentApproved, ToolIntentDenied, ToolExecutionRequested, McpToolExecutionApproved, ToolExecutionPermissionChecked, ToolExecutionCompleted, ToolExecutionDenied, ToolExecutionFailed, CodebaseIndexPermissionChecked, CodebaseIndexSnapshotBuilt, CodebaseIndexQueryCompleted, CodebaseIndexSelectionReadCompleted, CodebaseIndexPromptContextMaterialized, VerificationRecoveryContextReadMaterialized, AgentLoopStarted, AgentLoopCompleted, TaskCompletionAccepted, PromptBuilt, PromptSensitiveScanCompleted, PromptSensitiveScanFailed, LlmRequestCreated, LlmRequestFailed, LlmResponseReceived, SecondPassPromptBuilt, SecondPassLlmRequestCreated, SecondPassLlmRequestFailed, and SecondPassLlmResponseReceived are strict typed payload families.",
+            "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Versioned-open payload classifications keep protocol-event-canonization partial until every payload-bearing event has a strict typed schema, an explicit payload_absent contract, or a legacy-only compatibility entry. Current v8 terminal task, permission, selected tool, MCP approval, tool terminal, codebase index, verification recovery context, agent loop, prompt, LLM request/response/failure, and completion-acceptance payload schemas preserve v1 through v7 read compatibility while requiring strict field validation for new appends.",
             "guard": "guard:protocol-event-canonization",
             "event_payload_schema_classification_count": event_payload_schema_classifications.len(),
             "event_payload_schema_classifications": event_payload_schema_classifications,
@@ -1906,7 +1992,7 @@ fn canonical_value(value: &Value) -> Value {
     }
 }
 
-const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 7;
+const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 8;
 
 fn ledger_payload_schema_id(kind: &str) -> String {
     format!("ledger_payload.{kind}.v{LEDGER_PAYLOAD_SCHEMA_VERSION}")
@@ -1943,7 +2029,20 @@ fn ledger_payload_schema_classification(kind: &str) -> &'static str {
         | "CodebaseIndexQueryCompleted"
         | "CodebaseIndexSelectionReadCompleted"
         | "CodebaseIndexPromptContextMaterialized"
-        | "VerificationRecoveryContextReadMaterialized" => "strict_typed",
+        | "VerificationRecoveryContextReadMaterialized"
+        | "AgentLoopStarted"
+        | "AgentLoopCompleted"
+        | "TaskCompletionAccepted"
+        | "PromptBuilt"
+        | "PromptSensitiveScanCompleted"
+        | "PromptSensitiveScanFailed"
+        | "LlmRequestCreated"
+        | "LlmRequestFailed"
+        | "LlmResponseReceived"
+        | "SecondPassPromptBuilt"
+        | "SecondPassLlmRequestCreated"
+        | "SecondPassLlmRequestFailed"
+        | "SecondPassLlmResponseReceived" => "strict_typed",
         _ => "versioned_open",
     }
 }
@@ -1990,6 +2089,22 @@ fn ledger_payload_schema_descriptor(kind: &str) -> String {
         }
         "VerificationRecoveryContextReadMaterialized" => {
             verification_recovery_context_read_payload_schema_descriptor()
+        }
+        "AgentLoopStarted" => agent_loop_started_payload_schema_descriptor(),
+        "AgentLoopCompleted" => agent_loop_completed_payload_schema_descriptor(),
+        "TaskCompletionAccepted" => task_completion_accepted_payload_schema_descriptor(),
+        "PromptBuilt" | "SecondPassPromptBuilt" => prompt_built_payload_schema_descriptor(),
+        "PromptSensitiveScanCompleted" | "PromptSensitiveScanFailed" => {
+            prompt_sensitive_scan_payload_schema_descriptor()
+        }
+        "LlmRequestCreated" | "SecondPassLlmRequestCreated" => {
+            llm_request_created_payload_schema_descriptor()
+        }
+        "LlmRequestFailed" | "SecondPassLlmRequestFailed" => {
+            llm_request_failed_payload_schema_descriptor()
+        }
+        "LlmResponseReceived" | "SecondPassLlmResponseReceived" => {
+            llm_response_received_payload_schema_descriptor()
         }
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
@@ -2057,6 +2172,38 @@ fn codebase_index_prompt_context_materialized_payload_schema_descriptor() -> Str
 
 fn verification_recovery_context_read_payload_schema_descriptor() -> String {
     "strict_typed{payload_optional:false;required_fields:check_id:string,column:u64_or_null,context_read_id:string,diagnostic_index:u64,diagnostic_kind:string,excerpt_bytes:u64,excerpt_end_line:u64,excerpt_sha256:string,excerpt_start_line:u64,excerpt_truncated:boolean,failure_fingerprint:string,line:u64_or_null,mode_id:string,next_action:string,prompt_preview_redacted:boolean,read_path_fingerprint:string,recovery_run_id:string,recovery_task_id:string,required_action:string,severity:string,source_run_id:string,source_task_id:string,test_name_hash:string_or_null,tool_id:string,verification_recovery_context_read:boolean;additional_fields:false;verification_recovery_context_read_payload:true;required_action:ReadWorkspace;verification_recovery_context_read:true;prompt_preview_redacted:true;next_action:run_recovery_task_with_context}".to_string()
+}
+
+fn agent_loop_started_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:entrypoint:string,state:string;known_optional_fields:verification_recovery_retry:boolean;additional_fields:false;agent_loop_started_payload:true}".to_string()
+}
+
+fn agent_loop_completed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:completion_summary:string,final_state:string;known_optional_fields:completion_result_fingerprint:string,final_response_chars:u64,final_response_present:boolean,verification_recovery_retry:boolean;additional_fields:false;agent_loop_completed_payload:true}".to_string()
+}
+
+fn task_completion_accepted_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:acceptance_fingerprint:string,acceptance_id:string,next_action:string,replayed:boolean,run_id:string,status:string,task_id:string,terminal_completion_fingerprint:string,verifier_gate_status:string;additional_fields:false;task_completion_accepted_payload:true;status:AcceptedComplete;next_action:inspect_accepted_completion}".to_string()
+}
+
+fn prompt_built_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;known_optional_fields:context_budget_max_ledger_events:u64,context_budget_max_prompt_chars:u64,context_budget_max_selected_index_chars:u64,context_budget_prompt_chars:u64,context_budget_prompt_within_budget:boolean,context_budget_protected_context_chars:u64,context_budget_requested:boolean,context_budget_selected_index_content_chars:u64,context_budget_selected_index_context_present:boolean,context_budget_selected_index_materialized_chars:u64,context_budget_selected_index_truncated:boolean,context_first_included_event:string,context_included_events:u64,context_last_included_event:string,context_max_events:u64,context_omitted_events:u64,context_total_events:u64,context_window_bounded:boolean,max_prompt_chars:u64,message_count:u64,prompt_preview:string,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string;known_field_required:true;additional_fields:false;prompt_built_payload:true}".to_string()
+}
+
+fn prompt_sensitive_scan_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:categories:array<string>,finding_count:u64,message_indexes:array<u64>,mode:string,sensitive_guard:string;additional_fields:false;prompt_sensitive_scan_payload:true}".to_string()
+}
+
+fn llm_request_created_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:base_url:string_or_null,message_count:u64,model:string,provider:string,strict:boolean;additional_fields:false;llm_request_created_payload:true}".to_string()
+}
+
+fn llm_request_failed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;known_optional_fields:base_url:string_or_null,llm_provider_failure:object,model:string,provider:string,reason:string,reason_chars:u64,reason_sha256:string,reason_truncated:boolean,sensitive_guard:string,strict:boolean;known_field_required:true;additional_fields:false;llm_request_failed_payload:true}".to_string()
+}
+
+fn llm_response_received_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:provider:string;one_of_required:content_preview:string|content_preview_redacted:boolean;known_optional_fields:content_preview:string,content_preview_redacted:boolean,content_preview_redaction_reason:string,response_preview_chars:u64;additional_fields:false;llm_response_received_payload:true}".to_string()
 }
 
 fn ledger_payload_instance_shape_fingerprint_for_value(kind: &str, payload: &Value) -> String {
