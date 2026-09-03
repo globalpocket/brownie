@@ -32,8 +32,9 @@ pub const WORKSPACE_STATE_DIR: &str = ".brownie";
 pub const RUNS_DIR: &str = "runs";
 pub const CODEBASE_INDEX_DIR: &str = "codebase-index";
 pub const DURABLE_STORE_SCHEMA_MANIFEST: &str = "store-schema.json";
-pub const DURABLE_STORE_SCHEMA_VERSION: u64 = 1;
+pub const DURABLE_STORE_SCHEMA_VERSION: u64 = 2;
 pub const DURABLE_STORE_SCHEMA_MIN_SUPPORTED_VERSION: u64 = 1;
+const DURABLE_STORE_LAYOUT_MANIFEST: &str = "store-layout.json";
 const HEADLESS_CONTINUATIONS_DIR: &str = "headless-continuations";
 const HEADLESS_OBJECTIVE_ADMISSIONS_DIR: &str = "headless-objective-admissions";
 const HEADLESS_JOURNEY_EXECUTIONS_DIR: &str = "headless-journey-executions";
@@ -49,8 +50,22 @@ const CODEBASE_INDEX_LOCK_STALE_AFTER_SECONDS: i64 = 30 * 60;
 const DURABLE_STORE_SCHEMA_ID: &str = "brownie-runtime-durable-store";
 const DURABLE_STORE_SCHEMA_MANIFEST_FORMAT_VERSION: u64 = 1;
 const DURABLE_STORE_SCHEMA_STATE_CURRENT: &str = "current";
-const DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED: &str = "initialized-v1";
+const DURABLE_STORE_SCHEMA_STATE_MIGRATION_IN_PROGRESS: &str = "migration_in_progress";
+const DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED: &str = "initialized-v2";
+const DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED_V1: &str = "initialized-v1";
 const DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED: &str = "adopted-missing-v1-layout";
+const DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED_V2: &str = "adopted-missing-v1-layout-to-v2";
+const DURABLE_STORE_SCHEMA_MIGRATION_V1_TO_V2: &str = "v1-to-v2-layout-marker";
+const DURABLE_STORE_LAYOUT_ID: &str = "brownie-runtime-durable-store-layout";
+const DURABLE_STORE_LAYOUT_VERSION: u64 = 1;
+const DURABLE_STORE_LAYOUT_CURRENT: &str = "runtime-store-v2-bounded-local-layout";
+#[cfg(test)]
+const DURABLE_SCHEMA_MIGRATION_FAILPOINT_ENV: &str = "BROWNIE_STORE_SCHEMA_MIGRATION_FAILPOINT";
+#[cfg(test)]
+const DURABLE_SCHEMA_MIGRATION_CHILD_ROOT_ENV: &str = "BROWNIE_STORE_SCHEMA_MIGRATION_CHILD_ROOT";
+const DURABLE_SCHEMA_MIGRATION_FAILPOINT_AFTER_IN_PROGRESS: &str = "after_in_progress_marker";
+const DURABLE_SCHEMA_MIGRATION_FAILPOINT_AFTER_LAYOUT: &str = "after_layout_marker";
+const DURABLE_SCHEMA_MIGRATION_FAILPOINT_AFTER_CURRENT_V2: &str = "after_current_v2_manifest";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -61,6 +76,22 @@ pub struct DurableStoreSchemaManifest {
     pub minimum_runtime_store_schema_version: u64,
     pub state: String,
     pub migration: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub migration_from_store_schema_version: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub migration_to_store_schema_version: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct DurableStoreLayoutManifest {
+    schema_id: String,
+    manifest_format_version: u64,
+    store_schema_version: u64,
+    layout: String,
+    migration: String,
 }
 
 #[derive(Debug, Clone)]
@@ -2836,7 +2867,7 @@ impl CodebaseIndexStore {
         file.read_to_string(&mut before)
             .context("failed to read claimed codebase index lock")?;
         let owner = BuildLockOwner::parse(&before);
-        if !owner.is_reclaimable_stale() {
+        if !owner.is_reclaimable_stale_build_lock() {
             return Ok(false);
         }
 
@@ -2864,7 +2895,7 @@ impl CodebaseIndexStore {
             Err(error) => return Err(error).context("failed to inspect codebase index lock"),
         };
         let owner = BuildLockOwner::parse(&before);
-        Ok(owner.is_reclaimable_stale())
+        Ok(owner.is_reclaimable_stale_build_lock())
     }
 
     fn cleanup_temporary_files(&self) -> Result<()> {
@@ -2973,7 +3004,22 @@ impl BuildLockOwner {
         owner
     }
 
-    fn is_reclaimable_stale(&self) -> bool {
+    fn is_reclaimable_stale_build_lock(&self) -> bool {
+        self.is_reclaimable_after_min_age_and_process_exit(
+            "build.lock",
+            Some(CODEBASE_INDEX_LOCK_STALE_AFTER_SECONDS),
+        )
+    }
+
+    fn is_reclaimable_after_process_exit(&self, expected_lock_file: &str) -> bool {
+        self.is_reclaimable_after_min_age_and_process_exit(expected_lock_file, None)
+    }
+
+    fn is_reclaimable_after_min_age_and_process_exit(
+        &self,
+        expected_lock_file: &str,
+        min_age_seconds: Option<i64>,
+    ) -> bool {
         let Some(pid) = self.pid else {
             return false;
         };
@@ -2983,13 +3029,28 @@ impl BuildLockOwner {
         let Some(nonce) = self.nonce.as_deref() else {
             return false;
         };
-        if nonce.len() < 16 || self.lock_file.as_deref() != Some("build.lock") {
+        if nonce.len() < 16 || self.lock_file.as_deref() != Some(expected_lock_file) {
             return false;
         }
-        let age = OffsetDateTime::now_utc() - created_at;
-        age.whole_seconds() >= CODEBASE_INDEX_LOCK_STALE_AFTER_SECONDS && !process_is_alive(pid)
+        if let Some(min_age_seconds) = min_age_seconds {
+            let age = OffsetDateTime::now_utc() - created_at;
+            if age.whole_seconds() < min_age_seconds {
+                return false;
+            }
+        }
+        !process_is_alive(pid)
     }
 }
+
+#[cfg(test)]
+fn durable_schema_migration_test_failpoint(point: &str) {
+    if std::env::var(DURABLE_SCHEMA_MIGRATION_FAILPOINT_ENV).as_deref() == Ok(point) {
+        std::process::abort();
+    }
+}
+
+#[cfg(not(test))]
+fn durable_schema_migration_test_failpoint(_point: &str) {}
 
 #[cfg(unix)]
 fn process_is_alive(pid: u32) -> bool {
@@ -3176,8 +3237,12 @@ impl TaskStore {
     pub fn ensure_durable_schema(&self) -> Result<DurableStoreSchemaManifest> {
         match self.read_durable_schema_manifest() {
             Ok(Some(manifest)) => {
-                validate_durable_schema_manifest(&manifest)?;
-                Ok(manifest)
+                if durable_schema_manifest_is_current(&manifest)? {
+                    validate_current_durable_schema_manifest(self, &manifest)?;
+                    Ok(manifest)
+                } else {
+                    self.migrate_durable_schema_manifest(manifest)
+                }
             }
             Ok(None) => self.initialize_or_adopt_durable_schema_manifest(),
             Err(error) => Err(error),
@@ -4878,20 +4943,111 @@ impl TaskStore {
         let state_dir_existed = self.workspace_state_dir().exists();
         let _lock = self.acquire_durable_schema_migration_lock()?;
         if let Some(manifest) = self.read_durable_schema_manifest()? {
-            validate_durable_schema_manifest(&manifest)?;
-            return Ok(manifest);
+            if durable_schema_manifest_is_current(&manifest)? {
+                validate_current_durable_schema_manifest(self, &manifest)?;
+                return Ok(manifest);
+            }
+            return self.migrate_durable_schema_manifest_locked(manifest);
         }
 
-        let manifest = current_durable_schema_manifest(if state_dir_existed {
-            DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED
+        let migration = if state_dir_existed {
+            DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED_V2
         } else {
             DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED
-        });
+        };
+        self.write_durable_store_layout_manifest(migration)?;
+        let manifest = current_durable_schema_manifest(migration);
         let body = serde_json::to_string_pretty(&manifest)
             .context("failed to serialize durable store schema manifest")?;
         write_file_atomically(&self.durable_schema_manifest_path(), body.as_bytes())
             .context("failed to write durable store schema manifest")?;
         Ok(manifest)
+    }
+
+    fn migrate_durable_schema_manifest(
+        &self,
+        manifest: DurableStoreSchemaManifest,
+    ) -> Result<DurableStoreSchemaManifest> {
+        let _lock = self.acquire_durable_schema_migration_lock()?;
+        if let Some(latest) = self.read_durable_schema_manifest()? {
+            if latest != manifest {
+                if durable_schema_manifest_is_current(&latest)? {
+                    validate_current_durable_schema_manifest(self, &latest)?;
+                    return Ok(latest);
+                }
+                return self.migrate_durable_schema_manifest_locked(latest);
+            }
+        }
+        self.migrate_durable_schema_manifest_locked(manifest)
+    }
+
+    fn migrate_durable_schema_manifest_locked(
+        &self,
+        manifest: DurableStoreSchemaManifest,
+    ) -> Result<DurableStoreSchemaManifest> {
+        let migration = durable_schema_migration_for_manifest(&manifest)?;
+        let in_progress = durable_schema_migration_in_progress_manifest(migration);
+        let body = serde_json::to_string_pretty(&in_progress)
+            .context("failed to serialize durable schema migration marker")?;
+        write_file_atomically(&self.durable_schema_manifest_path(), body.as_bytes())
+            .context("failed to write durable schema migration marker")?;
+        durable_schema_migration_test_failpoint(
+            DURABLE_SCHEMA_MIGRATION_FAILPOINT_AFTER_IN_PROGRESS,
+        );
+
+        self.write_durable_store_layout_manifest(migration.id)?;
+        durable_schema_migration_test_failpoint(DURABLE_SCHEMA_MIGRATION_FAILPOINT_AFTER_LAYOUT);
+        let completed = durable_schema_migration_completed_manifest(migration);
+        let body = serde_json::to_string_pretty(&completed)
+            .context("failed to serialize durable schema migration completion")?;
+        write_file_atomically(&self.durable_schema_manifest_path(), body.as_bytes())
+            .context("failed to write durable schema migration completion")?;
+        durable_schema_migration_test_failpoint(
+            DURABLE_SCHEMA_MIGRATION_FAILPOINT_AFTER_CURRENT_V2,
+        );
+        validate_current_durable_schema_manifest(self, &completed)?;
+        Ok(completed)
+    }
+
+    fn read_durable_store_layout_manifest(&self) -> Result<Option<DurableStoreLayoutManifest>> {
+        let path = self
+            .workspace_state_dir()
+            .join(DURABLE_STORE_LAYOUT_MANIFEST);
+        match fs::read_to_string(&path) {
+            Ok(body) => serde_json::from_str(&body)
+                .with_context(|| format!("failed to parse {}", path.display()))
+                .map(Some),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+        }
+    }
+
+    fn write_durable_store_layout_manifest(&self, migration: &str) -> Result<()> {
+        let layout = DurableStoreLayoutManifest {
+            schema_id: DURABLE_STORE_LAYOUT_ID.to_string(),
+            manifest_format_version: DURABLE_STORE_LAYOUT_VERSION,
+            store_schema_version: DURABLE_STORE_SCHEMA_VERSION,
+            layout: DURABLE_STORE_LAYOUT_CURRENT.to_string(),
+            migration: migration.to_string(),
+        };
+        if let Some(existing) = self.read_durable_store_layout_manifest()? {
+            validate_durable_store_layout_manifest(&existing)?;
+            if existing.layout == layout.layout
+                && existing.store_schema_version == layout.store_schema_version
+            {
+                return Ok(());
+            }
+            bail!("conflicting durable store layout migration marker");
+        }
+        let body = serde_json::to_string_pretty(&layout)
+            .context("failed to serialize durable store layout manifest")?;
+        write_file_atomically(
+            &self
+                .workspace_state_dir()
+                .join(DURABLE_STORE_LAYOUT_MANIFEST),
+            body.as_bytes(),
+        )
+        .context("failed to write durable store layout manifest")
     }
 
     fn acquire_durable_schema_migration_lock(&self) -> Result<RunAdmissionLock> {
@@ -4906,11 +5062,24 @@ impl TaskStore {
                 .open(&lock_path)
             {
                 Ok(mut file) => {
-                    writeln!(file, "{}", timestamp()?)
+                    let nonce = Uuid::new_v4();
+                    writeln!(file, "pid={}", std::process::id())
                         .context("failed to write durable schema migration lock heartbeat")?;
+                    writeln!(file, "created_at={}", timestamp()?)
+                        .context("failed to write durable schema migration lock heartbeat")?;
+                    writeln!(file, "nonce={nonce}")
+                        .context("failed to write durable schema migration lock heartbeat")?;
+                    writeln!(file, "lock_file=store-schema.lock")
+                        .context("failed to write durable schema migration lock heartbeat")?;
+                    file.sync_all()
+                        .context("failed to sync durable schema migration lock")?;
+                    sync_dir(&state_dir)?;
                     return Ok(RunAdmissionLock { path: lock_path });
                 }
                 Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                    if self.reclaim_stale_durable_schema_migration_lock(&lock_path)? {
+                        continue;
+                    }
                     thread::sleep(RUN_ADMISSION_LOCK_SLEEP);
                 }
                 Err(error) => {
@@ -4924,6 +5093,77 @@ impl TaskStore {
             RUN_ADMISSION_LOCK_RETRIES,
             lock_path.display()
         )
+    }
+
+    #[cfg(unix)]
+    fn reclaim_stale_durable_schema_migration_lock(&self, lock_path: &Path) -> Result<bool> {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+        let mut file = match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(lock_path)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(true),
+            Err(error) if error.raw_os_error() == Some(libc::ELOOP) => return Ok(false),
+            Err(error) => {
+                return Err(error).context("failed to inspect durable schema migration lock")
+            }
+        };
+        let lock_result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if lock_result != 0 {
+            let error = std::io::Error::last_os_error();
+            if matches!(
+                error.raw_os_error(),
+                Some(code) if code == libc::EWOULDBLOCK || code == libc::EAGAIN
+            ) {
+                return Ok(false);
+            }
+            return Err(error).context("failed to claim stale durable schema migration lock");
+        }
+        let _claim = FlockGuard {
+            fd: file.as_raw_fd(),
+        };
+
+        let lock_metadata = file
+            .metadata()
+            .context("failed to inspect claimed durable schema migration lock")?;
+        if !lock_metadata.is_file() {
+            return Ok(false);
+        }
+        let mut before = String::new();
+        file.read_to_string(&mut before)
+            .context("failed to read claimed durable schema migration lock")?;
+        let owner = BuildLockOwner::parse(&before);
+        if !owner.is_reclaimable_after_process_exit("store-schema.lock") {
+            return Ok(false);
+        }
+
+        let path_metadata = match fs::symlink_metadata(lock_path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(true),
+            Err(error) => {
+                return Err(error).context("failed to reinspect durable schema migration lock")
+            }
+        };
+        if path_metadata.dev() != lock_metadata.dev() || path_metadata.ino() != lock_metadata.ino()
+        {
+            return Ok(false);
+        }
+        fs::remove_file(lock_path)
+            .context("failed to reclaim stale durable schema migration lock")?;
+        if let Some(parent) = lock_path.parent() {
+            sync_dir(parent)?;
+        }
+        Ok(true)
+    }
+
+    #[cfg(not(unix))]
+    fn reclaim_stale_durable_schema_migration_lock(&self, _lock_path: &Path) -> Result<bool> {
+        Ok(false)
     }
 
     fn durable_schema_manifest_path(&self) -> PathBuf {
@@ -5251,10 +5491,58 @@ fn current_durable_schema_manifest(migration: &str) -> DurableStoreSchemaManifes
         minimum_runtime_store_schema_version: DURABLE_STORE_SCHEMA_MIN_SUPPORTED_VERSION,
         state: DURABLE_STORE_SCHEMA_STATE_CURRENT.to_string(),
         migration: migration.to_string(),
+        layout: Some(DURABLE_STORE_LAYOUT_CURRENT.to_string()),
+        migration_from_store_schema_version: None,
+        migration_to_store_schema_version: None,
     }
 }
 
-fn validate_durable_schema_manifest(manifest: &DurableStoreSchemaManifest) -> Result<()> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DurableSchemaMigration {
+    id: &'static str,
+    from_version: u64,
+    to_version: u64,
+}
+
+const DURABLE_SCHEMA_MIGRATIONS: &[DurableSchemaMigration] = &[DurableSchemaMigration {
+    id: DURABLE_STORE_SCHEMA_MIGRATION_V1_TO_V2,
+    from_version: 1,
+    to_version: 2,
+}];
+
+fn durable_schema_migration_in_progress_manifest(
+    migration: DurableSchemaMigration,
+) -> DurableStoreSchemaManifest {
+    DurableStoreSchemaManifest {
+        schema_id: DURABLE_STORE_SCHEMA_ID.to_string(),
+        manifest_format_version: DURABLE_STORE_SCHEMA_MANIFEST_FORMAT_VERSION,
+        store_schema_version: migration.from_version,
+        minimum_runtime_store_schema_version: DURABLE_STORE_SCHEMA_MIN_SUPPORTED_VERSION,
+        state: DURABLE_STORE_SCHEMA_STATE_MIGRATION_IN_PROGRESS.to_string(),
+        migration: migration.id.to_string(),
+        layout: None,
+        migration_from_store_schema_version: Some(migration.from_version),
+        migration_to_store_schema_version: Some(migration.to_version),
+    }
+}
+
+fn durable_schema_migration_completed_manifest(
+    migration: DurableSchemaMigration,
+) -> DurableStoreSchemaManifest {
+    DurableStoreSchemaManifest {
+        schema_id: DURABLE_STORE_SCHEMA_ID.to_string(),
+        manifest_format_version: DURABLE_STORE_SCHEMA_MANIFEST_FORMAT_VERSION,
+        store_schema_version: migration.to_version,
+        minimum_runtime_store_schema_version: DURABLE_STORE_SCHEMA_MIN_SUPPORTED_VERSION,
+        state: DURABLE_STORE_SCHEMA_STATE_CURRENT.to_string(),
+        migration: migration.id.to_string(),
+        layout: Some(DURABLE_STORE_LAYOUT_CURRENT.to_string()),
+        migration_from_store_schema_version: Some(migration.from_version),
+        migration_to_store_schema_version: Some(migration.to_version),
+    }
+}
+
+fn validate_durable_schema_manifest_common(manifest: &DurableStoreSchemaManifest) -> Result<()> {
     if manifest.schema_id != DURABLE_STORE_SCHEMA_ID {
         bail!("unsupported durable store schema id");
     }
@@ -5279,16 +5567,120 @@ fn validate_durable_schema_manifest(manifest: &DurableStoreSchemaManifest) -> Re
             manifest.minimum_runtime_store_schema_version
         );
     }
+    Ok(())
+}
+
+fn durable_schema_manifest_is_current(manifest: &DurableStoreSchemaManifest) -> Result<bool> {
+    validate_durable_schema_manifest_common(manifest)?;
+    Ok(
+        manifest.store_schema_version == DURABLE_STORE_SCHEMA_VERSION
+            && manifest.state == DURABLE_STORE_SCHEMA_STATE_CURRENT,
+    )
+}
+
+fn validate_current_durable_schema_manifest(
+    store: &TaskStore,
+    manifest: &DurableStoreSchemaManifest,
+) -> Result<()> {
+    validate_durable_schema_manifest_common(manifest)?;
     if manifest.state != DURABLE_STORE_SCHEMA_STATE_CURRENT {
         bail!("durable store schema is not current");
     }
+    if manifest.store_schema_version != DURABLE_STORE_SCHEMA_VERSION {
+        bail!(
+            "durable store schema migration required from version {}",
+            manifest.store_schema_version
+        );
+    }
+    if manifest.layout.as_deref() != Some(DURABLE_STORE_LAYOUT_CURRENT) {
+        bail!("durable store schema layout marker is missing or unsupported");
+    }
     if !matches!(
         manifest.migration.as_str(),
-        DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED | DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED
+        DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED
+            | DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED_V2
+            | DURABLE_STORE_SCHEMA_MIGRATION_V1_TO_V2
     ) {
         bail!("unsupported durable store schema migration state");
     }
+    let layout = store
+        .read_durable_store_layout_manifest()?
+        .ok_or_else(|| anyhow::anyhow!("durable store layout marker is missing"))?;
+    validate_durable_store_layout_manifest(&layout)?;
+    let _ = store.reclaim_stale_durable_schema_migration_lock(
+        &store.workspace_state_dir().join("store-schema.lock"),
+    )?;
     Ok(())
+}
+
+fn validate_durable_store_layout_manifest(manifest: &DurableStoreLayoutManifest) -> Result<()> {
+    if manifest.schema_id != DURABLE_STORE_LAYOUT_ID {
+        bail!("unsupported durable store layout schema id");
+    }
+    if manifest.manifest_format_version != DURABLE_STORE_LAYOUT_VERSION {
+        bail!("unsupported durable store layout manifest format version");
+    }
+    if manifest.store_schema_version != DURABLE_STORE_SCHEMA_VERSION {
+        bail!("unsupported durable store layout schema version");
+    }
+    if manifest.layout != DURABLE_STORE_LAYOUT_CURRENT {
+        bail!("unsupported durable store layout marker");
+    }
+    if !matches!(
+        manifest.migration.as_str(),
+        DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED
+            | DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED_V2
+            | DURABLE_STORE_SCHEMA_MIGRATION_V1_TO_V2
+    ) {
+        bail!("unsupported durable store layout migration state");
+    }
+    Ok(())
+}
+
+fn durable_schema_migration_for_manifest(
+    manifest: &DurableStoreSchemaManifest,
+) -> Result<DurableSchemaMigration> {
+    validate_durable_schema_manifest_common(manifest)?;
+    if manifest.state == DURABLE_STORE_SCHEMA_STATE_MIGRATION_IN_PROGRESS {
+        let migration = DURABLE_SCHEMA_MIGRATIONS
+            .iter()
+            .copied()
+            .find(|candidate| {
+                manifest.migration == candidate.id
+                    && manifest.migration_from_store_schema_version == Some(candidate.from_version)
+                    && manifest.migration_to_store_schema_version == Some(candidate.to_version)
+            })
+            .ok_or_else(|| anyhow::anyhow!("unsupported durable store schema migration marker"))?;
+        return Ok(migration);
+    }
+    if manifest.state != DURABLE_STORE_SCHEMA_STATE_CURRENT {
+        bail!("durable store schema is not current");
+    }
+    if manifest.store_schema_version == DURABLE_STORE_SCHEMA_VERSION {
+        bail!("durable store schema is already current");
+    }
+    if manifest.store_schema_version == 1
+        && !matches!(
+            manifest.migration.as_str(),
+            DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED_V1 | DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED
+        )
+    {
+        bail!("unsupported durable store schema migration state");
+    }
+    DURABLE_SCHEMA_MIGRATIONS
+        .iter()
+        .copied()
+        .find(|candidate| {
+            candidate.from_version == manifest.store_schema_version
+                && candidate.to_version == DURABLE_STORE_SCHEMA_VERSION
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "unsupported durable store schema migration path: {} -> {}",
+                manifest.store_schema_version,
+                DURABLE_STORE_SCHEMA_VERSION
+            )
+        })
 }
 
 fn timestamp() -> Result<String> {
@@ -5316,6 +5708,11 @@ mod tests {
             manifest,
             current_durable_schema_manifest(DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED)
         );
+        let layout = store
+            .read_durable_store_layout_manifest()
+            .expect("read layout")
+            .expect("layout");
+        assert_eq!(layout.layout, DURABLE_STORE_LAYOUT_CURRENT);
         assert!(temp
             .path()
             .join(WORKSPACE_STATE_DIR)
@@ -5339,8 +5736,119 @@ mod tests {
 
         assert_eq!(
             manifest,
-            current_durable_schema_manifest(DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED)
+            current_durable_schema_manifest(DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED_V2)
         );
+        assert_eq!(
+            store
+                .read_durable_store_layout_manifest()
+                .expect("read layout")
+                .expect("layout")
+                .migration,
+            DURABLE_STORE_SCHEMA_MIGRATION_ADOPTED_V2
+        );
+    }
+
+    #[test]
+    fn durable_schema_v1_manifest_migrates_to_v2_layout() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_durable_schema_manifest_for_test(
+            temp.path(),
+            &legacy_v1_durable_schema_manifest(DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED_V1),
+        );
+        let store = TaskStore::new(temp.path());
+
+        let manifest = store.ensure_durable_schema().expect("migrated schema");
+
+        assert_eq!(
+            manifest,
+            durable_schema_migration_completed_manifest(DURABLE_SCHEMA_MIGRATIONS[0])
+        );
+        assert_eq!(
+            store
+                .read_durable_store_layout_manifest()
+                .expect("read layout")
+                .expect("layout")
+                .layout,
+            DURABLE_STORE_LAYOUT_CURRENT
+        );
+    }
+
+    #[test]
+    fn durable_schema_in_progress_migration_resumes_idempotently_without_layout_marker() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_durable_schema_manifest_for_test(
+            temp.path(),
+            &durable_schema_migration_in_progress_manifest(DURABLE_SCHEMA_MIGRATIONS[0]),
+        );
+        let store = TaskStore::new(temp.path());
+
+        let first = store.ensure_durable_schema().expect("first resume");
+        let second = store.ensure_durable_schema().expect("second resume");
+
+        assert_eq!(first, second);
+        assert_eq!(
+            first,
+            durable_schema_migration_completed_manifest(DURABLE_SCHEMA_MIGRATIONS[0])
+        );
+    }
+
+    #[test]
+    fn durable_schema_in_progress_migration_resumes_after_layout_marker_write() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_durable_schema_manifest_for_test(
+            temp.path(),
+            &durable_schema_migration_in_progress_manifest(DURABLE_SCHEMA_MIGRATIONS[0]),
+        );
+        let store = TaskStore::new(temp.path());
+        store
+            .write_durable_store_layout_manifest(DURABLE_STORE_SCHEMA_MIGRATION_V1_TO_V2)
+            .expect("layout marker");
+
+        let manifest = store.ensure_durable_schema().expect("resume");
+
+        assert_eq!(
+            manifest,
+            durable_schema_migration_completed_manifest(DURABLE_SCHEMA_MIGRATIONS[0])
+        );
+    }
+
+    #[test]
+    fn durable_schema_partial_migration_conflict_fails_closed_before_mutation() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_durable_schema_manifest_for_test(
+            temp.path(),
+            &durable_schema_migration_in_progress_manifest(DURABLE_SCHEMA_MIGRATIONS[0]),
+        );
+        let bad_layout = DurableStoreLayoutManifest {
+            schema_id: DURABLE_STORE_LAYOUT_ID.to_string(),
+            manifest_format_version: DURABLE_STORE_SCHEMA_MANIFEST_FORMAT_VERSION,
+            store_schema_version: DURABLE_STORE_SCHEMA_VERSION,
+            layout: "runtime-store-v2-conflicting-layout".to_string(),
+            migration: DURABLE_STORE_SCHEMA_MIGRATION_V1_TO_V2.to_string(),
+        };
+        write_durable_store_layout_manifest_for_test(temp.path(), &bad_layout);
+        let store = TaskStore::new(temp.path());
+
+        let error = store
+            .start_task(TaskStartParams {
+                goal: "must not mutate".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect_err("partial migration rejected");
+
+        assert!(error
+            .to_string()
+            .contains("unsupported durable store layout marker"));
+        assert!(!temp
+            .path()
+            .join(WORKSPACE_STATE_DIR)
+            .join(RUNS_DIR)
+            .exists());
     }
 
     #[test]
@@ -5421,6 +5929,310 @@ mod tests {
         assert!(error
             .to_string()
             .contains("durable store requires newer runtime schema support"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn durable_schema_process_loss_migration_resumes_after_each_durable_checkpoint() {
+        for failpoint in [
+            DURABLE_SCHEMA_MIGRATION_FAILPOINT_AFTER_IN_PROGRESS,
+            DURABLE_SCHEMA_MIGRATION_FAILPOINT_AFTER_LAYOUT,
+            DURABLE_SCHEMA_MIGRATION_FAILPOINT_AFTER_CURRENT_V2,
+        ] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let fixture = seed_v1_store_with_task_run_ledger_and_checkpoint(temp.path());
+
+            let failed = run_durable_schema_migration_child(temp.path(), Some(failpoint));
+            assert!(
+                !failed.success(),
+                "migration child unexpectedly survived failpoint {failpoint}"
+            );
+            let lock_path = temp
+                .path()
+                .join(WORKSPACE_STATE_DIR)
+                .join("store-schema.lock");
+            assert!(
+                lock_path.exists(),
+                "process loss at {failpoint} should leave the schema lock behind"
+            );
+            assert_interrupted_migration_checkpoint(temp.path(), failpoint);
+
+            let recovered = run_durable_schema_migration_child(temp.path(), None);
+            assert!(
+                recovered.success(),
+                "restart child failed to resume migration after {failpoint}: {recovered:?}"
+            );
+            assert!(
+                !lock_path.exists(),
+                "restart after {failpoint} should reclaim the dead-owner schema lock"
+            );
+            assert_v1_fixture_preserved_and_resumable(temp.path(), &fixture);
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn durable_schema_process_failpoint_child() {
+        let Some(root) = std::env::var_os(DURABLE_SCHEMA_MIGRATION_CHILD_ROOT_ENV) else {
+            return;
+        };
+        let expects_failpoint = std::env::var_os(DURABLE_SCHEMA_MIGRATION_FAILPOINT_ENV).is_some();
+        let store = TaskStore::new(PathBuf::from(root));
+        let manifest = store.ensure_durable_schema().expect("ensure schema");
+        if expects_failpoint {
+            panic!("durable schema migration failpoint did not abort the child process");
+        }
+        assert_eq!(manifest.store_schema_version, DURABLE_STORE_SCHEMA_VERSION);
+        assert_eq!(manifest.state, DURABLE_STORE_SCHEMA_STATE_CURRENT);
+    }
+
+    #[test]
+    fn durable_schema_v1_fixture_preserves_task_run_ledger_checkpoint_and_resume_identity() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let fixture = seed_v1_store_with_task_run_ledger_and_checkpoint(temp.path());
+        let store = TaskStore::new(temp.path());
+
+        let manifest = store.ensure_durable_schema().expect("migrate fixture");
+
+        assert_eq!(
+            manifest,
+            durable_schema_migration_completed_manifest(DURABLE_SCHEMA_MIGRATIONS[0])
+        );
+        assert_v1_fixture_preserved_and_resumable(temp.path(), &fixture);
+    }
+
+    fn legacy_v1_durable_schema_manifest(migration: &str) -> DurableStoreSchemaManifest {
+        DurableStoreSchemaManifest {
+            schema_id: DURABLE_STORE_SCHEMA_ID.to_string(),
+            manifest_format_version: DURABLE_STORE_SCHEMA_MANIFEST_FORMAT_VERSION,
+            store_schema_version: 1,
+            minimum_runtime_store_schema_version: 1,
+            state: DURABLE_STORE_SCHEMA_STATE_CURRENT.to_string(),
+            migration: migration.to_string(),
+            layout: None,
+            migration_from_store_schema_version: None,
+            migration_to_store_schema_version: None,
+        }
+    }
+
+    fn write_durable_schema_manifest_for_test(root: &Path, manifest: &DurableStoreSchemaManifest) {
+        let body = serde_json::to_string_pretty(manifest).expect("serialize manifest");
+        write_file_atomically(
+            &root
+                .join(WORKSPACE_STATE_DIR)
+                .join(DURABLE_STORE_SCHEMA_MANIFEST),
+            body.as_bytes(),
+        )
+        .expect("write manifest");
+    }
+
+    fn write_durable_store_layout_manifest_for_test(
+        root: &Path,
+        manifest: &DurableStoreLayoutManifest,
+    ) {
+        let body = serde_json::to_string_pretty(manifest).expect("serialize layout");
+        write_file_atomically(
+            &root
+                .join(WORKSPACE_STATE_DIR)
+                .join(DURABLE_STORE_LAYOUT_MANIFEST),
+            body.as_bytes(),
+        )
+        .expect("write layout");
+    }
+
+    #[derive(Debug)]
+    struct V1DurableFixtureEvidence {
+        task_id: String,
+        run_id: String,
+        state_bytes: Vec<u8>,
+        ledger_bytes: Vec<u8>,
+        checkpoint_bytes: Vec<u8>,
+        ledger_kinds: Vec<LedgerEventKind>,
+        checkpoint_fingerprint: String,
+    }
+
+    fn seed_v1_store_with_task_run_ledger_and_checkpoint(root: &Path) -> V1DurableFixtureEvidence {
+        let store = TaskStore::new(root);
+        let record = store
+            .start_task(TaskStartParams {
+                goal: "preserve durable v1 fixture".into(),
+                mode_id: Some("orchestrator".into()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start fixture task");
+        let running = store
+            .update_task_status(
+                &record.task_id,
+                TaskStatus::Running,
+                LedgerEventKind::TaskRunning,
+            )
+            .expect("mark fixture running");
+        let checkpoint = HeadlessObjectiveAdmissionCheckpoint {
+            admission_id: "rrp-4-1-v1-fixture-admission".to_string(),
+            material_fingerprint: format!("sha256:{}", "a".repeat(64)),
+            journey_id: "rrp-4-1-v1-fixture-journey".to_string(),
+            session_id: "rrp-4-1-v1-fixture-session".to_string(),
+            drive_id: "rrp-4-1-v1-fixture-drive".to_string(),
+            task_id: running.task_id.clone(),
+            run_id: running.run_id.clone(),
+            journey_fingerprint: format!("sha256:{}", "b".repeat(64)),
+        };
+        store
+            .write_headless_objective_admission_checkpoint(&checkpoint)
+            .expect("write fixture checkpoint");
+
+        let run_dir = store.run_dir(&running.run_id);
+        let state_path = run_dir.join("state.json");
+        let ledger_path = run_dir.join("ledger.jsonl");
+        let checkpoint_path = store.headless_objective_admission_path(&checkpoint.admission_id);
+        let ledger_kinds = store
+            .read_ledger_events(&running.run_id)
+            .expect("read fixture ledger")
+            .into_iter()
+            .map(|event| event.kind)
+            .collect::<Vec<_>>();
+        let evidence = V1DurableFixtureEvidence {
+            task_id: running.task_id.clone(),
+            run_id: running.run_id.clone(),
+            state_bytes: fs::read(&state_path).expect("read fixture state"),
+            ledger_bytes: fs::read(&ledger_path).expect("read fixture ledger bytes"),
+            checkpoint_bytes: fs::read(&checkpoint_path).expect("read fixture checkpoint"),
+            ledger_kinds,
+            checkpoint_fingerprint: checkpoint.material_fingerprint.clone(),
+        };
+
+        fs::remove_file(
+            root.join(WORKSPACE_STATE_DIR)
+                .join(DURABLE_STORE_LAYOUT_MANIFEST),
+        )
+        .expect("remove v2-only layout marker");
+        write_durable_schema_manifest_for_test(
+            root,
+            &legacy_v1_durable_schema_manifest(DURABLE_STORE_SCHEMA_MIGRATION_INITIALIZED_V1),
+        );
+        evidence
+    }
+
+    fn run_durable_schema_migration_child(
+        root: &Path,
+        failpoint: Option<&str>,
+    ) -> std::process::ExitStatus {
+        let mut command = std::process::Command::new(std::env::current_exe().expect("test exe"));
+        command
+            .arg("--ignored")
+            .arg("--nocapture")
+            .arg("durable_schema_process_failpoint_child")
+            .env(DURABLE_SCHEMA_MIGRATION_CHILD_ROOT_ENV, root);
+        if let Some(failpoint) = failpoint {
+            command.env(DURABLE_SCHEMA_MIGRATION_FAILPOINT_ENV, failpoint);
+        }
+        command.status().expect("run migration child")
+    }
+
+    fn assert_interrupted_migration_checkpoint(root: &Path, failpoint: &str) {
+        let store = TaskStore::new(root);
+        let manifest = store
+            .read_durable_schema_manifest()
+            .expect("read interrupted manifest")
+            .expect("interrupted manifest");
+        let layout = store
+            .read_durable_store_layout_manifest()
+            .expect("read interrupted layout");
+        match failpoint {
+            DURABLE_SCHEMA_MIGRATION_FAILPOINT_AFTER_IN_PROGRESS => {
+                assert_eq!(
+                    manifest.state,
+                    DURABLE_STORE_SCHEMA_STATE_MIGRATION_IN_PROGRESS
+                );
+                assert_eq!(manifest.migration_from_store_schema_version, Some(1));
+                assert_eq!(manifest.migration_to_store_schema_version, Some(2));
+                assert!(layout.is_none());
+            }
+            DURABLE_SCHEMA_MIGRATION_FAILPOINT_AFTER_LAYOUT => {
+                assert_eq!(
+                    manifest.state,
+                    DURABLE_STORE_SCHEMA_STATE_MIGRATION_IN_PROGRESS
+                );
+                assert_eq!(
+                    layout.expect("layout after layout failpoint").layout,
+                    DURABLE_STORE_LAYOUT_CURRENT
+                );
+            }
+            DURABLE_SCHEMA_MIGRATION_FAILPOINT_AFTER_CURRENT_V2 => {
+                assert_eq!(manifest.state, DURABLE_STORE_SCHEMA_STATE_CURRENT);
+                assert_eq!(manifest.store_schema_version, DURABLE_STORE_SCHEMA_VERSION);
+                assert_eq!(
+                    layout.expect("layout after current v2 failpoint").layout,
+                    DURABLE_STORE_LAYOUT_CURRENT
+                );
+            }
+            other => panic!("unknown failpoint {other}"),
+        }
+    }
+
+    fn assert_v1_fixture_preserved_and_resumable(root: &Path, fixture: &V1DurableFixtureEvidence) {
+        let store = TaskStore::new(root);
+        let tasks = store.list_tasks().expect("list migrated tasks");
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].task_id, fixture.task_id);
+        assert_eq!(tasks[0].run_id, fixture.run_id);
+        assert_eq!(tasks[0].status, TaskStatus::Running);
+
+        let run_dir = store.run_dir(&fixture.run_id);
+        assert_eq!(
+            fs::read(run_dir.join("state.json")).expect("read migrated state"),
+            fixture.state_bytes
+        );
+        assert_eq!(
+            fs::read(run_dir.join("ledger.jsonl")).expect("read migrated ledger"),
+            fixture.ledger_bytes
+        );
+        let checkpoint_path =
+            store.headless_objective_admission_path("rrp-4-1-v1-fixture-admission");
+        assert_eq!(
+            fs::read(&checkpoint_path).expect("read migrated checkpoint"),
+            fixture.checkpoint_bytes
+        );
+
+        let ledger_kinds = store
+            .read_ledger_events(&fixture.run_id)
+            .expect("read migrated ledger events")
+            .into_iter()
+            .map(|event| event.kind)
+            .collect::<Vec<_>>();
+        assert_eq!(ledger_kinds, fixture.ledger_kinds);
+        assert_eq!(
+            ledger_kinds,
+            vec![LedgerEventKind::TaskStarted, LedgerEventKind::TaskRunning]
+        );
+        let checkpoint = store
+            .read_headless_objective_admission_checkpoint("rrp-4-1-v1-fixture-admission")
+            .expect("read migrated checkpoint")
+            .expect("checkpoint");
+        assert_eq!(checkpoint.task_id, fixture.task_id);
+        assert_eq!(checkpoint.run_id, fixture.run_id);
+        assert_eq!(
+            checkpoint.material_fingerprint,
+            fixture.checkpoint_fingerprint
+        );
+
+        let resumed = store
+            .update_task_status(
+                &fixture.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("resume migrated task lifecycle");
+        assert_eq!(resumed.status, TaskStatus::Completed);
+        let resumed_events = store
+            .read_ledger_events(&fixture.run_id)
+            .expect("read resumed ledger");
+        assert_eq!(resumed_events.len(), 3);
+        assert_eq!(resumed_events[2].kind, LedgerEventKind::TaskCompleted);
     }
 
     #[test]

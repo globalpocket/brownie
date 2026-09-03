@@ -15,6 +15,7 @@ const ciText = [
 const cargoText = 'license = "UNLICENSED"\npublish = false\n';
 const vsixPackageText = [
   'pnpm --workspace-root guard:runtime-release-readiness',
+  'pnpm --workspace-root guard:durable-schema-migration',
   'pnpm --workspace-root guard:protocol-event-canonization',
   'pnpm --workspace-root guard:runtime-module-decomposition',
   'pnpm --workspace-root guard:platform-deadline-durability'
@@ -311,11 +312,20 @@ test('rejects CI or VSIX check path that omits release readiness guard coverage'
   const protocolGuardErrors = validate(validAudit(), {
     vsixPackageText: 'pnpm --workspace-root guard:runtime-release-readiness'
   });
-  assert(protocolGuardErrors.some((error) => error.includes('guard:protocol-event-canonization')));
+  assert(protocolGuardErrors.some((error) => error.includes('guard:durable-schema-migration')));
+
+  const semanticProtocolGuardErrors = validate(validAudit(), {
+    vsixPackageText: [
+      'pnpm --workspace-root guard:runtime-release-readiness',
+      'pnpm --workspace-root guard:durable-schema-migration'
+    ].join('\n')
+  });
+  assert(semanticProtocolGuardErrors.some((error) => error.includes('guard:protocol-event-canonization')));
 
   const moduleGuardErrors = validate(validAudit(), {
     vsixPackageText: [
       'pnpm --workspace-root guard:runtime-release-readiness',
+      'pnpm --workspace-root guard:durable-schema-migration',
       'pnpm --workspace-root guard:protocol-event-canonization'
     ].join('\n')
   });
@@ -324,6 +334,7 @@ test('rejects CI or VSIX check path that omits release readiness guard coverage'
   const platformGuardErrors = validate(validAudit(), {
     vsixPackageText: [
       'pnpm --workspace-root guard:runtime-release-readiness',
+      'pnpm --workspace-root guard:durable-schema-migration',
       'pnpm --workspace-root guard:protocol-event-canonization',
       'pnpm --workspace-root guard:runtime-module-decomposition'
     ].join('\n')
