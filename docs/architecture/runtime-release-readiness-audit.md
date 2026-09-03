@@ -2,7 +2,7 @@
 
 This audit is the bounded source of truth for the Runtime Release Readiness P0/P1 finite closure campaign. It does not declare Brownie Runtime release-ready; it records the remaining Runtime-owned blockers and keeps external platform, adapter, commercial, BDK, Enterprise, and Assurance work outside the Runtime release gate.
 
-Audited main: `3f08b3b91923731287be49c2d4daafab80f44873`
+Audited main: `a274ff9cf6d982318fb0ee7d7c7fad73f0e870b0`
 
 RRP-1 adds the guarded canonical Runtime boundary contract at
 `docs/architecture/runtime-boundary-canonical-contract.json`. The Runtime
@@ -40,14 +40,26 @@ runs `pnpm --workspace-root test:rrp3-process-loss`. Direct `.github` workflow
 wiring remains blocked by missing OAuth `workflow` scope and is left to the
 dedicated CI hardening phase.
 
+RRP-4 closes the durable schema version and migration blocker: Runtime/store now
+owns `.brownie/store-schema.json` as the release-level durable store schema
+manifest for local Runtime state. `TaskStore::ensure_durable_schema` creates the
+v1 manifest for new stores, adopts missing-manifest v1-shaped layouts under an
+exclusive migration lock, and fails closed for malformed, wrong-id, non-current,
+unsupported-migration, or future-version manifests before durable mutation.
+`BrownieStore::from_env_or_cwd` gates store-backed Runtime methods before
+durable JSON-RPC work proceeds, while store-free status remains outside the
+durable gate. The manifest records bounded compatibility metadata only; it does not
+ledger raw prompts, provider responses, file contents, paths, secrets,
+environment values, executable contents, or process output.
+
 | ID | Priority | Classification | Status | Responsibility | Release classification | Evidence summary | Next action |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `runtime-release-debt-reaudit` | P0 | Runtime Release debt reaudit | implemented sufficient | Runtime | closed | Required specs, manifests, guards, crates, CLI, VSIX, and CI were reaudited and are now backed by a machine guard. | Use this artifact as the source for the remaining bounded closure phases. |
 | `runtime-boundary-protocol-contracts` | P0 | Boundary Protocol gaps | implemented sufficient | Runtime | closed | RRP-1 adds a canonical Runtime boundary contract and compatibility matrix, and the release-readiness guard validates required surfaces, method subset, anchors, and non-authority language. | Use the guarded canonical boundary contract while closing the remaining Runtime Release Readiness blockers. |
 | `explicit-cancel-command` | P0 | Cancel semantics | implemented sufficient | Runtime | closed | RRP-2 adds `task.cancel` as a caller-authorized Runtime boundary with task/run identity, freshness checks, bounded cancel fingerprinting, single `TaskCancelled` terminal evidence, exact replay semantics, and VSIX thin validation. | Use `task.cancel` as the explicit cancellation boundary while closing the remaining blockers. |
 | `real-process-loss-recovery-e2e` | P0 | Real process loss Recovery E2E | implemented sufficient | Runtime | closed | RRP-3.1 keeps the RRP-3 real process-loss baseline and adds execution-scoped lock retention across live `tools/call`, latest-state terminal append validation, nonblocking recovery skip for live owners, concurrent recovery no-duplicate coverage, live recovery no-op coverage, and CI-required execution through the existing VSIX check path. | Use RRP-3/RRP-3.1 process-loss and race-safety evidence as the local Runtime recovery baseline while closing the remaining Runtime Release Readiness blockers. |
-| `durable-schema-version-and-migration` | P0 | Durable schema version/migration | partial | Runtime | required before release | Many payloads carry `schema_version`, but release-level durable store schema migration/fail-closed behavior is not yet proven. | Add durable schema version and migration/fail-closed behavior. |
-| `runtime-release-guard-ci` | P0 | CI Release Gate | partial | Runtime | required before release | RRP-3.1 adds the process-loss E2E to the existing VSIX check script that CI invokes. Direct `.github` workflow wiring remains blocked by missing OAuth `workflow` scope, and full release-gate hardening remains open for frozen install, fmt, audit/SBOM/secret/dependency, and complete release policy coverage. | Close direct workflow wiring and remaining full CI release-gate hardening in the dedicated CI phase when workflow-scope credentials are available. |
+| `durable-schema-version-and-migration` | P0 | Durable schema version/migration | implemented sufficient | Runtime | closed | RRP-4 adds `.brownie/store-schema.json`, strict manifest validation, locked v1 initialization/adoption, store-backed Runtime gating, and fail-closed behavior for malformed or future durable schema manifests before task/run/journey/checkpoint/ledger mutation. | Use the RRP-4 durable schema gate as the local Runtime v1 migration baseline while closing the remaining blockers. |
+| `runtime-release-guard-ci` | P0 | CI Release Gate | partial | Runtime | required before release | RRP-3.1 adds the process-loss E2E to the existing VSIX check script that CI invokes, and RRP-4 adds durable schema evidence/tests. Direct `.github` workflow wiring remains blocked by missing OAuth `workflow` scope, and full release-gate hardening remains open for frozen install, fmt, audit/SBOM/secret/dependency, and complete release policy coverage. | Close direct workflow wiring and remaining full CI release-gate hardening in the dedicated CI phase when workflow-scope credentials are available. |
 | `mcp-runtime-safety-policy` | P0 | MCP Runtime Safety Policy finite closure | implemented sufficient | closed | A follow-on MCP safety campaign is registered without replacing the MCP-first architecture; MCP-S1 result semantics, MCP-S1.1 protocol-conformance correction, MCP-S2 tool-level Brownie safety policy, MCP-S3 annotation provenance/drift checks, MCP-S4 tool-level approval binding, MCP-S4.1 approval consumption/retry safety, MCP-S5 runtime input/output schema validation, MCP-S6 secret reference contract, and MCP-S7 executable identity are closed. MCP stdio execution is now result-safe, policy-bound, annotation/catalog drift checked, approval-state-bound, schema-validated, secret-reference scoped, and executable-identity pinned before launch. | Use this closed MCP safety baseline while continuing the other Runtime Release Readiness P0/P1 blockers. |
 | `oss-release-technical-basis` | P1 | OSS Release technical basis | owner decision waiting | Owner | owner decision | Cargo workspace remains `UNLICENSED` and `publish = false`. | Owner must decide license/publish posture before OSS Release Ready. |
 | `protocol-event-canonization` | P1 | Protocol/Event canonization | partial | Runtime | required before release | Protocol and event types exist, but Rust, JSON-RPC, CLI, VSIX, store, events crate, and docs need a guarded ownership map. | Add canonical ownership and drift tests. |
