@@ -1,4 +1,5 @@
 //! JSON-RPC protocol types for Brownie VSIX/runtime communication.
+#![recursion_limit = "256"]
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -5661,7 +5662,7 @@ mod semantic_contract_tests {
         let contract = semantic_contract::runtime_semantic_protocol_contract();
         assert_eq!(
             contract.get("phase").and_then(Value::as_str),
-            Some("RRP-5.4")
+            Some("RRP-5.5")
         );
 
         let type_schemas = contract

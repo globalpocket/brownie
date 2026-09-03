@@ -175,7 +175,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
   requireValue(contract.contract_id === 'runtime-semantic-protocol-contract-v1', errors, `${contractPath} contract_id must identify the Runtime semantic protocol contract.`);
   requireValue(contract.campaign === 'runtime-release-readiness-p0-p1-finite-closure', errors, `${contractPath} campaign must match Runtime release readiness.`);
-  requireValue(contract.phase === 'RRP-5.4', errors, `${contractPath} phase must be RRP-5.4.`);
+  requireValue(contract.phase === 'RRP-5.5', errors, `${contractPath} phase must be RRP-5.5.`);
   requireValue(contract.owner === 'runtime', errors, `${contractPath} owner must be runtime.`);
   requireValue(contract.runtime_release_debt_id === 'protocol-event-canonization', errors, `${contractPath} must bind to protocol-event-canonization.`);
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must not declare Runtime Release Ready.`);
@@ -330,7 +330,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   requireValue(durableCoupling.ledger_payload_envelope_field === 'payload_envelope', errors, `${contractPath} must bind durable event payloads to payload_envelope.`);
   requireValue(durableCoupling.ledger_payload_schema_version_source === 'LEDGER_PAYLOAD_SCHEMA_VERSION', errors, `${contractPath} must bind durable event payload schema versions to LEDGER_PAYLOAD_SCHEMA_VERSION.`);
   requireValue(durableCoupling.ledger_payload_shape_version_source === 'LEDGER_PAYLOAD_SHAPE_VERSION', errors, `${contractPath} must bind durable event payload shape versions to LEDGER_PAYLOAD_SHAPE_VERSION.`);
-  for (const token of ['LedgerPayloadEnvelope', 'payload_envelope', 'LEDGER_PAYLOAD_SCHEMA_VERSION', 'schema_fingerprint', 'instance_shape_fingerprint', 'ledger_payload_schema_fingerprint', 'ledger_payload_instance_shape_fingerprint_for_value', 'validate_ledger_payload_envelope']) {
+  for (const token of ['LedgerPayloadEnvelope', 'payload_envelope', 'LEDGER_PAYLOAD_SCHEMA_VERSION', 'schema_fingerprint', 'instance_shape_fingerprint', 'LedgerPayloadSchemaClassification', 'ledger_payload_schema_classification', 'validate_task_completed_payload_schema', 'ledger_payload_schema_fingerprint', 'ledger_payload_instance_shape_fingerprint_for_value', 'validate_ledger_payload_envelope']) {
     requireValue(hasIdentifier(storeText, token), errors, `brownie-store durable ledger payload shape evidence must retain ${token}.`);
   }
   requireValue(typeof durableCoupling.policy === 'string' && durableCoupling.policy.includes('schema migration'), errors, `${contractPath} durable event changes must require migration policy.`);
@@ -346,6 +346,45 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
     errors,
     `${contractPath} durable coupling must state that instance fingerprints are diagnostic payload evidence.`
   );
+  const contractScope = durableCoupling.ledger_payload_contract_scope ?? {};
+  requireValue(contractScope.jsonrpc_request_result_contract === 'closed', errors, `${contractPath} must keep JSON-RPC request/result contract closed.`);
+  requireValue(contractScope.schema_and_instance_fingerprint_split === 'closed', errors, `${contractPath} must keep ledger schema/instance fingerprint split closed.`);
+  requireValue(contractScope.ledger_event_payload_inventory === 'closed', errors, `${contractPath} must close ledger event payload inventory.`);
+  requireValue(contractScope.ledger_event_payload_typed_schema_coverage === 'partial', errors, `${contractPath} must keep full ledger payload typed schema coverage partial until all open payload contracts close.`);
+  requireValue(
+    typeof durableCoupling.ledger_payload_schema_classification_policy === 'string' &&
+      durableCoupling.ledger_payload_schema_classification_policy.includes('Every LedgerEventKind'),
+    errors,
+    `${contractPath} durable coupling must require explicit LedgerEventKind payload schema classifications.`
+  );
+  requireValue(
+    Number.isInteger(durableCoupling.release_blocking_open_payload_count) &&
+      durableCoupling.release_blocking_open_payload_count > 0,
+    errors,
+    `${contractPath} must retain release_blocking_open_payload_count while ledger payload schemas remain partial.`
+  );
+  requireValue(
+    durableCoupling.event_payload_schema_classification_count === ledgerVariants.length,
+    errors,
+    `${contractPath} durable event schema classification count must match LedgerEventKind variants.`
+  );
+  const classificationByKind = new Map(
+    (Array.isArray(durableCoupling.event_payload_schema_classifications) ? durableCoupling.event_payload_schema_classifications : []).map((entry) => [entry?.ledger_event_kind, entry])
+  );
+  for (const variant of ledgerVariants) {
+    const entry = classificationByKind.get(variant);
+    requireValue(Boolean(entry), errors, `${contractPath} durable_event_migration_coupling.event_payload_schema_classifications must include ${variant}.`);
+    requireValue(
+      ['payload_absent', 'strict_typed', 'typed_known_fields_open', 'versioned_open', 'legacy_compatibility_only'].includes(entry?.payload_schema_classification),
+      errors,
+      `${contractPath} ${variant} payload_schema_classification must be explicit.`
+    );
+    requireValue(
+      ['closed', 'partial', 'legacy_only'].includes(entry?.payload_schema_contract_status),
+      errors,
+      `${contractPath} ${variant} payload_schema_contract_status must be explicit.`
+    );
+  }
   requireValue(durableCoupling.event_payload_schema_fingerprint_count === ledgerVariants.length, errors, `${contractPath} durable event schema fingerprint count must match LedgerEventKind variants.`);
   const fingerprintByKind = new Map(
     (Array.isArray(durableCoupling.event_payload_schema_fingerprints) ? durableCoupling.event_payload_schema_fingerprints : []).map((entry) => [entry?.ledger_event_kind, entry])
@@ -358,7 +397,22 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
     requireValue(isNonEmptyString(entry?.payload_schema_id), errors, `${contractPath} ${variant} payload_schema_id must be present.`);
     requireValue(isNonEmptyString(entry?.payload_schema_fingerprint), errors, `${contractPath} ${variant} payload_schema_fingerprint must be present.`);
     requireValue(isNonEmptyString(entry?.payload_schema_descriptor), errors, `${contractPath} ${variant} payload_schema_descriptor must be present.`);
+    requireValue(!entry?.payload_schema_descriptor?.startsWith('any{'), errors, `${contractPath} ${variant} payload schema descriptor must not use any fallback.`);
+    requireValue(
+      entry?.payload_schema_classification === classificationByKind.get(variant)?.payload_schema_classification,
+      errors,
+      `${contractPath} ${variant} fingerprint entry classification must match inventory.`
+    );
+    if (['typed_known_fields_open', 'versioned_open'].includes(entry?.payload_schema_classification)) {
+      requireValue(entry?.release_blocking_until_typed === true, errors, `${contractPath} ${variant} open payload schema must remain release-blocking.`);
+      requireValue(entry?.payload_schema_contract_status === 'partial', errors, `${contractPath} ${variant} open payload schema must be partial.`);
+    }
   }
+  requireValue(
+    fingerprintByKind.get('TaskCompleted')?.payload_schema_classification === 'typed_known_fields_open',
+    errors,
+    `${contractPath} TaskCompleted must be classified as typed_known_fields_open until it rejects unknown fields.`
+  );
   const schemaFixtures = Array.isArray(durableCoupling.payload_schema_fixtures) ? durableCoupling.payload_schema_fixtures : [];
   const taskCompletedFixtures = schemaFixtures.filter((fixture) => fixture?.ledger_event_kind === 'TaskCompleted');
   requireValue(taskCompletedFixtures.length >= 2, errors, `${contractPath} must include TaskCompleted payload schema/instance split fixtures.`);

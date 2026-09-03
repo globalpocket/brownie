@@ -264,3 +264,53 @@ test('rejects missing ledger event schema fingerprint evidence', () => {
 
   assert(errors.some((error) => error.includes('event_payload_schema_fingerprints must include TaskCancelled')));
 });
+
+test('rejects ledger payload contract without explicit per-event classification inventory', () => {
+  const contract = readSemanticContract();
+  contract.durable_event_migration_coupling.event_payload_schema_classifications =
+    contract.durable_event_migration_coupling.event_payload_schema_classifications.filter((entry) => entry.ledger_event_kind !== 'TaskCancelled');
+  contract.durable_event_migration_coupling.event_payload_schema_classification_count =
+    contract.durable_event_migration_coupling.event_payload_schema_classifications.length;
+
+  const errors = validateRuntimeSemanticProtocolContract(contract, readMap(), {
+    repoRoot,
+    contractPath: semanticContractPath,
+    mapPath,
+    skipRustGeneratedContractCheck: true
+  });
+
+  assert(errors.some((error) => error.includes('event_payload_schema_classifications must include TaskCancelled')));
+});
+
+test('rejects ledger payload descriptors that retain an any fallback', () => {
+  const contract = readSemanticContract();
+  const taskCancelled = contract.durable_event_migration_coupling.event_payload_schema_fingerprints.find(
+    (entry) => entry.ledger_event_kind === 'TaskCancelled'
+  );
+  taskCancelled.payload_schema_descriptor = 'any{schema_contract:event-kind-versioned-payload}';
+
+  const errors = validateRuntimeSemanticProtocolContract(contract, readMap(), {
+    repoRoot,
+    contractPath: semanticContractPath,
+    mapPath,
+    skipRustGeneratedContractCheck: true
+  });
+
+  assert(errors.some((error) => error.includes('payload schema descriptor must not use any fallback')));
+});
+
+test('rejects full ledger payload closure claims while open payload classifications remain', () => {
+  const contract = readSemanticContract();
+  contract.durable_event_migration_coupling.ledger_payload_contract_scope.ledger_event_payload_typed_schema_coverage = 'closed';
+  contract.durable_event_migration_coupling.release_blocking_open_payload_count = 0;
+
+  const errors = validateRuntimeSemanticProtocolContract(contract, readMap(), {
+    repoRoot,
+    contractPath: semanticContractPath,
+    mapPath,
+    skipRustGeneratedContractCheck: true
+  });
+
+  assert(errors.some((error) => error.includes('full ledger payload typed schema coverage partial')));
+  assert(errors.some((error) => error.includes('release_blocking_open_payload_count')));
+});

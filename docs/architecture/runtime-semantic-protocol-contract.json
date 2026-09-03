@@ -2,631 +2,1334 @@
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
   "contract_id": "runtime-semantic-protocol-contract-v1",
   "durable_event_migration_coupling": {
+    "event_payload_schema_classification_count": 77,
+    "event_payload_schema_classifications": [
+      {
+        "ledger_event_kind": "CodebaseIndexPermissionChecked",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "CodebaseIndexSnapshotBuilt",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "CodebaseIndexQueryCompleted",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "CodebaseIndexSelectionReadCompleted",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "CodebaseIndexPromptContextMaterialized",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "VerificationRecoveryContextReadMaterialized",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "TaskStarted",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "ModeResolved",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "ExternalModePackChildProvenanceDenied",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "ExternalModePackTaskProvenanceDenied",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "PermissionChecked",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "PermissionDenied",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "ToolPlanned",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "ToolPermissionChecked",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "ToolPlanApproved",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "ToolPlanDenied",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "ToolIntentParsed",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "ToolIntentRejected",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "ToolIntentPermissionChecked",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "ToolIntentApproved",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "ToolIntentDenied",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "SubtaskOrchestrationQueued",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "SubtaskHandoffPrepared",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "SubtaskSchedulerReadinessRecorded",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "SubtaskDispatchPlanPrepared",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "SubtaskDispatchContractPrepared",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "SubtaskDispatchAdmissionEvaluated",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "SubtaskDispatchReadinessSnapshotRecorded",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "SubtaskDispatcherGuardVerdictRecorded",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "SubtaskDispatchDecisionRecorded",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "SubtaskDispatchCandidateManifestRecorded",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "SubtaskDispatchHandoffEnvelopeRecorded",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "ParentJoinContinuationFingerprintConsumed",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "ToolExecutionRequested",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "McpToolExecutionApproved",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "ToolExecutionPermissionChecked",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "ToolExecutionCompleted",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "ToolExecutionDenied",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "ToolExecutionFailed",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "WorkspacePatchProposed",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "WorkspacePatchApprovalRequested",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "WorkspacePatchApproved",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "WorkspacePatchRejected",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "WorkspacePatchPreflightSnapshotCreated",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "WorkspacePatchApplyPlanCreated",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "WorkspacePatchApplyCapabilityChecked",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "WorkspacePatchApplyDryRunChecked",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "WorkspacePatchApplyResultRecorded",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "WorkspacePatchReadinessReportCreated",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "HeadlessContinuationDecisionRecorded",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "HeadlessRunSessionAdvanced",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "HeadlessRunSessionDriveCompleted",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "HeadlessRunProductEvidenceMatrixDerived",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "HeadlessRunSelectedProductGapClosureRecorded",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "HeadlessRunProductCompletionDecisionRecorded",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "HeadlessJourneyStarted",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "HeadlessJourneyRouteResumed",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "HeadlessJourneyClosed",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "HeadlessJourneyExecuted",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "HeadlessRunCompletionFinalized",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "TaskRunning",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "AgentLoopStarted",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "AgentLoopCompleted",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "TaskCompletionAccepted",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "PromptBuilt",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "PromptSensitiveScanCompleted",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "PromptSensitiveScanFailed",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "LlmRequestCreated",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "LlmRequestFailed",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "LlmResponseReceived",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "SecondPassPromptBuilt",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "SecondPassLlmRequestCreated",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "SecondPassLlmRequestFailed",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "SecondPassLlmResponseReceived",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "TaskCompleted",
+        "payload_schema_classification": "typed_known_fields_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "TaskFailed",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      },
+      {
+        "ledger_event_kind": "TaskCancelled",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "release_blocking_until_typed": true
+      }
+    ],
     "event_payload_schema_fingerprint_count": 77,
     "event_payload_schema_fingerprints": [
       {
         "ledger_event_kind": "CodebaseIndexPermissionChecked",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:7455de527cfa0e69",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:b19526102ddc8c8c",
         "payload_schema_id": "ledger_payload.CodebaseIndexPermissionChecked.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "CodebaseIndexSnapshotBuilt",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:cf8baf1be7786995",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:59b189773fac5f88",
         "payload_schema_id": "ledger_payload.CodebaseIndexSnapshotBuilt.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "CodebaseIndexQueryCompleted",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:873fd6ceb7787aee",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:3d25327aebc15797",
         "payload_schema_id": "ledger_payload.CodebaseIndexQueryCompleted.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "CodebaseIndexSelectionReadCompleted",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:81453a386fb3c864",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:8e226250fde3dbb5",
         "payload_schema_id": "ledger_payload.CodebaseIndexSelectionReadCompleted.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "CodebaseIndexPromptContextMaterialized",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:d67fd280511ba32b",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:1ad404153f7945ae",
         "payload_schema_id": "ledger_payload.CodebaseIndexPromptContextMaterialized.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "VerificationRecoveryContextReadMaterialized",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:789b803ee83bd45b",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:5fa83213bd92b13e",
         "payload_schema_id": "ledger_payload.VerificationRecoveryContextReadMaterialized.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "TaskStarted",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:79bdeb7eb2a8fcb9",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:86fcfd083562d2fc",
         "payload_schema_id": "ledger_payload.TaskStarted.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "ModeResolved",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:f0299554bf479a16",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:baa7549a8dbe9f5f",
         "payload_schema_id": "ledger_payload.ModeResolved.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "ExternalModePackChildProvenanceDenied",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:8cab19452af539da",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:7be58b4548962d33",
         "payload_schema_id": "ledger_payload.ExternalModePackChildProvenanceDenied.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "ExternalModePackTaskProvenanceDenied",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:aac26ac778ac66d5",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:7195d2f93038adc8",
         "payload_schema_id": "ledger_payload.ExternalModePackTaskProvenanceDenied.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "PermissionChecked",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:a7fac68842efa9cb",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:fb5902a632d7220e",
         "payload_schema_id": "ledger_payload.PermissionChecked.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "PermissionDenied",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:6944b0100b08ab81",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:a71c98b7dbe91ee4",
         "payload_schema_id": "ledger_payload.PermissionDenied.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "ToolPlanned",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:62520c23895fa543",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:530e16323bab0426",
         "payload_schema_id": "ledger_payload.ToolPlanned.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "ToolPermissionChecked",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:cf6fa3bad8745c99",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:a18f58eabb65f89c",
         "payload_schema_id": "ledger_payload.ToolPermissionChecked.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "ToolPlanApproved",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:77d4aa2534b98b4f",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:e6d7fa28cd181b32",
         "payload_schema_id": "ledger_payload.ToolPlanApproved.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "ToolPlanDenied",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:89155bc1796aabab",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:8988c4cee0fb162e",
         "payload_schema_id": "ledger_payload.ToolPlanDenied.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "ToolIntentParsed",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:cfe578c5ea7b0cb4",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:4721956374e85125",
         "payload_schema_id": "ledger_payload.ToolIntentParsed.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "ToolIntentRejected",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:32499786dc76bb7f",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:a68dea803078b442",
         "payload_schema_id": "ledger_payload.ToolIntentRejected.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "ToolIntentPermissionChecked",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:c4554771a1bc36b3",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:3720df7e6e7ec8b6",
         "payload_schema_id": "ledger_payload.ToolIntentPermissionChecked.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "ToolIntentApproved",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:470372136acd41d6",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:ac42106629e0ee1f",
         "payload_schema_id": "ledger_payload.ToolIntentApproved.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "ToolIntentDenied",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:11c1f7fd274d355a",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:aeff777fe49da0b3",
         "payload_schema_id": "ledger_payload.ToolIntentDenied.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskOrchestrationQueued",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:b6f820d9fb920880",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:74b4e2359ef50381",
         "payload_schema_id": "ledger_payload.SubtaskOrchestrationQueued.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskHandoffPrepared",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:611eb5fdcf95f077",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:685cc8c3aa3aec7a",
         "payload_schema_id": "ledger_payload.SubtaskHandoffPrepared.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskSchedulerReadinessRecorded",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:a9ff674a74f9d133",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:097566174e594b36",
         "payload_schema_id": "ledger_payload.SubtaskSchedulerReadinessRecorded.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskDispatchPlanPrepared",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:d7790af69dbc1a1c",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:7a938ab3ba05d2ad",
         "payload_schema_id": "ledger_payload.SubtaskDispatchPlanPrepared.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskDispatchContractPrepared",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:454679f5273240d1",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:ed627819f349e8d4",
         "payload_schema_id": "ledger_payload.SubtaskDispatchContractPrepared.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskDispatchAdmissionEvaluated",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:1569832f442762ec",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:7f6c0ea400ca069d",
         "payload_schema_id": "ledger_payload.SubtaskDispatchAdmissionEvaluated.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskDispatchReadinessSnapshotRecorded",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:4988743b266078de",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:396bc3a6878c0c27",
         "payload_schema_id": "ledger_payload.SubtaskDispatchReadinessSnapshotRecorded.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskDispatcherGuardVerdictRecorded",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:43ce92e79cdec3a3",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:eda9f63fe39bec46",
         "payload_schema_id": "ledger_payload.SubtaskDispatcherGuardVerdictRecorded.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskDispatchDecisionRecorded",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:0e393b170ec2afac",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:bef0cb5005c5c65d",
         "payload_schema_id": "ledger_payload.SubtaskDispatchDecisionRecorded.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskDispatchCandidateManifestRecorded",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:377c253cf4a7c59a",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:f1941433452d2cf3",
         "payload_schema_id": "ledger_payload.SubtaskDispatchCandidateManifestRecorded.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskDispatchHandoffEnvelopeRecorded",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:eb23551b1663dcb4",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:4862baf35c862125",
         "payload_schema_id": "ledger_payload.SubtaskDispatchHandoffEnvelopeRecorded.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "ParentJoinContinuationFingerprintConsumed",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:68f948f030794640",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:598e71311457f941",
         "payload_schema_id": "ledger_payload.ParentJoinContinuationFingerprintConsumed.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "ToolExecutionRequested",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:2d704cd4a369adc9",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:374e5d2421e1302c",
         "payload_schema_id": "ledger_payload.ToolExecutionRequested.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "McpToolExecutionApproved",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:cacd18e62a822626",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:9bac8e5f8ac1974f",
         "payload_schema_id": "ledger_payload.McpToolExecutionApproved.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "ToolExecutionPermissionChecked",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:ab350726c8c1cad1",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:01f1deef70ef12d4",
         "payload_schema_id": "ledger_payload.ToolExecutionPermissionChecked.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "ToolExecutionCompleted",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:7e6cc25815d2703c",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:925163c4c150ee8d",
         "payload_schema_id": "ledger_payload.ToolExecutionCompleted.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "ToolExecutionDenied",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:a594f8bf24b4e500",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:029793822c21e801",
         "payload_schema_id": "ledger_payload.ToolExecutionDenied.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "ToolExecutionFailed",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:c0ea9cf4d194de5e",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:e8b6667cfe4389a7",
         "payload_schema_id": "ledger_payload.ToolExecutionFailed.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "WorkspacePatchProposed",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:9aa569644286ca82",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:f85814d98fcb357b",
         "payload_schema_id": "ledger_payload.WorkspacePatchProposed.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "WorkspacePatchApprovalRequested",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:f3d866fbeeff4641",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:f7d05d8050e402a4",
         "payload_schema_id": "ledger_payload.WorkspacePatchApprovalRequested.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "WorkspacePatchApproved",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:4a2649d8ddc17723",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:fe1ff3c8495597c6",
         "payload_schema_id": "ledger_payload.WorkspacePatchApproved.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "WorkspacePatchRejected",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:b42681a944c11f72",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:3f1c494baa7568cb",
         "payload_schema_id": "ledger_payload.WorkspacePatchRejected.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "WorkspacePatchPreflightSnapshotCreated",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:5df4a68b049f2aa5",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:193c602aa8a1b178",
         "payload_schema_id": "ledger_payload.WorkspacePatchPreflightSnapshotCreated.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "WorkspacePatchApplyPlanCreated",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:8e020e99a10c0205",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:0b89c1560bc8b798",
         "payload_schema_id": "ledger_payload.WorkspacePatchApplyPlanCreated.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "WorkspacePatchApplyCapabilityChecked",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:44ad6ede44f150bf",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:3f4065b48c98d482",
         "payload_schema_id": "ledger_payload.WorkspacePatchApplyCapabilityChecked.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "WorkspacePatchApplyDryRunChecked",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:602e7678468524e7",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:38dee6da5c8b8c0a",
         "payload_schema_id": "ledger_payload.WorkspacePatchApplyDryRunChecked.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "WorkspacePatchApplyResultRecorded",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:62d7d5dacbf3a4d1",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:55535dcbfe438cd4",
         "payload_schema_id": "ledger_payload.WorkspacePatchApplyResultRecorded.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "WorkspacePatchReadinessReportCreated",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:81eedb1ac7c671ae",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:20683a8a080e1157",
         "payload_schema_id": "ledger_payload.WorkspacePatchReadinessReportCreated.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "HeadlessContinuationDecisionRecorded",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:948fe1f6927d98d3",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:3800012aa9a9fa16",
         "payload_schema_id": "ledger_payload.HeadlessContinuationDecisionRecorded.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "HeadlessRunSessionAdvanced",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:9a9925c68acb95e7",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:0e4d00de286d8d0a",
         "payload_schema_id": "ledger_payload.HeadlessRunSessionAdvanced.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "HeadlessRunSessionDriveCompleted",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:251e62cb6ada9f40",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:4e65a74a0fd76241",
         "payload_schema_id": "ledger_payload.HeadlessRunSessionDriveCompleted.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "HeadlessRunProductEvidenceMatrixDerived",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:96def4b61e445247",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:65586a02fbe68faa",
         "payload_schema_id": "ledger_payload.HeadlessRunProductEvidenceMatrixDerived.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "HeadlessRunSelectedProductGapClosureRecorded",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:44ef51bd15963be8",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:45f8b678977f8ae9",
         "payload_schema_id": "ledger_payload.HeadlessRunSelectedProductGapClosureRecorded.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "HeadlessRunProductCompletionDecisionRecorded",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:3246828c25386162",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:8907e9a8ff18ff1b",
         "payload_schema_id": "ledger_payload.HeadlessRunProductCompletionDecisionRecorded.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "HeadlessJourneyStarted",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:8880a831f2faf7f7",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:1c96c2b975762bfa",
         "payload_schema_id": "ledger_payload.HeadlessJourneyStarted.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "HeadlessJourneyRouteResumed",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:a389fdc348c80774",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:1e394f958b370be5",
         "payload_schema_id": "ledger_payload.HeadlessJourneyRouteResumed.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "HeadlessJourneyClosed",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:592f0d888cafcf96",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:b2f4a956808eecdf",
         "payload_schema_id": "ledger_payload.HeadlessJourneyClosed.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "HeadlessJourneyExecuted",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:482937c9c8cf55eb",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:d79ca8379e072c6e",
         "payload_schema_id": "ledger_payload.HeadlessJourneyExecuted.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "HeadlessRunCompletionFinalized",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:e747076aa12d9d4d",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:f1442da8fbd664e0",
         "payload_schema_id": "ledger_payload.HeadlessRunCompletionFinalized.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "TaskRunning",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:e10d47884c8d8943",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:56c5acb2b0192826",
         "payload_schema_id": "ledger_payload.TaskRunning.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "AgentLoopStarted",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:682c39efd93ce329",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:c06f89c4fa185e4c",
         "payload_schema_id": "ledger_payload.AgentLoopStarted.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "AgentLoopCompleted",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:1d5dddc69b840fb5",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:cb4874abd2b62be8",
         "payload_schema_id": "ledger_payload.AgentLoopCompleted.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "TaskCompletionAccepted",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:9294948c49f0e4bb",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:408e1f24784ac2de",
         "payload_schema_id": "ledger_payload.TaskCompletionAccepted.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "PromptBuilt",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:3d78015424fea959",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:350627784dd3125c",
         "payload_schema_id": "ledger_payload.PromptBuilt.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "PromptSensitiveScanCompleted",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:9ce8e3165d206cad",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:3120c7246d3f1e80",
         "payload_schema_id": "ledger_payload.PromptSensitiveScanCompleted.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "PromptSensitiveScanFailed",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:6c36dc99422aa801",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:1fa04fc952172364",
         "payload_schema_id": "ledger_payload.PromptSensitiveScanFailed.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "LlmRequestCreated",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:b1172de15514f4a7",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:43f6b58d4b4890ca",
         "payload_schema_id": "ledger_payload.LlmRequestCreated.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "LlmRequestFailed",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:abec65bf6865e93c",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:71a63d1ce0b4778d",
         "payload_schema_id": "ledger_payload.LlmRequestFailed.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "LlmResponseReceived",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:ec588a0b599c150c",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:a1d899ef06bf487d",
         "payload_schema_id": "ledger_payload.LlmResponseReceived.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SecondPassPromptBuilt",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:1101a2b6e71fa49a",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:039c2410cdd67bf3",
         "payload_schema_id": "ledger_payload.SecondPassPromptBuilt.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SecondPassLlmRequestCreated",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:4a5167919ce8e0c4",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:f8a91f3e742ed5d5",
         "payload_schema_id": "ledger_payload.SecondPassLlmRequestCreated.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SecondPassLlmRequestFailed",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:2414db4f2815c935",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:4bcc30badcfa3d68",
         "payload_schema_id": "ledger_payload.SecondPassLlmRequestFailed.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SecondPassLlmResponseReceived",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:8e663e3dc58b228f",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:190146a3bd334372",
         "payload_schema_id": "ledger_payload.SecondPassLlmResponseReceived.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "TaskCompleted",
-        "payload_schema_descriptor": "object{known_optional_fields:late_tool_response:boolean,status:string,terminal_process_loss:boolean,terminal_race_candidate:string;additional_fields:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:ea3f2a0697efa711",
+        "payload_schema_classification": "typed_known_fields_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "typed_known_fields_open{known_optional_fields:git:object,late_tool_response:boolean,mcp:object,runtime_deadline:object,status:string,terminal_process_loss:boolean,terminal_race_candidate:string;additional_fields:true;strict_typed_payload_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:a57aa83bf466e8b5",
         "payload_schema_id": "ledger_payload.TaskCompleted.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "TaskFailed",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:af20784a0d746839",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:9763911e470cb67c",
         "payload_schema_id": "ledger_payload.TaskFailed.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "TaskCancelled",
-        "payload_schema_descriptor": "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:a25d6c6dfb86dce7",
+        "payload_schema_classification": "versioned_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:2873751e3da4c40a",
         "payload_schema_id": "ledger_payload.TaskCancelled.v2",
         "payload_schema_version": 2,
+        "release_blocking_until_typed": true,
         "store_schema_version": 2
       }
     ],
     "guard": "guard:protocol-event-canonization",
     "layout_marker_path": ".brownie/store-layout.json",
     "ledger_event_kind_source": "crates/brownie-store/src/lib.rs",
+    "ledger_payload_contract_scope": {
+      "jsonrpc_request_result_contract": "closed",
+      "ledger_event_payload_inventory": "closed",
+      "ledger_event_payload_typed_schema_coverage": "partial",
+      "schema_and_instance_fingerprint_split": "closed"
+    },
     "ledger_payload_envelope_field": "payload_envelope",
     "ledger_payload_envelope_type": "LedgerPayloadEnvelope",
     "ledger_payload_instance_shape_fingerprint_basis": "LedgerEventKind plus the canonical structural shape of the actual persisted payload value. This is diagnostic instance evidence, not the durable contract schema fingerprint.",
+    "ledger_payload_schema_classification_policy": "Every LedgerEventKind must carry an explicit payload schema classification. versioned_open and typed_known_fields_open are allowed only as required-before-release debt evidence and must not be treated as fully typed ledger payload schemas.",
     "ledger_payload_schema_fingerprint_basis": "LedgerEventKind plus the fixed Runtime-owned payload schema descriptor for that event-kind/version. It is stable across optional field presence, null-vs-value choices, and other individual payload instance variation.",
     "ledger_payload_schema_version_source": "LEDGER_PAYLOAD_SCHEMA_VERSION",
     "ledger_payload_shape_version_source": "LEDGER_PAYLOAD_SHAPE_VERSION",
@@ -638,7 +1341,9 @@
         },
         "payload_instance_shape_descriptor": "object{status:string}",
         "payload_instance_shape_fingerprint": "shape-fnv1a64:fc1e9a8c4121e9f1",
-        "payload_schema_fingerprint": "shape-fnv1a64:ea3f2a0697efa711",
+        "payload_schema_classification": "typed_known_fields_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_fingerprint": "shape-fnv1a64:a57aa83bf466e8b5",
         "payload_schema_id": "ledger_payload.TaskCompleted.v2"
       },
       {
@@ -649,11 +1354,14 @@
         },
         "payload_instance_shape_descriptor": "object{late_tool_response:boolean,status:string}",
         "payload_instance_shape_fingerprint": "shape-fnv1a64:104e3bf6bf2b6ad0",
-        "payload_schema_fingerprint": "shape-fnv1a64:ea3f2a0697efa711",
+        "payload_schema_classification": "typed_known_fields_open",
+        "payload_schema_contract_status": "partial",
+        "payload_schema_fingerprint": "shape-fnv1a64:a57aa83bf466e8b5",
         "payload_schema_id": "ledger_payload.TaskCompleted.v2"
       }
     ],
-    "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint.",
+    "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Versioned-open payload classifications keep protocol-event-canonization partial until every payload-bearing event has a strict typed schema, an explicit payload_absent contract, or a legacy-only compatibility entry.",
+    "release_blocking_open_payload_count": 77,
     "schema_manifest_path": ".brownie/store-schema.json",
     "store_schema_version": 2
   },
@@ -858,10 +1566,10 @@
       },
       "payload_envelope": {
         "instance_shape_fingerprint": "shape-fnv1a64:fc1e9a8c4121e9f1",
-        "schema_fingerprint": "shape-fnv1a64:ea3f2a0697efa711",
+        "schema_fingerprint": "shape-fnv1a64:a57aa83bf466e8b5",
         "schema_id": "ledger_payload.TaskCompleted.v2",
         "schema_version": 2,
-        "shape_fingerprint": "shape-fnv1a64:ea3f2a0697efa711",
+        "shape_fingerprint": "shape-fnv1a64:a57aa83bf466e8b5",
         "shape_id": "ledger_payload.TaskCompleted.v2"
       },
       "run_id": "run_1",
@@ -8502,7 +9210,7 @@
     "policy": "Every explicit Runtime method in the canonical map must have a semantic method contract."
   },
   "owner": "runtime",
-  "phase": "RRP-5.4",
+  "phase": "RRP-5.5",
   "recursive_json_schema_coverage": {
     "coverage": "Every method param/result type has a recursive Rust-derived JSON Schema document with nested struct and enum definitions.",
     "definition_keyword": "$defs",
@@ -8513,7 +9221,7 @@
   },
   "runtime_release_debt_id": "protocol-event-canonization",
   "runtime_release_ready": false,
-  "schema_version": 4,
+  "schema_version": 5,
   "sources": [
     {
       "path": "crates/brownie-protocol/src/lib.rs",
