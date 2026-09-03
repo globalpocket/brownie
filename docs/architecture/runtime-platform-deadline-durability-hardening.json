@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "assessment_id": "runtime-platform-deadline-durability-hardening-v1",
+  "phase": "RRP-7",
+  "phase_title": "Platform, Deadline, and Durability Hardening",
+  "runtime_release_debt_id": "platform-deadline-durability-hardening",
+  "base_commit": "ba6fb62eb12a63e48bcd5b64072e3314efbc53bc",
+  "runtime_release_ready": false,
+  "scope": [
+    "local Runtime durable task-state write ordering",
+    "local atomic write file fsync and parent directory sync assumptions",
+    "MCP stdio deadline and timeout cleanup evidence",
+    "Runtime timeout terminal-state coverage"
+  ],
+  "source_checks": [
+    {
+      "id": "task-state-uses-synced-atomic-helper",
+      "source_path": "crates/brownie-store/src/lib.rs",
+      "requirement": "TaskStore::write_task_state uses write_file_atomically instead of raw fs::write plus fs::rename."
+    },
+    {
+      "id": "atomic-helper-fsyncs-file-and-parent-directory",
+      "source_path": "crates/brownie-store/src/lib.rs",
+      "requirement": "write_file_atomically creates a sibling temporary file with create_new, writes and fsyncs the file, renames it into place, and fails closed if the Unix parent directory sync fails."
+    },
+    {
+      "id": "mcp-stdio-timeout-kills-process-tree",
+      "source_path": "crates/brownie-runtime/src/mcp_client.rs",
+      "requirement": "MCP stdio subprocesses run in their own Unix process group, timeout handling terminates the process tree, and timeout errors expose bounded process-tree cleanup evidence."
+    },
+    {
+      "id": "runtime-timeout-tests-cover-cleanup-and-terminal-state",
+      "source_path": "crates/brownie-runtime/src/lib.rs",
+      "requirement": "Runtime tests cover MCP stdio timeout cleanup and approval timeout terminalization without approval reuse."
+    }
+  ],
+  "closure": {
+    "status": "implemented_sufficient",
+    "debt_classification": "closed",
+    "runtime_authority_retained_by": "Rust Runtime",
+    "summary": "RRP-7 closes the local Runtime platform/deadline/durability blocker by requiring task state to use the shared synced atomic write helper, by making parent-directory sync failures fail closed where supported, and by guarding the existing MCP process-tree timeout evidence."
+  },
+  "non_goals": [
+    "hosted scheduler, daemon, worker fleet, and generic shell execution remain out of scope",
+    "direct GitHub workflow hardening remains in runtime-release-guard-ci",
+    "license, publish, tag, release, and release asset decisions remain owner-controlled",
+    "runtime_release_ready remains false until the CI blocker and owner decisions close"
+  ]
+}

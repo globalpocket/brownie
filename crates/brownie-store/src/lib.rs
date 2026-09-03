@@ -1781,7 +1781,7 @@ impl BrownieStore {
             .context("failed to append active modepack ledger")?;
         file.sync_all()
             .context("failed to sync active modepack ledger")?;
-        sync_dir(&root);
+        sync_dir(&root)?;
         Ok(())
     }
 
@@ -1802,7 +1802,7 @@ impl BrownieStore {
             .context("failed to append Mode Pack candidate ledger")?;
         file.sync_all()
             .context("failed to sync Mode Pack candidate ledger")?;
-        sync_dir(&root);
+        sync_dir(&root)?;
         Ok(())
     }
 
@@ -2724,7 +2724,7 @@ impl CodebaseIndexStore {
             .context("failed to append codebase index ledger event")?;
         file.sync_all()
             .context("failed to sync codebase index ledger event")?;
-        sync_dir(&self.index_dir());
+        sync_dir(&self.index_dir())?;
         Ok(event)
     }
 
@@ -2777,7 +2777,7 @@ impl CodebaseIndexStore {
                     writeln!(file, "lock_file=build.lock")
                         .context("failed to write index build lock")?;
                     file.sync_all().context("failed to sync index build lock")?;
-                    sync_dir(&root);
+                    sync_dir(&root)?;
                     return Ok(CodebaseIndexBuildLock { path: lock_path });
                 }
                 Err(error) if error.kind() == ErrorKind::AlreadyExists && attempt == 0 => {
@@ -2851,7 +2851,7 @@ impl CodebaseIndexStore {
         }
         fs::remove_file(lock_path).context("failed to reclaim stale codebase index lock")?;
         if let Some(parent) = lock_path.parent() {
-            sync_dir(parent);
+            sync_dir(parent)?;
         }
         Ok(true)
     }
@@ -2920,7 +2920,7 @@ impl Drop for CodebaseIndexBuildLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
         if let Some(parent) = self.path.parent() {
-            sync_dir(parent);
+            let _ = sync_dir(parent);
         }
     }
 }
@@ -3034,7 +3034,7 @@ fn write_file_atomically(path: &std::path::Path, body: &[u8]) -> Result<()> {
                 tmp_path.display()
             )
         })?;
-        sync_dir(parent);
+        sync_dir(parent)?;
         Ok(())
     })();
 
@@ -3044,10 +3044,17 @@ fn write_file_atomically(path: &std::path::Path, body: &[u8]) -> Result<()> {
     write_result
 }
 
-fn sync_dir(path: &std::path::Path) {
-    if let Ok(file) = fs::File::open(path) {
-        let _ = file.sync_all();
-    }
+#[cfg(unix)]
+fn sync_dir(path: &std::path::Path) -> Result<()> {
+    let file = fs::File::open(path)
+        .with_context(|| format!("failed to open directory {}", path.display()))?;
+    file.sync_all()
+        .with_context(|| format!("failed to sync directory {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn sync_dir(_path: &std::path::Path) -> Result<()> {
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4254,11 +4261,9 @@ impl TaskStore {
         let state =
             serde_json::to_string_pretty(record).context("failed to serialize task state")?;
         let state_path = run_dir.join("state.json");
-        let tmp_path = run_dir.join(format!("state.json.tmp-{}", Uuid::new_v4().simple()));
-        fs::write(&tmp_path, state).context("failed to write temporary task state")?;
-        fs::rename(&tmp_path, &state_path).with_context(|| {
+        write_file_atomically(&state_path, state.as_bytes()).with_context(|| {
             format!(
-                "failed to atomically replace task state {}",
+                "failed to durably replace task state {}",
                 state_path.display()
             )
         })

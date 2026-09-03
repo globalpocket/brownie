@@ -32,6 +32,8 @@ const guardEngineFiles = [
   'scripts/guard-product-completion.test.mjs',
   'scripts/guard-phase-value.mjs',
   'scripts/guard-phase-value.test.mjs',
+  'scripts/guard-platform-deadline-durability.mjs',
+  'scripts/guard-platform-deadline-durability.test.mjs',
   'scripts/guard-protocol-event-canonization.mjs',
   'scripts/guard-protocol-event-canonization.test.mjs',
   'scripts/guard-runtime-module-decomposition.mjs',
@@ -40,6 +42,7 @@ const guardEngineFiles = [
   'scripts/guard-runtime-release-readiness.test.mjs',
   'docs/architecture/phase-value-gate.md',
   'docs/architecture/phase-value-manifest.json',
+  'docs/architecture/runtime-platform-deadline-durability-hardening.json',
   'docs/architecture/runtime-module-decomposition-assessment.json',
   'docs/architecture/runtime-protocol-event-canonical-map.json',
   'docs/architecture/runtime-release-readiness-audit.json'
