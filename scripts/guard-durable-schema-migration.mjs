@@ -61,7 +61,9 @@ export function validateDurableSchemaMigration({ storeText, audit, packageText, 
     'durable_schema_v1_manifest_migrates_to_v2_layout',
     'durable_schema_in_progress_migration_resumes_idempotently_without_layout_marker',
     'durable_schema_in_progress_migration_resumes_after_layout_marker_write',
-    'durable_schema_partial_migration_conflict_fails_closed_before_mutation'
+    'durable_schema_partial_migration_conflict_fails_closed_before_mutation',
+    'durable_schema_process_loss_migration_resumes_after_each_durable_checkpoint',
+    'durable_schema_v1_fixture_preserves_task_run_ledger_checkpoint_and_resume_identity'
   ]) {
     requireValue(storeText.includes(testName), errors, `brownie-store tests must include ${testName}.`);
   }
@@ -71,7 +73,7 @@ export function validateDurableSchemaMigration({ storeText, audit, packageText, 
   requireValue(durable?.status === 'implemented_sufficient', errors, 'durable-schema-version-and-migration must remain implemented_sufficient after RRP-4.1.');
   requireValue(durable?.debt_classification === 'closed', errors, 'durable-schema-version-and-migration must be closed after RRP-4.1.');
   const durableEvidence = evidenceText(durable);
-  for (const token of ['RRP-4.1', 'v1 to v2', 'migration_in_progress', 'store-layout.json', 'partial migration']) {
+  for (const token of ['RRP-4.1', 'v1 to v2', 'migration_in_progress', 'store-layout.json', 'process-loss', 'v1 task/run/ledger fixture', 'partial migration']) {
     requireValue(durableEvidence.includes(token), errors, `durable schema evidence must mention ${token}.`);
   }
 

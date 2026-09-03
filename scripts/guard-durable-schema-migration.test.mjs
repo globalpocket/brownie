@@ -17,7 +17,9 @@ function validFixture() {
       'fn durable_schema_v1_manifest_migrates_to_v2_layout() {}',
       'fn durable_schema_in_progress_migration_resumes_idempotently_without_layout_marker() {}',
       'fn durable_schema_in_progress_migration_resumes_after_layout_marker_write() {}',
-      'fn durable_schema_partial_migration_conflict_fails_closed_before_mutation() {}'
+      'fn durable_schema_partial_migration_conflict_fails_closed_before_mutation() {}',
+      'fn durable_schema_process_loss_migration_resumes_after_each_durable_checkpoint() {}',
+      'fn durable_schema_v1_fixture_preserves_task_run_ledger_checkpoint_and_resume_identity() {}'
     ].join('\n'),
     packageText: '"guard:durable-schema-migration": "node scripts/guard-durable-schema-migration.mjs"',
     vsixPackageText: 'pnpm --workspace-root guard:durable-schema-migration',
@@ -34,7 +36,7 @@ function validFixture() {
           status: 'implemented_sufficient',
           debt_classification: 'closed',
           evidence: [
-            'RRP-4.1 migrates v1 to v2 with migration_in_progress, store-layout.json, and partial migration checks.'
+            'RRP-4.1 migrates v1 to v2 with migration_in_progress, store-layout.json, process-loss recovery, v1 task/run/ledger fixture preservation, and partial migration checks.'
           ]
         }
       ]
@@ -58,6 +60,20 @@ test('guard fails when interrupted migration evidence is absent', () => {
   fixture.storeText = fixture.storeText.replace('fn durable_schema_in_progress_migration_resumes_after_layout_marker_write() {}', '');
 
   assert.match(validateDurableSchemaMigration(fixture).join('\n'), /resumes_after_layout_marker_write/);
+});
+
+test('guard fails when process-loss migration evidence is absent', () => {
+  const fixture = validFixture();
+  fixture.storeText = fixture.storeText.replace('fn durable_schema_process_loss_migration_resumes_after_each_durable_checkpoint() {}', '');
+
+  assert.match(validateDurableSchemaMigration(fixture).join('\n'), /process_loss_migration/);
+});
+
+test('guard fails when v1 durable artifact preservation evidence is absent', () => {
+  const fixture = validFixture();
+  fixture.storeText = fixture.storeText.replace('fn durable_schema_v1_fixture_preserves_task_run_ledger_checkpoint_and_resume_identity() {}', '');
+
+  assert.match(validateDurableSchemaMigration(fixture).join('\n'), /v1_fixture_preserves/);
 });
 
 test('guard fails when later reopened blockers are hidden', () => {

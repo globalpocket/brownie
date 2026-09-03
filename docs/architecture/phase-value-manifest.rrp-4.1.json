@@ -25,14 +25,14 @@
     "required": true,
     "answers": {
       "strategic_capabilities": "Advances headless_autonomous_development, runtime_permission_enforcement, and controlled_workspace_tools by replacing the prior v1-only schema gate with a concrete v1-to-v2 migration and interrupted-recovery path.",
-      "new_capability": "Runtime/store first-touch can migrate a v1 durable schema manifest to v2, write a bounded store-layout.json marker, resume from migration_in_progress markers, and fail closed on conflicting partial migration state before durable mutation.",
+      "new_capability": "Runtime/store first-touch can migrate a v1 durable schema manifest to v2, write a bounded store-layout.json marker, resume after real process loss at each durable migration checkpoint, preserve existing v1 task/run/ledger/checkpoint artifacts, and fail closed on conflicting partial migration state before durable mutation.",
       "why_existing_functionality_is_insufficient": "RRP-4 could initialize or adopt v1 manifests and reject future/corrupt manifests, but it had no vN-to-vN+1 migration planner, no in-progress crash marker, no idempotent interrupted migration resume, and no partial migration conflict detection.",
       "product_gap_if_skipped": "A release build could claim durable schema migration readiness while only proving admission gating, leaving future local Runtime store upgrades dependent on untested best-effort behavior.",
       "non_duplicative": "This is a corrective durable schema migration phase; it is not MCP approval recovery, protocol semantic contract work, module decomposition, platform/deadline hardening, CI workflow hardening, or owner license/publish work.",
       "no_new_rpc": "Yes. The behavior is internal to brownie-store and existing BrownieStore durable entrypoints; no JSON-RPC, CLI, or VSIX protocol surface is added.",
       "no_new_summary": "Yes. The only new durable artifact is the bounded local store-layout.json marker and guard evidence, not a runtime report endpoint or diagnostic wrapper.",
-      "runtime_behavior_change": "Existing v1 .brownie stores are migrated under the schema lock on first touch; interrupted migrations resume from durable markers, and conflicting partial layouts fail closed before task/run/journey/checkpoint/ledger mutation.",
-      "headless_autonomous_contribution": "Autonomous controllers can rely on Runtime refusing incompatible or partially migrated local state and converging interrupted v1-to-v2 migrations without external scheduler authority.",
+      "runtime_behavior_change": "Existing v1 .brownie stores are migrated under the schema lock on first touch; interrupted migrations resume from durable markers after child process loss, existing task/run/ledger/checkpoint bytes are preserved until explicit post-migration mutation, and conflicting partial layouts fail closed before task/run/journey/checkpoint/ledger mutation.",
+      "headless_autonomous_contribution": "Autonomous controllers can rely on Runtime refusing incompatible or partially migrated local state and converging interrupted v1-to-v2 migrations after process death without external scheduler authority.",
       "milestone_progress": "Closes the reopened P0 durable-schema-version-and-migration gap while keeping Runtime Release Ready false until RRP-7.1, RRP-5.1, runtime-release-guard-ci, and owner license/publish/release decisions are resolved."
     },
     "questions": [
@@ -87,7 +87,12 @@
     {
       "surface": "Interrupted migration recovery",
       "classification": "implemented_sufficient",
-      "evidence": "TaskStore::ensure_durable_schema writes migration_in_progress before migration work, resumes the same migration under the schema lock, and only commits current v2 after store-layout.json validates."
+      "evidence": "TaskStore::ensure_durable_schema writes migration_in_progress before migration work, resumes the same migration under the schema lock after real child process loss at each durable checkpoint, and only commits current v2 after store-layout.json validates."
+    },
+    {
+      "surface": "Existing v1 durable artifact preservation",
+      "classification": "implemented_sufficient",
+      "evidence": "The v1 fixture test preserves task identity, run ledger order, continuation/replay fingerprint material, and task state, ledger, and checkpoint bytes across migration before post-migration resume mutation."
     },
     {
       "surface": "Partial migration fail-closed behavior",
@@ -137,27 +142,29 @@
     "Current durable store schema advances to v2 with an explicit v1-to-v2 migration registry.",
     "Migration writes a bounded migration_in_progress schema marker before v2 layout work.",
     "Migration writes and validates a bounded store-layout.json marker before committing current v2.",
-    "Interrupted migration resumes idempotently before and after the layout marker write.",
+    "Interrupted migration resumes idempotently after real process loss at the in-progress marker, layout marker, and current v2 manifest write.",
+    "Migration preserves existing v1 task/run/ledger/checkpoint artifacts and continuation/replay fingerprint material before explicit post-migration resume mutation.",
     "Conflicting partial migration state fails closed before task mutation.",
-    "guard:durable-schema-migration and durable schema tests cover migration, interruption, partial conflict, and reopened blocker accounting.",
+    "Rust durable schema tests cover migration behavior, process-loss interruption, v1 artifact preservation, partial conflict, and reopened blocker accounting; guard:durable-schema-migration detects deletion or drift of the required evidence.",
     "Runtime Release Ready remains false; RRP-7.1, RRP-5.1, runtime-release-guard-ci, and owner release decisions remain open."
   ],
   "behavior_evidence": [
-    "cargo test -p brownie-store durable_schema -- --test-threads=1 covers v2 initialization, missing-manifest adoption, v1-to-v2 migration, interrupted migration resume, partial conflict rejection, malformed rejection, future-version rejection, and minimum-runtime-version rejection.",
-    "pnpm guard:durable-schema-migration validates source and audit evidence for the migration registry, crash marker, layout marker, interruption tests, and reopened blocker accounting.",
-    "pnpm guard:durable-schema-migration:test covers negative drift for missing migration registry, missing interruption evidence, and hidden reopened blockers."
+    "cargo test -p brownie-store durable_schema -- --test-threads=1 covers v2 initialization, missing-manifest adoption, v1-to-v2 migration, real child process-loss migration resume at in-progress/layout/current-v2 checkpoints, v1 task/run/ledger/checkpoint fixture preservation, partial conflict rejection, malformed rejection, future-version rejection, and minimum-runtime-version rejection.",
+    "pnpm guard:durable-schema-migration validates source and audit presence for the migration registry, crash marker, layout marker, behavior test names, and reopened blocker accounting; this is drift/deletion evidence, not the primary behavior proof.",
+    "pnpm guard:durable-schema-migration:test covers negative drift for missing migration registry, missing interruption/process-loss evidence, missing v1 artifact preservation evidence, and hidden reopened blockers."
   ],
   "product_completion_gate": {
     "required": true,
     "product_completion_claim": false,
     "accepted_capability": [
       "Runtime/store can migrate v1 local durable schema manifests to current v2.",
-      "Interrupted durable schema migration resumes from bounded migration markers.",
+      "Interrupted durable schema migration resumes from bounded migration markers after real child process loss.",
+      "Existing v1 task/run/ledger/checkpoint data remains byte-preserved until explicit post-migration resume mutation.",
       "Conflicting partial migration state is refused before durable mutation."
     ],
     "behavior_evidence": [
-      "cargo test -p brownie-store durable_schema -- --test-threads=1 covers v2 initialization, v1-to-v2 migration, interrupted resume, and partial conflict rejection.",
-      "pnpm guard:durable-schema-migration and pnpm guard:durable-schema-migration:test validate durable migration evidence and negative drift cases."
+      "cargo test -p brownie-store durable_schema -- --test-threads=1 covers v2 initialization, v1-to-v2 migration, child process-loss resume, v1 durable artifact preservation, post-migration task lifecycle resume, and partial conflict rejection.",
+      "pnpm guard:durable-schema-migration and pnpm guard:durable-schema-migration:test validate durable migration evidence presence and negative drift cases."
     ],
     "safety_boundary": [
       "Rust Runtime and brownie-store remain durable schema, replay, admission, ledger, checkpoint, tool, workspace mutation, and completion authority.",
