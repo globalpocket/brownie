@@ -214,12 +214,12 @@ test('rejects protocol closure without durable ledger payload envelope evidence'
   assert(errors.some((error) => error.includes('LedgerPayloadEnvelope')));
 });
 
-test('rejects payload shape fingerprints that do not vary with concrete payload fields', () => {
+test('rejects payload schema fingerprints that vary with allowed instance fields', () => {
   const contract = readSemanticContract();
-  const fixtures = contract.durable_event_migration_coupling.payload_shape_fixtures.filter(
+  const fixtures = contract.durable_event_migration_coupling.payload_schema_fixtures.filter(
     (fixture) => fixture.ledger_event_kind === 'TaskCompleted'
   );
-  fixtures[1].payload_shape_fingerprint = fixtures[0].payload_shape_fingerprint;
+  fixtures[1].payload_schema_fingerprint = 'shape-fnv1a64:ffffffffffffffff';
 
   const errors = validateRuntimeSemanticProtocolContract(contract, readMap(), {
     repoRoot,
@@ -228,15 +228,15 @@ test('rejects payload shape fingerprints that do not vary with concrete payload 
     skipRustGeneratedContractCheck: true
   });
 
-  assert(errors.some((error) => error.includes('payload shape fixtures must prove field-shape changes alter fingerprints')));
+  assert(errors.some((error) => error.includes('fixed contract schema fingerprint')));
 });
 
-test('rejects missing ledger event shape fingerprint evidence', () => {
+test('rejects payload schema fixtures without separate instance fingerprints', () => {
   const contract = readSemanticContract();
-  contract.durable_event_migration_coupling.event_shape_fingerprints =
-    contract.durable_event_migration_coupling.event_shape_fingerprints.filter((entry) => entry.ledger_event_kind !== 'TaskCancelled');
-  contract.durable_event_migration_coupling.event_shape_fingerprint_count =
-    contract.durable_event_migration_coupling.event_shape_fingerprints.length;
+  const fixtures = contract.durable_event_migration_coupling.payload_schema_fixtures.filter(
+    (fixture) => fixture.ledger_event_kind === 'TaskCompleted'
+  );
+  fixtures[1].payload_instance_shape_fingerprint = fixtures[0].payload_instance_shape_fingerprint;
 
   const errors = validateRuntimeSemanticProtocolContract(contract, readMap(), {
     repoRoot,
@@ -245,5 +245,22 @@ test('rejects missing ledger event shape fingerprint evidence', () => {
     skipRustGeneratedContractCheck: true
   });
 
-  assert(errors.some((error) => error.includes('event_shape_fingerprints must include TaskCancelled')));
+  assert(errors.some((error) => error.includes('diagnostic instance shape fingerprints')));
+});
+
+test('rejects missing ledger event schema fingerprint evidence', () => {
+  const contract = readSemanticContract();
+  contract.durable_event_migration_coupling.event_payload_schema_fingerprints =
+    contract.durable_event_migration_coupling.event_payload_schema_fingerprints.filter((entry) => entry.ledger_event_kind !== 'TaskCancelled');
+  contract.durable_event_migration_coupling.event_payload_schema_fingerprint_count =
+    contract.durable_event_migration_coupling.event_payload_schema_fingerprints.length;
+
+  const errors = validateRuntimeSemanticProtocolContract(contract, readMap(), {
+    repoRoot,
+    contractPath: semanticContractPath,
+    mapPath,
+    skipRustGeneratedContractCheck: true
+  });
+
+  assert(errors.some((error) => error.includes('event_payload_schema_fingerprints must include TaskCancelled')));
 });

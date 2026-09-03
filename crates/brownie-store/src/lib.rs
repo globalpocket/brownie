@@ -5062,7 +5062,7 @@ impl TaskStore {
         kind: LedgerEventKind,
         payload: Option<serde_json::Value>,
     ) -> Result<LedgerEvent> {
-        let payload_envelope = ledger_payload_envelope(&kind, payload.as_ref());
+        let payload_envelope = ledger_payload_envelope(&kind, payload.as_ref())?;
         Ok(LedgerEvent {
             event_id: format!("event_{}", Uuid::new_v4()),
             task_id: record.task_id.clone(),
@@ -5718,6 +5718,8 @@ impl RunLedger {
             .with_context(|| format!("failed to create {}", self.run_dir.display()))?;
         let mut buffer = Vec::new();
         for event in events {
+            validate_ledger_event_payload_contract(event, true)
+                .context("failed to validate ledger event payload contract before append")?;
             serde_json::to_writer(&mut buffer, event)
                 .context("failed to serialize ledger event")?;
             writeln!(&mut buffer).context("failed to write ledger newline")?;
@@ -5750,10 +5752,13 @@ impl RunLedger {
             if line.trim().is_empty() {
                 continue;
             }
-            events.push(
-                serde_json::from_str(&line)
-                    .with_context(|| format!("failed to parse {}", ledger_path.display()))?,
-            );
+            events.push({
+                let event = serde_json::from_str::<LedgerEvent>(&line)
+                    .with_context(|| format!("failed to parse {}", ledger_path.display()))?;
+                validate_ledger_event_payload_contract(&event, false)
+                    .with_context(|| format!("failed to validate {}", ledger_path.display()))?;
+                event
+            });
         }
         Ok(events)
     }
@@ -5842,26 +5847,45 @@ pub struct LedgerPayloadEnvelope {
     pub schema_version: u64,
     pub shape_id: String,
     pub shape_fingerprint: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub schema_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub schema_fingerprint: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub instance_shape_fingerprint: String,
 }
 
-pub const LEDGER_PAYLOAD_SHAPE_VERSION: u64 = 1;
+pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 2;
+pub const LEDGER_PAYLOAD_SHAPE_VERSION: u64 = LEDGER_PAYLOAD_SCHEMA_VERSION;
 
 pub fn ledger_payload_shape_id(kind: &LedgerEventKind) -> String {
-    format!("ledger_payload.{kind:?}.v{LEDGER_PAYLOAD_SHAPE_VERSION}")
+    ledger_payload_schema_id(kind)
+}
+
+pub fn ledger_payload_schema_id(kind: &LedgerEventKind) -> String {
+    format!("ledger_payload.{kind:?}.v{LEDGER_PAYLOAD_SCHEMA_VERSION}")
 }
 
 pub fn ledger_payload_shape_fingerprint(kind: &LedgerEventKind) -> String {
-    stable_ledger_payload_fingerprint(&ledger_payload_shape_fingerprint_input(
-        kind,
-        "payload:none",
-    ))
+    ledger_payload_schema_fingerprint(kind)
+}
+
+pub fn ledger_payload_schema_fingerprint(kind: &LedgerEventKind) -> String {
+    stable_ledger_payload_fingerprint(&ledger_payload_schema_fingerprint_input(kind))
 }
 
 pub fn ledger_payload_shape_fingerprint_for_value(
     kind: &LedgerEventKind,
     payload: &serde_json::Value,
 ) -> String {
-    stable_ledger_payload_fingerprint(&ledger_payload_shape_fingerprint_input(
+    ledger_payload_instance_shape_fingerprint_for_value(kind, payload)
+}
+
+pub fn ledger_payload_instance_shape_fingerprint_for_value(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> String {
+    stable_ledger_payload_fingerprint(&ledger_payload_instance_shape_fingerprint_input(
         kind,
         &ledger_payload_shape_descriptor(payload),
     ))
@@ -5870,16 +5894,157 @@ pub fn ledger_payload_shape_fingerprint_for_value(
 fn ledger_payload_envelope(
     kind: &LedgerEventKind,
     payload: Option<&serde_json::Value>,
-) -> Option<LedgerPayloadEnvelope> {
-    payload.map(|payload| LedgerPayloadEnvelope {
-        schema_version: LEDGER_PAYLOAD_SHAPE_VERSION,
-        shape_id: ledger_payload_shape_id(kind),
-        shape_fingerprint: ledger_payload_shape_fingerprint_for_value(kind, payload),
-    })
+) -> Result<Option<LedgerPayloadEnvelope>> {
+    let Some(payload) = payload else {
+        return Ok(None);
+    };
+    validate_ledger_payload_schema(kind, payload)?;
+    let schema_id = ledger_payload_schema_id(kind);
+    let schema_fingerprint = ledger_payload_schema_fingerprint(kind);
+    Ok(Some(LedgerPayloadEnvelope {
+        schema_version: LEDGER_PAYLOAD_SCHEMA_VERSION,
+        shape_id: schema_id.clone(),
+        shape_fingerprint: schema_fingerprint.clone(),
+        schema_id,
+        schema_fingerprint,
+        instance_shape_fingerprint: ledger_payload_instance_shape_fingerprint_for_value(
+            kind, payload,
+        ),
+    }))
 }
 
-fn ledger_payload_shape_fingerprint_input(kind: &LedgerEventKind, descriptor: &str) -> String {
-    format!("{kind:?}:payload_shape_v{LEDGER_PAYLOAD_SHAPE_VERSION}:descriptor:{descriptor}")
+fn validate_ledger_event_payload_contract(
+    event: &LedgerEvent,
+    require_current: bool,
+) -> Result<()> {
+    match (&event.payload, &event.payload_envelope) {
+        (None, None) => Ok(()),
+        (None, Some(_)) => bail!("ledger event has payload envelope without payload"),
+        (Some(payload), None) if !require_current => {
+            validate_ledger_payload_schema(&event.kind, payload)
+        }
+        (Some(_), None) => bail!("ledger event payload is missing payload_envelope"),
+        (Some(payload), Some(envelope)) => {
+            validate_ledger_payload_schema(&event.kind, payload)?;
+            validate_ledger_payload_envelope(&event.kind, payload, envelope)
+        }
+    }
+}
+
+fn validate_ledger_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    if let LedgerEventKind::TaskCompleted = kind {
+        let object = payload
+            .as_object()
+            .context("TaskCompleted ledger payload must be a JSON object")?;
+        validate_optional_payload_string_field(object, "status")?;
+        validate_optional_payload_bool_field(object, "late_tool_response")?;
+        validate_optional_payload_bool_field(object, "terminal_process_loss")?;
+        validate_optional_payload_string_field(object, "terminal_race_candidate")?;
+    }
+    Ok(())
+}
+
+fn validate_optional_payload_string_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    if let Some(value) = object.get(field) {
+        if !value.is_string() {
+            bail!("ledger payload field {field} must be a string");
+        }
+    }
+    Ok(())
+}
+
+fn validate_optional_payload_bool_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    if let Some(value) = object.get(field) {
+        if !value.is_boolean() {
+            bail!("ledger payload field {field} must be a boolean");
+        }
+    }
+    Ok(())
+}
+
+fn validate_ledger_payload_envelope(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+    envelope: &LedgerPayloadEnvelope,
+) -> Result<()> {
+    if envelope.schema_version == 1 && envelope.schema_id.is_empty() {
+        let expected_shape_id = ledger_payload_legacy_v1_shape_id(kind);
+        if envelope.shape_id != expected_shape_id {
+            bail!("legacy ledger payload envelope shape_id mismatch");
+        }
+        let expected_shape_fingerprint =
+            ledger_payload_legacy_v1_shape_fingerprint_for_value(kind, payload);
+        if envelope.shape_fingerprint != expected_shape_fingerprint {
+            bail!("legacy ledger payload envelope shape_fingerprint mismatch");
+        }
+        return Ok(());
+    }
+
+    if envelope.schema_version != LEDGER_PAYLOAD_SCHEMA_VERSION {
+        bail!("ledger payload envelope schema_version mismatch");
+    }
+    let expected_schema_id = ledger_payload_schema_id(kind);
+    if envelope.schema_id != expected_schema_id || envelope.shape_id != expected_schema_id {
+        bail!("ledger payload envelope schema_id mismatch");
+    }
+    let expected_schema_fingerprint = ledger_payload_schema_fingerprint(kind);
+    if envelope.schema_fingerprint != expected_schema_fingerprint
+        || envelope.shape_fingerprint != expected_schema_fingerprint
+    {
+        bail!("ledger payload envelope schema_fingerprint mismatch");
+    }
+    let expected_instance_fingerprint =
+        ledger_payload_instance_shape_fingerprint_for_value(kind, payload);
+    if envelope.instance_shape_fingerprint != expected_instance_fingerprint {
+        bail!("ledger payload envelope instance_shape_fingerprint mismatch");
+    }
+    Ok(())
+}
+
+fn ledger_payload_schema_fingerprint_input(kind: &LedgerEventKind) -> String {
+    format!(
+        "{kind:?}:payload_schema_v{LEDGER_PAYLOAD_SCHEMA_VERSION}:descriptor:{}",
+        ledger_payload_schema_descriptor(kind)
+    )
+}
+
+fn ledger_payload_schema_descriptor(kind: &LedgerEventKind) -> String {
+    match kind {
+        LedgerEventKind::TaskCompleted => "object{known_optional_fields:late_tool_response:boolean,status:string,terminal_process_loss:boolean,terminal_race_candidate:string;additional_fields:true}".to_string(),
+        _ => "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}".to_string(),
+    }
+}
+
+fn ledger_payload_instance_shape_fingerprint_input(
+    kind: &LedgerEventKind,
+    descriptor: &str,
+) -> String {
+    format!(
+        "{kind:?}:payload_instance_shape_v{LEDGER_PAYLOAD_SCHEMA_VERSION}:descriptor:{descriptor}"
+    )
+}
+
+fn ledger_payload_legacy_v1_shape_id(kind: &LedgerEventKind) -> String {
+    format!("ledger_payload.{kind:?}.v1")
+}
+
+fn ledger_payload_legacy_v1_shape_fingerprint_for_value(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> String {
+    stable_ledger_payload_fingerprint(&format!(
+        "{kind:?}:payload_shape_v1:descriptor:{}",
+        ledger_payload_shape_descriptor(payload)
+    ))
 }
 
 fn ledger_payload_shape_descriptor(value: &serde_json::Value) -> String {
@@ -6661,29 +6826,43 @@ mod tests {
     }
 
     #[test]
-    fn ledger_payload_shape_fingerprint_tracks_concrete_payload_structure() {
+    fn ledger_payload_envelope_separates_schema_and_instance_shape_fingerprints() {
         let base_payload = serde_json::json!({"status": "Completed"});
         let added_field_payload =
             serde_json::json!({"status": "Completed", "late_tool_response": true});
         let nested_payload =
             serde_json::json!({"status": "Completed", "evidence": {"attempts": [1, 2]}});
 
-        let base = ledger_payload_shape_fingerprint_for_value(
+        let base_schema = ledger_payload_schema_fingerprint(&LedgerEventKind::TaskCompleted);
+        let base = ledger_payload_instance_shape_fingerprint_for_value(
             &LedgerEventKind::TaskCompleted,
             &base_payload,
         );
-        let added_field = ledger_payload_shape_fingerprint_for_value(
+        let added_field = ledger_payload_instance_shape_fingerprint_for_value(
             &LedgerEventKind::TaskCompleted,
             &added_field_payload,
         );
-        let nested = ledger_payload_shape_fingerprint_for_value(
+        let nested = ledger_payload_instance_shape_fingerprint_for_value(
             &LedgerEventKind::TaskCompleted,
             &nested_payload,
         );
+        let base_envelope =
+            ledger_payload_envelope(&LedgerEventKind::TaskCompleted, Some(&base_payload))
+                .expect("build envelope")
+                .expect("payload envelope");
+        let added_envelope =
+            ledger_payload_envelope(&LedgerEventKind::TaskCompleted, Some(&added_field_payload))
+                .expect("build envelope")
+                .expect("payload envelope");
 
+        assert_eq!(base_envelope.schema_version, LEDGER_PAYLOAD_SCHEMA_VERSION);
+        assert_eq!(base_envelope.shape_id, base_envelope.schema_id);
+        assert_eq!(base_envelope.shape_fingerprint, base_schema);
+        assert_eq!(base_envelope.schema_fingerprint, base_schema);
+        assert_eq!(added_envelope.schema_fingerprint, base_schema);
         assert_ne!(
             base, added_field,
-            "adding a payload field must change the envelope shape fingerprint"
+            "adding a payload field must change the diagnostic instance shape fingerprint"
         );
         assert_ne!(
             base, nested,
@@ -6691,9 +6870,107 @@ mod tests {
         );
         assert_ne!(
             base,
-            ledger_payload_shape_fingerprint(&LedgerEventKind::TaskCompleted),
-            "concrete payload fingerprints must not collapse to the event-kind version label"
+            base_schema,
+            "diagnostic instance fingerprints must not collapse to the fixed contract schema fingerprint"
         );
+    }
+
+    #[test]
+    fn ledger_payload_write_rejects_payload_that_violates_typed_schema() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = TaskStore::new(temp.path());
+        let record = store
+            .start_task(TaskStartParams {
+                goal: "typed payload schema".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start task");
+
+        let error = store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::TaskCompleted,
+                    Some(serde_json::json!({"status": true})),
+                )],
+            )
+            .expect_err("invalid typed TaskCompleted payload should fail closed");
+
+        assert!(format!("{error:#}").contains("status must be a string"));
+    }
+
+    #[test]
+    fn ledger_read_rejects_mismatched_payload_envelope() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let run_dir = temp.path().join("runs").join("run_1");
+        fs::create_dir_all(&run_dir).expect("create run dir");
+        let payload = serde_json::json!({"status": "Completed"});
+        let mut envelope = ledger_payload_envelope(&LedgerEventKind::TaskCompleted, Some(&payload))
+            .expect("build envelope")
+            .expect("payload envelope");
+        envelope.instance_shape_fingerprint = "shape-fnv1a64:0000000000000000".into();
+        let event = LedgerEvent {
+            event_id: "evt_1".into(),
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            kind: LedgerEventKind::TaskCompleted,
+            timestamp: "2026-09-03T00:00:00Z".into(),
+            payload: Some(payload),
+            payload_envelope: Some(envelope),
+        };
+        let body = format!(
+            "{}\n",
+            serde_json::to_string(&event).expect("serialize event")
+        );
+        fs::write(run_dir.join("ledger.jsonl"), body).expect("write ledger");
+
+        let error = RunLedger::new(run_dir)
+            .read_events()
+            .expect_err("mismatched envelope must fail closed on read");
+
+        assert!(format!("{error:#}").contains("instance_shape_fingerprint mismatch"));
+    }
+
+    #[test]
+    fn ledger_read_accepts_legacy_v1_payload_envelope() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let run_dir = temp.path().join("runs").join("run_1");
+        fs::create_dir_all(&run_dir).expect("create run dir");
+        let payload = serde_json::json!({"status": "Completed"});
+        let event = LedgerEvent {
+            event_id: "evt_1".into(),
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            kind: LedgerEventKind::TaskCompleted,
+            timestamp: "2026-09-03T00:00:00Z".into(),
+            payload: Some(payload.clone()),
+            payload_envelope: Some(LedgerPayloadEnvelope {
+                schema_version: 1,
+                shape_id: ledger_payload_legacy_v1_shape_id(&LedgerEventKind::TaskCompleted),
+                shape_fingerprint: ledger_payload_legacy_v1_shape_fingerprint_for_value(
+                    &LedgerEventKind::TaskCompleted,
+                    &payload,
+                ),
+                schema_id: String::new(),
+                schema_fingerprint: String::new(),
+                instance_shape_fingerprint: String::new(),
+            }),
+        };
+        let body = format!(
+            "{}\n",
+            serde_json::to_string(&event).expect("serialize event")
+        );
+        fs::write(run_dir.join("ledger.jsonl"), body).expect("write ledger");
+
+        let events = RunLedger::new(run_dir).read_events().expect("read ledger");
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, LedgerEventKind::TaskCompleted);
     }
 
     #[test]
