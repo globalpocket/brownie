@@ -29872,6 +29872,8 @@ modes:
                 LedgerEventKind::ToolExecutionFailed,
                 Some(json!({
                     "tool_id": "verification.cargo_check",
+                    "status": "Failed",
+                    "reason": "verification failed",
                     "verification_status": "Failed"
                 })),
             )
@@ -30568,6 +30570,8 @@ modes:
                 LedgerEventKind::ToolExecutionFailed,
                 Some(json!({
                     "tool_id": "verification.cargo_check",
+                    "status": "Failed",
+                    "reason": "verification failed",
                     "verification_status": "Failed"
                 })),
             )
@@ -64374,6 +64378,8 @@ content-length: {}
             .expect("task");
         let mut approval = denied["output"]["mcp_approval_binding"].clone();
         approval["status"] = json!("approved");
+        approval["approval_state_fingerprint"] =
+            json!("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         store
             .tasks()
             .append_task_event_with_payload(
@@ -64385,6 +64391,8 @@ content-length: {}
 
         let mut consumed_approval = approval;
         consumed_approval["status"] = json!("consumed");
+        consumed_approval["approval_state_fingerprint"] =
+            json!("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
         store
             .tasks()
             .append_task_event_with_payload(
@@ -64469,6 +64477,8 @@ content-length: {}
             .expect("task");
         let mut stale_approval = denied["output"]["mcp_approval_binding"].clone();
         stale_approval["status"] = json!("approved");
+        stale_approval["approval_state_fingerprint"] =
+            json!("sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
         stale_approval["request_fingerprint"] =
             json!("sha256:0000000000000000000000000000000000000000000000000000000000000000");
         store
@@ -64495,6 +64505,8 @@ content-length: {}
 
         let mut consumed_approval = denied["output"]["mcp_approval_binding"].clone();
         consumed_approval["status"] = json!("consumed");
+        consumed_approval["approval_state_fingerprint"] =
+            json!("sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd");
         store
             .tasks()
             .append_task_event_with_payload(
@@ -64516,7 +64528,7 @@ content-length: {}
         .expect("consumed approval denied");
         assert_eq!(consumed_denied["status"], json!("Denied"));
 
-        store
+        let overbroad_append = store
             .tasks()
             .append_task_event_with_payload(
                 &record,
@@ -64525,23 +64537,16 @@ content-length: {}
                     "status": "approved",
                     "approval_fingerprint": denied["output"]["mcp_approval_binding"]["approval_fingerprint"]
                 })),
-            )
-            .expect("over-broad approval event");
-        let overbroad_denied = handle_tool_execute(
-            json!(5),
-            Some(json!({
-                "task_id": task_id,
-                "mode_id": "reviewer",
-                "tool_id": "mcp.github.search_code",
-                "input": {"query": "bounded"}
-            })),
-        )
-        .result
-        .expect("over-broad approval denied");
-        assert_eq!(overbroad_denied["status"], json!("Denied"));
+            );
+        assert!(
+            overbroad_append.is_err(),
+            "strict approval payload validation rejects over-broad events before ledger append"
+        );
 
         let mut approval = denied["output"]["mcp_approval_binding"].clone();
         approval["status"] = json!("approved");
+        approval["approval_state_fingerprint"] =
+            json!("sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
         store
             .tasks()
             .append_task_event_with_payload(
@@ -64622,6 +64627,7 @@ content-length: {}
                 &record,
                 LedgerEventKind::McpToolExecutionApproved,
                 Some(json!({
+                    "approval_schema_version": 1,
                     "status": "approved",
                     "task_id": record.task_id,
                     "run_id": record.run_id,
@@ -64629,7 +64635,10 @@ content-length: {}
                     "server_id": "github",
                     "tool_name": "search_code",
                     "request_fingerprint": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-                    "approval_fingerprint": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+                    "catalog_provenance": {},
+                    "mcp_safety_policy": null,
+                    "approval_fingerprint": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "approval_state_fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
                 })),
             )
             .expect("destructive approval event");
