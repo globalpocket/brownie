@@ -599,12 +599,33 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             })
         })
         .collect::<Vec<_>>();
+    let task_completed_payload = json!({"status": "Completed"});
+    let task_completed_late_response_payload =
+        json!({"status": "Completed", "late_tool_response": true});
+    let payload_schema_fixtures = vec![
+        json!({
+            "ledger_event_kind": "TaskCompleted",
+            "payload": task_completed_payload,
+            "payload_schema_id": ledger_payload_schema_id("TaskCompleted"),
+            "payload_schema_fingerprint": ledger_payload_schema_fingerprint("TaskCompleted"),
+            "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&task_completed_payload),
+            "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("TaskCompleted", &task_completed_payload)
+        }),
+        json!({
+            "ledger_event_kind": "TaskCompleted",
+            "payload": task_completed_late_response_payload,
+            "payload_schema_id": ledger_payload_schema_id("TaskCompleted"),
+            "payload_schema_fingerprint": ledger_payload_schema_fingerprint("TaskCompleted"),
+            "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&task_completed_late_response_payload),
+            "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("TaskCompleted", &task_completed_late_response_payload)
+        }),
+    ];
 
     json!({
-        "schema_version": 3,
+        "schema_version": 4,
         "contract_id": "runtime-semantic-protocol-contract-v1",
         "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-        "phase": "RRP-5.3",
+        "phase": "RRP-5.4",
         "owner": "runtime",
         "runtime_release_debt_id": "protocol-event-canonization",
         "runtime_release_ready": false,
@@ -699,39 +720,28 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             "ledger_event_kind_source": "crates/brownie-store/src/lib.rs",
             "ledger_payload_envelope_type": "LedgerPayloadEnvelope",
             "ledger_payload_envelope_field": "payload_envelope",
+            "ledger_payload_schema_version_source": "LEDGER_PAYLOAD_SCHEMA_VERSION",
             "ledger_payload_shape_version_source": "LEDGER_PAYLOAD_SHAPE_VERSION",
-            "ledger_payload_shape_fingerprint_basis": "LedgerEventKind plus the canonical structural shape of the actual persisted payload value: object field names, value kinds, nested arrays/objects, nullability, and primitive kinds.",
-            "policy": "Durable event kind or typed payload shape changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes fingerprint concrete payload structure, not only event-kind version labels.",
+            "ledger_payload_schema_fingerprint_basis": "LedgerEventKind plus the fixed Runtime-owned payload schema descriptor for that event-kind/version. It is stable across optional field presence, null-vs-value choices, and other individual payload instance variation.",
+            "ledger_payload_instance_shape_fingerprint_basis": "LedgerEventKind plus the canonical structural shape of the actual persisted payload value. This is diagnostic instance evidence, not the durable contract schema fingerprint.",
+            "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint.",
             "guard": "guard:protocol-event-canonization",
-            "event_shape_fingerprint_count": ledger_event_kinds.len(),
-            "event_shape_fingerprints": ledger_event_kinds
+            "event_payload_schema_fingerprint_count": ledger_event_kinds.len(),
+            "event_payload_schema_fingerprints": ledger_event_kinds
                 .iter()
                 .map(|kind| {
-                    let shape_id = format!("ledger_payload.{kind}.v1");
+                    let schema_id = ledger_payload_schema_id(kind);
                     json!({
                         "ledger_event_kind": kind,
-                        "payload_shape_id": shape_id,
-                        "payload_shape_version": 1,
-                        "payload_shape_fingerprint": ledger_payload_shape_fingerprint_for_descriptor(kind, "payload:none"),
-                        "payload_shape_descriptor": "payload:none",
+                        "payload_schema_id": schema_id,
+                        "payload_schema_version": LEDGER_PAYLOAD_SCHEMA_VERSION,
+                        "payload_schema_fingerprint": ledger_payload_schema_fingerprint(kind),
+                        "payload_schema_descriptor": ledger_payload_schema_descriptor(kind),
                         "store_schema_version": 2
                     })
                 })
                 .collect::<Vec<_>>(),
-            "payload_shape_fixtures": [
-                {
-                    "ledger_event_kind": "TaskCompleted",
-                    "payload": {"status": "Completed"},
-                    "payload_shape_descriptor": ledger_payload_shape_descriptor(&json!({"status": "Completed"})),
-                    "payload_shape_fingerprint": ledger_payload_shape_fingerprint_for_value("TaskCompleted", &json!({"status": "Completed"}))
-                },
-                {
-                    "ledger_event_kind": "TaskCompleted",
-                    "payload": {"status": "Completed", "late_tool_response": true},
-                    "payload_shape_descriptor": ledger_payload_shape_descriptor(&json!({"status": "Completed", "late_tool_response": true})),
-                    "payload_shape_fingerprint": ledger_payload_shape_fingerprint_for_value("TaskCompleted", &json!({"status": "Completed", "late_tool_response": true}))
-                }
-            ]
+            "payload_schema_fixtures": payload_schema_fixtures
         }
     })
 }
@@ -1009,8 +1019,13 @@ fn optional_field_names(schema: &StructSchema) -> Vec<String> {
 
 fn golden_fixtures() -> Value {
     let task_completed_payload = json!({"status": "Completed"});
-    let task_completed_payload_shape_fingerprint =
-        ledger_payload_shape_fingerprint_for_value("TaskCompleted", &task_completed_payload);
+    let task_completed_payload_schema_fingerprint =
+        ledger_payload_schema_fingerprint("TaskCompleted");
+    let task_completed_payload_instance_shape_fingerprint =
+        ledger_payload_instance_shape_fingerprint_for_value(
+            "TaskCompleted",
+            &task_completed_payload,
+        );
     json!({
         "task_start_vsix_client_input": {
             "goal": "ship bounded release evidence",
@@ -1072,9 +1087,12 @@ fn golden_fixtures() -> Value {
             "timestamp": "2026-09-03T00:00:01Z",
             "payload": task_completed_payload,
             "payload_envelope": {
-                "schema_version": 1,
-                "shape_id": "ledger_payload.TaskCompleted.v1",
-                "shape_fingerprint": task_completed_payload_shape_fingerprint
+                "schema_version": LEDGER_PAYLOAD_SCHEMA_VERSION,
+                "shape_id": ledger_payload_schema_id("TaskCompleted"),
+                "shape_fingerprint": task_completed_payload_schema_fingerprint,
+                "schema_id": ledger_payload_schema_id("TaskCompleted"),
+                "schema_fingerprint": task_completed_payload_schema_fingerprint,
+                "instance_shape_fingerprint": task_completed_payload_instance_shape_fingerprint
             }
         },
         "task_status_values": ["Created", "Queued", "Running", "Completed", "Failed", "Cancelled"]
@@ -1401,12 +1419,31 @@ fn canonical_value(value: &Value) -> Value {
     }
 }
 
-fn ledger_payload_shape_fingerprint_for_value(kind: &str, payload: &Value) -> String {
-    ledger_payload_shape_fingerprint_for_descriptor(kind, &ledger_payload_shape_descriptor(payload))
+const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 2;
+
+fn ledger_payload_schema_id(kind: &str) -> String {
+    format!("ledger_payload.{kind}.v{LEDGER_PAYLOAD_SCHEMA_VERSION}")
 }
 
-fn ledger_payload_shape_fingerprint_for_descriptor(kind: &str, descriptor: &str) -> String {
-    stable_fingerprint(&format!("{kind}:payload_shape_v1:descriptor:{descriptor}"))
+fn ledger_payload_schema_fingerprint(kind: &str) -> String {
+    stable_fingerprint(&format!(
+        "{kind}:payload_schema_v{LEDGER_PAYLOAD_SCHEMA_VERSION}:descriptor:{}",
+        ledger_payload_schema_descriptor(kind)
+    ))
+}
+
+fn ledger_payload_schema_descriptor(kind: &str) -> String {
+    match kind {
+        "TaskCompleted" => "object{known_optional_fields:late_tool_response:boolean,status:string,terminal_process_loss:boolean,terminal_race_candidate:string;additional_fields:true}".to_string(),
+        _ => "any{schema_contract:event-kind-versioned-payload;compatibility_entry_required_before_release:true}".to_string(),
+    }
+}
+
+fn ledger_payload_instance_shape_fingerprint_for_value(kind: &str, payload: &Value) -> String {
+    stable_fingerprint(&format!(
+        "{kind}:payload_instance_shape_v{LEDGER_PAYLOAD_SCHEMA_VERSION}:descriptor:{}",
+        ledger_payload_shape_descriptor(payload)
+    ))
 }
 
 fn ledger_payload_shape_descriptor(value: &Value) -> String {

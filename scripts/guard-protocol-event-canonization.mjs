@@ -175,7 +175,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
   requireValue(contract.contract_id === 'runtime-semantic-protocol-contract-v1', errors, `${contractPath} contract_id must identify the Runtime semantic protocol contract.`);
   requireValue(contract.campaign === 'runtime-release-readiness-p0-p1-finite-closure', errors, `${contractPath} campaign must match Runtime release readiness.`);
-  requireValue(contract.phase === 'RRP-5.3', errors, `${contractPath} phase must be RRP-5.3.`);
+  requireValue(contract.phase === 'RRP-5.4', errors, `${contractPath} phase must be RRP-5.4.`);
   requireValue(contract.owner === 'runtime', errors, `${contractPath} owner must be runtime.`);
   requireValue(contract.runtime_release_debt_id === 'protocol-event-canonization', errors, `${contractPath} must bind to protocol-event-canonization.`);
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must not declare Runtime Release Ready.`);
@@ -328,36 +328,49 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   requireValue(durableCoupling.ledger_event_kind_source === 'crates/brownie-store/src/lib.rs', errors, `${contractPath} must bind durable event kinds to brownie-store.`);
   requireValue(durableCoupling.ledger_payload_envelope_type === 'LedgerPayloadEnvelope', errors, `${contractPath} must bind durable event payloads to LedgerPayloadEnvelope.`);
   requireValue(durableCoupling.ledger_payload_envelope_field === 'payload_envelope', errors, `${contractPath} must bind durable event payloads to payload_envelope.`);
+  requireValue(durableCoupling.ledger_payload_schema_version_source === 'LEDGER_PAYLOAD_SCHEMA_VERSION', errors, `${contractPath} must bind durable event payload schema versions to LEDGER_PAYLOAD_SCHEMA_VERSION.`);
   requireValue(durableCoupling.ledger_payload_shape_version_source === 'LEDGER_PAYLOAD_SHAPE_VERSION', errors, `${contractPath} must bind durable event payload shape versions to LEDGER_PAYLOAD_SHAPE_VERSION.`);
-  for (const token of ['LedgerPayloadEnvelope', 'payload_envelope', 'LEDGER_PAYLOAD_SHAPE_VERSION', 'ledger_payload_shape_fingerprint', 'ledger_payload_shape_descriptor']) {
+  for (const token of ['LedgerPayloadEnvelope', 'payload_envelope', 'LEDGER_PAYLOAD_SCHEMA_VERSION', 'schema_fingerprint', 'instance_shape_fingerprint', 'ledger_payload_schema_fingerprint', 'ledger_payload_instance_shape_fingerprint_for_value', 'validate_ledger_payload_envelope']) {
     requireValue(hasIdentifier(storeText, token), errors, `brownie-store durable ledger payload shape evidence must retain ${token}.`);
   }
   requireValue(typeof durableCoupling.policy === 'string' && durableCoupling.policy.includes('schema migration'), errors, `${contractPath} durable event changes must require migration policy.`);
   requireValue(
-    typeof durableCoupling.ledger_payload_shape_fingerprint_basis === 'string' &&
-      durableCoupling.ledger_payload_shape_fingerprint_basis.includes('actual persisted payload value'),
+    typeof durableCoupling.ledger_payload_schema_fingerprint_basis === 'string' &&
+      durableCoupling.ledger_payload_schema_fingerprint_basis.includes('fixed Runtime-owned payload schema descriptor'),
     errors,
-    `${contractPath} durable coupling must state that payload fingerprints are based on concrete payload structure.`
+    `${contractPath} durable coupling must state that schema fingerprints are fixed contract evidence.`
   );
-  requireValue(durableCoupling.event_shape_fingerprint_count === ledgerVariants.length, errors, `${contractPath} durable event shape fingerprint count must match LedgerEventKind variants.`);
+  requireValue(
+    typeof durableCoupling.ledger_payload_instance_shape_fingerprint_basis === 'string' &&
+      durableCoupling.ledger_payload_instance_shape_fingerprint_basis.includes('actual persisted payload value'),
+    errors,
+    `${contractPath} durable coupling must state that instance fingerprints are diagnostic payload evidence.`
+  );
+  requireValue(durableCoupling.event_payload_schema_fingerprint_count === ledgerVariants.length, errors, `${contractPath} durable event schema fingerprint count must match LedgerEventKind variants.`);
   const fingerprintByKind = new Map(
-    (Array.isArray(durableCoupling.event_shape_fingerprints) ? durableCoupling.event_shape_fingerprints : []).map((entry) => [entry?.ledger_event_kind, entry])
+    (Array.isArray(durableCoupling.event_payload_schema_fingerprints) ? durableCoupling.event_payload_schema_fingerprints : []).map((entry) => [entry?.ledger_event_kind, entry])
   );
   for (const variant of ledgerVariants) {
     const entry = fingerprintByKind.get(variant);
-    requireValue(Boolean(entry), errors, `${contractPath} durable_event_migration_coupling.event_shape_fingerprints must include ${variant}.`);
-    requireValue(entry?.payload_shape_version === 1, errors, `${contractPath} ${variant} payload_shape_version must be 1.`);
+    requireValue(Boolean(entry), errors, `${contractPath} durable_event_migration_coupling.event_payload_schema_fingerprints must include ${variant}.`);
+    requireValue(entry?.payload_schema_version === 2, errors, `${contractPath} ${variant} payload_schema_version must be 2.`);
     requireValue(entry?.store_schema_version === durableCoupling.store_schema_version, errors, `${contractPath} ${variant} store_schema_version must match durable coupling schema version.`);
-    requireValue(isNonEmptyString(entry?.payload_shape_fingerprint), errors, `${contractPath} ${variant} payload_shape_fingerprint must be present.`);
-    requireValue(isNonEmptyString(entry?.payload_shape_descriptor), errors, `${contractPath} ${variant} payload_shape_descriptor must be present.`);
+    requireValue(isNonEmptyString(entry?.payload_schema_id), errors, `${contractPath} ${variant} payload_schema_id must be present.`);
+    requireValue(isNonEmptyString(entry?.payload_schema_fingerprint), errors, `${contractPath} ${variant} payload_schema_fingerprint must be present.`);
+    requireValue(isNonEmptyString(entry?.payload_schema_descriptor), errors, `${contractPath} ${variant} payload_schema_descriptor must be present.`);
   }
-  const shapeFixtures = Array.isArray(durableCoupling.payload_shape_fixtures) ? durableCoupling.payload_shape_fixtures : [];
-  const taskCompletedFixtures = shapeFixtures.filter((fixture) => fixture?.ledger_event_kind === 'TaskCompleted');
-  requireValue(taskCompletedFixtures.length >= 2, errors, `${contractPath} must include TaskCompleted payload shape drift fixtures.`);
+  const schemaFixtures = Array.isArray(durableCoupling.payload_schema_fixtures) ? durableCoupling.payload_schema_fixtures : [];
+  const taskCompletedFixtures = schemaFixtures.filter((fixture) => fixture?.ledger_event_kind === 'TaskCompleted');
+  requireValue(taskCompletedFixtures.length >= 2, errors, `${contractPath} must include TaskCompleted payload schema/instance split fixtures.`);
   requireValue(
-    new Set(taskCompletedFixtures.map((fixture) => fixture?.payload_shape_fingerprint)).size >= 2,
+    new Set(taskCompletedFixtures.map((fixture) => fixture?.payload_schema_fingerprint)).size === 1,
     errors,
-    `${contractPath} payload shape fixtures must prove field-shape changes alter fingerprints.`
+    `${contractPath} payload schema fixtures must keep one fixed contract schema fingerprint across allowed instance variation.`
+  );
+  requireValue(
+    new Set(taskCompletedFixtures.map((fixture) => fixture?.payload_instance_shape_fingerprint)).size >= 2,
+    errors,
+    `${contractPath} payload schema fixtures must keep diagnostic instance shape fingerprints separate from schema fingerprints.`
   );
 
   if (options.skipRustGeneratedContractCheck !== true) {

@@ -44,8 +44,12 @@ interface SemanticProtocolContract {
   durable_event_migration_coupling: {
     ledger_payload_envelope_type: string;
     ledger_payload_envelope_field: string;
-    event_shape_fingerprint_count: number;
-    payload_shape_fixtures: Array<{ ledger_event_kind: string; payload_shape_fingerprint: string }>;
+    event_payload_schema_fingerprint_count: number;
+    payload_schema_fixtures: Array<{
+      ledger_event_kind: string;
+      payload_schema_fingerprint: string;
+      payload_instance_shape_fingerprint: string;
+    }>;
   };
 }
 
@@ -78,7 +82,7 @@ describe('Runtime semantic protocol contract', () => {
     const mappedMethods = new Set(readCanonicalMap().protocol_method_groups.flatMap((group) => group.methods));
     const contractedMethods = new Set(contract.method_contracts.map((method) => method.method));
 
-    expect(contract.phase).toBe('RRP-5.3');
+    expect(contract.phase).toBe('RRP-5.4');
     expect(contractedMethods).toEqual(mappedMethods);
     expect(contract.method_contracts.every((method) => method.request_schema && method.result_schema)).toBe(true);
     expect(contract.method_contracts.every((method) => method.result_schema_ref === `#/type_schemas/${method.result_type}`)).toBe(true);
@@ -110,8 +114,11 @@ describe('Runtime semantic protocol contract', () => {
     expect(isLedgerEventSummary(fixtures.ledger_event_summary)).toBe(true);
     expect(fixtures.ledger_event_with_payload_envelope).toMatchObject({
       payload_envelope: {
-        schema_version: 1,
-        shape_id: 'ledger_payload.TaskCompleted.v1',
+        schema_version: 2,
+        shape_id: 'ledger_payload.TaskCompleted.v2',
+        schema_id: 'ledger_payload.TaskCompleted.v2',
+        schema_fingerprint: expect.stringMatching(/^shape-fnv1a64:/),
+        instance_shape_fingerprint: expect.stringMatching(/^shape-fnv1a64:/),
       },
     });
   });
@@ -121,9 +128,10 @@ describe('Runtime semantic protocol contract', () => {
 
     expect(coupling.ledger_payload_envelope_type).toBe('LedgerPayloadEnvelope');
     expect(coupling.ledger_payload_envelope_field).toBe('payload_envelope');
-    expect(coupling.event_shape_fingerprint_count).toBeGreaterThan(0);
-    const taskCompleted = coupling.payload_shape_fixtures.filter((fixture) => fixture.ledger_event_kind === 'TaskCompleted');
-    expect(new Set(taskCompleted.map((fixture) => fixture.payload_shape_fingerprint)).size).toBeGreaterThan(1);
+    expect(coupling.event_payload_schema_fingerprint_count).toBeGreaterThan(0);
+    const taskCompleted = coupling.payload_schema_fixtures.filter((fixture) => fixture.ledger_event_kind === 'TaskCompleted');
+    expect(new Set(taskCompleted.map((fixture) => fixture.payload_schema_fingerprint)).size).toBe(1);
+    expect(new Set(taskCompleted.map((fixture) => fixture.payload_instance_shape_fingerprint)).size).toBeGreaterThan(1);
   });
 
   it('rejects unknown fields from semantic contract fixtures', () => {
