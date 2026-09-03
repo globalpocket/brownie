@@ -1,14 +1,13 @@
 {
   "schema_version": 1,
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-  "phase": "RRP-4",
-  "phase_title": "Durable Schema Version and Migration",
+  "phase": "RRP-5",
+  "phase_title": "Protocol/Event Canonization",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "a274ff9cf6d982318fb0ee7d7c7fad73f0e870b0",
+  "audited_main_commit": "c0ce34fa53a098d1cd51b2ff09afcab68ade4d48",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
     "runtime-release-guard-ci",
-    "protocol-event-canonization",
     "runtime-module-decomposition-reevaluation",
     "platform-deadline-durability-hardening"
   ],
@@ -146,14 +145,15 @@
       "id": "protocol-event-canonization",
       "title": "Protocol/Event canonization",
       "priority": "P1",
-      "status": "partial",
+      "status": "implemented_sufficient",
       "responsibility_domain": "runtime",
-      "debt_classification": "required_before_release",
+      "debt_classification": "closed",
       "evidence": [
-        "Runtime events and protocol structs exist in brownie-protocol, brownie-events, brownie-store, runtime, CLI, and VSIX projection code.",
-        "Release needs a canonical event/protocol ownership map and guard against drift between Rust protocol, runtime JSON-RPC handlers, CLI validation, VSIX validation, and docs."
+        "RRP-5 adds docs/architecture/runtime-protocol-event-canonical-map.json as the canonical Runtime-owned protocol/event ownership map for JSON-RPC method groups, generated compatibility families, event domains, durable ledger variants, CLI transport subset, VSIX validators/client calls, and docs anchors.",
+        "scripts/guard-protocol-event-canonization.mjs extracts Runtime METHOD_* constants and dispatch arms, EventKind variants, and LedgerEventKind variants, then fails when a method/event is unmapped or when declared Runtime, protocol, CLI, VSIX, or docs anchors drift.",
+        "extensions/brownie-vsix/package.json now invokes pnpm --workspace-root guard:protocol-event-canonization through the existing CI-invoked VSIX check path, and scripts/guard-protocol-event-canonization.test.mjs covers unowned method drift, missing dispatch, ledger variant drift, and VSIX projection drift."
       ],
-      "next_action": "Canonize protocol/event ownership and drift tests in the protocol/event phase."
+      "next_action": "Use the canonical protocol/event map and drift guard as the release baseline while closing the remaining Runtime-owned blockers."
     },
     {
       "id": "runtime-module-decomposition-reevaluation",

@@ -1,0 +1,474 @@
+{
+  "schema_version": 1,
+  "map_id": "runtime-protocol-event-canonical-map-v0",
+  "campaign": "runtime-release-readiness-p0-p1-finite-closure",
+  "phase": "RRP-5",
+  "owner": "runtime",
+  "runtime_release_debt_id": "protocol-event-canonization",
+  "runtime_release_ready": false,
+  "sources": [
+    {
+      "path": "crates/brownie-runtime/src/lib.rs",
+      "owner": "runtime",
+      "role": "JSON-RPC method constants, dispatch, admission, execution, recovery, and ledger emission"
+    },
+    {
+      "path": "crates/brownie-protocol/src/lib.rs",
+      "owner": "runtime",
+      "role": "Rust protocol request, response, and bounded summary types"
+    },
+    {
+      "path": "crates/brownie-store/src/lib.rs",
+      "owner": "runtime",
+      "role": "Durable ledger event kinds and store-backed event persistence"
+    },
+    {
+      "path": "crates/brownie-events/src/lib.rs",
+      "owner": "runtime",
+      "role": "Coarse runtime event domain names"
+    },
+    {
+      "path": "crates/brownie-cli/src/runtime_client.rs",
+      "owner": "cli_thin_transport",
+      "role": "CLI JSON-RPC method projection and bounded response validation"
+    },
+    {
+      "path": "extensions/brownie-vsix/src/runtime/protocol.ts",
+      "owner": "vsix_thin_projection",
+      "role": "VSIX TypeScript protocol interfaces and runtime result validators"
+    },
+    {
+      "path": "extensions/brownie-vsix/src/runtime/runtimeClient.ts",
+      "owner": "vsix_thin_projection",
+      "role": "VSIX JSON-RPC method projection"
+    },
+    {
+      "path": "docs/specifications/runtime-protocol-spec-v0.md",
+      "owner": "runtime_docs",
+      "role": "Human-readable canonical protocol/event inventory"
+    }
+  ],
+  "protocol_method_groups": [
+    {
+      "id": "runtime-observability",
+      "owner": "runtime",
+      "stability_class": "stable_v0",
+      "methods": [
+        "runtime.status",
+        "llm.status",
+        "llm.health",
+        "runtime.config.get",
+        "runtime.diagnostics.get"
+      ],
+      "vsix_client_methods": true,
+      "cli_methods": [
+        "runtime.status"
+      ],
+      "anchors": [
+        {
+          "path": "crates/brownie-protocol/src/lib.rs",
+          "tokens": [
+            "pub struct RuntimeStatus",
+            "pub struct LlmStatusResult",
+            "pub struct LlmHealthParams",
+            "pub struct LlmHealthResult",
+            "pub struct RuntimeConfigGetResult",
+            "pub struct RuntimeDiagnosticsResult"
+          ]
+        },
+        {
+          "path": "extensions/brownie-vsix/src/runtime/protocol.ts",
+          "tokens": [
+            "export function isRuntimeStatusResult",
+            "export function isLlmStatusResult",
+            "export function isLlmHealthResult",
+            "export function isRuntimeConfigGetResult",
+            "export function isRuntimeDiagnosticsResult"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "task-lifecycle",
+      "owner": "runtime",
+      "stability_class": "stable_v0",
+      "methods": [
+        "task.start",
+        "task.get",
+        "task.cancel",
+        "task.run",
+        "task.inspect",
+        "task.list"
+      ],
+      "vsix_client_methods": true,
+      "cli_methods": [
+        "task.run",
+        "task.inspect",
+        "task.list"
+      ],
+      "anchors": [
+        {
+          "path": "crates/brownie-protocol/src/lib.rs",
+          "tokens": [
+            "pub struct TaskStartParams",
+            "pub struct TaskStartResult",
+            "pub struct TaskGetParams",
+            "pub struct TaskCancelParams",
+            "pub struct TaskCancelResult",
+            "pub struct TaskRunParams",
+            "pub struct TaskInspectResult",
+            "pub struct TaskRecord"
+          ]
+        },
+        {
+          "path": "extensions/brownie-vsix/src/runtime/protocol.ts",
+          "tokens": [
+            "export function isTaskStartParams",
+            "export function isTaskStartResult",
+            "export function isTaskCancelParams",
+            "export function isTaskCancelResult",
+            "export function isTaskRunParams",
+            "export function isTaskRunResult",
+            "export function isTaskInspectResult",
+            "export function isTaskListResult"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "headless-control",
+      "owner": "runtime",
+      "stability_class": "stable_v0",
+      "methods": [
+        "headless.continue_once",
+        "headless.run.advance",
+        "headless.run.drive",
+        "headless.run.recovery_probe"
+      ],
+      "vsix_client_methods": false,
+      "cli_methods": [
+        "headless.continue_once",
+        "headless.run.advance",
+        "headless.run.drive",
+        "headless.run.recovery_probe"
+      ],
+      "anchors": [
+        {
+          "path": "crates/brownie-protocol/src/lib.rs",
+          "tokens": [
+            "pub struct HeadlessContinueOnceParams",
+            "pub struct HeadlessRunAdvanceParams",
+            "pub struct HeadlessRunDriveParams",
+            "pub struct HeadlessRunRecoveryProbeParams",
+            "pub struct HeadlessRunRecoveryProbeResult"
+          ]
+        },
+        {
+          "path": "extensions/brownie-vsix/src/runtime/protocol.ts",
+          "tokens": [
+            "export function isHeadlessContinueOnceParams",
+            "export function isHeadlessRunAdvanceParams",
+            "export function isHeadlessRunDriveParams",
+            "export function isHeadlessRunAdvanceResult",
+            "export function isHeadlessRunDriveResult"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mode-and-modepack",
+      "owner": "runtime",
+      "stability_class": "stable_v0",
+      "methods": [
+        "mode.list",
+        "mode.get",
+        "modepack.activate",
+        "modepack.fetchCandidate",
+        "modepack.selectRegistryUpdate",
+        "modepack.approveCandidate",
+        "modepack.trustSigner",
+        "modepack.revokeSigner",
+        "modepack.verifyCandidateProvenance",
+        "modepack.replaceActive",
+        "modepack.rollbackActive"
+      ],
+      "vsix_client_methods": true,
+      "cli_methods": [
+        "mode.list"
+      ],
+      "anchors": [
+        {
+          "path": "crates/brownie-protocol/src/lib.rs",
+          "tokens": [
+            "pub struct ModeListResult",
+            "pub struct ModeGetParams",
+            "pub struct ModePackActivateParams",
+            "pub struct ModePackFetchCandidateParams",
+            "pub struct ModePackSelectRegistryUpdateParams",
+            "pub struct ModePackApproveCandidateParams",
+            "pub struct ModePackTrustSignerParams",
+            "pub struct ModePackRevokeSignerParams",
+            "pub struct ModePackVerifyCandidateProvenanceParams",
+            "pub struct ModePackReplaceActiveParams",
+            "pub struct ModePackRollbackActiveParams"
+          ]
+        },
+        {
+          "path": "extensions/brownie-vsix/src/runtime/protocol.ts",
+          "tokens": [
+            "export function isModeListResult",
+            "export function isModePackActivateResult",
+            "export function isModePackFetchCandidateResult",
+            "export function isModePackSelectRegistryUpdateResult",
+            "export function isModePackApproveCandidateResult",
+            "export function isModePackTrustSignerResult",
+            "export function isModePackRevokeSignerResult",
+            "export function isModePackVerifyCandidateProvenanceResult",
+            "export function isModePackReplaceActiveResult",
+            "export function isModePackRollbackActiveResult"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "permission-and-tools",
+      "owner": "runtime",
+      "stability_class": "stable_v0",
+      "methods": [
+        "permission.check",
+        "tool.list",
+        "tool.plan",
+        "tool.intent.parse",
+        "tool.execute",
+        "mcp.tool.approve"
+      ],
+      "vsix_client_methods": false,
+      "cli_methods": [],
+      "anchors": [
+        {
+          "path": "crates/brownie-protocol/src/lib.rs",
+          "tokens": [
+            "pub struct PermissionCheckParams",
+            "pub struct PermissionCheckResult",
+            "pub struct ToolPlanParams",
+            "pub struct ToolPlanResult",
+            "pub struct ToolIntentParseParams",
+            "pub struct ToolIntentParseResult",
+            "pub struct ToolExecuteParams",
+            "pub struct ToolExecuteResult",
+            "pub struct McpToolApprovalApproveParams",
+            "pub struct McpToolApprovalApproveResult"
+          ]
+        },
+        {
+          "path": "extensions/brownie-vsix/src/runtime/protocol.ts",
+          "tokens": [
+            "export function isPermissionCheckResult",
+            "export function isToolPlanResult",
+            "export function isToolIntentParseResult",
+            "export function isToolExecuteResult"
+          ]
+        },
+        {
+          "path": "extensions/brownie-vsix/src/runtime/runtimeClient.ts",
+          "tokens": [
+            "'permission.check'",
+            "'tool.plan'",
+            "'tool.intent.parse'",
+            "'tool.execute'"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "run-and-codebase-inspection",
+      "owner": "runtime",
+      "stability_class": "stable_v0",
+      "methods": [
+        "run.events",
+        "run.inspect",
+        "codebase.index.build",
+        "codebase.index.query"
+      ],
+      "vsix_client_methods": false,
+      "cli_methods": [
+        "run.inspect"
+      ],
+      "anchors": [
+        {
+          "path": "crates/brownie-protocol/src/lib.rs",
+          "tokens": [
+            "pub struct RunEventsParams",
+            "pub struct RunInspectParams",
+            "pub struct RunInspectSummary",
+            "pub struct CodebaseIndexBuildParams",
+            "pub struct CodebaseIndexBuildResult",
+            "pub struct CodebaseIndexQueryParams",
+            "pub struct CodebaseIndexQueryResult"
+          ]
+        },
+        {
+          "path": "extensions/brownie-vsix/src/runtime/protocol.ts",
+          "tokens": [
+            "export function isRunEventsResult",
+            "export function isRunInspectResult",
+            "export function isCodebaseIndexBuildResult",
+            "export function isCodebaseIndexQueryResult"
+          ]
+        },
+        {
+          "path": "extensions/brownie-vsix/src/runtime/runtimeClient.ts",
+          "tokens": [
+            "'run.events'",
+            "'run.inspect'"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "proposal-and-review",
+      "owner": "runtime",
+      "stability_class": "stable_v0",
+      "methods": [
+        "proposal.list",
+        "proposal.inspect",
+        "proposal.approve",
+        "proposal.reject",
+        "proposal.preflight",
+        "proposal.readiness",
+        "proposal.applyCapability",
+        "proposal.applyDryRun",
+        "proposal.apply",
+        "proposal.applyDryRunHistory",
+        "proposal.auditTrail",
+        "proposal.reviewBundle",
+        "proposal.reviewVerdict",
+        "proposal.reviewReport",
+        "proposal.reviewQueue"
+      ],
+      "covered_method_prefixes": [
+        "proposal.reviewQueueDiagnostics"
+      ],
+      "vsix_client_methods": true,
+      "cli_methods": [
+        "proposal.inspect"
+      ],
+      "anchors": [
+        {
+          "path": "crates/brownie-protocol/src/lib.rs",
+          "tokens": [
+            "pub struct ProposalListParams",
+            "pub struct ProposalInspectParams",
+            "pub struct ProposalApproveParams",
+            "pub struct ProposalRejectParams",
+            "pub struct ProposalPreflightParams",
+            "pub struct ProposalReadinessParams",
+            "pub struct ProposalApplyCapabilityParams",
+            "pub struct ProposalApplyDryRunParams",
+            "pub struct ProposalApplyParams",
+            "pub struct ProposalReviewBundleParams",
+            "pub struct ProposalReviewQueueParams",
+            "pub struct ProposalReviewQueueDiagnosticsParams"
+          ]
+        },
+        {
+          "path": "extensions/brownie-vsix/src/runtime/protocol.ts",
+          "tokens": [
+            "export function isProposalListResult",
+            "export function isProposalInspectResult",
+            "export function isProposalApplyResult",
+            "export function isProposalReviewBundleResult",
+            "export function isProposalReviewQueueResult",
+            "export function isProposalReviewQueueDiagnosticsResult"
+          ]
+        }
+      ]
+    }
+  ],
+  "event_groups": [
+    {
+      "id": "coarse-event-domains",
+      "owner": "runtime",
+      "event_kind_variants": [
+        "Runtime",
+        "Task",
+        "Llm",
+        "Tool",
+        "File",
+        "Subtask",
+        "Index",
+        "ModePack"
+      ],
+      "anchors": [
+        {
+          "path": "crates/brownie-events/src/lib.rs",
+          "tokens": [
+            "pub enum EventKind"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "durable-ledger-events",
+      "owner": "runtime",
+      "ledger_variants": [
+        "TaskStarted",
+        "TaskCancelled",
+        "ToolExecutionRequested",
+        "McpToolExecutionApproved",
+        "ToolExecutionCompleted",
+        "ToolExecutionDenied",
+        "ToolExecutionFailed",
+        "HeadlessRunSessionAdvanced",
+        "HeadlessRunCompletionFinalized"
+      ],
+      "ledger_variant_prefixes": [
+        "CodebaseIndex",
+        "VerificationRecovery",
+        "Task",
+        "Mode",
+        "ExternalModePack",
+        "Permission",
+        "Tool",
+        "McpTool",
+        "Subtask",
+        "ParentJoin",
+        "WorkspacePatch",
+        "Headless",
+        "AgentLoop",
+        "Prompt",
+        "Llm",
+        "SecondPass"
+      ],
+      "anchors": [
+        {
+          "path": "crates/brownie-store/src/lib.rs",
+          "tokens": [
+            "pub enum LedgerEventKind",
+            "pub struct LedgerEvent",
+            "pub struct CodebaseIndexLedgerEvent"
+          ]
+        },
+        {
+          "path": "extensions/brownie-vsix/src/runtime/protocol.ts",
+          "tokens": [
+            "export interface LedgerEventSummary",
+            "export function isLedgerEventSummary",
+            "function isSanitizedLedgerPayload"
+          ]
+        }
+      ]
+    }
+  ],
+  "drift_rules": [
+    "Every Runtime METHOD_* JSON-RPC constant must be covered by a named protocol_method_group or covered_method_prefixes compatibility family.",
+    "Every explicit method in this map must retain a Runtime constant, Runtime dispatch arm, docs inventory entry, and any declared CLI or VSIX projection.",
+    "Every EventKind and LedgerEventKind variant must be covered by a named event group or event prefix.",
+    "CLI and VSIX are thin transport/projection validators; Runtime remains the execution, admission, ledger, permission, replay, and completion authority."
+  ],
+  "non_authority": [
+    "Runtime owns protocol/event authority; CLI and VSIX cannot grant Runtime authority.",
+    "MCP descriptions, schemas, annotations, results, executable identity, and approval state are not Runtime authority.",
+    "prose, model output, raw prompt text, provider responses, file content, absolute paths, canonical paths, secrets, environment values, executable content, and process output are not canonical protocol/event evidence."
+  ]
+}

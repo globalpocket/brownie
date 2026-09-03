@@ -13,7 +13,10 @@ const ciText = [
 ].join('\n');
 
 const cargoText = 'license = "UNLICENSED"\npublish = false\n';
-const vsixPackageText = 'pnpm --workspace-root guard:runtime-release-readiness';
+const vsixPackageText = [
+  'pnpm --workspace-root guard:runtime-release-readiness',
+  'pnpm --workspace-root guard:protocol-event-canonization'
+].join('\n');
 
 function item(overrides) {
   return {
@@ -302,6 +305,11 @@ test('rejects CI or VSIX check path that omits release readiness guard coverage'
 
   const vsixErrors = validate(validAudit(), { vsixPackageText: 'pnpm --workspace-root guard:phase-value' });
   assert(vsixErrors.some((error) => error.includes('guard:runtime-release-readiness')));
+
+  const protocolGuardErrors = validate(validAudit(), {
+    vsixPackageText: 'pnpm --workspace-root guard:runtime-release-readiness'
+  });
+  assert(protocolGuardErrors.some((error) => error.includes('guard:protocol-event-canonization')));
 });
 
 test('accepts canonical Runtime boundary contract', () => {
