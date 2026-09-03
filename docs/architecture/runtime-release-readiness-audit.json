@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-  "phase": "RRP-3",
-  "phase_title": "Real Process-Loss Recovery E2E",
+  "phase": "RRP-3.1",
+  "phase_title": "MCP Execution and Recovery Race Safety",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "e098364d8a5a7ade0b8f9cfdb8f719682bd11063",
+  "audited_main_commit": "3f08b3b91923731287be49c2d4daafab80f44873",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
     "durable-schema-version-and-migration",
@@ -73,11 +73,13 @@
       "debt_classification": "closed",
       "evidence": [
         "RRP-3 replaces create_new MCP approval claim lock authority with an OS-owned advisory file lock over a non-authoritative residual lock file.",
-        "headless.run.recovery_probe invokes Runtime-owned unfinished MCP approval recovery and converts latest executing approval state to outcome_unknown with bounded fingerprint evidence exactly once.",
-        "Focused runtime tests cover stale residual lock file progress, executing-to-outcome_unknown recovery idempotence, and no tools/call replay from outcome_unknown.",
-        "test:rrp3-process-loss launches actual brownie-runtime child processes with an isolated trusted active Mode Pack snapshot and deterministic fake MCP stdio server, kills/restarts Runtime mid-call, verifies stale lock progress, executing-before-spawn recovery, outcome_unknown idempotence, independent process racing with at most one tools/call, and terminal consumed non-rerun after restart."
+        "RRP-3.1 retains the approval claim lock through executing evidence, actual tools/call, result normalization, and terminal approval append.",
+        "terminalize_mcp_tool_approval rereads latest matching approval state before appending terminal evidence and refuses missing, non-executing, or changed approval_state_fingerprint transitions, preventing outcome_unknown-to-consumed terminal chains.",
+        "recover_unfinished_mcp_tool_approvals uses a nonblocking attempt on the same execution-scoped lock, skips WouldBlock live owners without ledger mutation, rereads latest matching state under the lock, and appends outcome_unknown at most once only for latest executing evidence.",
+        "test:rrp3-process-loss launches actual brownie-runtime child processes with an isolated trusted active Mode Pack snapshot and deterministic fake MCP stdio server, verifies stale lock progress, executing-before-spawn recovery, concurrent recovery without duplicate outcome_unknown, recovery during live tools/call as a no-op, mid-tools/call process loss recovery, independent process racing with at most one tools/call, and terminal consumed non-rerun after restart.",
+        "The existing CI-invoked VSIX check path now invokes pnpm --workspace-root test:rrp3-process-loss."
       ],
-      "next_action": "Use RRP-3 process-loss evidence as the local Runtime recovery baseline while closing the remaining Runtime Release Readiness blockers."
+      "next_action": "Use RRP-3/RRP-3.1 process-loss and race-safety evidence as the local Runtime recovery baseline while closing the remaining Runtime Release Readiness blockers."
     },
     {
       "id": "durable-schema-version-and-migration",
@@ -100,12 +102,12 @@
       "responsibility_domain": "runtime",
       "debt_classification": "required_before_release",
       "evidence": [
-        "The existing CI still uses pnpm install instead of pnpm install --frozen-lockfile and does not directly run every release-relevant guard test.",
-        "RRD-1 wires the Runtime release readiness guard into the VSIX check path that CI already invokes.",
-        "The Runtime release readiness guard now supports audit-driven convergence: open Runtime P0/P1 debt keeps runtime_release_ready=false, closed Runtime blockers must be removed from release_ready_blocked_by, and all closed Runtime blockers require runtime_release_ready=true.",
-        "Full CI Release Gate hardening remains a later P0 closure phase because workflow update authority was unavailable."
+        "RRP-3.1 adds pnpm --workspace-root test:rrp3-process-loss to the existing VSIX check script that CI invokes, making the real process-loss E2E CI-required without changing .github/workflows/ci.yml.",
+        "RRD-1 already wires the Runtime release readiness guard into the VSIX check path that CI invokes.",
+        "The Runtime release readiness guard supports audit-driven convergence: open Runtime P0/P1 debt keeps runtime_release_ready=false, closed Runtime blockers must be removed from release_ready_blocked_by, and all closed Runtime blockers require runtime_release_ready=true.",
+        "Direct .github workflow wiring remains blocked by missing OAuth workflow scope, and full CI Release Gate hardening remains a later P0 closure phase for frozen install, fmt, audit/SBOM/secret/dependency, and complete release gate policy coverage."
       ],
-      "next_action": "Close the remaining CI workflow hardening when workflow update authority is available."
+      "next_action": "Close direct workflow wiring and remaining full CI release-gate hardening in the dedicated CI phase when workflow-scope credentials are available."
     },
     {
       "id": "mcp-runtime-safety-policy",

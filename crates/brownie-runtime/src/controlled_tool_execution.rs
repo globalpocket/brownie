@@ -3,6 +3,7 @@
 use super::*;
 use anyhow::{bail, Context};
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 use std::{fs, io::Write, thread, time::Duration};
 
 const MCP_APPROVAL_CLAIM_LOCK_RETRIES: usize = 40;
@@ -905,9 +906,10 @@ impl McpToolApprovalState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct McpToolApprovalClaim {
     executing_binding: Value,
+    _lock: McpToolApprovalClaimLock,
 }
 
 enum McpToolApprovalClaimResult {
@@ -920,7 +922,7 @@ fn claim_mcp_tool_approval_for_execution(
     record: &TaskRecord,
     approval_binding: &Value,
 ) -> anyhow::Result<McpToolApprovalClaimResult> {
-    let _lock = acquire_mcp_tool_approval_claim_lock(store, record, approval_binding)?;
+    let lock = acquire_mcp_tool_approval_claim_lock(store, record, approval_binding)?;
     match latest_mcp_tool_approval_state(store, record, approval_binding)? {
         Some(McpToolApprovalState::Approved) => {
             let executing_binding = mcp_tool_approval_state_payload(
@@ -936,6 +938,7 @@ fn claim_mcp_tool_approval_for_execution(
             )?;
             Ok(McpToolApprovalClaimResult::Claimed(McpToolApprovalClaim {
                 executing_binding,
+                _lock: lock,
             }))
         }
         Some(state) => Ok(McpToolApprovalClaimResult::Denied(format!(
@@ -1005,6 +1008,26 @@ fn terminalize_mcp_tool_approval(
     let Some(claim) = claim else {
         return Ok(None);
     };
+    let Some((_, latest_payload)) =
+        latest_mcp_tool_approval_payload_with_index(store, record, &claim.executing_binding)?
+    else {
+        bail!("MCP tool approval claim disappeared before terminal append");
+    };
+    if McpToolApprovalState::from_payload(&latest_payload) != McpToolApprovalState::Executing {
+        bail!("MCP tool approval latest state changed before terminal append");
+    }
+    let expected_state_fingerprint = claim
+        .executing_binding
+        .get("approval_state_fingerprint")
+        .and_then(Value::as_str);
+    let latest_state_fingerprint = latest_payload
+        .get("approval_state_fingerprint")
+        .and_then(Value::as_str);
+    if expected_state_fingerprint.is_none()
+        || expected_state_fingerprint != latest_state_fingerprint
+    {
+        bail!("MCP tool approval executing state fingerprint changed before terminal append");
+    }
     let terminal_binding = mcp_tool_approval_state_payload(
         &claim.executing_binding,
         status,
@@ -1060,6 +1083,24 @@ fn latest_mcp_tool_approval_state(
     record: &TaskRecord,
     approval_binding: &Value,
 ) -> anyhow::Result<Option<McpToolApprovalState>> {
+    Ok(
+        latest_mcp_tool_approval_payload_with_index(store, record, approval_binding)?.map(
+            |(_, payload)| {
+                if mcp_tool_approval_payload_matches_binding(&payload, approval_binding) {
+                    McpToolApprovalState::from_payload(&payload)
+                } else {
+                    McpToolApprovalState::Malformed
+                }
+            },
+        ),
+    )
+}
+
+fn latest_mcp_tool_approval_payload_with_index(
+    store: &BrownieStore,
+    record: &TaskRecord,
+    approval_binding: &Value,
+) -> anyhow::Result<Option<(usize, Value)>> {
     let events = store.tasks().read_ledger_events(&record.run_id)?;
     let expected_fingerprint = approval_binding
         .get("approval_fingerprint")
@@ -1069,19 +1110,14 @@ fn latest_mcp_tool_approval_state(
     };
     Ok(events
         .iter()
+        .enumerate()
         .rev()
-        .filter(|event| event.kind == LedgerEventKind::McpToolExecutionApproved)
-        .filter_map(|event| event.payload.as_ref())
-        .find(|payload| {
+        .filter(|(_, event)| event.kind == LedgerEventKind::McpToolExecutionApproved)
+        .filter_map(|(index, event)| event.payload.as_ref().map(|payload| (index, payload)))
+        .find(|(_, payload)| {
             payload.get("approval_fingerprint").and_then(Value::as_str) == Some(fingerprint)
         })
-        .map(|payload| {
-            if mcp_tool_approval_payload_matches_binding(payload, approval_binding) {
-                McpToolApprovalState::from_payload(payload)
-            } else {
-                McpToolApprovalState::Malformed
-            }
-        }))
+        .map(|(index, payload)| (index, payload.clone())))
 }
 
 fn mcp_tool_approval_payload_matches_binding(payload: &Value, approval_binding: &Value) -> bool {
@@ -1136,6 +1172,25 @@ fn acquire_mcp_tool_approval_claim_lock(
     record: &TaskRecord,
     approval_binding: &Value,
 ) -> anyhow::Result<McpToolApprovalClaimLock> {
+    for _ in 0..MCP_APPROVAL_CLAIM_LOCK_RETRIES {
+        if let Some(lock) =
+            try_acquire_mcp_tool_approval_claim_lock(store, record, approval_binding)?
+        {
+            return Ok(lock);
+        }
+        thread::sleep(MCP_APPROVAL_CLAIM_LOCK_SLEEP);
+    }
+    bail!(
+        "failed to acquire MCP approval claim lock for {}",
+        record.run_id
+    )
+}
+
+fn try_acquire_mcp_tool_approval_claim_lock(
+    store: &BrownieStore,
+    record: &TaskRecord,
+    approval_binding: &Value,
+) -> anyhow::Result<Option<McpToolApprovalClaimLock>> {
     let run_dir = store.tasks().run_dir(&record.run_id);
     fs::create_dir_all(&run_dir)
         .with_context(|| format!("failed to create {}", run_dir.display()))?;
@@ -1149,48 +1204,42 @@ fn acquire_mcp_tool_approval_claim_lock(
     let Some(lock_name) = lock_name else {
         bail!("MCP tool approval fingerprint is malformed and cannot be locked");
     };
-    let lock_path = run_dir.join(format!("mcp-approval-{lock_name}.lock"));
-    for _ in 0..MCP_APPROVAL_CLAIM_LOCK_RETRIES {
-        match fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(&lock_path)
-        {
-            Ok(mut file) => {
-                match file.try_lock() {
-                    Ok(()) => {}
-                    Err(std::fs::TryLockError::WouldBlock) => {
-                        thread::sleep(MCP_APPROVAL_CLAIM_LOCK_SLEEP);
-                        continue;
-                    }
-                    Err(std::fs::TryLockError::Error(error)) => {
-                        return Err(error)
-                            .with_context(|| format!("failed to lock {}", lock_path.display()));
-                    }
+    let lock_path = mcp_tool_approval_claim_lock_path(&run_dir, lock_name);
+    match fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(&lock_path)
+    {
+        Ok(mut file) => {
+            match file.try_lock() {
+                Ok(()) => {}
+                Err(std::fs::TryLockError::WouldBlock) => return Ok(None),
+                Err(std::fs::TryLockError::Error(error)) => {
+                    return Err(error)
+                        .with_context(|| format!("failed to lock {}", lock_path.display()));
                 }
-                file.set_len(0)
-                    .with_context(|| format!("failed to reset {}", lock_path.display()))?;
-                writeln!(
-                    file,
-                    "brownie-mcp-approval-claim-lock-v2:{}",
-                    runtime_sha256_fingerprint(lock_name.as_bytes())
-                )
-                .context("failed to write MCP approval claim lock")?;
-                file.sync_all()
-                    .with_context(|| format!("failed to sync {}", lock_path.display()))?;
-                return Ok(McpToolApprovalClaimLock { _file: file });
             }
-            Err(error) => {
-                return Err(error)
-                    .with_context(|| format!("failed to acquire {}", lock_path.display()));
-            }
+            file.set_len(0)
+                .with_context(|| format!("failed to reset {}", lock_path.display()))?;
+            writeln!(
+                file,
+                "brownie-mcp-approval-claim-lock-v2:{}",
+                runtime_sha256_fingerprint(lock_name.as_bytes())
+            )
+            .context("failed to write MCP approval claim lock")?;
+            file.sync_all()
+                .with_context(|| format!("failed to sync {}", lock_path.display()))?;
+            Ok(Some(McpToolApprovalClaimLock { _file: file }))
+        }
+        Err(error) => {
+            Err(error).with_context(|| format!("failed to acquire {}", lock_path.display()))
         }
     }
-    bail!(
-        "failed to acquire MCP approval claim lock for {}",
-        record.run_id
-    )
+}
+
+fn mcp_tool_approval_claim_lock_path(run_dir: &std::path::Path, lock_name: &str) -> PathBuf {
+    run_dir.join(format!("mcp-approval-{lock_name}.lock"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1226,11 +1275,26 @@ pub(super) fn recover_unfinished_mcp_tool_approvals(
     }
 
     let mut recovered = 0;
-    for (approval_fingerprint, (event_index, payload)) in latest_by_approval {
+    for (approval_fingerprint, (_event_index, payload)) in latest_by_approval {
         if McpToolApprovalState::from_payload(&payload) != McpToolApprovalState::Executing {
             continue;
         }
         if payload.get("task_id").and_then(Value::as_str) != Some(record.task_id.as_str())
+            || payload.get("run_id").and_then(Value::as_str) != Some(record.run_id.as_str())
+            || !mcp_tool_approval_payload_has_required_binding_fields(&payload)
+        {
+            continue;
+        }
+        let Some(_lock) = try_acquire_mcp_tool_approval_claim_lock(store, record, &payload)? else {
+            continue;
+        };
+        let Some((event_index, payload)) =
+            latest_mcp_tool_approval_payload_with_index(store, record, &payload)?
+        else {
+            continue;
+        };
+        if McpToolApprovalState::from_payload(&payload) != McpToolApprovalState::Executing
+            || payload.get("task_id").and_then(Value::as_str) != Some(record.task_id.as_str())
             || payload.get("run_id").and_then(Value::as_str) != Some(record.run_id.as_str())
             || !mcp_tool_approval_payload_has_required_binding_fields(&payload)
         {

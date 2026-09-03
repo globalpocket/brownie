@@ -540,6 +540,16 @@ async function executingWithoutCallRecovers(runtimeBinary) {
   await scenario.runtime.stop();
 
   const restarted = startRuntime(runtimeBinary, scenario.workspaceRoot);
+  const peer = startRuntime(runtimeBinary, scenario.workspaceRoot);
+  const probes = await Promise.all([
+    recoveryProbe(restarted, scenario.checkpoint),
+    recoveryProbe(peer, scenario.checkpoint)
+  ]);
+  assert.equal(probes[0].admission_state, 'persisted');
+  assert.equal(probes[1].admission_state, 'persisted');
+  assert.deepEqual(mcpApprovalStates(scenario.workspaceRoot, scenario.runId), ['approved', 'executing', 'outcome_unknown']);
+  await peer.stop();
+
   const probe = await recoveryProbe(restarted, scenario.checkpoint);
   assert.equal(probe.admission_state, 'persisted');
   assert.deepEqual(mcpApprovalStates(scenario.workspaceRoot, scenario.runId), ['approved', 'executing', 'outcome_unknown']);
@@ -550,6 +560,35 @@ async function executingWithoutCallRecovers(runtimeBinary) {
   await recoveryProbe(restarted, scenario.checkpoint);
   assert.equal(mcpApprovalStates(scenario.workspaceRoot, scenario.runId).filter((state) => state === 'outcome_unknown').length, 1);
   await restarted.stop();
+}
+
+async function recoveryDuringLiveToolCallDoesNotTerminalize(runtimeBinary) {
+  const scenario = await setupScenario(runtimeBinary, 'blocking', 'RRP-3.1 live recovery lock race');
+  await approve(scenario.runtime, scenario.taskId, 'rrp3-live-recovery-race');
+  const pendingExecution = toolExecute(scenario.runtime, scenario.taskId, { query: 'bounded' }, 30000)
+    .catch((error) => error);
+  await waitFor(
+    () => fs.existsSync(path.join(scenario.workspaceRoot, 'mcp-call-received-blocking.pid')),
+    'live recovery fake MCP tools/call receipt'
+  );
+  await waitFor(
+    () => mcpApprovalStates(scenario.workspaceRoot, scenario.runId).includes('executing'),
+    'live recovery durable executing approval state'
+  );
+
+  const peer = startRuntime(runtimeBinary, scenario.workspaceRoot);
+  const probe = await recoveryProbe(peer, scenario.checkpoint);
+  assert.equal(probe.admission_state, 'persisted');
+  assert.deepEqual(mcpApprovalStates(scenario.workspaceRoot, scenario.runId), ['approved', 'executing']);
+  assert.equal(callCount(scenario.workspaceRoot), 1);
+
+  fs.writeFileSync(path.join(scenario.workspaceRoot, 'release-call'), '1\n');
+  const executed = await pendingExecution;
+  assert.equal(executed.status, 'Completed');
+  assert.equal(callCount(scenario.workspaceRoot), 1);
+  assert.deepEqual(mcpApprovalStates(scenario.workspaceRoot, scenario.runId), ['approved', 'executing', 'consumed']);
+  await peer.stop();
+  await scenario.runtime.stop();
 }
 
 async function processLossDuringToolCallRecovers(runtimeBinary) {
@@ -625,6 +664,7 @@ async function main() {
   const runtimeBinary = ensureRuntimeBinary();
   await staleLockDoesNotBlock(runtimeBinary);
   await executingWithoutCallRecovers(runtimeBinary);
+  await recoveryDuringLiveToolCallDoesNotTerminalize(runtimeBinary);
   await processLossDuringToolCallRecovers(runtimeBinary);
   await racingProcessesExecuteAtMostOnce(runtimeBinary);
   await terminalConsumedStateDoesNotRerunAfterRestart(runtimeBinary);
