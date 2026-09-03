@@ -6087,7 +6087,7 @@ pub struct LedgerPayloadEnvelope {
     pub instance_shape_fingerprint: String,
 }
 
-pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 3;
+pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 4;
 pub const LEDGER_PAYLOAD_SHAPE_VERSION: u64 = LEDGER_PAYLOAD_SCHEMA_VERSION;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6129,7 +6129,9 @@ pub fn ledger_payload_schema_classification(
     match kind {
         LedgerEventKind::TaskCompleted
         | LedgerEventKind::TaskFailed
-        | LedgerEventKind::TaskCancelled => LedgerPayloadSchemaClassification::StrictTyped,
+        | LedgerEventKind::TaskCancelled
+        | LedgerEventKind::PermissionChecked
+        | LedgerEventKind::PermissionDenied => LedgerPayloadSchemaClassification::StrictTyped,
         _ => LedgerPayloadSchemaClassification::VersionedOpen,
     }
 }
@@ -6250,6 +6252,9 @@ fn validate_strict_ledger_payload_schema(
         LedgerEventKind::TaskCompleted
         | LedgerEventKind::TaskFailed
         | LedgerEventKind::TaskCancelled => validate_terminal_task_payload_schema(kind, payload),
+        LedgerEventKind::PermissionChecked | LedgerEventKind::PermissionDenied => {
+            validate_permission_payload_schema(kind, payload)
+        }
         _ => bail!("{kind:?} strict ledger payload schema is not registered"),
     }
 }
@@ -6342,6 +6347,59 @@ fn validate_terminal_task_payload_schema(
     Ok(())
 }
 
+fn validate_permission_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = payload
+        .as_object()
+        .with_context(|| format!("{kind:?} ledger payload must be a JSON object"))?;
+    for field in object.keys() {
+        if !PERMISSION_KNOWN_PAYLOAD_FIELDS.contains(&field.as_str()) {
+            bail!(
+                "{kind:?} ledger payload field {field} is not allowed by strict permission schema"
+            );
+        }
+    }
+    for field in ["mode_id", "allowed", "reason"] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    if !object.contains_key("action") && !object.contains_key("required_action") {
+        bail!("{kind:?} ledger payload must include action or required_action");
+    }
+
+    validate_required_payload_string_field(object, "mode_id")?;
+    validate_required_payload_bool_field(object, "allowed")?;
+    validate_required_payload_string_field(object, "reason")?;
+    validate_optional_payload_string_field(object, "action")?;
+    validate_optional_payload_string_field(object, "scope")?;
+    validate_optional_payload_string_field(object, "tool_id")?;
+    validate_optional_payload_string_field(object, "apply_id")?;
+    validate_optional_payload_string_field(object, "proposal_id")?;
+    validate_optional_payload_string_field(object, "path")?;
+    validate_optional_payload_string_field(object, "operation")?;
+    validate_optional_payload_string_field(object, "required_action")?;
+    validate_optional_payload_u64_field(object, "workspace_write_scope_count")?;
+    Ok(())
+}
+
+const PERMISSION_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "action",
+    "allowed",
+    "apply_id",
+    "mode_id",
+    "operation",
+    "path",
+    "proposal_id",
+    "reason",
+    "required_action",
+    "scope",
+    "tool_id",
+    "workspace_write_scope_count",
+];
+
 const TERMINAL_TASK_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "caller_authorized",
     "cancel_fingerprint",
@@ -6399,6 +6457,32 @@ fn validate_optional_payload_string_field(
         if !value.is_string() {
             bail!("ledger payload field {field} must be a string");
         }
+    }
+    Ok(())
+}
+
+fn validate_required_payload_string_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    let Some(value) = object.get(field) else {
+        bail!("ledger payload field {field} is required");
+    };
+    if !value.is_string() {
+        bail!("ledger payload field {field} must be a string");
+    }
+    Ok(())
+}
+
+fn validate_required_payload_bool_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    let Some(value) = object.get(field) else {
+        bail!("ledger payload field {field} is required");
+    };
+    if !value.is_boolean() {
+        bail!("ledger payload field {field} must be a boolean");
     }
     Ok(())
 }
@@ -6523,14 +6607,15 @@ fn validate_legacy_ledger_payload_envelope(
         return Ok(());
     }
 
-    if envelope.schema_version == 2 {
-        let expected_schema_id = format!("ledger_payload.{kind:?}.v2");
+    if envelope.schema_version == 2 || envelope.schema_version == 3 {
+        let expected_schema_id = format!("ledger_payload.{kind:?}.v{}", envelope.schema_version);
         if envelope.schema_id != expected_schema_id || envelope.shape_id != expected_schema_id {
             bail!("legacy ledger payload envelope schema_id mismatch");
         }
         let expected_schema_fingerprint = stable_ledger_payload_fingerprint(&format!(
-            "{kind:?}:payload_schema_v2:descriptor:{}",
-            ledger_payload_legacy_v2_schema_descriptor(kind)
+            "{kind:?}:payload_schema_v{}:descriptor:{}",
+            envelope.schema_version,
+            ledger_payload_legacy_schema_descriptor(kind, envelope.schema_version)
         ));
         if envelope.schema_fingerprint != expected_schema_fingerprint
             || envelope.shape_fingerprint != expected_schema_fingerprint
@@ -6538,7 +6623,8 @@ fn validate_legacy_ledger_payload_envelope(
             bail!("legacy ledger payload envelope schema_fingerprint mismatch");
         }
         let expected_instance_fingerprint = stable_ledger_payload_fingerprint(&format!(
-            "{kind:?}:payload_instance_shape_v2:descriptor:{}",
+            "{kind:?}:payload_instance_shape_v{}:descriptor:{}",
+            envelope.schema_version,
             ledger_payload_shape_descriptor(payload)
         ));
         if envelope.instance_shape_fingerprint != expected_instance_fingerprint {
@@ -6562,6 +6648,9 @@ fn ledger_payload_schema_descriptor(kind: &LedgerEventKind) -> String {
         LedgerEventKind::TaskCompleted => terminal_task_payload_schema_descriptor("Completed"),
         LedgerEventKind::TaskFailed => terminal_task_payload_schema_descriptor("Failed"),
         LedgerEventKind::TaskCancelled => terminal_task_payload_schema_descriptor("Cancelled"),
+        LedgerEventKind::PermissionChecked | LedgerEventKind::PermissionDenied => {
+            permission_payload_schema_descriptor()
+        }
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
 }
@@ -6572,8 +6661,25 @@ fn terminal_task_payload_schema_descriptor(status: &str) -> String {
     )
 }
 
-fn ledger_payload_legacy_v2_schema_descriptor(kind: &LedgerEventKind) -> String {
+fn permission_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:allowed:boolean,mode_id:string,reason:string;one_of_required:action:string|required_action:string;known_optional_fields:action:string,apply_id:string,operation:string,path:string,proposal_id:string,required_action:string,scope:string,tool_id:string,workspace_write_scope_count:u64;additional_fields:false;permission_decision_payload:true}".to_string()
+}
+
+fn ledger_payload_legacy_schema_descriptor(kind: &LedgerEventKind, schema_version: u64) -> String {
     match kind {
+        LedgerEventKind::TaskCompleted
+        | LedgerEventKind::TaskFailed
+        | LedgerEventKind::TaskCancelled
+            if schema_version >= 3 =>
+        {
+            let status = match kind {
+                LedgerEventKind::TaskCompleted => "Completed",
+                LedgerEventKind::TaskFailed => "Failed",
+                LedgerEventKind::TaskCancelled => "Cancelled",
+                _ => unreachable!(),
+            };
+            terminal_task_payload_schema_descriptor(status)
+        }
         LedgerEventKind::TaskCompleted => "typed_known_fields_open{known_optional_fields:completion_evidence:object,git:object,late_tool_response:boolean,mcp:object,runtime_deadline:object,status:string,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:legacy_open;known_field_required:true;additional_fields:true;strict_typed_payload_required_before_release:true}".to_string(),
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
@@ -7450,6 +7556,19 @@ mod tests {
         assert!(
             !ledger_payload_schema_descriptor(&LedgerEventKind::TaskCancelled).starts_with("any{")
         );
+
+        let permission_checked_classification =
+            ledger_payload_schema_classification(&LedgerEventKind::PermissionChecked);
+        assert_eq!(permission_checked_classification.as_str(), "strict_typed");
+        assert_eq!(
+            permission_checked_classification.contract_status(),
+            "closed"
+        );
+        assert!(!permission_checked_classification.release_blocking());
+        assert!(
+            ledger_payload_schema_descriptor(&LedgerEventKind::PermissionChecked)
+                .contains("permission_decision_payload:true")
+        );
     }
 
     #[test]
@@ -7569,6 +7688,106 @@ mod tests {
                 )],
             )
             .expect("strict TaskCancelled cancel payload should pass");
+    }
+
+    #[test]
+    fn ledger_payload_write_rejects_malformed_permission_payload() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = TaskStore::new(temp.path());
+        let record = store
+            .start_task(TaskStartParams {
+                goal: "permission payload validation".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start task");
+
+        store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::PermissionChecked,
+                    Some(serde_json::json!({
+                        "mode_id": "default",
+                        "action": "ReadWorkspace",
+                        "allowed": true,
+                        "reason": "allowed by policy"
+                    })),
+                )],
+            )
+            .expect("strict PermissionChecked runtime-action payload should pass");
+
+        store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::PermissionDenied,
+                    Some(serde_json::json!({
+                        "scope": "workspace.write",
+                        "tool_id": "workspace.write",
+                        "path": "src/lib.rs",
+                        "operation": "replace_file",
+                        "mode_id": "default",
+                        "required_action": "WriteWorkspace",
+                        "workspace_write_scope_count": 0,
+                        "allowed": false,
+                        "reason": "path outside allowed workspace write scopes"
+                    })),
+                )],
+            )
+            .expect("strict PermissionDenied workspace-scope payload should pass");
+
+        let missing_action = store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::PermissionChecked,
+                    Some(serde_json::json!({
+                        "mode_id": "default",
+                        "allowed": true,
+                        "reason": "allowed by policy"
+                    })),
+                )],
+            )
+            .expect_err("permission payload without action evidence should fail closed");
+        assert!(format!("{missing_action:#}").contains("action or required_action"));
+
+        let malformed_allowed = store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::PermissionChecked,
+                    Some(serde_json::json!({
+                        "mode_id": "default",
+                        "action": "ReadWorkspace",
+                        "allowed": "true",
+                        "reason": "allowed by policy"
+                    })),
+                )],
+            )
+            .expect_err("permission payload with malformed allowed field should fail closed");
+        assert!(format!("{malformed_allowed:#}").contains("allowed must be a boolean"));
+
+        let unknown_field = store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::PermissionDenied,
+                    Some(serde_json::json!({
+                        "mode_id": "default",
+                        "action": "WriteWorkspace",
+                        "allowed": false,
+                        "reason": "denied by policy",
+                        "raw_policy": "not allowed"
+                    })),
+                )],
+            )
+            .expect_err("permission payload with unknown field should fail closed");
+        assert!(format!("{unknown_field:#}").contains("strict permission schema"));
     }
 
     #[test]

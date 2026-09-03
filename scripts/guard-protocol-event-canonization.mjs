@@ -175,7 +175,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
   requireValue(contract.contract_id === 'runtime-semantic-protocol-contract-v1', errors, `${contractPath} contract_id must identify the Runtime semantic protocol contract.`);
   requireValue(contract.campaign === 'runtime-release-readiness-p0-p1-finite-closure', errors, `${contractPath} campaign must match Runtime release readiness.`);
-  requireValue(contract.phase === 'RRP-5.7', errors, `${contractPath} phase must be RRP-5.7.`);
+  requireValue(contract.phase === 'RRP-5.8', errors, `${contractPath} phase must be RRP-5.8.`);
   requireValue(contract.owner === 'runtime', errors, `${contractPath} owner must be runtime.`);
   requireValue(contract.runtime_release_debt_id === 'protocol-event-canonization', errors, `${contractPath} must bind to protocol-event-canonization.`);
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must not declare Runtime Release Ready.`);
@@ -392,7 +392,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   for (const variant of ledgerVariants) {
     const entry = fingerprintByKind.get(variant);
     requireValue(Boolean(entry), errors, `${contractPath} durable_event_migration_coupling.event_payload_schema_fingerprints must include ${variant}.`);
-    requireValue(entry?.payload_schema_version === 3, errors, `${contractPath} ${variant} payload_schema_version must be 3.`);
+    requireValue(entry?.payload_schema_version === 4, errors, `${contractPath} ${variant} payload_schema_version must be 4.`);
     requireValue(entry?.store_schema_version === durableCoupling.store_schema_version, errors, `${contractPath} ${variant} store_schema_version must match durable coupling schema version.`);
     requireValue(isNonEmptyString(entry?.payload_schema_id), errors, `${contractPath} ${variant} payload_schema_id must be present.`);
     requireValue(isNonEmptyString(entry?.payload_schema_fingerprint), errors, `${contractPath} ${variant} payload_schema_fingerprint must be present.`);
@@ -428,6 +428,26 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
       `${contractPath} ${terminalKind} payload schema descriptor must require known terminal evidence and reject additional fields.`
     );
   }
+  for (const permissionKind of ['PermissionChecked', 'PermissionDenied']) {
+    const permissionEntry = fingerprintByKind.get(permissionKind);
+    requireValue(
+      permissionEntry?.payload_schema_classification === 'strict_typed',
+      errors,
+      `${contractPath} ${permissionKind} must be classified as strict_typed.`
+    );
+    requireValue(
+      permissionEntry?.payload_schema_contract_status === 'closed' &&
+        permissionEntry?.release_blocking_until_typed === false,
+      errors,
+      `${contractPath} ${permissionKind} strict typed payload schema must be closed and non-release-blocking.`
+    );
+    requireValue(
+      permissionEntry?.payload_schema_descriptor?.includes('permission_decision_payload:true') &&
+        permissionEntry?.payload_schema_descriptor?.includes('additional_fields:false'),
+      errors,
+      `${contractPath} ${permissionKind} payload schema descriptor must capture bounded permission evidence and reject additional fields.`
+    );
+  }
   const schemaFixtures = Array.isArray(durableCoupling.payload_schema_fixtures) ? durableCoupling.payload_schema_fixtures : [];
   const taskCompletedFixtures = schemaFixtures.filter((fixture) => fixture?.ledger_event_kind === 'TaskCompleted');
   requireValue(taskCompletedFixtures.length >= 2, errors, `${contractPath} must include TaskCompleted payload schema/instance split fixtures.`);
@@ -436,6 +456,13 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
       schemaFixtures.some((fixture) => fixture?.ledger_event_kind === terminalKind),
       errors,
       `${contractPath} must include ${terminalKind} strict typed terminal payload fixture.`
+    );
+  }
+  for (const permissionKind of ['PermissionChecked', 'PermissionDenied']) {
+    requireValue(
+      schemaFixtures.some((fixture) => fixture?.ledger_event_kind === permissionKind),
+      errors,
+      `${contractPath} must include ${permissionKind} strict typed permission payload fixture.`
     );
   }
   requireValue(
