@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use brownie_modepack::{
@@ -32,6 +32,33 @@ const MAX_MCP_RESULT_TEXT_ITEM_CHARS: usize = 2_048;
 const MAX_MCP_RESULT_TEXT_TOTAL_CHARS: usize = 8_192;
 const MAX_MCP_SECRET_VALUE_BYTES: usize = 8_192;
 const MAX_MCP_EXECUTABLE_BYTES: u64 = 64 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy)]
+struct McpStdioDeadline {
+    expires_at: Instant,
+    total_budget: Duration,
+}
+
+impl McpStdioDeadline {
+    fn after(total_budget: Duration) -> Self {
+        Self {
+            expires_at: Instant::now() + total_budget,
+            total_budget,
+        }
+    }
+
+    fn remaining(self) -> Option<Duration> {
+        self.expires_at.checked_duration_since(Instant::now())
+    }
+
+    fn remaining_or_zero(self) -> Duration {
+        self.remaining().unwrap_or(Duration::ZERO)
+    }
+
+    fn is_expired(self) -> bool {
+        self.remaining().is_none()
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpToolCatalogEntry {
@@ -250,10 +277,12 @@ pub fn list_tools_with_secret_resolver(
     secret_resolver: &dyn McpSecretResolver,
 ) -> Result<McpToolCatalog> {
     let executable_identity = materialize_mcp_executable_identity(config)?;
+    let deadline = McpStdioDeadline::after(Duration::from_millis(MCP_STDIO_TIMEOUT_MS));
     let response = stdio_request(
         config,
         secret_resolver,
         Some(&executable_identity),
+        deadline,
         json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -405,10 +434,12 @@ pub fn call_tool_with_secret_resolver(
             }),
         ));
     }
+    let deadline = McpStdioDeadline::after(Duration::from_millis(MCP_STDIO_TIMEOUT_MS));
     let response = stdio_request(
         config,
         secret_resolver,
         Some(&executable_identity),
+        deadline,
         json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -644,6 +675,7 @@ fn stdio_request(
     config: &ModePackMcpServerConfig,
     secret_resolver: &dyn McpSecretResolver,
     expected_executable_identity: Option<&McpExecutableIdentity>,
+    deadline: McpStdioDeadline,
     request: Value,
 ) -> Result<Value> {
     if config.transport != "stdio" {
@@ -686,7 +718,7 @@ fn stdio_request(
         let result = read_stdio_response(stdout);
         let _ = tx.send(result);
     });
-    let line = match rx.recv_timeout(Duration::from_millis(MCP_STDIO_TIMEOUT_MS)) {
+    let line = match rx.recv_timeout(deadline.remaining_or_zero()) {
         Ok(Ok(line)) => line,
         Ok(Err(error)) => {
             let _ = terminate_process_tree(&mut child);
@@ -706,12 +738,35 @@ fn stdio_request(
             bail!("MCP stdio response reader disconnected");
         }
     };
-    let _ = terminate_process_tree(&mut child);
+    wait_for_stdio_child_exit_or_timeout(&mut child, deadline)?;
     let _ = reader.join();
     if line.trim().is_empty() {
         bail!("MCP stdio server returned empty response");
     }
     serde_json::from_str(&line).context("MCP stdio response is not valid JSON")
+}
+
+fn wait_for_stdio_child_exit_or_timeout(
+    child: &mut Child,
+    deadline: McpStdioDeadline,
+) -> Result<()> {
+    loop {
+        if child
+            .try_wait()
+            .context("failed to inspect MCP stdio child exit")?
+            .is_some()
+        {
+            return Ok(());
+        }
+        if deadline.is_expired() {
+            let (succeeded, reason) = terminate_process_tree(child);
+            bail!(
+                "MCP stdio request timed out while waiting for child exit; timeout_budget_ms={} process_tree_kill_attempted=true process_tree_kill_succeeded={succeeded} process_tree_kill_reason={reason}",
+                deadline.total_budget.as_millis()
+            );
+        }
+        thread::sleep(deadline.remaining_or_zero().min(Duration::from_millis(10)));
+    }
 }
 
 fn validate_stdio_command_boundary(config: &ModePackMcpServerConfig) -> Result<()> {
@@ -1495,6 +1550,75 @@ mod tests {
         assert!(error.contains("absolute executable path"));
     }
 
+    #[test]
+    fn mcp_stdio_deadline_reconstructs_remaining_monotonic_budget() {
+        let deadline = McpStdioDeadline::after(Duration::from_millis(250));
+
+        assert!(deadline.remaining().expect("remaining") <= deadline.total_budget);
+        assert!(!deadline.is_expired());
+
+        let expired = McpStdioDeadline {
+            expires_at: Instant::now() - Duration::from_millis(1),
+            total_budget: Duration::from_millis(250),
+        };
+        assert_eq!(expired.remaining_or_zero(), Duration::ZERO);
+        assert!(expired.is_expired());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn mcp_stdio_deadline_covers_child_exit_after_response_line() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let pid_file = temp.path().join("late-exit.pid");
+        let script = temp.path().join("fake-mcp-late-exit.sh");
+        std::fs::write(
+            &script,
+            format!(
+                r#"#!/bin/sh
+read request
+printf '%s\n' "$$" > "{}"
+printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"tools":[]}}}}'
+sleep 5
+"#,
+                pid_file.display()
+            ),
+        )
+        .expect("write script");
+        make_executable(&script);
+        let config = ModePackMcpServerConfig {
+            server_id: "github".to_string(),
+            transport: "stdio".to_string(),
+            command: script.to_string_lossy().to_string(),
+            args: vec![],
+            secret_env: vec![],
+            config_identity_fingerprint: "sha256:server-config".to_string(),
+        };
+
+        let error = stdio_request(
+            &config,
+            &EnvMcpSecretResolver,
+            None,
+            McpStdioDeadline::after(Duration::from_millis(3_000)),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+                "params": {}
+            }),
+        )
+        .expect_err("late child exit must be bounded by the same deadline")
+        .to_string();
+
+        assert!(error.contains("waiting for child exit"));
+        assert!(error.contains("timeout_budget_ms=3000"));
+        let pid = std::fs::read_to_string(&pid_file)
+            .expect("pid file")
+            .trim()
+            .parse::<u32>()
+            .expect("pid");
+        assert!(!process_exists(pid), "late-exit child was not killed");
+    }
+
     #[derive(Debug)]
     struct StaticSecretResolver {
         secret_ref: String,
@@ -1762,5 +1886,13 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"content":[{{"type":"text","t
             .permissions();
         std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
         std::fs::set_permissions(path, permissions).expect("chmod script");
+    }
+
+    #[cfg(unix)]
+    fn process_exists(pid: u32) -> bool {
+        unsafe extern "C" {
+            fn kill(pid: i32, sig: i32) -> i32;
+        }
+        unsafe { kill(pid as i32, 0) == 0 }
     }
 }

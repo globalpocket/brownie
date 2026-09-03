@@ -31,10 +31,10 @@
   "metrics": {
     "files": {
       "crates/brownie-runtime/src/lib.rs": {
-        "line_count": 65411,
+        "line_count": 65417,
         "public_items": 3,
         "private_items": 481,
-        "production_line_count": 14203,
+        "production_line_count": 14209,
         "test_line_count": 51208,
         "state_mutation_mentions": 299,
         "durable_write_mentions": 223,
@@ -117,16 +117,16 @@
         "diagnostics_mentions": 96
       },
       "crates/brownie-runtime/src/mcp_client.rs": {
-        "line_count": 1766,
+        "line_count": 1898,
         "public_items": 19,
-        "private_items": 59,
+        "private_items": 61,
         "state_mutation_mentions": 0,
         "durable_write_mentions": 0,
         "permission_decision_mentions": 0,
         "recovery_mentions": 0,
         "rpc_dispatch_mentions": 0,
         "approval_mentions": 0,
-        "mcp_mentions": 271,
+        "mcp_mentions": 288,
         "product_dod_mentions": 0,
         "diagnostics_mentions": 0
       },
@@ -377,7 +377,8 @@
     "remaining_risks": [
       "The lib.rs behavior-test corpus remains large and should be split opportunistically with future behavior changes, but it is not treated as a Runtime-owned release blocker after this guarded assessment.",
       "The generated proposal review diagnostics compatibility chain remains in lib.rs because moving it would be a high-churn compatibility refactor without reducing Runtime authority risk in this release phase."
-    ]
+    ],
+    "summary": "RRP-6 remains closed after RRP-7.1 source growth; metrics were refreshed to include the bounded McpStdioDeadline, MCP late-child-exit, durable write failpoint, and checked terminal-status additions without moving Runtime authority out of Rust Runtime."
   },
   "non_authority_rules": [
     "CLI and VSIX are transport/projection only",

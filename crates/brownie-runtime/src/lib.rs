@@ -1461,8 +1461,10 @@ fn handle_task_cancel(id: Value, params: Option<Value>) -> JsonRpcResponse<Value
         "reason": "Runtime admitted an explicit caller-authorized cancel command for this task/run."
     });
 
-    match store.tasks().update_task_status_with_payload(
+    match store.tasks().update_task_status_with_payload_checked(
         &params.task_id,
+        params.expected_status.clone(),
+        &params.expected_task_updated_at,
         TaskStatus::Cancelled,
         LedgerEventKind::TaskCancelled,
         Some(payload),
@@ -2626,8 +2628,10 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         verification_recovery_repair.as_ref(),
     );
 
-    match store.tasks().update_task_status_with_payload(
+    match store.tasks().update_task_status_with_payload_checked(
         &running.task_id,
+        TaskStatus::Running,
+        &running.updated_at,
         final_status,
         event_kind,
         terminal_payload,
@@ -2856,8 +2860,10 @@ fn handle_verification_recovery_retry_task_run(
         verification_completion_gate.as_ref(),
         None,
     );
-    match store.tasks().update_task_status_with_payload(
+    match store.tasks().update_task_status_with_payload_checked(
         &running.task_id,
+        TaskStatus::Running,
+        &running.updated_at,
         final_status,
         event_kind,
         terminal_payload,

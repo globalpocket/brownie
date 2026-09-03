@@ -27,8 +27,7 @@ function validFixture() {
       runtime_release_ready: false,
       release_ready_blocked_by: [
         'runtime-release-guard-ci',
-        'protocol-event-canonization',
-        'platform-deadline-durability-hardening'
+        'protocol-event-canonization'
       ],
       classifications: [
         {
@@ -37,6 +36,14 @@ function validFixture() {
           debt_classification: 'closed',
           evidence: [
             'RRP-4.1 migrates v1 to v2 with migration_in_progress, store-layout.json, process-loss recovery, v1 task/run/ledger fixture preservation, and partial migration checks.'
+          ]
+        },
+        {
+          id: 'platform-deadline-durability-hardening',
+          status: 'implemented_sufficient',
+          debt_classification: 'closed',
+          evidence: [
+            'RRP-7.1 closes platform deadline durability hardening.'
           ]
         }
       ]
@@ -81,4 +88,13 @@ test('guard fails when later reopened blockers are hidden', () => {
   fixture.audit.release_ready_blocked_by = ['runtime-release-guard-ci'];
 
   assert.match(validateDurableSchemaMigration(fixture).join('\n'), /protocol-event-canonization/);
+});
+
+test('guard fails when platform deadline blocker is hidden before RRP-7.1 closure', () => {
+  const fixture = validFixture();
+  fixture.audit.classifications.find((item) => item.id === 'platform-deadline-durability-hardening').status = 'partial';
+  fixture.audit.classifications.find((item) => item.id === 'platform-deadline-durability-hardening').debt_classification = 'required_before_release';
+  fixture.audit.release_ready_blocked_by = ['runtime-release-guard-ci', 'protocol-event-canonization'];
+
+  assert.match(validateDurableSchemaMigration(fixture).join('\n'), /platform-deadline-durability-hardening/);
 });
