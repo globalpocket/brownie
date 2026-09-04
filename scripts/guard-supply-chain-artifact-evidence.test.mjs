@@ -36,7 +36,7 @@ function sha256File(filePath) {
 
 function validContract(overrides = {}) {
   return {
-    phase: 'RRP-8.4',
+    phase: 'RRP-8.5',
     runtime_release_ready: false,
     release_engineering_maturity: {
       current_percent: 70,
@@ -44,6 +44,9 @@ function validContract(overrides = {}) {
     },
     local_release_gate: {
       commands: [
+        { command: 'pnpm --workspace-root release:dependency-security-license-audit' },
+        { command: 'pnpm --workspace-root guard:dependency-security-license-audit' },
+        { command: 'pnpm --workspace-root guard:dependency-security-license-audit:test' },
         { command: 'pnpm --workspace-root release:supply-chain-artifact-evidence' },
         { command: 'pnpm --workspace-root guard:supply-chain-artifact-evidence' },
         { command: 'pnpm --workspace-root guard:supply-chain-artifact-evidence:test' }
