@@ -52,6 +52,16 @@ brownie help run
 brownie run "summarize this repository"
 ```
 
+For an explicitly configured strict OpenAI-compatible local or LAN LLM endpoint,
+request the built-in network-capable provider-runner mode before using the same
+`brownie run` entrypoint:
+
+```sh
+export BROWNIE_CLI_RUN_MODE_ID=provider-runner
+export BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true
+brownie run "Hello"
+```
+
 Command-specific help is available with:
 
 ```sh

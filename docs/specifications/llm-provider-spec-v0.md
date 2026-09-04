@@ -66,6 +66,15 @@ Phase 2.5 adds the explicit `llm.health` JSON-RPC method, specified in `docs/spe
 
 M15.2 additionally requires the task's resolved runtime mode to allow `AccessNetwork` before strict enabled OpenAI-compatible `task.run` may enter real-provider execution. This is separate from `BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK`: the environment/config guard opts the process into provider network use, while the runtime permission check authorizes the individual task mode at the final side-effect boundary. Denial records only bounded permission and provider-failure metadata and must not append provider request/response evidence, contact the provider, or expose raw prompts, provider responses, request bodies, API keys, Authorization/Bearer values, file content, commands, environment values, absolute paths, or canonical paths. Fake-provider and non-strict fallback task runs do not require `AccessNetwork`.
 
+For CLI-driven local provider smoke runs, `BROWNIE_CLI_RUN_MODE_ID=provider-runner`
+requests Brownie's built-in network-capable provider-runner mode for the
+admitted task while keeping runtime permission enforcement authoritative.
+With a strict OpenAI-compatible LAN endpoint configured and
+`BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true`, this permits the expected
+`brownie run "Hello"` path without raw JSON-RPC. The CLI variable does not
+grant permission on its own; unknown or denied modes still fail inside the
+runtime before provider network side effects.
+
 ## Phase 2.7 LLM request budget note
 
 See [LLM Request Budget Spec v0](llm-request-budget-spec-v0.md). Runtime provider requests are bounded by the resolved budget, status/config responses include the budget summary, diagnostics report default/profile/env/invalid budget sources, and ledger/inspection payloads keep prompt and response previews only.
