@@ -1057,6 +1057,287 @@ pub fn runtime_semantic_protocol_contract() -> Value {
         "source_kind": "workspace_modepack",
         "source_path": ".brownie/modepack.json"
     });
+    let subtask_orchestration_queued_payload = json!({
+        "subtask_id": "subtask_1",
+        "parent_task_id": "task_parent",
+        "parent_run_id": "run_parent",
+        "tool_id": "subtask.spawn",
+        "required_action": "SpawnSubtask",
+        "status": "Queued",
+        "queue_position": 1,
+        "request_reason": "split work",
+        "input_summary": {},
+        "execution_enabled": false,
+        "reason": "queued",
+        "requested_goal_preview": "child goal",
+        "requested_mode_id": "implementer"
+    });
+    let subtask_handoff_prepared_payload = json!({
+        "handoff_id": "handoff_1",
+        "parent_task_id": "task_parent",
+        "parent_run_id": "run_parent",
+        "status": "Prepared",
+        "queued_count": 1,
+        "queued_subtask_ids": ["subtask_1"],
+        "source_event_count": 1,
+        "execution_enabled": false,
+        "next_action": "await_future_runtime_scheduler",
+        "reason": "prepared"
+    });
+    let subtask_scheduler_readiness_payload = json!({
+        "readiness_id": "readiness_1",
+        "parent_task_id": "task_parent",
+        "parent_run_id": "run_parent",
+        "handoff_id": "handoff_1",
+        "handoff_count": 1,
+        "queued_count": 1,
+        "source_event_count": 1,
+        "status": "Blocked",
+        "readiness_status": "Blocked",
+        "readiness_reason": "not ready",
+        "check_count": 1,
+        "blocked_checks": ["runtime_scheduler_not_implemented"],
+        "execution_enabled": false,
+        "dispatch_enabled": false,
+        "next_action": "await_runtime_scheduler_dispatch",
+        "reason": "blocked"
+    });
+    let subtask_dispatch_plan_payload = json!({
+        "plan_id": "plan_1",
+        "parent_task_id": "task_parent",
+        "parent_run_id": "run_parent",
+        "readiness_id": "readiness_1",
+        "readiness_count": 1,
+        "queued_count": 1,
+        "source_event_count": 1,
+        "status": "Blocked",
+        "dispatch_plan_status": "Blocked",
+        "dispatch_reason": "blocked",
+        "required_capability": "runtime_subtask_dispatcher",
+        "check_count": 1,
+        "blocked_checks": ["runtime_dispatcher_not_implemented"],
+        "execution_enabled": false,
+        "dispatch_enabled": false,
+        "next_action": "await_runtime_subtask_dispatcher",
+        "reason": "blocked"
+    });
+    let subtask_dispatch_contract_payload = json!({
+        "contract_id": "contract_1",
+        "parent_task_id": "task_parent",
+        "parent_run_id": "run_parent",
+        "plan_id": "plan_1",
+        "plan_count": 1,
+        "queued_count": 1,
+        "source_event_count": 1,
+        "status": "Blocked",
+        "dispatch_contract_status": "Blocked",
+        "eligibility_status": "Blocked",
+        "dispatch_contract_reason": "blocked",
+        "required_capability": "runtime_subtask_dispatcher",
+        "required_preconditions": ["runtime_subtask_dispatcher_implemented"],
+        "check_count": 1,
+        "blocked_checks": ["dispatch_contract_not_executable"],
+        "execution_enabled": false,
+        "dispatch_enabled": false,
+        "next_action": "await_dispatch_contract_implementation",
+        "reason": "blocked"
+    });
+    let subtask_dispatch_admission_payload = json!({
+        "admission_id": "admission_1",
+        "parent_task_id": "task_parent",
+        "parent_run_id": "run_parent",
+        "contract_id": "contract_1",
+        "contract_count": 1,
+        "queued_count": 1,
+        "source_event_count": 1,
+        "status": "Blocked",
+        "admission_status": "Blocked",
+        "execution_gate_status": "Blocked",
+        "admission_reason": "blocked",
+        "required_capability": "runtime_subtask_dispatcher",
+        "precondition_count": 1,
+        "satisfied_precondition_count": 0,
+        "blocked_preconditions": ["runtime_subtask_dispatcher_implemented"],
+        "check_count": 1,
+        "blocked_checks": ["dispatch_admission_blocked"],
+        "execution_enabled": false,
+        "dispatch_enabled": false,
+        "next_action": "await_dispatch_admission_preconditions",
+        "reason": "blocked"
+    });
+    let subtask_dispatch_readiness_snapshot_payload = json!({
+        "snapshot_id": "snapshot_1",
+        "parent_task_id": "task_parent",
+        "parent_run_id": "run_parent",
+        "admission_id": "admission_1",
+        "admission_count": 1,
+        "queued_count": 1,
+        "source_event_count": 1,
+        "status": "Blocked",
+        "readiness_status": "Blocked",
+        "scheduler_handoff_status": "Blocked",
+        "readiness_reason": "blocked",
+        "required_capability": "runtime_subtask_dispatcher",
+        "precondition_count": 1,
+        "satisfied_precondition_count": 0,
+        "blocked_preconditions": ["runtime_subtask_dispatcher_implemented"],
+        "check_count": 1,
+        "blocked_checks": ["dispatch_readiness_snapshot_blocked"],
+        "readiness_fingerprint": format!("sha256:{}", "b".repeat(64)),
+        "fingerprint_input_count": 8,
+        "execution_enabled": false,
+        "dispatch_enabled": false,
+        "next_action": "await_dispatch_readiness_snapshot_handoff",
+        "reason": "blocked"
+    });
+    let subtask_dispatcher_guard_verdict_payload = json!({
+        "guard_id": "guard_1",
+        "parent_task_id": "task_parent",
+        "parent_run_id": "run_parent",
+        "snapshot_id": "snapshot_1",
+        "snapshot_count": 1,
+        "queued_count": 1,
+        "source_event_count": 1,
+        "status": "Blocked",
+        "guard_status": "Blocked",
+        "scheduler_handoff_status": "Blocked",
+        "handoff_preflight_status": "Blocked",
+        "snapshot_validity_status": "Current",
+        "snapshot_fingerprint": format!("sha256:{}", "b".repeat(64)),
+        "snapshot_fingerprint_count": 1,
+        "fingerprint_input_count": 8,
+        "guard_reason": "blocked",
+        "required_capability": "runtime_subtask_dispatcher",
+        "precondition_count": 1,
+        "satisfied_precondition_count": 0,
+        "blocked_preconditions": ["runtime_subtask_dispatcher_implemented"],
+        "check_count": 1,
+        "blocked_checks": ["dispatcher_guard_blocked"],
+        "execution_enabled": false,
+        "dispatch_enabled": false,
+        "next_action": "await_dispatcher_guard_preconditions",
+        "reason": "blocked"
+    });
+    let subtask_dispatch_decision_payload = json!({
+        "decision_id": "decision_1",
+        "parent_task_id": "task_parent",
+        "parent_run_id": "run_parent",
+        "guard_id": "guard_1",
+        "guard_count": 1,
+        "snapshot_id": "snapshot_1",
+        "queued_count": 1,
+        "source_event_count": 1,
+        "status": "Blocked",
+        "decision_status": "Blocked",
+        "candidate_status": "Blocked",
+        "dispatch_decision": "Denied",
+        "dispatch_denial_reason": "blocked",
+        "handoff_preflight_status": "Blocked",
+        "guard_status": "Blocked",
+        "snapshot_validity_status": "Current",
+        "snapshot_fingerprint": format!("sha256:{}", "b".repeat(64)),
+        "snapshot_fingerprint_count": 1,
+        "fingerprint_input_count": 8,
+        "dispatch_candidate_count": 1,
+        "eligible_candidate_count": 0,
+        "blocked_candidate_count": 1,
+        "required_capability": "runtime_subtask_dispatcher",
+        "precondition_count": 1,
+        "satisfied_precondition_count": 0,
+        "blocked_preconditions": ["runtime_subtask_dispatcher_implemented"],
+        "check_count": 1,
+        "blocked_checks": ["dispatch_decision_blocked"],
+        "execution_enabled": false,
+        "dispatch_enabled": false,
+        "next_action": "await_dispatch_decision_preconditions",
+        "reason": "blocked"
+    });
+    let subtask_dispatch_candidate_manifest_payload = json!({
+        "manifest_id": "manifest_1",
+        "parent_task_id": "task_parent",
+        "parent_run_id": "run_parent",
+        "decision_id": "decision_1",
+        "decision_count": 1,
+        "guard_id": "guard_1",
+        "snapshot_id": "snapshot_1",
+        "queued_count": 1,
+        "source_event_count": 1,
+        "status": "Blocked",
+        "manifest_status": "Blocked",
+        "candidate_status": "Blocked",
+        "dispatch_decision": "Denied",
+        "candidate_denial_reason": "blocked",
+        "candidate_count": 1,
+        "dispatch_candidate_count": 1,
+        "eligible_candidate_count": 0,
+        "blocked_candidate_count": 1,
+        "candidate_ids": ["subtask_1"],
+        "eligible_candidate_ids": [],
+        "blocked_candidate_ids": ["subtask_1"],
+        "candidate_manifest_fingerprint": format!("sha256:{}", "c".repeat(64)),
+        "snapshot_fingerprint": format!("sha256:{}", "b".repeat(64)),
+        "fingerprint_input_count": 8,
+        "required_capability": "runtime_subtask_dispatcher",
+        "precondition_count": 1,
+        "satisfied_precondition_count": 0,
+        "blocked_preconditions": ["runtime_subtask_dispatcher_implemented"],
+        "check_count": 1,
+        "blocked_checks": ["dispatch_candidate_manifest_blocked"],
+        "execution_enabled": false,
+        "dispatch_enabled": false,
+        "next_action": "await_dispatch_candidate_manifest_preconditions",
+        "reason": "blocked"
+    });
+    let subtask_dispatch_handoff_envelope_payload = json!({
+        "handoff_envelope_id": "envelope_1",
+        "parent_task_id": "task_parent",
+        "parent_run_id": "run_parent",
+        "manifest_id": "manifest_1",
+        "manifest_count": 1,
+        "decision_id": "decision_1",
+        "queued_count": 1,
+        "source_event_count": 1,
+        "status": "Accepted",
+        "handoff_envelope_status": "Accepted",
+        "handoff_ticket_status": "Blocked",
+        "replay_guard_status": "Blocked",
+        "scheduler_handoff_status": "Blocked",
+        "candidate_status": "Blocked",
+        "dispatch_decision": "Denied",
+        "candidate_denial_reason": "blocked",
+        "candidate_count": 1,
+        "dispatch_candidate_count": 1,
+        "eligible_candidate_count": 0,
+        "blocked_candidate_count": 1,
+        "handoff_ticket_count": 0,
+        "candidate_ids": ["subtask_1"],
+        "eligible_candidate_ids": [],
+        "blocked_candidate_ids": ["subtask_1"],
+        "candidate_manifest_fingerprint": format!("sha256:{}", "c".repeat(64)),
+        "handoff_envelope_fingerprint": format!("sha256:{}", "d".repeat(64)),
+        "fingerprint_input_count": 8,
+        "required_capability": "runtime_subtask_dispatcher",
+        "precondition_count": 1,
+        "satisfied_precondition_count": 0,
+        "blocked_preconditions": ["runtime_subtask_dispatcher_implemented"],
+        "check_count": 1,
+        "blocked_checks": ["dispatch_handoff_envelope_blocked"],
+        "execution_enabled": false,
+        "dispatch_enabled": false,
+        "next_action": "materialize_controlled_child_task",
+        "reason": "blocked"
+    });
+    let parent_join_continuation_consumed_payload = json!({
+        "parent_join_continuation_status": "Consumed",
+        "admission_id": "parent_join_admission_1",
+        "child_completion_fingerprint": format!("sha256:{}", "a".repeat(64)),
+        "child_completion_child_count": 1,
+        "child_terminal_completed_count": 1,
+        "child_terminal_failed_count": 0,
+        "child_recovery_cycle_depth": 0,
+        "fingerprint_input_count": 5,
+        "reason": "consumed"
+    });
     let event_payload_schema_classifications = ledger_event_kinds
         .iter()
         .map(|kind| {
@@ -1273,13 +1554,58 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             "ExternalModePackTaskProvenanceDenied",
             &external_modepack_task_denied_payload,
         ),
+        payload_schema_fixture(
+            "SubtaskOrchestrationQueued",
+            &subtask_orchestration_queued_payload,
+        ),
+        payload_schema_fixture("SubtaskHandoffPrepared", &subtask_handoff_prepared_payload),
+        payload_schema_fixture(
+            "SubtaskSchedulerReadinessRecorded",
+            &subtask_scheduler_readiness_payload,
+        ),
+        payload_schema_fixture(
+            "SubtaskDispatchPlanPrepared",
+            &subtask_dispatch_plan_payload,
+        ),
+        payload_schema_fixture(
+            "SubtaskDispatchContractPrepared",
+            &subtask_dispatch_contract_payload,
+        ),
+        payload_schema_fixture(
+            "SubtaskDispatchAdmissionEvaluated",
+            &subtask_dispatch_admission_payload,
+        ),
+        payload_schema_fixture(
+            "SubtaskDispatchReadinessSnapshotRecorded",
+            &subtask_dispatch_readiness_snapshot_payload,
+        ),
+        payload_schema_fixture(
+            "SubtaskDispatcherGuardVerdictRecorded",
+            &subtask_dispatcher_guard_verdict_payload,
+        ),
+        payload_schema_fixture(
+            "SubtaskDispatchDecisionRecorded",
+            &subtask_dispatch_decision_payload,
+        ),
+        payload_schema_fixture(
+            "SubtaskDispatchCandidateManifestRecorded",
+            &subtask_dispatch_candidate_manifest_payload,
+        ),
+        payload_schema_fixture(
+            "SubtaskDispatchHandoffEnvelopeRecorded",
+            &subtask_dispatch_handoff_envelope_payload,
+        ),
+        payload_schema_fixture(
+            "ParentJoinContinuationFingerprintConsumed",
+            &parent_join_continuation_consumed_payload,
+        ),
     ];
 
     json!({
         "schema_version": 10,
         "contract_id": "runtime-semantic-protocol-contract-v1",
         "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-        "phase": "RRP-5.14",
+        "phase": "RRP-5.15",
         "owner": "runtime",
         "runtime_release_debt_id": "protocol-event-canonization",
         "runtime_release_ready": false,
@@ -2100,7 +2426,7 @@ fn canonical_value(value: &Value) -> Value {
     }
 }
 
-const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 10;
+const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 11;
 
 fn ledger_payload_schema_id(kind: &str) -> String {
     format!("ledger_payload.{kind}.v{LEDGER_PAYLOAD_SCHEMA_VERSION}")
@@ -2158,7 +2484,19 @@ fn ledger_payload_schema_classification(kind: &str) -> &'static str {
         | "TaskRunning"
         | "ModeResolved"
         | "ExternalModePackChildProvenanceDenied"
-        | "ExternalModePackTaskProvenanceDenied" => "strict_typed",
+        | "ExternalModePackTaskProvenanceDenied"
+        | "SubtaskOrchestrationQueued"
+        | "SubtaskHandoffPrepared"
+        | "SubtaskSchedulerReadinessRecorded"
+        | "SubtaskDispatchPlanPrepared"
+        | "SubtaskDispatchContractPrepared"
+        | "SubtaskDispatchAdmissionEvaluated"
+        | "SubtaskDispatchReadinessSnapshotRecorded"
+        | "SubtaskDispatcherGuardVerdictRecorded"
+        | "SubtaskDispatchDecisionRecorded"
+        | "SubtaskDispatchCandidateManifestRecorded"
+        | "SubtaskDispatchHandoffEnvelopeRecorded"
+        | "ParentJoinContinuationFingerprintConsumed" => "strict_typed",
         _ => "versioned_open",
     }
 }
@@ -2233,6 +2571,30 @@ fn ledger_payload_schema_descriptor(kind: &str) -> String {
         }
         "ExternalModePackTaskProvenanceDenied" => {
             external_modepack_task_denied_payload_schema_descriptor()
+        }
+        "SubtaskOrchestrationQueued" => subtask_orchestration_queued_payload_schema_descriptor(),
+        "SubtaskHandoffPrepared" => subtask_handoff_prepared_payload_schema_descriptor(),
+        "SubtaskSchedulerReadinessRecorded" => {
+            subtask_scheduler_readiness_payload_schema_descriptor()
+        }
+        "SubtaskDispatchPlanPrepared" => subtask_dispatch_plan_payload_schema_descriptor(),
+        "SubtaskDispatchContractPrepared" => subtask_dispatch_contract_payload_schema_descriptor(),
+        "SubtaskDispatchAdmissionEvaluated" => subtask_dispatch_admission_payload_schema_descriptor(),
+        "SubtaskDispatchReadinessSnapshotRecorded" => {
+            subtask_dispatch_readiness_snapshot_payload_schema_descriptor()
+        }
+        "SubtaskDispatcherGuardVerdictRecorded" => {
+            subtask_dispatcher_guard_verdict_payload_schema_descriptor()
+        }
+        "SubtaskDispatchDecisionRecorded" => subtask_dispatch_decision_payload_schema_descriptor(),
+        "SubtaskDispatchCandidateManifestRecorded" => {
+            subtask_dispatch_candidate_manifest_payload_schema_descriptor()
+        }
+        "SubtaskDispatchHandoffEnvelopeRecorded" => {
+            subtask_dispatch_handoff_envelope_payload_schema_descriptor()
+        }
+        "ParentJoinContinuationFingerprintConsumed" => {
+            parent_join_continuation_consumed_payload_schema_descriptor()
         }
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
@@ -2364,6 +2726,54 @@ fn external_modepack_child_denied_payload_schema_descriptor() -> String {
 
 fn external_modepack_task_denied_payload_schema_descriptor() -> String {
     "strict_typed{payload_optional:false;required_fields:reason:string,run_id:string,source_kind:string,source_path:string,status:string,task_id:string;known_optional_fields:mode_id:string_or_null;additional_fields:false;external_modepack_task_provenance_denied_payload:true;status:Denied}".to_string()
+}
+
+fn subtask_orchestration_queued_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:execution_enabled:boolean,input_summary:object,parent_run_id:string,parent_task_id:string,queue_position:u64,reason:string,request_reason:string,required_action:string,status:string,subtask_id:string,tool_id:string;known_optional_fields:requested_goal_preview:string,requested_mode_id:string;additional_fields:false;subtask_orchestration_payload:true}".to_string()
+}
+
+fn subtask_handoff_prepared_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:execution_enabled:boolean,handoff_id:string,next_action:string,parent_run_id:string,parent_task_id:string,queued_count:u64,queued_subtask_ids:array<string>,reason:string,source_event_count:u64,status:string;additional_fields:false;subtask_handoff_prepared_payload:true}".to_string()
+}
+
+fn subtask_scheduler_readiness_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,check_count:u64,dispatch_enabled:boolean,execution_enabled:boolean,handoff_count:u64,handoff_id:string,next_action:string,parent_run_id:string,parent_task_id:string,queued_count:u64,readiness_id:string,readiness_reason:string,readiness_status:string,reason:string,source_event_count:u64,status:string;additional_fields:false;subtask_scheduler_readiness_payload:true}".to_string()
+}
+
+fn subtask_dispatch_plan_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,check_count:u64,dispatch_enabled:boolean,dispatch_plan_status:string,dispatch_reason:string,execution_enabled:boolean,next_action:string,parent_run_id:string,parent_task_id:string,plan_id:string,queued_count:u64,readiness_count:u64,readiness_id:string,reason:string,required_capability:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_plan_payload:true}".to_string()
+}
+
+fn subtask_dispatch_contract_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,check_count:u64,contract_id:string,dispatch_contract_reason:string,dispatch_contract_status:string,dispatch_enabled:boolean,eligibility_status:string,execution_enabled:boolean,next_action:string,parent_run_id:string,parent_task_id:string,plan_count:u64,plan_id:string,queued_count:u64,reason:string,required_capability:string,required_preconditions:array<string>,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_contract_payload:true}".to_string()
+}
+
+fn subtask_dispatch_admission_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:admission_id:string,admission_reason:string,admission_status:string,blocked_checks:array<string>,blocked_preconditions:array<string>,check_count:u64,contract_count:u64,contract_id:string,dispatch_enabled:boolean,execution_enabled:boolean,execution_gate_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,reason:string,required_capability:string,satisfied_precondition_count:u64,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_admission_payload:true}".to_string()
+}
+
+fn subtask_dispatch_readiness_snapshot_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:admission_count:u64,admission_id:string,blocked_checks:array<string>,blocked_preconditions:array<string>,check_count:u64,dispatch_enabled:boolean,execution_enabled:boolean,fingerprint_input_count:u64,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,readiness_fingerprint:string,readiness_reason:string,readiness_status:string,reason:string,required_capability:string,satisfied_precondition_count:u64,scheduler_handoff_status:string,snapshot_id:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_readiness_snapshot_payload:true}".to_string()
+}
+
+fn subtask_dispatcher_guard_verdict_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,blocked_preconditions:array<string>,check_count:u64,dispatch_enabled:boolean,execution_enabled:boolean,fingerprint_input_count:u64,guard_id:string,guard_reason:string,guard_status:string,handoff_preflight_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,reason:string,required_capability:string,satisfied_precondition_count:u64,scheduler_handoff_status:string,snapshot_count:u64,snapshot_fingerprint:string,snapshot_fingerprint_count:u64,snapshot_id:string,snapshot_validity_status:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatcher_guard_verdict_payload:true}".to_string()
+}
+
+fn subtask_dispatch_decision_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:blocked_candidate_count:u64,blocked_checks:array<string>,blocked_preconditions:array<string>,candidate_status:string,check_count:u64,decision_id:string,decision_status:string,dispatch_candidate_count:u64,dispatch_decision:string,dispatch_denial_reason:string,dispatch_enabled:boolean,eligible_candidate_count:u64,execution_enabled:boolean,fingerprint_input_count:u64,guard_count:u64,guard_id:string,guard_status:string,handoff_preflight_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,reason:string,required_capability:string,satisfied_precondition_count:u64,snapshot_fingerprint:string,snapshot_fingerprint_count:u64,snapshot_id:string,snapshot_validity_status:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_decision_payload:true}".to_string()
+}
+
+fn subtask_dispatch_candidate_manifest_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:blocked_candidate_count:u64,blocked_candidate_ids:array<string>,blocked_checks:array<string>,blocked_preconditions:array<string>,candidate_count:u64,candidate_denial_reason:string,candidate_ids:array<string>,candidate_manifest_fingerprint:string,candidate_status:string,check_count:u64,decision_count:u64,decision_id:string,dispatch_candidate_count:u64,dispatch_decision:string,dispatch_enabled:boolean,eligible_candidate_count:u64,eligible_candidate_ids:array<string>,execution_enabled:boolean,fingerprint_input_count:u64,guard_id:string,manifest_id:string,manifest_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,reason:string,required_capability:string,satisfied_precondition_count:u64,snapshot_fingerprint:string,snapshot_id:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_candidate_manifest_payload:true}".to_string()
+}
+
+fn subtask_dispatch_handoff_envelope_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:blocked_candidate_count:u64,blocked_candidate_ids:array<string>,candidate_count:u64,candidate_ids:array<string>,candidate_status:string,dispatch_decision:string,dispatch_enabled:boolean,eligible_candidate_count:u64,eligible_candidate_ids:array<string>,execution_enabled:boolean,fingerprint_input_count:u64,handoff_envelope_fingerprint:string,handoff_envelope_id:string,handoff_envelope_status:string,next_action:string,parent_run_id:string,parent_task_id:string,reason:string,required_capability:string,scheduler_handoff_status:string,status:string;known_optional_fields:blocked_checks:array<string>,blocked_preconditions:array<string>,candidate_denial_reason:string,candidate_manifest_fingerprint:string,check_count:u64,continuation_materialization:boolean,continuation_source:string,decision_id:string,dispatch_candidate_count:u64,handoff_ticket_count:u64,handoff_ticket_status:string,manifest_count:u64,manifest_id:string,max_recovery_cycle_depth:u64,parent_join_admission_id:string,parent_join_child_completion_child_count:u64,parent_join_child_completion_fingerprint:string,parent_join_fingerprint_input_count:u64,parent_join_recovery_cycle:boolean,parent_join_recovery_cycle_depth:u64,parent_join_terminal_completed_child_count:u64,parent_join_terminal_failed_child_count:u64,precondition_count:u64,queued_count:u64,recovery_cycle_budget_status:string,replay_guard_reason:string,replay_guard_status:string,satisfied_precondition_count:u64,source_event_count:u64;additional_fields:false;subtask_dispatch_handoff_envelope_payload:true}".to_string()
+}
+
+fn parent_join_continuation_consumed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:admission_id:string,child_completion_child_count:u64,child_completion_fingerprint:string,child_recovery_cycle_depth:u64,child_terminal_completed_count:u64,child_terminal_failed_count:u64,fingerprint_input_count:u64,parent_join_continuation_status:string,reason:string;additional_fields:false;parent_join_continuation_consumed_payload:true}".to_string()
 }
 
 fn ledger_payload_instance_shape_fingerprint_for_value(kind: &str, payload: &Value) -> String {

@@ -31,15 +31,15 @@
   "metrics": {
     "files": {
       "crates/brownie-runtime/src/lib.rs": {
-        "line_count": 65978,
+        "line_count": 66171,
         "public_items": 3,
         "private_items": 487,
         "production_line_count": 14368,
-        "test_line_count": 51610,
+        "test_line_count": 51803,
         "state_mutation_mentions": 303,
         "durable_write_mentions": 224,
         "permission_decision_mentions": 175,
-        "recovery_mentions": 2217,
+        "recovery_mentions": 2242,
         "rpc_dispatch_mentions": 90,
         "approval_mentions": 533,
         "mcp_mentions": 599,

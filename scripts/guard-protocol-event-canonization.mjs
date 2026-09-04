@@ -175,7 +175,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
   requireValue(contract.contract_id === 'runtime-semantic-protocol-contract-v1', errors, `${contractPath} contract_id must identify the Runtime semantic protocol contract.`);
   requireValue(contract.campaign === 'runtime-release-readiness-p0-p1-finite-closure', errors, `${contractPath} campaign must match Runtime release readiness.`);
-  requireValue(contract.phase === 'RRP-5.14', errors, `${contractPath} phase must be RRP-5.14.`);
+  requireValue(contract.phase === 'RRP-5.15', errors, `${contractPath} phase must be RRP-5.15.`);
   requireValue(contract.owner === 'runtime', errors, `${contractPath} owner must be runtime.`);
   requireValue(contract.runtime_release_debt_id === 'protocol-event-canonization', errors, `${contractPath} must bind to protocol-event-canonization.`);
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must not declare Runtime Release Ready.`);
@@ -392,7 +392,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   for (const variant of ledgerVariants) {
     const entry = fingerprintByKind.get(variant);
     requireValue(Boolean(entry), errors, `${contractPath} durable_event_migration_coupling.event_payload_schema_fingerprints must include ${variant}.`);
-    requireValue(entry?.payload_schema_version === 10, errors, `${contractPath} ${variant} payload_schema_version must be 10.`);
+    requireValue(entry?.payload_schema_version === 11, errors, `${contractPath} ${variant} payload_schema_version must be 11.`);
     requireValue(entry?.store_schema_version === durableCoupling.store_schema_version, errors, `${contractPath} ${variant} store_schema_version must match durable coupling schema version.`);
     requireValue(isNonEmptyString(entry?.payload_schema_id), errors, `${contractPath} ${variant} payload_schema_id must be present.`);
     requireValue(isNonEmptyString(entry?.payload_schema_fingerprint), errors, `${contractPath} ${variant} payload_schema_fingerprint must be present.`);
@@ -464,6 +464,18 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
     ['ToolExecutionCompleted', 'tool_execution_terminal_payload:true'],
     ['ToolExecutionDenied', 'tool_execution_terminal_payload:true'],
     ['ToolExecutionFailed', 'tool_execution_terminal_payload:true'],
+    ['SubtaskOrchestrationQueued', 'subtask_orchestration_payload:true'],
+    ['SubtaskHandoffPrepared', 'subtask_handoff_prepared_payload:true'],
+    ['SubtaskSchedulerReadinessRecorded', 'subtask_scheduler_readiness_payload:true'],
+    ['SubtaskDispatchPlanPrepared', 'subtask_dispatch_plan_payload:true'],
+    ['SubtaskDispatchContractPrepared', 'subtask_dispatch_contract_payload:true'],
+    ['SubtaskDispatchAdmissionEvaluated', 'subtask_dispatch_admission_payload:true'],
+    ['SubtaskDispatchReadinessSnapshotRecorded', 'subtask_dispatch_readiness_snapshot_payload:true'],
+    ['SubtaskDispatcherGuardVerdictRecorded', 'subtask_dispatcher_guard_verdict_payload:true'],
+    ['SubtaskDispatchDecisionRecorded', 'subtask_dispatch_decision_payload:true'],
+    ['SubtaskDispatchCandidateManifestRecorded', 'subtask_dispatch_candidate_manifest_payload:true'],
+    ['SubtaskDispatchHandoffEnvelopeRecorded', 'subtask_dispatch_handoff_envelope_payload:true'],
+    ['ParentJoinContinuationFingerprintConsumed', 'parent_join_continuation_consumed_payload:true'],
   ]);
   for (const [toolKind, descriptorToken] of toolDescriptorRequirements) {
     const toolEntry = fingerprintByKind.get(toolKind);
