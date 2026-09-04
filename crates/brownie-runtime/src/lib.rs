@@ -14407,55 +14407,15 @@ mod tests {
             .expect("ledger events")
     }
 
-    fn legacy_v1_payload_shape_descriptor(value: &serde_json::Value) -> String {
-        match value {
-            serde_json::Value::Null => "null".to_string(),
-            serde_json::Value::Bool(_) => "boolean".to_string(),
-            serde_json::Value::Number(number) if number.is_i64() || number.is_u64() => {
-                "integer".to_string()
-            }
-            serde_json::Value::Number(_) => "number".to_string(),
-            serde_json::Value::String(_) => "string".to_string(),
-            serde_json::Value::Array(values) => {
-                if values.is_empty() {
-                    "array<empty>".to_string()
-                } else {
-                    let mut item_shapes = values
-                        .iter()
-                        .map(legacy_v1_payload_shape_descriptor)
-                        .collect::<Vec<_>>();
-                    item_shapes.sort();
-                    item_shapes.dedup();
-                    format!("array<{}>", item_shapes.join("|"))
-                }
-            }
-            serde_json::Value::Object(object) => {
-                let fields = object
-                    .iter()
-                    .map(|(key, value)| {
-                        format!("{key}:{}", legacy_v1_payload_shape_descriptor(value))
-                    })
-                    .collect::<Vec<_>>()
-                    .join(",");
-                format!("object{{{fields}}}")
-            }
-        }
-    }
-
     fn legacy_v1_payload_shape_fingerprint(
         kind: &brownie_store::LedgerEventKind,
         payload: &serde_json::Value,
     ) -> String {
-        let input = format!(
-            "{kind:?}:payload_shape_v1:descriptor:{}",
-            legacy_v1_payload_shape_descriptor(payload)
-        );
-        let mut hash = 0xcbf29ce484222325u64;
-        for byte in input.as_bytes() {
-            hash ^= u64::from(*byte);
-            hash = hash.wrapping_mul(0x100000001b3);
-        }
-        format!("shape-fnv1a64:{hash:016x}")
+        brownie_protocol::semantic_contract::ledger_payload_instance_shape_fingerprint_for_version(
+            &format!("{kind:?}"),
+            1,
+            payload,
+        )
     }
 
     #[test]

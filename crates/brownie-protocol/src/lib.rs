@@ -5673,7 +5673,7 @@ mod semantic_contract_tests {
         let contract = semantic_contract::runtime_semantic_protocol_contract();
         assert_eq!(
             contract.get("phase").and_then(Value::as_str),
-            Some("RRP-5.17")
+            Some("RRP-5.18")
         );
 
         let type_schemas = contract
@@ -5726,6 +5726,32 @@ mod semantic_contract_tests {
                 .and_then(Value::as_str)
                 .is_some_and(|fingerprint| fingerprint.starts_with("shape-fnv1a64:")),
             "method contract must fingerprint the recursive result schema"
+        );
+    }
+
+    #[test]
+    fn semantic_contract_uses_event_specific_ledger_payload_schema_versions() {
+        assert_eq!(
+            semantic_contract::ledger_payload_schema_version("TaskCompleted"),
+            3
+        );
+        assert_eq!(
+            semantic_contract::ledger_payload_schema_id("TaskCompleted"),
+            "ledger_payload.TaskCompleted.v3"
+        );
+        assert_eq!(
+            semantic_contract::ledger_payload_schema_version("HeadlessRunCompletionFinalized"),
+            13
+        );
+        assert_ne!(
+            semantic_contract::ledger_payload_schema_fingerprint("TaskCompleted"),
+            semantic_contract::ledger_payload_schema_fingerprint_for_version("TaskCompleted", 13),
+            "legacy v13 compatibility fingerprint must not replace the current event-specific contract fingerprint"
+        );
+        assert_eq!(
+            semantic_contract::ledger_payload_schema_descriptor("TaskCompleted"),
+            semantic_contract::ledger_payload_schema_descriptor_for_version("TaskCompleted", 13),
+            "legacy global v13 envelopes reuse the same event descriptor through the compatibility registry"
         );
     }
 

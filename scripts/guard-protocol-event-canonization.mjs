@@ -175,7 +175,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
   requireValue(contract.contract_id === 'runtime-semantic-protocol-contract-v1', errors, `${contractPath} contract_id must identify the Runtime semantic protocol contract.`);
   requireValue(contract.campaign === 'runtime-release-readiness-p0-p1-finite-closure', errors, `${contractPath} campaign must match Runtime release readiness.`);
-  requireValue(contract.phase === 'RRP-5.17', errors, `${contractPath} phase must be RRP-5.17.`);
+  requireValue(contract.phase === 'RRP-5.18', errors, `${contractPath} phase must be RRP-5.18.`);
   requireValue(contract.owner === 'runtime', errors, `${contractPath} owner must be runtime.`);
   requireValue(contract.runtime_release_debt_id === 'protocol-event-canonization', errors, `${contractPath} must bind to protocol-event-canonization.`);
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must not declare Runtime Release Ready.`);
@@ -323,20 +323,32 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
 
   const durableCoupling = contract.durable_event_migration_coupling ?? {};
   const storeText = textByPath.get('crates/brownie-store/src/lib.rs') ?? '';
+  const protocolContractText = textByPath.get('crates/brownie-protocol/src/semantic_contract.rs') ?? '';
   const ledgerVariants = extractEnumVariants(storeText, 'LedgerEventKind');
   requireValue(durableCoupling.store_schema_version === 2, errors, `${contractPath} durable_event_migration_coupling.store_schema_version must be 2.`);
   requireValue(durableCoupling.ledger_event_kind_source === 'crates/brownie-store/src/lib.rs', errors, `${contractPath} must bind durable event kinds to brownie-store.`);
   requireValue(durableCoupling.ledger_payload_envelope_type === 'LedgerPayloadEnvelope', errors, `${contractPath} must bind durable event payloads to LedgerPayloadEnvelope.`);
   requireValue(durableCoupling.ledger_payload_envelope_field === 'payload_envelope', errors, `${contractPath} must bind durable event payloads to payload_envelope.`);
-  requireValue(durableCoupling.ledger_payload_schema_version_source === 'LEDGER_PAYLOAD_SCHEMA_VERSION', errors, `${contractPath} must bind durable event payload schema versions to LEDGER_PAYLOAD_SCHEMA_VERSION.`);
-  requireValue(durableCoupling.ledger_payload_shape_version_source === 'LEDGER_PAYLOAD_SHAPE_VERSION', errors, `${contractPath} must bind durable event payload shape versions to LEDGER_PAYLOAD_SHAPE_VERSION.`);
-  for (const token of ['LedgerPayloadEnvelope', 'payload_envelope', 'LEDGER_PAYLOAD_SCHEMA_VERSION', 'schema_fingerprint', 'instance_shape_fingerprint', 'LedgerPayloadSchemaClassification', 'ledger_payload_schema_classification', 'validate_terminal_task_payload_schema', 'ledger_payload_schema_fingerprint', 'ledger_payload_instance_shape_fingerprint_for_value', 'validate_ledger_payload_envelope']) {
+  requireValue(
+    durableCoupling.ledger_payload_schema_version_source === 'brownie_protocol::semantic_contract::ledger_payload_schema_version(kind)',
+    errors,
+    `${contractPath} must bind durable event payload schema versions to the protocol-owned event-specific registry.`
+  );
+  requireValue(
+    durableCoupling.ledger_payload_shape_version_source === 'schema alias of ledger_payload_schema_version(kind)',
+    errors,
+    `${contractPath} must bind durable event payload shape versions to the event-specific schema version.`
+  );
+  for (const token of ['LEDGER_PAYLOAD_LEGACY_GLOBAL_SCHEMA_MAX_VERSION', 'ledger_payload_schema_version', 'ledger_payload_schema_descriptor_for_version', 'ledger_payload_schema_fingerprint_for_version', 'ledger_payload_instance_shape_fingerprint_for_version']) {
+    requireValue(hasIdentifier(protocolContractText, token), errors, `brownie-protocol semantic contract must retain ${token}.`);
+  }
+  for (const token of ['LedgerPayloadEnvelope', 'payload_envelope', 'schema_fingerprint', 'instance_shape_fingerprint', 'LedgerPayloadSchemaClassification', 'ledger_payload_schema_classification', 'validate_terminal_task_payload_schema', 'ledger_payload_schema_fingerprint', 'ledger_payload_instance_shape_fingerprint_for_value', 'validate_ledger_payload_envelope', 'validate_bounded_opaque_payload_value']) {
     requireValue(hasIdentifier(storeText, token), errors, `brownie-store durable ledger payload shape evidence must retain ${token}.`);
   }
   requireValue(typeof durableCoupling.policy === 'string' && durableCoupling.policy.includes('schema migration'), errors, `${contractPath} durable event changes must require migration policy.`);
   requireValue(
     typeof durableCoupling.ledger_payload_schema_fingerprint_basis === 'string' &&
-      durableCoupling.ledger_payload_schema_fingerprint_basis.includes('fixed Runtime-owned payload schema descriptor'),
+      durableCoupling.ledger_payload_schema_fingerprint_basis.includes('event-specific Runtime-owned payload schema version'),
     errors,
     `${contractPath} durable coupling must state that schema fingerprints are fixed contract evidence.`
   );
@@ -393,10 +405,19 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   const fingerprintByKind = new Map(
     (Array.isArray(durableCoupling.event_payload_schema_fingerprints) ? durableCoupling.event_payload_schema_fingerprints : []).map((entry) => [entry?.ledger_event_kind, entry])
   );
+  const payloadSchemaVersions = new Set();
   for (const variant of ledgerVariants) {
     const entry = fingerprintByKind.get(variant);
     requireValue(Boolean(entry), errors, `${contractPath} durable_event_migration_coupling.event_payload_schema_fingerprints must include ${variant}.`);
-    requireValue(entry?.payload_schema_version === 13, errors, `${contractPath} ${variant} payload_schema_version must be 13.`);
+    requireValue(Number.isInteger(entry?.payload_schema_version) && entry.payload_schema_version >= 1 && entry.payload_schema_version <= 13, errors, `${contractPath} ${variant} payload_schema_version must be event-specific and within supported v1-v13 compatibility.`);
+    if (Number.isInteger(entry?.payload_schema_version)) {
+      payloadSchemaVersions.add(entry.payload_schema_version);
+    }
+    requireValue(
+      entry?.payload_schema_id === `ledger_payload.${variant}.v${entry?.payload_schema_version}`,
+      errors,
+      `${contractPath} ${variant} payload_schema_id must use the event-specific payload_schema_version.`
+    );
     requireValue(entry?.store_schema_version === durableCoupling.store_schema_version, errors, `${contractPath} ${variant} store_schema_version must match durable coupling schema version.`);
     requireValue(isNonEmptyString(entry?.payload_schema_id), errors, `${contractPath} ${variant} payload_schema_id must be present.`);
     requireValue(isNonEmptyString(entry?.payload_schema_fingerprint), errors, `${contractPath} ${variant} payload_schema_fingerprint must be present.`);
@@ -412,6 +433,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
       requireValue(entry?.payload_schema_contract_status === 'partial', errors, `${contractPath} ${variant} open payload schema must be partial.`);
     }
   }
+  requireValue(payloadSchemaVersions.size > 1, errors, `${contractPath} ledger payload schema versions must be event-specific, not one global value for every event.`);
   for (const terminalKind of ['TaskCompleted', 'TaskFailed', 'TaskCancelled']) {
     const terminalEntry = fingerprintByKind.get(terminalKind);
     requireValue(

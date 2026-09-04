@@ -555,6 +555,7 @@ const METHOD_SPECS: &[MethodSpec] = &[
     ),
 ];
 
+#[allow(clippy::too_many_arguments)]
 const fn method(
     method: &'static str,
     group_id: &'static str,
@@ -1506,7 +1507,7 @@ pub fn runtime_semantic_protocol_contract() -> Value {
         "task_id": "task_1",
         "run_id": "run_1",
         "acceptance_id": "acceptance_1",
-        "phase_id": "RRP-5.17",
+        "phase_id": "RRP-5.18",
         "milestone": "runtime_release_readiness",
         "target_capability": "protocol-event-canonization",
         "concrete_capability_transition": "headless payload strict coverage",
@@ -1991,7 +1992,7 @@ pub fn runtime_semantic_protocol_contract() -> Value {
         "schema_version": 10,
         "contract_id": "runtime-semantic-protocol-contract-v1",
         "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-        "phase": "RRP-5.17",
+        "phase": "RRP-5.18",
         "owner": "runtime",
         "runtime_release_debt_id": "protocol-event-canonization",
         "runtime_release_ready": false,
@@ -2086,9 +2087,9 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             "ledger_event_kind_source": "crates/brownie-store/src/lib.rs",
             "ledger_payload_envelope_type": "LedgerPayloadEnvelope",
             "ledger_payload_envelope_field": "payload_envelope",
-            "ledger_payload_schema_version_source": "LEDGER_PAYLOAD_SCHEMA_VERSION",
-            "ledger_payload_shape_version_source": "LEDGER_PAYLOAD_SHAPE_VERSION",
-            "ledger_payload_schema_fingerprint_basis": "LedgerEventKind plus the fixed Runtime-owned payload schema descriptor for that event-kind/version. It is stable across optional field presence, null-vs-value choices, and other individual payload instance variation.",
+            "ledger_payload_schema_version_source": "brownie_protocol::semantic_contract::ledger_payload_schema_version(kind)",
+            "ledger_payload_shape_version_source": "schema alias of ledger_payload_schema_version(kind)",
+            "ledger_payload_schema_fingerprint_basis": "LedgerEventKind plus the event-specific Runtime-owned payload schema version and payload schema descriptor. It is stable across optional field presence, null-vs-value choices, and other individual payload instance variation.",
             "ledger_payload_instance_shape_fingerprint_basis": "LedgerEventKind plus the canonical structural shape of the actual persisted payload value. This is diagnostic instance evidence, not the durable contract schema fingerprint.",
             "ledger_payload_contract_scope": {
                 "jsonrpc_request_result_contract": "closed",
@@ -2096,8 +2097,8 @@ pub fn runtime_semantic_protocol_contract() -> Value {
                 "ledger_event_payload_inventory": "closed",
                 "ledger_event_payload_typed_schema_coverage": "closed"
             },
-            "ledger_payload_schema_classification_policy": "Every LedgerEventKind must carry an explicit payload schema classification. versioned_open and typed_known_fields_open are allowed only as required-before-release debt evidence and must not be treated as fully typed ledger payload schemas. Current v13 classifies every LedgerEventKind as strict_typed or payload_absent, including the remaining headless continuation, headless run, journey, and completion-finalization families.",
-            "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Current v13 terminal task, permission, selected tool, MCP approval, tool terminal, codebase index, verification recovery context, agent loop, prompt, LLM request/response/failure, completion-acceptance, task admission, mode-resolution, tool planning, intent parsing, subtask orchestration/dispatch, workspace patch, and headless continuation/run/journey payload schemas preserve v1 through v12 read compatibility while requiring strict field validation for new appends.",
+            "ledger_payload_schema_classification_policy": "Every LedgerEventKind must carry an explicit payload schema classification. versioned_open and typed_known_fields_open are release-blocking and cannot be treated as fully typed ledger payload schemas. Current event-specific versions classify every LedgerEventKind as strict_typed or payload_absent; nested object and generic array fields are bounded opaque evidence unless their descriptor names a stricter primitive or string-array contract.",
+            "policy": "Durable event kind or typed payload schema changes require an explicit store schema migration or event-kind compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. New appends use the event-specific current schema version while read/replay preserve legacy v1 through v13 envelopes through the protocol-owned compatibility registry.",
             "guard": "guard:protocol-event-canonization",
             "event_payload_schema_classification_count": event_payload_schema_classifications.len(),
             "event_payload_schema_classifications": event_payload_schema_classifications,
@@ -2114,7 +2115,7 @@ pub fn runtime_semantic_protocol_contract() -> Value {
                         "payload_schema_classification": classification,
                         "payload_schema_contract_status": ledger_payload_schema_contract_status(classification),
                         "release_blocking_until_typed": ledger_payload_schema_release_blocking(classification),
-                        "payload_schema_version": LEDGER_PAYLOAD_SCHEMA_VERSION,
+                        "payload_schema_version": ledger_payload_schema_version(kind),
                         "payload_schema_fingerprint": ledger_payload_schema_fingerprint(kind),
                         "payload_schema_descriptor": ledger_payload_schema_descriptor(kind),
                         "store_schema_version": 2
@@ -2480,7 +2481,7 @@ fn golden_fixtures() -> Value {
             "timestamp": "2026-09-03T00:00:01Z",
             "payload": task_completed_payload,
             "payload_envelope": {
-                "schema_version": LEDGER_PAYLOAD_SCHEMA_VERSION,
+                "schema_version": ledger_payload_schema_version("TaskCompleted"),
                 "shape_id": ledger_payload_schema_id("TaskCompleted"),
                 "shape_fingerprint": task_completed_payload_schema_fingerprint,
                 "schema_id": ledger_payload_schema_id("TaskCompleted"),
@@ -2812,20 +2813,107 @@ fn canonical_value(value: &Value) -> Value {
     }
 }
 
-const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 13;
+pub const LEDGER_PAYLOAD_LEGACY_GLOBAL_SCHEMA_MAX_VERSION: u64 = 13;
 
-fn ledger_payload_schema_id(kind: &str) -> String {
-    format!("ledger_payload.{kind}.v{LEDGER_PAYLOAD_SCHEMA_VERSION}")
+pub fn ledger_payload_schema_version(kind: &str) -> u64 {
+    match kind {
+        "TaskCompleted" | "TaskFailed" | "TaskCancelled" => 3,
+        "PermissionChecked" | "PermissionDenied" => 4,
+        "ToolPermissionChecked"
+        | "ToolPlanApproved"
+        | "ToolPlanDenied"
+        | "ToolIntentPermissionChecked"
+        | "ToolIntentApproved"
+        | "ToolIntentDenied"
+        | "ToolExecutionRequested"
+        | "ToolExecutionPermissionChecked"
+        | "ToolExecutionDenied" => 5,
+        "McpToolExecutionApproved" | "ToolExecutionCompleted" | "ToolExecutionFailed" => 6,
+        "CodebaseIndexPermissionChecked"
+        | "CodebaseIndexSnapshotBuilt"
+        | "CodebaseIndexQueryCompleted"
+        | "CodebaseIndexSelectionReadCompleted"
+        | "CodebaseIndexPromptContextMaterialized"
+        | "VerificationRecoveryContextReadMaterialized" => 7,
+        "AgentLoopStarted"
+        | "AgentLoopCompleted"
+        | "TaskCompletionAccepted"
+        | "PromptBuilt"
+        | "PromptSensitiveScanCompleted"
+        | "PromptSensitiveScanFailed"
+        | "LlmRequestCreated"
+        | "LlmRequestFailed"
+        | "LlmResponseReceived"
+        | "SecondPassPromptBuilt"
+        | "SecondPassLlmRequestCreated"
+        | "SecondPassLlmRequestFailed"
+        | "SecondPassLlmResponseReceived" => 8,
+        "TaskStarted"
+        | "TaskRunning"
+        | "ModeResolved"
+        | "ExternalModePackChildProvenanceDenied"
+        | "ExternalModePackTaskProvenanceDenied" => 9,
+        "ToolPlanned" | "ToolIntentParsed" | "ToolIntentRejected" => 10,
+        "SubtaskOrchestrationQueued"
+        | "SubtaskHandoffPrepared"
+        | "SubtaskSchedulerReadinessRecorded"
+        | "SubtaskDispatchPlanPrepared"
+        | "SubtaskDispatchContractPrepared"
+        | "SubtaskDispatchAdmissionEvaluated"
+        | "SubtaskDispatchReadinessSnapshotRecorded"
+        | "SubtaskDispatcherGuardVerdictRecorded"
+        | "SubtaskDispatchDecisionRecorded"
+        | "SubtaskDispatchCandidateManifestRecorded"
+        | "SubtaskDispatchHandoffEnvelopeRecorded"
+        | "ParentJoinContinuationFingerprintConsumed" => 11,
+        "WorkspacePatchProposed"
+        | "WorkspacePatchApprovalRequested"
+        | "WorkspacePatchApproved"
+        | "WorkspacePatchRejected"
+        | "WorkspacePatchPreflightSnapshotCreated"
+        | "WorkspacePatchApplyPlanCreated"
+        | "WorkspacePatchApplyCapabilityChecked"
+        | "WorkspacePatchApplyDryRunChecked"
+        | "WorkspacePatchApplyResultRecorded"
+        | "WorkspacePatchReadinessReportCreated" => 12,
+        "HeadlessContinuationDecisionRecorded"
+        | "HeadlessRunSessionAdvanced"
+        | "HeadlessRunSessionDriveCompleted"
+        | "HeadlessRunProductEvidenceMatrixDerived"
+        | "HeadlessRunSelectedProductGapClosureRecorded"
+        | "HeadlessRunProductCompletionDecisionRecorded"
+        | "HeadlessJourneyStarted"
+        | "HeadlessJourneyRouteResumed"
+        | "HeadlessJourneyClosed"
+        | "HeadlessJourneyExecuted"
+        | "HeadlessRunCompletionFinalized" => 13,
+        _ => LEDGER_PAYLOAD_LEGACY_GLOBAL_SCHEMA_MAX_VERSION,
+    }
 }
 
-fn ledger_payload_schema_fingerprint(kind: &str) -> String {
+pub fn ledger_payload_schema_id(kind: &str) -> String {
+    format!(
+        "ledger_payload.{kind}.v{}",
+        ledger_payload_schema_version(kind)
+    )
+}
+
+pub fn ledger_payload_legacy_schema_id(kind: &str, schema_version: u64) -> String {
+    format!("ledger_payload.{kind}.v{schema_version}")
+}
+
+pub fn ledger_payload_schema_fingerprint(kind: &str) -> String {
+    ledger_payload_schema_fingerprint_for_version(kind, ledger_payload_schema_version(kind))
+}
+
+pub fn ledger_payload_schema_fingerprint_for_version(kind: &str, schema_version: u64) -> String {
     stable_fingerprint(&format!(
-        "{kind}:payload_schema_v{LEDGER_PAYLOAD_SCHEMA_VERSION}:descriptor:{}",
-        ledger_payload_schema_descriptor(kind)
+        "{kind}:payload_schema_v{schema_version}:descriptor:{}",
+        ledger_payload_schema_descriptor_for_version(kind, schema_version)
     ))
 }
 
-fn ledger_payload_schema_classification(kind: &str) -> &'static str {
+pub fn ledger_payload_schema_classification(kind: &str) -> &'static str {
     match kind {
         "TaskCompleted"
         | "TaskFailed"
@@ -2908,7 +2996,7 @@ fn ledger_payload_schema_classification(kind: &str) -> &'static str {
     }
 }
 
-fn ledger_payload_schema_contract_status(classification: &str) -> &'static str {
+pub fn ledger_payload_schema_contract_status(classification: &str) -> &'static str {
     match classification {
         "payload_absent" | "strict_typed" => "closed",
         "typed_known_fields_open" | "versioned_open" => "partial",
@@ -2917,11 +3005,11 @@ fn ledger_payload_schema_contract_status(classification: &str) -> &'static str {
     }
 }
 
-fn ledger_payload_schema_release_blocking(classification: &str) -> bool {
+pub fn ledger_payload_schema_release_blocking(classification: &str) -> bool {
     matches!(classification, "typed_known_fields_open" | "versioned_open")
 }
 
-fn ledger_payload_schema_descriptor(kind: &str) -> String {
+pub fn ledger_payload_schema_descriptor(kind: &str) -> String {
     match kind {
         "TaskCompleted" => terminal_task_payload_schema_descriptor("Completed"),
         "TaskFailed" => terminal_task_payload_schema_descriptor("Failed"),
@@ -3050,6 +3138,15 @@ fn ledger_payload_schema_descriptor(kind: &str) -> String {
         }
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
+}
+
+pub fn ledger_payload_schema_descriptor_for_version(kind: &str, schema_version: u64) -> String {
+    if schema_version < ledger_payload_schema_version(kind)
+        || schema_version > LEDGER_PAYLOAD_LEGACY_GLOBAL_SCHEMA_MAX_VERSION
+    {
+        return "unsupported{ledger_payload_schema_compatibility_entry_required:true}".to_string();
+    }
+    ledger_payload_schema_descriptor(kind)
 }
 
 fn terminal_task_payload_schema_descriptor(status: &str) -> String {
@@ -3269,14 +3366,37 @@ fn workspace_patch_readiness_report_payload_schema_descriptor() -> String {
     "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,check_count:u64,failed_checks:array<string>,fingerprint_input_count:u64,generated_at:string,proposal_id:string,readiness_fingerprint:string,readiness_reason:string_or_null,readiness_status:string,report_id:string;additional_fields:false;workspace_patch_readiness_report_payload:true}".to_string()
 }
 
-fn ledger_payload_instance_shape_fingerprint_for_value(kind: &str, payload: &Value) -> String {
-    stable_fingerprint(&format!(
-        "{kind}:payload_instance_shape_v{LEDGER_PAYLOAD_SCHEMA_VERSION}:descriptor:{}",
-        ledger_payload_shape_descriptor(payload)
-    ))
+pub fn ledger_payload_instance_shape_fingerprint_for_value(kind: &str, payload: &Value) -> String {
+    ledger_payload_instance_shape_fingerprint_for_version(
+        kind,
+        ledger_payload_schema_version(kind),
+        payload,
+    )
 }
 
-fn ledger_payload_shape_descriptor(value: &Value) -> String {
+pub fn ledger_payload_instance_shape_fingerprint_for_version(
+    kind: &str,
+    schema_version: u64,
+    payload: &Value,
+) -> String {
+    stable_fingerprint(
+        &ledger_payload_instance_shape_fingerprint_input_for_version(kind, schema_version, payload),
+    )
+}
+
+pub fn ledger_payload_instance_shape_fingerprint_input_for_version(
+    kind: &str,
+    schema_version: u64,
+    payload: &Value,
+) -> String {
+    format!(
+        "{kind}:payload_instance_shape_v{}:descriptor:{}",
+        schema_version,
+        ledger_payload_shape_descriptor(payload)
+    )
+}
+
+pub fn ledger_payload_shape_descriptor(value: &Value) -> String {
     match value {
         Value::Null => "null".to_string(),
         Value::Bool(_) => "boolean".to_string(),
