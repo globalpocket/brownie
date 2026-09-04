@@ -32081,22 +32081,113 @@ modes:
         );
     }
 
+    fn synthetic_handoff_envelope_payload(
+        parent: &TaskRecord,
+        handoff_envelope_id: &str,
+        handoff_envelope_fingerprint: &str,
+        candidate_ids: &[&str],
+        blocked_candidate_ids: &[&str],
+        dispatch_enabled: bool,
+        execution_enabled: bool,
+    ) -> Value {
+        let eligible_candidate_ids = if dispatch_enabled {
+            candidate_ids
+                .iter()
+                .filter(|candidate_id| !blocked_candidate_ids.contains(candidate_id))
+                .copied()
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        json!({
+            "handoff_envelope_id": handoff_envelope_id,
+            "parent_task_id": parent.task_id,
+            "parent_run_id": parent.run_id,
+            "status": "Accepted",
+            "handoff_envelope_status": "Accepted",
+            "scheduler_handoff_status": if dispatch_enabled { "Ready" } else { "Blocked" },
+            "candidate_status": if blocked_candidate_ids.is_empty() { "Eligible" } else { "Blocked" },
+            "dispatch_decision": if dispatch_enabled { "Accepted" } else { "Denied" },
+            "handoff_envelope_fingerprint": handoff_envelope_fingerprint,
+            "required_capability": "spawn_subtask",
+            "next_action": if dispatch_enabled {
+                "materialize_child_task"
+            } else {
+                "block_child_task_materialization"
+            },
+            "reason": "Synthetic strict handoff envelope test fixture.",
+            "candidate_count": candidate_ids.len(),
+            "eligible_candidate_count": eligible_candidate_ids.len(),
+            "blocked_candidate_count": blocked_candidate_ids.len(),
+            "fingerprint_input_count": 6,
+            "execution_enabled": execution_enabled,
+            "dispatch_enabled": dispatch_enabled,
+            "candidate_ids": candidate_ids,
+            "eligible_candidate_ids": eligible_candidate_ids,
+            "blocked_candidate_ids": blocked_candidate_ids
+        })
+    }
+
+    fn synthetic_subtask_queue_payload(
+        parent: &TaskRecord,
+        subtask_id: &str,
+        request_reason: &str,
+        requested_goal_preview: &str,
+        requested_mode_id: &str,
+        queue_position: usize,
+        execution_enabled: bool,
+    ) -> Value {
+        json!({
+            "subtask_id": subtask_id,
+            "parent_task_id": parent.task_id,
+            "parent_run_id": parent.run_id,
+            "tool_id": SUBTASK_SPAWN_TOOL_ID,
+            "required_action": "SpawnSubtask",
+            "status": "Queued",
+            "request_reason": request_reason,
+            "reason": "Synthetic strict queued subtask test fixture.",
+            "queue_position": queue_position,
+            "execution_enabled": execution_enabled,
+            "requested_goal_preview": requested_goal_preview,
+            "requested_mode_id": requested_mode_id,
+            "input_summary": {
+                "has_path": false,
+                "field_count": 2
+            }
+        })
+    }
+
     fn append_progress_test_handoff_envelope(
         store: &BrownieStore,
         parent: &TaskRecord,
         child: &TaskRecord,
     ) {
+        let source_handoff_envelope_id = child
+            .source_handoff_envelope_id
+            .as_deref()
+            .expect("child source handoff envelope id");
+        let source_handoff_envelope_fingerprint = child
+            .source_handoff_envelope_fingerprint
+            .as_deref()
+            .expect("child source handoff envelope fingerprint");
+        let source_candidate_id = child
+            .source_candidate_id
+            .as_deref()
+            .expect("child source candidate id");
         store
             .tasks()
             .append_task_event_with_payload(
                 parent,
                 LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
-                Some(json!({
-                    "handoff_envelope_id": child.source_handoff_envelope_id,
-                    "handoff_envelope_fingerprint": child.source_handoff_envelope_fingerprint,
-                    "candidate_ids": [child.source_candidate_id],
-                    "blocked_candidate_ids": []
-                })),
+                Some(synthetic_handoff_envelope_payload(
+                    parent,
+                    source_handoff_envelope_id,
+                    source_handoff_envelope_fingerprint,
+                    &[source_candidate_id],
+                    &[],
+                    true,
+                    false,
+                )),
             )
             .expect("append synthetic handoff envelope");
     }
@@ -33914,18 +34005,15 @@ modes:
             .append_task_event_with_payload(
                 &parent,
                 LedgerEventKind::SubtaskOrchestrationQueued,
-                Some(json!({
-                    "subtask_id": pending_candidate_id,
-                    "tool_id": SUBTASK_SPAWN_TOOL_ID,
-                    "required_action": "SpawnSubtask",
-                    "request_reason": "Create M5.34 pending sibling.",
-                    "requested_goal_preview": "Run M5.34 pending sibling raw goal",
-                    "requested_mode_id": "implementer",
-                    "input_summary": {
-                        "has_path": false,
-                        "field_count": 2
-                    }
-                })),
+                Some(synthetic_subtask_queue_payload(
+                    &parent,
+                    pending_candidate_id,
+                    "Create M5.34 pending sibling.",
+                    "Run M5.34 pending sibling raw goal",
+                    "implementer",
+                    1,
+                    false,
+                )),
             )
             .expect("append pending sibling queue");
         store
@@ -33933,14 +34021,15 @@ modes:
             .append_task_event_with_payload(
                 &parent,
                 LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
-                Some(json!({
-                    "handoff_envelope_status": "Accepted",
-                    "handoff_envelope_id": "handoff_envelope_m5_34_pending",
-                    "handoff_envelope_fingerprint": "sha256:m5-34-controlled-child-set",
-                    "candidate_ids": [pending_candidate_id],
-                    "dispatch_enabled": false,
-                    "execution_enabled": false
-                })),
+                Some(synthetic_handoff_envelope_payload(
+                    &parent,
+                    "handoff_envelope_m5_34_pending",
+                    "sha256:m5-34-controlled-child-set",
+                    &[pending_candidate_id],
+                    &[],
+                    false,
+                    false,
+                )),
             )
             .expect("append pending sibling handoff");
         let _ = materialize_controlled_child_task_from_handoff_envelope(&store, &parent)
@@ -34155,18 +34244,15 @@ modes:
             .append_task_event_with_payload(
                 &parent,
                 LedgerEventKind::SubtaskOrchestrationQueued,
-                Some(json!({
-                    "subtask_id": pending_candidate_id,
-                    "tool_id": SUBTASK_SPAWN_TOOL_ID,
-                    "required_action": "SpawnSubtask",
-                    "request_reason": "Create M5.35 pending sibling.",
-                    "requested_goal_preview": "Run M5.35 pending sibling raw goal",
-                    "requested_mode_id": "implementer",
-                    "input_summary": {
-                        "has_path": false,
-                        "field_count": 2
-                    }
-                })),
+                Some(synthetic_subtask_queue_payload(
+                    &parent,
+                    pending_candidate_id,
+                    "Create M5.35 pending sibling.",
+                    "Run M5.35 pending sibling raw goal",
+                    "implementer",
+                    1,
+                    false,
+                )),
             )
             .expect("append pending sibling queue");
         store
@@ -34174,14 +34260,15 @@ modes:
             .append_task_event_with_payload(
                 &parent,
                 LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
-                Some(json!({
-                    "handoff_envelope_status": "Accepted",
-                    "handoff_envelope_id": "handoff_envelope_m5_35_pending",
-                    "handoff_envelope_fingerprint": "sha256:m5-35-controlled-child-set",
-                    "candidate_ids": [pending_candidate_id],
-                    "dispatch_enabled": false,
-                    "execution_enabled": false
-                })),
+                Some(synthetic_handoff_envelope_payload(
+                    &parent,
+                    "handoff_envelope_m5_35_pending",
+                    "sha256:m5-35-controlled-child-set",
+                    &[pending_candidate_id],
+                    &[],
+                    false,
+                    false,
+                )),
             )
             .expect("append pending sibling handoff");
         let _ = materialize_controlled_child_task_from_handoff_envelope(&store, &parent)
@@ -34520,18 +34607,15 @@ modes:
             .append_task_event_with_payload(
                 &parent,
                 LedgerEventKind::SubtaskOrchestrationQueued,
-                Some(json!({
-                    "subtask_id": pending_candidate_id,
-                    "tool_id": SUBTASK_SPAWN_TOOL_ID,
-                    "required_action": "SpawnSubtask",
-                    "request_reason": "Create M5.35 non-runnable sibling.",
-                    "requested_goal_preview": "Run M5.35 non-runnable sibling raw goal",
-                    "requested_mode_id": "implementer",
-                    "input_summary": {
-                        "has_path": false,
-                        "field_count": 2
-                    }
-                })),
+                Some(synthetic_subtask_queue_payload(
+                    &parent,
+                    pending_candidate_id,
+                    "Create M5.35 non-runnable sibling.",
+                    "Run M5.35 non-runnable sibling raw goal",
+                    "implementer",
+                    1,
+                    false,
+                )),
             )
             .expect("append non-runnable sibling queue");
         store
@@ -34539,14 +34623,15 @@ modes:
             .append_task_event_with_payload(
                 &parent,
                 LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
-                Some(json!({
-                    "handoff_envelope_status": "Accepted",
-                    "handoff_envelope_id": "handoff_envelope_m5_35_non_runnable",
-                    "handoff_envelope_fingerprint": "sha256:m5-35-non-runnable-child-set",
-                    "candidate_ids": [pending_candidate_id],
-                    "dispatch_enabled": false,
-                    "execution_enabled": false
-                })),
+                Some(synthetic_handoff_envelope_payload(
+                    &parent,
+                    "handoff_envelope_m5_35_non_runnable",
+                    "sha256:m5-35-non-runnable-child-set",
+                    &[pending_candidate_id],
+                    &[],
+                    false,
+                    false,
+                )),
             )
             .expect("append non-runnable sibling handoff");
         let _ = materialize_controlled_child_task_from_handoff_envelope(&store, &parent)
@@ -34807,12 +34892,15 @@ modes:
             .append_task_event_with_payload(
                 &parent,
                 LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
-                Some(json!({
-                    "handoff_envelope_status": "Accepted",
-                    "handoff_envelope_id": "handoff_envelope_structured",
-                    "handoff_envelope_fingerprint": "sha256:structured-subtask",
-                    "candidate_ids": [source_candidate_id],
-                })),
+                Some(synthetic_handoff_envelope_payload(
+                    &parent,
+                    "handoff_envelope_structured",
+                    "sha256:structured-subtask",
+                    &[source_candidate_id.as_str()],
+                    &[],
+                    true,
+                    false,
+                )),
             )
             .expect("append handoff envelope");
 
@@ -34931,15 +35019,47 @@ modes:
                 &parent,
                 LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
                 Some(json!({
-                    "handoff_envelope_status": "Accepted",
                     "handoff_envelope_id": "handoff_envelope_multi",
+                    "parent_task_id": parent.task_id,
+                    "parent_run_id": parent.run_id,
+                    "manifest_id": "manifest_multi",
+                    "manifest_count": 1,
+                    "decision_id": "decision_multi",
+                    "queued_count": 2,
+                    "source_event_count": parent_events.len() as u64,
+                    "status": "Accepted",
+                    "handoff_envelope_status": "Accepted",
+                    "handoff_ticket_status": "Accepted",
+                    "replay_guard_status": "Current",
+                    "scheduler_handoff_status": "Ready",
+                    "candidate_status": "PartiallyBlocked",
+                    "dispatch_decision": "Accepted",
+                    "candidate_denial_reason": "one candidate blocked by fixture",
+                    "candidate_count": 2,
+                    "dispatch_candidate_count": 2,
+                    "eligible_candidate_count": 1,
+                    "blocked_candidate_count": 1,
+                    "handoff_ticket_count": 1,
+                    "eligible_candidate_ids": [candidate_ids[0].clone()],
+                    "blocked_candidate_ids": [candidate_ids[1].clone()],
                     "handoff_envelope_fingerprint": "sha256:multi-subtask",
                     "candidate_ids": [
                         candidate_ids[0].clone(),
                         candidate_ids[1].clone(),
                         candidate_ids[0].clone()
                     ],
-                    "blocked_candidate_ids": [candidate_ids[1].clone()],
+                    "candidate_manifest_fingerprint": "sha256:multi-candidate-manifest",
+                    "fingerprint_input_count": 3,
+                    "required_capability": "runtime_subtask_dispatcher",
+                    "precondition_count": 1,
+                    "satisfied_precondition_count": 1,
+                    "blocked_preconditions": [],
+                    "check_count": 1,
+                    "blocked_checks": [],
+                    "execution_enabled": true,
+                    "dispatch_enabled": true,
+                    "next_action": "materialize_controlled_child_task",
+                    "reason": "accepted"
                 })),
             )
             .expect("append handoff envelope");
@@ -36146,12 +36266,15 @@ modes:
             .append_task_event_with_payload(
                 &parent,
                 LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
-                Some(json!({
-                    "handoff_envelope_status": "Accepted",
-                    "handoff_envelope_id": "handoff_envelope_external_snapshot",
-                    "handoff_envelope_fingerprint": format!("sha256:{}", "a".repeat(64)),
-                    "candidate_ids": [source_candidate_id],
-                })),
+                Some(synthetic_handoff_envelope_payload(
+                    &parent,
+                    "handoff_envelope_external_snapshot",
+                    &format!("sha256:{}", "a".repeat(64)),
+                    &[source_candidate_id.as_str()],
+                    &[],
+                    true,
+                    false,
+                )),
             )
             .expect("append handoff envelope");
         let child = materialize_controlled_child_task_from_handoff_envelope(&store, &parent)
@@ -36247,12 +36370,15 @@ modes:
             .append_task_event_with_payload(
                 &parent,
                 LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
-                Some(json!({
-                    "handoff_envelope_status": "Accepted",
-                    "handoff_envelope_id": "handoff_envelope_stale_snapshot",
-                    "handoff_envelope_fingerprint": format!("sha256:{}", "b".repeat(64)),
-                    "candidate_ids": [source_candidate_id],
-                })),
+                Some(synthetic_handoff_envelope_payload(
+                    &parent,
+                    "handoff_envelope_stale_snapshot",
+                    &format!("sha256:{}", "b".repeat(64)),
+                    &[source_candidate_id.as_str()],
+                    &[],
+                    true,
+                    false,
+                )),
             )
             .expect("append handoff envelope");
         let child = materialize_controlled_child_task_from_handoff_envelope(&store, &parent)
@@ -36349,12 +36475,15 @@ modes:
             .append_task_event_with_payload(
                 &parent,
                 LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
-                Some(json!({
-                    "handoff_envelope_status": "Accepted",
-                    "handoff_envelope_id": "handoff_envelope_missing_snapshot",
-                    "handoff_envelope_fingerprint": handoff_fingerprint,
-                    "candidate_ids": [source_candidate_id],
-                })),
+                Some(synthetic_handoff_envelope_payload(
+                    &parent,
+                    "handoff_envelope_missing_snapshot",
+                    &handoff_fingerprint,
+                    &[source_candidate_id],
+                    &[],
+                    true,
+                    false,
+                )),
             )
             .expect("append handoff envelope");
         let child = store
@@ -37230,27 +37359,56 @@ modes:
                 })),
             )
             .expect("append parent join admission evidence");
+        let mut recovery_handoff = synthetic_handoff_envelope_payload(
+            &parent,
+            source_handoff_envelope_id,
+            &source_handoff_envelope_fingerprint,
+            &[source_candidate_id],
+            &[],
+            false,
+            false,
+        );
+        let recovery_handoff_object = recovery_handoff
+            .as_object_mut()
+            .expect("recovery handoff object");
+        recovery_handoff_object.insert(
+            "parent_join_admission_id".to_string(),
+            json!(provenance.parent_join_admission_id.clone()),
+        );
+        recovery_handoff_object.insert(
+            "parent_join_child_completion_fingerprint".to_string(),
+            json!(provenance.parent_join_child_completion_fingerprint.clone()),
+        );
+        recovery_handoff_object.insert(
+            "parent_join_child_completion_child_count".to_string(),
+            json!(provenance.parent_join_child_completion_child_count),
+        );
+        recovery_handoff_object.insert(
+            "parent_join_terminal_failed_child_count".to_string(),
+            json!(provenance.parent_join_terminal_failed_child_count),
+        );
+        recovery_handoff_object.insert(
+            "parent_join_terminal_completed_child_count".to_string(),
+            json!(provenance.parent_join_terminal_completed_child_count),
+        );
+        recovery_handoff_object.insert(
+            "parent_join_recovery_cycle".to_string(),
+            json!(provenance.parent_join_recovery_cycle),
+        );
+        recovery_handoff_object.insert(
+            "parent_join_recovery_cycle_depth".to_string(),
+            json!(provenance.parent_join_recovery_cycle_depth),
+        );
+        recovery_handoff_object.insert(
+            "reason".to_string(),
+            json!("Accepted parent join recovery-cycle handoff envelope for controlled child materialization."),
+        );
         store
             .tasks()
             .append_task_event_with_payload(
                 &parent,
                 LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
-                Some(json!({
-                    "handoff_envelope_status": "Accepted",
-                    "handoff_envelope_id": source_handoff_envelope_id,
-                    "handoff_envelope_fingerprint": source_handoff_envelope_fingerprint,
-                    "candidate_ids": [source_candidate_id],
-                    "parent_join_admission_id": provenance.parent_join_admission_id,
-                    "parent_join_child_completion_fingerprint": provenance.parent_join_child_completion_fingerprint,
-                    "parent_join_child_completion_child_count": provenance.parent_join_child_completion_child_count,
-                    "parent_join_terminal_failed_child_count": provenance.parent_join_terminal_failed_child_count,
-                    "parent_join_terminal_completed_child_count": provenance.parent_join_terminal_completed_child_count,
-                    "parent_join_recovery_cycle": provenance.parent_join_recovery_cycle,
-                    "parent_join_recovery_cycle_depth": provenance.parent_join_recovery_cycle_depth,
-                    "scheduler_handoff_status": "Blocked",
-                    "execution_enabled": false,
-                    "reason": "Accepted parent join recovery-cycle handoff envelope for controlled child materialization."
-                })),
+                Some(recovery_handoff),
             )
             .expect("append accepted handoff envelope evidence");
         let child = store
@@ -39846,23 +40004,46 @@ modes:
                 product_continuation_source: None,
             })
             .expect("start parent");
+        let mut invalid_recovery_handoff = synthetic_handoff_envelope_payload(
+            &parent,
+            "handoff_envelope_invalid_recovery",
+            "sha256:invalid-recovery-envelope",
+            &["candidate_recovery_1"],
+            &[],
+            true,
+            false,
+        );
+        let invalid_recovery_handoff_object = invalid_recovery_handoff
+            .as_object_mut()
+            .expect("handoff object");
+        invalid_recovery_handoff_object.insert(
+            "parent_join_admission_id".to_string(),
+            json!("admission_invalid"),
+        );
+        invalid_recovery_handoff_object.insert(
+            "parent_join_child_completion_fingerprint".to_string(),
+            json!(format!("sha256:{}", "1".repeat(64))),
+        );
+        invalid_recovery_handoff_object.insert(
+            "parent_join_child_completion_child_count".to_string(),
+            json!(3),
+        );
+        invalid_recovery_handoff_object.insert(
+            "parent_join_terminal_failed_child_count".to_string(),
+            json!(1),
+        );
+        invalid_recovery_handoff_object.insert(
+            "parent_join_terminal_completed_child_count".to_string(),
+            json!(2),
+        );
+        invalid_recovery_handoff_object
+            .insert("parent_join_recovery_cycle".to_string(), json!(true));
         store
             .tasks()
             .append_task_event_with_payload(
                 &parent,
                 LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
-                Some(json!({
-                    "handoff_envelope_status": "Accepted",
-                    "handoff_envelope_id": "handoff_envelope_invalid_recovery",
-                    "handoff_envelope_fingerprint": "sha256:invalid-recovery-envelope",
-                    "candidate_ids": ["candidate_recovery_1"],
-                    "parent_join_admission_id": "admission_invalid",
-                    "parent_join_child_completion_fingerprint": format!("sha256:{}", "1".repeat(64)),
-                    "parent_join_child_completion_child_count": 3,
-                    "parent_join_terminal_failed_child_count": 1,
-                    "parent_join_terminal_completed_child_count": 2,
-                    "parent_join_recovery_cycle": true
-                })),
+                Some(invalid_recovery_handoff),
             )
             .expect("append invalid recovery handoff envelope");
 
@@ -39921,7 +40102,8 @@ modes:
                     "child_terminal_failed_count": continuation.child_terminal_failed_count,
                     "child_terminal_completed_count": continuation.child_terminal_completed_count,
                     "child_recovery_cycle_depth": continuation.child_recovery_cycle_depth,
-                    "fingerprint_input_count": continuation.child_completion_fingerprint_input_count
+                    "fingerprint_input_count": continuation.child_completion_fingerprint_input_count,
+                    "reason": "Synthetic over-budget parent join continuation consumption."
                 })),
             )
             .expect("append over-budget parent join consumption");
@@ -39930,11 +40112,15 @@ modes:
             .append_task_event_with_payload(
                 &parent,
                 LedgerEventKind::SubtaskOrchestrationQueued,
-                Some(json!({
-                    "subtask_id": "candidate_budget_m5_27",
-                    "tool_id": "subtask.spawn",
-                    "request_reason": "RAW_M5_27_OVER_BUDGET_REASON_SHOULD_NOT_APPEAR"
-                })),
+                Some(synthetic_subtask_queue_payload(
+                    &parent,
+                    "candidate_budget_m5_27",
+                    "RAW_M5_27_OVER_BUDGET_REASON_SHOULD_NOT_APPEAR",
+                    "Budget recovery-cycle child.",
+                    "orchestrator",
+                    1,
+                    false,
+                )),
             )
             .expect("append over-budget queued subtask intent");
 
@@ -40048,19 +40234,22 @@ modes:
             handoff_fingerprint: &str,
             provenance: Option<&RecoveryCycleChildProvenance>,
         ) {
-            let mut payload = json!({
-                "handoff_envelope_status": "Accepted",
-                "handoff_envelope_id": handoff_id,
-                "handoff_envelope_fingerprint": handoff_fingerprint,
-                "candidate_ids": [candidate_id],
-                "scheduler_handoff_status": "Blocked",
-                "execution_enabled": false,
-                "reason": "Accepted synthetic handoff for M5.28 parent budget outcome test."
-            });
+            let mut payload = synthetic_handoff_envelope_payload(
+                parent,
+                handoff_id,
+                handoff_fingerprint,
+                &[candidate_id],
+                &[],
+                false,
+                false,
+            );
+            payload["reason"] =
+                json!("Accepted synthetic handoff for M5.28 parent budget outcome test.");
             if let Some(provenance) = provenance {
-                payload["parent_join_admission_id"] = json!(provenance.parent_join_admission_id);
+                payload["parent_join_admission_id"] =
+                    json!(provenance.parent_join_admission_id.clone());
                 payload["parent_join_child_completion_fingerprint"] =
-                    json!(provenance.parent_join_child_completion_fingerprint);
+                    json!(provenance.parent_join_child_completion_fingerprint.clone());
                 payload["parent_join_child_completion_child_count"] =
                     json!(provenance.parent_join_child_completion_child_count);
                 payload["parent_join_terminal_failed_child_count"] =
@@ -40103,7 +40292,8 @@ modes:
                         "child_terminal_failed_count": provenance.parent_join_terminal_failed_child_count,
                         "child_terminal_completed_count": provenance.parent_join_terminal_completed_child_count,
                         "child_recovery_cycle_depth": provenance.parent_join_recovery_cycle_depth,
-                        "fingerprint_input_count": 6
+                        "fingerprint_input_count": 6,
+                        "reason": "Synthetic parent join continuation consumption."
                     })),
                 )
                 .expect("append parent join consumption");
@@ -41085,6 +41275,9 @@ modes:
                     "admission_id": "orphaned-admission",
                     "child_completion_fingerprint": child_completion_fingerprint,
                     "child_completion_child_count": 1,
+                    "child_terminal_failed_count": 0,
+                    "child_terminal_completed_count": 1,
+                    "child_recovery_cycle_depth": 0,
                     "fingerprint_input_count": input_count,
                     "reason": "Synthetic orphaned consumption without TaskRunning."
                 })),

@@ -6088,7 +6088,7 @@ pub struct LedgerPayloadEnvelope {
     pub instance_shape_fingerprint: String,
 }
 
-pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 10;
+pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 11;
 pub const LEDGER_PAYLOAD_SHAPE_VERSION: u64 = LEDGER_PAYLOAD_SCHEMA_VERSION;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6171,7 +6171,19 @@ pub fn ledger_payload_schema_classification(
         | LedgerEventKind::TaskRunning
         | LedgerEventKind::ModeResolved
         | LedgerEventKind::ExternalModePackChildProvenanceDenied
-        | LedgerEventKind::ExternalModePackTaskProvenanceDenied => {
+        | LedgerEventKind::ExternalModePackTaskProvenanceDenied
+        | LedgerEventKind::SubtaskOrchestrationQueued
+        | LedgerEventKind::SubtaskHandoffPrepared
+        | LedgerEventKind::SubtaskSchedulerReadinessRecorded
+        | LedgerEventKind::SubtaskDispatchPlanPrepared
+        | LedgerEventKind::SubtaskDispatchContractPrepared
+        | LedgerEventKind::SubtaskDispatchAdmissionEvaluated
+        | LedgerEventKind::SubtaskDispatchReadinessSnapshotRecorded
+        | LedgerEventKind::SubtaskDispatcherGuardVerdictRecorded
+        | LedgerEventKind::SubtaskDispatchDecisionRecorded
+        | LedgerEventKind::SubtaskDispatchCandidateManifestRecorded
+        | LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded
+        | LedgerEventKind::ParentJoinContinuationFingerprintConsumed => {
             LedgerPayloadSchemaClassification::StrictTyped
         }
         _ => LedgerPayloadSchemaClassification::VersionedOpen,
@@ -6380,6 +6392,42 @@ fn validate_strict_ledger_payload_schema(
         LedgerEventKind::ExternalModePackTaskProvenanceDenied => {
             validate_external_modepack_task_denied_payload_schema(kind, payload)
         }
+        LedgerEventKind::SubtaskOrchestrationQueued => {
+            validate_subtask_orchestration_queued_payload_schema(kind, payload)
+        }
+        LedgerEventKind::SubtaskHandoffPrepared => {
+            validate_subtask_handoff_prepared_payload_schema(kind, payload)
+        }
+        LedgerEventKind::SubtaskSchedulerReadinessRecorded => {
+            validate_subtask_scheduler_readiness_payload_schema(kind, payload)
+        }
+        LedgerEventKind::SubtaskDispatchPlanPrepared => {
+            validate_subtask_dispatch_plan_payload_schema(kind, payload)
+        }
+        LedgerEventKind::SubtaskDispatchContractPrepared => {
+            validate_subtask_dispatch_contract_payload_schema(kind, payload)
+        }
+        LedgerEventKind::SubtaskDispatchAdmissionEvaluated => {
+            validate_subtask_dispatch_admission_payload_schema(kind, payload)
+        }
+        LedgerEventKind::SubtaskDispatchReadinessSnapshotRecorded => {
+            validate_subtask_dispatch_readiness_snapshot_payload_schema(kind, payload)
+        }
+        LedgerEventKind::SubtaskDispatcherGuardVerdictRecorded => {
+            validate_subtask_dispatcher_guard_verdict_payload_schema(kind, payload)
+        }
+        LedgerEventKind::SubtaskDispatchDecisionRecorded => {
+            validate_subtask_dispatch_decision_payload_schema(kind, payload)
+        }
+        LedgerEventKind::SubtaskDispatchCandidateManifestRecorded => {
+            validate_subtask_dispatch_candidate_manifest_payload_schema(kind, payload)
+        }
+        LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded => {
+            validate_subtask_dispatch_handoff_envelope_payload_schema(kind, payload)
+        }
+        LedgerEventKind::ParentJoinContinuationFingerprintConsumed => {
+            validate_parent_join_continuation_consumed_payload_schema(kind, payload)
+        }
         _ => bail!("{kind:?} strict ledger payload schema is not registered"),
     }
 }
@@ -6572,6 +6620,588 @@ fn validate_tool_intent_rejected_payload_schema(
     validate_required_payload_string_field(object, "reason")?;
     validate_required_payload_string_field(object, "code")?;
     Ok(())
+}
+
+struct StrictPayloadShape<'a> {
+    known_fields: &'a [&'a str],
+    required_strings: &'a [&'a str],
+    required_u64s: &'a [&'a str],
+    required_bools: &'a [&'a str],
+    required_string_arrays: &'a [&'a str],
+    required_objects: &'a [&'a str],
+    optional_strings: &'a [&'a str],
+    optional_u64s: &'a [&'a str],
+    optional_bools: &'a [&'a str],
+    optional_string_arrays: &'a [&'a str],
+    optional_objects: &'a [&'a str],
+}
+
+fn validate_subtask_dispatch_payload_shape(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+    shape: StrictPayloadShape<'_>,
+) -> Result<()> {
+    let object = validate_known_payload_object(kind, payload, shape.known_fields)?;
+    for field in shape.required_strings {
+        validate_required_payload_string_field(object, field)?;
+    }
+    for field in shape.required_u64s {
+        validate_required_payload_u64_field(object, field)?;
+    }
+    for field in shape.required_bools {
+        validate_required_payload_bool_field(object, field)?;
+    }
+    for field in shape.required_string_arrays {
+        validate_required_payload_string_array_field(object, field)?;
+    }
+    for field in shape.required_objects {
+        validate_required_payload_object_field(object, field)?;
+    }
+    for field in shape.optional_strings {
+        validate_optional_payload_string_field(object, field)?;
+    }
+    for field in shape.optional_u64s {
+        validate_optional_payload_u64_field(object, field)?;
+    }
+    for field in shape.optional_bools {
+        validate_optional_payload_bool_field(object, field)?;
+    }
+    for field in shape.optional_string_arrays {
+        validate_optional_payload_string_array_field(object, field)?;
+    }
+    for field in shape.optional_objects {
+        validate_optional_payload_object_field(object, field)?;
+    }
+    Ok(())
+}
+
+fn validate_subtask_orchestration_queued_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    validate_subtask_dispatch_payload_shape(
+        kind,
+        payload,
+        StrictPayloadShape {
+            known_fields: SUBTASK_ORCHESTRATION_QUEUED_KNOWN_PAYLOAD_FIELDS,
+            required_strings: &[
+                "subtask_id",
+                "parent_task_id",
+                "parent_run_id",
+                "tool_id",
+                "required_action",
+                "status",
+                "request_reason",
+                "reason",
+            ],
+            required_u64s: &["queue_position"],
+            required_bools: &["execution_enabled"],
+            required_string_arrays: &[],
+            required_objects: &["input_summary"],
+            optional_strings: &["requested_goal_preview", "requested_mode_id"],
+            optional_u64s: &[],
+            optional_bools: &[],
+            optional_string_arrays: &[],
+            optional_objects: &[],
+        },
+    )
+}
+
+fn validate_subtask_handoff_prepared_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    validate_subtask_dispatch_payload_shape(
+        kind,
+        payload,
+        StrictPayloadShape {
+            known_fields: SUBTASK_HANDOFF_PREPARED_KNOWN_PAYLOAD_FIELDS,
+            required_strings: &[
+                "handoff_id",
+                "parent_task_id",
+                "parent_run_id",
+                "status",
+                "next_action",
+                "reason",
+            ],
+            required_u64s: &["queued_count", "source_event_count"],
+            required_bools: &["execution_enabled"],
+            required_string_arrays: &["queued_subtask_ids"],
+            required_objects: &[],
+            optional_strings: &[],
+            optional_u64s: &[],
+            optional_bools: &[],
+            optional_string_arrays: &[],
+            optional_objects: &[],
+        },
+    )
+}
+
+fn validate_subtask_scheduler_readiness_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    validate_subtask_dispatch_payload_shape(
+        kind,
+        payload,
+        StrictPayloadShape {
+            known_fields: SUBTASK_SCHEDULER_READINESS_KNOWN_PAYLOAD_FIELDS,
+            required_strings: &[
+                "readiness_id",
+                "parent_task_id",
+                "parent_run_id",
+                "handoff_id",
+                "status",
+                "readiness_status",
+                "readiness_reason",
+                "next_action",
+                "reason",
+            ],
+            required_u64s: &[
+                "handoff_count",
+                "queued_count",
+                "source_event_count",
+                "check_count",
+            ],
+            required_bools: &["execution_enabled", "dispatch_enabled"],
+            required_string_arrays: &["blocked_checks"],
+            required_objects: &[],
+            optional_strings: &[],
+            optional_u64s: &[],
+            optional_bools: &[],
+            optional_string_arrays: &[],
+            optional_objects: &[],
+        },
+    )
+}
+
+fn validate_subtask_dispatch_plan_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    validate_subtask_dispatch_payload_shape(
+        kind,
+        payload,
+        StrictPayloadShape {
+            known_fields: SUBTASK_DISPATCH_PLAN_KNOWN_PAYLOAD_FIELDS,
+            required_strings: &[
+                "plan_id",
+                "parent_task_id",
+                "parent_run_id",
+                "readiness_id",
+                "status",
+                "dispatch_plan_status",
+                "dispatch_reason",
+                "required_capability",
+                "next_action",
+                "reason",
+            ],
+            required_u64s: &[
+                "readiness_count",
+                "queued_count",
+                "source_event_count",
+                "check_count",
+            ],
+            required_bools: &["execution_enabled", "dispatch_enabled"],
+            required_string_arrays: &["blocked_checks"],
+            required_objects: &[],
+            optional_strings: &[],
+            optional_u64s: &[],
+            optional_bools: &[],
+            optional_string_arrays: &[],
+            optional_objects: &[],
+        },
+    )
+}
+
+fn validate_subtask_dispatch_contract_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    validate_subtask_dispatch_payload_shape(
+        kind,
+        payload,
+        StrictPayloadShape {
+            known_fields: SUBTASK_DISPATCH_CONTRACT_KNOWN_PAYLOAD_FIELDS,
+            required_strings: &[
+                "contract_id",
+                "parent_task_id",
+                "parent_run_id",
+                "plan_id",
+                "status",
+                "dispatch_contract_status",
+                "eligibility_status",
+                "dispatch_contract_reason",
+                "required_capability",
+                "next_action",
+                "reason",
+            ],
+            required_u64s: &[
+                "plan_count",
+                "queued_count",
+                "source_event_count",
+                "check_count",
+            ],
+            required_bools: &["execution_enabled", "dispatch_enabled"],
+            required_string_arrays: &["required_preconditions", "blocked_checks"],
+            required_objects: &[],
+            optional_strings: &[],
+            optional_u64s: &[],
+            optional_bools: &[],
+            optional_string_arrays: &[],
+            optional_objects: &[],
+        },
+    )
+}
+
+fn validate_subtask_dispatch_admission_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    validate_subtask_dispatch_payload_shape(
+        kind,
+        payload,
+        StrictPayloadShape {
+            known_fields: SUBTASK_DISPATCH_ADMISSION_KNOWN_PAYLOAD_FIELDS,
+            required_strings: &[
+                "admission_id",
+                "parent_task_id",
+                "parent_run_id",
+                "contract_id",
+                "status",
+                "admission_status",
+                "execution_gate_status",
+                "admission_reason",
+                "required_capability",
+                "next_action",
+                "reason",
+            ],
+            required_u64s: &[
+                "contract_count",
+                "queued_count",
+                "source_event_count",
+                "precondition_count",
+                "satisfied_precondition_count",
+                "check_count",
+            ],
+            required_bools: &["execution_enabled", "dispatch_enabled"],
+            required_string_arrays: &["blocked_preconditions", "blocked_checks"],
+            required_objects: &[],
+            optional_strings: &[],
+            optional_u64s: &[],
+            optional_bools: &[],
+            optional_string_arrays: &[],
+            optional_objects: &[],
+        },
+    )
+}
+
+fn validate_subtask_dispatch_readiness_snapshot_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    validate_subtask_dispatch_payload_shape(
+        kind,
+        payload,
+        StrictPayloadShape {
+            known_fields: SUBTASK_DISPATCH_READINESS_SNAPSHOT_KNOWN_PAYLOAD_FIELDS,
+            required_strings: &[
+                "snapshot_id",
+                "parent_task_id",
+                "parent_run_id",
+                "admission_id",
+                "status",
+                "readiness_status",
+                "scheduler_handoff_status",
+                "readiness_reason",
+                "required_capability",
+                "readiness_fingerprint",
+                "next_action",
+                "reason",
+            ],
+            required_u64s: &[
+                "admission_count",
+                "queued_count",
+                "source_event_count",
+                "precondition_count",
+                "satisfied_precondition_count",
+                "check_count",
+                "fingerprint_input_count",
+            ],
+            required_bools: &["execution_enabled", "dispatch_enabled"],
+            required_string_arrays: &["blocked_preconditions", "blocked_checks"],
+            required_objects: &[],
+            optional_strings: &[],
+            optional_u64s: &[],
+            optional_bools: &[],
+            optional_string_arrays: &[],
+            optional_objects: &[],
+        },
+    )
+}
+
+fn validate_subtask_dispatcher_guard_verdict_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    validate_subtask_dispatch_payload_shape(
+        kind,
+        payload,
+        StrictPayloadShape {
+            known_fields: SUBTASK_DISPATCHER_GUARD_VERDICT_KNOWN_PAYLOAD_FIELDS,
+            required_strings: &[
+                "guard_id",
+                "parent_task_id",
+                "parent_run_id",
+                "snapshot_id",
+                "status",
+                "guard_status",
+                "scheduler_handoff_status",
+                "handoff_preflight_status",
+                "snapshot_validity_status",
+                "snapshot_fingerprint",
+                "guard_reason",
+                "required_capability",
+                "next_action",
+                "reason",
+            ],
+            required_u64s: &[
+                "snapshot_count",
+                "queued_count",
+                "source_event_count",
+                "snapshot_fingerprint_count",
+                "fingerprint_input_count",
+                "precondition_count",
+                "satisfied_precondition_count",
+                "check_count",
+            ],
+            required_bools: &["execution_enabled", "dispatch_enabled"],
+            required_string_arrays: &["blocked_preconditions", "blocked_checks"],
+            required_objects: &[],
+            optional_strings: &[],
+            optional_u64s: &[],
+            optional_bools: &[],
+            optional_string_arrays: &[],
+            optional_objects: &[],
+        },
+    )
+}
+
+fn validate_subtask_dispatch_decision_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    validate_subtask_dispatch_payload_shape(
+        kind,
+        payload,
+        StrictPayloadShape {
+            known_fields: SUBTASK_DISPATCH_DECISION_KNOWN_PAYLOAD_FIELDS,
+            required_strings: &[
+                "decision_id",
+                "parent_task_id",
+                "parent_run_id",
+                "guard_id",
+                "snapshot_id",
+                "status",
+                "decision_status",
+                "candidate_status",
+                "dispatch_decision",
+                "dispatch_denial_reason",
+                "handoff_preflight_status",
+                "guard_status",
+                "snapshot_validity_status",
+                "snapshot_fingerprint",
+                "required_capability",
+                "next_action",
+                "reason",
+            ],
+            required_u64s: &[
+                "guard_count",
+                "queued_count",
+                "source_event_count",
+                "snapshot_fingerprint_count",
+                "fingerprint_input_count",
+                "dispatch_candidate_count",
+                "eligible_candidate_count",
+                "blocked_candidate_count",
+                "precondition_count",
+                "satisfied_precondition_count",
+                "check_count",
+            ],
+            required_bools: &["execution_enabled", "dispatch_enabled"],
+            required_string_arrays: &["blocked_preconditions", "blocked_checks"],
+            required_objects: &[],
+            optional_strings: &[],
+            optional_u64s: &[],
+            optional_bools: &[],
+            optional_string_arrays: &[],
+            optional_objects: &[],
+        },
+    )
+}
+
+fn validate_subtask_dispatch_candidate_manifest_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    validate_subtask_dispatch_payload_shape(
+        kind,
+        payload,
+        StrictPayloadShape {
+            known_fields: SUBTASK_DISPATCH_CANDIDATE_MANIFEST_KNOWN_PAYLOAD_FIELDS,
+            required_strings: &[
+                "manifest_id",
+                "parent_task_id",
+                "parent_run_id",
+                "decision_id",
+                "guard_id",
+                "snapshot_id",
+                "status",
+                "manifest_status",
+                "candidate_status",
+                "dispatch_decision",
+                "candidate_denial_reason",
+                "candidate_manifest_fingerprint",
+                "snapshot_fingerprint",
+                "required_capability",
+                "next_action",
+                "reason",
+            ],
+            required_u64s: &[
+                "decision_count",
+                "queued_count",
+                "source_event_count",
+                "candidate_count",
+                "dispatch_candidate_count",
+                "eligible_candidate_count",
+                "blocked_candidate_count",
+                "fingerprint_input_count",
+                "precondition_count",
+                "satisfied_precondition_count",
+                "check_count",
+            ],
+            required_bools: &["execution_enabled", "dispatch_enabled"],
+            required_string_arrays: &[
+                "candidate_ids",
+                "eligible_candidate_ids",
+                "blocked_candidate_ids",
+                "blocked_preconditions",
+                "blocked_checks",
+            ],
+            required_objects: &[],
+            optional_strings: &[],
+            optional_u64s: &[],
+            optional_bools: &[],
+            optional_string_arrays: &[],
+            optional_objects: &[],
+        },
+    )
+}
+
+fn validate_subtask_dispatch_handoff_envelope_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    validate_subtask_dispatch_payload_shape(
+        kind,
+        payload,
+        StrictPayloadShape {
+            known_fields: SUBTASK_DISPATCH_HANDOFF_ENVELOPE_KNOWN_PAYLOAD_FIELDS,
+            required_strings: &[
+                "handoff_envelope_id",
+                "parent_task_id",
+                "parent_run_id",
+                "status",
+                "handoff_envelope_status",
+                "scheduler_handoff_status",
+                "candidate_status",
+                "dispatch_decision",
+                "handoff_envelope_fingerprint",
+                "required_capability",
+                "next_action",
+                "reason",
+            ],
+            required_u64s: &[
+                "candidate_count",
+                "eligible_candidate_count",
+                "blocked_candidate_count",
+                "fingerprint_input_count",
+            ],
+            required_bools: &["execution_enabled", "dispatch_enabled"],
+            required_string_arrays: &[
+                "candidate_ids",
+                "eligible_candidate_ids",
+                "blocked_candidate_ids",
+            ],
+            required_objects: &[],
+            optional_strings: &[
+                "manifest_id",
+                "decision_id",
+                "handoff_ticket_status",
+                "replay_guard_status",
+                "candidate_denial_reason",
+                "replay_guard_reason",
+                "candidate_manifest_fingerprint",
+                "parent_join_admission_id",
+                "parent_join_child_completion_fingerprint",
+                "recovery_cycle_budget_status",
+                "continuation_source",
+            ],
+            optional_u64s: &[
+                "manifest_count",
+                "queued_count",
+                "source_event_count",
+                "dispatch_candidate_count",
+                "handoff_ticket_count",
+                "precondition_count",
+                "satisfied_precondition_count",
+                "check_count",
+                "parent_join_child_completion_child_count",
+                "parent_join_terminal_completed_child_count",
+                "parent_join_terminal_failed_child_count",
+                "parent_join_fingerprint_input_count",
+                "parent_join_recovery_cycle_depth",
+                "max_recovery_cycle_depth",
+            ],
+            optional_bools: &["continuation_materialization", "parent_join_recovery_cycle"],
+            optional_string_arrays: &["blocked_preconditions", "blocked_checks"],
+            optional_objects: &[],
+        },
+    )
+}
+
+fn validate_parent_join_continuation_consumed_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    validate_subtask_dispatch_payload_shape(
+        kind,
+        payload,
+        StrictPayloadShape {
+            known_fields: PARENT_JOIN_CONTINUATION_CONSUMED_KNOWN_PAYLOAD_FIELDS,
+            required_strings: &[
+                "parent_join_continuation_status",
+                "admission_id",
+                "child_completion_fingerprint",
+                "reason",
+            ],
+            required_u64s: &[
+                "child_completion_child_count",
+                "child_terminal_completed_count",
+                "child_terminal_failed_count",
+                "child_recovery_cycle_depth",
+                "fingerprint_input_count",
+            ],
+            required_bools: &[],
+            required_string_arrays: &[],
+            required_objects: &[],
+            optional_strings: &[],
+            optional_u64s: &[],
+            optional_bools: &[],
+            optional_string_arrays: &[],
+            optional_objects: &[],
+        },
+    )
 }
 
 fn validate_tool_intent_payload_schema(
@@ -7924,6 +8554,312 @@ const TOOL_INTENT_PARSED_KNOWN_PAYLOAD_FIELDS: &[&str] = &["parser", "tool_ids"]
 
 const TOOL_INTENT_REJECTED_KNOWN_PAYLOAD_FIELDS: &[&str] = &["code", "reason", "tool_id"];
 
+const SUBTASK_ORCHESTRATION_QUEUED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "execution_enabled",
+    "input_summary",
+    "parent_run_id",
+    "parent_task_id",
+    "queue_position",
+    "reason",
+    "request_reason",
+    "requested_goal_preview",
+    "requested_mode_id",
+    "required_action",
+    "status",
+    "subtask_id",
+    "tool_id",
+];
+
+const SUBTASK_HANDOFF_PREPARED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "execution_enabled",
+    "handoff_id",
+    "next_action",
+    "parent_run_id",
+    "parent_task_id",
+    "queued_count",
+    "queued_subtask_ids",
+    "reason",
+    "source_event_count",
+    "status",
+];
+
+const SUBTASK_SCHEDULER_READINESS_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "blocked_checks",
+    "check_count",
+    "dispatch_enabled",
+    "execution_enabled",
+    "handoff_count",
+    "handoff_id",
+    "next_action",
+    "parent_run_id",
+    "parent_task_id",
+    "queued_count",
+    "readiness_id",
+    "readiness_reason",
+    "readiness_status",
+    "reason",
+    "source_event_count",
+    "status",
+];
+
+const SUBTASK_DISPATCH_PLAN_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "blocked_checks",
+    "check_count",
+    "dispatch_enabled",
+    "dispatch_plan_status",
+    "dispatch_reason",
+    "execution_enabled",
+    "next_action",
+    "parent_run_id",
+    "parent_task_id",
+    "plan_id",
+    "queued_count",
+    "readiness_count",
+    "readiness_id",
+    "reason",
+    "required_capability",
+    "source_event_count",
+    "status",
+];
+
+const SUBTASK_DISPATCH_CONTRACT_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "blocked_checks",
+    "check_count",
+    "contract_id",
+    "dispatch_contract_reason",
+    "dispatch_contract_status",
+    "dispatch_enabled",
+    "eligibility_status",
+    "execution_enabled",
+    "next_action",
+    "parent_run_id",
+    "parent_task_id",
+    "plan_count",
+    "plan_id",
+    "queued_count",
+    "reason",
+    "required_capability",
+    "required_preconditions",
+    "source_event_count",
+    "status",
+];
+
+const SUBTASK_DISPATCH_ADMISSION_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "admission_id",
+    "admission_reason",
+    "admission_status",
+    "blocked_checks",
+    "blocked_preconditions",
+    "check_count",
+    "contract_count",
+    "contract_id",
+    "dispatch_enabled",
+    "execution_enabled",
+    "execution_gate_status",
+    "next_action",
+    "parent_run_id",
+    "parent_task_id",
+    "precondition_count",
+    "queued_count",
+    "reason",
+    "required_capability",
+    "satisfied_precondition_count",
+    "source_event_count",
+    "status",
+];
+
+const SUBTASK_DISPATCH_READINESS_SNAPSHOT_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "admission_count",
+    "admission_id",
+    "blocked_checks",
+    "blocked_preconditions",
+    "check_count",
+    "dispatch_enabled",
+    "execution_enabled",
+    "fingerprint_input_count",
+    "next_action",
+    "parent_run_id",
+    "parent_task_id",
+    "precondition_count",
+    "queued_count",
+    "readiness_fingerprint",
+    "readiness_reason",
+    "readiness_status",
+    "reason",
+    "required_capability",
+    "satisfied_precondition_count",
+    "scheduler_handoff_status",
+    "snapshot_id",
+    "source_event_count",
+    "status",
+];
+
+const SUBTASK_DISPATCHER_GUARD_VERDICT_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "blocked_checks",
+    "blocked_preconditions",
+    "check_count",
+    "dispatch_enabled",
+    "execution_enabled",
+    "fingerprint_input_count",
+    "guard_id",
+    "guard_reason",
+    "guard_status",
+    "handoff_preflight_status",
+    "next_action",
+    "parent_run_id",
+    "parent_task_id",
+    "precondition_count",
+    "queued_count",
+    "reason",
+    "required_capability",
+    "satisfied_precondition_count",
+    "scheduler_handoff_status",
+    "snapshot_count",
+    "snapshot_fingerprint",
+    "snapshot_fingerprint_count",
+    "snapshot_id",
+    "snapshot_validity_status",
+    "source_event_count",
+    "status",
+];
+
+const SUBTASK_DISPATCH_DECISION_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "blocked_candidate_count",
+    "blocked_checks",
+    "blocked_preconditions",
+    "candidate_status",
+    "check_count",
+    "decision_id",
+    "decision_status",
+    "dispatch_candidate_count",
+    "dispatch_decision",
+    "dispatch_denial_reason",
+    "dispatch_enabled",
+    "eligible_candidate_count",
+    "execution_enabled",
+    "fingerprint_input_count",
+    "guard_count",
+    "guard_id",
+    "guard_status",
+    "handoff_preflight_status",
+    "next_action",
+    "parent_run_id",
+    "parent_task_id",
+    "precondition_count",
+    "queued_count",
+    "reason",
+    "required_capability",
+    "satisfied_precondition_count",
+    "snapshot_fingerprint",
+    "snapshot_fingerprint_count",
+    "snapshot_id",
+    "snapshot_validity_status",
+    "source_event_count",
+    "status",
+];
+
+const SUBTASK_DISPATCH_CANDIDATE_MANIFEST_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "blocked_candidate_count",
+    "blocked_candidate_ids",
+    "blocked_checks",
+    "blocked_preconditions",
+    "candidate_count",
+    "candidate_denial_reason",
+    "candidate_ids",
+    "candidate_manifest_fingerprint",
+    "candidate_status",
+    "check_count",
+    "decision_count",
+    "decision_id",
+    "dispatch_candidate_count",
+    "dispatch_decision",
+    "dispatch_enabled",
+    "eligible_candidate_count",
+    "eligible_candidate_ids",
+    "execution_enabled",
+    "fingerprint_input_count",
+    "guard_id",
+    "manifest_id",
+    "manifest_status",
+    "next_action",
+    "parent_run_id",
+    "parent_task_id",
+    "precondition_count",
+    "queued_count",
+    "reason",
+    "required_capability",
+    "satisfied_precondition_count",
+    "snapshot_fingerprint",
+    "snapshot_id",
+    "source_event_count",
+    "status",
+];
+
+const SUBTASK_DISPATCH_HANDOFF_ENVELOPE_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "blocked_candidate_count",
+    "blocked_candidate_ids",
+    "blocked_checks",
+    "blocked_preconditions",
+    "candidate_count",
+    "candidate_denial_reason",
+    "candidate_ids",
+    "candidate_manifest_fingerprint",
+    "candidate_status",
+    "check_count",
+    "continuation_materialization",
+    "continuation_source",
+    "decision_id",
+    "dispatch_candidate_count",
+    "dispatch_decision",
+    "dispatch_enabled",
+    "eligible_candidate_count",
+    "eligible_candidate_ids",
+    "execution_enabled",
+    "fingerprint_input_count",
+    "handoff_envelope_fingerprint",
+    "handoff_envelope_id",
+    "handoff_envelope_status",
+    "handoff_ticket_count",
+    "handoff_ticket_status",
+    "manifest_count",
+    "manifest_id",
+    "max_recovery_cycle_depth",
+    "next_action",
+    "parent_join_admission_id",
+    "parent_join_child_completion_child_count",
+    "parent_join_child_completion_fingerprint",
+    "parent_join_fingerprint_input_count",
+    "parent_join_recovery_cycle",
+    "parent_join_recovery_cycle_depth",
+    "parent_join_terminal_completed_child_count",
+    "parent_join_terminal_failed_child_count",
+    "parent_run_id",
+    "parent_task_id",
+    "precondition_count",
+    "queued_count",
+    "reason",
+    "recovery_cycle_budget_status",
+    "replay_guard_reason",
+    "replay_guard_status",
+    "required_capability",
+    "satisfied_precondition_count",
+    "scheduler_handoff_status",
+    "source_event_count",
+    "status",
+];
+
+const PARENT_JOIN_CONTINUATION_CONSUMED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "admission_id",
+    "child_completion_child_count",
+    "child_completion_fingerprint",
+    "child_recovery_cycle_depth",
+    "child_terminal_completed_count",
+    "child_terminal_failed_count",
+    "fingerprint_input_count",
+    "parent_join_continuation_status",
+    "reason",
+];
+
 const TOOL_INTENT_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "allowed",
     "input_summary",
@@ -8711,6 +9647,40 @@ fn ledger_payload_schema_descriptor(kind: &LedgerEventKind) -> String {
         LedgerEventKind::ExternalModePackTaskProvenanceDenied => {
             external_modepack_task_denied_payload_schema_descriptor()
         }
+        LedgerEventKind::SubtaskOrchestrationQueued => {
+            subtask_orchestration_queued_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskHandoffPrepared => subtask_handoff_prepared_payload_schema_descriptor(),
+        LedgerEventKind::SubtaskSchedulerReadinessRecorded => {
+            subtask_scheduler_readiness_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskDispatchPlanPrepared => {
+            subtask_dispatch_plan_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskDispatchContractPrepared => {
+            subtask_dispatch_contract_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskDispatchAdmissionEvaluated => {
+            subtask_dispatch_admission_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskDispatchReadinessSnapshotRecorded => {
+            subtask_dispatch_readiness_snapshot_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskDispatcherGuardVerdictRecorded => {
+            subtask_dispatcher_guard_verdict_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskDispatchDecisionRecorded => {
+            subtask_dispatch_decision_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskDispatchCandidateManifestRecorded => {
+            subtask_dispatch_candidate_manifest_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded => {
+            subtask_dispatch_handoff_envelope_payload_schema_descriptor()
+        }
+        LedgerEventKind::ParentJoinContinuationFingerprintConsumed => {
+            parent_join_continuation_consumed_payload_schema_descriptor()
+        }
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
 }
@@ -8843,6 +9813,54 @@ fn external_modepack_task_denied_payload_schema_descriptor() -> String {
     "strict_typed{payload_optional:false;required_fields:reason:string,run_id:string,source_kind:string,source_path:string,status:string,task_id:string;known_optional_fields:mode_id:string_or_null;additional_fields:false;external_modepack_task_provenance_denied_payload:true;status:Denied}".to_string()
 }
 
+fn subtask_orchestration_queued_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:execution_enabled:boolean,input_summary:object,parent_run_id:string,parent_task_id:string,queue_position:u64,reason:string,request_reason:string,required_action:string,status:string,subtask_id:string,tool_id:string;known_optional_fields:requested_goal_preview:string,requested_mode_id:string;additional_fields:false;subtask_orchestration_payload:true}".to_string()
+}
+
+fn subtask_handoff_prepared_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:execution_enabled:boolean,handoff_id:string,next_action:string,parent_run_id:string,parent_task_id:string,queued_count:u64,queued_subtask_ids:array<string>,reason:string,source_event_count:u64,status:string;additional_fields:false;subtask_handoff_prepared_payload:true}".to_string()
+}
+
+fn subtask_scheduler_readiness_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,check_count:u64,dispatch_enabled:boolean,execution_enabled:boolean,handoff_count:u64,handoff_id:string,next_action:string,parent_run_id:string,parent_task_id:string,queued_count:u64,readiness_id:string,readiness_reason:string,readiness_status:string,reason:string,source_event_count:u64,status:string;additional_fields:false;subtask_scheduler_readiness_payload:true}".to_string()
+}
+
+fn subtask_dispatch_plan_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,check_count:u64,dispatch_enabled:boolean,dispatch_plan_status:string,dispatch_reason:string,execution_enabled:boolean,next_action:string,parent_run_id:string,parent_task_id:string,plan_id:string,queued_count:u64,readiness_count:u64,readiness_id:string,reason:string,required_capability:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_plan_payload:true}".to_string()
+}
+
+fn subtask_dispatch_contract_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,check_count:u64,contract_id:string,dispatch_contract_reason:string,dispatch_contract_status:string,dispatch_enabled:boolean,eligibility_status:string,execution_enabled:boolean,next_action:string,parent_run_id:string,parent_task_id:string,plan_count:u64,plan_id:string,queued_count:u64,reason:string,required_capability:string,required_preconditions:array<string>,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_contract_payload:true}".to_string()
+}
+
+fn subtask_dispatch_admission_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:admission_id:string,admission_reason:string,admission_status:string,blocked_checks:array<string>,blocked_preconditions:array<string>,check_count:u64,contract_count:u64,contract_id:string,dispatch_enabled:boolean,execution_enabled:boolean,execution_gate_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,reason:string,required_capability:string,satisfied_precondition_count:u64,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_admission_payload:true}".to_string()
+}
+
+fn subtask_dispatch_readiness_snapshot_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:admission_count:u64,admission_id:string,blocked_checks:array<string>,blocked_preconditions:array<string>,check_count:u64,dispatch_enabled:boolean,execution_enabled:boolean,fingerprint_input_count:u64,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,readiness_fingerprint:string,readiness_reason:string,readiness_status:string,reason:string,required_capability:string,satisfied_precondition_count:u64,scheduler_handoff_status:string,snapshot_id:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_readiness_snapshot_payload:true}".to_string()
+}
+
+fn subtask_dispatcher_guard_verdict_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,blocked_preconditions:array<string>,check_count:u64,dispatch_enabled:boolean,execution_enabled:boolean,fingerprint_input_count:u64,guard_id:string,guard_reason:string,guard_status:string,handoff_preflight_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,reason:string,required_capability:string,satisfied_precondition_count:u64,scheduler_handoff_status:string,snapshot_count:u64,snapshot_fingerprint:string,snapshot_fingerprint_count:u64,snapshot_id:string,snapshot_validity_status:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatcher_guard_verdict_payload:true}".to_string()
+}
+
+fn subtask_dispatch_decision_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:blocked_candidate_count:u64,blocked_checks:array<string>,blocked_preconditions:array<string>,candidate_status:string,check_count:u64,decision_id:string,decision_status:string,dispatch_candidate_count:u64,dispatch_decision:string,dispatch_denial_reason:string,dispatch_enabled:boolean,eligible_candidate_count:u64,execution_enabled:boolean,fingerprint_input_count:u64,guard_count:u64,guard_id:string,guard_status:string,handoff_preflight_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,reason:string,required_capability:string,satisfied_precondition_count:u64,snapshot_fingerprint:string,snapshot_fingerprint_count:u64,snapshot_id:string,snapshot_validity_status:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_decision_payload:true}".to_string()
+}
+
+fn subtask_dispatch_candidate_manifest_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:blocked_candidate_count:u64,blocked_candidate_ids:array<string>,blocked_checks:array<string>,blocked_preconditions:array<string>,candidate_count:u64,candidate_denial_reason:string,candidate_ids:array<string>,candidate_manifest_fingerprint:string,candidate_status:string,check_count:u64,decision_count:u64,decision_id:string,dispatch_candidate_count:u64,dispatch_decision:string,dispatch_enabled:boolean,eligible_candidate_count:u64,eligible_candidate_ids:array<string>,execution_enabled:boolean,fingerprint_input_count:u64,guard_id:string,manifest_id:string,manifest_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,reason:string,required_capability:string,satisfied_precondition_count:u64,snapshot_fingerprint:string,snapshot_id:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_candidate_manifest_payload:true}".to_string()
+}
+
+fn subtask_dispatch_handoff_envelope_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:blocked_candidate_count:u64,blocked_candidate_ids:array<string>,candidate_count:u64,candidate_ids:array<string>,candidate_status:string,dispatch_decision:string,dispatch_enabled:boolean,eligible_candidate_count:u64,eligible_candidate_ids:array<string>,execution_enabled:boolean,fingerprint_input_count:u64,handoff_envelope_fingerprint:string,handoff_envelope_id:string,handoff_envelope_status:string,next_action:string,parent_run_id:string,parent_task_id:string,reason:string,required_capability:string,scheduler_handoff_status:string,status:string;known_optional_fields:blocked_checks:array<string>,blocked_preconditions:array<string>,candidate_denial_reason:string,candidate_manifest_fingerprint:string,check_count:u64,continuation_materialization:boolean,continuation_source:string,decision_id:string,dispatch_candidate_count:u64,handoff_ticket_count:u64,handoff_ticket_status:string,manifest_count:u64,manifest_id:string,max_recovery_cycle_depth:u64,parent_join_admission_id:string,parent_join_child_completion_child_count:u64,parent_join_child_completion_fingerprint:string,parent_join_fingerprint_input_count:u64,parent_join_recovery_cycle:boolean,parent_join_recovery_cycle_depth:u64,parent_join_terminal_completed_child_count:u64,parent_join_terminal_failed_child_count:u64,precondition_count:u64,queued_count:u64,recovery_cycle_budget_status:string,replay_guard_reason:string,replay_guard_status:string,satisfied_precondition_count:u64,source_event_count:u64;additional_fields:false;subtask_dispatch_handoff_envelope_payload:true}".to_string()
+}
+
+fn parent_join_continuation_consumed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:admission_id:string,child_completion_child_count:u64,child_completion_fingerprint:string,child_recovery_cycle_depth:u64,child_terminal_completed_count:u64,child_terminal_failed_count:u64,fingerprint_input_count:u64,parent_join_continuation_status:string,reason:string;additional_fields:false;parent_join_continuation_consumed_payload:true}".to_string()
+}
+
 fn ledger_payload_legacy_schema_descriptor(kind: &LedgerEventKind, schema_version: u64) -> String {
     match kind {
         LedgerEventKind::TaskCompleted
@@ -8970,6 +9988,42 @@ fn ledger_payload_legacy_schema_descriptor(kind: &LedgerEventKind, schema_versio
         }
         LedgerEventKind::ExternalModePackTaskProvenanceDenied if schema_version >= 9 => {
             external_modepack_task_denied_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskOrchestrationQueued if schema_version >= 11 => {
+            subtask_orchestration_queued_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskHandoffPrepared if schema_version >= 11 => {
+            subtask_handoff_prepared_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskSchedulerReadinessRecorded if schema_version >= 11 => {
+            subtask_scheduler_readiness_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskDispatchPlanPrepared if schema_version >= 11 => {
+            subtask_dispatch_plan_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskDispatchContractPrepared if schema_version >= 11 => {
+            subtask_dispatch_contract_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskDispatchAdmissionEvaluated if schema_version >= 11 => {
+            subtask_dispatch_admission_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskDispatchReadinessSnapshotRecorded if schema_version >= 11 => {
+            subtask_dispatch_readiness_snapshot_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskDispatcherGuardVerdictRecorded if schema_version >= 11 => {
+            subtask_dispatcher_guard_verdict_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskDispatchDecisionRecorded if schema_version >= 11 => {
+            subtask_dispatch_decision_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskDispatchCandidateManifestRecorded if schema_version >= 11 => {
+            subtask_dispatch_candidate_manifest_payload_schema_descriptor()
+        }
+        LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded if schema_version >= 11 => {
+            subtask_dispatch_handoff_envelope_payload_schema_descriptor()
+        }
+        LedgerEventKind::ParentJoinContinuationFingerprintConsumed if schema_version >= 11 => {
+            parent_join_continuation_consumed_payload_schema_descriptor()
         }
         LedgerEventKind::TaskCompleted => "typed_known_fields_open{known_optional_fields:completion_evidence:object,git:object,late_tool_response:boolean,mcp:object,runtime_deadline:object,status:string,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:legacy_open;known_field_required:true;additional_fields:true;strict_typed_payload_required_before_release:true}".to_string(),
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
@@ -11212,6 +12266,411 @@ mod tests {
                 ],
             )
             .expect("strict tool planning and intent parse payloads should append");
+    }
+
+    #[test]
+    fn ledger_payload_write_rejects_malformed_subtask_dispatch_payloads() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = TaskStore::new(temp.path());
+        let record = store
+            .start_task(TaskStartParams {
+                goal: "subtask dispatch payload schema".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start task");
+
+        for (kind, payload) in [
+            (
+                LedgerEventKind::SubtaskOrchestrationQueued,
+                serde_json::json!({
+                    "subtask_id": "subtask_1",
+                    "parent_task_id": record.task_id,
+                    "parent_run_id": record.run_id,
+                    "tool_id": "subtask.spawn",
+                    "required_action": "SpawnSubtask",
+                    "status": "Queued",
+                    "queue_position": 1,
+                    "request_reason": "split work",
+                    "input_summary": {},
+                    "execution_enabled": false,
+                    "reason": "queued",
+                    "raw_goal": "not allowed"
+                }),
+            ),
+            (
+                LedgerEventKind::SubtaskDispatchPlanPrepared,
+                serde_json::json!({
+                    "plan_id": "plan_1",
+                    "parent_task_id": record.task_id,
+                    "parent_run_id": record.run_id,
+                    "readiness_id": "readiness_1",
+                    "readiness_count": 1,
+                    "queued_count": 1,
+                    "source_event_count": 1,
+                    "status": "Blocked",
+                    "dispatch_plan_status": "Blocked",
+                    "dispatch_reason": "blocked",
+                    "required_capability": "runtime_subtask_dispatcher",
+                    "check_count": 1,
+                    "blocked_checks": [false],
+                    "execution_enabled": false,
+                    "dispatch_enabled": false,
+                    "next_action": "wait",
+                    "reason": "blocked"
+                }),
+            ),
+            (
+                LedgerEventKind::ParentJoinContinuationFingerprintConsumed,
+                serde_json::json!({
+                    "admission_id": "parent_join_admission_1",
+                    "child_completion_fingerprint": format!("sha256:{}", "a".repeat(64)),
+                    "child_completion_child_count": 1,
+                    "child_terminal_completed_count": 1,
+                    "child_terminal_failed_count": 0,
+                    "child_recovery_cycle_depth": 0,
+                    "fingerprint_input_count": 5,
+                    "reason": "missing status"
+                }),
+            ),
+        ] {
+            let error = store
+                .append_task_events_with_payloads(&record, vec![(kind.clone(), Some(payload))])
+                .expect_err("malformed subtask dispatch payload should fail closed");
+            assert!(
+                error.to_string().contains("ledger payload"),
+                "{kind:?}: {error}"
+            );
+        }
+
+        store
+            .append_task_events_with_payloads(
+                &record,
+                vec![
+                    (
+                        LedgerEventKind::SubtaskOrchestrationQueued,
+                        Some(serde_json::json!({
+                            "subtask_id": "subtask_1",
+                            "parent_task_id": record.task_id,
+                            "parent_run_id": record.run_id,
+                            "tool_id": "subtask.spawn",
+                            "required_action": "SpawnSubtask",
+                            "status": "Queued",
+                            "queue_position": 1,
+                            "request_reason": "split work",
+                            "input_summary": {},
+                            "execution_enabled": false,
+                            "reason": "queued",
+                            "requested_goal_preview": "child goal",
+                            "requested_mode_id": "implementer"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::SubtaskHandoffPrepared,
+                        Some(serde_json::json!({
+                            "handoff_id": "handoff_1",
+                            "parent_task_id": record.task_id,
+                            "parent_run_id": record.run_id,
+                            "status": "Prepared",
+                            "queued_count": 1,
+                            "queued_subtask_ids": ["subtask_1"],
+                            "source_event_count": 1,
+                            "execution_enabled": false,
+                            "next_action": "await_future_runtime_scheduler",
+                            "reason": "prepared"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::SubtaskSchedulerReadinessRecorded,
+                        Some(serde_json::json!({
+                            "readiness_id": "readiness_1",
+                            "parent_task_id": record.task_id,
+                            "parent_run_id": record.run_id,
+                            "handoff_id": "handoff_1",
+                            "handoff_count": 1,
+                            "queued_count": 1,
+                            "source_event_count": 1,
+                            "status": "Blocked",
+                            "readiness_status": "Blocked",
+                            "readiness_reason": "not ready",
+                            "check_count": 1,
+                            "blocked_checks": ["runtime_scheduler_not_implemented"],
+                            "execution_enabled": false,
+                            "dispatch_enabled": false,
+                            "next_action": "await_runtime_scheduler_dispatch",
+                            "reason": "blocked"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::SubtaskDispatchPlanPrepared,
+                        Some(serde_json::json!({
+                            "plan_id": "plan_1",
+                            "parent_task_id": record.task_id,
+                            "parent_run_id": record.run_id,
+                            "readiness_id": "readiness_1",
+                            "readiness_count": 1,
+                            "queued_count": 1,
+                            "source_event_count": 1,
+                            "status": "Blocked",
+                            "dispatch_plan_status": "Blocked",
+                            "dispatch_reason": "blocked",
+                            "required_capability": "runtime_subtask_dispatcher",
+                            "check_count": 1,
+                            "blocked_checks": ["runtime_dispatcher_not_implemented"],
+                            "execution_enabled": false,
+                            "dispatch_enabled": false,
+                            "next_action": "await_runtime_subtask_dispatcher",
+                            "reason": "blocked"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::SubtaskDispatchContractPrepared,
+                        Some(serde_json::json!({
+                            "contract_id": "contract_1",
+                            "parent_task_id": record.task_id,
+                            "parent_run_id": record.run_id,
+                            "plan_id": "plan_1",
+                            "plan_count": 1,
+                            "queued_count": 1,
+                            "source_event_count": 1,
+                            "status": "Blocked",
+                            "dispatch_contract_status": "Blocked",
+                            "eligibility_status": "Blocked",
+                            "dispatch_contract_reason": "blocked",
+                            "required_capability": "runtime_subtask_dispatcher",
+                            "required_preconditions": ["runtime_subtask_dispatcher_implemented"],
+                            "check_count": 1,
+                            "blocked_checks": ["dispatch_contract_not_executable"],
+                            "execution_enabled": false,
+                            "dispatch_enabled": false,
+                            "next_action": "await_dispatch_contract_implementation",
+                            "reason": "blocked"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::SubtaskDispatchAdmissionEvaluated,
+                        Some(serde_json::json!({
+                            "admission_id": "admission_1",
+                            "parent_task_id": record.task_id,
+                            "parent_run_id": record.run_id,
+                            "contract_id": "contract_1",
+                            "contract_count": 1,
+                            "queued_count": 1,
+                            "source_event_count": 1,
+                            "status": "Blocked",
+                            "admission_status": "Blocked",
+                            "execution_gate_status": "Blocked",
+                            "admission_reason": "blocked",
+                            "required_capability": "runtime_subtask_dispatcher",
+                            "precondition_count": 1,
+                            "satisfied_precondition_count": 0,
+                            "blocked_preconditions": ["runtime_subtask_dispatcher_implemented"],
+                            "check_count": 1,
+                            "blocked_checks": ["dispatch_admission_blocked"],
+                            "execution_enabled": false,
+                            "dispatch_enabled": false,
+                            "next_action": "await_dispatch_admission_preconditions",
+                            "reason": "blocked"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::SubtaskDispatchReadinessSnapshotRecorded,
+                        Some(serde_json::json!({
+                            "snapshot_id": "snapshot_1",
+                            "parent_task_id": record.task_id,
+                            "parent_run_id": record.run_id,
+                            "admission_id": "admission_1",
+                            "admission_count": 1,
+                            "queued_count": 1,
+                            "source_event_count": 1,
+                            "status": "Blocked",
+                            "readiness_status": "Blocked",
+                            "scheduler_handoff_status": "Blocked",
+                            "readiness_reason": "blocked",
+                            "required_capability": "runtime_subtask_dispatcher",
+                            "precondition_count": 1,
+                            "satisfied_precondition_count": 0,
+                            "blocked_preconditions": ["runtime_subtask_dispatcher_implemented"],
+                            "check_count": 1,
+                            "blocked_checks": ["dispatch_readiness_snapshot_blocked"],
+                            "readiness_fingerprint": format!("sha256:{}", "b".repeat(64)),
+                            "fingerprint_input_count": 8,
+                            "execution_enabled": false,
+                            "dispatch_enabled": false,
+                            "next_action": "await_dispatch_readiness_snapshot_handoff",
+                            "reason": "blocked"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::SubtaskDispatcherGuardVerdictRecorded,
+                        Some(serde_json::json!({
+                            "guard_id": "guard_1",
+                            "parent_task_id": record.task_id,
+                            "parent_run_id": record.run_id,
+                            "snapshot_id": "snapshot_1",
+                            "snapshot_count": 1,
+                            "queued_count": 1,
+                            "source_event_count": 1,
+                            "status": "Blocked",
+                            "guard_status": "Blocked",
+                            "scheduler_handoff_status": "Blocked",
+                            "handoff_preflight_status": "Blocked",
+                            "snapshot_validity_status": "Current",
+                            "snapshot_fingerprint": format!("sha256:{}", "b".repeat(64)),
+                            "snapshot_fingerprint_count": 1,
+                            "fingerprint_input_count": 8,
+                            "guard_reason": "blocked",
+                            "required_capability": "runtime_subtask_dispatcher",
+                            "precondition_count": 1,
+                            "satisfied_precondition_count": 0,
+                            "blocked_preconditions": ["runtime_subtask_dispatcher_implemented"],
+                            "check_count": 1,
+                            "blocked_checks": ["dispatcher_guard_blocked"],
+                            "execution_enabled": false,
+                            "dispatch_enabled": false,
+                            "next_action": "await_dispatcher_guard_preconditions",
+                            "reason": "blocked"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::SubtaskDispatchDecisionRecorded,
+                        Some(serde_json::json!({
+                            "decision_id": "decision_1",
+                            "parent_task_id": record.task_id,
+                            "parent_run_id": record.run_id,
+                            "guard_id": "guard_1",
+                            "guard_count": 1,
+                            "snapshot_id": "snapshot_1",
+                            "queued_count": 1,
+                            "source_event_count": 1,
+                            "status": "Blocked",
+                            "decision_status": "Blocked",
+                            "candidate_status": "Blocked",
+                            "dispatch_decision": "Denied",
+                            "dispatch_denial_reason": "blocked",
+                            "handoff_preflight_status": "Blocked",
+                            "guard_status": "Blocked",
+                            "snapshot_validity_status": "Current",
+                            "snapshot_fingerprint": format!("sha256:{}", "b".repeat(64)),
+                            "snapshot_fingerprint_count": 1,
+                            "fingerprint_input_count": 8,
+                            "dispatch_candidate_count": 1,
+                            "eligible_candidate_count": 0,
+                            "blocked_candidate_count": 1,
+                            "required_capability": "runtime_subtask_dispatcher",
+                            "precondition_count": 1,
+                            "satisfied_precondition_count": 0,
+                            "blocked_preconditions": ["runtime_subtask_dispatcher_implemented"],
+                            "check_count": 1,
+                            "blocked_checks": ["dispatch_decision_blocked"],
+                            "execution_enabled": false,
+                            "dispatch_enabled": false,
+                            "next_action": "await_dispatch_decision_preconditions",
+                            "reason": "blocked"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::SubtaskDispatchCandidateManifestRecorded,
+                        Some(serde_json::json!({
+                            "manifest_id": "manifest_1",
+                            "parent_task_id": record.task_id,
+                            "parent_run_id": record.run_id,
+                            "decision_id": "decision_1",
+                            "decision_count": 1,
+                            "guard_id": "guard_1",
+                            "snapshot_id": "snapshot_1",
+                            "queued_count": 1,
+                            "source_event_count": 1,
+                            "status": "Blocked",
+                            "manifest_status": "Blocked",
+                            "candidate_status": "Blocked",
+                            "dispatch_decision": "Denied",
+                            "candidate_denial_reason": "blocked",
+                            "candidate_count": 1,
+                            "dispatch_candidate_count": 1,
+                            "eligible_candidate_count": 0,
+                            "blocked_candidate_count": 1,
+                            "candidate_ids": ["subtask_1"],
+                            "eligible_candidate_ids": [],
+                            "blocked_candidate_ids": ["subtask_1"],
+                            "candidate_manifest_fingerprint": format!("sha256:{}", "c".repeat(64)),
+                            "snapshot_fingerprint": format!("sha256:{}", "b".repeat(64)),
+                            "fingerprint_input_count": 8,
+                            "required_capability": "runtime_subtask_dispatcher",
+                            "precondition_count": 1,
+                            "satisfied_precondition_count": 0,
+                            "blocked_preconditions": ["runtime_subtask_dispatcher_implemented"],
+                            "check_count": 1,
+                            "blocked_checks": ["dispatch_candidate_manifest_blocked"],
+                            "execution_enabled": false,
+                            "dispatch_enabled": false,
+                            "next_action": "await_dispatch_candidate_manifest_preconditions",
+                            "reason": "blocked"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
+                        Some(serde_json::json!({
+                            "handoff_envelope_id": "envelope_1",
+                            "parent_task_id": record.task_id,
+                            "parent_run_id": record.run_id,
+                            "manifest_id": "manifest_1",
+                            "manifest_count": 1,
+                            "decision_id": "decision_1",
+                            "queued_count": 1,
+                            "source_event_count": 1,
+                            "status": "Accepted",
+                            "handoff_envelope_status": "Accepted",
+                            "handoff_ticket_status": "Blocked",
+                            "replay_guard_status": "Blocked",
+                            "scheduler_handoff_status": "Blocked",
+                            "candidate_status": "Blocked",
+                            "dispatch_decision": "Denied",
+                            "candidate_denial_reason": "blocked",
+                            "candidate_count": 1,
+                            "dispatch_candidate_count": 1,
+                            "eligible_candidate_count": 0,
+                            "blocked_candidate_count": 1,
+                            "handoff_ticket_count": 0,
+                            "candidate_ids": ["subtask_1"],
+                            "eligible_candidate_ids": [],
+                            "blocked_candidate_ids": ["subtask_1"],
+                            "candidate_manifest_fingerprint": format!("sha256:{}", "c".repeat(64)),
+                            "handoff_envelope_fingerprint": format!("sha256:{}", "d".repeat(64)),
+                            "fingerprint_input_count": 8,
+                            "required_capability": "runtime_subtask_dispatcher",
+                            "precondition_count": 1,
+                            "satisfied_precondition_count": 0,
+                            "blocked_preconditions": ["runtime_subtask_dispatcher_implemented"],
+                            "check_count": 1,
+                            "blocked_checks": ["dispatch_handoff_envelope_blocked"],
+                            "execution_enabled": false,
+                            "dispatch_enabled": false,
+                            "next_action": "materialize_controlled_child_task",
+                            "reason": "blocked"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::ParentJoinContinuationFingerprintConsumed,
+                        Some(serde_json::json!({
+                            "parent_join_continuation_status": "Consumed",
+                            "admission_id": "parent_join_admission_1",
+                            "child_completion_fingerprint": format!("sha256:{}", "a".repeat(64)),
+                            "child_completion_child_count": 1,
+                            "child_terminal_completed_count": 1,
+                            "child_terminal_failed_count": 0,
+                            "child_recovery_cycle_depth": 0,
+                            "fingerprint_input_count": 5,
+                            "reason": "consumed"
+                        })),
+                    ),
+                ],
+            )
+            .expect("strict subtask dispatch payloads should append");
     }
 
     #[test]

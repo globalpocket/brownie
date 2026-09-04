@@ -132,75 +132,75 @@
       },
       {
         "ledger_event_kind": "SubtaskOrchestrationQueued",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "SubtaskHandoffPrepared",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "SubtaskSchedulerReadinessRecorded",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "SubtaskDispatchPlanPrepared",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "SubtaskDispatchContractPrepared",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "SubtaskDispatchAdmissionEvaluated",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "SubtaskDispatchReadinessSnapshotRecorded",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "SubtaskDispatcherGuardVerdictRecorded",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "SubtaskDispatchDecisionRecorded",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "SubtaskDispatchCandidateManifestRecorded",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "SubtaskDispatchHandoffEnvelopeRecorded",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "ParentJoinContinuationFingerprintConsumed",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "release_blocking_until_typed": true
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "release_blocking_until_typed": false
       },
       {
         "ledger_event_kind": "ToolExecutionRequested",
@@ -474,9 +474,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:action:string,allowed:boolean,mode_id:string,reason:string;known_optional_fields:entry_count:u64,file_kind_filter:string,index_id:string,max_results:u64,query_fingerprint:string,query_id:string,query_length_chars:u64,query_token_count:u64,request_kind:string,requested_force_refresh:boolean,requested_root_present:boolean,selection_fingerprint:string,selection_id:string,snapshot_fingerprint:string,workspace_fingerprint:string;additional_fields:false;codebase_index_permission_payload:true;action:IndexCodebase}",
-        "payload_schema_fingerprint": "shape-fnv1a64:febc2c26b2b2ea5f",
-        "payload_schema_id": "ledger_payload.CodebaseIndexPermissionChecked.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:543818f78c8fadf8",
+        "payload_schema_id": "ledger_payload.CodebaseIndexPermissionChecked.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -485,9 +485,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:built_at:string,ignore_rule_count:u64,ignore_rule_files_loaded:u64,index_id:string,indexed_files:u64,max_directories:u64,max_directory_entries:u64,max_file_bytes:u64,max_files:u64,max_path_chars:u64,max_visited_entries:u64,mode_id:string,next_action:string,requested_force_refresh:boolean,root:string,sensitive_finding_count:u64,skipped_binary_like:u64,skipped_ignored:u64,skipped_other:u64,skipped_protected:u64,skipped_sensitive:u64,skipped_symlink:u64,skipped_too_large:u64,skipped_unreadable:u64,skipped_unsafe_path:u64,snapshot_fingerprint:string,truncated:boolean,truncated_directories:u64,truncated_entries:u64,visited_entries:u64,walked_directories:u64,workspace_fingerprint:string;additional_fields:false;codebase_index_snapshot_payload:true;next_action:build_bounded_index_query_file_selection}",
-        "payload_schema_fingerprint": "shape-fnv1a64:b4f83eca308b2fe3",
-        "payload_schema_id": "ledger_payload.CodebaseIndexSnapshotBuilt.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:c1172678cb3393f0",
+        "payload_schema_id": "ledger_payload.CodebaseIndexSnapshotBuilt.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -496,9 +496,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:file_kind_filter:string,index_id:string,match_reason_counts:object,matched_entry_count:u64,max_results:u64,mode_id:string,next_action:string,query_fingerprint:string,query_id:string,returned_entry_count:u64,selection_fingerprint:string,selection_id:string,skipped_entry_count:u64,snapshot_fingerprint:string,snapshot_truncated:boolean,workspace_fingerprint:string;additional_fields:false;codebase_index_query_payload:true;next_action:read_selected_files_with_controlled_workspace_read}",
-        "payload_schema_fingerprint": "shape-fnv1a64:b30c3ce5fdd3d4c4",
-        "payload_schema_id": "ledger_payload.CodebaseIndexQueryCompleted.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:69379d4e095c5ab9",
+        "payload_schema_id": "ledger_payload.CodebaseIndexQueryCompleted.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -507,9 +507,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:byte_length:u64,bytes_read:u64,content_hash_verified:boolean,content_sha256:string,entry_count:u64,file_kind:string,file_kind_filter:string,index_id:string,max_results:u64,mode_id:string,next_action:string,query_fingerprint:string,query_id:string,read_path_fingerprint:string,selection_fingerprint:string,selection_id:string,snapshot_fingerprint:string,snapshot_truncated:boolean,tool_id:string,truncated:boolean,workspace_fingerprint:string;additional_fields:false;codebase_index_selection_read_payload:true;tool_id:codebase.index.selection.read;content_hash_verified:true;next_action:use_selected_file_context_for_prompt_materialization}",
-        "payload_schema_fingerprint": "shape-fnv1a64:49d480cf1e711ed5",
-        "payload_schema_id": "ledger_payload.CodebaseIndexSelectionReadCompleted.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:3935c6685a53ecf4",
+        "payload_schema_id": "ledger_payload.CodebaseIndexSelectionReadCompleted.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -518,9 +518,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:bytes_read:u64,content_char_count:u64,content_hash_verified:boolean,content_sha256:string,file_kind:string,index_id:string,mode_id:string,next_action:string,prompt_context_id:string,prompt_preview_redacted:boolean,query_fingerprint:string,query_id:string,read_path_fingerprint:string,run_id:string,selection_fingerprint:string,selection_id:string,snapshot_fingerprint:string,source_event_id:string,source_event_kind:string,task_id:string,workspace_fingerprint:string;additional_fields:false;codebase_index_prompt_context_payload:true;source_event_kind:CodebaseIndexSelectionReadCompleted;content_hash_verified:true;prompt_preview_redacted:true;next_action:continue_task_execution_with_materialized_context}",
-        "payload_schema_fingerprint": "shape-fnv1a64:3b33893c8062b77b",
-        "payload_schema_id": "ledger_payload.CodebaseIndexPromptContextMaterialized.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:e9495432a18534c4",
+        "payload_schema_id": "ledger_payload.CodebaseIndexPromptContextMaterialized.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -529,9 +529,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:check_id:string,column:u64_or_null,context_read_id:string,diagnostic_index:u64,diagnostic_kind:string,excerpt_bytes:u64,excerpt_end_line:u64,excerpt_sha256:string,excerpt_start_line:u64,excerpt_truncated:boolean,failure_fingerprint:string,line:u64_or_null,mode_id:string,next_action:string,prompt_preview_redacted:boolean,read_path_fingerprint:string,recovery_run_id:string,recovery_task_id:string,required_action:string,severity:string,source_run_id:string,source_task_id:string,test_name_hash:string_or_null,tool_id:string,verification_recovery_context_read:boolean;additional_fields:false;verification_recovery_context_read_payload:true;required_action:ReadWorkspace;verification_recovery_context_read:true;prompt_preview_redacted:true;next_action:run_recovery_task_with_context}",
-        "payload_schema_fingerprint": "shape-fnv1a64:735f32516606fe90",
-        "payload_schema_id": "ledger_payload.VerificationRecoveryContextReadMaterialized.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:b99fe336be13349f",
+        "payload_schema_id": "ledger_payload.VerificationRecoveryContextReadMaterialized.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -540,9 +540,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:true;known_optional_fields:apply_fingerprint:string_or_null,apply_id:string_or_null,decision_fingerprint:string_or_null,derived_goal_fingerprint:string_or_null,derived_objective_fingerprint:string_or_null,drive_fingerprint:string_or_null,end_session_sequence:u64_or_null,execution_enabled:boolean,external_modepack_child_provenance:object_or_null,failure_class:string_or_null,failure_fingerprint:string_or_null,llm_provider_failure_retry_provenance:object_or_null,next_action:string,next_route_fingerprint:string_or_null,parent_run_id:string_or_null,parent_task_id:string_or_null,patch_apply_recovery_provenance:object_or_null,product_continuation_provenance:object_or_null,product_continuation_running_enabled:boolean,product_evidence_fingerprint:string_or_null,product_loop_stop_recovery_provenance:object_or_null,product_loop_stop_recovery_running_enabled:boolean,product_objective_continuation_provenance:object_or_null,proposal_id:string_or_null,reason:string,recovery_boundary_fingerprint:string_or_null,recovery_cycle_provenance:object_or_null,recovery_run_id:string_or_null,recovery_running_enabled:boolean,recovery_task_id:string_or_null,retried_verifier_tool_ids:array_or_null,retry_running_enabled:boolean,retryable:boolean_or_null,scheduler_handoff_enabled:boolean,source_apply_id:string_or_null,source_candidate_id:string_or_null,source_decision_id:string_or_null,source_drive_id:string_or_null,source_handoff_envelope_fingerprint:string_or_null,source_handoff_envelope_id:string_or_null,source_intent_summary:object_or_null,source_progress_fingerprint:string_or_null,source_proposal_id:string_or_null,source_run_id:string_or_null,source_session_id:string_or_null,source_task_id:string_or_null,status:string,stop_class:string_or_null,stop_reason:string_or_null,verification_recovery_provenance:object_or_null,verification_recovery_retry_provenance:object_or_null;known_field_required:true;additional_fields:false;task_started_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:facc03802f1e6a9e",
-        "payload_schema_id": "ledger_payload.TaskStarted.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:f48f149da19255e9",
+        "payload_schema_id": "ledger_payload.TaskStarted.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -551,9 +551,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:completion_rules:array,display_name:string,instruction_fingerprint:string_or_null,mcp_access:array,mode_id:string,permissions:object,prompt_sections:array,role_definition:string,workspace_write_scopes:array;known_optional_fields:allowed_handoff_targets:array_or_null,description:string_or_null,external_modepack_task_provenance:object,mcp_tool_catalogs:array,verification_responsibility:string_or_null,when_to_use:string_or_null;additional_fields:false;mode_resolved_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:ddff764ff424f703",
-        "payload_schema_id": "ledger_payload.ModeResolved.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:3b606f6e6b542004",
+        "payload_schema_id": "ledger_payload.ModeResolved.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -562,9 +562,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:reason:string,run_id:string,status:string,task_id:string;known_optional_fields:mode_id:string_or_null,parent_run_id:string_or_null,source_candidate_id:string_or_null,source_handoff_envelope_fingerprint:string_or_null,source_handoff_envelope_id:string_or_null;additional_fields:false;external_modepack_child_provenance_denied_payload:true;status:Denied}",
-        "payload_schema_fingerprint": "shape-fnv1a64:edb68a70012aae12",
-        "payload_schema_id": "ledger_payload.ExternalModePackChildProvenanceDenied.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:70027c0ca4b70685",
+        "payload_schema_id": "ledger_payload.ExternalModePackChildProvenanceDenied.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -573,9 +573,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:reason:string,run_id:string,source_kind:string,source_path:string,status:string,task_id:string;known_optional_fields:mode_id:string_or_null;additional_fields:false;external_modepack_task_provenance_denied_payload:true;status:Denied}",
-        "payload_schema_fingerprint": "shape-fnv1a64:d1d68977a0b9f38b",
-        "payload_schema_id": "ledger_payload.ExternalModePackTaskProvenanceDenied.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:b6d3ab71c832c88c",
+        "payload_schema_id": "ledger_payload.ExternalModePackTaskProvenanceDenied.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -584,9 +584,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:allowed:boolean,mode_id:string,reason:string;one_of_required:action:string|required_action:string;known_optional_fields:action:string,apply_id:string,operation:string,path:string,proposal_id:string,required_action:string,scope:string,tool_id:string,workspace_write_scope_count:u64;additional_fields:false;permission_decision_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:6d8e07077e98546f",
-        "payload_schema_id": "ledger_payload.PermissionChecked.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:e1c94928cd483214",
+        "payload_schema_id": "ledger_payload.PermissionChecked.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -595,9 +595,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:allowed:boolean,mode_id:string,reason:string;one_of_required:action:string|required_action:string;known_optional_fields:action:string,apply_id:string,operation:string,path:string,proposal_id:string,required_action:string,scope:string,tool_id:string,workspace_write_scope_count:u64;additional_fields:false;permission_decision_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:a35de12ec95da249",
-        "payload_schema_id": "ledger_payload.PermissionDenied.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:23f2a724176f18ce",
+        "payload_schema_id": "ledger_payload.PermissionDenied.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -606,9 +606,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:tool_ids:array<string>;additional_fields:false;tool_planned_inventory_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:3565080003727cea",
-        "payload_schema_id": "ledger_payload.ToolPlanned.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:79ed875bfdb3af7b",
+        "payload_schema_id": "ledger_payload.ToolPlanned.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -617,9 +617,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:allowed:boolean,reason:string,required_action:string,tool_id:string;additional_fields:false;tool_plan_decision_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:77dae29619039a3d",
-        "payload_schema_id": "ledger_payload.ToolPermissionChecked.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:be39280e7781c902",
+        "payload_schema_id": "ledger_payload.ToolPermissionChecked.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -628,9 +628,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:allowed:boolean,reason:string,required_action:string,tool_id:string;additional_fields:false;tool_plan_decision_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:26594c40b5e60e47",
-        "payload_schema_id": "ledger_payload.ToolPlanApproved.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:057cd3636d4c01a4",
+        "payload_schema_id": "ledger_payload.ToolPlanApproved.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -639,9 +639,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:allowed:boolean,reason:string,required_action:string,tool_id:string;additional_fields:false;tool_plan_decision_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:993c868dd94d37fb",
-        "payload_schema_id": "ledger_payload.ToolPlanDenied.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:2d3d2f33dba26048",
+        "payload_schema_id": "ledger_payload.ToolPlanDenied.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -650,9 +650,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:parser:object,tool_ids:array<string>;additional_fields:false;tool_intent_parsed_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:2f47da8f563e46d6",
-        "payload_schema_id": "ledger_payload.ToolIntentParsed.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:54dedf791eadc9af",
+        "payload_schema_id": "ledger_payload.ToolIntentParsed.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -661,9 +661,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:code:string,reason:string,tool_id:string;additional_fields:false;tool_intent_rejected_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:3ab3e31fa23ba559",
-        "payload_schema_id": "ledger_payload.ToolIntentRejected.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:029df968ef9aa130",
+        "payload_schema_id": "ledger_payload.ToolIntentRejected.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -672,9 +672,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:allowed:boolean,input_summary:object,reason:string,request_reason:string,required_action:string,tool_id:string;known_optional_fields:mode_id:string,requested_mode_id:string,source_apply_id:string,source_run_id:string,source_task_id:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_intent_decision_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:5c7661a3d35af06a",
-        "payload_schema_id": "ledger_payload.ToolIntentPermissionChecked.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:4d6b88b28f2917d9",
+        "payload_schema_id": "ledger_payload.ToolIntentPermissionChecked.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -683,9 +683,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:allowed:boolean,input_summary:object,reason:string,request_reason:string,required_action:string,tool_id:string;known_optional_fields:mode_id:string,requested_mode_id:string,source_apply_id:string,source_run_id:string,source_task_id:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_intent_decision_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:7996b324fced039d",
-        "payload_schema_id": "ledger_payload.ToolIntentApproved.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:aab3fa66e98d01ce",
+        "payload_schema_id": "ledger_payload.ToolIntentApproved.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -694,142 +694,142 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:allowed:boolean,input_summary:object,reason:string,request_reason:string,required_action:string,tool_id:string;known_optional_fields:mode_id:string,requested_mode_id:string,source_apply_id:string,source_run_id:string,source_task_id:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_intent_decision_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:ae5af28899cb01b1",
-        "payload_schema_id": "ledger_payload.ToolIntentDenied.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:bc65b969bc0d65a2",
+        "payload_schema_id": "ledger_payload.ToolIntentDenied.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskOrchestrationQueued",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:751f4210fe52031c",
-        "payload_schema_id": "ledger_payload.SubtaskOrchestrationQueued.v10",
-        "payload_schema_version": 10,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:execution_enabled:boolean,input_summary:object,parent_run_id:string,parent_task_id:string,queue_position:u64,reason:string,request_reason:string,required_action:string,status:string,subtask_id:string,tool_id:string;known_optional_fields:requested_goal_preview:string,requested_mode_id:string;additional_fields:false;subtask_orchestration_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:300f5f6bed4a7597",
+        "payload_schema_id": "ledger_payload.SubtaskOrchestrationQueued.v11",
+        "payload_schema_version": 11,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskHandoffPrepared",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:f7ce5f46091371a9",
-        "payload_schema_id": "ledger_payload.SubtaskHandoffPrepared.v10",
-        "payload_schema_version": 10,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:execution_enabled:boolean,handoff_id:string,next_action:string,parent_run_id:string,parent_task_id:string,queued_count:u64,queued_subtask_ids:array<string>,reason:string,source_event_count:u64,status:string;additional_fields:false;subtask_handoff_prepared_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:4a8bbfc3ce4b325d",
+        "payload_schema_id": "ledger_payload.SubtaskHandoffPrepared.v11",
+        "payload_schema_version": 11,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskSchedulerReadinessRecorded",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:44df85e16aac165d",
-        "payload_schema_id": "ledger_payload.SubtaskSchedulerReadinessRecorded.v10",
-        "payload_schema_version": 10,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,check_count:u64,dispatch_enabled:boolean,execution_enabled:boolean,handoff_count:u64,handoff_id:string,next_action:string,parent_run_id:string,parent_task_id:string,queued_count:u64,readiness_id:string,readiness_reason:string,readiness_status:string,reason:string,source_event_count:u64,status:string;additional_fields:false;subtask_scheduler_readiness_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:3baae8b4793469f6",
+        "payload_schema_id": "ledger_payload.SubtaskSchedulerReadinessRecorded.v11",
+        "payload_schema_version": 11,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskDispatchPlanPrepared",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:bb3360f21d8d3200",
-        "payload_schema_id": "ledger_payload.SubtaskDispatchPlanPrepared.v10",
-        "payload_schema_version": 10,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,check_count:u64,dispatch_enabled:boolean,dispatch_plan_status:string,dispatch_reason:string,execution_enabled:boolean,next_action:string,parent_run_id:string,parent_task_id:string,plan_id:string,queued_count:u64,readiness_count:u64,readiness_id:string,reason:string,required_capability:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_plan_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:61e187cde380dbbb",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchPlanPrepared.v11",
+        "payload_schema_version": 11,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskDispatchContractPrepared",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:fec2cd06d79f4973",
-        "payload_schema_id": "ledger_payload.SubtaskDispatchContractPrepared.v10",
-        "payload_schema_version": 10,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,check_count:u64,contract_id:string,dispatch_contract_reason:string,dispatch_contract_status:string,dispatch_enabled:boolean,eligibility_status:string,execution_enabled:boolean,next_action:string,parent_run_id:string,parent_task_id:string,plan_count:u64,plan_id:string,queued_count:u64,reason:string,required_capability:string,required_preconditions:array<string>,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_contract_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:828c0ce64034a63a",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchContractPrepared.v11",
+        "payload_schema_version": 11,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskDispatchAdmissionEvaluated",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:a346208c38ba03f0",
-        "payload_schema_id": "ledger_payload.SubtaskDispatchAdmissionEvaluated.v10",
-        "payload_schema_version": 10,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:admission_id:string,admission_reason:string,admission_status:string,blocked_checks:array<string>,blocked_preconditions:array<string>,check_count:u64,contract_count:u64,contract_id:string,dispatch_enabled:boolean,execution_enabled:boolean,execution_gate_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,reason:string,required_capability:string,satisfied_precondition_count:u64,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_admission_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:f5988281a08efd92",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchAdmissionEvaluated.v11",
+        "payload_schema_version": 11,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskDispatchReadinessSnapshotRecorded",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:aa3c572ffe644c92",
-        "payload_schema_id": "ledger_payload.SubtaskDispatchReadinessSnapshotRecorded.v10",
-        "payload_schema_version": 10,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:admission_count:u64,admission_id:string,blocked_checks:array<string>,blocked_preconditions:array<string>,check_count:u64,dispatch_enabled:boolean,execution_enabled:boolean,fingerprint_input_count:u64,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,readiness_fingerprint:string,readiness_reason:string,readiness_status:string,reason:string,required_capability:string,satisfied_precondition_count:u64,scheduler_handoff_status:string,snapshot_id:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_readiness_snapshot_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:1d0676da8583bb91",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchReadinessSnapshotRecorded.v11",
+        "payload_schema_version": 11,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskDispatcherGuardVerdictRecorded",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:a35ae0aa6d7eb32d",
-        "payload_schema_id": "ledger_payload.SubtaskDispatcherGuardVerdictRecorded.v10",
-        "payload_schema_version": 10,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,blocked_preconditions:array<string>,check_count:u64,dispatch_enabled:boolean,execution_enabled:boolean,fingerprint_input_count:u64,guard_id:string,guard_reason:string,guard_status:string,handoff_preflight_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,reason:string,required_capability:string,satisfied_precondition_count:u64,scheduler_handoff_status:string,snapshot_count:u64,snapshot_fingerprint:string,snapshot_fingerprint_count:u64,snapshot_id:string,snapshot_validity_status:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatcher_guard_verdict_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:64174fd2d62d8da7",
+        "payload_schema_id": "ledger_payload.SubtaskDispatcherGuardVerdictRecorded.v11",
+        "payload_schema_version": 11,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskDispatchDecisionRecorded",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:2f2499cdbe544b30",
-        "payload_schema_id": "ledger_payload.SubtaskDispatchDecisionRecorded.v10",
-        "payload_schema_version": 10,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:blocked_candidate_count:u64,blocked_checks:array<string>,blocked_preconditions:array<string>,candidate_status:string,check_count:u64,decision_id:string,decision_status:string,dispatch_candidate_count:u64,dispatch_decision:string,dispatch_denial_reason:string,dispatch_enabled:boolean,eligible_candidate_count:u64,execution_enabled:boolean,fingerprint_input_count:u64,guard_count:u64,guard_id:string,guard_status:string,handoff_preflight_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,reason:string,required_capability:string,satisfied_precondition_count:u64,snapshot_fingerprint:string,snapshot_fingerprint_count:u64,snapshot_id:string,snapshot_validity_status:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_decision_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:394bc58d4edbf474",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchDecisionRecorded.v11",
+        "payload_schema_version": 11,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskDispatchCandidateManifestRecorded",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:4fd741f1ad32f8b6",
-        "payload_schema_id": "ledger_payload.SubtaskDispatchCandidateManifestRecorded.v10",
-        "payload_schema_version": 10,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:blocked_candidate_count:u64,blocked_candidate_ids:array<string>,blocked_checks:array<string>,blocked_preconditions:array<string>,candidate_count:u64,candidate_denial_reason:string,candidate_ids:array<string>,candidate_manifest_fingerprint:string,candidate_status:string,check_count:u64,decision_count:u64,decision_id:string,dispatch_candidate_count:u64,dispatch_decision:string,dispatch_enabled:boolean,eligible_candidate_count:u64,eligible_candidate_ids:array<string>,execution_enabled:boolean,fingerprint_input_count:u64,guard_id:string,manifest_id:string,manifest_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,reason:string,required_capability:string,satisfied_precondition_count:u64,snapshot_fingerprint:string,snapshot_id:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_candidate_manifest_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:7128e59fb39e556c",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchCandidateManifestRecorded.v11",
+        "payload_schema_version": 11,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "SubtaskDispatchHandoffEnvelopeRecorded",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:5ed7c68545d38228",
-        "payload_schema_id": "ledger_payload.SubtaskDispatchHandoffEnvelopeRecorded.v10",
-        "payload_schema_version": 10,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:blocked_candidate_count:u64,blocked_candidate_ids:array<string>,candidate_count:u64,candidate_ids:array<string>,candidate_status:string,dispatch_decision:string,dispatch_enabled:boolean,eligible_candidate_count:u64,eligible_candidate_ids:array<string>,execution_enabled:boolean,fingerprint_input_count:u64,handoff_envelope_fingerprint:string,handoff_envelope_id:string,handoff_envelope_status:string,next_action:string,parent_run_id:string,parent_task_id:string,reason:string,required_capability:string,scheduler_handoff_status:string,status:string;known_optional_fields:blocked_checks:array<string>,blocked_preconditions:array<string>,candidate_denial_reason:string,candidate_manifest_fingerprint:string,check_count:u64,continuation_materialization:boolean,continuation_source:string,decision_id:string,dispatch_candidate_count:u64,handoff_ticket_count:u64,handoff_ticket_status:string,manifest_count:u64,manifest_id:string,max_recovery_cycle_depth:u64,parent_join_admission_id:string,parent_join_child_completion_child_count:u64,parent_join_child_completion_fingerprint:string,parent_join_fingerprint_input_count:u64,parent_join_recovery_cycle:boolean,parent_join_recovery_cycle_depth:u64,parent_join_terminal_completed_child_count:u64,parent_join_terminal_failed_child_count:u64,precondition_count:u64,queued_count:u64,recovery_cycle_budget_status:string,replay_guard_reason:string,replay_guard_status:string,satisfied_precondition_count:u64,source_event_count:u64;additional_fields:false;subtask_dispatch_handoff_envelope_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:0f2b6307a849b96f",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchHandoffEnvelopeRecorded.v11",
+        "payload_schema_version": 11,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
         "ledger_event_kind": "ParentJoinContinuationFingerprintConsumed",
-        "payload_schema_classification": "versioned_open",
-        "payload_schema_contract_status": "partial",
-        "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:b26ee503fbbabc5c",
-        "payload_schema_id": "ledger_payload.ParentJoinContinuationFingerprintConsumed.v10",
-        "payload_schema_version": 10,
-        "release_blocking_until_typed": true,
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:admission_id:string,child_completion_child_count:u64,child_completion_fingerprint:string,child_recovery_cycle_depth:u64,child_terminal_completed_count:u64,child_terminal_failed_count:u64,fingerprint_input_count:u64,parent_join_continuation_status:string,reason:string;additional_fields:false;parent_join_continuation_consumed_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:ffc5b4fa444da3df",
+        "payload_schema_id": "ledger_payload.ParentJoinContinuationFingerprintConsumed.v11",
+        "payload_schema_version": 11,
+        "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
       {
@@ -837,9 +837,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:input_summary:object,tool_id:string;known_optional_fields:request_fingerprint:string,source_apply_id:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_execution_request_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:c1d818a9f0228662",
-        "payload_schema_id": "ledger_payload.ToolExecutionRequested.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:77e62f187bbd8657",
+        "payload_schema_id": "ledger_payload.ToolExecutionRequested.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -848,9 +848,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:approval_fingerprint:string,approval_schema_version:u64,approval_state_fingerprint:string,catalog_provenance:object,mcp_safety_policy:object_or_null,request_fingerprint:string,run_id:string,server_id:string,status:string,task_id:string,tool_id:string,tool_name:string;known_optional_fields:approval_id_fingerprint:string,outcome:string,outcome_fingerprint:string,recovery_fingerprint:string,recovery_reason:string,recovery_source_state_fingerprint:string;additional_fields:false;mcp_tool_execution_approval_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:c2ea5f17d64621e6",
-        "payload_schema_id": "ledger_payload.McpToolExecutionApproved.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:d7fb0cea1c29a141",
+        "payload_schema_id": "ledger_payload.McpToolExecutionApproved.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -859,9 +859,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:allowed:boolean,reason:string,required_action:string,tool_id:string;known_optional_fields:mcp_safety_policy:object_or_null,request_fingerprint:string,server_id:string,source_apply_id:string,tool_name:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_execution_permission_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:5068d76f60403822",
-        "payload_schema_id": "ledger_payload.ToolExecutionPermissionChecked.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:6f115b86b4f652b7",
+        "payload_schema_id": "ledger_payload.ToolExecutionPermissionChecked.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -870,9 +870,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:status:string,tool_id:string;known_optional_fields:absolute_paths_redacted:boolean,ambient_index_ignored:boolean,authorized_change_set_fingerprint:string,authorized_path_count:u64,bounded_cargo_diagnostics:array,bytes_read:u64,captured_bytes:u64,cargo_dependency_fetch_offline:boolean,catalog_provenance:object,check_id:string,cleanup_succeeded:boolean,commit_id:string,committed_tree_fingerprint:string,compile_time_code_sandboxed:boolean,duration_ms:u64,exit_code:integer_or_null,expected_parent_head:string,failed_git_operation:string,git:object,git_environment_hardened:boolean,git_optional_locks_disabled:boolean,git_process_count:u64,git_processes_bounded:boolean,git_prompts_disabled:boolean,line_count:u64,logical_invocation_fingerprint:string,mcp:object,mcp_approval_binding:object,mcp_safety_policy:object_or_null,message_fingerprint:string,mutation_process_launched:boolean,operation:string,os_network_isolated:boolean,output_oversized:boolean,output_preview:string,output_redacted:boolean,output_truncated:boolean,process_launched:boolean,process_tree_kill_attempted:boolean,process_tree_kill_reason:string,process_tree_kill_succeeded:boolean,process_tree_timeout_supported:boolean,raw_diff_redacted:boolean,raw_file_content_redacted:boolean,raw_message_redacted:boolean,reason:string,reader_thread_joined:boolean,replayed:boolean,repository_hooks_bypassed:boolean,runtime_authorization_required:boolean,source_apply_id:string,standard_error_bytes:u64,standard_error_truncated:boolean,standard_output_bytes:u64,standard_output_truncated:boolean,target_dir_isolated:boolean,temporary_index_cleaned:boolean,test_code_executed:boolean,timed_out:boolean,truncated:boolean,trusted_workspace_required:boolean,used_git_plumbing:boolean,used_temporary_index:boolean,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string,verification_status:string,workspace_write_scope_fingerprint:string;additional_fields:false;tool_execution_terminal_payload:true;terminal_status:Completed}",
-        "payload_schema_fingerprint": "shape-fnv1a64:cb813209af854e28",
-        "payload_schema_id": "ledger_payload.ToolExecutionCompleted.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:87511988cfe4f933",
+        "payload_schema_id": "ledger_payload.ToolExecutionCompleted.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -881,9 +881,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:reason:string,status:string,tool_id:string;known_optional_fields:absolute_paths_redacted:boolean,ambient_index_ignored:boolean,authorized_change_set_fingerprint:string,authorized_path_count:u64,bounded_cargo_diagnostics:array,bytes_read:u64,captured_bytes:u64,cargo_dependency_fetch_offline:boolean,catalog_provenance:object,check_id:string,cleanup_succeeded:boolean,commit_id:string,committed_tree_fingerprint:string,compile_time_code_sandboxed:boolean,duration_ms:u64,exit_code:integer_or_null,expected_parent_head:string,failed_git_operation:string,git:object,git_environment_hardened:boolean,git_optional_locks_disabled:boolean,git_process_count:u64,git_processes_bounded:boolean,git_prompts_disabled:boolean,line_count:u64,logical_invocation_fingerprint:string,mcp:object,mcp_approval_binding:object,mcp_safety_policy:object_or_null,message_fingerprint:string,mutation_process_launched:boolean,operation:string,os_network_isolated:boolean,output_oversized:boolean,output_preview:string,output_redacted:boolean,output_truncated:boolean,process_launched:boolean,process_tree_kill_attempted:boolean,process_tree_kill_reason:string,process_tree_kill_succeeded:boolean,process_tree_timeout_supported:boolean,raw_diff_redacted:boolean,raw_file_content_redacted:boolean,raw_message_redacted:boolean,reason:string,reader_thread_joined:boolean,replayed:boolean,repository_hooks_bypassed:boolean,runtime_authorization_required:boolean,source_apply_id:string,standard_error_bytes:u64,standard_error_truncated:boolean,standard_output_bytes:u64,standard_output_truncated:boolean,target_dir_isolated:boolean,temporary_index_cleaned:boolean,test_code_executed:boolean,timed_out:boolean,truncated:boolean,trusted_workspace_required:boolean,used_git_plumbing:boolean,used_temporary_index:boolean,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string,verification_status:string,workspace_write_scope_fingerprint:string;additional_fields:false;tool_execution_terminal_payload:true;terminal_status:Denied}",
-        "payload_schema_fingerprint": "shape-fnv1a64:9152911e000126bd",
-        "payload_schema_id": "ledger_payload.ToolExecutionDenied.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:92a0f0d2f681b234",
+        "payload_schema_id": "ledger_payload.ToolExecutionDenied.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -892,9 +892,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:reason:string,status:string,tool_id:string;known_optional_fields:absolute_paths_redacted:boolean,ambient_index_ignored:boolean,authorized_change_set_fingerprint:string,authorized_path_count:u64,bounded_cargo_diagnostics:array,bytes_read:u64,captured_bytes:u64,cargo_dependency_fetch_offline:boolean,catalog_provenance:object,check_id:string,cleanup_succeeded:boolean,commit_id:string,committed_tree_fingerprint:string,compile_time_code_sandboxed:boolean,duration_ms:u64,exit_code:integer_or_null,expected_parent_head:string,failed_git_operation:string,git:object,git_environment_hardened:boolean,git_optional_locks_disabled:boolean,git_process_count:u64,git_processes_bounded:boolean,git_prompts_disabled:boolean,line_count:u64,logical_invocation_fingerprint:string,mcp:object,mcp_approval_binding:object,mcp_safety_policy:object_or_null,message_fingerprint:string,mutation_process_launched:boolean,operation:string,os_network_isolated:boolean,output_oversized:boolean,output_preview:string,output_redacted:boolean,output_truncated:boolean,process_launched:boolean,process_tree_kill_attempted:boolean,process_tree_kill_reason:string,process_tree_kill_succeeded:boolean,process_tree_timeout_supported:boolean,raw_diff_redacted:boolean,raw_file_content_redacted:boolean,raw_message_redacted:boolean,reason:string,reader_thread_joined:boolean,replayed:boolean,repository_hooks_bypassed:boolean,runtime_authorization_required:boolean,source_apply_id:string,standard_error_bytes:u64,standard_error_truncated:boolean,standard_output_bytes:u64,standard_output_truncated:boolean,target_dir_isolated:boolean,temporary_index_cleaned:boolean,test_code_executed:boolean,timed_out:boolean,truncated:boolean,trusted_workspace_required:boolean,used_git_plumbing:boolean,used_temporary_index:boolean,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string,verification_status:string,workspace_write_scope_fingerprint:string;additional_fields:false;tool_execution_terminal_payload:true;terminal_status:Failed}",
-        "payload_schema_fingerprint": "shape-fnv1a64:808bf0c35552295d",
-        "payload_schema_id": "ledger_payload.ToolExecutionFailed.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:1e05d4d0e31bbc08",
+        "payload_schema_id": "ledger_payload.ToolExecutionFailed.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -903,9 +903,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:910d32b3e93718ae",
-        "payload_schema_id": "ledger_payload.WorkspacePatchProposed.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:08fdc5eddef724ed",
+        "payload_schema_id": "ledger_payload.WorkspacePatchProposed.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -914,9 +914,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:e1e99064cd222cc3",
-        "payload_schema_id": "ledger_payload.WorkspacePatchApprovalRequested.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:ad3b18757027b3e4",
+        "payload_schema_id": "ledger_payload.WorkspacePatchApprovalRequested.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -925,9 +925,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:55842f6f47fd1dad",
-        "payload_schema_id": "ledger_payload.WorkspacePatchApproved.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:d768640f39b3d46e",
+        "payload_schema_id": "ledger_payload.WorkspacePatchApproved.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -936,9 +936,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:16c58971680bcabe",
-        "payload_schema_id": "ledger_payload.WorkspacePatchRejected.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:152b6f8d604ddcbd",
+        "payload_schema_id": "ledger_payload.WorkspacePatchRejected.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -947,9 +947,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:acc80440465ae51f",
-        "payload_schema_id": "ledger_payload.WorkspacePatchPreflightSnapshotCreated.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:f964cea45bf86b00",
+        "payload_schema_id": "ledger_payload.WorkspacePatchPreflightSnapshotCreated.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -958,9 +958,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:cb4e43f946e75bbf",
-        "payload_schema_id": "ledger_payload.WorkspacePatchApplyPlanCreated.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:1105af0967c284a0",
+        "payload_schema_id": "ledger_payload.WorkspacePatchApplyPlanCreated.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -969,9 +969,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:f27910d90f546a81",
-        "payload_schema_id": "ledger_payload.WorkspacePatchApplyCapabilityChecked.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:a668b53276348782",
+        "payload_schema_id": "ledger_payload.WorkspacePatchApplyCapabilityChecked.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -980,9 +980,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:06e3628bddf11fb9",
-        "payload_schema_id": "ledger_payload.WorkspacePatchApplyDryRunChecked.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:924434a159bbeb9a",
+        "payload_schema_id": "ledger_payload.WorkspacePatchApplyDryRunChecked.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -991,9 +991,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:96bd1a8f7dd0f573",
-        "payload_schema_id": "ledger_payload.WorkspacePatchApplyResultRecorded.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:413f9bc51ccd55d4",
+        "payload_schema_id": "ledger_payload.WorkspacePatchApplyResultRecorded.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1002,9 +1002,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:f5d5ce302daf4942",
-        "payload_schema_id": "ledger_payload.WorkspacePatchReadinessReportCreated.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:176d50103cc81341",
+        "payload_schema_id": "ledger_payload.WorkspacePatchReadinessReportCreated.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1013,9 +1013,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:659ae0091ff80f3d",
-        "payload_schema_id": "ledger_payload.HeadlessContinuationDecisionRecorded.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:6734f9ed27b5fd3e",
+        "payload_schema_id": "ledger_payload.HeadlessContinuationDecisionRecorded.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1024,9 +1024,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:92fa96ff4ef8d2b9",
-        "payload_schema_id": "ledger_payload.HeadlessRunSessionAdvanced.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:1e5b6914cac39e9a",
+        "payload_schema_id": "ledger_payload.HeadlessRunSessionAdvanced.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1035,9 +1035,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:3b88d177553a275c",
-        "payload_schema_id": "ledger_payload.HeadlessRunSessionDriveCompleted.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:8286e21bcb44a9bb",
+        "payload_schema_id": "ledger_payload.HeadlessRunSessionDriveCompleted.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1046,9 +1046,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:864469d9ea5b3159",
-        "payload_schema_id": "ledger_payload.HeadlessRunProductEvidenceMatrixDerived.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:31b4630e82350aba",
+        "payload_schema_id": "ledger_payload.HeadlessRunProductEvidenceMatrixDerived.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1057,9 +1057,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:340e5d6d96255ad4",
-        "payload_schema_id": "ledger_payload.HeadlessRunSelectedProductGapClosureRecorded.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:898bdc37f728fa73",
+        "payload_schema_id": "ledger_payload.HeadlessRunSelectedProductGapClosureRecorded.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1068,9 +1068,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:b73fce548667e9ce",
-        "payload_schema_id": "ledger_payload.HeadlessRunProductCompletionDecisionRecorded.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:a4b214759d01c40d",
+        "payload_schema_id": "ledger_payload.HeadlessRunProductCompletionDecisionRecorded.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1079,9 +1079,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:71919bee5ec05829",
-        "payload_schema_id": "ledger_payload.HeadlessJourneyStarted.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:6c35143eb97b5b8a",
+        "payload_schema_id": "ledger_payload.HeadlessJourneyStarted.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1090,9 +1090,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:2427c0ce66afb868",
-        "payload_schema_id": "ledger_payload.HeadlessJourneyRouteResumed.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:a02f9a83b06cd487",
+        "payload_schema_id": "ledger_payload.HeadlessJourneyRouteResumed.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1101,9 +1101,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:16e5000a88bee33a",
-        "payload_schema_id": "ledger_payload.HeadlessJourneyClosed.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:6b7506d5f0e509d9",
+        "payload_schema_id": "ledger_payload.HeadlessJourneyClosed.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1112,9 +1112,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:0a6dfde85cdb0f05",
-        "payload_schema_id": "ledger_payload.HeadlessJourneyExecuted.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:eb1e7be5e0360a26",
+        "payload_schema_id": "ledger_payload.HeadlessJourneyExecuted.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1123,9 +1123,9 @@
         "payload_schema_classification": "versioned_open",
         "payload_schema_contract_status": "partial",
         "payload_schema_descriptor": "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:41b860f1966aee97",
-        "payload_schema_id": "ledger_payload.HeadlessRunCompletionFinalized.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:ade27342e4c17278",
+        "payload_schema_id": "ledger_payload.HeadlessRunCompletionFinalized.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": true,
         "store_schema_version": 2
       },
@@ -1134,9 +1134,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:true;known_optional_fields:admission_id:string,admission_kind:string,deadline_persisted:boolean,deadline_scope:string,reason:string,runtime_deadline:object;known_field_required:true;conditional_required:runtime_deadline=>deadline_scope+deadline_persisted,admission_id|admission_kind=>admission_id+admission_kind+reason;additional_fields:false;task_running_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:d42a3b45f5a6c9bf",
-        "payload_schema_id": "ledger_payload.TaskRunning.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:1e53189d6e262b6a",
+        "payload_schema_id": "ledger_payload.TaskRunning.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1145,9 +1145,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:entrypoint:string,state:string;known_optional_fields:verification_recovery_retry:boolean;additional_fields:false;agent_loop_started_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:5a97fe0e64e61b53",
-        "payload_schema_id": "ledger_payload.AgentLoopStarted.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:1e52b7e586df804a",
+        "payload_schema_id": "ledger_payload.AgentLoopStarted.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1156,9 +1156,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:completion_summary:string,final_state:string;known_optional_fields:completion_result_fingerprint:string,final_response_chars:u64,final_response_present:boolean,verification_recovery_retry:boolean;additional_fields:false;agent_loop_completed_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:d0af48a1fe18fe9c",
-        "payload_schema_id": "ledger_payload.AgentLoopCompleted.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:07cbed5c4f3f926b",
+        "payload_schema_id": "ledger_payload.AgentLoopCompleted.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1167,9 +1167,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:acceptance_fingerprint:string,acceptance_id:string,next_action:string,replayed:boolean,run_id:string,status:string,task_id:string,terminal_completion_fingerprint:string,verifier_gate_status:string;additional_fields:false;task_completion_accepted_payload:true;status:AcceptedComplete;next_action:inspect_accepted_completion}",
-        "payload_schema_fingerprint": "shape-fnv1a64:c7cff3d0f56eaac4",
-        "payload_schema_id": "ledger_payload.TaskCompletionAccepted.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:0680ac2375b519cd",
+        "payload_schema_id": "ledger_payload.TaskCompletionAccepted.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1178,9 +1178,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;known_optional_fields:context_budget_max_ledger_events:u64,context_budget_max_prompt_chars:u64,context_budget_max_selected_index_chars:u64,context_budget_prompt_chars:u64,context_budget_prompt_within_budget:boolean,context_budget_protected_context_chars:u64,context_budget_requested:boolean,context_budget_selected_index_content_chars:u64,context_budget_selected_index_context_present:boolean,context_budget_selected_index_materialized_chars:u64,context_budget_selected_index_truncated:boolean,context_first_included_event:string,context_included_events:u64,context_last_included_event:string,context_max_events:u64,context_omitted_events:u64,context_total_events:u64,context_window_bounded:boolean,max_prompt_chars:u64,message_count:u64,prompt_preview:string,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string;known_field_required:true;additional_fields:false;prompt_built_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:31d6c0b293438a67",
-        "payload_schema_id": "ledger_payload.PromptBuilt.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:13fd60fbf13b6f2a",
+        "payload_schema_id": "ledger_payload.PromptBuilt.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1189,9 +1189,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:categories:array<string>,finding_count:u64,message_indexes:array<u64>,mode:string,sensitive_guard:string;additional_fields:false;prompt_sensitive_scan_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:d898212160f40e29",
-        "payload_schema_id": "ledger_payload.PromptSensitiveScanCompleted.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:a8bdf79d565dc8ea",
+        "payload_schema_id": "ledger_payload.PromptSensitiveScanCompleted.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1200,9 +1200,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:categories:array<string>,finding_count:u64,message_indexes:array<u64>,mode:string,sensitive_guard:string;additional_fields:false;prompt_sensitive_scan_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:71645426265d8a8d",
-        "payload_schema_id": "ledger_payload.PromptSensitiveScanFailed.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:ef33e9ddfc48a98e",
+        "payload_schema_id": "ledger_payload.PromptSensitiveScanFailed.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1211,9 +1211,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:base_url:string_or_null,message_count:u64,model:string,provider:string,strict:boolean;additional_fields:false;llm_request_created_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:fc4ab0e6c8f22442",
-        "payload_schema_id": "ledger_payload.LlmRequestCreated.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:84176bf11e671077",
+        "payload_schema_id": "ledger_payload.LlmRequestCreated.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1222,9 +1222,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;known_optional_fields:base_url:string_or_null,llm_provider_failure:object,model:string,provider:string,reason:string,reason_chars:u64,reason_sha256:string,reason_truncated:boolean,sensitive_guard:string,strict:boolean;known_field_required:true;additional_fields:false;llm_request_failed_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:e974937663ef8672",
-        "payload_schema_id": "ledger_payload.LlmRequestFailed.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:15ad4346ff87bcb1",
+        "payload_schema_id": "ledger_payload.LlmRequestFailed.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1233,9 +1233,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:provider:string;one_of_required:content_preview:string|content_preview_redacted:boolean;known_optional_fields:content_preview:string,content_preview_redacted:boolean,content_preview_redaction_reason:string,response_preview_chars:u64;additional_fields:false;llm_response_received_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:da436679894425f4",
-        "payload_schema_id": "ledger_payload.LlmResponseReceived.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:a3a342714a7bb303",
+        "payload_schema_id": "ledger_payload.LlmResponseReceived.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1244,9 +1244,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;known_optional_fields:context_budget_max_ledger_events:u64,context_budget_max_prompt_chars:u64,context_budget_max_selected_index_chars:u64,context_budget_prompt_chars:u64,context_budget_prompt_within_budget:boolean,context_budget_protected_context_chars:u64,context_budget_requested:boolean,context_budget_selected_index_content_chars:u64,context_budget_selected_index_context_present:boolean,context_budget_selected_index_materialized_chars:u64,context_budget_selected_index_truncated:boolean,context_first_included_event:string,context_included_events:u64,context_last_included_event:string,context_max_events:u64,context_omitted_events:u64,context_total_events:u64,context_window_bounded:boolean,max_prompt_chars:u64,message_count:u64,prompt_preview:string,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string;known_field_required:true;additional_fields:false;prompt_built_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:e33c433de957dd1c",
-        "payload_schema_id": "ledger_payload.SecondPassPromptBuilt.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:5241da2d37979da9",
+        "payload_schema_id": "ledger_payload.SecondPassPromptBuilt.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1255,9 +1255,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:base_url:string_or_null,message_count:u64,model:string,provider:string,strict:boolean;additional_fields:false;llm_request_created_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:cf6b77c01be71f85",
-        "payload_schema_id": "ledger_payload.SecondPassLlmRequestCreated.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:3d83b205fae7c610",
+        "payload_schema_id": "ledger_payload.SecondPassLlmRequestCreated.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1266,9 +1266,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;known_optional_fields:base_url:string_or_null,llm_provider_failure:object,model:string,provider:string,reason:string,reason_chars:u64,reason_sha256:string,reason_truncated:boolean,sensitive_guard:string,strict:boolean;known_field_required:true;additional_fields:false;llm_request_failed_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:115b87154c016d81",
-        "payload_schema_id": "ledger_payload.SecondPassLlmRequestFailed.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:bb2728f96667f002",
+        "payload_schema_id": "ledger_payload.SecondPassLlmRequestFailed.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1277,9 +1277,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:provider:string;one_of_required:content_preview:string|content_preview_redacted:boolean;known_optional_fields:content_preview:string,content_preview_redacted:boolean,content_preview_redaction_reason:string,response_preview_chars:u64;additional_fields:false;llm_response_received_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:7599a16b279a30a5",
-        "payload_schema_id": "ledger_payload.SecondPassLlmResponseReceived.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:4fd18add7f18879e",
+        "payload_schema_id": "ledger_payload.SecondPassLlmResponseReceived.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1288,9 +1288,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:true;known_optional_fields:apply_enabled:boolean,bounded_cargo_diagnostics:array,caller_authorized:boolean,cancel_fingerprint:string,cancel_id:string,cancel_status:string,completion_evidence:object,expected_task_updated_at:string,failed_verifier_count:u64,failed_verifier_tool_ids:array<string>,failure_fingerprint:string,failure_reason:string,failure_reasons:array<string>,git:object,late_tool_response:boolean,mcp:object,missing_verifier_tool_ids:array<string>,next_action:string,passed_verifier_count:u64,passed_verifier_tool_ids:array<string>,previous_status:string,proposal_count:u64,proposal_id:string,reason:string,recovery_run_id:string,recovery_task_id:string,request_fingerprint_version:string,required_verifier_count:u64,required_verifier_tool_ids:array<string>,requirement_fingerprint:string,run_id:string,runtime_deadline:object,source_apply_id:string,source_run_id:string,source_task_id:string,status:string,task_id:string,terminal_evidence:boolean,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:string,verification_recovery_repair:boolean,verification_recovery_repair_gate_status:string,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;known_field_required:true;additional_fields:false;terminal_status:Completed}",
-        "payload_schema_fingerprint": "shape-fnv1a64:877a2eb1bf23b3dd",
-        "payload_schema_id": "ledger_payload.TaskCompleted.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:46373738a803fbf4",
+        "payload_schema_id": "ledger_payload.TaskCompleted.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1299,9 +1299,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:true;known_optional_fields:apply_enabled:boolean,bounded_cargo_diagnostics:array,caller_authorized:boolean,cancel_fingerprint:string,cancel_id:string,cancel_status:string,completion_evidence:object,expected_task_updated_at:string,failed_verifier_count:u64,failed_verifier_tool_ids:array<string>,failure_fingerprint:string,failure_reason:string,failure_reasons:array<string>,git:object,late_tool_response:boolean,mcp:object,missing_verifier_tool_ids:array<string>,next_action:string,passed_verifier_count:u64,passed_verifier_tool_ids:array<string>,previous_status:string,proposal_count:u64,proposal_id:string,reason:string,recovery_run_id:string,recovery_task_id:string,request_fingerprint_version:string,required_verifier_count:u64,required_verifier_tool_ids:array<string>,requirement_fingerprint:string,run_id:string,runtime_deadline:object,source_apply_id:string,source_run_id:string,source_task_id:string,status:string,task_id:string,terminal_evidence:boolean,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:string,verification_recovery_repair:boolean,verification_recovery_repair_gate_status:string,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;known_field_required:true;additional_fields:false;terminal_status:Failed}",
-        "payload_schema_fingerprint": "shape-fnv1a64:9304df565276b4af",
-        "payload_schema_id": "ledger_payload.TaskFailed.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:48d7f67acad6a9f4",
+        "payload_schema_id": "ledger_payload.TaskFailed.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1310,9 +1310,9 @@
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
         "payload_schema_descriptor": "strict_typed{payload_optional:true;known_optional_fields:apply_enabled:boolean,bounded_cargo_diagnostics:array,caller_authorized:boolean,cancel_fingerprint:string,cancel_id:string,cancel_status:string,completion_evidence:object,expected_task_updated_at:string,failed_verifier_count:u64,failed_verifier_tool_ids:array<string>,failure_fingerprint:string,failure_reason:string,failure_reasons:array<string>,git:object,late_tool_response:boolean,mcp:object,missing_verifier_tool_ids:array<string>,next_action:string,passed_verifier_count:u64,passed_verifier_tool_ids:array<string>,previous_status:string,proposal_count:u64,proposal_id:string,reason:string,recovery_run_id:string,recovery_task_id:string,request_fingerprint_version:string,required_verifier_count:u64,required_verifier_tool_ids:array<string>,requirement_fingerprint:string,run_id:string,runtime_deadline:object,source_apply_id:string,source_run_id:string,source_task_id:string,status:string,task_id:string,terminal_evidence:boolean,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:string,verification_recovery_repair:boolean,verification_recovery_repair_gate_status:string,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;known_field_required:true;additional_fields:false;terminal_status:Cancelled}",
-        "payload_schema_fingerprint": "shape-fnv1a64:6f3884ae7f8b1fdd",
-        "payload_schema_id": "ledger_payload.TaskCancelled.v10",
-        "payload_schema_version": 10,
+        "payload_schema_fingerprint": "shape-fnv1a64:f8f771fb0cd7c704",
+        "payload_schema_id": "ledger_payload.TaskCancelled.v11",
+        "payload_schema_version": 11,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       }
@@ -1340,11 +1340,11 @@
           "status": "Completed"
         },
         "payload_instance_shape_descriptor": "object{status:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:8cd58850563e9650",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:7d701e439555dfb9",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:877a2eb1bf23b3dd",
-        "payload_schema_id": "ledger_payload.TaskCompleted.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:46373738a803fbf4",
+        "payload_schema_id": "ledger_payload.TaskCompleted.v11"
       },
       {
         "ledger_event_kind": "TaskCompleted",
@@ -1353,11 +1353,11 @@
           "status": "Completed"
         },
         "payload_instance_shape_descriptor": "object{late_tool_response:boolean,status:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:c399bd05548e760f",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:c1c1bc25b06008e8",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:877a2eb1bf23b3dd",
-        "payload_schema_id": "ledger_payload.TaskCompleted.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:46373738a803fbf4",
+        "payload_schema_id": "ledger_payload.TaskCompleted.v11"
       },
       {
         "ledger_event_kind": "TaskFailed",
@@ -1380,11 +1380,11 @@
           "verification_completion_gate_status": "Failed"
         },
         "payload_instance_shape_descriptor": "object{failed_verifier_count:integer,failed_verifier_tool_ids:array<string>,failure_reasons:array<string>,passed_verifier_count:integer,passed_verifier_tool_ids:array<empty>,required_verifier_count:integer,required_verifier_tool_ids:array<string>,requirement_fingerprint:string,status:string,verification_completion_gate_status:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:41dbf36a7480eb5f",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:aada3687b037166e",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:9304df565276b4af",
-        "payload_schema_id": "ledger_payload.TaskFailed.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:48d7f67acad6a9f4",
+        "payload_schema_id": "ledger_payload.TaskFailed.v11"
       },
       {
         "ledger_event_kind": "TaskCancelled",
@@ -1402,11 +1402,11 @@
           "terminal_evidence": true
         },
         "payload_instance_shape_descriptor": "object{caller_authorized:boolean,cancel_fingerprint:string,cancel_id:string,cancel_status:string,expected_task_updated_at:string,previous_status:string,reason:string,request_fingerprint_version:string,run_id:string,task_id:string,terminal_evidence:boolean}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:f0f807b18a6a0578",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:744433539f9d2487",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:6f3884ae7f8b1fdd",
-        "payload_schema_id": "ledger_payload.TaskCancelled.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:f8f771fb0cd7c704",
+        "payload_schema_id": "ledger_payload.TaskCancelled.v11"
       },
       {
         "ledger_event_kind": "PermissionChecked",
@@ -1417,11 +1417,11 @@
           "reason": "allowed by policy"
         },
         "payload_instance_shape_descriptor": "object{action:string,allowed:boolean,mode_id:string,reason:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:7344e7469a2bb8ff",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:759e68226a71e18c",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:6d8e07077e98546f",
-        "payload_schema_id": "ledger_payload.PermissionChecked.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:e1c94928cd483214",
+        "payload_schema_id": "ledger_payload.PermissionChecked.v11"
       },
       {
         "ledger_event_kind": "PermissionDenied",
@@ -1437,11 +1437,11 @@
           "workspace_write_scope_count": 0
         },
         "payload_instance_shape_descriptor": "object{allowed:boolean,mode_id:string,operation:string,path:string,reason:string,required_action:string,scope:string,tool_id:string,workspace_write_scope_count:integer}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:c9060451d155c613",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:2b9318caa170aea8",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:a35de12ec95da249",
-        "payload_schema_id": "ledger_payload.PermissionDenied.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:23f2a724176f18ce",
+        "payload_schema_id": "ledger_payload.PermissionDenied.v11"
       },
       {
         "ledger_event_kind": "ToolPlanned",
@@ -1452,11 +1452,11 @@
           ]
         },
         "payload_instance_shape_descriptor": "object{tool_ids:array<string>}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:fc87a647c1adf6d6",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:b6d3d806d5f11309",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:3565080003727cea",
-        "payload_schema_id": "ledger_payload.ToolPlanned.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:79ed875bfdb3af7b",
+        "payload_schema_id": "ledger_payload.ToolPlanned.v11"
       },
       {
         "ledger_event_kind": "ToolPermissionChecked",
@@ -1467,11 +1467,11 @@
           "tool_id": "workspace.read"
         },
         "payload_instance_shape_descriptor": "object{allowed:boolean,reason:string,required_action:string,tool_id:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:d6d8e8cac4411698",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:de7878fb38f9362d",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:77dae29619039a3d",
-        "payload_schema_id": "ledger_payload.ToolPermissionChecked.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:be39280e7781c902",
+        "payload_schema_id": "ledger_payload.ToolPermissionChecked.v11"
       },
       {
         "ledger_event_kind": "ToolIntentParsed",
@@ -1493,11 +1493,11 @@
           ]
         },
         "payload_instance_shape_descriptor": "object{parser:object{accepted_blocks:integer,accepted_requests:integer,found_blocks:integer,max_block_bytes:integer,max_blocks:integer,max_input_bytes:integer,max_reason_chars:integer,max_tool_requests:integer,max_workspace_write_content_chars:integer,rejected_requests:integer},tool_ids:array<string>}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:3dda9e644395144e",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:bf2c809eef50456d",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:2f47da8f563e46d6",
-        "payload_schema_id": "ledger_payload.ToolIntentParsed.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:54dedf791eadc9af",
+        "payload_schema_id": "ledger_payload.ToolIntentParsed.v11"
       },
       {
         "ledger_event_kind": "ToolIntentRejected",
@@ -1507,11 +1507,11 @@
           "tool_id": "unsafe.tool"
         },
         "payload_instance_shape_descriptor": "object{code:string,reason:string,tool_id:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:804ea05891dabbd9",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:44a3789d81ad27ca",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:3ab3e31fa23ba559",
-        "payload_schema_id": "ledger_payload.ToolIntentRejected.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:029df968ef9aa130",
+        "payload_schema_id": "ledger_payload.ToolIntentRejected.v11"
       },
       {
         "ledger_event_kind": "ToolIntentPermissionChecked",
@@ -1535,11 +1535,11 @@
           "tool_id": "workspace.read"
         },
         "payload_instance_shape_descriptor": "object{allowed:boolean,input_summary:object{array_field_count:integer,bool_field_count:integer,field_count:integer,fingerprint:string,null_field_count:integer,numeric_field_count:integer,object_field_count:integer,other_field_count:integer,string_field_count:integer,summary_schema:string},reason:string,request_reason:string,required_action:string,tool_id:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:9d5ef3dfb1ba05eb",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:c411aa0aeaea98c0",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:5c7661a3d35af06a",
-        "payload_schema_id": "ledger_payload.ToolIntentPermissionChecked.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:4d6b88b28f2917d9",
+        "payload_schema_id": "ledger_payload.ToolIntentPermissionChecked.v11"
       },
       {
         "ledger_event_kind": "ToolExecutionRequested",
@@ -1560,11 +1560,11 @@
           "tool_id": "workspace.read"
         },
         "payload_instance_shape_descriptor": "object{input_summary:object{array_field_count:integer,bool_field_count:integer,field_count:integer,fingerprint:string,null_field_count:integer,numeric_field_count:integer,object_field_count:integer,other_field_count:integer,string_field_count:integer,summary_schema:string},request_fingerprint:string,tool_id:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:28b215ac2e180c23",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:15aa599d5f49dc6c",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:c1d818a9f0228662",
-        "payload_schema_id": "ledger_payload.ToolExecutionRequested.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:77e62f187bbd8657",
+        "payload_schema_id": "ledger_payload.ToolExecutionRequested.v11"
       },
       {
         "ledger_event_kind": "ToolExecutionPermissionChecked",
@@ -1579,11 +1579,11 @@
           "tool_name": "tool"
         },
         "payload_instance_shape_descriptor": "object{allowed:boolean,mcp_safety_policy:null,reason:string,request_fingerprint:string,required_action:string,server_id:string,tool_id:string,tool_name:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:9a69591ce4e7e867",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:da583bd5a206c33e",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:5068d76f60403822",
-        "payload_schema_id": "ledger_payload.ToolExecutionPermissionChecked.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:6f115b86b4f652b7",
+        "payload_schema_id": "ledger_payload.ToolExecutionPermissionChecked.v11"
       },
       {
         "ledger_event_kind": "ToolExecutionDenied",
@@ -1593,11 +1593,11 @@
           "tool_id": "workspace.write"
         },
         "payload_instance_shape_descriptor": "object{reason:string,status:string,tool_id:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:9faaf7722dec01a1",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:1fff04a3bffe4de6",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:9152911e000126bd",
-        "payload_schema_id": "ledger_payload.ToolExecutionDenied.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:92a0f0d2f681b234",
+        "payload_schema_id": "ledger_payload.ToolExecutionDenied.v11"
       },
       {
         "ledger_event_kind": "McpToolExecutionApproved",
@@ -1620,11 +1620,11 @@
           "tool_name": "tool"
         },
         "payload_instance_shape_descriptor": "object{approval_fingerprint:string,approval_schema_version:integer,approval_state_fingerprint:string,catalog_provenance:object{catalog_fingerprint:string,server_id:string,tool_name:string},mcp_safety_policy:null,request_fingerprint:string,run_id:string,server_id:string,status:string,task_id:string,tool_id:string,tool_name:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:ad9528c490531f65",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:9eba0a3647ffc214",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:c2ea5f17d64621e6",
-        "payload_schema_id": "ledger_payload.McpToolExecutionApproved.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:d7fb0cea1c29a141",
+        "payload_schema_id": "ledger_payload.McpToolExecutionApproved.v11"
       },
       {
         "ledger_event_kind": "ToolExecutionCompleted",
@@ -1636,11 +1636,11 @@
           "truncated": false
         },
         "payload_instance_shape_descriptor": "object{bytes_read:integer,output_preview:string,status:string,tool_id:string,truncated:boolean}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:8e156626f9f26885",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:b243b9aeb39ab610",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:cb813209af854e28",
-        "payload_schema_id": "ledger_payload.ToolExecutionCompleted.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:87511988cfe4f933",
+        "payload_schema_id": "ledger_payload.ToolExecutionCompleted.v11"
       },
       {
         "ledger_event_kind": "ToolExecutionFailed",
@@ -1679,11 +1679,11 @@
           "tool_id": "mcp.server.tool"
         },
         "payload_instance_shape_descriptor": "object{catalog_provenance:object{catalog_fingerprint:string,server_id:string,tool_name:string},mcp:object{execution_status:string,request_fingerprint:string,result_fingerprint:string,server_id:string,tool_name:string},mcp_approval_binding:object{approval_fingerprint:string,approval_schema_version:integer,approval_state_fingerprint:string,catalog_provenance:object{},mcp_safety_policy:null,outcome:string,outcome_fingerprint:string,request_fingerprint:string,run_id:string,server_id:string,status:string,task_id:string,tool_id:string,tool_name:string},mcp_safety_policy:null,reason:string,status:string,tool_id:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:05ac8d7b0204b391",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:da50750e2773a828",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:808bf0c35552295d",
-        "payload_schema_id": "ledger_payload.ToolExecutionFailed.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:1e05d4d0e31bbc08",
+        "payload_schema_id": "ledger_payload.ToolExecutionFailed.v11"
       },
       {
         "ledger_event_kind": "CodebaseIndexPermissionChecked",
@@ -1700,11 +1700,11 @@
           "request_kind": "query"
         },
         "payload_instance_shape_descriptor": "object{action:string,allowed:boolean,file_kind_filter:string,max_results:integer,mode_id:string,query_fingerprint:string,query_length_chars:integer,query_token_count:integer,reason:string,request_kind:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:3f3a61318212bc9d",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:a8f94f279c6acdda",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:febc2c26b2b2ea5f",
-        "payload_schema_id": "ledger_payload.CodebaseIndexPermissionChecked.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:543818f78c8fadf8",
+        "payload_schema_id": "ledger_payload.CodebaseIndexPermissionChecked.v11"
       },
       {
         "ledger_event_kind": "CodebaseIndexSnapshotBuilt",
@@ -1743,11 +1743,11 @@
           "workspace_fingerprint": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
         },
         "payload_instance_shape_descriptor": "object{built_at:string,ignore_rule_count:integer,ignore_rule_files_loaded:integer,index_id:string,indexed_files:integer,max_directories:integer,max_directory_entries:integer,max_file_bytes:integer,max_files:integer,max_path_chars:integer,max_visited_entries:integer,mode_id:string,next_action:string,requested_force_refresh:boolean,root:string,sensitive_finding_count:integer,skipped_binary_like:integer,skipped_ignored:integer,skipped_other:integer,skipped_protected:integer,skipped_sensitive:integer,skipped_symlink:integer,skipped_too_large:integer,skipped_unreadable:integer,skipped_unsafe_path:integer,snapshot_fingerprint:string,truncated:boolean,truncated_directories:integer,truncated_entries:integer,visited_entries:integer,walked_directories:integer,workspace_fingerprint:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:a16e465573d13b21",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:bbd1b463fe070e90",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:b4f83eca308b2fe3",
-        "payload_schema_id": "ledger_payload.CodebaseIndexSnapshotBuilt.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:c1172678cb3393f0",
+        "payload_schema_id": "ledger_payload.CodebaseIndexSnapshotBuilt.v11"
       },
       {
         "ledger_event_kind": "CodebaseIndexQueryCompleted",
@@ -1772,11 +1772,11 @@
           "workspace_fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
         },
         "payload_instance_shape_descriptor": "object{file_kind_filter:string,index_id:string,match_reason_counts:object{file_name:integer},matched_entry_count:integer,max_results:integer,mode_id:string,next_action:string,query_fingerprint:string,query_id:string,returned_entry_count:integer,selection_fingerprint:string,selection_id:string,skipped_entry_count:integer,snapshot_fingerprint:string,snapshot_truncated:boolean,workspace_fingerprint:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:03095ca902b2c0a8",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:91dd9010633271e3",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:b30c3ce5fdd3d4c4",
-        "payload_schema_id": "ledger_payload.CodebaseIndexQueryCompleted.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:69379d4e095c5ab9",
+        "payload_schema_id": "ledger_payload.CodebaseIndexQueryCompleted.v11"
       },
       {
         "ledger_event_kind": "CodebaseIndexSelectionReadCompleted",
@@ -1804,11 +1804,11 @@
           "workspace_fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
         },
         "payload_instance_shape_descriptor": "object{byte_length:integer,bytes_read:integer,content_hash_verified:boolean,content_sha256:string,entry_count:integer,file_kind:string,file_kind_filter:string,index_id:string,max_results:integer,mode_id:string,next_action:string,query_fingerprint:string,query_id:string,read_path_fingerprint:string,selection_fingerprint:string,selection_id:string,snapshot_fingerprint:string,snapshot_truncated:boolean,tool_id:string,truncated:boolean,workspace_fingerprint:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:1a28b0389abda3af",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:fb24f09b7a130fbe",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:49d480cf1e711ed5",
-        "payload_schema_id": "ledger_payload.CodebaseIndexSelectionReadCompleted.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:3935c6685a53ecf4",
+        "payload_schema_id": "ledger_payload.CodebaseIndexSelectionReadCompleted.v11"
       },
       {
         "ledger_event_kind": "CodebaseIndexPromptContextMaterialized",
@@ -1836,11 +1836,11 @@
           "workspace_fingerprint": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
         },
         "payload_instance_shape_descriptor": "object{bytes_read:integer,content_char_count:integer,content_hash_verified:boolean,content_sha256:string,file_kind:string,index_id:string,mode_id:string,next_action:string,prompt_context_id:string,prompt_preview_redacted:boolean,query_fingerprint:string,query_id:string,read_path_fingerprint:string,run_id:string,selection_fingerprint:string,selection_id:string,snapshot_fingerprint:string,source_event_id:string,source_event_kind:string,task_id:string,workspace_fingerprint:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:86ffcf191a2f64eb",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:51fb4d68d25ed1fc",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:3b33893c8062b77b",
-        "payload_schema_id": "ledger_payload.CodebaseIndexPromptContextMaterialized.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:e9495432a18534c4",
+        "payload_schema_id": "ledger_payload.CodebaseIndexPromptContextMaterialized.v11"
       },
       {
         "ledger_event_kind": "VerificationRecoveryContextReadMaterialized",
@@ -1872,11 +1872,11 @@
           "verification_recovery_context_read": true
         },
         "payload_instance_shape_descriptor": "object{check_id:string,column:null,context_read_id:string,diagnostic_index:integer,diagnostic_kind:string,excerpt_bytes:integer,excerpt_end_line:integer,excerpt_sha256:string,excerpt_start_line:integer,excerpt_truncated:boolean,failure_fingerprint:string,line:integer,mode_id:string,next_action:string,prompt_preview_redacted:boolean,read_path_fingerprint:string,recovery_run_id:string,recovery_task_id:string,required_action:string,severity:string,source_run_id:string,source_task_id:string,test_name_hash:null,tool_id:string,verification_recovery_context_read:boolean}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:502fe7a0bb59b20a",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:87029bd264524431",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:735f32516606fe90",
-        "payload_schema_id": "ledger_payload.VerificationRecoveryContextReadMaterialized.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:b99fe336be13349f",
+        "payload_schema_id": "ledger_payload.VerificationRecoveryContextReadMaterialized.v11"
       },
       {
         "ledger_event_kind": "AgentLoopStarted",
@@ -1885,11 +1885,11 @@
           "state": "BuildingContext"
         },
         "payload_instance_shape_descriptor": "object{entrypoint:string,state:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:3595fd3ec13addce",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:c0f7c8f7e9977b69",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:5a97fe0e64e61b53",
-        "payload_schema_id": "ledger_payload.AgentLoopStarted.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:1e52b7e586df804a",
+        "payload_schema_id": "ledger_payload.AgentLoopStarted.v11"
       },
       {
         "ledger_event_kind": "AgentLoopCompleted",
@@ -1901,11 +1901,11 @@
           "final_state": "Completed"
         },
         "payload_instance_shape_descriptor": "object{completion_result_fingerprint:string,completion_summary:string,final_response_chars:integer,final_response_present:boolean,final_state:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:71ddecb348cdd914",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:690ff31929b1faad",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:d0af48a1fe18fe9c",
-        "payload_schema_id": "ledger_payload.AgentLoopCompleted.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:07cbed5c4f3f926b",
+        "payload_schema_id": "ledger_payload.AgentLoopCompleted.v11"
       },
       {
         "ledger_event_kind": "TaskCompletionAccepted",
@@ -1921,11 +1921,11 @@
           "verifier_gate_status": "NotRequired"
         },
         "payload_instance_shape_descriptor": "object{acceptance_fingerprint:string,acceptance_id:string,next_action:string,replayed:boolean,run_id:string,status:string,task_id:string,terminal_completion_fingerprint:string,verifier_gate_status:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:27767892311a0eb5",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:23d3f9bb481048ae",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:c7cff3d0f56eaac4",
-        "payload_schema_id": "ledger_payload.TaskCompletionAccepted.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:0680ac2375b519cd",
+        "payload_schema_id": "ledger_payload.TaskCompletionAccepted.v11"
       },
       {
         "ledger_event_kind": "PromptBuilt",
@@ -1941,11 +1941,11 @@
           "prompt_preview_redaction_reason": "selected_index_context_present"
         },
         "payload_instance_shape_descriptor": "object{context_included_events:integer,context_max_events:integer,context_omitted_events:integer,context_total_events:integer,context_window_bounded:boolean,max_prompt_chars:integer,message_count:integer,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:f03e0c48687b8ad8",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:6a586718338ae311",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:31d6c0b293438a67",
-        "payload_schema_id": "ledger_payload.PromptBuilt.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:13fd60fbf13b6f2a",
+        "payload_schema_id": "ledger_payload.PromptBuilt.v11"
       },
       {
         "ledger_event_kind": "SecondPassPromptBuilt",
@@ -1961,11 +1961,11 @@
           "prompt_preview_redaction_reason": "selected_index_context_present"
         },
         "payload_instance_shape_descriptor": "object{context_included_events:integer,context_max_events:integer,context_omitted_events:integer,context_total_events:integer,context_window_bounded:boolean,max_prompt_chars:integer,message_count:integer,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:6fdf07ee7e79f76b",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:7b8769571841474a",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:e33c433de957dd1c",
-        "payload_schema_id": "ledger_payload.SecondPassPromptBuilt.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:5241da2d37979da9",
+        "payload_schema_id": "ledger_payload.SecondPassPromptBuilt.v11"
       },
       {
         "ledger_event_kind": "PromptSensitiveScanCompleted",
@@ -1981,11 +1981,11 @@
           "sensitive_guard": "warn"
         },
         "payload_instance_shape_descriptor": "object{categories:array<string>,finding_count:integer,message_indexes:array<integer>,mode:string,sensitive_guard:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:a2c8b20b3c4d622e",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:bcb16fd0b6155f79",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:d898212160f40e29",
-        "payload_schema_id": "ledger_payload.PromptSensitiveScanCompleted.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:a8bdf79d565dc8ea",
+        "payload_schema_id": "ledger_payload.PromptSensitiveScanCompleted.v11"
       },
       {
         "ledger_event_kind": "PromptSensitiveScanFailed",
@@ -2001,11 +2001,11 @@
           "sensitive_guard": "warn"
         },
         "payload_instance_shape_descriptor": "object{categories:array<string>,finding_count:integer,message_indexes:array<integer>,mode:string,sensitive_guard:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:2e955e6933125f32",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:9fcb0b2f82da806d",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:71645426265d8a8d",
-        "payload_schema_id": "ledger_payload.PromptSensitiveScanFailed.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:ef33e9ddfc48a98e",
+        "payload_schema_id": "ledger_payload.PromptSensitiveScanFailed.v11"
       },
       {
         "ledger_event_kind": "LlmRequestCreated",
@@ -2017,11 +2017,11 @@
           "strict": true
         },
         "payload_instance_shape_descriptor": "object{base_url:null,message_count:integer,model:string,provider:string,strict:boolean}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:fae3586b3547d55f",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:b8aafbe8791b873e",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:fc4ab0e6c8f22442",
-        "payload_schema_id": "ledger_payload.LlmRequestCreated.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:84176bf11e671077",
+        "payload_schema_id": "ledger_payload.LlmRequestCreated.v11"
       },
       {
         "ledger_event_kind": "SecondPassLlmRequestCreated",
@@ -2033,11 +2033,11 @@
           "strict": true
         },
         "payload_instance_shape_descriptor": "object{base_url:null,message_count:integer,model:string,provider:string,strict:boolean}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:2d99a0d8c674ca4c",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:04a7800fedd843b5",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:cf6b77c01be71f85",
-        "payload_schema_id": "ledger_payload.SecondPassLlmRequestCreated.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:3d83b205fae7c610",
+        "payload_schema_id": "ledger_payload.SecondPassLlmRequestCreated.v11"
       },
       {
         "ledger_event_kind": "LlmRequestFailed",
@@ -2057,11 +2057,11 @@
           "strict": true
         },
         "payload_instance_shape_descriptor": "object{base_url:null,llm_provider_failure:object{request_phase:string,retryable:boolean},model:string,provider:string,reason:string,reason_chars:integer,reason_sha256:string,reason_truncated:boolean,sensitive_guard:string,strict:boolean}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:aed8190dd1c84e76",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:a88cbc26c10d9897",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:e974937663ef8672",
-        "payload_schema_id": "ledger_payload.LlmRequestFailed.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:15ad4346ff87bcb1",
+        "payload_schema_id": "ledger_payload.LlmRequestFailed.v11"
       },
       {
         "ledger_event_kind": "SecondPassLlmRequestFailed",
@@ -2081,11 +2081,11 @@
           "strict": true
         },
         "payload_instance_shape_descriptor": "object{base_url:null,llm_provider_failure:object{request_phase:string,retryable:boolean},model:string,provider:string,reason:string,reason_chars:integer,reason_sha256:string,reason_truncated:boolean,sensitive_guard:string,strict:boolean}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:51448198bb9502cb",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:e5dd0573fd2edfba",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:115b87154c016d81",
-        "payload_schema_id": "ledger_payload.SecondPassLlmRequestFailed.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:bb2728f96667f002",
+        "payload_schema_id": "ledger_payload.SecondPassLlmRequestFailed.v11"
       },
       {
         "ledger_event_kind": "LlmResponseReceived",
@@ -2095,11 +2095,11 @@
           "response_preview_chars": 2000
         },
         "payload_instance_shape_descriptor": "object{content_preview:string,provider:string,response_preview_chars:integer}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:7615286bc7a709d5",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:39a96c6ae17a8c18",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:da436679894425f4",
-        "payload_schema_id": "ledger_payload.LlmResponseReceived.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:a3a342714a7bb303",
+        "payload_schema_id": "ledger_payload.LlmResponseReceived.v11"
       },
       {
         "ledger_event_kind": "SecondPassLlmResponseReceived",
@@ -2109,11 +2109,11 @@
           "response_preview_chars": 2000
         },
         "payload_instance_shape_descriptor": "object{content_preview:string,provider:string,response_preview_chars:integer}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:ef96db67731aa986",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:6712b10ec85aab53",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:7599a16b279a30a5",
-        "payload_schema_id": "ledger_payload.SecondPassLlmResponseReceived.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:4fd18add7f18879e",
+        "payload_schema_id": "ledger_payload.SecondPassLlmResponseReceived.v11"
       },
       {
         "ledger_event_kind": "TaskStarted",
@@ -2134,11 +2134,11 @@
           "status": "Queued"
         },
         "payload_instance_shape_descriptor": "object{execution_enabled:boolean,external_modepack_child_provenance:null,parent_run_id:string,parent_task_id:string,reason:string,scheduler_handoff_enabled:boolean,source_candidate_id:string,source_handoff_envelope_fingerprint:string,source_handoff_envelope_id:string,source_intent_summary:object{required_action:string,tool_id:string},status:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:88c2a10a0bc06ff8",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:ea92fd0f54362627",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:facc03802f1e6a9e",
-        "payload_schema_id": "ledger_payload.TaskStarted.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:f48f149da19255e9",
+        "payload_schema_id": "ledger_payload.TaskStarted.v11"
       },
       {
         "ledger_event_kind": "TaskRunning",
@@ -2151,11 +2151,11 @@
           }
         },
         "payload_instance_shape_descriptor": "object{deadline_persisted:boolean,deadline_scope:string,runtime_deadline:object{budget_ms:integer,deadline_unix_ms:integer}}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:6f6133d14e3ba51b",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:632e5802eea838cc",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:d42a3b45f5a6c9bf",
-        "payload_schema_id": "ledger_payload.TaskRunning.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:1e53189d6e262b6a",
+        "payload_schema_id": "ledger_payload.TaskRunning.v11"
       },
       {
         "ledger_event_kind": "ModeResolved",
@@ -2187,11 +2187,11 @@
           "workspace_write_scopes": []
         },
         "payload_instance_shape_descriptor": "object{allowed_handoff_targets:null,completion_rules:array<empty>,description:null,display_name:string,instruction_fingerprint:string,mcp_access:array<empty>,mode_id:string,permissions:object{can_spawn_subtasks:boolean,codebase_index:boolean,destructive:boolean,git_commit:boolean,git_inspect:boolean,mcp_tool_access:boolean,network_access:boolean,process_exec:boolean,read_only:boolean,service_control:boolean,workspace_write:boolean},prompt_sections:array<empty>,role_definition:string,verification_responsibility:null,when_to_use:null,workspace_write_scopes:array<empty>}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:51f6bc1992343024",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:10473e82add00a77",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:ddff764ff424f703",
-        "payload_schema_id": "ledger_payload.ModeResolved.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:3b606f6e6b542004",
+        "payload_schema_id": "ledger_payload.ModeResolved.v11"
       },
       {
         "ledger_event_kind": "ExternalModePackChildProvenanceDenied",
@@ -2207,11 +2207,11 @@
           "task_id": "task_child"
         },
         "payload_instance_shape_descriptor": "object{mode_id:string,parent_run_id:string,reason:string,run_id:string,source_candidate_id:string,source_handoff_envelope_fingerprint:string,source_handoff_envelope_id:string,status:string,task_id:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:2134725b6563eb96",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:cb5ac30f9c8c3971",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:edb68a70012aae12",
-        "payload_schema_id": "ledger_payload.ExternalModePackChildProvenanceDenied.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:70027c0ca4b70685",
+        "payload_schema_id": "ledger_payload.ExternalModePackChildProvenanceDenied.v11"
       },
       {
         "ledger_event_kind": "ExternalModePackTaskProvenanceDenied",
@@ -2225,15 +2225,446 @@
           "task_id": "task_1"
         },
         "payload_instance_shape_descriptor": "object{mode_id:string,reason:string,run_id:string,source_kind:string,source_path:string,status:string,task_id:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:452d43bb3ce84bcc",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:2e83bc1022d8bb11",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:d1d68977a0b9f38b",
-        "payload_schema_id": "ledger_payload.ExternalModePackTaskProvenanceDenied.v10"
+        "payload_schema_fingerprint": "shape-fnv1a64:b6d3ab71c832c88c",
+        "payload_schema_id": "ledger_payload.ExternalModePackTaskProvenanceDenied.v11"
+      },
+      {
+        "ledger_event_kind": "SubtaskOrchestrationQueued",
+        "payload": {
+          "execution_enabled": false,
+          "input_summary": {},
+          "parent_run_id": "run_parent",
+          "parent_task_id": "task_parent",
+          "queue_position": 1,
+          "reason": "queued",
+          "request_reason": "split work",
+          "requested_goal_preview": "child goal",
+          "requested_mode_id": "implementer",
+          "required_action": "SpawnSubtask",
+          "status": "Queued",
+          "subtask_id": "subtask_1",
+          "tool_id": "subtask.spawn"
+        },
+        "payload_instance_shape_descriptor": "object{execution_enabled:boolean,input_summary:object{},parent_run_id:string,parent_task_id:string,queue_position:integer,reason:string,request_reason:string,requested_goal_preview:string,requested_mode_id:string,required_action:string,status:string,subtask_id:string,tool_id:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:277db4f3b1a8d764",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:300f5f6bed4a7597",
+        "payload_schema_id": "ledger_payload.SubtaskOrchestrationQueued.v11"
+      },
+      {
+        "ledger_event_kind": "SubtaskHandoffPrepared",
+        "payload": {
+          "execution_enabled": false,
+          "handoff_id": "handoff_1",
+          "next_action": "await_future_runtime_scheduler",
+          "parent_run_id": "run_parent",
+          "parent_task_id": "task_parent",
+          "queued_count": 1,
+          "queued_subtask_ids": [
+            "subtask_1"
+          ],
+          "reason": "prepared",
+          "source_event_count": 1,
+          "status": "Prepared"
+        },
+        "payload_instance_shape_descriptor": "object{execution_enabled:boolean,handoff_id:string,next_action:string,parent_run_id:string,parent_task_id:string,queued_count:integer,queued_subtask_ids:array<string>,reason:string,source_event_count:integer,status:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:c9d670047beb47e5",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:4a8bbfc3ce4b325d",
+        "payload_schema_id": "ledger_payload.SubtaskHandoffPrepared.v11"
+      },
+      {
+        "ledger_event_kind": "SubtaskSchedulerReadinessRecorded",
+        "payload": {
+          "blocked_checks": [
+            "runtime_scheduler_not_implemented"
+          ],
+          "check_count": 1,
+          "dispatch_enabled": false,
+          "execution_enabled": false,
+          "handoff_count": 1,
+          "handoff_id": "handoff_1",
+          "next_action": "await_runtime_scheduler_dispatch",
+          "parent_run_id": "run_parent",
+          "parent_task_id": "task_parent",
+          "queued_count": 1,
+          "readiness_id": "readiness_1",
+          "readiness_reason": "not ready",
+          "readiness_status": "Blocked",
+          "reason": "blocked",
+          "source_event_count": 1,
+          "status": "Blocked"
+        },
+        "payload_instance_shape_descriptor": "object{blocked_checks:array<string>,check_count:integer,dispatch_enabled:boolean,execution_enabled:boolean,handoff_count:integer,handoff_id:string,next_action:string,parent_run_id:string,parent_task_id:string,queued_count:integer,readiness_id:string,readiness_reason:string,readiness_status:string,reason:string,source_event_count:integer,status:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:76a80ca60cc88740",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:3baae8b4793469f6",
+        "payload_schema_id": "ledger_payload.SubtaskSchedulerReadinessRecorded.v11"
+      },
+      {
+        "ledger_event_kind": "SubtaskDispatchPlanPrepared",
+        "payload": {
+          "blocked_checks": [
+            "runtime_dispatcher_not_implemented"
+          ],
+          "check_count": 1,
+          "dispatch_enabled": false,
+          "dispatch_plan_status": "Blocked",
+          "dispatch_reason": "blocked",
+          "execution_enabled": false,
+          "next_action": "await_runtime_subtask_dispatcher",
+          "parent_run_id": "run_parent",
+          "parent_task_id": "task_parent",
+          "plan_id": "plan_1",
+          "queued_count": 1,
+          "readiness_count": 1,
+          "readiness_id": "readiness_1",
+          "reason": "blocked",
+          "required_capability": "runtime_subtask_dispatcher",
+          "source_event_count": 1,
+          "status": "Blocked"
+        },
+        "payload_instance_shape_descriptor": "object{blocked_checks:array<string>,check_count:integer,dispatch_enabled:boolean,dispatch_plan_status:string,dispatch_reason:string,execution_enabled:boolean,next_action:string,parent_run_id:string,parent_task_id:string,plan_id:string,queued_count:integer,readiness_count:integer,readiness_id:string,reason:string,required_capability:string,source_event_count:integer,status:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:d957f433838f36ed",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:61e187cde380dbbb",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchPlanPrepared.v11"
+      },
+      {
+        "ledger_event_kind": "SubtaskDispatchContractPrepared",
+        "payload": {
+          "blocked_checks": [
+            "dispatch_contract_not_executable"
+          ],
+          "check_count": 1,
+          "contract_id": "contract_1",
+          "dispatch_contract_reason": "blocked",
+          "dispatch_contract_status": "Blocked",
+          "dispatch_enabled": false,
+          "eligibility_status": "Blocked",
+          "execution_enabled": false,
+          "next_action": "await_dispatch_contract_implementation",
+          "parent_run_id": "run_parent",
+          "parent_task_id": "task_parent",
+          "plan_count": 1,
+          "plan_id": "plan_1",
+          "queued_count": 1,
+          "reason": "blocked",
+          "required_capability": "runtime_subtask_dispatcher",
+          "required_preconditions": [
+            "runtime_subtask_dispatcher_implemented"
+          ],
+          "source_event_count": 1,
+          "status": "Blocked"
+        },
+        "payload_instance_shape_descriptor": "object{blocked_checks:array<string>,check_count:integer,contract_id:string,dispatch_contract_reason:string,dispatch_contract_status:string,dispatch_enabled:boolean,eligibility_status:string,execution_enabled:boolean,next_action:string,parent_run_id:string,parent_task_id:string,plan_count:integer,plan_id:string,queued_count:integer,reason:string,required_capability:string,required_preconditions:array<string>,source_event_count:integer,status:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:d2929f1b9e0d13a3",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:828c0ce64034a63a",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchContractPrepared.v11"
+      },
+      {
+        "ledger_event_kind": "SubtaskDispatchAdmissionEvaluated",
+        "payload": {
+          "admission_id": "admission_1",
+          "admission_reason": "blocked",
+          "admission_status": "Blocked",
+          "blocked_checks": [
+            "dispatch_admission_blocked"
+          ],
+          "blocked_preconditions": [
+            "runtime_subtask_dispatcher_implemented"
+          ],
+          "check_count": 1,
+          "contract_count": 1,
+          "contract_id": "contract_1",
+          "dispatch_enabled": false,
+          "execution_enabled": false,
+          "execution_gate_status": "Blocked",
+          "next_action": "await_dispatch_admission_preconditions",
+          "parent_run_id": "run_parent",
+          "parent_task_id": "task_parent",
+          "precondition_count": 1,
+          "queued_count": 1,
+          "reason": "blocked",
+          "required_capability": "runtime_subtask_dispatcher",
+          "satisfied_precondition_count": 0,
+          "source_event_count": 1,
+          "status": "Blocked"
+        },
+        "payload_instance_shape_descriptor": "object{admission_id:string,admission_reason:string,admission_status:string,blocked_checks:array<string>,blocked_preconditions:array<string>,check_count:integer,contract_count:integer,contract_id:string,dispatch_enabled:boolean,execution_enabled:boolean,execution_gate_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:integer,queued_count:integer,reason:string,required_capability:string,satisfied_precondition_count:integer,source_event_count:integer,status:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:b09cde6da37ab4da",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:f5988281a08efd92",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchAdmissionEvaluated.v11"
+      },
+      {
+        "ledger_event_kind": "SubtaskDispatchReadinessSnapshotRecorded",
+        "payload": {
+          "admission_count": 1,
+          "admission_id": "admission_1",
+          "blocked_checks": [
+            "dispatch_readiness_snapshot_blocked"
+          ],
+          "blocked_preconditions": [
+            "runtime_subtask_dispatcher_implemented"
+          ],
+          "check_count": 1,
+          "dispatch_enabled": false,
+          "execution_enabled": false,
+          "fingerprint_input_count": 8,
+          "next_action": "await_dispatch_readiness_snapshot_handoff",
+          "parent_run_id": "run_parent",
+          "parent_task_id": "task_parent",
+          "precondition_count": 1,
+          "queued_count": 1,
+          "readiness_fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "readiness_reason": "blocked",
+          "readiness_status": "Blocked",
+          "reason": "blocked",
+          "required_capability": "runtime_subtask_dispatcher",
+          "satisfied_precondition_count": 0,
+          "scheduler_handoff_status": "Blocked",
+          "snapshot_id": "snapshot_1",
+          "source_event_count": 1,
+          "status": "Blocked"
+        },
+        "payload_instance_shape_descriptor": "object{admission_count:integer,admission_id:string,blocked_checks:array<string>,blocked_preconditions:array<string>,check_count:integer,dispatch_enabled:boolean,execution_enabled:boolean,fingerprint_input_count:integer,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:integer,queued_count:integer,readiness_fingerprint:string,readiness_reason:string,readiness_status:string,reason:string,required_capability:string,satisfied_precondition_count:integer,scheduler_handoff_status:string,snapshot_id:string,source_event_count:integer,status:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:2b6ca43983db021a",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:1d0676da8583bb91",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchReadinessSnapshotRecorded.v11"
+      },
+      {
+        "ledger_event_kind": "SubtaskDispatcherGuardVerdictRecorded",
+        "payload": {
+          "blocked_checks": [
+            "dispatcher_guard_blocked"
+          ],
+          "blocked_preconditions": [
+            "runtime_subtask_dispatcher_implemented"
+          ],
+          "check_count": 1,
+          "dispatch_enabled": false,
+          "execution_enabled": false,
+          "fingerprint_input_count": 8,
+          "guard_id": "guard_1",
+          "guard_reason": "blocked",
+          "guard_status": "Blocked",
+          "handoff_preflight_status": "Blocked",
+          "next_action": "await_dispatcher_guard_preconditions",
+          "parent_run_id": "run_parent",
+          "parent_task_id": "task_parent",
+          "precondition_count": 1,
+          "queued_count": 1,
+          "reason": "blocked",
+          "required_capability": "runtime_subtask_dispatcher",
+          "satisfied_precondition_count": 0,
+          "scheduler_handoff_status": "Blocked",
+          "snapshot_count": 1,
+          "snapshot_fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "snapshot_fingerprint_count": 1,
+          "snapshot_id": "snapshot_1",
+          "snapshot_validity_status": "Current",
+          "source_event_count": 1,
+          "status": "Blocked"
+        },
+        "payload_instance_shape_descriptor": "object{blocked_checks:array<string>,blocked_preconditions:array<string>,check_count:integer,dispatch_enabled:boolean,execution_enabled:boolean,fingerprint_input_count:integer,guard_id:string,guard_reason:string,guard_status:string,handoff_preflight_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:integer,queued_count:integer,reason:string,required_capability:string,satisfied_precondition_count:integer,scheduler_handoff_status:string,snapshot_count:integer,snapshot_fingerprint:string,snapshot_fingerprint_count:integer,snapshot_id:string,snapshot_validity_status:string,source_event_count:integer,status:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:0d3ea406b8add534",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:64174fd2d62d8da7",
+        "payload_schema_id": "ledger_payload.SubtaskDispatcherGuardVerdictRecorded.v11"
+      },
+      {
+        "ledger_event_kind": "SubtaskDispatchDecisionRecorded",
+        "payload": {
+          "blocked_candidate_count": 1,
+          "blocked_checks": [
+            "dispatch_decision_blocked"
+          ],
+          "blocked_preconditions": [
+            "runtime_subtask_dispatcher_implemented"
+          ],
+          "candidate_status": "Blocked",
+          "check_count": 1,
+          "decision_id": "decision_1",
+          "decision_status": "Blocked",
+          "dispatch_candidate_count": 1,
+          "dispatch_decision": "Denied",
+          "dispatch_denial_reason": "blocked",
+          "dispatch_enabled": false,
+          "eligible_candidate_count": 0,
+          "execution_enabled": false,
+          "fingerprint_input_count": 8,
+          "guard_count": 1,
+          "guard_id": "guard_1",
+          "guard_status": "Blocked",
+          "handoff_preflight_status": "Blocked",
+          "next_action": "await_dispatch_decision_preconditions",
+          "parent_run_id": "run_parent",
+          "parent_task_id": "task_parent",
+          "precondition_count": 1,
+          "queued_count": 1,
+          "reason": "blocked",
+          "required_capability": "runtime_subtask_dispatcher",
+          "satisfied_precondition_count": 0,
+          "snapshot_fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "snapshot_fingerprint_count": 1,
+          "snapshot_id": "snapshot_1",
+          "snapshot_validity_status": "Current",
+          "source_event_count": 1,
+          "status": "Blocked"
+        },
+        "payload_instance_shape_descriptor": "object{blocked_candidate_count:integer,blocked_checks:array<string>,blocked_preconditions:array<string>,candidate_status:string,check_count:integer,decision_id:string,decision_status:string,dispatch_candidate_count:integer,dispatch_decision:string,dispatch_denial_reason:string,dispatch_enabled:boolean,eligible_candidate_count:integer,execution_enabled:boolean,fingerprint_input_count:integer,guard_count:integer,guard_id:string,guard_status:string,handoff_preflight_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:integer,queued_count:integer,reason:string,required_capability:string,satisfied_precondition_count:integer,snapshot_fingerprint:string,snapshot_fingerprint_count:integer,snapshot_id:string,snapshot_validity_status:string,source_event_count:integer,status:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:6654844a9bf903cc",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:394bc58d4edbf474",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchDecisionRecorded.v11"
+      },
+      {
+        "ledger_event_kind": "SubtaskDispatchCandidateManifestRecorded",
+        "payload": {
+          "blocked_candidate_count": 1,
+          "blocked_candidate_ids": [
+            "subtask_1"
+          ],
+          "blocked_checks": [
+            "dispatch_candidate_manifest_blocked"
+          ],
+          "blocked_preconditions": [
+            "runtime_subtask_dispatcher_implemented"
+          ],
+          "candidate_count": 1,
+          "candidate_denial_reason": "blocked",
+          "candidate_ids": [
+            "subtask_1"
+          ],
+          "candidate_manifest_fingerprint": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "candidate_status": "Blocked",
+          "check_count": 1,
+          "decision_count": 1,
+          "decision_id": "decision_1",
+          "dispatch_candidate_count": 1,
+          "dispatch_decision": "Denied",
+          "dispatch_enabled": false,
+          "eligible_candidate_count": 0,
+          "eligible_candidate_ids": [],
+          "execution_enabled": false,
+          "fingerprint_input_count": 8,
+          "guard_id": "guard_1",
+          "manifest_id": "manifest_1",
+          "manifest_status": "Blocked",
+          "next_action": "await_dispatch_candidate_manifest_preconditions",
+          "parent_run_id": "run_parent",
+          "parent_task_id": "task_parent",
+          "precondition_count": 1,
+          "queued_count": 1,
+          "reason": "blocked",
+          "required_capability": "runtime_subtask_dispatcher",
+          "satisfied_precondition_count": 0,
+          "snapshot_fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "snapshot_id": "snapshot_1",
+          "source_event_count": 1,
+          "status": "Blocked"
+        },
+        "payload_instance_shape_descriptor": "object{blocked_candidate_count:integer,blocked_candidate_ids:array<string>,blocked_checks:array<string>,blocked_preconditions:array<string>,candidate_count:integer,candidate_denial_reason:string,candidate_ids:array<string>,candidate_manifest_fingerprint:string,candidate_status:string,check_count:integer,decision_count:integer,decision_id:string,dispatch_candidate_count:integer,dispatch_decision:string,dispatch_enabled:boolean,eligible_candidate_count:integer,eligible_candidate_ids:array<empty>,execution_enabled:boolean,fingerprint_input_count:integer,guard_id:string,manifest_id:string,manifest_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:integer,queued_count:integer,reason:string,required_capability:string,satisfied_precondition_count:integer,snapshot_fingerprint:string,snapshot_id:string,source_event_count:integer,status:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:2e9e0d59b615efa5",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:7128e59fb39e556c",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchCandidateManifestRecorded.v11"
+      },
+      {
+        "ledger_event_kind": "SubtaskDispatchHandoffEnvelopeRecorded",
+        "payload": {
+          "blocked_candidate_count": 1,
+          "blocked_candidate_ids": [
+            "subtask_1"
+          ],
+          "blocked_checks": [
+            "dispatch_handoff_envelope_blocked"
+          ],
+          "blocked_preconditions": [
+            "runtime_subtask_dispatcher_implemented"
+          ],
+          "candidate_count": 1,
+          "candidate_denial_reason": "blocked",
+          "candidate_ids": [
+            "subtask_1"
+          ],
+          "candidate_manifest_fingerprint": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "candidate_status": "Blocked",
+          "check_count": 1,
+          "decision_id": "decision_1",
+          "dispatch_candidate_count": 1,
+          "dispatch_decision": "Denied",
+          "dispatch_enabled": false,
+          "eligible_candidate_count": 0,
+          "eligible_candidate_ids": [],
+          "execution_enabled": false,
+          "fingerprint_input_count": 8,
+          "handoff_envelope_fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "handoff_envelope_id": "envelope_1",
+          "handoff_envelope_status": "Accepted",
+          "handoff_ticket_count": 0,
+          "handoff_ticket_status": "Blocked",
+          "manifest_count": 1,
+          "manifest_id": "manifest_1",
+          "next_action": "materialize_controlled_child_task",
+          "parent_run_id": "run_parent",
+          "parent_task_id": "task_parent",
+          "precondition_count": 1,
+          "queued_count": 1,
+          "reason": "blocked",
+          "replay_guard_status": "Blocked",
+          "required_capability": "runtime_subtask_dispatcher",
+          "satisfied_precondition_count": 0,
+          "scheduler_handoff_status": "Blocked",
+          "source_event_count": 1,
+          "status": "Accepted"
+        },
+        "payload_instance_shape_descriptor": "object{blocked_candidate_count:integer,blocked_candidate_ids:array<string>,blocked_checks:array<string>,blocked_preconditions:array<string>,candidate_count:integer,candidate_denial_reason:string,candidate_ids:array<string>,candidate_manifest_fingerprint:string,candidate_status:string,check_count:integer,decision_id:string,dispatch_candidate_count:integer,dispatch_decision:string,dispatch_enabled:boolean,eligible_candidate_count:integer,eligible_candidate_ids:array<empty>,execution_enabled:boolean,fingerprint_input_count:integer,handoff_envelope_fingerprint:string,handoff_envelope_id:string,handoff_envelope_status:string,handoff_ticket_count:integer,handoff_ticket_status:string,manifest_count:integer,manifest_id:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:integer,queued_count:integer,reason:string,replay_guard_status:string,required_capability:string,satisfied_precondition_count:integer,scheduler_handoff_status:string,source_event_count:integer,status:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:d1d429552a0c83cf",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:0f2b6307a849b96f",
+        "payload_schema_id": "ledger_payload.SubtaskDispatchHandoffEnvelopeRecorded.v11"
+      },
+      {
+        "ledger_event_kind": "ParentJoinContinuationFingerprintConsumed",
+        "payload": {
+          "admission_id": "parent_join_admission_1",
+          "child_completion_child_count": 1,
+          "child_completion_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "child_recovery_cycle_depth": 0,
+          "child_terminal_completed_count": 1,
+          "child_terminal_failed_count": 0,
+          "fingerprint_input_count": 5,
+          "parent_join_continuation_status": "Consumed",
+          "reason": "consumed"
+        },
+        "payload_instance_shape_descriptor": "object{admission_id:string,child_completion_child_count:integer,child_completion_fingerprint:string,child_recovery_cycle_depth:integer,child_terminal_completed_count:integer,child_terminal_failed_count:integer,fingerprint_input_count:integer,parent_join_continuation_status:string,reason:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:8a805a6bf13310aa",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:ffc5b4fa444da3df",
+        "payload_schema_id": "ledger_payload.ParentJoinContinuationFingerprintConsumed.v11"
       }
     ],
     "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Versioned-open payload classifications keep protocol-event-canonization partial until every payload-bearing event has a strict typed schema, an explicit payload_absent contract, or a legacy-only compatibility entry. Current v10 terminal task, permission, selected tool, MCP approval, tool terminal, codebase index, verification recovery context, agent loop, prompt, LLM request/response/failure, completion-acceptance, task admission, mode-resolution, tool planning, and intent parsing payload schemas preserve v1 through v9 read compatibility while requiring strict field validation for new appends.",
-    "release_blocking_open_payload_count": 33,
+    "release_blocking_open_payload_count": 21,
     "schema_manifest_path": ".brownie/store-schema.json",
     "store_schema_version": 2
   },
@@ -2437,12 +2868,12 @@
         "status": "Completed"
       },
       "payload_envelope": {
-        "instance_shape_fingerprint": "shape-fnv1a64:8cd58850563e9650",
-        "schema_fingerprint": "shape-fnv1a64:877a2eb1bf23b3dd",
-        "schema_id": "ledger_payload.TaskCompleted.v10",
-        "schema_version": 10,
-        "shape_fingerprint": "shape-fnv1a64:877a2eb1bf23b3dd",
-        "shape_id": "ledger_payload.TaskCompleted.v10"
+        "instance_shape_fingerprint": "shape-fnv1a64:7d701e439555dfb9",
+        "schema_fingerprint": "shape-fnv1a64:46373738a803fbf4",
+        "schema_id": "ledger_payload.TaskCompleted.v11",
+        "schema_version": 11,
+        "shape_fingerprint": "shape-fnv1a64:46373738a803fbf4",
+        "shape_id": "ledger_payload.TaskCompleted.v11"
       },
       "run_id": "run_1",
       "task_id": "task_1",
@@ -10103,7 +10534,7 @@
     "policy": "Every explicit Runtime method in the canonical map must have a semantic method contract."
   },
   "owner": "runtime",
-  "phase": "RRP-5.14",
+  "phase": "RRP-5.15",
   "recursive_json_schema_coverage": {
     "coverage": "Every method param/result type has a recursive Rust-derived JSON Schema document with nested struct and enum definitions.",
     "definition_keyword": "$defs",
