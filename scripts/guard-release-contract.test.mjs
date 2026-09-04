@@ -35,7 +35,7 @@ function validContract(overrides = {}) {
   return {
     schema_version: 1,
     contract_id: 'runtime-release-engineering-contract-v1',
-    phase: 'RRP-8.2',
+    phase: 'RRP-8.4',
     owner: 'runtime',
     runtime_release_ready: false,
     release_engineering_maturity: {
@@ -87,6 +87,21 @@ function validContract(overrides = {}) {
       sbom: { status: 'not_generated', path: null },
       provenance: { status: 'not_generated', path: null }
     },
+    supply_chain_artifact_evidence: {
+      contract_id: 'brownie-supply-chain-artifact-evidence-v1',
+      default_path: '.brownie/release-evidence/supply-chain-artifact-evidence.json',
+      required_sections: [
+        'lockfile_fixed',
+        'dependency_security_license_scan',
+        'secret_scan',
+        'sbom',
+        'artifacts',
+        'artifact_smoke',
+        'checksums',
+        'signature_or_integrity_proof',
+        'provenance'
+      ]
+    },
     ...overrides
   };
 }
@@ -105,14 +120,17 @@ function validAudit(overrides = {}) {
 const validPackageJson = {
   scripts: {
     'release:gate': 'node scripts/release-gate.mjs',
+    'release:supply-chain-artifact-evidence': 'node scripts/release-supply-chain-artifact-evidence.mjs',
     'guard:release-contract': 'node scripts/guard-release-contract.mjs',
-    'guard:release-contract:test': 'node --test scripts/guard-release-contract.test.mjs'
+    'guard:release-contract:test': 'node --test scripts/guard-release-contract.test.mjs',
+    'guard:supply-chain-artifact-evidence': 'node scripts/guard-supply-chain-artifact-evidence.mjs',
+    'guard:supply-chain-artifact-evidence:test': 'node --test scripts/guard-supply-chain-artifact-evidence.test.mjs'
   }
 };
 
 const validVsixPackageJson = {
   scripts: {
-    check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test'
+    check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root guard:supply-chain-artifact-evidence && pnpm --workspace-root guard:supply-chain-artifact-evidence:test'
   }
 };
 
@@ -159,8 +177,11 @@ test('rejects fake satisfied artifact evidence', () => {
 test('rejects missing release gate package scripts', () => {
   const errors = validate(validContract(), { packageJson: { scripts: {} } });
   assert(errors.some((error) => error.includes('release:gate')));
+  assert(errors.some((error) => error.includes('release:supply-chain-artifact-evidence')));
   assert(errors.some((error) => error.includes('guard:release-contract')));
   assert(errors.some((error) => error.includes('guard:release-contract:test')));
+  assert(errors.some((error) => error.includes('guard:supply-chain-artifact-evidence')));
+  assert(errors.some((error) => error.includes('guard:supply-chain-artifact-evidence:test')));
 });
 
 test('rejects VSIX check path that omits release contract guard', () => {
@@ -175,6 +196,18 @@ test('rejects VSIX check path that omits release contract guard tests', () => {
     vsixPackageJson: { scripts: { check: 'pnpm --workspace-root guard:release-contract' } }
   });
   assert(errors.some((error) => error.includes('guard:release-contract:test')));
+});
+
+test('rejects VSIX check path that omits supply-chain evidence guard', () => {
+  const errors = validate(validContract(), {
+    vsixPackageJson: { scripts: { check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test' } }
+  });
+  assert(errors.some((error) => error.includes('guard:supply-chain-artifact-evidence')));
+});
+
+test('rejects missing supply-chain evidence contract section', () => {
+  const errors = validate(validContract({ supply_chain_artifact_evidence: undefined }));
+  assert(errors.some((error) => error.includes('supply_chain_artifact_evidence.contract_id')));
 });
 
 test('rejects missing workflow-scope blocker while workflow edit remains unavailable', () => {

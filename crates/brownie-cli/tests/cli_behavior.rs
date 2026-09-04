@@ -2655,6 +2655,16 @@ fn installed_run_timeout_retry_uses_same_admission_without_duplicate_task() {
     let repository = ordinary_git_repository("installed-admission-retry-repo");
     let objective = "Implement README update";
 
+    // Keep first-touch binary/store setup outside the short timeout window so
+    // this test exercises the post-admission retry contract deterministically.
+    let preflight = invoke_runtime_json(
+        &runtime,
+        &repository,
+        &serde_json::json!({"jsonrpc":"2.0","id":0,"method":"task.list"}),
+        &[],
+    );
+    assert!(preflight["result"]["tasks"].as_array().unwrap().is_empty());
+
     let timed_out = Command::new(&installed)
         .args(["--json", "run", objective])
         .current_dir(&repository)

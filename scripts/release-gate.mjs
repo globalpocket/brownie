@@ -69,6 +69,24 @@ export const requiredReleaseGateCommands = [
     args: ['--workspace-root', 'guard:release-contract:test']
   },
   {
+    id: 'supply_chain_artifact_evidence_generate',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'release:supply-chain-artifact-evidence']
+  },
+  {
+    id: 'supply_chain_artifact_evidence_guard',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:supply-chain-artifact-evidence']
+  },
+  {
+    id: 'supply_chain_artifact_evidence_guard_test',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:supply-chain-artifact-evidence:test']
+  },
+  {
     id: 'runtime_release_readiness_guard',
     category: 'brownie_release_guard',
     command: 'pnpm',
