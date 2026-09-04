@@ -1338,6 +1338,126 @@ pub fn runtime_semantic_protocol_contract() -> Value {
         "fingerprint_input_count": 5,
         "reason": "consumed"
     });
+    let workspace_patch_proposed_payload = json!({
+        "proposal_id": "proposal_1",
+        "tool_id": "workspace.write",
+        "path": "README.md",
+        "operation": "replace_file",
+        "content_preview": "updated",
+        "content_chars": 7,
+        "truncated": false,
+        "validation_status": "Valid",
+        "validation_reason": null,
+        "diff_preview": "diff",
+        "diff_truncated": false,
+        "diff_redacted": false,
+        "hunk_count": 1,
+        "hunk_fingerprint": format!("sha256:{}", "a".repeat(64))
+    });
+    let workspace_patch_approved_payload = json!({
+        "proposal_id": "proposal_1",
+        "approval_status": "Approved",
+        "approval_reason": null,
+        "approval_reason_redacted": false,
+        "approved_at": "2026-09-04T00:00:00Z"
+    });
+    let workspace_patch_rejected_payload = json!({
+        "proposal_id": "proposal_2",
+        "approval_status": "Rejected",
+        "approval_reason": "not needed",
+        "approval_reason_redacted": false,
+        "rejected_at": "2026-09-04T00:00:01Z"
+    });
+    let workspace_patch_preflight_snapshot_payload = json!({
+        "proposal_id": "proposal_1",
+        "snapshot_id": "snapshot_1",
+        "path": "README.md",
+        "canonical_path_hash": format!("sha256:{}", "b".repeat(64)),
+        "file_exists": true,
+        "file_kind": "file",
+        "file_size_bytes": 10,
+        "file_modified_unix_ms": 1800000000000_i64,
+        "file_sha256": format!("sha256:{}", "c".repeat(64)),
+        "captured_at": "2026-09-04T00:00:02Z",
+        "stale": false,
+        "stale_reason": null
+    });
+    let workspace_patch_apply_plan_payload = json!({
+        "proposal_id": "proposal_1",
+        "plan_id": "plan_1",
+        "operation": "replace_file",
+        "status": "Ready",
+        "check_count": 1,
+        "failed_checks": []
+    });
+    let workspace_patch_apply_capability_payload = json!({
+        "proposal_id": "proposal_1",
+        "capability_id": "capability_1",
+        "apply_supported": true,
+        "apply_enabled": true,
+        "mode": "controlled_apply",
+        "reason": "ready",
+        "required_gates": ["proposal_valid"],
+        "can_apply_now": true,
+        "checked_at": "2026-09-04T00:00:03Z",
+        "check_count": 1,
+        "failed_checks": [],
+        "blocked_checks": []
+    });
+    let workspace_patch_apply_dry_run_payload = json!({
+        "proposal_id": "proposal_1",
+        "dry_run_id": "dry_run_1",
+        "dry_run_status": "Completed",
+        "dry_run_reason": "No mutation.",
+        "checked_at": "2026-09-04T00:00:04Z",
+        "required_gates": ["proposal_valid"],
+        "check_count": 1,
+        "failed_checks": [],
+        "blocked_checks": [],
+        "no_patch_applied": true,
+        "apply_executed": false,
+        "workspace_files_changed": false
+    });
+    let workspace_patch_apply_result_payload = json!({
+        "proposal_id": "proposal_1",
+        "apply_id": "apply_1",
+        "apply_status": "Applied",
+        "apply_reason": "Applied.",
+        "authorization_id": "authorization_1",
+        "authorization_consumed": true,
+        "applied": true,
+        "operation": "replace_file",
+        "atomic_replacement_completed": true,
+        "atomic_create_completed": false,
+        "atomic_delete_completed": false,
+        "path": "README.md",
+        "expected_target_sha256": format!("sha256:{}", "c".repeat(64)),
+        "expected_target_absent": false,
+        "pre_write_target_sha256": format!("sha256:{}", "c".repeat(64)),
+        "pre_write_target_exists": true,
+        "post_write_sha256": format!("sha256:{}", "d".repeat(64)),
+        "post_delete_target_exists": null,
+        "content_chars": 7,
+        "content_bytes": 7,
+        "checked_at": "2026-09-04T00:00:05Z",
+        "applied_at": "2026-09-04T00:00:06Z",
+        "temp_file_cleaned": true,
+        "check_count": 1,
+        "failed_checks": [],
+        "blocked_checks": []
+    });
+    let workspace_patch_readiness_report_payload = json!({
+        "proposal_id": "proposal_1",
+        "report_id": "report_1",
+        "readiness_status": "Ready",
+        "readiness_reason": null,
+        "readiness_fingerprint": format!("sha256:{}", "e".repeat(64)),
+        "fingerprint_input_count": 3,
+        "generated_at": "2026-09-04T00:00:07Z",
+        "check_count": 1,
+        "failed_checks": [],
+        "blocked_checks": []
+    });
     let event_payload_schema_classifications = ledger_event_kinds
         .iter()
         .map(|kind| {
@@ -1599,13 +1719,40 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             "ParentJoinContinuationFingerprintConsumed",
             &parent_join_continuation_consumed_payload,
         ),
+        payload_schema_fixture("WorkspacePatchProposed", &workspace_patch_proposed_payload),
+        payload_schema_fixture("WorkspacePatchApproved", &workspace_patch_approved_payload),
+        payload_schema_fixture("WorkspacePatchRejected", &workspace_patch_rejected_payload),
+        payload_schema_fixture(
+            "WorkspacePatchPreflightSnapshotCreated",
+            &workspace_patch_preflight_snapshot_payload,
+        ),
+        payload_schema_fixture(
+            "WorkspacePatchApplyPlanCreated",
+            &workspace_patch_apply_plan_payload,
+        ),
+        payload_schema_fixture(
+            "WorkspacePatchApplyCapabilityChecked",
+            &workspace_patch_apply_capability_payload,
+        ),
+        payload_schema_fixture(
+            "WorkspacePatchApplyDryRunChecked",
+            &workspace_patch_apply_dry_run_payload,
+        ),
+        payload_schema_fixture(
+            "WorkspacePatchApplyResultRecorded",
+            &workspace_patch_apply_result_payload,
+        ),
+        payload_schema_fixture(
+            "WorkspacePatchReadinessReportCreated",
+            &workspace_patch_readiness_report_payload,
+        ),
     ];
 
     json!({
         "schema_version": 10,
         "contract_id": "runtime-semantic-protocol-contract-v1",
         "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-        "phase": "RRP-5.15",
+        "phase": "RRP-5.16",
         "owner": "runtime",
         "runtime_release_debt_id": "protocol-event-canonization",
         "runtime_release_ready": false,
@@ -2426,7 +2573,7 @@ fn canonical_value(value: &Value) -> Value {
     }
 }
 
-const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 11;
+const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 12;
 
 fn ledger_payload_schema_id(kind: &str) -> String {
     format!("ledger_payload.{kind}.v{LEDGER_PAYLOAD_SCHEMA_VERSION}")
@@ -2496,7 +2643,17 @@ fn ledger_payload_schema_classification(kind: &str) -> &'static str {
         | "SubtaskDispatchDecisionRecorded"
         | "SubtaskDispatchCandidateManifestRecorded"
         | "SubtaskDispatchHandoffEnvelopeRecorded"
-        | "ParentJoinContinuationFingerprintConsumed" => "strict_typed",
+        | "ParentJoinContinuationFingerprintConsumed"
+        | "WorkspacePatchProposed"
+        | "WorkspacePatchApproved"
+        | "WorkspacePatchRejected"
+        | "WorkspacePatchPreflightSnapshotCreated"
+        | "WorkspacePatchApplyPlanCreated"
+        | "WorkspacePatchApplyCapabilityChecked"
+        | "WorkspacePatchApplyDryRunChecked"
+        | "WorkspacePatchApplyResultRecorded"
+        | "WorkspacePatchReadinessReportCreated" => "strict_typed",
+        "WorkspacePatchApprovalRequested" => "payload_absent",
         _ => "versioned_open",
     }
 }
@@ -2595,6 +2752,28 @@ fn ledger_payload_schema_descriptor(kind: &str) -> String {
         }
         "ParentJoinContinuationFingerprintConsumed" => {
             parent_join_continuation_consumed_payload_schema_descriptor()
+        }
+        "WorkspacePatchProposed" => workspace_patch_proposed_payload_schema_descriptor(),
+        "WorkspacePatchApprovalRequested" => {
+            workspace_patch_approval_requested_payload_schema_descriptor()
+        }
+        "WorkspacePatchApproved" => workspace_patch_approved_payload_schema_descriptor(),
+        "WorkspacePatchRejected" => workspace_patch_rejected_payload_schema_descriptor(),
+        "WorkspacePatchPreflightSnapshotCreated" => {
+            workspace_patch_preflight_snapshot_payload_schema_descriptor()
+        }
+        "WorkspacePatchApplyPlanCreated" => workspace_patch_apply_plan_payload_schema_descriptor(),
+        "WorkspacePatchApplyCapabilityChecked" => {
+            workspace_patch_apply_capability_payload_schema_descriptor()
+        }
+        "WorkspacePatchApplyDryRunChecked" => {
+            workspace_patch_apply_dry_run_payload_schema_descriptor()
+        }
+        "WorkspacePatchApplyResultRecorded" => {
+            workspace_patch_apply_result_payload_schema_descriptor()
+        }
+        "WorkspacePatchReadinessReportCreated" => {
+            workspace_patch_readiness_report_payload_schema_descriptor()
         }
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
@@ -2774,6 +2953,47 @@ fn subtask_dispatch_handoff_envelope_payload_schema_descriptor() -> String {
 
 fn parent_join_continuation_consumed_payload_schema_descriptor() -> String {
     "strict_typed{payload_optional:false;required_fields:admission_id:string,child_completion_child_count:u64,child_completion_fingerprint:string,child_recovery_cycle_depth:u64,child_terminal_completed_count:u64,child_terminal_failed_count:u64,fingerprint_input_count:u64,parent_join_continuation_status:string,reason:string;additional_fields:false;parent_join_continuation_consumed_payload:true}".to_string()
+}
+
+fn workspace_patch_proposed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:content_chars:u64,content_preview:string,diff_preview:string_or_null,diff_redacted:boolean,diff_truncated:boolean,operation:string,path:string,proposal_id:string,tool_id:string,truncated:boolean,validation_reason:string_or_null,validation_status:string;known_optional_fields:failed_verifier_tool_ids:array<string>,failure_class:string,failure_fingerprint:string,hunk_count:u64,hunk_fingerprint:string,patch_apply_recovery_repair:boolean,recovery_run_id:string,recovery_task_id:string,source_apply_fingerprint:string,source_apply_id:string,source_hunk_count:u64,source_hunk_fingerprint:string,source_operation:string,source_path:string,source_proposal_id:string,source_run_id:string,source_task_id:string,verification_recovery_repair:boolean;additional_fields:false;workspace_patch_proposed_payload:true}".to_string()
+}
+
+fn workspace_patch_approval_requested_payload_schema_descriptor() -> String {
+    "payload_absent{payload_optional:false;workspace_patch_approval_requested_payload_absent:true}"
+        .to_string()
+}
+
+fn workspace_patch_approved_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:approval_reason:string_or_null,approval_reason_redacted:boolean,approval_status:string,approved_at:string,proposal_id:string;known_optional_fields:rejected_at:string;additional_fields:false;workspace_patch_approved_payload:true;approval_status:Approved}".to_string()
+}
+
+fn workspace_patch_rejected_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:approval_reason:string_or_null,approval_reason_redacted:boolean,approval_status:string,proposal_id:string,rejected_at:string;known_optional_fields:approved_at:string;additional_fields:false;workspace_patch_rejected_payload:true;approval_status:Rejected}".to_string()
+}
+
+fn workspace_patch_preflight_snapshot_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:canonical_path_hash:string,captured_at:string,file_exists:boolean,file_kind:string,file_modified_unix_ms:integer_or_null,file_sha256:string_or_null,file_size_bytes:u64_or_null,path:string,proposal_id:string,snapshot_id:string,stale:boolean,stale_reason:string_or_null;additional_fields:false;workspace_patch_preflight_snapshot_payload:true}".to_string()
+}
+
+fn workspace_patch_apply_plan_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:check_count:u64,failed_checks:array<string>,operation:string,plan_id:string,proposal_id:string,status:string;additional_fields:false;workspace_patch_apply_plan_payload:true}".to_string()
+}
+
+fn workspace_patch_apply_capability_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:apply_enabled:boolean,apply_supported:boolean,blocked_checks:array<string>,can_apply_now:boolean,capability_id:string,check_count:u64,checked_at:string,failed_checks:array<string>,mode:string,proposal_id:string,reason:string,required_gates:array<string>;additional_fields:false;workspace_patch_apply_capability_payload:true}".to_string()
+}
+
+fn workspace_patch_apply_dry_run_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:apply_executed:boolean,blocked_checks:array<string>,check_count:u64,checked_at:string,dry_run_id:string,dry_run_reason:string,dry_run_status:string,failed_checks:array<string>,no_patch_applied:boolean,proposal_id:string,required_gates:array<string>,workspace_files_changed:boolean;additional_fields:false;workspace_patch_apply_dry_run_payload:true}".to_string()
+}
+
+fn workspace_patch_apply_result_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:applied:boolean,apply_id:string,apply_reason:string,apply_status:string,authorization_consumed:boolean,blocked_checks:array<string>,failed_checks:array<string>,operation:string,path:string,proposal_id:string;known_optional_fields:applied_at:string_or_null,atomic_create_completed:boolean_or_null,atomic_delete_completed:boolean_or_null,atomic_replacement_completed:boolean_or_null,authorization_id:string_or_null,check_count:u64,checked_at:string_or_null,content_bytes:u64,content_chars:u64,expected_target_absent:boolean_or_null,expected_target_sha256:string_or_null,hunk_count:u64,hunk_fingerprint:string_or_null,post_delete_target_exists:boolean_or_null,post_write_sha256:string_or_null,pre_write_target_exists:boolean_or_null,pre_write_target_sha256:string_or_null,temp_file_cleaned:boolean_or_null,transaction_id:string_or_null,transaction_item_count:u64,transaction_items:array,transaction_recovery_source:object,transaction_recovery_status:string_or_null,transaction_status:string_or_null;additional_fields:false;workspace_patch_apply_result_payload:true}".to_string()
+}
+
+fn workspace_patch_readiness_report_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,check_count:u64,failed_checks:array<string>,fingerprint_input_count:u64,generated_at:string,proposal_id:string,readiness_fingerprint:string,readiness_reason:string_or_null,readiness_status:string,report_id:string;additional_fields:false;workspace_patch_readiness_report_payload:true}".to_string()
 }
 
 fn ledger_payload_instance_shape_fingerprint_for_value(kind: &str, payload: &Value) -> String {

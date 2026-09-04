@@ -175,7 +175,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
   requireValue(contract.contract_id === 'runtime-semantic-protocol-contract-v1', errors, `${contractPath} contract_id must identify the Runtime semantic protocol contract.`);
   requireValue(contract.campaign === 'runtime-release-readiness-p0-p1-finite-closure', errors, `${contractPath} campaign must match Runtime release readiness.`);
-  requireValue(contract.phase === 'RRP-5.15', errors, `${contractPath} phase must be RRP-5.15.`);
+  requireValue(contract.phase === 'RRP-5.16', errors, `${contractPath} phase must be RRP-5.16.`);
   requireValue(contract.owner === 'runtime', errors, `${contractPath} owner must be runtime.`);
   requireValue(contract.runtime_release_debt_id === 'protocol-event-canonization', errors, `${contractPath} must bind to protocol-event-canonization.`);
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must not declare Runtime Release Ready.`);
@@ -392,7 +392,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   for (const variant of ledgerVariants) {
     const entry = fingerprintByKind.get(variant);
     requireValue(Boolean(entry), errors, `${contractPath} durable_event_migration_coupling.event_payload_schema_fingerprints must include ${variant}.`);
-    requireValue(entry?.payload_schema_version === 11, errors, `${contractPath} ${variant} payload_schema_version must be 11.`);
+    requireValue(entry?.payload_schema_version === 12, errors, `${contractPath} ${variant} payload_schema_version must be 12.`);
     requireValue(entry?.store_schema_version === durableCoupling.store_schema_version, errors, `${contractPath} ${variant} store_schema_version must match durable coupling schema version.`);
     requireValue(isNonEmptyString(entry?.payload_schema_id), errors, `${contractPath} ${variant} payload_schema_id must be present.`);
     requireValue(isNonEmptyString(entry?.payload_schema_fingerprint), errors, `${contractPath} ${variant} payload_schema_fingerprint must be present.`);
@@ -476,6 +476,15 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
     ['SubtaskDispatchCandidateManifestRecorded', 'subtask_dispatch_candidate_manifest_payload:true'],
     ['SubtaskDispatchHandoffEnvelopeRecorded', 'subtask_dispatch_handoff_envelope_payload:true'],
     ['ParentJoinContinuationFingerprintConsumed', 'parent_join_continuation_consumed_payload:true'],
+    ['WorkspacePatchProposed', 'workspace_patch_proposed_payload:true'],
+    ['WorkspacePatchApproved', 'workspace_patch_approved_payload:true'],
+    ['WorkspacePatchRejected', 'workspace_patch_rejected_payload:true'],
+    ['WorkspacePatchPreflightSnapshotCreated', 'workspace_patch_preflight_snapshot_payload:true'],
+    ['WorkspacePatchApplyPlanCreated', 'workspace_patch_apply_plan_payload:true'],
+    ['WorkspacePatchApplyCapabilityChecked', 'workspace_patch_apply_capability_payload:true'],
+    ['WorkspacePatchApplyDryRunChecked', 'workspace_patch_apply_dry_run_payload:true'],
+    ['WorkspacePatchApplyResultRecorded', 'workspace_patch_apply_result_payload:true'],
+    ['WorkspacePatchReadinessReportCreated', 'workspace_patch_readiness_report_payload:true'],
   ]);
   for (const [toolKind, descriptorToken] of toolDescriptorRequirements) {
     const toolEntry = fingerprintByKind.get(toolKind);
@@ -497,6 +506,19 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
       `${contractPath} ${toolKind} payload schema descriptor must capture ${descriptorToken} and reject additional fields.`
     );
   }
+  const approvalRequestedEntry = fingerprintByKind.get('WorkspacePatchApprovalRequested');
+  requireValue(
+    approvalRequestedEntry?.payload_schema_classification === 'payload_absent',
+    errors,
+    `${contractPath} WorkspacePatchApprovalRequested must be classified as payload_absent until a Runtime append path exists.`
+  );
+  requireValue(
+    approvalRequestedEntry?.payload_schema_contract_status === 'closed' &&
+      approvalRequestedEntry?.release_blocking_until_typed === false &&
+      approvalRequestedEntry?.payload_schema_descriptor?.includes('workspace_patch_approval_requested_payload_absent:true'),
+    errors,
+    `${contractPath} WorkspacePatchApprovalRequested payload-absent descriptor must be closed and non-release-blocking.`
+  );
   const codebaseDescriptorRequirements = new Map([
     ['CodebaseIndexPermissionChecked', 'codebase_index_permission_payload:true'],
     ['CodebaseIndexSnapshotBuilt', 'codebase_index_snapshot_payload:true'],

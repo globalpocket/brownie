@@ -6088,7 +6088,7 @@ pub struct LedgerPayloadEnvelope {
     pub instance_shape_fingerprint: String,
 }
 
-pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 11;
+pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 12;
 pub const LEDGER_PAYLOAD_SHAPE_VERSION: u64 = LEDGER_PAYLOAD_SCHEMA_VERSION;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6183,8 +6183,20 @@ pub fn ledger_payload_schema_classification(
         | LedgerEventKind::SubtaskDispatchDecisionRecorded
         | LedgerEventKind::SubtaskDispatchCandidateManifestRecorded
         | LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded
-        | LedgerEventKind::ParentJoinContinuationFingerprintConsumed => {
+        | LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+        | LedgerEventKind::WorkspacePatchProposed
+        | LedgerEventKind::WorkspacePatchApproved
+        | LedgerEventKind::WorkspacePatchRejected
+        | LedgerEventKind::WorkspacePatchPreflightSnapshotCreated
+        | LedgerEventKind::WorkspacePatchApplyPlanCreated
+        | LedgerEventKind::WorkspacePatchApplyCapabilityChecked
+        | LedgerEventKind::WorkspacePatchApplyDryRunChecked
+        | LedgerEventKind::WorkspacePatchApplyResultRecorded
+        | LedgerEventKind::WorkspacePatchReadinessReportCreated => {
             LedgerPayloadSchemaClassification::StrictTyped
+        }
+        LedgerEventKind::WorkspacePatchApprovalRequested => {
+            LedgerPayloadSchemaClassification::PayloadAbsent
         }
         _ => LedgerPayloadSchemaClassification::VersionedOpen,
     }
@@ -6427,6 +6439,33 @@ fn validate_strict_ledger_payload_schema(
         }
         LedgerEventKind::ParentJoinContinuationFingerprintConsumed => {
             validate_parent_join_continuation_consumed_payload_schema(kind, payload)
+        }
+        LedgerEventKind::WorkspacePatchProposed => {
+            validate_workspace_patch_proposed_payload_schema(kind, payload)
+        }
+        LedgerEventKind::WorkspacePatchApproved => {
+            validate_workspace_patch_approved_payload_schema(kind, payload)
+        }
+        LedgerEventKind::WorkspacePatchRejected => {
+            validate_workspace_patch_rejected_payload_schema(kind, payload)
+        }
+        LedgerEventKind::WorkspacePatchPreflightSnapshotCreated => {
+            validate_workspace_patch_preflight_snapshot_payload_schema(kind, payload)
+        }
+        LedgerEventKind::WorkspacePatchApplyPlanCreated => {
+            validate_workspace_patch_apply_plan_payload_schema(kind, payload)
+        }
+        LedgerEventKind::WorkspacePatchApplyCapabilityChecked => {
+            validate_workspace_patch_apply_capability_payload_schema(kind, payload)
+        }
+        LedgerEventKind::WorkspacePatchApplyDryRunChecked => {
+            validate_workspace_patch_apply_dry_run_payload_schema(kind, payload)
+        }
+        LedgerEventKind::WorkspacePatchApplyResultRecorded => {
+            validate_workspace_patch_apply_result_payload_schema(kind, payload)
+        }
+        LedgerEventKind::WorkspacePatchReadinessReportCreated => {
+            validate_workspace_patch_readiness_report_payload_schema(kind, payload)
         }
         _ => bail!("{kind:?} strict ledger payload schema is not registered"),
     }
@@ -7202,6 +7241,308 @@ fn validate_parent_join_continuation_consumed_payload_schema(
             optional_objects: &[],
         },
     )
+}
+
+fn validate_workspace_patch_proposed_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        WORKSPACE_PATCH_PROPOSED_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "proposal_id",
+        "tool_id",
+        "path",
+        "operation",
+        "content_preview",
+        "validation_status",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    validate_required_payload_u64_field(object, "content_chars")?;
+    for field in ["truncated", "diff_truncated", "diff_redacted"] {
+        validate_required_payload_bool_field(object, field)?;
+    }
+    validate_required_payload_string_or_null_field(object, "validation_reason")?;
+    validate_required_payload_string_or_null_field(object, "diff_preview")?;
+    for field in [
+        "hunk_fingerprint",
+        "source_task_id",
+        "source_run_id",
+        "recovery_task_id",
+        "recovery_run_id",
+        "failure_fingerprint",
+        "source_proposal_id",
+        "source_apply_id",
+        "source_apply_fingerprint",
+        "failure_class",
+        "source_operation",
+        "source_path",
+        "source_hunk_fingerprint",
+    ] {
+        validate_optional_payload_string_field(object, field)?;
+    }
+    for field in ["hunk_count", "source_hunk_count"] {
+        validate_optional_payload_u64_field(object, field)?;
+    }
+    for field in [
+        "verification_recovery_repair",
+        "patch_apply_recovery_repair",
+    ] {
+        validate_optional_payload_bool_field(object, field)?;
+    }
+    validate_optional_payload_string_array_field(object, "failed_verifier_tool_ids")?;
+    Ok(())
+}
+
+fn validate_workspace_patch_approved_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        WORKSPACE_PATCH_APPROVAL_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    validate_required_payload_string_field(object, "proposal_id")?;
+    validate_required_payload_string_field(object, "approval_status")?;
+    validate_required_payload_string_or_null_field(object, "approval_reason")?;
+    validate_required_payload_bool_field(object, "approval_reason_redacted")?;
+    validate_required_payload_string_field(object, "approved_at")?;
+    validate_optional_payload_string_field(object, "rejected_at")?;
+    if object
+        .get("approval_status")
+        .and_then(serde_json::Value::as_str)
+        != Some("Approved")
+    {
+        bail!("{kind:?} ledger payload approval_status must be Approved");
+    }
+    Ok(())
+}
+
+fn validate_workspace_patch_rejected_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        WORKSPACE_PATCH_APPROVAL_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    validate_required_payload_string_field(object, "proposal_id")?;
+    validate_required_payload_string_field(object, "approval_status")?;
+    validate_required_payload_string_or_null_field(object, "approval_reason")?;
+    validate_required_payload_bool_field(object, "approval_reason_redacted")?;
+    validate_required_payload_string_field(object, "rejected_at")?;
+    validate_optional_payload_string_field(object, "approved_at")?;
+    if object
+        .get("approval_status")
+        .and_then(serde_json::Value::as_str)
+        != Some("Rejected")
+    {
+        bail!("{kind:?} ledger payload approval_status must be Rejected");
+    }
+    Ok(())
+}
+
+fn validate_workspace_patch_preflight_snapshot_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        WORKSPACE_PATCH_PREFLIGHT_SNAPSHOT_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "proposal_id",
+        "snapshot_id",
+        "path",
+        "canonical_path_hash",
+        "file_kind",
+        "captured_at",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    validate_required_payload_bool_field(object, "file_exists")?;
+    validate_required_payload_bool_field(object, "stale")?;
+    validate_required_payload_u64_or_null_field(object, "file_size_bytes")?;
+    validate_required_payload_i64_or_null_field(object, "file_modified_unix_ms")?;
+    validate_required_payload_string_or_null_field(object, "file_sha256")?;
+    validate_required_payload_string_or_null_field(object, "stale_reason")?;
+    Ok(())
+}
+
+fn validate_workspace_patch_apply_plan_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        WORKSPACE_PATCH_APPLY_PLAN_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in ["proposal_id", "plan_id", "operation", "status"] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    validate_required_payload_u64_field(object, "check_count")?;
+    validate_required_payload_string_array_field(object, "failed_checks")?;
+    Ok(())
+}
+
+fn validate_workspace_patch_apply_capability_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        WORKSPACE_PATCH_APPLY_CAPABILITY_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "proposal_id",
+        "capability_id",
+        "mode",
+        "reason",
+        "checked_at",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    for field in ["apply_supported", "apply_enabled", "can_apply_now"] {
+        validate_required_payload_bool_field(object, field)?;
+    }
+    validate_required_payload_u64_field(object, "check_count")?;
+    for field in ["required_gates", "failed_checks", "blocked_checks"] {
+        validate_required_payload_string_array_field(object, field)?;
+    }
+    Ok(())
+}
+
+fn validate_workspace_patch_apply_dry_run_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        WORKSPACE_PATCH_APPLY_DRY_RUN_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "proposal_id",
+        "dry_run_id",
+        "dry_run_status",
+        "dry_run_reason",
+        "checked_at",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    for field in [
+        "no_patch_applied",
+        "apply_executed",
+        "workspace_files_changed",
+    ] {
+        validate_required_payload_bool_field(object, field)?;
+    }
+    validate_required_payload_u64_field(object, "check_count")?;
+    for field in ["required_gates", "failed_checks", "blocked_checks"] {
+        validate_required_payload_string_array_field(object, field)?;
+    }
+    Ok(())
+}
+
+fn validate_workspace_patch_apply_result_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        WORKSPACE_PATCH_APPLY_RESULT_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "proposal_id",
+        "apply_id",
+        "apply_status",
+        "apply_reason",
+        "operation",
+        "path",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    for field in ["authorization_consumed", "applied"] {
+        validate_required_payload_bool_field(object, field)?;
+    }
+    for field in ["failed_checks", "blocked_checks"] {
+        validate_required_payload_string_array_field(object, field)?;
+    }
+    for field in [
+        "authorization_id",
+        "expected_target_sha256",
+        "pre_write_target_sha256",
+        "post_write_sha256",
+        "checked_at",
+        "applied_at",
+        "transaction_id",
+        "transaction_status",
+        "transaction_recovery_status",
+        "hunk_fingerprint",
+    ] {
+        validate_optional_payload_string_or_null_field(object, field)?;
+    }
+    for field in [
+        "expected_target_absent",
+        "pre_write_target_exists",
+        "post_delete_target_exists",
+        "atomic_replacement_completed",
+        "atomic_create_completed",
+        "atomic_delete_completed",
+        "temp_file_cleaned",
+    ] {
+        validate_optional_payload_bool_or_null_field(object, field)?;
+    }
+    for field in [
+        "content_chars",
+        "content_bytes",
+        "check_count",
+        "transaction_item_count",
+        "hunk_count",
+    ] {
+        validate_optional_payload_u64_field(object, field)?;
+    }
+    validate_optional_payload_array_field(object, "transaction_items")?;
+    validate_optional_payload_object_field(object, "transaction_recovery_source")?;
+    Ok(())
+}
+
+fn validate_workspace_patch_readiness_report_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        WORKSPACE_PATCH_READINESS_REPORT_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "proposal_id",
+        "report_id",
+        "readiness_status",
+        "readiness_fingerprint",
+        "generated_at",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    validate_required_payload_string_or_null_field(object, "readiness_reason")?;
+    for field in ["fingerprint_input_count", "check_count"] {
+        validate_required_payload_u64_field(object, field)?;
+    }
+    for field in ["failed_checks", "blocked_checks"] {
+        validate_required_payload_string_array_field(object, field)?;
+    }
+    Ok(())
 }
 
 fn validate_tool_intent_payload_schema(
@@ -8554,6 +8895,152 @@ const TOOL_INTENT_PARSED_KNOWN_PAYLOAD_FIELDS: &[&str] = &["parser", "tool_ids"]
 
 const TOOL_INTENT_REJECTED_KNOWN_PAYLOAD_FIELDS: &[&str] = &["code", "reason", "tool_id"];
 
+const WORKSPACE_PATCH_PROPOSED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "content_chars",
+    "content_preview",
+    "diff_preview",
+    "diff_redacted",
+    "diff_truncated",
+    "failed_verifier_tool_ids",
+    "failure_class",
+    "failure_fingerprint",
+    "hunk_count",
+    "hunk_fingerprint",
+    "operation",
+    "patch_apply_recovery_repair",
+    "path",
+    "proposal_id",
+    "recovery_run_id",
+    "recovery_task_id",
+    "source_apply_fingerprint",
+    "source_apply_id",
+    "source_hunk_count",
+    "source_hunk_fingerprint",
+    "source_operation",
+    "source_path",
+    "source_proposal_id",
+    "source_run_id",
+    "source_task_id",
+    "tool_id",
+    "truncated",
+    "validation_reason",
+    "validation_status",
+    "verification_recovery_repair",
+];
+
+const WORKSPACE_PATCH_APPROVAL_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "approval_reason",
+    "approval_reason_redacted",
+    "approval_status",
+    "approved_at",
+    "proposal_id",
+    "rejected_at",
+];
+
+const WORKSPACE_PATCH_PREFLIGHT_SNAPSHOT_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "canonical_path_hash",
+    "captured_at",
+    "file_exists",
+    "file_kind",
+    "file_modified_unix_ms",
+    "file_sha256",
+    "file_size_bytes",
+    "path",
+    "proposal_id",
+    "snapshot_id",
+    "stale",
+    "stale_reason",
+];
+
+const WORKSPACE_PATCH_APPLY_PLAN_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "check_count",
+    "failed_checks",
+    "operation",
+    "plan_id",
+    "proposal_id",
+    "status",
+];
+
+const WORKSPACE_PATCH_APPLY_CAPABILITY_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "apply_enabled",
+    "apply_supported",
+    "blocked_checks",
+    "can_apply_now",
+    "capability_id",
+    "check_count",
+    "checked_at",
+    "failed_checks",
+    "mode",
+    "proposal_id",
+    "reason",
+    "required_gates",
+];
+
+const WORKSPACE_PATCH_APPLY_DRY_RUN_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "apply_executed",
+    "blocked_checks",
+    "check_count",
+    "checked_at",
+    "dry_run_id",
+    "dry_run_reason",
+    "dry_run_status",
+    "failed_checks",
+    "no_patch_applied",
+    "proposal_id",
+    "required_gates",
+    "workspace_files_changed",
+];
+
+const WORKSPACE_PATCH_APPLY_RESULT_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "applied",
+    "applied_at",
+    "apply_id",
+    "apply_reason",
+    "apply_status",
+    "atomic_create_completed",
+    "atomic_delete_completed",
+    "atomic_replacement_completed",
+    "authorization_consumed",
+    "authorization_id",
+    "blocked_checks",
+    "check_count",
+    "checked_at",
+    "content_bytes",
+    "content_chars",
+    "expected_target_absent",
+    "expected_target_sha256",
+    "failed_checks",
+    "hunk_count",
+    "hunk_fingerprint",
+    "operation",
+    "path",
+    "post_delete_target_exists",
+    "post_write_sha256",
+    "pre_write_target_exists",
+    "pre_write_target_sha256",
+    "proposal_id",
+    "temp_file_cleaned",
+    "transaction_id",
+    "transaction_item_count",
+    "transaction_items",
+    "transaction_recovery_source",
+    "transaction_recovery_status",
+    "transaction_status",
+];
+
+const WORKSPACE_PATCH_READINESS_REPORT_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "blocked_checks",
+    "check_count",
+    "failed_checks",
+    "fingerprint_input_count",
+    "generated_at",
+    "proposal_id",
+    "readiness_fingerprint",
+    "readiness_reason",
+    "readiness_status",
+    "report_id",
+];
+
 const SUBTASK_ORCHESTRATION_QUEUED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "execution_enabled",
     "input_summary",
@@ -9387,6 +9874,19 @@ fn validate_optional_payload_i64_or_null_field(
     Ok(())
 }
 
+fn validate_required_payload_i64_or_null_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    let Some(value) = object.get(field) else {
+        bail!("ledger payload field {field} is required");
+    };
+    if !value.is_null() && value.as_i64().is_none() && value.as_u64().is_none() {
+        bail!("ledger payload field {field} must be an integer or null");
+    }
+    Ok(())
+}
+
 fn validate_optional_payload_string_array_field(
     object: &serde_json::Map<String, serde_json::Value>,
     field: &str,
@@ -9681,6 +10181,36 @@ fn ledger_payload_schema_descriptor(kind: &LedgerEventKind) -> String {
         LedgerEventKind::ParentJoinContinuationFingerprintConsumed => {
             parent_join_continuation_consumed_payload_schema_descriptor()
         }
+        LedgerEventKind::WorkspacePatchProposed => {
+            workspace_patch_proposed_payload_schema_descriptor()
+        }
+        LedgerEventKind::WorkspacePatchApprovalRequested => {
+            workspace_patch_approval_requested_payload_schema_descriptor()
+        }
+        LedgerEventKind::WorkspacePatchApproved => {
+            workspace_patch_approved_payload_schema_descriptor()
+        }
+        LedgerEventKind::WorkspacePatchRejected => {
+            workspace_patch_rejected_payload_schema_descriptor()
+        }
+        LedgerEventKind::WorkspacePatchPreflightSnapshotCreated => {
+            workspace_patch_preflight_snapshot_payload_schema_descriptor()
+        }
+        LedgerEventKind::WorkspacePatchApplyPlanCreated => {
+            workspace_patch_apply_plan_payload_schema_descriptor()
+        }
+        LedgerEventKind::WorkspacePatchApplyCapabilityChecked => {
+            workspace_patch_apply_capability_payload_schema_descriptor()
+        }
+        LedgerEventKind::WorkspacePatchApplyDryRunChecked => {
+            workspace_patch_apply_dry_run_payload_schema_descriptor()
+        }
+        LedgerEventKind::WorkspacePatchApplyResultRecorded => {
+            workspace_patch_apply_result_payload_schema_descriptor()
+        }
+        LedgerEventKind::WorkspacePatchReadinessReportCreated => {
+            workspace_patch_readiness_report_payload_schema_descriptor()
+        }
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
 }
@@ -9861,6 +10391,47 @@ fn parent_join_continuation_consumed_payload_schema_descriptor() -> String {
     "strict_typed{payload_optional:false;required_fields:admission_id:string,child_completion_child_count:u64,child_completion_fingerprint:string,child_recovery_cycle_depth:u64,child_terminal_completed_count:u64,child_terminal_failed_count:u64,fingerprint_input_count:u64,parent_join_continuation_status:string,reason:string;additional_fields:false;parent_join_continuation_consumed_payload:true}".to_string()
 }
 
+fn workspace_patch_proposed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:content_chars:u64,content_preview:string,diff_preview:string_or_null,diff_redacted:boolean,diff_truncated:boolean,operation:string,path:string,proposal_id:string,tool_id:string,truncated:boolean,validation_reason:string_or_null,validation_status:string;known_optional_fields:failed_verifier_tool_ids:array<string>,failure_class:string,failure_fingerprint:string,hunk_count:u64,hunk_fingerprint:string,patch_apply_recovery_repair:boolean,recovery_run_id:string,recovery_task_id:string,source_apply_fingerprint:string,source_apply_id:string,source_hunk_count:u64,source_hunk_fingerprint:string,source_operation:string,source_path:string,source_proposal_id:string,source_run_id:string,source_task_id:string,verification_recovery_repair:boolean;additional_fields:false;workspace_patch_proposed_payload:true}".to_string()
+}
+
+fn workspace_patch_approval_requested_payload_schema_descriptor() -> String {
+    "payload_absent{payload_optional:false;workspace_patch_approval_requested_payload_absent:true}"
+        .to_string()
+}
+
+fn workspace_patch_approved_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:approval_reason:string_or_null,approval_reason_redacted:boolean,approval_status:string,approved_at:string,proposal_id:string;known_optional_fields:rejected_at:string;additional_fields:false;workspace_patch_approved_payload:true;approval_status:Approved}".to_string()
+}
+
+fn workspace_patch_rejected_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:approval_reason:string_or_null,approval_reason_redacted:boolean,approval_status:string,proposal_id:string,rejected_at:string;known_optional_fields:approved_at:string;additional_fields:false;workspace_patch_rejected_payload:true;approval_status:Rejected}".to_string()
+}
+
+fn workspace_patch_preflight_snapshot_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:canonical_path_hash:string,captured_at:string,file_exists:boolean,file_kind:string,file_modified_unix_ms:integer_or_null,file_sha256:string_or_null,file_size_bytes:u64_or_null,path:string,proposal_id:string,snapshot_id:string,stale:boolean,stale_reason:string_or_null;additional_fields:false;workspace_patch_preflight_snapshot_payload:true}".to_string()
+}
+
+fn workspace_patch_apply_plan_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:check_count:u64,failed_checks:array<string>,operation:string,plan_id:string,proposal_id:string,status:string;additional_fields:false;workspace_patch_apply_plan_payload:true}".to_string()
+}
+
+fn workspace_patch_apply_capability_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:apply_enabled:boolean,apply_supported:boolean,blocked_checks:array<string>,can_apply_now:boolean,capability_id:string,check_count:u64,checked_at:string,failed_checks:array<string>,mode:string,proposal_id:string,reason:string,required_gates:array<string>;additional_fields:false;workspace_patch_apply_capability_payload:true}".to_string()
+}
+
+fn workspace_patch_apply_dry_run_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:apply_executed:boolean,blocked_checks:array<string>,check_count:u64,checked_at:string,dry_run_id:string,dry_run_reason:string,dry_run_status:string,failed_checks:array<string>,no_patch_applied:boolean,proposal_id:string,required_gates:array<string>,workspace_files_changed:boolean;additional_fields:false;workspace_patch_apply_dry_run_payload:true}".to_string()
+}
+
+fn workspace_patch_apply_result_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:applied:boolean,apply_id:string,apply_reason:string,apply_status:string,authorization_consumed:boolean,blocked_checks:array<string>,failed_checks:array<string>,operation:string,path:string,proposal_id:string;known_optional_fields:applied_at:string_or_null,atomic_create_completed:boolean_or_null,atomic_delete_completed:boolean_or_null,atomic_replacement_completed:boolean_or_null,authorization_id:string_or_null,check_count:u64,checked_at:string_or_null,content_bytes:u64,content_chars:u64,expected_target_absent:boolean_or_null,expected_target_sha256:string_or_null,hunk_count:u64,hunk_fingerprint:string_or_null,post_delete_target_exists:boolean_or_null,post_write_sha256:string_or_null,pre_write_target_exists:boolean_or_null,pre_write_target_sha256:string_or_null,temp_file_cleaned:boolean_or_null,transaction_id:string_or_null,transaction_item_count:u64,transaction_items:array,transaction_recovery_source:object,transaction_recovery_status:string_or_null,transaction_status:string_or_null;additional_fields:false;workspace_patch_apply_result_payload:true}".to_string()
+}
+
+fn workspace_patch_readiness_report_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,check_count:u64,failed_checks:array<string>,fingerprint_input_count:u64,generated_at:string,proposal_id:string,readiness_fingerprint:string,readiness_reason:string_or_null,readiness_status:string,report_id:string;additional_fields:false;workspace_patch_readiness_report_payload:true}".to_string()
+}
+
 fn ledger_payload_legacy_schema_descriptor(kind: &LedgerEventKind, schema_version: u64) -> String {
     match kind {
         LedgerEventKind::TaskCompleted
@@ -10024,6 +10595,36 @@ fn ledger_payload_legacy_schema_descriptor(kind: &LedgerEventKind, schema_versio
         }
         LedgerEventKind::ParentJoinContinuationFingerprintConsumed if schema_version >= 11 => {
             parent_join_continuation_consumed_payload_schema_descriptor()
+        }
+        LedgerEventKind::WorkspacePatchProposed if schema_version >= 12 => {
+            workspace_patch_proposed_payload_schema_descriptor()
+        }
+        LedgerEventKind::WorkspacePatchApprovalRequested if schema_version >= 12 => {
+            workspace_patch_approval_requested_payload_schema_descriptor()
+        }
+        LedgerEventKind::WorkspacePatchApproved if schema_version >= 12 => {
+            workspace_patch_approved_payload_schema_descriptor()
+        }
+        LedgerEventKind::WorkspacePatchRejected if schema_version >= 12 => {
+            workspace_patch_rejected_payload_schema_descriptor()
+        }
+        LedgerEventKind::WorkspacePatchPreflightSnapshotCreated if schema_version >= 12 => {
+            workspace_patch_preflight_snapshot_payload_schema_descriptor()
+        }
+        LedgerEventKind::WorkspacePatchApplyPlanCreated if schema_version >= 12 => {
+            workspace_patch_apply_plan_payload_schema_descriptor()
+        }
+        LedgerEventKind::WorkspacePatchApplyCapabilityChecked if schema_version >= 12 => {
+            workspace_patch_apply_capability_payload_schema_descriptor()
+        }
+        LedgerEventKind::WorkspacePatchApplyDryRunChecked if schema_version >= 12 => {
+            workspace_patch_apply_dry_run_payload_schema_descriptor()
+        }
+        LedgerEventKind::WorkspacePatchApplyResultRecorded if schema_version >= 12 => {
+            workspace_patch_apply_result_payload_schema_descriptor()
+        }
+        LedgerEventKind::WorkspacePatchReadinessReportCreated if schema_version >= 12 => {
+            workspace_patch_readiness_report_payload_schema_descriptor()
         }
         LedgerEventKind::TaskCompleted => "typed_known_fields_open{known_optional_fields:completion_evidence:object,git:object,late_tool_response:boolean,mcp:object,runtime_deadline:object,status:string,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:legacy_open;known_field_required:true;additional_fields:true;strict_typed_payload_required_before_release:true}".to_string(),
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
@@ -10992,6 +11593,40 @@ mod tests {
                 "{kind:?}"
             );
         }
+
+        let approval_requested_classification =
+            ledger_payload_schema_classification(&LedgerEventKind::WorkspacePatchApprovalRequested);
+        assert_eq!(approval_requested_classification.as_str(), "payload_absent");
+        assert_eq!(
+            approval_requested_classification.contract_status(),
+            "closed"
+        );
+        assert!(!approval_requested_classification.release_blocking());
+        assert!(ledger_payload_schema_descriptor(
+            &LedgerEventKind::WorkspacePatchApprovalRequested
+        )
+        .contains("workspace_patch_approval_requested_payload_absent:true"));
+
+        for kind in [
+            LedgerEventKind::WorkspacePatchProposed,
+            LedgerEventKind::WorkspacePatchApproved,
+            LedgerEventKind::WorkspacePatchRejected,
+            LedgerEventKind::WorkspacePatchPreflightSnapshotCreated,
+            LedgerEventKind::WorkspacePatchApplyPlanCreated,
+            LedgerEventKind::WorkspacePatchApplyCapabilityChecked,
+            LedgerEventKind::WorkspacePatchApplyDryRunChecked,
+            LedgerEventKind::WorkspacePatchApplyResultRecorded,
+            LedgerEventKind::WorkspacePatchReadinessReportCreated,
+        ] {
+            let classification = ledger_payload_schema_classification(&kind);
+            assert_eq!(classification.as_str(), "strict_typed", "{kind:?}");
+            assert_eq!(classification.contract_status(), "closed", "{kind:?}");
+            assert!(!classification.release_blocking(), "{kind:?}");
+            assert!(
+                ledger_payload_schema_descriptor(&kind).contains("additional_fields:false"),
+                "{kind:?}"
+            );
+        }
     }
 
     #[test]
@@ -11651,6 +12286,245 @@ mod tests {
             )
             .expect_err("wrong recovery required_action should fail");
         assert!(format!("{recovery_error:#}").contains("required_action must be ReadWorkspace"));
+    }
+
+    #[test]
+    fn ledger_payload_write_rejects_malformed_workspace_patch_payloads() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = TaskStore::new(temp.path());
+        let record = store
+            .start_task(TaskStartParams {
+                goal: "workspace patch payload schema".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start task");
+
+        for (kind, payload) in [
+            (
+                LedgerEventKind::WorkspacePatchApprovalRequested,
+                serde_json::json!({"proposal_id": "proposal_1"}),
+            ),
+            (
+                LedgerEventKind::WorkspacePatchProposed,
+                serde_json::json!({
+                    "proposal_id": "proposal_1",
+                    "tool_id": "workspace.write",
+                    "path": "README.md",
+                    "operation": "replace_file",
+                    "content_preview": "updated",
+                    "content_chars": 7,
+                    "truncated": false,
+                    "validation_status": "Valid",
+                    "validation_reason": null,
+                    "diff_preview": "diff",
+                    "diff_truncated": false,
+                    "diff_redacted": false,
+                    "raw_content": "not allowed"
+                }),
+            ),
+            (
+                LedgerEventKind::WorkspacePatchApplyCapabilityChecked,
+                serde_json::json!({
+                    "proposal_id": "proposal_1",
+                    "capability_id": "capability_1",
+                    "apply_supported": true,
+                    "apply_enabled": false,
+                    "mode": "controlled_apply",
+                    "reason": "blocked",
+                    "required_gates": ["proposal_valid"],
+                    "can_apply_now": false,
+                    "checked_at": "2026-09-04T00:00:00Z",
+                    "check_count": 1,
+                    "failed_checks": [false],
+                    "blocked_checks": []
+                }),
+            ),
+            (
+                LedgerEventKind::WorkspacePatchApplyResultRecorded,
+                serde_json::json!({
+                    "proposal_id": "proposal_1",
+                    "apply_id": "apply_1",
+                    "apply_status": "Applied",
+                    "apply_reason": "Applied.",
+                    "authorization_consumed": true,
+                    "applied": true,
+                    "operation": "replace_file",
+                    "path": "README.md",
+                    "failed_checks": [],
+                    "blocked_checks": [],
+                    "transaction_items": {}
+                }),
+            ),
+        ] {
+            let error = store
+                .append_task_events_with_payloads(&record, vec![(kind.clone(), Some(payload))])
+                .expect_err("malformed workspace patch payload should fail closed");
+            assert!(
+                error.to_string().contains("ledger payload")
+                    || error.to_string().contains("does not accept a payload"),
+                "{kind:?}: {error}"
+            );
+        }
+
+        store
+            .append_task_events_with_payloads(
+                &record,
+                vec![
+                    (
+                        LedgerEventKind::WorkspacePatchProposed,
+                        Some(serde_json::json!({
+                            "proposal_id": "proposal_1",
+                            "tool_id": "workspace.write",
+                            "path": "README.md",
+                            "operation": "replace_file",
+                            "content_preview": "updated",
+                            "content_chars": 7,
+                            "truncated": false,
+                            "validation_status": "Valid",
+                            "validation_reason": null,
+                            "diff_preview": "diff",
+                            "diff_truncated": false,
+                            "diff_redacted": false,
+                            "hunk_count": 1,
+                            "hunk_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::WorkspacePatchApproved,
+                        Some(serde_json::json!({
+                            "proposal_id": "proposal_1",
+                            "approval_status": "Approved",
+                            "approval_reason": null,
+                            "approval_reason_redacted": false,
+                            "approved_at": "2026-09-04T00:00:00Z"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::WorkspacePatchRejected,
+                        Some(serde_json::json!({
+                            "proposal_id": "proposal_2",
+                            "approval_status": "Rejected",
+                            "approval_reason": "not needed",
+                            "approval_reason_redacted": false,
+                            "rejected_at": "2026-09-04T00:00:01Z"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::WorkspacePatchPreflightSnapshotCreated,
+                        Some(serde_json::json!({
+                            "proposal_id": "proposal_1",
+                            "snapshot_id": "snapshot_1",
+                            "path": "README.md",
+                            "canonical_path_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                            "file_exists": true,
+                            "file_kind": "file",
+                            "file_size_bytes": 10,
+                            "file_modified_unix_ms": 1800000000000_i64,
+                            "file_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                            "captured_at": "2026-09-04T00:00:02Z",
+                            "stale": false,
+                            "stale_reason": null
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::WorkspacePatchApplyPlanCreated,
+                        Some(serde_json::json!({
+                            "proposal_id": "proposal_1",
+                            "plan_id": "plan_1",
+                            "operation": "replace_file",
+                            "status": "Ready",
+                            "check_count": 1,
+                            "failed_checks": []
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::WorkspacePatchApplyCapabilityChecked,
+                        Some(serde_json::json!({
+                            "proposal_id": "proposal_1",
+                            "capability_id": "capability_1",
+                            "apply_supported": true,
+                            "apply_enabled": true,
+                            "mode": "controlled_apply",
+                            "reason": "ready",
+                            "required_gates": ["proposal_valid"],
+                            "can_apply_now": true,
+                            "checked_at": "2026-09-04T00:00:03Z",
+                            "check_count": 1,
+                            "failed_checks": [],
+                            "blocked_checks": []
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::WorkspacePatchApplyDryRunChecked,
+                        Some(serde_json::json!({
+                            "proposal_id": "proposal_1",
+                            "dry_run_id": "dry_run_1",
+                            "dry_run_status": "Completed",
+                            "dry_run_reason": "No mutation.",
+                            "checked_at": "2026-09-04T00:00:04Z",
+                            "required_gates": ["proposal_valid"],
+                            "check_count": 1,
+                            "failed_checks": [],
+                            "blocked_checks": [],
+                            "no_patch_applied": true,
+                            "apply_executed": false,
+                            "workspace_files_changed": false
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::WorkspacePatchApplyResultRecorded,
+                        Some(serde_json::json!({
+                            "proposal_id": "proposal_1",
+                            "apply_id": "apply_1",
+                            "apply_status": "Applied",
+                            "apply_reason": "Applied.",
+                            "authorization_id": "authorization_1",
+                            "authorization_consumed": true,
+                            "applied": true,
+                            "operation": "replace_file",
+                            "atomic_replacement_completed": true,
+                            "atomic_create_completed": false,
+                            "atomic_delete_completed": false,
+                            "path": "README.md",
+                            "expected_target_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                            "expected_target_absent": false,
+                            "pre_write_target_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                            "pre_write_target_exists": true,
+                            "post_write_sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                            "post_delete_target_exists": null,
+                            "content_chars": 7,
+                            "content_bytes": 7,
+                            "checked_at": "2026-09-04T00:00:05Z",
+                            "applied_at": "2026-09-04T00:00:06Z",
+                            "temp_file_cleaned": true,
+                            "check_count": 1,
+                            "failed_checks": [],
+                            "blocked_checks": []
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::WorkspacePatchReadinessReportCreated,
+                        Some(serde_json::json!({
+                            "proposal_id": "proposal_1",
+                            "report_id": "report_1",
+                            "readiness_status": "Ready",
+                            "readiness_reason": null,
+                            "readiness_fingerprint": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                            "fingerprint_input_count": 3,
+                            "generated_at": "2026-09-04T00:00:07Z",
+                            "check_count": 1,
+                            "failed_checks": [],
+                            "blocked_checks": []
+                        })),
+                    ),
+                ],
+            )
+            .expect("strict workspace patch payloads should append");
     }
 
     #[test]

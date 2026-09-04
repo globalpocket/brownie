@@ -21465,7 +21465,7 @@ modes:
             .tasks()
             .append_task_event_with_payload(
                 &task,
-                LedgerEventKind::WorkspacePatchProposed,
+                LedgerEventKind::HeadlessRunSessionAdvanced,
                 Some(json!({
                     "verification_completion_gate_status": "Failed",
                     "required_verifier_count": 1
@@ -21780,7 +21780,7 @@ modes:
             .tasks()
             .append_task_event_with_payload(
                 &task,
-                LedgerEventKind::WorkspacePatchProposed,
+                LedgerEventKind::HeadlessRunSessionAdvanced,
                 Some(json!({
                     "verification_recovery_repair": true,
                     "gate_status": "Failed",
@@ -30678,7 +30678,17 @@ modes:
                 Some(json!({
                     "verification_recovery_repair": true,
                     "proposal_id": "proposal_recovery_1",
+                    "tool_id": WORKSPACE_WRITE_TOOL_ID,
+                    "path": "README.md",
+                    "operation": WorkspacePatchOperation::ReplaceFile.as_str(),
+                    "content_preview": "bounded recovery patch",
+                    "content_chars": 22,
+                    "truncated": false,
                     "validation_status": "Valid",
+                    "validation_reason": null,
+                    "diff_preview": null,
+                    "diff_truncated": false,
+                    "diff_redacted": false,
                     "source_task_id": source.task_id,
                     "source_run_id": source.run_id,
                     "recovery_task_id": recovery.task_id,
