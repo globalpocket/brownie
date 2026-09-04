@@ -171,9 +171,11 @@ pub fn build_workspace_file_inventory(
         open_validated_directory(&canonical_workspace_root, &canonical_workspace_root)
             .map_err(|_| CodebaseIndexError::WorkspaceRootUnreadable)?;
     let ignore_resolver = IgnoreResolver::load(&workspace_root_handle)?;
-    let mut counts = CodebaseIndexCounts::default();
-    counts.ignore_rule_files_loaded = ignore_resolver.rule_files_loaded;
-    counts.ignore_rule_count = ignore_resolver.rule_count;
+    let mut counts = CodebaseIndexCounts {
+        ignore_rule_files_loaded: ignore_resolver.rule_files_loaded,
+        ignore_rule_count: ignore_resolver.rule_count,
+        ..CodebaseIndexCounts::default()
+    };
     let mut entries = Vec::new();
     let mut queue = VecDeque::from([(canonical_scan_root, root.clone())]);
     let mut truncated = false;
@@ -972,11 +974,11 @@ fn compare_os_names(a: &std::ffi::OsStr, b: &std::ffi::OsStr) -> Ordering {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
-        return a.as_bytes().cmp(b.as_bytes());
+        a.as_bytes().cmp(b.as_bytes())
     }
     #[cfg(not(unix))]
     {
-        return a.to_string_lossy().cmp(&b.to_string_lossy());
+        a.to_string_lossy().cmp(&b.to_string_lossy())
     }
 }
 

@@ -878,7 +878,7 @@ fn task_inspect_payload(result: &Value) -> Result<Value, RuntimeClientError> {
 fn run_inspect_payload(result: &Value) -> Result<Value, RuntimeClientError> {
     let run = object_field(result, "run")?;
     let progress = optional_object_field(run, "progress_snapshot");
-    Ok(project_run_summary(run, progress)?)
+    project_run_summary(run, progress)
 }
 
 fn recovery_probe_payload(result: &Value) -> Result<Value, RuntimeClientError> {

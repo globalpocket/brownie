@@ -61,6 +61,8 @@ const requiredCiCommands = [
 
 const requiredVsixCheckCommands = [
   'pnpm --workspace-root guard:runtime-release-readiness',
+  'pnpm --workspace-root guard:release-contract',
+  'pnpm --workspace-root guard:release-contract:test',
   'pnpm --workspace-root guard:durable-schema-migration',
   'pnpm --workspace-root guard:protocol-event-canonization',
   'pnpm --workspace-root guard:runtime-module-decomposition',
@@ -255,6 +257,23 @@ export function validateRuntimeReleaseReadinessAudit(audit, options = {}) {
   requireValue(Number.isInteger(audit.schema_version) && audit.schema_version > 0, errors, `${auditPath} schema_version must be a positive integer.`);
   requireValue(audit.campaign === 'runtime-release-readiness-p0-p1-finite-closure', errors, `${auditPath} campaign must identify the finite P0/P1 closure campaign.`);
   requireValue(typeof audit.runtime_release_ready === 'boolean', errors, `${auditPath} runtime_release_ready must be a boolean.`);
+  requireValue(
+    audit.release_engineering_contract?.contract_path === 'docs/architecture/runtime-release-contract.json',
+    errors,
+    `${auditPath} must reference the Runtime release engineering contract.`
+  );
+  requireValue(
+    ['partial', 'satisfied'].includes(audit.release_engineering_contract?.status),
+    errors,
+    `${auditPath} release_engineering_contract.status must be partial or satisfied.`
+  );
+  if (audit.release_engineering_contract?.status !== 'satisfied') {
+    requireValue(
+      audit.runtime_release_ready === false,
+      errors,
+      `${auditPath} runtime_release_ready must remain false while release_engineering_contract is not satisfied.`
+    );
+  }
 
   const classifications = Array.isArray(audit.classifications) ? audit.classifications : [];
   requireValue(classifications.length > 0, errors, `${auditPath} classifications must be non-empty.`);

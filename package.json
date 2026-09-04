@@ -15,6 +15,8 @@
     "guard:phase-value:test": "node --test scripts/guard-phase-value.test.mjs",
     "guard:product-completion": "node scripts/guard-product-completion.mjs",
     "guard:product-completion:test": "node --test scripts/guard-product-completion.test.mjs",
+    "guard:release-contract": "node scripts/guard-release-contract.mjs",
+    "guard:release-contract:test": "node --test scripts/guard-release-contract.test.mjs",
     "guard:protocol-event-canonization": "node scripts/guard-protocol-event-canonization.mjs",
     "guard:protocol-event-canonization:test": "node --test scripts/guard-protocol-event-canonization.test.mjs",
     "guard:platform-deadline-durability": "node scripts/guard-platform-deadline-durability.mjs",
@@ -25,6 +27,7 @@
     "guard:runtime-release-readiness:test": "node --test scripts/guard-runtime-release-readiness.test.mjs",
     "install:cli": "node scripts/install-brownie-cli.mjs",
     "install:cli:test": "node --test scripts/install-brownie-cli.test.mjs",
+    "release:gate": "node scripts/release-gate.mjs",
     "test:rrp3-process-loss": "node scripts/rrp3-process-loss-recovery-e2e.mjs",
     "test": "pnpm --filter brownie-vsix test"
   },

@@ -253,17 +253,12 @@ pub struct AgentModesCompileOptions {
     pub capability_ceiling: AgentModesCapabilityCeiling,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum AgentModesSourceTrust {
+    #[default]
     TrustedLocalDeveloper,
     TrustedSignedActiveModePack,
     UntrustedRepositoryLocal,
-}
-
-impl Default for AgentModesSourceTrust {
-    fn default() -> Self {
-        Self::TrustedLocalDeveloper
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

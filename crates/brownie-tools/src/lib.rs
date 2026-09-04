@@ -53,8 +53,8 @@ pub const DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 20_000;
 
 #[cfg(test)]
 thread_local! {
-    static TEST_GIT_PROGRAM_OVERRIDE: RefCell<Option<OsString>> = RefCell::new(None);
-    static TEST_GIT_TIMEOUT_OVERRIDE: RefCell<Option<Duration>> = RefCell::new(None);
+    static TEST_GIT_PROGRAM_OVERRIDE: RefCell<Option<OsString>> = const { RefCell::new(None) };
+    static TEST_GIT_TIMEOUT_OVERRIDE: RefCell<Option<Duration>> = const { RefCell::new(None) };
 }
 pub const MIN_WORKSPACE_WRITE_CONTENT_CHARS: usize = 100;
 pub const MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 200_000;
@@ -1127,7 +1127,7 @@ fn execute_bounded_git_commit(
                 "--add",
                 "--cacheinfo",
                 "100644",
-                &blob_id,
+                blob_id,
                 &authorized_path.path,
             ],
             git_timeout(),
@@ -1225,7 +1225,7 @@ fn execute_bounded_git_commit(
             "-c",
             "core.hooksPath=/dev/null",
             "commit-tree",
-            &tree_id,
+            tree_id,
             "-p",
             &authorization.expected_parent_head,
             "-m",
@@ -1271,7 +1271,7 @@ fn execute_bounded_git_commit(
             "core.hooksPath=/dev/null",
             "update-ref",
             head_ref,
-            &commit_id,
+            commit_id,
             &authorization.expected_parent_head,
         ],
         git_timeout(),
@@ -1940,10 +1940,7 @@ fn capture_pipe<R: Read>(mut reader: R) -> ProcessCapture {
     let mut truncated = false;
     let mut content = Vec::new();
     let mut buffer = [0u8; 8192];
-    loop {
-        let Ok(read) = reader.read(&mut buffer) else {
-            break;
-        };
+    while let Ok(read) = reader.read(&mut buffer) {
         if read == 0 {
             break;
         }
@@ -1978,10 +1975,7 @@ fn capture_pipe_bounded<R: Read>(
     let mut truncated = false;
     let mut content = Vec::new();
     let mut buffer = [0u8; 8192];
-    loop {
-        let Ok(read) = reader.read(&mut buffer) else {
-            break;
-        };
+    while let Ok(read) = reader.read(&mut buffer) {
         if read == 0 {
             break;
         }
@@ -2066,6 +2060,10 @@ fn terminate_process_tree(_child_id: u32) -> (bool, &'static str) {
     (false, "process_tree_timeout_unsupported")
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Verifier result construction keeps bounded process evidence explicit at call sites."
+)]
 fn verification_result(
     tool_id: &str,
     check_id: &str,
@@ -3805,7 +3803,7 @@ fn preflight_git_input(input: &Value, tool_id: &str) -> Result<(), &'static str>
     let Some(object) = input.as_object() else {
         return Err("git capability input must be an object.");
     };
-    for key in object.keys() {
+    if let Some(key) = object.keys().next() {
         match key.as_str() {
             "command" | "argv" | "args" | "cwd" | "env" | "stdin" | "shell" | "timeout"
             | "timeout_ms" | "remote" | "path" | "paths" | "branch" | "ref" | "revision" => {

@@ -15,6 +15,8 @@ const ciText = [
 const cargoText = 'license = "UNLICENSED"\npublish = false\n';
 const vsixPackageText = [
   'pnpm --workspace-root guard:runtime-release-readiness',
+  'pnpm --workspace-root guard:release-contract',
+  'pnpm --workspace-root guard:release-contract:test',
   'pnpm --workspace-root guard:durable-schema-migration',
   'pnpm --workspace-root guard:protocol-event-canonization',
   'pnpm --workspace-root guard:runtime-module-decomposition',
@@ -41,6 +43,10 @@ function validAudit(overrides = {}) {
     campaign: 'runtime-release-readiness-p0-p1-finite-closure',
     phase: 'RRD-1',
     runtime_release_ready: false,
+    release_engineering_contract: {
+      contract_path: 'docs/architecture/runtime-release-contract.json',
+      status: 'partial'
+    },
     release_ready_blocked_by: [
       'runtime-boundary-protocol-contracts',
       'explicit-cancel-command',
@@ -122,6 +128,10 @@ function terminalRuntimeReadyAudit(overrides = {}) {
   return {
     ...audit,
     runtime_release_ready: true,
+    release_engineering_contract: {
+      contract_path: 'docs/architecture/runtime-release-contract.json',
+      status: 'satisfied'
+    },
     release_ready_blocked_by: [],
     classifications: audit.classifications.map((entry) => {
       if (
@@ -302,6 +312,12 @@ test('rejects missing owner license decision while workspace remains unpublished
   assert(errors.some((error) => error.includes('oss_license')));
 });
 
+test('rejects audit without release engineering contract reference', () => {
+  const audit = validAudit({ release_engineering_contract: undefined });
+  const errors = validate(audit);
+  assert(errors.some((error) => error.includes('release engineering contract')));
+});
+
 test('rejects CI or VSIX check path that omits release readiness guard coverage', () => {
   const errors = validate(validAudit(), { ciText: 'pnpm install\npnpm guard:phase-value\n' });
   assert(errors.some((error) => error.includes('pnpm --filter brownie-vsix check')));
@@ -312,11 +328,13 @@ test('rejects CI or VSIX check path that omits release readiness guard coverage'
   const protocolGuardErrors = validate(validAudit(), {
     vsixPackageText: 'pnpm --workspace-root guard:runtime-release-readiness'
   });
-  assert(protocolGuardErrors.some((error) => error.includes('guard:durable-schema-migration')));
+  assert(protocolGuardErrors.some((error) => error.includes('guard:release-contract')));
 
   const semanticProtocolGuardErrors = validate(validAudit(), {
     vsixPackageText: [
       'pnpm --workspace-root guard:runtime-release-readiness',
+      'pnpm --workspace-root guard:release-contract',
+      'pnpm --workspace-root guard:release-contract:test',
       'pnpm --workspace-root guard:durable-schema-migration'
     ].join('\n')
   });
@@ -325,6 +343,8 @@ test('rejects CI or VSIX check path that omits release readiness guard coverage'
   const moduleGuardErrors = validate(validAudit(), {
     vsixPackageText: [
       'pnpm --workspace-root guard:runtime-release-readiness',
+      'pnpm --workspace-root guard:release-contract',
+      'pnpm --workspace-root guard:release-contract:test',
       'pnpm --workspace-root guard:durable-schema-migration',
       'pnpm --workspace-root guard:protocol-event-canonization'
     ].join('\n')
@@ -334,6 +354,8 @@ test('rejects CI or VSIX check path that omits release readiness guard coverage'
   const platformGuardErrors = validate(validAudit(), {
     vsixPackageText: [
       'pnpm --workspace-root guard:runtime-release-readiness',
+      'pnpm --workspace-root guard:release-contract',
+      'pnpm --workspace-root guard:release-contract:test',
       'pnpm --workspace-root guard:durable-schema-migration',
       'pnpm --workspace-root guard:protocol-event-canonization',
       'pnpm --workspace-root guard:runtime-module-decomposition'

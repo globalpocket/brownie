@@ -740,7 +740,7 @@ fn validate_mcp_secret_env(
     let mut bindings = Vec::with_capacity(raw.len());
     let mut seen_refs = HashSet::new();
     for (env_name, value) in raw {
-        let env_name = validate_mcp_secret_env_name(&server_id, &env_name)?;
+        let env_name = validate_mcp_secret_env_name(server_id, &env_name)?;
         let object = value.as_object().ok_or_else(|| {
             anyhow::anyhow!(
                 "modepack mcp_servers[{server_id}].env[{env_name}] must be a secret reference object"

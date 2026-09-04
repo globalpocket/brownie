@@ -119,7 +119,7 @@ impl Cli {
                 CliCommand::Run { objective }
             }
             "resume" => parse_resume(&args[1..])?,
-            "status" => no_args(&args, CliCommand::Status)?,
+            "status" => no_args(args, CliCommand::Status)?,
             "inspect" => parse_inspect(&args[1..])?,
             "list" => parse_list(&args[1..])?,
             "mode" => parse_mode(&args[1..])?,
