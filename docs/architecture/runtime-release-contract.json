@@ -1,0 +1,375 @@
+{
+  "schema_version": 1,
+  "contract_id": "runtime-release-engineering-contract-v1",
+  "phase": "RRP-8.2",
+  "phase_title": "Release Contract and Local Gate Baseline",
+  "campaign": "runtime-release-readiness-p0-p1-finite-closure",
+  "repository": "globalpocket/brownie",
+  "owner": "runtime",
+  "runtime_release_ready": false,
+  "release_engineering_maturity": {
+    "baseline_percent": 58,
+    "target_percent": 90,
+    "current_percent": 58,
+    "scoring_basis": "No maturity increase is claimed until executable release-gate, artifact, security, provenance, cross-platform, review, and owner-controlled-setting evidence exists for one tested commit."
+  },
+  "commit_trace": {
+    "audited_base_commit": "8016b67262f6e951fd834589637df475e03adb2b",
+    "implementation_commit": null,
+    "tested_commit": null,
+    "release_tag": null,
+    "workflow_run_id": null,
+    "artifact_sha256": null,
+    "contract_registry_fingerprint": "sha256:runtime-release-engineering-contract-v1-rrp-8-2",
+    "mode_pack_fingerprint": null,
+    "product_dod_fingerprint": null
+  },
+  "release_ready_conditions": [
+    {
+      "id": "required_before_release_closed",
+      "status": "blocked_by_runtime_release_guard_ci",
+      "release_blocking": true,
+      "required_evidence": [
+        "runtime-release-readiness audit has zero Runtime-owned P0/P1 required_before_release items",
+        "runtime_release_ready remains false until this is proven"
+      ]
+    },
+    {
+      "id": "product_completion_guard",
+      "status": "scripted_gate_available",
+      "release_blocking": true,
+      "required_evidence": [
+        "pnpm --workspace-root guard:product-completion"
+      ]
+    },
+    {
+      "id": "mandatory_ci_success",
+      "status": "partial_workflow_scope_blocked_and_clippy_baseline_open",
+      "release_blocking": true,
+      "required_evidence": [
+        "cargo fmt --all -- --check",
+        "cargo check --workspace --all-targets --all-features",
+        "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+        "cargo test --workspace --all-features",
+        "pnpm install --frozen-lockfile",
+        "pnpm --workspace-root check",
+        "pnpm --workspace-root test",
+        "pnpm --workspace-root build",
+        "GitHub workflow directly invokes the release gate from the tested commit",
+        "pnpm release:gate passes instead of failing closed at rust_clippy"
+      ]
+    },
+    {
+      "id": "os_artifacts_generated",
+      "status": "not_generated",
+      "release_blocking": true,
+      "required_evidence": [
+        "Ubuntu Linux artifact",
+        "macOS Apple Silicon artifact",
+        "Windows artifact"
+      ]
+    },
+    {
+      "id": "artifact_smoke_tests",
+      "status": "not_executed",
+      "release_blocking": true,
+      "required_evidence": [
+        "clean install smoke test per target OS",
+        "brownie --version",
+        "base Mode Pack load",
+        "minimal task run",
+        "ledger generation",
+        "forced termination and continuation resume",
+        "stale and replay rejection"
+      ]
+    },
+    {
+      "id": "security_dependency_secret_scans",
+      "status": "not_integrated",
+      "release_blocking": true,
+      "required_evidence": [
+        "cargo audit or equivalent vulnerability scan",
+        "cargo deny or equivalent dependency/license policy scan",
+        "Node dependency audit",
+        "secret scan over Rust and Node sources and generated release evidence"
+      ]
+    },
+    {
+      "id": "sbom_generated",
+      "status": "not_generated",
+      "release_blocking": true,
+      "required_evidence": [
+        "Rust and Node SBOM generated from the tested commit"
+      ]
+    },
+    {
+      "id": "checksums_generated",
+      "status": "not_generated",
+      "release_blocking": true,
+      "required_evidence": [
+        "SHA256SUMS generated for every release artifact and release evidence file"
+      ]
+    },
+    {
+      "id": "signature_or_integrity_proof",
+      "status": "blocked_external",
+      "release_blocking": true,
+      "required_evidence": [
+        "artifact signature or owner-approved formal integrity mechanism",
+        "signing authority and verification instructions"
+      ]
+    },
+    {
+      "id": "provenance_generated",
+      "status": "not_generated",
+      "release_blocking": true,
+      "required_evidence": [
+        "build provenance binds source commit, workflow run, builder environment, artifact checksums, and release evidence"
+      ]
+    },
+    {
+      "id": "tested_commit_matches_artifact_commit",
+      "status": "missing_artifacts",
+      "release_blocking": true,
+      "required_evidence": [
+        "tested_commit equals artifact source commit"
+      ]
+    },
+    {
+      "id": "audit_trace_matches_tested_commit",
+      "status": "missing_tested_commit",
+      "release_blocking": true,
+      "required_evidence": [
+        "release readiness audit, semantic contract, product DoD, and release contract are generated or checked from the tested commit"
+      ]
+    },
+    {
+      "id": "no_unresolved_release_blockers",
+      "status": "blocked_by_runtime_release_guard_ci",
+      "release_blocking": true,
+      "required_evidence": [
+        "release_ready_blocked_by is empty",
+        "owner-controlled settings required for release are completed"
+      ]
+    },
+    {
+      "id": "owner_controlled_settings_complete",
+      "status": "owner_decision_waiting",
+      "release_blocking": true,
+      "required_evidence": [
+        "OSS license and publish posture decision",
+        "branch protection and required status checks configured",
+        "protected tag policy configured if release tags are used",
+        "signing or integrity authority configured"
+      ]
+    },
+    {
+      "id": "required_independent_reviews_complete",
+      "status": "not_completed",
+      "release_blocking": true,
+      "required_evidence": [
+        "independent human review for Release workflow",
+        "independent human review for permission model",
+        "independent human review for Ledger Contract",
+        "independent human review for Mode Pack trust boundary",
+        "independent human review for signing/provenance",
+        "independent human review for Release Ready判定ロジック"
+      ]
+    }
+  ],
+  "finite_phase_plan": [
+    {
+      "id": "phase-a-release-contract",
+      "status": "implemented_in_this_phase",
+      "verification": [
+        "pnpm --workspace-root guard:release-contract",
+        "node --test scripts/guard-release-contract.test.mjs",
+        "pnpm release:gate -- --dry-run"
+      ]
+    },
+    {
+      "id": "phase-b-mandatory-ci-quality-gate",
+      "status": "partially_available_workflow_scope_blocked",
+      "verification": [
+        "repository-local release:gate script enumerates required Rust, Node, Brownie guard, and recovery commands",
+        "direct .github workflow wiring remains blocked until workflow scope exists"
+      ]
+    },
+    {
+      "id": "phase-c-ledger-contract-release-integrity",
+      "status": "implemented_sufficient_current_contract",
+      "verification": [
+        "guard:protocol-event-canonization",
+        "brownie-protocol generated semantic contract",
+        "brownie-store ledger payload validation tests"
+      ]
+    },
+    {
+      "id": "phase-d-supply-chain-security",
+      "status": "not_integrated",
+      "verification": [
+        "cargo audit or equivalent",
+        "cargo deny or equivalent",
+        "Node audit",
+        "secret scan",
+        "SBOM"
+      ]
+    },
+    {
+      "id": "phase-e-cross-platform-distribution",
+      "status": "not_integrated",
+      "verification": [
+        "Linux/macOS/Windows build artifacts",
+        "clean install smoke tests",
+        "checksum verification"
+      ]
+    },
+    {
+      "id": "phase-f-flaky-recovery-soak",
+      "status": "not_integrated",
+      "verification": [
+        "short deterministic PR repetition",
+        "100 iteration scheduled/release soak evidence with seed and failure rate"
+      ]
+    },
+    {
+      "id": "phase-g-release-governance",
+      "status": "partial_owner_settings_required",
+      "verification": [
+        "repository policy document",
+        "required status checks",
+        "self-approval prohibition",
+        "protected tag policy",
+        "owner action list for GitHub settings"
+      ]
+    }
+  ],
+  "local_release_gate": {
+    "package_script": "pnpm release:gate",
+    "dry_run_command": "pnpm release:gate -- --dry-run",
+    "evidence_command": "pnpm release:gate -- --evidence dist/release-evidence/release-gate.json",
+    "commands": [
+      {
+        "id": "rust_fmt",
+        "command": "cargo fmt --all -- --check"
+      },
+      {
+        "id": "rust_check",
+        "command": "cargo check --workspace --all-targets --all-features"
+      },
+      {
+        "id": "rust_clippy",
+        "command": "cargo clippy --workspace --all-targets --all-features -- -D warnings"
+      },
+      {
+        "id": "rust_test",
+        "command": "cargo test --workspace --all-features"
+      },
+      {
+        "id": "pnpm_install_frozen",
+        "command": "pnpm install --frozen-lockfile"
+      },
+      {
+        "id": "node_check",
+        "command": "pnpm --workspace-root check"
+      },
+      {
+        "id": "node_test",
+        "command": "pnpm --workspace-root test"
+      },
+      {
+        "id": "node_build",
+        "command": "pnpm --workspace-root build"
+      },
+      {
+        "id": "release_contract_guard",
+        "command": "pnpm --workspace-root guard:release-contract"
+      },
+      {
+        "id": "release_contract_guard_test",
+        "command": "pnpm --workspace-root guard:release-contract:test"
+      },
+      {
+        "id": "runtime_release_readiness_guard",
+        "command": "pnpm --workspace-root guard:runtime-release-readiness"
+      },
+      {
+        "id": "product_completion_guard",
+        "command": "pnpm --workspace-root guard:product-completion"
+      },
+      {
+        "id": "phase_value_guard",
+        "command": "pnpm --workspace-root guard:phase-value"
+      },
+      {
+        "id": "durable_schema_migration_guard",
+        "command": "pnpm --workspace-root guard:durable-schema-migration"
+      },
+      {
+        "id": "protocol_event_canonization_guard",
+        "command": "pnpm --workspace-root guard:protocol-event-canonization"
+      },
+      {
+        "id": "runtime_module_decomposition_guard",
+        "command": "pnpm --workspace-root guard:runtime-module-decomposition"
+      },
+      {
+        "id": "platform_deadline_durability_guard",
+        "command": "pnpm --workspace-root guard:platform-deadline-durability"
+      },
+      {
+        "id": "rrp3_process_loss_e2e",
+        "command": "pnpm --workspace-root test:rrp3-process-loss"
+      }
+    ]
+  },
+  "external_blockers": [
+    {
+      "id": "github_workflow_scope",
+      "status": "blocked_external",
+      "reason": "Current GitHub credentials have repo, gist, project, and read:org scopes, but not workflow scope; direct .github/workflows/ci.yml hardening cannot be pushed by this controller.",
+      "owner_action": "Provide workflow-scope credentials or approve an equivalent CI-hardening path that does not require workflow-file mutation."
+    },
+    {
+      "id": "release_signing_authority",
+      "status": "owner_decision_waiting",
+      "reason": "Runtime can generate checksum/provenance files, but signing authority or an approved formal integrity mechanism is an owner-controlled release decision."
+    }
+  ],
+  "release_artifact_evidence": {
+    "artifacts": {
+      "status": "not_generated",
+      "path": null
+    },
+    "sha256sums": {
+      "status": "not_generated",
+      "path": null
+    },
+    "signature": {
+      "status": "blocked_external",
+      "path": null
+    },
+    "sbom": {
+      "status": "not_generated",
+      "path": null
+    },
+    "provenance": {
+      "status": "not_generated",
+      "path": null
+    }
+  },
+  "owner_actions_required": [
+    "Decide OSS license and publish posture.",
+    "Provide GitHub workflow scope or approve an equivalent CI-hardening path.",
+    "Configure required status checks and branch protection for the release gate.",
+    "Configure protected tag policy if release tags are used.",
+    "Configure signing authority or approve a formal integrity mechanism.",
+    "Arrange independent human reviews for Release workflow, permission model, Ledger Contract, Mode Pack trust boundary, signing/provenance, and Release Ready判定ロジック."
+  ],
+  "forbidden_success_claims": [
+    "Do not set runtime_release_ready=true while any release_ready_condition is not satisfied.",
+    "Do not treat missing artifacts, missing scans, missing SBOM, missing checksum, missing signature/integrity proof, missing provenance, missing tested_commit, or missing workflow run as success.",
+    "Do not edit .github workflow files without workflow scope or an owner-approved equivalent path.",
+    "Do not change license, publish settings, tags, or release assets in this phase."
+  ]
+}

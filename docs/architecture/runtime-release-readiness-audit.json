@@ -1,14 +1,23 @@
 {
   "schema_version": 1,
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-  "phase": "RRP-5.18",
-  "phase_title": "Ledger Payload Contract Registry and Event Version Baseline",
+  "phase": "RRP-8.2",
+  "phase_title": "Release Contract and Local Gate Baseline",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "e98590ac81c3b611c8d055bad5b493c960429830",
+  "audited_main_commit": "8016b67262f6e951fd834589637df475e03adb2b",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
     "runtime-release-guard-ci"
   ],
+  "release_engineering_contract": {
+    "contract_path": "docs/architecture/runtime-release-contract.json",
+    "status": "partial",
+    "phase": "RRP-8.2",
+    "audited_base_commit": "8016b67262f6e951fd834589637df475e03adb2b",
+    "local_release_gate_script": "pnpm release:gate",
+    "direct_workflow_gate_status": "blocked_external_workflow_scope_required",
+    "runtime_release_ready_after_phase": false
+  },
   "owner_decisions": [
     {
       "id": "oss_license",
@@ -118,9 +127,11 @@
         "RRP-5.15 extends guard:protocol-event-canonization in the existing CI-invoked VSIX check path to require strict typed subtask orchestration/dispatch payload descriptor tokens, fixtures, and release-blocking open-count accounting.",
         "RRP-5.16 extends guard:protocol-event-canonization in the existing CI-invoked VSIX check path to require strict typed workspace patch payload descriptor tokens, payload_absent approval-request evidence, fixtures, and release-blocking open-count accounting.",
         "RRP-5.17 extends guard:protocol-event-canonization in the existing CI-invoked VSIX check path to require strict typed headless payload descriptor tokens, fixtures, full typed coverage closure, and release_blocking_open_payload_count 0.",
-        "RRP-5.18 updates guard:protocol-event-canonization so the CI-invoked guard requires protocol-owned event-specific ledger payload schema versions and rejects a single global current schema version for every event; direct .github workflow hardening still requires workflow-scope credentials or an owner-approved equivalent path."
+        "RRP-5.18 updates guard:protocol-event-canonization so the CI-invoked guard requires protocol-owned event-specific ledger payload schema versions and rejects a single global current schema version for every event; direct .github workflow hardening still requires workflow-scope credentials or an owner-approved equivalent path.",
+        "RRP-8.2 adds docs/architecture/runtime-release-contract.json as the fail-closed Release Engineering Contract, adds pnpm release:gate as the repository-local command plan for Rust, Node, Brownie guard, and recovery evidence, and wires guard:release-contract plus guard:release-contract:test into the existing CI-invoked VSIX check path without editing .github/workflows/ci.yml.",
+        "RRP-8.2 local release:gate evidence passes rust_fmt and rust_check, then fails closed at rust_clippy because existing Runtime clippy warnings remain; this is not treated as Release Ready."
       ],
-      "next_action": "Close direct workflow wiring and remaining full CI release-gate hardening only after workflow-scope credentials or an owner-approved equivalent CI-hardening path are available."
+      "next_action": "Continue runtime-release-guard-ci by adding supply-chain, artifact, provenance, cross-platform, soak, and governance evidence in repo-local scripts where possible; close direct workflow wiring only after workflow-scope credentials or an owner-approved equivalent CI-hardening path are available."
     },
     {
       "id": "mcp-runtime-safety-policy",
@@ -204,7 +215,7 @@
         "RRP-7.2 adds a RuntimeDeadline protocol field for task.run, persists the chosen deadline into TaskRecord during Running transition, rejects mismatched resume deadlines, and fails closed before resume mutation when the persisted wall-clock deadline has expired.",
         "RRP-7.2 adds real child-process-loss evidence for the MCP response-after-receive window by aborting after durable MCP ToolExecutionCompleted evidence and before terminal task recording, then verifying restart/recovery behavior."
       ],
-      "next_action": "Use the closed RRP-7.2 platform/deadline/durability evidence while continuing remaining release blockers: protocol-event-canonization, runtime-release-guard-ci, and owner license/publish decisions."
+      "next_action": "Use the closed RRP-7.2 platform/deadline/durability evidence while continuing remaining release blockers: runtime-release-guard-ci and owner license/publish decisions."
     },
     {
       "id": "hosted-scheduler-daemon-worker-fleet",
@@ -243,5 +254,5 @@
       "next_action": "Do not use these items to block Brownie Runtime release."
     }
   ],
-  "updated_at": "2026-09-04T00:00:00Z"
+  "updated_at": "2026-09-04T05:50:00Z"
 }
