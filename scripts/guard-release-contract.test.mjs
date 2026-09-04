@@ -35,7 +35,7 @@ function validContract(overrides = {}) {
   return {
     schema_version: 1,
     contract_id: 'runtime-release-engineering-contract-v1',
-    phase: 'RRP-8.5',
+    phase: 'RRP-8.6',
     owner: 'runtime',
     runtime_release_ready: false,
     release_engineering_maturity: {
@@ -141,7 +141,7 @@ const validPackageJson = {
 
 const validVsixPackageJson = {
   scripts: {
-    check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root release:dependency-security-license-audit:test && pnpm --workspace-root guard:dependency-security-license-audit && pnpm --workspace-root guard:dependency-security-license-audit:test && pnpm --workspace-root guard:supply-chain-artifact-evidence && pnpm --workspace-root guard:supply-chain-artifact-evidence:test'
+    check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root release:gate -- --dry-run && pnpm --workspace-root release:dependency-security-license-audit:test && pnpm --workspace-root guard:dependency-security-license-audit && pnpm --workspace-root guard:dependency-security-license-audit:test && pnpm --workspace-root guard:supply-chain-artifact-evidence && pnpm --workspace-root guard:supply-chain-artifact-evidence:test'
   }
 };
 
@@ -211,6 +211,17 @@ test('rejects VSIX check path that omits release contract guard tests', () => {
     vsixPackageJson: { scripts: { check: 'pnpm --workspace-root guard:release-contract' } }
   });
   assert(errors.some((error) => error.includes('guard:release-contract:test')));
+});
+
+test('rejects VSIX check path that omits release gate dry run', () => {
+  const errors = validate(validContract(), {
+    vsixPackageJson: {
+      scripts: {
+        check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root release:dependency-security-license-audit:test && pnpm --workspace-root guard:dependency-security-license-audit && pnpm --workspace-root guard:dependency-security-license-audit:test && pnpm --workspace-root guard:supply-chain-artifact-evidence && pnpm --workspace-root guard:supply-chain-artifact-evidence:test'
+      }
+    }
+  });
+  assert(errors.some((error) => error.includes('release:gate dry-run')));
 });
 
 test('rejects VSIX check path that omits supply-chain evidence guard', () => {

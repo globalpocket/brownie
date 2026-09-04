@@ -1,34 +1,34 @@
 {
   "schema_version": 1,
-  "phase": "RRP-8.4",
-  "title": "Supply Chain and Artifact Evidence Baseline",
+  "phase": "RRP-8.6",
+  "title": "Existing CI Release Gate Dry-Run Binding",
   "date": "2026-09-04",
   "current_milestone": "runtime-release-readiness-p0-p1-finite-closure",
   "milestone": "Brownie Runtime Release Readiness",
   "target_capability": "headless_autonomous_development",
-  "concrete_capability_transition": "Brownie release engineering gains a repository-local supply-chain and artifact evidence generator plus guard that records lockfile, dependency/security/license scan, secret scan, SBOM, checksum, provenance, artifact, smoke-test, and signing evidence slots while failing closed instead of treating missing evidence as Release Ready.",
+  "concrete_capability_transition": "Brownie release engineering binds the repository-local release gate dry-run into the existing GitHub-CI-invoked VSIX check path without editing workflow files, making release-gate plan drift a guarded CI failure while Runtime Release Ready remains false.",
   "forbidden_pattern": "runtime_release_ready_without_complete_release_evidence_missing_artifacts_as_success_missing_sbom_checksum_signature_provenance_as_success_missing_dependency_license_secret_scan_as_success_workflow_edit_without_scope_license_publish_release_tag_asset_self_review_as_independent_review_hosted_scheduler_daemon_queue_supervisor_saas_rbac_vault_billing_bdk_enterprise_admin_generic_shell_arbitrary_process_exec_remote_git_expansion_streamable_http_oauth_mcp_apps_sampling_roots_elicitation_public_registry_automatic_install",
   "project_objective_ref": "docs/architecture/product-charter.md",
   "strategic_capability_mapping": [
     {
       "capability": "headless_autonomous_development",
-      "transition": "The local release gate now produces and validates bounded supply-chain and artifact evidence slots for the tested commit.",
-      "relationship": "This advances runtime-release-guard-ci by turning missing SBOM, checksum, provenance, artifact, scan, and signing evidence into explicit machine-checked release blockers rather than prose-only follow-up."
+      "transition": "The existing CI path now executes the release gate dry-run through brownie-vsix check and guard engines fail closed if that binding is removed.",
+      "relationship": "This advances runtime-release-guard-ci through an owner-approved equivalent path while workflow-scope credentials remain absent; it does not claim direct workflow hardening or Runtime Release Ready."
     }
   ],
   "phase_value_gate": {
     "required": true,
     "answers": {
-      "strategic_capabilities": "The phase advances headless_autonomous_development by making supply-chain and release-artifact evidence mechanically visible to the Runtime release gate.",
-      "new_capability": "A contributor can run pnpm --workspace-root release:supply-chain-artifact-evidence and guard:supply-chain-artifact-evidence to generate and validate bounded local evidence for lockfiles, dependency scan status, secret scan status, SBOM, checksums, provenance, artifacts, smoke tests, and signing/integrity status.",
-      "why_existing_functionality_is_insufficient": "The existing release contract named missing artifacts, SBOM, checksums, provenance, and scans but did not generate a concrete evidence file or validate satisfied evidence paths and hashes.",
-      "product_gap_if_skipped": "Brownie could keep passing the local mandatory gate while still relying on manual interpretation of missing supply-chain evidence, making Release Ready drift harder to detect.",
-      "non_duplicative": "This phase does not repeat clippy, protocol, ledger, durable migration, or platform work; it adds the supply-chain and artifact evidence surface that those gates did not produce.",
+      "strategic_capabilities": "The phase advances headless_autonomous_development by making the mandatory release gate plan visible and guarded in the existing CI-invoked VSIX check path.",
+      "new_capability": "A contributor or CI run that executes pnpm --filter brownie-vsix check now also executes pnpm --workspace-root release:gate -- --dry-run, and guards reject removing that binding.",
+      "why_existing_functionality_is_insufficient": "Before this phase, CI checked the release contract and many release guards but did not directly exercise the release gate plan from the CI-invoked path, so release:gate command-list drift could escape the mandatory VSIX check.",
+      "product_gap_if_skipped": "Brownie would retain a local release gate whose command plan could diverge from the CI-required check path until workflow-scope credentials are available.",
+      "non_duplicative": "This phase does not add another release contract, workflow edit, or ledger/platform feature; it binds the existing release gate dry-run into the existing CI path and guards that binding.",
       "no_new_rpc": "Yes. No JSON-RPC method or Runtime protocol surface is added.",
-      "no_new_summary": "Yes. The generated evidence is a release artifact candidate for guards, not a new user-facing report or Runtime diagnostic endpoint.",
-      "runtime_behavior_change": "Build/release behavior changes: pnpm release:gate now includes supply-chain evidence generation plus guard tests, and VSIX check invokes the contract-only guard path.",
-      "headless_autonomous_contribution": "The autonomous release loop can now distinguish missing release artifacts or scan tooling from successful Runtime behavior and continue closing concrete release evidence gaps.",
-      "milestone_progress": "RRP-8.4 narrows runtime-release-guard-ci from local mandatory quality gate success to explicit supply-chain and artifact evidence accounting while preserving runtime_release_ready=false."
+      "no_new_summary": "Yes. The dry-run output is existing release-gate evidence, not a new user-facing summary or Runtime diagnostic endpoint.",
+      "runtime_behavior_change": "Build/release behavior changes: brownie-vsix check now includes the release gate dry-run, and release/readiness guards fail closed if the CI-invoked path omits it.",
+      "headless_autonomous_contribution": "The autonomous release loop can continue using existing CI while workflow-scope credentials are unavailable, with less room for local release-gate drift.",
+      "milestone_progress": "RRP-8.6 narrows runtime-release-guard-ci by closing the permitted existing-CI dry-run binding slice while preserving release-blocking workflow, artifact, audit, governance, and owner-decision evidence."
     },
     "questions": [
       {
@@ -77,7 +77,9 @@
     "classification": "required_before_release_corrective",
     "status": "partial",
     "runtime_release_ready_after_phase": false,
-    "closed_debt": [],
+    "closed_debt": [
+      "runtime-release-guard-ci existing-CI release gate dry-run binding"
+    ],
     "remaining_runtime_owned_debt": [
       "runtime-release-guard-ci"
     ],
@@ -104,9 +106,9 @@
   },
   "review_value_gate": {
     "reject_when": [
-      "phase claims Runtime Release Ready or raises maturity to the target without artifact, scan, SBOM, checksum, provenance, review, and owner-setting evidence",
-      "missing artifacts, SBOM, checksum, signature or integrity proof, provenance, dependency audit, license audit, or secret scan evidence are treated as satisfied",
-      "generated release evidence stores raw prompt, provider response, file content, process output, absolute path, canonical path, environment value, executable content, credential, or secret material",
+      "phase claims Runtime Release Ready or removes release-blocking artifact, audit, governance, workflow, review, or owner-setting evidence",
+      "pnpm --filter brownie-vsix check does not invoke pnpm --workspace-root release:gate -- --dry-run",
+      "guard:release-contract or guard:runtime-release-readiness does not fail closed when the VSIX check path omits the release gate dry-run",
       "workflow files are modified without workflow-scope credentials or owner-approved equivalent path",
       "license, publish settings, tags, release assets, or signing infrastructure are changed by Runtime automation"
     ]
@@ -115,76 +117,57 @@
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "RRP-8.4 changes release-gate and guard-engine files plus release-contract/audit manifests. Review must confirm supply-chain evidence generation is bounded, guards fail closed on missing or falsely satisfied evidence, release:gate invokes the generator and guard, VSIX check validates the contract-only guard path, no workflow file is edited without workflow scope, and runtime_release_ready remains false.",
+    "review_intent": "RRP-8.6 changes CI-invoked package scripts and release/readiness guard engines. Review must confirm the existing VSIX check path invokes release:gate -- --dry-run, guards fail closed if it is removed, no .github workflow files were edited, and runtime_release_ready remains false.",
     "changed_files": [
-      "Cargo.lock",
-      "crates/brownie-runtime/Cargo.toml",
-      "crates/brownie-cli/tests/cli_behavior.rs",
-      "crates/brownie-runtime/src/codebase_index.rs",
-      "crates/brownie-runtime/src/controlled_tool_execution.rs",
-      "crates/brownie-runtime/src/headless_journey.rs",
-      "crates/brownie-runtime/src/lib.rs",
-      "crates/brownie-runtime/src/llm_provider.rs",
-      "crates/brownie-runtime/src/mcp_client.rs",
-      "crates/brownie-runtime/src/modepack.rs",
-      "crates/brownie-runtime/src/objective_proposal.rs",
-      "crates/brownie-runtime/src/product_completion.rs",
-      "crates/brownie-runtime/src/product_continuation.rs",
-      "crates/brownie-runtime/src/proposal_apply.rs",
-      "crates/brownie-runtime/src/task_progress.rs",
-      "crates/brownie-runtime/src/verification_recovery.rs",
-      "crates/brownie-tools/src/lib.rs",
       "docs/architecture/phase-value-manifest.json",
-      "docs/architecture/phase-value-manifest.rrp-8.3.json",
-      "docs/architecture/phase-value-manifest.rrp-8.4.json",
+      "docs/architecture/phase-value-manifest.rrp-8.6.json",
       "docs/architecture/runtime-module-decomposition-assessment.json",
       "docs/architecture/runtime-release-contract.json",
       "docs/architecture/runtime-release-readiness-audit.json",
       "extensions/brownie-vsix/package.json",
-      "package.json",
       "scripts/guard-release-contract.mjs",
       "scripts/guard-release-contract.test.mjs",
+      "scripts/guard-runtime-release-readiness.mjs",
+      "scripts/guard-runtime-release-readiness.test.mjs",
       "scripts/guard-supply-chain-artifact-evidence.mjs",
-      "scripts/guard-supply-chain-artifact-evidence.test.mjs",
-      "scripts/release-gate.mjs",
-      "scripts/release-supply-chain-artifact-evidence.mjs"
+      "scripts/guard-supply-chain-artifact-evidence.test.mjs"
     ]
   },
   "exit_criteria": [
-    "pnpm --workspace-root release:supply-chain-artifact-evidence generates bounded local evidence with runtime_release_ready=false.",
-    "pnpm --workspace-root guard:supply-chain-artifact-evidence validates the release contract and generated evidence, rejecting missing sections, absolute paths, false Release Ready claims, and falsely satisfied evidence.",
-    "pnpm --workspace-root guard:supply-chain-artifact-evidence:test covers fail-closed negative cases.",
-    "pnpm release:gate includes supply-chain evidence generation and validation after the Release Contract guard.",
-    "runtime_release_ready remains false while actual release artifacts, smoke tests, audit tools, workflow provenance, signatures/integrity proof, owner settings, and independent reviews remain incomplete."
+    "extensions/brownie-vsix/package.json check invokes pnpm --workspace-root release:gate -- --dry-run.",
+    "scripts/guard-release-contract.mjs rejects VSIX check paths that omit the release gate dry-run.",
+    "scripts/guard-runtime-release-readiness.mjs rejects VSIX check paths that omit the release gate dry-run.",
+    "pnpm --workspace-root release:gate -- --dry-run passes and lists the mandatory release gate command plan.",
+    "pnpm --filter brownie-vsix check passes with runtime_release_ready=false and release_ready=false."
   ],
   "behavior_evidence": [
-    "node --test scripts/guard-supply-chain-artifact-evidence.test.mjs passes.",
-    "pnpm --workspace-root release:supply-chain-artifact-evidence generates .brownie/release-evidence/supply-chain-artifact-evidence.json with explicit fail_closed_reasons.",
-    "pnpm --workspace-root guard:supply-chain-artifact-evidence passes against generated evidence while keeping release_ready=false.",
-    "pnpm --workspace-root guard:release-contract and guard:release-contract:test require the new evidence contract and commands.",
-    "pnpm release:gate -- --evidence /tmp/brownie-rrp8-4-release-gate.json passes the repository-local mandatory gate while recording runtime_release_ready=false.",
-    "cargo test -p brownie-cli installed_run_timeout_retry_uses_same_admission_without_duplicate_task -- --exact --nocapture passes after warming first-touch runtime setup outside the timeout window."
+    "node --test scripts/guard-release-contract.test.mjs passes.",
+    "node --test scripts/guard-runtime-release-readiness.test.mjs passes.",
+    "pnpm --workspace-root guard:release-contract passes.",
+    "pnpm --workspace-root guard:runtime-release-readiness passes.",
+    "pnpm --workspace-root release:gate -- --dry-run passes.",
+    "pnpm --filter brownie-vsix check passes."
   ],
   "product_completion_gate": {
     "required": true,
     "product_completion_claim": false,
     "blocker_removal": {
       "allowed": true,
-      "blocker": "runtime-release-guard-ci"
+      "blocker": "runtime-release-guard-ci",
+      "status": "partial_existing_ci_binding_closed"
     },
     "accepted_capability": [
-      "The repository-local release gate generates supply-chain and artifact evidence slots.",
-      "The supply-chain/artifact guard validates generated evidence and contract metadata.",
-      "Missing artifacts, scan tooling, smoke tests, workflow provenance, and signing or integrity authority remain explicit release blockers.",
-      "No Release Ready claim is made without complete evidence."
+      "The existing CI-invoked VSIX check path exercises the release gate dry-run.",
+      "Release and readiness guards keep that dry-run binding mandatory.",
+      "Direct workflow hardening remains blocked by missing workflow-scope credentials.",
+      "Runtime Release Ready remains false until release evidence and owner-controlled settings are complete."
     ],
     "behavior_evidence": [
-      "node --test scripts/guard-supply-chain-artifact-evidence.test.mjs passes.",
-      "pnpm --workspace-root release:supply-chain-artifact-evidence generates .brownie/release-evidence/supply-chain-artifact-evidence.json with explicit fail_closed_reasons.",
-      "pnpm --workspace-root guard:supply-chain-artifact-evidence passes against generated evidence while keeping release_ready=false.",
-      "pnpm --workspace-root guard:release-contract and guard:release-contract:test require the new evidence contract and commands.",
-      "pnpm release:gate -- --evidence /tmp/brownie-rrp8-4-release-gate.json passes the repository-local mandatory gate while recording runtime_release_ready=false.",
-      "cargo test -p brownie-cli installed_run_timeout_retry_uses_same_admission_without_duplicate_task -- --exact --nocapture passes after warming first-touch runtime setup outside the timeout window."
+      "node --test scripts/guard-release-contract.test.mjs validates fail-closed release gate dry-run binding checks.",
+      "node --test scripts/guard-runtime-release-readiness.test.mjs validates fail-closed existing CI path coverage.",
+      "pnpm --workspace-root guard:release-contract validates the live Runtime release contract and VSIX check binding.",
+      "pnpm --workspace-root guard:runtime-release-readiness validates the live audit and VSIX check binding.",
+      "pnpm --workspace-root release:gate -- --dry-run emits the mandatory release gate command plan."
     ],
     "safety_boundary": [
       "Rust Runtime remains execution, admission, replay, permission, MCP, workspace mutation, durable state, protocol, and completion authority.",
@@ -194,27 +177,27 @@
     ],
     "non_goals": [
       "Does not claim Runtime Release Ready.",
-      "Does not edit .github workflow files without workflow scope.",
+      "Does not edit .github workflow files.",
       "Does not generate or publish release tags, packages, license metadata, signatures, or release assets.",
       "Does not add hosted scheduler, daemon, durable queue, supervisor, SaaS control plane, customer RBAC, Vault, billing, BDK, Enterprise admin, generic shell, arbitrary process execution, or remote Git capability expansion."
     ],
     "rejected_alternatives": [
-      "Rejected crate-level clippy allow because the mandatory gate should expose real warning debt.",
-      "Rejected marking runtime-release-guard-ci closed because workflow hardening, artifacts, scans, SBOM, checksums, provenance, reviews, and owner-controlled settings remain incomplete.",
-      "Rejected editing .github/workflows/ci.yml because the active credentials do not have workflow scope."
+      "Rejected editing .github/workflows/ci.yml because active GitHub credentials still lack workflow scope.",
+      "Rejected claiming runtime-release-guard-ci closed because release artifacts, audits, provenance, governance, and owner decisions remain incomplete.",
+      "Rejected a docs-only update because the existing CI-invoked check path must execute and guard the release gate dry-run."
     ],
     "technical_debt": [
-      "runtime-release-guard-ci remains open until actual vulnerability/license audits, cross-platform artifacts, artifact smoke tests, workflow enforcement, provenance, signing/integrity, branch protection/status checks, independent reviews, and owner settings are complete.",
+      "runtime-release-guard-ci remains open until actual vulnerability/license audit execution, cross-platform artifacts, artifact smoke tests, direct workflow enforcement or stronger owner-approved CI enforcement, provenance, signing/integrity, branch protection/status checks, independent reviews, and owner settings are complete.",
       "Owner license, publish posture, signing or integrity mechanism, branch protection, protected tags, and independent reviews remain required before Runtime Release Ready."
     ],
     "next_capability_rationale": [
-      "Continue with supply-chain, artifact, cross-platform, soak, and governance release evidence that can be implemented locally, then return to workflow hardening when workflow-scope credentials or owner-approved equivalent path exists."
+      "Continue with the next bounded runtime-release-guard-ci slice that can be completed without workflow scope or owner-only settings, or wait for workflow-scope credentials for direct workflow hardening."
     ],
     "release_readiness_scope": {
       "runtime_release_dod": [
         "Closed RRP-1 through RRP-7.2 and RRP-5.18 evidence remains in force and is not reimplemented.",
-        "RRP-8.2 establishes the Release Engineering Contract and local gate baseline while keeping runtime_release_ready false.",
-        "Missing release artifacts, scans, SBOM, checksums, signatures or integrity proof, provenance, workflow run, tested commit, and independent reviews remain release-blocking."
+        "RRP-8.6 binds the local release gate dry-run into existing CI evidence without treating it as final Release Ready.",
+        "Missing release artifacts, scans, SBOM, checksums, signatures or integrity proof, provenance, workflow run enforcement, tested commit, and independent reviews remain release-blocking."
       ],
       "runtime_boundary_contracts": [
         "No new RPC surface is added.",
@@ -228,7 +211,7 @@
       ],
       "commercial_solution_readiness": [
         "Packaging publication, license choice, signing authority, notarization, enterprise administration, operational runbooks, support, and commercial release decisions remain owner-controlled or later release work.",
-        "Cargo license and publish settings remain owner-decision items and are not changed by RRP-8.2."
+        "Cargo license and publish settings remain owner-decision items and are not changed by RRP-8.6."
       ],
       "external_responsibility_not_release_blocking": true
     }
@@ -239,14 +222,14 @@
       "responsibility_domain": "runtime",
       "classification": "required_before_release",
       "status": "partial",
-      "next_action": "Add remaining repository-local artifact, supply-chain, cross-platform, soak, governance, and permitted CI evidence, then wire mandatory workflow once workflow scope or owner-approved equivalent path exists."
+      "next_action": "Add actual vulnerability/license audits, cross-platform artifacts and smoke tests, governance evidence, and direct workflow or stronger owner-approved CI enforcement before Runtime Release Ready."
     },
     {
       "id": "github_workflow_scope",
       "responsibility_domain": "runtime",
       "classification": "required_before_release",
       "status": "blocked_external",
-      "next_action": "Owner must provide workflow-scope credentials or approve an equivalent CI-hardening path before direct .github workflow gate closure."
+      "next_action": "Owner must provide workflow-scope credentials for direct .github workflow gate closure."
     },
     {
       "id": "oss_license_publish",
@@ -259,12 +242,13 @@
   "closeout_review": {
     "status": "partial_required_before_release_corrective",
     "runtime_release_ready": false,
-    "release_engineering_maturity_percent": 58,
-    "evidence": "RRP-8.2 defines the release engineering contract and local gate baseline but does not claim artifact, security, cross-platform, governance, workflow, or owner-setting completion.",
+    "release_engineering_maturity_percent": 70,
+    "evidence": "RRP-8.6 binds release:gate dry-run into the existing CI-invoked VSIX check path and guards that binding, while workflow enforcement and release evidence remain incomplete.",
     "remaining_blockers": [
       "runtime-release-guard-ci",
       "github_workflow_scope",
       "owner license/publish/signing/review settings"
     ]
-  }
+  },
+  "phase_title": "Existing CI Release Gate Dry-Run Binding"
 }

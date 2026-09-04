@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "phase": "RRP-8.6",
+  "title": "Existing CI Release Gate Dry-Run Binding",
+  "date": "2026-09-04",
+  "current_milestone": "runtime-release-readiness-p0-p1-finite-closure",
+  "milestone": "Brownie Runtime Release Readiness",
+  "target_capability": "headless_autonomous_development",
+  "concrete_capability_transition": "Brownie release engineering binds the repository-local release gate dry-run into the existing GitHub-CI-invoked VSIX check path without editing workflow files, making release-gate plan drift a guarded CI failure while Runtime Release Ready remains false.",
+  "forbidden_pattern": "runtime_release_ready_without_complete_release_evidence_workflow_edit_without_scope_license_publish_release_tag_asset_signing_infrastructure_hosted_scheduler_daemon_generic_shell_arbitrary_process_exec",
+  "project_objective_ref": "docs/architecture/product-charter.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "headless_autonomous_development",
+      "transition": "The existing CI path now executes the release gate dry-run through brownie-vsix check and guard engines fail closed if that binding is removed.",
+      "relationship": "This advances runtime-release-guard-ci through an owner-approved equivalent path while workflow-scope credentials remain absent; it does not claim direct workflow hardening or Runtime Release Ready."
+    }
+  ],
+  "phase_value_gate": {
+    "required": true,
+    "answers": {
+      "strategic_capabilities": "The phase advances headless_autonomous_development by making the mandatory release gate plan visible and guarded in the existing CI-invoked VSIX check path.",
+      "new_capability": "A contributor or CI run that executes pnpm --filter brownie-vsix check now also executes pnpm --workspace-root release:gate -- --dry-run, and guards reject removing that binding.",
+      "why_existing_functionality_is_insufficient": "Before this phase, CI checked the release contract and many release guards but did not directly exercise the release gate plan from the CI-invoked path, so release:gate command-list drift could escape the mandatory VSIX check.",
+      "product_gap_if_skipped": "Brownie would retain a local release gate whose command plan could diverge from the CI-required check path until workflow-scope credentials are available.",
+      "non_duplicative": "This phase does not add another release contract, workflow edit, or ledger/platform feature; it binds the existing release gate dry-run into the existing CI path and guards that binding.",
+      "no_new_rpc": "Yes. No JSON-RPC method or Runtime protocol surface is added.",
+      "no_new_summary": "Yes. The dry-run output is existing release-gate evidence, not a new user-facing summary or Runtime diagnostic endpoint.",
+      "runtime_behavior_change": "Build/release behavior changes: brownie-vsix check now includes the release gate dry-run, and release/readiness guards fail closed if the CI-invoked path omits it.",
+      "headless_autonomous_contribution": "The autonomous release loop can continue using existing CI while workflow-scope credentials are unavailable, with less room for local release-gate drift.",
+      "milestone_progress": "RRP-8.6 narrows runtime-release-guard-ci by closing the permitted existing-CI dry-run binding slice while preserving release-blocking workflow, artifact, audit, governance, and owner-decision evidence."
+    },
+    "questions": [
+      {
+        "id": "strategic_capabilities",
+        "question": "Which strategic capabilities move forward?"
+      },
+      {
+        "id": "new_capability",
+        "question": "What becomes newly executable or usable?"
+      },
+      {
+        "id": "why_existing_functionality_is_insufficient",
+        "question": "Why can existing behavior not substitute for this?"
+      },
+      {
+        "id": "product_gap_if_skipped",
+        "question": "What remains impossible if skipped?"
+      },
+      {
+        "id": "non_duplicative",
+        "question": "Why is this not semantically duplicative?"
+      },
+      {
+        "id": "no_new_rpc",
+        "question": "Can this be done without adding a new RPC?"
+      },
+      {
+        "id": "no_new_summary",
+        "question": "Can this be done without adding a new summary/report surface?"
+      },
+      {
+        "id": "runtime_behavior_change",
+        "question": "How does runtime or user-visible behavior change?"
+      },
+      {
+        "id": "headless_autonomous_contribution",
+        "question": "How does this contribute to headless autonomous operation?"
+      },
+      {
+        "id": "milestone_progress",
+        "question": "How does this move milestone completion?"
+      }
+    ]
+  },
+  "review_value_gate": {
+    "reject_when": [
+      "runtime_release_ready is set true",
+      "the VSIX check path omits pnpm --workspace-root release:gate -- --dry-run",
+      "release/readiness guards do not detect the missing dry-run binding",
+      ".github workflow files are modified without workflow-scope credentials",
+      "license, publish settings, tags, release assets, or signing infrastructure are changed"
+    ]
+  },
+  "guard_engine_change_review": {
+    "required": true,
+    "strict_review_required": true,
+    "no_self_approval": true,
+    "review_intent": "RRP-8.6 changes CI-invoked package scripts and release/readiness guard engines. Review must confirm the existing VSIX check path invokes release:gate -- --dry-run, guards fail closed if it is removed, no .github workflow files were edited, and runtime_release_ready remains false.",
+    "changed_files": [
+      "docs/architecture/phase-value-manifest.json",
+      "docs/architecture/phase-value-manifest.rrp-8.6.json",
+      "docs/architecture/runtime-module-decomposition-assessment.json",
+      "docs/architecture/runtime-release-contract.json",
+      "docs/architecture/runtime-release-readiness-audit.json",
+      "extensions/brownie-vsix/package.json",
+      "scripts/guard-release-contract.mjs",
+      "scripts/guard-release-contract.test.mjs",
+      "scripts/guard-runtime-release-readiness.mjs",
+      "scripts/guard-runtime-release-readiness.test.mjs",
+      "scripts/guard-supply-chain-artifact-evidence.mjs",
+      "scripts/guard-supply-chain-artifact-evidence.test.mjs"
+    ]
+  },
+  "exit_criteria": [
+    "extensions/brownie-vsix/package.json check invokes pnpm --workspace-root release:gate -- --dry-run.",
+    "scripts/guard-release-contract.mjs rejects VSIX check paths that omit the release gate dry-run.",
+    "scripts/guard-runtime-release-readiness.mjs rejects VSIX check paths that omit the release gate dry-run.",
+    "pnpm --workspace-root release:gate -- --dry-run passes and lists the mandatory release gate command plan.",
+    "pnpm --filter brownie-vsix check passes with runtime_release_ready=false and release_ready=false."
+  ]
+}

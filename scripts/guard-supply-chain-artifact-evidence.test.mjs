@@ -36,7 +36,7 @@ function sha256File(filePath) {
 
 function validContract(overrides = {}) {
   return {
-    phase: 'RRP-8.5',
+    phase: 'RRP-8.6',
     runtime_release_ready: false,
     release_engineering_maturity: {
       current_percent: 70,
