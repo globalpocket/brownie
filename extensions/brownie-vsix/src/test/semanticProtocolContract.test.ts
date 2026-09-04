@@ -82,7 +82,7 @@ describe('Runtime semantic protocol contract', () => {
     const mappedMethods = new Set(readCanonicalMap().protocol_method_groups.flatMap((group) => group.methods));
     const contractedMethods = new Set(contract.method_contracts.map((method) => method.method));
 
-    expect(contract.phase).toBe('RRP-5.16');
+    expect(contract.phase).toBe('RRP-5.17');
     expect(contractedMethods).toEqual(mappedMethods);
     expect(contract.method_contracts.every((method) => method.request_schema && method.result_schema)).toBe(true);
     expect(contract.method_contracts.every((method) => method.result_schema_ref === `#/type_schemas/${method.result_type}`)).toBe(true);
@@ -114,9 +114,9 @@ describe('Runtime semantic protocol contract', () => {
     expect(isLedgerEventSummary(fixtures.ledger_event_summary)).toBe(true);
     expect(fixtures.ledger_event_with_payload_envelope).toMatchObject({
       payload_envelope: {
-        schema_version: 12,
-        shape_id: 'ledger_payload.TaskCompleted.v12',
-        schema_id: 'ledger_payload.TaskCompleted.v12',
+        schema_version: 13,
+        shape_id: 'ledger_payload.TaskCompleted.v13',
+        schema_id: 'ledger_payload.TaskCompleted.v13',
         schema_fingerprint: expect.stringMatching(/^shape-fnv1a64:/),
         instance_shape_fingerprint: expect.stringMatching(/^shape-fnv1a64:/),
       },

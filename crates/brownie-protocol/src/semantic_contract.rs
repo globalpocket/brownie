@@ -1458,6 +1458,207 @@ pub fn runtime_semantic_protocol_contract() -> Value {
         "failed_checks": [],
         "blocked_checks": []
     });
+    let headless_continuation_decision_payload = json!({
+        "decision_id": "decision_1",
+        "continuation_id": "continuation_1",
+        "selected_task_id": "task_1",
+        "selected_run_id": "run_1",
+        "next_action": "run_task",
+        "reason": "selected",
+        "expected_aggregate_sequence": 0,
+        "candidate_count": 1,
+        "authorize": true,
+        "policy_version": "headless_continue_once_v1"
+    });
+    let headless_run_session_advanced_payload = json!({
+        "advance_id": "advance_1",
+        "checkpoint_fingerprint": "sha256:checkpoint",
+        "next_action": "continue",
+        "reason": "advanced",
+        "selected_task_id": "task_1",
+        "selected_run_id": "run_1",
+        "session_id": "session_1",
+        "session_sequence": 1,
+        "start_aggregate_sequence": 0,
+        "start_progress_fingerprint": "sha256:start-progress",
+        "post_aggregate_sequence": 1,
+        "post_progress_fingerprint": "sha256:post-progress"
+    });
+    let headless_run_session_drive_completed_payload = json!({
+        "drive_id": "drive_1",
+        "advance_id": "advance_1",
+        "session_id": "session_1",
+        "selected_task_id": "task_1",
+        "selected_run_id": "run_1",
+        "start_session_sequence": 0,
+        "end_session_sequence": 1,
+        "session_sequence": 1,
+        "step_index": 0,
+        "drive_fingerprint": "sha256:drive",
+        "completion_closure": {},
+        "terminal_completion_evidence": {},
+        "next_action": "finalize",
+        "stop_reason": null,
+        "reason": "drive completed"
+    });
+    let headless_product_evidence_matrix_payload = json!({
+        "derivation_id": "derivation_1",
+        "task_id": "task_1",
+        "run_id": "run_1",
+        "acceptance_id": "acceptance_1",
+        "phase_id": "RRP-5.17",
+        "milestone": "runtime_release_readiness",
+        "target_capability": "protocol-event-canonization",
+        "concrete_capability_transition": "headless payload strict coverage",
+        "accepted_completion_fingerprint": "sha256:accepted",
+        "terminal_completion_fingerprint": "sha256:terminal",
+        "completion_closure_fingerprint": "sha256:closure",
+        "product_evidence_matrix_fingerprint": "sha256:matrix",
+        "artifact_count": 1,
+        "artifact_hashes": ["sha256:artifact"],
+        "behavior_evidence_count": 1,
+        "validated_gate_categories": ["payload_schema"],
+        "product_completion_claim": false,
+        "safety_boundary_reviewed": true,
+        "non_goals_reviewed": true,
+        "technical_debt_reviewed": true,
+        "rejected_alternatives_count": 0,
+        "selected_remaining_gap": null,
+        "selected_gap_closure_evidence": null,
+        "selected_gap_closure_evidence_set": [],
+        "selected_gap_closure_set_fingerprint": null,
+        "replayed": false,
+        "next_action": "continue"
+    });
+    let headless_selected_product_gap_closure_payload = json!({
+        "closure_id": "closure_1",
+        "task_id": "task_1",
+        "run_id": "run_1",
+        "acceptance_id": "acceptance_1",
+        "source_decision_id": "decision_1",
+        "source_decision_fingerprint": "sha256:decision",
+        "product_evidence_fingerprint": "sha256:product",
+        "product_objective_fingerprint": "sha256:objective",
+        "accepted_completion_fingerprint": "sha256:accepted",
+        "terminal_completion_fingerprint": "sha256:terminal",
+        "completion_closure_fingerprint": "sha256:completion",
+        "closure_evidence_fingerprint": "sha256:evidence",
+        "selected_remaining_gap": {},
+        "status": "recorded",
+        "replayed": false,
+        "next_action": "continue"
+    });
+    let headless_product_completion_decision_payload = json!({
+        "decision_id": "product_decision_1",
+        "task_id": "task_1",
+        "run_id": "run_1",
+        "acceptance_id": "acceptance_1",
+        "status": "incomplete",
+        "target_capability": "protocol-event-canonization",
+        "concrete_capability_transition": "headless payload strict coverage",
+        "accepted_completion_fingerprint": "sha256:accepted",
+        "terminal_completion_fingerprint": "sha256:terminal",
+        "completion_closure_fingerprint": "sha256:closure",
+        "product_evidence_fingerprint": "sha256:product",
+        "decision_fingerprint": "sha256:decision",
+        "derived_product_evidence_matrix_fingerprint": null,
+        "behavior_evidence_count": 1,
+        "validated_gate_categories": ["payload_schema"],
+        "safety_boundary_reviewed": true,
+        "non_goals_reviewed": true,
+        "technical_debt_reviewed": true,
+        "rejected_alternatives_count": 0,
+        "remaining_capability": null,
+        "selected_remaining_gap": null,
+        "milestone_exit_rationale": null,
+        "technical_debt_carry_forward": null,
+        "replayed": false,
+        "next_action": "continue"
+    });
+    let headless_journey_started_payload = json!({
+        "journey_id": "journey_1",
+        "session_id": "session_1",
+        "drive_id": "drive_1",
+        "task_id": "task_1",
+        "run_id": "run_1",
+        "task_start_fingerprint": "sha256:start",
+        "start_aggregate_sequence": 0,
+        "start_progress_fingerprint": "sha256:progress",
+        "journey_fingerprint": "sha256:journey",
+        "next_action": "drive",
+        "reason": "started",
+        "task_start": {}
+    });
+    let headless_journey_route_resumed_payload = json!({
+        "journey_id": "journey_1",
+        "session_id": "session_1",
+        "drive_id": "drive_1",
+        "task_id": "task_1",
+        "run_id": "run_1",
+        "route_kind": "continue",
+        "source_continuation_id": "continuation_1",
+        "source_decision_id": "decision_1",
+        "source_checkpoint_fingerprint": "sha256:checkpoint",
+        "derived_target_class": "task_run",
+        "result_advance_id": "advance_1",
+        "result_continuation_id": "continuation_2",
+        "post_route_aggregate_sequence": 1,
+        "post_route_progress_fingerprint": "sha256:post-progress",
+        "resume_fingerprint": "sha256:resume",
+        "next_action": "drive",
+        "reason": "resumed"
+    });
+    let headless_journey_closed_payload = json!({
+        "journey_id": "journey_1",
+        "session_id": "session_1",
+        "drive_id": "drive_1",
+        "task_id": "task_1",
+        "run_id": "run_1",
+        "replacement_route_kind": "terminal",
+        "replacement_continuation_id": "continuation_3",
+        "replacement_checkpoint_fingerprint": "sha256:replacement",
+        "active_modepack_activation_fingerprint": "sha256:modepack",
+        "closure_fingerprint": "sha256:closure",
+        "finalization_fingerprint": "sha256:final",
+        "terminal_completion_fingerprint": "sha256:terminal",
+        "progress_fingerprint": "sha256:progress",
+        "aggregate_sequence": 2,
+        "source_replacement_drive_id": null,
+        "source_replacement_resume_fingerprint": null,
+        "journey_closure_fingerprint": "sha256:journey-closure",
+        "next_action": "finalize",
+        "reason": "closed"
+    });
+    let headless_journey_executed_payload = json!({
+        "journey_id": "journey_1",
+        "session_id": "session_1",
+        "drive_id": "drive_1",
+        "task_id": "task_1",
+        "run_id": "run_1",
+        "journey_fingerprint": "sha256:journey",
+        "execution_checkpoint_fingerprint": "sha256:checkpoint",
+        "completed_boundary_count": 1,
+        "complete": true,
+        "next_action": "close",
+        "reason": "executed"
+    });
+    let headless_run_completion_finalized_payload = json!({
+        "session_id": "session_1",
+        "drive_id": "drive_1",
+        "closure_fingerprint": "sha256:closure",
+        "progress_fingerprint": "sha256:progress",
+        "owner_task_id": "task_1",
+        "owner_run_id": "run_1",
+        "start_session_sequence": 0,
+        "end_session_sequence": 1,
+        "aggregate_sequence": 2,
+        "terminal_task_count": 1,
+        "total_task_count": 1,
+        "terminal_completion_fingerprint": "sha256:terminal",
+        "finalization_fingerprint": "sha256:final",
+        "next_action": "inspect",
+        "reason": "finalized"
+    });
     let event_payload_schema_classifications = ledger_event_kinds
         .iter()
         .map(|kind| {
@@ -1746,13 +1947,51 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             "WorkspacePatchReadinessReportCreated",
             &workspace_patch_readiness_report_payload,
         ),
+        payload_schema_fixture(
+            "HeadlessContinuationDecisionRecorded",
+            &headless_continuation_decision_payload,
+        ),
+        payload_schema_fixture(
+            "HeadlessRunSessionAdvanced",
+            &headless_run_session_advanced_payload,
+        ),
+        payload_schema_fixture(
+            "HeadlessRunSessionDriveCompleted",
+            &headless_run_session_drive_completed_payload,
+        ),
+        payload_schema_fixture(
+            "HeadlessRunProductEvidenceMatrixDerived",
+            &headless_product_evidence_matrix_payload,
+        ),
+        payload_schema_fixture(
+            "HeadlessRunSelectedProductGapClosureRecorded",
+            &headless_selected_product_gap_closure_payload,
+        ),
+        payload_schema_fixture(
+            "HeadlessRunProductCompletionDecisionRecorded",
+            &headless_product_completion_decision_payload,
+        ),
+        payload_schema_fixture("HeadlessJourneyStarted", &headless_journey_started_payload),
+        payload_schema_fixture(
+            "HeadlessJourneyRouteResumed",
+            &headless_journey_route_resumed_payload,
+        ),
+        payload_schema_fixture("HeadlessJourneyClosed", &headless_journey_closed_payload),
+        payload_schema_fixture(
+            "HeadlessJourneyExecuted",
+            &headless_journey_executed_payload,
+        ),
+        payload_schema_fixture(
+            "HeadlessRunCompletionFinalized",
+            &headless_run_completion_finalized_payload,
+        ),
     ];
 
     json!({
         "schema_version": 10,
         "contract_id": "runtime-semantic-protocol-contract-v1",
         "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-        "phase": "RRP-5.16",
+        "phase": "RRP-5.17",
         "owner": "runtime",
         "runtime_release_debt_id": "protocol-event-canonization",
         "runtime_release_ready": false,
@@ -1855,10 +2094,10 @@ pub fn runtime_semantic_protocol_contract() -> Value {
                 "jsonrpc_request_result_contract": "closed",
                 "schema_and_instance_fingerprint_split": "closed",
                 "ledger_event_payload_inventory": "closed",
-                "ledger_event_payload_typed_schema_coverage": "partial"
+                "ledger_event_payload_typed_schema_coverage": "closed"
             },
-            "ledger_payload_schema_classification_policy": "Every LedgerEventKind must carry an explicit payload schema classification. versioned_open and typed_known_fields_open are allowed only as required-before-release debt evidence and must not be treated as fully typed ledger payload schemas. TaskCompleted, TaskFailed, TaskCancelled, PermissionChecked, PermissionDenied, ToolPermissionChecked, ToolPlanApproved, ToolPlanDenied, ToolIntentPermissionChecked, ToolIntentApproved, ToolIntentDenied, ToolExecutionRequested, McpToolExecutionApproved, ToolExecutionPermissionChecked, ToolExecutionCompleted, ToolExecutionDenied, ToolExecutionFailed, CodebaseIndexPermissionChecked, CodebaseIndexSnapshotBuilt, CodebaseIndexQueryCompleted, CodebaseIndexSelectionReadCompleted, CodebaseIndexPromptContextMaterialized, VerificationRecoveryContextReadMaterialized, AgentLoopStarted, AgentLoopCompleted, TaskCompletionAccepted, PromptBuilt, PromptSensitiveScanCompleted, PromptSensitiveScanFailed, LlmRequestCreated, LlmRequestFailed, LlmResponseReceived, SecondPassPromptBuilt, SecondPassLlmRequestCreated, SecondPassLlmRequestFailed, and SecondPassLlmResponseReceived are strict typed payload families.",
-            "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Versioned-open payload classifications keep protocol-event-canonization partial until every payload-bearing event has a strict typed schema, an explicit payload_absent contract, or a legacy-only compatibility entry. Current v10 terminal task, permission, selected tool, MCP approval, tool terminal, codebase index, verification recovery context, agent loop, prompt, LLM request/response/failure, completion-acceptance, task admission, mode-resolution, tool planning, and intent parsing payload schemas preserve v1 through v9 read compatibility while requiring strict field validation for new appends.",
+            "ledger_payload_schema_classification_policy": "Every LedgerEventKind must carry an explicit payload schema classification. versioned_open and typed_known_fields_open are allowed only as required-before-release debt evidence and must not be treated as fully typed ledger payload schemas. Current v13 classifies every LedgerEventKind as strict_typed or payload_absent, including the remaining headless continuation, headless run, journey, and completion-finalization families.",
+            "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Current v13 terminal task, permission, selected tool, MCP approval, tool terminal, codebase index, verification recovery context, agent loop, prompt, LLM request/response/failure, completion-acceptance, task admission, mode-resolution, tool planning, intent parsing, subtask orchestration/dispatch, workspace patch, and headless continuation/run/journey payload schemas preserve v1 through v12 read compatibility while requiring strict field validation for new appends.",
             "guard": "guard:protocol-event-canonization",
             "event_payload_schema_classification_count": event_payload_schema_classifications.len(),
             "event_payload_schema_classifications": event_payload_schema_classifications,
@@ -2573,7 +2812,7 @@ fn canonical_value(value: &Value) -> Value {
     }
 }
 
-const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 12;
+const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 13;
 
 fn ledger_payload_schema_id(kind: &str) -> String {
     format!("ledger_payload.{kind}.v{LEDGER_PAYLOAD_SCHEMA_VERSION}")
@@ -2652,7 +2891,18 @@ fn ledger_payload_schema_classification(kind: &str) -> &'static str {
         | "WorkspacePatchApplyCapabilityChecked"
         | "WorkspacePatchApplyDryRunChecked"
         | "WorkspacePatchApplyResultRecorded"
-        | "WorkspacePatchReadinessReportCreated" => "strict_typed",
+        | "WorkspacePatchReadinessReportCreated"
+        | "HeadlessContinuationDecisionRecorded"
+        | "HeadlessRunSessionAdvanced"
+        | "HeadlessRunSessionDriveCompleted"
+        | "HeadlessRunProductEvidenceMatrixDerived"
+        | "HeadlessRunSelectedProductGapClosureRecorded"
+        | "HeadlessRunProductCompletionDecisionRecorded"
+        | "HeadlessJourneyStarted"
+        | "HeadlessJourneyRouteResumed"
+        | "HeadlessJourneyClosed"
+        | "HeadlessJourneyExecuted"
+        | "HeadlessRunCompletionFinalized" => "strict_typed",
         "WorkspacePatchApprovalRequested" => "payload_absent",
         _ => "versioned_open",
     }
@@ -2774,6 +3024,29 @@ fn ledger_payload_schema_descriptor(kind: &str) -> String {
         }
         "WorkspacePatchReadinessReportCreated" => {
             workspace_patch_readiness_report_payload_schema_descriptor()
+        }
+        "HeadlessContinuationDecisionRecorded" => {
+            headless_continuation_decision_payload_schema_descriptor()
+        }
+        "HeadlessRunSessionAdvanced" => headless_run_session_advanced_payload_schema_descriptor(),
+        "HeadlessRunSessionDriveCompleted" => {
+            headless_run_session_drive_completed_payload_schema_descriptor()
+        }
+        "HeadlessRunProductEvidenceMatrixDerived" => {
+            headless_product_evidence_matrix_payload_schema_descriptor()
+        }
+        "HeadlessRunSelectedProductGapClosureRecorded" => {
+            headless_selected_product_gap_closure_payload_schema_descriptor()
+        }
+        "HeadlessRunProductCompletionDecisionRecorded" => {
+            headless_product_completion_decision_payload_schema_descriptor()
+        }
+        "HeadlessJourneyStarted" => headless_journey_started_payload_schema_descriptor(),
+        "HeadlessJourneyRouteResumed" => headless_journey_route_resumed_payload_schema_descriptor(),
+        "HeadlessJourneyClosed" => headless_journey_closed_payload_schema_descriptor(),
+        "HeadlessJourneyExecuted" => headless_journey_executed_payload_schema_descriptor(),
+        "HeadlessRunCompletionFinalized" => {
+            headless_run_completion_finalized_payload_schema_descriptor()
         }
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
@@ -3060,4 +3333,48 @@ pub fn explicit_runtime_method_set() -> BTreeSet<String> {
         .iter()
         .map(|spec| spec.method.to_string())
         .collect()
+}
+
+fn headless_continuation_decision_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;known_field_required:true;known_optional_fields:acceptance_status:string_or_null,admission_route_kind:string_or_null,applied:boolean,apply_fingerprint:string_or_null,apply_id:string_or_null,apply_status:string_or_null,authorization_preflight_continuation_id:string_or_null,authorization_preflight_decision_id:string_or_null,authorization_preflight_fingerprint:string_or_null,authorize:boolean,authorize_objective_apply_verification:boolean,authorize_objective_completion_acceptance:boolean,authorize_objective_proposal_apply:boolean,authorize_parent_join_run:boolean,authorize_patch_apply_recovery:boolean,authorize_patch_apply_recovery_apply:boolean,authorize_patch_apply_recovery_run:boolean,authorize_product_continuation_run:boolean,authorize_provider_failure_retry:boolean,authorize_provider_failure_retry_run:boolean,authorize_recovery:boolean,authorize_recovery_apply:boolean,authorize_recovery_run:boolean,authorize_verification_retry:boolean,authorize_verification_retry_run:boolean,candidate_count:u64_or_null,child_completion_child_count:u64_or_null,child_completion_fingerprint:string_or_null,child_terminal_completed_count:u64_or_null,child_terminal_failed_count:u64_or_null,completion_result_fingerprint:string_or_null,completion_summary:string_or_null,context_read_id:string_or_null,continuation_id:string_or_null,continuation_running_enabled:boolean,current_target_sha256:string_or_null,decision_fingerprint:string_or_null,decision_id:string,diagnostic_index:u64_or_null,drive_fingerprint:string_or_null,end_session_sequence:u64_or_null,excerpt_bytes:u64_or_null,excerpt_sha256:string_or_null,execution_enabled:boolean,expected_aggregate_sequence:u64_or_null,expected_apply_fingerprint:string_or_null,expected_current_target_sha256:string_or_null,expected_post_write_sha256:string_or_null,expected_progress_fingerprint:string_or_null,expected_target_sha256:string_or_null,expected_verification_fingerprint:string_or_null,failure_class:string_or_null,failure_fingerprint:string_or_null,final_state:string_or_null,hunk_count:u64_or_null,journey_id:string_or_null,next_action:string,next_route_fingerprint:string_or_null,objective_apply_continuation_id:string_or_null,objective_apply_decision_id:string_or_null,objective_apply_verification_continuation_id:string_or_null,objective_apply_verification_decision_id:string_or_null,operation:string_or_null,parent_run_id:string_or_null,parent_task_id:string_or_null,path_fingerprint:string_or_null,policy_version:string_or_null,product_evidence_fingerprint:string_or_null,proposal_id:string_or_null,read_path_fingerprint:string_or_null,reason:string,recovery_boundary_fingerprint:string_or_null,recovery_proposal_id:string_or_null,recovery_run_id:string_or_null,recovery_task_id:string_or_null,replacement_content_bytes:u64_or_null,replacement_content_chars:u64_or_null,replacement_content_sha256:string_or_null,request_fingerprint:string_or_null,retry_run_id:string_or_null,retry_task_id:string_or_null,retryable:boolean,route_kind:string_or_null,scheduler_handoff_enabled:boolean,selected_remaining_gap_fingerprint:string_or_null,selected_run_id:string,selected_task_id:string,session_id:string_or_null,source_apply_fingerprint:string_or_null,source_apply_id:string_or_null,source_decision_id:string_or_null,source_drive_id:string_or_null,source_event_id:string_or_null,source_event_kind:string_or_null,source_progress_fingerprint:string_or_null,source_proposal_id:string_or_null,source_run_id:string_or_null,source_session_id:string_or_null,source_task_id:string_or_null,stop_class:string_or_null,stop_reason:string_or_null,verification_recovery_context_read:boolean,verification_status:string_or_null;additional_fields:false;headless_continuation_decision_payload:true}".to_string()
+}
+
+fn headless_run_session_advanced_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;known_field_required:true;known_optional_fields:advance_id:string,checkpoint_fingerprint:string,gate_status:string_or_null,next_action:string,post_aggregate_sequence:u64_or_null,post_progress_fingerprint:string_or_null,proposal_count:u64_or_null,reason:string,required_verifier_count:u64_or_null,selected_run_id:string,selected_task_id:string,session_id:string,session_sequence:u64_or_null,start_aggregate_sequence:u64_or_null,start_progress_fingerprint:string,step_index:u64_or_null,stop_reason:string_or_null,terminal_completion_evidence:object_or_null,verification_completion_gate_status:string_or_null,verification_recovery_repair:boolean;additional_fields:false;headless_run_session_advanced_payload:true}".to_string()
+}
+
+fn headless_run_session_drive_completed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:advance_id:string,completion_closure:object,drive_fingerprint:string,drive_id:string,end_session_sequence:u64,next_action:string,reason:string,selected_run_id:string,selected_task_id:string,session_id:string,session_sequence:u64,start_session_sequence:u64,step_index:u64,stop_reason:string_or_null,terminal_completion_evidence:object_or_null;additional_fields:false;headless_run_session_drive_completed_payload:true}".to_string()
+}
+
+fn headless_product_evidence_matrix_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:accepted_completion_fingerprint:string,acceptance_id:string,artifact_count:u64,artifact_hashes:array,behavior_evidence_count:u64,completion_closure_fingerprint:string,concrete_capability_transition:string,derivation_id:string,milestone:string,next_action:string,non_goals_reviewed:boolean,phase_id:string,product_completion_claim:boolean,product_evidence_matrix_fingerprint:string,rejected_alternatives_count:u64,replayed:boolean,run_id:string,safety_boundary_reviewed:boolean,selected_gap_closure_evidence:object_or_null,selected_gap_closure_evidence_set:array,selected_gap_closure_set_fingerprint:string_or_null,selected_remaining_gap:object_or_null,target_capability:string,task_id:string,technical_debt_reviewed:boolean,terminal_completion_fingerprint:string,validated_gate_categories:array;additional_fields:false;headless_product_evidence_matrix_payload:true}".to_string()
+}
+
+fn headless_selected_product_gap_closure_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:accepted_completion_fingerprint:string,acceptance_id:string,closure_evidence_fingerprint:string,closure_id:string,completion_closure_fingerprint:string,next_action:string,product_evidence_fingerprint:string,product_objective_fingerprint:string,replayed:boolean,run_id:string,selected_remaining_gap:object,source_decision_fingerprint:string,source_decision_id:string,status:string,task_id:string,terminal_completion_fingerprint:string;additional_fields:false;headless_selected_product_gap_closure_payload:true}".to_string()
+}
+
+fn headless_product_completion_decision_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:accepted_completion_fingerprint:string,acceptance_id:string,behavior_evidence_count:u64,completion_closure_fingerprint:string,concrete_capability_transition:string,decision_fingerprint:string,decision_id:string,derived_product_evidence_matrix_fingerprint:string_or_null,milestone_exit_rationale:string_or_null,next_action:string,non_goals_reviewed:boolean,product_evidence_fingerprint:string,rejected_alternatives_count:u64,remaining_capability:string_or_null,replayed:boolean,run_id:string,safety_boundary_reviewed:boolean,selected_remaining_gap:object_or_null,status:string,target_capability:string,task_id:string,technical_debt_carry_forward:object_or_null,technical_debt_reviewed:boolean,terminal_completion_fingerprint:string,validated_gate_categories:array<string>;additional_fields:false;headless_product_completion_decision_payload:true}".to_string()
+}
+
+fn headless_journey_started_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:drive_id:string,journey_fingerprint:string,journey_id:string,next_action:string,reason:string,run_id:string,session_id:string,start_aggregate_sequence:u64,start_progress_fingerprint:string,task_id:string,task_start_fingerprint:string;known_optional_fields:derived_goal_fingerprint:string,derived_objective_fingerprint:string,objective_context:object,product_objective_continuation_provenance:object,remaining_capability:string,remaining_capability_fingerprint:string,task_start:object;additional_fields:false;headless_journey_started_payload:true}".to_string()
+}
+
+fn headless_journey_route_resumed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:derived_target_class:string,drive_id:string,journey_id:string,next_action:string,post_route_aggregate_sequence:u64_or_null,post_route_progress_fingerprint:string,reason:string,result_advance_id:string,result_continuation_id:string,resume_fingerprint:string,route_kind:string,run_id:string,session_id:string,source_checkpoint_fingerprint:string,source_continuation_id:string,source_decision_id:string,task_id:string;additional_fields:false;headless_journey_route_resumed_payload:true}".to_string()
+}
+
+fn headless_journey_closed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:active_modepack_activation_fingerprint:string,aggregate_sequence:u64,closure_fingerprint:string,drive_id:string,finalization_fingerprint:string,journey_closure_fingerprint:string,journey_id:string,next_action:string,progress_fingerprint:string,reason:string,replacement_checkpoint_fingerprint:string,replacement_continuation_id:string,replacement_route_kind:string,run_id:string,session_id:string,source_replacement_drive_id:string_or_null,source_replacement_resume_fingerprint:string_or_null,task_id:string,terminal_completion_fingerprint:string;additional_fields:false;headless_journey_closed_payload:true}".to_string()
+}
+
+fn headless_journey_executed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:complete:boolean,completed_boundary_count:u64,drive_id:string,execution_checkpoint_fingerprint:string,journey_fingerprint:string,journey_id:string,next_action:string,reason:string,run_id:string,session_id:string,task_id:string;additional_fields:false;headless_journey_executed_payload:true}".to_string()
+}
+
+fn headless_run_completion_finalized_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:aggregate_sequence:u64,closure_fingerprint:string,drive_id:string,end_session_sequence:u64,finalization_fingerprint:string,next_action:string,owner_run_id:string,owner_task_id:string,progress_fingerprint:string,reason:string,session_id:string,start_session_sequence:u64,terminal_completion_fingerprint:string,terminal_task_count:u64,total_task_count:u64;additional_fields:false;headless_run_completion_finalized_payload:true}".to_string()
 }

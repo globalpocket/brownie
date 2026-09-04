@@ -359,10 +359,21 @@ test('rejects strict tool payload descriptors without tool evidence requirements
   assert(errors.some((error) => error.includes('tool_execution_permission_payload:true')));
 });
 
-test('rejects full ledger payload closure claims while open payload classifications remain', () => {
+test('rejects open ledger payload classifications after closure', () => {
   const contract = readSemanticContract();
-  contract.durable_event_migration_coupling.ledger_payload_contract_scope.ledger_event_payload_typed_schema_coverage = 'closed';
-  contract.durable_event_migration_coupling.release_blocking_open_payload_count = 0;
+  const classification = contract.durable_event_migration_coupling.event_payload_schema_classifications.find(
+    (entry) => entry.ledger_event_kind === 'HeadlessRunSessionAdvanced'
+  );
+  const fingerprint = contract.durable_event_migration_coupling.event_payload_schema_fingerprints.find(
+    (entry) => entry.ledger_event_kind === 'HeadlessRunSessionAdvanced'
+  );
+  classification.payload_schema_classification = 'versioned_open';
+  classification.payload_schema_contract_status = 'partial';
+  classification.release_blocking_until_typed = true;
+  fingerprint.payload_schema_classification = 'versioned_open';
+  fingerprint.payload_schema_contract_status = 'partial';
+  fingerprint.release_blocking_until_typed = true;
+  contract.durable_event_migration_coupling.release_blocking_open_payload_count = 1;
 
   const errors = validateRuntimeSemanticProtocolContract(contract, readMap(), {
     repoRoot,
@@ -371,6 +382,6 @@ test('rejects full ledger payload closure claims while open payload classificati
     skipRustGeneratedContractCheck: true
   });
 
-  assert(errors.some((error) => error.includes('full ledger payload typed schema coverage partial')));
-  assert(errors.some((error) => error.includes('release_blocking_open_payload_count')));
+  assert(errors.some((error) => error.includes('release_blocking_open_payload_count at 0')));
+  assert(errors.some((error) => error.includes('must not remain release-blocking')));
 });
