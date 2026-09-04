@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "contract_id": "runtime-release-engineering-contract-v1",
-  "phase": "RRP-8.5",
-  "phase_title": "Supply Chain and Artifact Evidence Baseline",
+  "phase": "RRP-8.6",
+  "phase_title": "Existing CI Release Gate Dry-Run Binding",
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
   "repository": "globalpocket/brownie",
   "owner": "runtime",
@@ -10,8 +10,8 @@
   "release_engineering_maturity": {
     "baseline_percent": 58,
     "target_percent": 90,
-    "current_percent": 68,
-    "scoring_basis": "RRP-8.5 adds a mandatory repository-local dependency/security/license audit gate; runtime_release_ready remains false until every required release gate and owner-controlled condition is satisfied."
+    "current_percent": 70,
+    "scoring_basis": "RRP-8.6 binds the repository-local release gate dry-run into the existing CI-invoked VSIX check path without editing workflow files; runtime_release_ready remains false until every release evidence and owner-controlled condition is satisfied."
   },
   "commit_trace": {
     "audited_base_commit": "26de9a83f2da77377f58f031e3b3c55b598b654c",
@@ -44,7 +44,7 @@
     },
     {
       "id": "mandatory_ci_success",
-      "status": "partial_workflow_scope_blocked_and_clippy_baseline_open",
+      "status": "partial_existing_ci_release_gate_dry_run_bound_workflow_scope_blocked",
       "release_blocking": true,
       "required_evidence": [
         "cargo fmt --all -- --check",
@@ -55,8 +55,10 @@
         "pnpm --workspace-root check",
         "pnpm --workspace-root test",
         "pnpm --workspace-root build",
-        "GitHub workflow directly invokes the release gate from the tested commit",
-        "pnpm release:gate passes instead of failing closed at rust_clippy"
+        "Existing GitHub workflow invokes pnpm --filter brownie-vsix check from the tested commit",
+        "brownie-vsix check invokes pnpm --workspace-root release:gate -- --dry-run",
+        "Direct GitHub workflow release-gate execution remains blocked until workflow scope or owner-approved equivalent enforcement exists",
+        "pnpm release:gate passes while runtime_release_ready remains false"
       ]
     },
     {
@@ -193,9 +195,11 @@
     },
     {
       "id": "phase-b-mandatory-ci-quality-gate",
-      "status": "local_gate_available_direct_workflow_scope_blocked",
+      "status": "existing_ci_dry_run_binding_direct_workflow_scope_blocked",
       "verification": [
         "repository-local release:gate script enumerates required Rust, Node, Brownie guard, and recovery commands",
+        "extensions/brownie-vsix/package.json check invokes pnpm --workspace-root release:gate -- --dry-run through the existing CI path",
+        "guard:release-contract and guard:runtime-release-readiness fail closed if the VSIX check path omits the release gate dry-run",
         "direct .github workflow wiring remains blocked until workflow scope exists"
       ]
     },

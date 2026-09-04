@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-  "phase": "RRP-8.5",
-  "phase_title": "Dependency Audit and License Tooling Gate",
+  "phase": "RRP-8.6",
+  "phase_title": "Existing CI Release Gate Dry-Run Binding",
   "repository": "globalpocket/brownie",
   "audited_main_commit": "26de9a83f2da77377f58f031e3b3c55b598b654c",
   "runtime_release_ready": false,
@@ -12,13 +12,14 @@
   "release_engineering_contract": {
     "contract_path": "docs/architecture/runtime-release-contract.json",
     "status": "partial",
-    "phase": "RRP-8.5",
+    "phase": "RRP-8.6",
     "audited_base_commit": "26de9a83f2da77377f58f031e3b3c55b598b654c",
     "local_release_gate_script": "pnpm release:gate",
     "direct_workflow_gate_status": "blocked_external_workflow_scope_required",
     "runtime_release_ready_after_phase": false,
     "supply_chain_artifact_evidence_status": "local_baseline_available_release_blocking_gaps_preserved",
-    "dependency_security_license_audit_status": "mandatory_local_gate_added_release_blocking_until_tools_execute_and_pass"
+    "dependency_security_license_audit_status": "mandatory_local_gate_added_release_blocking_until_tools_execute_and_pass",
+    "existing_ci_release_gate_binding_status": "release_gate_dry_run_required_by_existing_vsix_check_path_direct_workflow_scope_blocked"
   },
   "owner_decisions": [
     {
@@ -136,9 +137,11 @@
         "RRP-8.4 adds pnpm --workspace-root release:supply-chain-artifact-evidence, guard:supply-chain-artifact-evidence, and guard:supply-chain-artifact-evidence:test to the repository-local release gate and existing CI-invoked VSIX check path.",
         "RRP-8.4 generated evidence records lockfile hashes, cargo metadata lockfile validation, high-confidence secret scan results, local SBOM baseline, SHA256SUMS, local provenance, artifact inventory, smoke-test status, and signature/integrity owner-action state without storing raw process output or absolute paths.",
         "RRP-8.4 remains fail-closed: missing cargo audit/cargo deny/pnpm audit execution, missing release artifacts, missing artifact smoke tests, missing release artifact checksums, missing workflow provenance, and missing owner-controlled signing or integrity proof keep runtime_release_ready=false.",
-        "RRP-8.4 stabilizes the installed_run_timeout_retry_uses_same_admission_without_duplicate_task release-gate failure by warming read-only first-touch runtime setup before the short post-admission timeout assertion."
+        "RRP-8.4 stabilizes the installed_run_timeout_retry_uses_same_admission_without_duplicate_task release-gate failure by warming read-only first-touch runtime setup before the short post-admission timeout assertion.",
+        "RRP-8.6 wires pnpm --workspace-root release:gate -- --dry-run into extensions/brownie-vsix/package.json check, which is already invoked by GitHub CI, and both release-contract and runtime-release-readiness guards fail closed if that dry-run binding is removed.",
+        "RRP-8.6 is an owner-approved equivalent CI-hardening slice that avoids .github workflow edits while workflow-scope credentials are unavailable; direct workflow enforcement, release artifacts, audit execution, SBOM/artifact provenance, signing/integrity, branch protection, and independent review evidence remain release-blocking."
       ],
-      "next_action": "Continue runtime-release-guard-ci by adding actual vulnerability/license audit execution, cross-platform release artifacts and smoke tests, workflow or owner-approved CI enforcement, branch protection/status-check evidence, independent review evidence, and owner signing/integrity decisions before any Runtime Release Ready claim."
+      "next_action": "Continue runtime-release-guard-ci by adding actual vulnerability/license audit execution, cross-platform release artifacts and smoke tests, direct workflow enforcement or stronger owner-approved CI enforcement, branch protection/status-check evidence, independent review evidence, and owner signing/integrity decisions before any Runtime Release Ready claim."
     },
     {
       "id": "mcp-runtime-safety-policy",
@@ -261,9 +264,10 @@
       "next_action": "Do not use these items to block Brownie Runtime release."
     }
   ],
-  "updated_at": "2026-09-04T05:50:00Z",
+  "updated_at": "2026-09-04T13:40:00Z",
   "evidence": [
-    "RRP-8.5 adds pnpm --workspace-root release:dependency-security-license-audit to pnpm release:gate, plus contract guards and CI-invoked tests. Missing cargo audit, cargo deny, pnpm audit execution, missing lockfiles, missing deny.toml, or failed audit results are release-blocking and cannot be counted as Release Ready."
+    "RRP-8.5 adds pnpm --workspace-root release:dependency-security-license-audit to pnpm release:gate, plus contract guards and CI-invoked tests. Missing cargo audit, cargo deny, pnpm audit execution, missing lockfiles, missing deny.toml, or failed audit results are release-blocking and cannot be counted as Release Ready.",
+    "RRP-8.6 binds pnpm --workspace-root release:gate -- --dry-run into the existing GitHub-CI-invoked brownie-vsix check path and guards that binding without editing .github/workflows/ci.yml."
   ],
   "blockers": [
     "runtime-release-guard-ci"

@@ -106,7 +106,7 @@ function validateRuntimeReleaseContract(contract, options = {}) {
   requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
   requireValue(contract.contract_id === 'runtime-release-engineering-contract-v1', errors, `${contractPath} contract_id must identify the Runtime release engineering contract.`);
   requireValue(contract.owner === 'runtime', errors, `${contractPath} owner must be runtime.`);
-  requireValue(contract.phase === 'RRP-8.5', errors, `${contractPath} phase must be RRP-8.5.`);
+  requireValue(contract.phase === 'RRP-8.6', errors, `${contractPath} phase must be RRP-8.6.`);
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must keep runtime_release_ready false until all release evidence exists.`);
 
   validateCommitTrace(contract.commit_trace, errors, contractPath);
@@ -152,6 +152,7 @@ function validateRuntimeReleaseContract(contract, options = {}) {
   requireValue(packageJson.scripts?.['guard:supply-chain-artifact-evidence:test'] === 'node --test scripts/guard-supply-chain-artifact-evidence.test.mjs', errors, `${defaultPackagePath} must define guard:supply-chain-artifact-evidence:test.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:release-contract'), errors, `${defaultVsixPackagePath} check must invoke guard:release-contract.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:release-contract:test'), errors, `${defaultVsixPackagePath} check must invoke guard:release-contract:test.`);
+  requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root release:gate -- --dry-run'), errors, `${defaultVsixPackagePath} check must invoke release:gate dry-run through the existing CI path.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:supply-chain-artifact-evidence'), errors, `${defaultVsixPackagePath} check must invoke guard:supply-chain-artifact-evidence.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:supply-chain-artifact-evidence:test'), errors, `${defaultVsixPackagePath} check must invoke guard:supply-chain-artifact-evidence:test.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root release:dependency-security-license-audit:test'), errors, `${defaultVsixPackagePath} check must invoke release:dependency-security-license-audit:test.`);

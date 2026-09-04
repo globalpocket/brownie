@@ -63,6 +63,7 @@ const requiredVsixCheckCommands = [
   'pnpm --workspace-root guard:runtime-release-readiness',
   'pnpm --workspace-root guard:release-contract',
   'pnpm --workspace-root guard:release-contract:test',
+  'pnpm --workspace-root release:gate -- --dry-run',
   'pnpm --workspace-root guard:durable-schema-migration',
   'pnpm --workspace-root guard:protocol-event-canonization',
   'pnpm --workspace-root guard:runtime-module-decomposition',

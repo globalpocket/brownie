@@ -160,7 +160,7 @@ export function validateSupplyChainArtifactContract(contract, options = {}) {
   const errors = [];
 
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must keep runtime_release_ready false.`);
-  requireValue(contract.phase === 'RRP-8.5', errors, `${contractPath} phase must be RRP-8.5.`);
+  requireValue(contract.phase === 'RRP-8.6', errors, `${contractPath} phase must be RRP-8.6.`);
   requireValue(contract.release_engineering_maturity?.current_percent < contract.release_engineering_maturity?.target_percent, errors, `${contractPath} must not claim target release maturity before full evidence exists.`);
 
   const localGateCommands = new Set(

@@ -17,6 +17,7 @@ const vsixPackageText = [
   'pnpm --workspace-root guard:runtime-release-readiness',
   'pnpm --workspace-root guard:release-contract',
   'pnpm --workspace-root guard:release-contract:test',
+  'pnpm --workspace-root release:gate -- --dry-run',
   'pnpm --workspace-root guard:durable-schema-migration',
   'pnpm --workspace-root guard:protocol-event-canonization',
   'pnpm --workspace-root guard:runtime-module-decomposition',
@@ -335,6 +336,7 @@ test('rejects CI or VSIX check path that omits release readiness guard coverage'
       'pnpm --workspace-root guard:runtime-release-readiness',
       'pnpm --workspace-root guard:release-contract',
       'pnpm --workspace-root guard:release-contract:test',
+      'pnpm --workspace-root release:gate -- --dry-run',
       'pnpm --workspace-root guard:durable-schema-migration'
     ].join('\n')
   });
@@ -345,6 +347,7 @@ test('rejects CI or VSIX check path that omits release readiness guard coverage'
       'pnpm --workspace-root guard:runtime-release-readiness',
       'pnpm --workspace-root guard:release-contract',
       'pnpm --workspace-root guard:release-contract:test',
+      'pnpm --workspace-root release:gate -- --dry-run',
       'pnpm --workspace-root guard:durable-schema-migration',
       'pnpm --workspace-root guard:protocol-event-canonization'
     ].join('\n')
@@ -356,6 +359,7 @@ test('rejects CI or VSIX check path that omits release readiness guard coverage'
       'pnpm --workspace-root guard:runtime-release-readiness',
       'pnpm --workspace-root guard:release-contract',
       'pnpm --workspace-root guard:release-contract:test',
+      'pnpm --workspace-root release:gate -- --dry-run',
       'pnpm --workspace-root guard:durable-schema-migration',
       'pnpm --workspace-root guard:protocol-event-canonization',
       'pnpm --workspace-root guard:runtime-module-decomposition'
