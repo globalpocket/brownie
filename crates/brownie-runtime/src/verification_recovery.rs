@@ -798,15 +798,19 @@ pub(super) fn latest_product_completion_decision_payload<'a>(
     source_task_id: &str,
     source_run_id: &str,
 ) -> Option<&'a Value> {
-    events
-        .iter()
-        .filter(|event| event.kind == LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded)
-        .filter_map(|event| event.payload.as_ref())
-        .filter(|payload| {
-            payload.get("task_id").and_then(Value::as_str) == Some(source_task_id)
-                && payload.get("run_id").and_then(Value::as_str) == Some(source_run_id)
-        })
-        .last()
+    events.iter().rev().find_map(|event| {
+        if event.kind != LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded {
+            return None;
+        }
+        let payload = event.payload.as_ref()?;
+        if payload.get("task_id").and_then(Value::as_str) == Some(source_task_id)
+            && payload.get("run_id").and_then(Value::as_str) == Some(source_run_id)
+        {
+            Some(payload)
+        } else {
+            None
+        }
+    })
 }
 
 fn is_retryable_llm_provider_failure_class(failure_class: &str) -> bool {
@@ -878,20 +882,17 @@ pub(super) fn verification_recovery_retry_record_for_headless_run_target(
     }
     if !target.authorize_verification_retry_run {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_retry_run_target.authorize_verification_retry_run must be true"
-                .into(),
+            "invalid params: verification_recovery_retry_run_target.authorize_verification_retry_run must be true",
         ));
     }
     if !is_sha256_fingerprint(&target.expected_failure_fingerprint) {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_retry_run_target.expected_failure_fingerprint must be a sha256 fingerprint"
-                .into(),
+            "invalid params: verification_recovery_retry_run_target.expected_failure_fingerprint must be a sha256 fingerprint",
         ));
     }
     if !is_sha256_fingerprint(&target.expected_apply_fingerprint) {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_retry_run_target.expected_apply_fingerprint must be a sha256 fingerprint"
-                .into(),
+            "invalid params: verification_recovery_retry_run_target.expected_apply_fingerprint must be a sha256 fingerprint",
         ));
     }
 
@@ -899,50 +900,44 @@ pub(super) fn verification_recovery_retry_record_for_headless_run_target(
         .tasks()
         .get_task(&target.retry_task_id)
         .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?
-        .ok_or_else(|| {
+        .ok_or({
             TaskRunAdmissionRejection::InvalidParams(
-                "invalid params: verification_recovery_retry_run_target.retry_task_id was not found"
-                    .into(),
+                "invalid params: verification_recovery_retry_run_target.retry_task_id was not found",
             )
         })?;
     if record.run_id != target.retry_run_id {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_retry_run_target.retry_run_id does not match retry task"
-                .into(),
+            "invalid params: verification_recovery_retry_run_target.retry_run_id does not match retry task",
         ));
     }
     if !matches!(record.status, TaskStatus::Created | TaskStatus::Queued) {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification recovery retry run target task must be Created or Queued"
-                .into(),
+            "invalid params: verification recovery retry run target task must be Created or Queued",
         ));
     }
     let Some(provenance) = record.verification_recovery_retry_provenance.as_ref() else {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification recovery retry run target task has no retry provenance"
-                .into(),
+            "invalid params: verification recovery retry run target task has no retry provenance",
         ));
     };
     if provenance.proposal_id != target.proposal_id {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_retry_run_target.proposal_id is stale".into(),
+            "invalid params: verification_recovery_retry_run_target.proposal_id is stale",
         ));
     }
     if provenance.apply_id != target.apply_id {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_retry_run_target.apply_id is stale".into(),
+            "invalid params: verification_recovery_retry_run_target.apply_id is stale",
         ));
     }
     if provenance.failure_fingerprint != target.expected_failure_fingerprint {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_retry_run_target.expected_failure_fingerprint is stale"
-                .into(),
+            "invalid params: verification_recovery_retry_run_target.expected_failure_fingerprint is stale",
         ));
     }
     if provenance.apply_fingerprint != target.expected_apply_fingerprint {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_retry_run_target.expected_apply_fingerprint is stale"
-                .into(),
+            "invalid params: verification_recovery_retry_run_target.expected_apply_fingerprint is stale",
         ));
     }
     revalidate_verification_recovery_retry_task_for_run(store, &record)?;
@@ -967,14 +962,12 @@ pub(super) fn llm_provider_failure_retry_record_for_headless_run_target(
     }
     if !target.authorize_provider_failure_retry_run {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: llm_provider_failure_retry_run_target.authorize_provider_failure_retry_run must be true"
-                .into(),
+            "invalid params: llm_provider_failure_retry_run_target.authorize_provider_failure_retry_run must be true",
         ));
     }
     if !is_sha256_fingerprint(&target.expected_failure_fingerprint) {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: llm_provider_failure_retry_run_target.expected_failure_fingerprint must be a sha256 fingerprint"
-                .into(),
+            "invalid params: llm_provider_failure_retry_run_target.expected_failure_fingerprint must be a sha256 fingerprint",
         ));
     }
 
@@ -982,44 +975,39 @@ pub(super) fn llm_provider_failure_retry_record_for_headless_run_target(
         .tasks()
         .get_task(&target.retry_task_id)
         .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?
-        .ok_or_else(|| {
+        .ok_or({
             TaskRunAdmissionRejection::InvalidParams(
-                "invalid params: llm_provider_failure_retry_run_target.retry_task_id was not found"
-                    .into(),
+                "invalid params: llm_provider_failure_retry_run_target.retry_task_id was not found",
             )
         })?;
     if record.run_id != target.retry_run_id {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: llm_provider_failure_retry_run_target.retry_run_id does not match retry task"
-                .into(),
+            "invalid params: llm_provider_failure_retry_run_target.retry_run_id does not match retry task",
         ));
     }
     if !matches!(record.status, TaskStatus::Created | TaskStatus::Queued) {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: LLM provider failure retry run target task must be Created or Queued"
-                .into(),
+            "invalid params: LLM provider failure retry run target task must be Created or Queued",
         ));
     }
     let Some(provenance) = record.llm_provider_failure_retry_provenance.as_ref() else {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: LLM provider failure retry run target task has no retry provenance"
-                .into(),
+            "invalid params: LLM provider failure retry run target task has no retry provenance",
         ));
     };
     if provenance.source_task_id != target.source_task_id {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: llm_provider_failure_retry_run_target.source_task_id is stale".into(),
+            "invalid params: llm_provider_failure_retry_run_target.source_task_id is stale",
         ));
     }
     if provenance.source_run_id != target.source_run_id {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: llm_provider_failure_retry_run_target.source_run_id is stale".into(),
+            "invalid params: llm_provider_failure_retry_run_target.source_run_id is stale",
         ));
     }
     if provenance.failure_fingerprint != target.expected_failure_fingerprint {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: llm_provider_failure_retry_run_target.expected_failure_fingerprint is stale"
-                .into(),
+            "invalid params: llm_provider_failure_retry_run_target.expected_failure_fingerprint is stale",
         ));
     }
     revalidate_llm_provider_failure_retry_task_for_run(store, &record)?;
@@ -1045,21 +1033,18 @@ pub(super) fn verification_recovery_record_for_headless_apply_target(
     }
     if !target.authorize_recovery_apply {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_apply_target.authorize_recovery_apply must be true"
-                .into(),
+            "invalid params: verification_recovery_apply_target.authorize_recovery_apply must be true",
         ));
     }
     if !is_sha256_fingerprint(&target.expected_failure_fingerprint) {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_apply_target.expected_failure_fingerprint must be a sha256 fingerprint"
-                .into(),
+            "invalid params: verification_recovery_apply_target.expected_failure_fingerprint must be a sha256 fingerprint",
         ));
     }
     if let Some(expected_target_sha256) = target.expected_target_sha256.as_ref() {
         if !is_sha256_fingerprint(expected_target_sha256) {
             return Err(TaskRunAdmissionRejection::InvalidParams(
-                "invalid params: verification_recovery_apply_target.expected_target_sha256 must be a sha256 fingerprint"
-                    .into(),
+                "invalid params: verification_recovery_apply_target.expected_target_sha256 must be a sha256 fingerprint",
             ));
         }
     }
@@ -1068,38 +1053,34 @@ pub(super) fn verification_recovery_record_for_headless_apply_target(
         .tasks()
         .get_task(&target.recovery_task_id)
         .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?
-        .ok_or_else(|| {
+        .ok_or({
             TaskRunAdmissionRejection::InvalidParams(
-                "invalid params: verification_recovery_apply_target.recovery_task_id was not found"
-                    .into(),
+                "invalid params: verification_recovery_apply_target.recovery_task_id was not found",
             )
         })?;
     if record.run_id != target.recovery_run_id {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_apply_target.recovery_run_id does not match recovery task"
-                .into(),
+            "invalid params: verification_recovery_apply_target.recovery_run_id does not match recovery task",
         ));
     }
     let Some(provenance) = record.verification_recovery_provenance.as_ref() else {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification recovery apply target task has no recovery provenance"
-                .into(),
+            "invalid params: verification recovery apply target task has no recovery provenance",
         ));
     };
     if provenance.source_task_id != target.source_task_id {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_apply_target.source_task_id is stale".into(),
+            "invalid params: verification_recovery_apply_target.source_task_id is stale",
         ));
     }
     if provenance.source_run_id != target.source_run_id {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_apply_target.source_run_id is stale".into(),
+            "invalid params: verification_recovery_apply_target.source_run_id is stale",
         ));
     }
     if provenance.failure_fingerprint != target.expected_failure_fingerprint {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_apply_target.expected_failure_fingerprint is stale"
-                .into(),
+            "invalid params: verification_recovery_apply_target.expected_failure_fingerprint is stale",
         ));
     }
     revalidate_verification_recovery_task_for_run(store, &record)?;
@@ -1110,8 +1091,7 @@ pub(super) fn verification_recovery_record_for_headless_apply_target(
         .any(|proposal| proposal.applicable && proposal.proposal_id == target.proposal_id)
     {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_apply_target.proposal_id is not recovery-scoped"
-                .into(),
+            "invalid params: verification_recovery_apply_target.proposal_id is not recovery-scoped",
         ));
     }
     Ok(record)
@@ -1135,14 +1115,12 @@ pub(super) fn verification_recovery_record_for_headless_run_target(
     }
     if !target.authorize_recovery_run {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_run_target.authorize_recovery_run must be true"
-                .into(),
+            "invalid params: verification_recovery_run_target.authorize_recovery_run must be true",
         ));
     }
     if !is_sha256_fingerprint(&target.expected_failure_fingerprint) {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_run_target.expected_failure_fingerprint must be a sha256 fingerprint"
-                .into(),
+            "invalid params: verification_recovery_run_target.expected_failure_fingerprint must be a sha256 fingerprint",
         ));
     }
 
@@ -1150,44 +1128,39 @@ pub(super) fn verification_recovery_record_for_headless_run_target(
         .tasks()
         .get_task(&target.recovery_task_id)
         .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?
-        .ok_or_else(|| {
+        .ok_or({
             TaskRunAdmissionRejection::InvalidParams(
-                "invalid params: verification_recovery_run_target.recovery_task_id was not found"
-                    .into(),
+                "invalid params: verification_recovery_run_target.recovery_task_id was not found",
             )
         })?;
     if record.run_id != target.recovery_run_id {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_run_target.recovery_run_id does not match recovery task"
-                .into(),
+            "invalid params: verification_recovery_run_target.recovery_run_id does not match recovery task",
         ));
     }
     if !matches!(record.status, TaskStatus::Created | TaskStatus::Queued) {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification recovery run target task must be Created or Queued"
-                .into(),
+            "invalid params: verification recovery run target task must be Created or Queued",
         ));
     }
     let Some(provenance) = record.verification_recovery_provenance.as_ref() else {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification recovery run target task has no recovery provenance"
-                .into(),
+            "invalid params: verification recovery run target task has no recovery provenance",
         ));
     };
     if provenance.source_task_id != target.source_task_id {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_run_target.source_task_id is stale".into(),
+            "invalid params: verification_recovery_run_target.source_task_id is stale",
         ));
     }
     if provenance.source_run_id != target.source_run_id {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_run_target.source_run_id is stale".into(),
+            "invalid params: verification_recovery_run_target.source_run_id is stale",
         ));
     }
     if provenance.failure_fingerprint != target.expected_failure_fingerprint {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: verification_recovery_run_target.expected_failure_fingerprint is stale"
-                .into(),
+            "invalid params: verification_recovery_run_target.expected_failure_fingerprint is stale",
         ));
     }
     revalidate_verification_recovery_task_for_run(store, &record)?;

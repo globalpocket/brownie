@@ -904,9 +904,7 @@ fn validate_secret_binding(binding: &ModePackMcpSecretEnvBinding) -> Result<()> 
 }
 
 fn validate_secret_value(value: &str) -> Result<()> {
-    if value.is_empty()
-        || value.len() > MAX_MCP_SECRET_VALUE_BYTES
-        || value.as_bytes().iter().any(|byte| *byte == 0)
+    if value.is_empty() || value.len() > MAX_MCP_SECRET_VALUE_BYTES || value.as_bytes().contains(&0)
     {
         bail!("MCP secret reference resolved to an invalid value");
     }

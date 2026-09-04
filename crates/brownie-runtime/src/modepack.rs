@@ -3096,8 +3096,7 @@ pub(super) fn selected_candidate_provenance_material_from_response(
                 "modepack selected candidate fetch failed: invalid provenance statement response JSON: {error}"
             )
         })?;
-    if material.provenance_statement_json.as_bytes().len() > MODEPACK_PROVENANCE_STATEMENT_MAX_BYTES
-    {
+    if material.provenance_statement_json.len() > MODEPACK_PROVENANCE_STATEMENT_MAX_BYTES {
         return Err(
             "modepack selected candidate fetch failed: provenance statement exceeds byte limit"
                 .to_string(),
@@ -3434,7 +3433,7 @@ fn verify_modepack_registry_manifest_trust(
     provenance_statement_url_fingerprint: &str,
 ) -> Result<ModePackRegistryManifestTrustEvidence, String> {
     let statement_json = &params.registry_provenance_statement_json;
-    if statement_json.as_bytes().len() > MODEPACK_PROVENANCE_STATEMENT_MAX_BYTES {
+    if statement_json.len() > MODEPACK_PROVENANCE_STATEMENT_MAX_BYTES {
         return Err(
             "modepack registry update selection failed: registry trust statement exceeds byte limit"
                 .to_string(),
@@ -3904,7 +3903,7 @@ pub(super) fn verify_modepack_candidate_provenance(
     store: &BrownieStore,
     params: &ModePackVerifyCandidateProvenanceParams,
 ) -> Result<ModePackVerifyCandidateProvenanceResult, String> {
-    if params.provenance_statement_json.as_bytes().len() > MODEPACK_PROVENANCE_STATEMENT_MAX_BYTES {
+    if params.provenance_statement_json.len() > MODEPACK_PROVENANCE_STATEMENT_MAX_BYTES {
         return Err(
             "modepack candidate provenance verification failed: statement exceeds byte limit"
                 .to_string(),
@@ -4294,11 +4293,12 @@ pub(super) fn private_or_special_ip(ip: IpAddr) -> bool {
                 )
         }
         IpAddr::V6(ip) => {
+            let first_segment = ip.segments()[0];
             ip.is_loopback()
                 || ip.is_unspecified()
-                || ip.is_unique_local()
-                || ip.is_unicast_link_local()
-                || ip.segments()[0] == 0x2001 && ip.segments()[1] == 0x0db8
+                || (first_segment & 0xfe00) == 0xfc00
+                || (first_segment & 0xffc0) == 0xfe80
+                || first_segment == 0x2001 && ip.segments()[1] == 0x0db8
         }
     }
 }

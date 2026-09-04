@@ -382,6 +382,10 @@ fn status_from_config(config: &BrownieConfig) -> Result<RuntimeLlmProviderStatus
     })
 }
 
+#[expect(
+    clippy::result_large_err,
+    reason = "provider admission failures carry bounded status evidence for runtime ledgering"
+)]
 pub fn llm_provider_from_workspace_for_task_run(
     workspace_root: &std::path::Path,
 ) -> Result<Box<dyn LlmProvider>, RuntimeLlmProviderError> {
@@ -460,6 +464,10 @@ pub fn llm_provider_from_workspace_for_task_run(
     }
 }
 
+#[expect(
+    clippy::result_large_err,
+    reason = "provider admission failures carry bounded status evidence for runtime ledgering"
+)]
 pub fn llm_provider_from_env_for_task_run() -> Result<Box<dyn LlmProvider>, RuntimeLlmProviderError>
 {
     match std::env::var("BROWNIE_LLM_PROVIDER").ok().as_deref() {

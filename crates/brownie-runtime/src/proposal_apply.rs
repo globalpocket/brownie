@@ -1635,7 +1635,7 @@ fn apply_patch_file_proposal(
     apply_result.content_chars = hunk_chars;
     apply_result.content_bytes = hunks
         .iter()
-        .map(|hunk| hunk.old_text.as_bytes().len() as u64 + hunk.new_text.as_bytes().len() as u64)
+        .map(|hunk| hunk.old_text.len() as u64 + hunk.new_text.len() as u64)
         .sum();
     if hunk_chars > DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS {
         return deny_patch_file_apply(
@@ -5739,31 +5739,18 @@ pub(super) fn apply_proposal(
     } else if operation == WorkspacePatchOperation::PatchFile.as_str() {
         params.patch_hunks.as_ref().map_or_else(
             || {
-                params
-                    .patch_old_text
-                    .as_deref()
-                    .unwrap_or("")
-                    .as_bytes()
-                    .len() as u64
-                    + params
-                        .patch_new_text
-                        .as_deref()
-                        .unwrap_or("")
-                        .as_bytes()
-                        .len() as u64
+                params.patch_old_text.as_deref().unwrap_or("").len() as u64
+                    + params.patch_new_text.as_deref().unwrap_or("").len() as u64
             },
             |hunks| {
                 hunks
                     .iter()
-                    .map(|hunk| {
-                        hunk.old_text.as_bytes().len() as u64
-                            + hunk.new_text.as_bytes().len() as u64
-                    })
+                    .map(|hunk| hunk.old_text.len() as u64 + hunk.new_text.len() as u64)
                     .sum()
             },
         )
     } else {
-        replacement_content_for_counts.as_bytes().len() as u64
+        replacement_content_for_counts.len() as u64
     };
     let mut apply_result = WorkspacePatchApplyResultSummary {
         proposal_id: params.proposal_id.clone(),

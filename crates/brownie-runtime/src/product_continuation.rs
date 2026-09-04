@@ -348,7 +348,7 @@ pub(super) fn headless_continue_product_loop_stop_recovery(
         .tasks()
         .list_tasks()
         .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
-    if headless_product_loop_stop_recovery_existing_boundary_admission(&store, &tasks, target)?
+    if headless_product_loop_stop_recovery_existing_boundary_admission(store, &tasks, target)?
         .is_some()
     {
         return Err(VerificationRecoveryAdmissionError::InvalidParams(

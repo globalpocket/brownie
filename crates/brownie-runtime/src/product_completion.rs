@@ -991,6 +991,10 @@ fn project_completion_policy_path_array(value: Option<&Value>) -> Result<Vec<Str
     Ok(paths)
 }
 
+#[expect(
+    clippy::type_complexity,
+    reason = "existing policy parser returns the complete bounded product-gap decision tuple"
+)]
 pub(super) fn project_completion_policy_remaining_gap_selection(
     value: Option<&Value>,
     product_completion_claim: bool,
@@ -1056,13 +1060,14 @@ pub(super) fn project_completion_policy_remaining_gap_selection(
             }
         }
     }
-    if selected.is_none() && !product_completion_claim {
-        if !saw_open_required_gap || consumed_closures.is_empty() {
-            return Err(
+    if selected.is_none()
+        && !product_completion_claim
+        && (!saw_open_required_gap || consumed_closures.is_empty())
+    {
+        return Err(
                 "invalid params: project completion policy incomplete claim requires one open required product DoD gap"
                     .to_string(),
             );
-        }
     }
     consumed_closures.sort_by(|left, right| {
         left.selected_remaining_gap
@@ -1296,6 +1301,10 @@ pub(super) fn headless_product_remaining_gap_selection_fingerprint(
     format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "fingerprint intentionally names every release-product evidence input"
+)]
 fn headless_product_evidence_matrix_fingerprint(
     request: &HeadlessRunProductEvidenceDerivationRequest,
     accepted: &HeadlessRunAcceptedCompletion,
@@ -1644,25 +1653,23 @@ pub(super) fn headless_run_product_completion_decision(
         "product_complete"
             if !missing_or_invalid_evidence
                 && evidence_request.remaining_capability.is_none()
-                && request
+                && !request
                     .milestone_exit_rationale
                     .as_deref()
                     .unwrap_or("")
                     .trim()
-                    .len()
-                    > 0 =>
+                    .is_empty() =>
         {
             ("product_complete", "stop_autonomous_development")
         }
         "continue_development"
             if !missing_or_invalid_evidence
-                && evidence_request
+                && !evidence_request
                     .remaining_capability
                     .as_deref()
                     .unwrap_or("")
                     .trim()
-                    .len()
-                    > 0 =>
+                    .is_empty() =>
         {
             ("continue_development", "plan_next_phase")
         }
@@ -2046,18 +2053,17 @@ fn validate_technical_debt_transitions(
                     );
                 }
             }
-            "deferred" => {
+            "deferred"
                 if transition
                     .closure_evidence_fingerprint
                     .as_ref()
                     .map(|value| !is_sha256_fingerprint(value))
-                    .unwrap_or(false)
-                {
-                    return Err(
-                        "technical_debt_transitions deferred evidence fingerprint is malformed"
-                            .to_string(),
-                    );
-                }
+                    .unwrap_or(false) =>
+            {
+                return Err(
+                    "technical_debt_transitions deferred evidence fingerprint is malformed"
+                        .to_string(),
+                );
             }
             _ => {}
         }
@@ -2146,6 +2152,10 @@ pub(super) fn headless_product_completion_decision_payload(
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "fingerprint intentionally names every completion-decision evidence input"
+)]
 fn headless_product_completion_decision_fingerprint(
     request: &HeadlessRunProductCompletionDecisionRequest,
     accepted: &HeadlessRunAcceptedCompletion,

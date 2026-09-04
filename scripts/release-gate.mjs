@@ -157,6 +157,17 @@ function gitValue(repoRoot, args) {
   return result.stdout.trim();
 }
 
+function readRuntimeReleaseReady(repoRoot) {
+  try {
+    const contract = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, 'docs/architecture/runtime-release-contract.json'), 'utf8')
+    );
+    return contract.runtime_release_ready === true;
+  } catch {
+    return false;
+  }
+}
+
 function runCommand(repoRoot, entry) {
   const startedAt = new Date().toISOString();
   const result = spawnSync(entry.command, entry.args, {
@@ -199,6 +210,8 @@ export function runReleaseGate(options = {}) {
     ...buildReleaseGatePlan({ repoRoot }),
     started_at: new Date().toISOString(),
     finished_at: null,
+    mandatory_gate_passed: false,
+    runtime_release_ready: false,
     release_ready: false,
     command_results: []
   };
@@ -212,9 +225,12 @@ export function runReleaseGate(options = {}) {
   }
 
   evidence.finished_at = new Date().toISOString();
-  evidence.release_ready =
+  evidence.mandatory_gate_passed =
     evidence.command_results.length === requiredReleaseGateCommands.length &&
     evidence.command_results.every((result) => result.passed);
+  evidence.runtime_release_ready =
+    evidence.mandatory_gate_passed === true && readRuntimeReleaseReady(repoRoot) === true;
+  evidence.release_ready = evidence.runtime_release_ready;
   return evidence;
 }
 
@@ -230,7 +246,7 @@ if (isMainModule()) {
       fs.writeFileSync(options.evidencePath, output);
     }
     process.stdout.write(output);
-    if (!options.dryRun && evidence.release_ready !== true) {
+    if (!options.dryRun && evidence.mandatory_gate_passed !== true) {
       process.exit(1);
     }
   } catch (error) {

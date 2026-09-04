@@ -434,13 +434,13 @@ fn validate_headless_journey_admission(
                 .to_string(),
         );
     }
-    if admission.objective_context.is_some() {
-        if params.max_advances.unwrap_or(1) != 1 || params.max_steps_per_advance.unwrap_or(1) != 1 {
-            return Err(
-                "invalid params: objective_context admission requires one advance with one step"
-                    .to_string(),
-            );
-        }
+    if admission.objective_context.is_some()
+        && (params.max_advances.unwrap_or(1) != 1 || params.max_steps_per_advance.unwrap_or(1) != 1)
+    {
+        return Err(
+            "invalid params: objective_context admission requires one advance with one step"
+                .to_string(),
+        );
     }
     Ok(())
 }
@@ -2806,6 +2806,10 @@ fn headless_journey_execution_checkpoint_fingerprint(
     format!("sha256:{}", hex_sha256(seed.to_string().as_bytes()))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "execution metadata constructor keeps persisted journey evidence explicit"
+)]
 fn headless_journey_execution_metadata(
     journey: &HeadlessJourneyStartCheckpoint,
     session_id: &str,
@@ -2859,6 +2863,10 @@ fn headless_journey_execution_boundary_from_result(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "checkpoint writer threads explicit journey execution evidence through one boundary"
+)]
 fn headless_journey_execution_write_checkpoint(
     store: &BrownieStore,
     journey: &HeadlessJourneyStartCheckpoint,

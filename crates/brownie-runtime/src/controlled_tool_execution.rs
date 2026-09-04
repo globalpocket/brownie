@@ -3,8 +3,10 @@
 use super::*;
 use anyhow::{bail, Context};
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
-use std::{fs, io::Write, thread, time::Duration};
+use std::{fs, io, io::Write, thread, time::Duration};
 
 const MCP_APPROVAL_CLAIM_LOCK_RETRIES: usize = 40;
 const MCP_APPROVAL_CLAIM_LOCK_SLEEP: Duration = Duration::from_millis(25);
@@ -451,7 +453,7 @@ fn execute_mcp_tool_for_record(
     };
     let server_id = server_id.to_string();
     let tool_name = tool_name.to_string();
-    let decision = mcp_tool_runtime_permission_decision(&policy, &server_id, &tool_name);
+    let decision = mcp_tool_runtime_permission_decision(policy, &server_id, &tool_name);
     if !decision.allowed {
         return Ok(ToolExecuteResult {
             tool_id,
@@ -467,7 +469,7 @@ fn execute_mcp_tool_for_record(
         });
     };
     let mcp_safety_policy = mcp_tool_safety_policy_payload(tool_policy);
-    let Some(config) = mcp_server_config_for_policy(&store, &record, &server_id)? else {
+    let Some(config) = mcp_server_config_for_policy(store, record, &server_id)? else {
         return Ok(ToolExecuteResult {
             tool_id,
             status: ToolExecuteStatus::Denied,
@@ -495,7 +497,7 @@ fn execute_mcp_tool_for_record(
             output: json!({ "reason": "MCP tool is outside the validated server catalog." }),
         });
     };
-    if !pinned_mcp_catalog_allows(&store, &record, &catalog, catalog_entry)? {
+    if !pinned_mcp_catalog_allows(store, record, &catalog, catalog_entry)? {
         return Ok(ToolExecuteResult {
             tool_id,
             status: ToolExecuteStatus::Denied,
@@ -1167,6 +1169,35 @@ struct McpToolApprovalClaimLock {
     _file: fs::File,
 }
 
+fn try_lock_file_nonblocking(file: &fs::File) -> io::Result<bool> {
+    try_lock_file_nonblocking_platform(file)
+}
+
+#[cfg(unix)]
+fn try_lock_file_nonblocking_platform(file: &fs::File) -> io::Result<bool> {
+    let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if result == 0 {
+        return Ok(true);
+    }
+    let error = io::Error::last_os_error();
+    if matches!(
+        error.raw_os_error(),
+        Some(code) if code == libc::EWOULDBLOCK || code == libc::EAGAIN
+    ) {
+        return Ok(false);
+    }
+    Err(error)
+}
+
+#[cfg(not(unix))]
+fn try_lock_file_nonblocking_platform(file: &fs::File) -> io::Result<bool> {
+    match file.try_lock() {
+        Ok(()) => Ok(true),
+        Err(fs::TryLockError::WouldBlock) => Ok(false),
+        Err(fs::TryLockError::Error(error)) => Err(error),
+    }
+}
+
 fn acquire_mcp_tool_approval_claim_lock(
     store: &BrownieStore,
     record: &TaskRecord,
@@ -1209,16 +1240,14 @@ fn try_acquire_mcp_tool_approval_claim_lock(
         .read(true)
         .write(true)
         .create(true)
+        .truncate(true)
         .open(&lock_path)
     {
         Ok(mut file) => {
-            match file.try_lock() {
-                Ok(()) => {}
-                Err(std::fs::TryLockError::WouldBlock) => return Ok(None),
-                Err(std::fs::TryLockError::Error(error)) => {
-                    return Err(error)
-                        .with_context(|| format!("failed to lock {}", lock_path.display()));
-                }
+            if !try_lock_file_nonblocking(&file)
+                .with_context(|| format!("failed to lock {}", lock_path.display()))?
+            {
+                return Ok(None);
             }
             file.set_len(0)
                 .with_context(|| format!("failed to reset {}", lock_path.display()))?;
