@@ -175,7 +175,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
   requireValue(contract.contract_id === 'runtime-semantic-protocol-contract-v1', errors, `${contractPath} contract_id must identify the Runtime semantic protocol contract.`);
   requireValue(contract.campaign === 'runtime-release-readiness-p0-p1-finite-closure', errors, `${contractPath} campaign must match Runtime release readiness.`);
-  requireValue(contract.phase === 'RRP-5.12', errors, `${contractPath} phase must be RRP-5.12.`);
+  requireValue(contract.phase === 'RRP-5.13', errors, `${contractPath} phase must be RRP-5.13.`);
   requireValue(contract.owner === 'runtime', errors, `${contractPath} owner must be runtime.`);
   requireValue(contract.runtime_release_debt_id === 'protocol-event-canonization', errors, `${contractPath} must bind to protocol-event-canonization.`);
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must not declare Runtime Release Ready.`);
@@ -392,7 +392,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   for (const variant of ledgerVariants) {
     const entry = fingerprintByKind.get(variant);
     requireValue(Boolean(entry), errors, `${contractPath} durable_event_migration_coupling.event_payload_schema_fingerprints must include ${variant}.`);
-    requireValue(entry?.payload_schema_version === 8, errors, `${contractPath} ${variant} payload_schema_version must be 8.`);
+    requireValue(entry?.payload_schema_version === 9, errors, `${contractPath} ${variant} payload_schema_version must be 9.`);
     requireValue(entry?.store_schema_version === durableCoupling.store_schema_version, errors, `${contractPath} ${variant} store_schema_version must match durable coupling schema version.`);
     requireValue(isNonEmptyString(entry?.payload_schema_id), errors, `${contractPath} ${variant} payload_schema_id must be present.`);
     requireValue(isNonEmptyString(entry?.payload_schema_fingerprint), errors, `${contractPath} ${variant} payload_schema_fingerprint must be present.`);
@@ -547,6 +547,33 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
       `${contractPath} ${eventKind} payload schema descriptor must capture ${descriptorToken} and reject additional fields.`
     );
   }
+  const taskAdmissionDescriptorRequirements = new Map([
+    ['TaskStarted', 'task_started_payload:true'],
+    ['TaskRunning', 'task_running_payload:true'],
+    ['ModeResolved', 'mode_resolved_payload:true'],
+    ['ExternalModePackChildProvenanceDenied', 'external_modepack_child_provenance_denied_payload:true'],
+    ['ExternalModePackTaskProvenanceDenied', 'external_modepack_task_provenance_denied_payload:true'],
+  ]);
+  for (const [eventKind, descriptorToken] of taskAdmissionDescriptorRequirements) {
+    const entry = fingerprintByKind.get(eventKind);
+    requireValue(
+      entry?.payload_schema_classification === 'strict_typed',
+      errors,
+      `${contractPath} ${eventKind} must be classified as strict_typed.`
+    );
+    requireValue(
+      entry?.payload_schema_contract_status === 'closed' &&
+        entry?.release_blocking_until_typed === false,
+      errors,
+      `${contractPath} ${eventKind} strict typed task admission/mode payload schema must be closed and non-release-blocking.`
+    );
+    requireValue(
+      entry?.payload_schema_descriptor?.includes(descriptorToken) &&
+        entry?.payload_schema_descriptor?.includes('additional_fields:false'),
+      errors,
+      `${contractPath} ${eventKind} payload schema descriptor must capture ${descriptorToken} and reject additional fields.`
+    );
+  }
   const schemaFixtures = Array.isArray(durableCoupling.payload_schema_fixtures) ? durableCoupling.payload_schema_fixtures : [];
   const taskCompletedFixtures = schemaFixtures.filter((fixture) => fixture?.ledger_event_kind === 'TaskCompleted');
   requireValue(taskCompletedFixtures.length >= 2, errors, `${contractPath} must include TaskCompleted payload schema/instance split fixtures.`);
@@ -586,6 +613,13 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
       schemaFixtures.some((fixture) => fixture?.ledger_event_kind === eventKind),
       errors,
       `${contractPath} must include ${eventKind} strict typed lifecycle payload fixture.`
+    );
+  }
+  for (const eventKind of taskAdmissionDescriptorRequirements.keys()) {
+    requireValue(
+      schemaFixtures.some((fixture) => fixture?.ledger_event_kind === eventKind),
+      errors,
+      `${contractPath} must include ${eventKind} strict typed task admission/mode payload fixture.`
     );
   }
   requireValue(

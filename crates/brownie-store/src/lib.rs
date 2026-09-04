@@ -6088,7 +6088,7 @@ pub struct LedgerPayloadEnvelope {
     pub instance_shape_fingerprint: String,
 }
 
-pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 8;
+pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 9;
 pub const LEDGER_PAYLOAD_SHAPE_VERSION: u64 = LEDGER_PAYLOAD_SCHEMA_VERSION;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6163,7 +6163,12 @@ pub fn ledger_payload_schema_classification(
         | LedgerEventKind::SecondPassPromptBuilt
         | LedgerEventKind::SecondPassLlmRequestCreated
         | LedgerEventKind::SecondPassLlmRequestFailed
-        | LedgerEventKind::SecondPassLlmResponseReceived => {
+        | LedgerEventKind::SecondPassLlmResponseReceived
+        | LedgerEventKind::TaskStarted
+        | LedgerEventKind::TaskRunning
+        | LedgerEventKind::ModeResolved
+        | LedgerEventKind::ExternalModePackChildProvenanceDenied
+        | LedgerEventKind::ExternalModePackTaskProvenanceDenied => {
             LedgerPayloadSchemaClassification::StrictTyped
         }
         _ => LedgerPayloadSchemaClassification::VersionedOpen,
@@ -6355,6 +6360,15 @@ fn validate_strict_ledger_payload_schema(
         }
         LedgerEventKind::LlmResponseReceived | LedgerEventKind::SecondPassLlmResponseReceived => {
             validate_llm_response_received_payload_schema(kind, payload)
+        }
+        LedgerEventKind::TaskStarted => validate_task_started_payload_schema(kind, payload),
+        LedgerEventKind::TaskRunning => validate_task_running_payload_schema(kind, payload),
+        LedgerEventKind::ModeResolved => validate_mode_resolved_payload_schema(kind, payload),
+        LedgerEventKind::ExternalModePackChildProvenanceDenied => {
+            validate_external_modepack_child_denied_payload_schema(kind, payload)
+        }
+        LedgerEventKind::ExternalModePackTaskProvenanceDenied => {
+            validate_external_modepack_task_denied_payload_schema(kind, payload)
         }
         _ => bail!("{kind:?} strict ledger payload schema is not registered"),
     }
@@ -7432,6 +7446,222 @@ fn validate_llm_response_received_payload_schema(
     Ok(())
 }
 
+fn validate_task_started_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(kind, payload, TASK_STARTED_KNOWN_PAYLOAD_FIELDS)?;
+    validate_payload_has_known_field(kind, object)?;
+    validate_optional_payload_string_field(object, "status")?;
+    validate_optional_payload_string_or_null_field(object, "parent_task_id")?;
+    validate_optional_payload_string_or_null_field(object, "parent_run_id")?;
+    validate_optional_payload_string_or_null_field(object, "source_candidate_id")?;
+    validate_optional_payload_string_or_null_field(object, "source_handoff_envelope_id")?;
+    validate_optional_payload_string_or_null_field(object, "source_handoff_envelope_fingerprint")?;
+    validate_optional_payload_object_or_null_field(object, "source_intent_summary")?;
+    validate_optional_payload_object_or_null_field(object, "recovery_cycle_provenance")?;
+    validate_optional_payload_object_or_null_field(object, "external_modepack_child_provenance")?;
+    validate_optional_payload_object_or_null_field(object, "verification_recovery_provenance")?;
+    validate_optional_payload_object_or_null_field(object, "patch_apply_recovery_provenance")?;
+    validate_optional_payload_object_or_null_field(
+        object,
+        "verification_recovery_retry_provenance",
+    )?;
+    validate_optional_payload_object_or_null_field(
+        object,
+        "llm_provider_failure_retry_provenance",
+    )?;
+    validate_optional_payload_object_or_null_field(object, "product_continuation_provenance")?;
+    validate_optional_payload_object_or_null_field(
+        object,
+        "product_objective_continuation_provenance",
+    )?;
+    validate_optional_payload_object_or_null_field(
+        object,
+        "product_loop_stop_recovery_provenance",
+    )?;
+    validate_optional_payload_string_or_null_field(object, "source_task_id")?;
+    validate_optional_payload_string_or_null_field(object, "source_run_id")?;
+    validate_optional_payload_string_or_null_field(object, "source_apply_id")?;
+    validate_optional_payload_string_or_null_field(object, "source_proposal_id")?;
+    validate_optional_payload_string_or_null_field(object, "source_decision_id")?;
+    validate_optional_payload_string_or_null_field(object, "failure_fingerprint")?;
+    validate_optional_payload_string_or_null_field(object, "failure_class")?;
+    validate_optional_payload_string_or_null_field(object, "recovery_task_id")?;
+    validate_optional_payload_string_or_null_field(object, "recovery_run_id")?;
+    validate_optional_payload_string_or_null_field(object, "proposal_id")?;
+    validate_optional_payload_string_or_null_field(object, "apply_id")?;
+    validate_optional_payload_string_or_null_field(object, "apply_fingerprint")?;
+    validate_optional_payload_array_or_null_field(object, "retried_verifier_tool_ids")?;
+    validate_optional_payload_string_or_null_field(object, "decision_fingerprint")?;
+    validate_optional_payload_string_or_null_field(object, "product_evidence_fingerprint")?;
+    validate_optional_payload_string_or_null_field(object, "derived_objective_fingerprint")?;
+    validate_optional_payload_string_or_null_field(object, "derived_goal_fingerprint")?;
+    validate_optional_payload_string_or_null_field(object, "source_session_id")?;
+    validate_optional_payload_string_or_null_field(object, "source_drive_id")?;
+    validate_optional_payload_string_or_null_field(object, "drive_fingerprint")?;
+    validate_optional_payload_string_or_null_field(object, "stop_reason")?;
+    validate_optional_payload_string_or_null_field(object, "stop_class")?;
+    validate_optional_payload_string_or_null_field(object, "source_progress_fingerprint")?;
+    validate_optional_payload_u64_or_null_field(object, "end_session_sequence")?;
+    validate_optional_payload_string_or_null_field(object, "next_route_fingerprint")?;
+    validate_optional_payload_string_or_null_field(object, "recovery_boundary_fingerprint")?;
+    validate_optional_payload_bool_field(object, "execution_enabled")?;
+    validate_optional_payload_bool_field(object, "scheduler_handoff_enabled")?;
+    validate_optional_payload_bool_field(object, "recovery_running_enabled")?;
+    validate_optional_payload_bool_field(object, "retry_running_enabled")?;
+    validate_optional_payload_bool_field(object, "product_continuation_running_enabled")?;
+    validate_optional_payload_bool_field(object, "product_loop_stop_recovery_running_enabled")?;
+    validate_optional_payload_bool_or_null_field(object, "retryable")?;
+    validate_optional_payload_string_field(object, "next_action")?;
+    validate_optional_payload_string_field(object, "reason")?;
+    Ok(())
+}
+
+fn validate_task_running_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(kind, payload, TASK_RUNNING_KNOWN_PAYLOAD_FIELDS)?;
+    validate_payload_has_known_field(kind, object)?;
+    validate_optional_payload_object_field(object, "runtime_deadline")?;
+    validate_optional_payload_string_field(object, "deadline_scope")?;
+    validate_optional_payload_bool_field(object, "deadline_persisted")?;
+    validate_optional_payload_string_field(object, "admission_id")?;
+    validate_optional_payload_string_field(object, "admission_kind")?;
+    validate_optional_payload_string_field(object, "reason")?;
+    if object.contains_key("runtime_deadline") {
+        for field in ["deadline_scope", "deadline_persisted"] {
+            if !object.contains_key(field) {
+                bail!("{kind:?} ledger payload must include {field} with runtime_deadline");
+            }
+        }
+        if object
+            .get("deadline_scope")
+            .and_then(serde_json::Value::as_str)
+            != Some("task_run")
+        {
+            bail!("{kind:?} ledger payload deadline_scope must be task_run");
+        }
+        if object
+            .get("deadline_persisted")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+        {
+            bail!("{kind:?} ledger payload deadline_persisted must be true");
+        }
+    }
+    if object.contains_key("admission_id") || object.contains_key("admission_kind") {
+        for field in ["admission_id", "admission_kind", "reason"] {
+            if !object.contains_key(field) {
+                bail!("{kind:?} ledger payload must include {field} for admission evidence");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_mode_resolved_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(kind, payload, MODE_RESOLVED_KNOWN_PAYLOAD_FIELDS)?;
+    for field in [
+        "mode_id",
+        "display_name",
+        "role_definition",
+        "prompt_sections",
+        "instruction_fingerprint",
+        "workspace_write_scopes",
+        "mcp_access",
+        "completion_rules",
+        "permissions",
+    ] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    validate_required_payload_string_field(object, "mode_id")?;
+    validate_required_payload_string_field(object, "display_name")?;
+    validate_required_payload_string_field(object, "role_definition")?;
+    validate_optional_payload_string_or_null_field(object, "when_to_use")?;
+    validate_optional_payload_string_or_null_field(object, "description")?;
+    validate_required_payload_array_field(object, "prompt_sections")?;
+    validate_optional_payload_string_or_null_field(object, "verification_responsibility")?;
+    validate_optional_payload_string_or_null_field(object, "instruction_fingerprint")?;
+    validate_required_payload_array_field(object, "workspace_write_scopes")?;
+    validate_optional_payload_array_or_null_field(object, "allowed_handoff_targets")?;
+    validate_required_payload_array_field(object, "mcp_access")?;
+    validate_required_payload_array_field(object, "completion_rules")?;
+    validate_required_payload_object_field(object, "permissions")?;
+    validate_optional_payload_array_field(object, "mcp_tool_catalogs")?;
+    validate_optional_payload_object_field(object, "external_modepack_task_provenance")?;
+    Ok(())
+}
+
+fn validate_external_modepack_child_denied_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        EXTERNAL_MODEPACK_CHILD_DENIED_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in ["status", "reason", "task_id", "run_id"] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    validate_required_payload_string_field(object, "status")?;
+    validate_required_payload_string_field(object, "reason")?;
+    validate_required_payload_string_field(object, "task_id")?;
+    validate_required_payload_string_field(object, "run_id")?;
+    validate_optional_payload_string_or_null_field(object, "parent_run_id")?;
+    validate_optional_payload_string_or_null_field(object, "source_candidate_id")?;
+    validate_optional_payload_string_or_null_field(object, "source_handoff_envelope_id")?;
+    validate_optional_payload_string_or_null_field(object, "source_handoff_envelope_fingerprint")?;
+    validate_optional_payload_string_or_null_field(object, "mode_id")?;
+    if object.get("status").and_then(serde_json::Value::as_str) != Some("Denied") {
+        bail!("{kind:?} ledger payload status must be Denied");
+    }
+    Ok(())
+}
+
+fn validate_external_modepack_task_denied_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        EXTERNAL_MODEPACK_TASK_DENIED_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "status",
+        "reason",
+        "task_id",
+        "run_id",
+        "source_kind",
+        "source_path",
+    ] {
+        if !object.contains_key(field) {
+            bail!("{kind:?} ledger payload must include {field}");
+        }
+    }
+    validate_required_payload_string_field(object, "status")?;
+    validate_required_payload_string_field(object, "reason")?;
+    validate_required_payload_string_field(object, "task_id")?;
+    validate_required_payload_string_field(object, "run_id")?;
+    validate_optional_payload_string_or_null_field(object, "mode_id")?;
+    validate_required_payload_string_field(object, "source_kind")?;
+    validate_required_payload_string_field(object, "source_path")?;
+    if object.get("status").and_then(serde_json::Value::as_str) != Some("Denied") {
+        bail!("{kind:?} ledger payload status must be Denied");
+    }
+    Ok(())
+}
+
 fn validate_known_payload_object<'a>(
     kind: &LedgerEventKind,
     payload: &'a serde_json::Value,
@@ -7538,6 +7768,109 @@ const LLM_RESPONSE_RECEIVED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "content_preview_redaction_reason",
     "provider",
     "response_preview_chars",
+];
+
+const TASK_STARTED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "apply_fingerprint",
+    "apply_id",
+    "decision_fingerprint",
+    "derived_goal_fingerprint",
+    "derived_objective_fingerprint",
+    "drive_fingerprint",
+    "end_session_sequence",
+    "execution_enabled",
+    "external_modepack_child_provenance",
+    "failure_class",
+    "failure_fingerprint",
+    "llm_provider_failure_retry_provenance",
+    "next_action",
+    "next_route_fingerprint",
+    "parent_run_id",
+    "parent_task_id",
+    "patch_apply_recovery_provenance",
+    "product_continuation_provenance",
+    "product_continuation_running_enabled",
+    "product_evidence_fingerprint",
+    "product_loop_stop_recovery_provenance",
+    "product_loop_stop_recovery_running_enabled",
+    "product_objective_continuation_provenance",
+    "proposal_id",
+    "reason",
+    "recovery_boundary_fingerprint",
+    "recovery_cycle_provenance",
+    "recovery_run_id",
+    "recovery_running_enabled",
+    "recovery_task_id",
+    "retried_verifier_tool_ids",
+    "retry_running_enabled",
+    "retryable",
+    "scheduler_handoff_enabled",
+    "source_apply_id",
+    "source_candidate_id",
+    "source_decision_id",
+    "source_drive_id",
+    "source_handoff_envelope_fingerprint",
+    "source_handoff_envelope_id",
+    "source_intent_summary",
+    "source_progress_fingerprint",
+    "source_proposal_id",
+    "source_run_id",
+    "source_session_id",
+    "source_task_id",
+    "status",
+    "stop_class",
+    "stop_reason",
+    "verification_recovery_provenance",
+    "verification_recovery_retry_provenance",
+];
+
+const TASK_RUNNING_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "admission_id",
+    "admission_kind",
+    "deadline_persisted",
+    "deadline_scope",
+    "reason",
+    "runtime_deadline",
+];
+
+const MODE_RESOLVED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "allowed_handoff_targets",
+    "completion_rules",
+    "description",
+    "display_name",
+    "external_modepack_task_provenance",
+    "instruction_fingerprint",
+    "mcp_access",
+    "mcp_tool_catalogs",
+    "mode_id",
+    "permissions",
+    "prompt_sections",
+    "role_definition",
+    "verification_responsibility",
+    "workspace_write_scopes",
+    "when_to_use",
+];
+
+const EXTERNAL_MODEPACK_CHILD_DENIED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "mode_id",
+    "parent_run_id",
+    "reason",
+    "run_id",
+    "source_candidate_id",
+    "source_handoff_envelope_fingerprint",
+    "source_handoff_envelope_id",
+    "status",
+    "task_id",
+];
+
+const EXTERNAL_MODEPACK_TASK_DENIED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "mode_id",
+    "reason",
+    "run_id",
+    "source_kind",
+    "source_path",
+    "status",
+    "task_id",
 ];
 
 const TOOL_PLAN_KNOWN_PAYLOAD_FIELDS: &[&str] =
@@ -7986,6 +8319,18 @@ fn validate_required_payload_u64_or_null_field(
     Ok(())
 }
 
+fn validate_optional_payload_u64_or_null_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    if let Some(value) = object.get(field) {
+        if !(value.is_u64() || value.is_null()) {
+            bail!("ledger payload field {field} must be a u64 or null");
+        }
+    }
+    Ok(())
+}
+
 fn validate_optional_payload_bool_field(
     object: &serde_json::Map<String, serde_json::Value>,
     field: &str,
@@ -7993,6 +8338,18 @@ fn validate_optional_payload_bool_field(
     if let Some(value) = object.get(field) {
         if !value.is_boolean() {
             bail!("ledger payload field {field} must be a boolean");
+        }
+    }
+    Ok(())
+}
+
+fn validate_optional_payload_bool_or_null_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    if let Some(value) = object.get(field) {
+        if !(value.is_boolean() || value.is_null()) {
+            bail!("ledger payload field {field} must be a boolean or null");
         }
     }
     Ok(())
@@ -8100,6 +8457,31 @@ fn validate_optional_payload_array_field(
     if let Some(value) = object.get(field) {
         if !value.is_array() {
             bail!("ledger payload field {field} must be an array");
+        }
+    }
+    Ok(())
+}
+
+fn validate_required_payload_array_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    let Some(value) = object.get(field) else {
+        bail!("ledger payload field {field} is required");
+    };
+    if !value.is_array() {
+        bail!("ledger payload field {field} must be an array");
+    }
+    Ok(())
+}
+
+fn validate_optional_payload_array_or_null_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    if let Some(value) = object.get(field) {
+        if !(value.is_array() || value.is_null()) {
+            bail!("ledger payload field {field} must be an array or null");
         }
     }
     Ok(())
@@ -8269,6 +8651,15 @@ fn ledger_payload_schema_descriptor(kind: &LedgerEventKind) -> String {
         LedgerEventKind::LlmResponseReceived | LedgerEventKind::SecondPassLlmResponseReceived => {
             llm_response_received_payload_schema_descriptor()
         }
+        LedgerEventKind::TaskStarted => task_started_payload_schema_descriptor(),
+        LedgerEventKind::TaskRunning => task_running_payload_schema_descriptor(),
+        LedgerEventKind::ModeResolved => mode_resolved_payload_schema_descriptor(),
+        LedgerEventKind::ExternalModePackChildProvenanceDenied => {
+            external_modepack_child_denied_payload_schema_descriptor()
+        }
+        LedgerEventKind::ExternalModePackTaskProvenanceDenied => {
+            external_modepack_task_denied_payload_schema_descriptor()
+        }
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
 }
@@ -8367,6 +8758,26 @@ fn llm_request_failed_payload_schema_descriptor() -> String {
 
 fn llm_response_received_payload_schema_descriptor() -> String {
     "strict_typed{payload_optional:false;required_fields:provider:string;one_of_required:content_preview:string|content_preview_redacted:boolean;known_optional_fields:content_preview:string,content_preview_redacted:boolean,content_preview_redaction_reason:string,response_preview_chars:u64;additional_fields:false;llm_response_received_payload:true}".to_string()
+}
+
+fn task_started_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:true;known_optional_fields:apply_fingerprint:string_or_null,apply_id:string_or_null,decision_fingerprint:string_or_null,derived_goal_fingerprint:string_or_null,derived_objective_fingerprint:string_or_null,drive_fingerprint:string_or_null,end_session_sequence:u64_or_null,execution_enabled:boolean,external_modepack_child_provenance:object_or_null,failure_class:string_or_null,failure_fingerprint:string_or_null,llm_provider_failure_retry_provenance:object_or_null,next_action:string,next_route_fingerprint:string_or_null,parent_run_id:string_or_null,parent_task_id:string_or_null,patch_apply_recovery_provenance:object_or_null,product_continuation_provenance:object_or_null,product_continuation_running_enabled:boolean,product_evidence_fingerprint:string_or_null,product_loop_stop_recovery_provenance:object_or_null,product_loop_stop_recovery_running_enabled:boolean,product_objective_continuation_provenance:object_or_null,proposal_id:string_or_null,reason:string,recovery_boundary_fingerprint:string_or_null,recovery_cycle_provenance:object_or_null,recovery_run_id:string_or_null,recovery_running_enabled:boolean,recovery_task_id:string_or_null,retried_verifier_tool_ids:array_or_null,retry_running_enabled:boolean,retryable:boolean_or_null,scheduler_handoff_enabled:boolean,source_apply_id:string_or_null,source_candidate_id:string_or_null,source_decision_id:string_or_null,source_drive_id:string_or_null,source_handoff_envelope_fingerprint:string_or_null,source_handoff_envelope_id:string_or_null,source_intent_summary:object_or_null,source_progress_fingerprint:string_or_null,source_proposal_id:string_or_null,source_run_id:string_or_null,source_session_id:string_or_null,source_task_id:string_or_null,status:string,stop_class:string_or_null,stop_reason:string_or_null,verification_recovery_provenance:object_or_null,verification_recovery_retry_provenance:object_or_null;known_field_required:true;additional_fields:false;task_started_payload:true}".to_string()
+}
+
+fn task_running_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:true;known_optional_fields:admission_id:string,admission_kind:string,deadline_persisted:boolean,deadline_scope:string,reason:string,runtime_deadline:object;known_field_required:true;conditional_required:runtime_deadline=>deadline_scope+deadline_persisted,admission_id|admission_kind=>admission_id+admission_kind+reason;additional_fields:false;task_running_payload:true}".to_string()
+}
+
+fn mode_resolved_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:completion_rules:array,display_name:string,instruction_fingerprint:string_or_null,mcp_access:array,mode_id:string,permissions:object,prompt_sections:array,role_definition:string,workspace_write_scopes:array;known_optional_fields:allowed_handoff_targets:array_or_null,description:string_or_null,external_modepack_task_provenance:object,mcp_tool_catalogs:array,verification_responsibility:string_or_null,when_to_use:string_or_null;additional_fields:false;mode_resolved_payload:true}".to_string()
+}
+
+fn external_modepack_child_denied_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:reason:string,run_id:string,status:string,task_id:string;known_optional_fields:mode_id:string_or_null,parent_run_id:string_or_null,source_candidate_id:string_or_null,source_handoff_envelope_fingerprint:string_or_null,source_handoff_envelope_id:string_or_null;additional_fields:false;external_modepack_child_provenance_denied_payload:true;status:Denied}".to_string()
+}
+
+fn external_modepack_task_denied_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:reason:string,run_id:string,source_kind:string,source_path:string,status:string,task_id:string;known_optional_fields:mode_id:string_or_null;additional_fields:false;external_modepack_task_provenance_denied_payload:true;status:Denied}".to_string()
 }
 
 fn ledger_payload_legacy_schema_descriptor(kind: &LedgerEventKind, schema_version: u64) -> String {
@@ -8472,6 +8883,21 @@ fn ledger_payload_legacy_schema_descriptor(kind: &LedgerEventKind, schema_versio
             if schema_version >= 8 =>
         {
             llm_response_received_payload_schema_descriptor()
+        }
+        LedgerEventKind::TaskStarted if schema_version >= 9 => {
+            task_started_payload_schema_descriptor()
+        }
+        LedgerEventKind::TaskRunning if schema_version >= 9 => {
+            task_running_payload_schema_descriptor()
+        }
+        LedgerEventKind::ModeResolved if schema_version >= 9 => {
+            mode_resolved_payload_schema_descriptor()
+        }
+        LedgerEventKind::ExternalModePackChildProvenanceDenied if schema_version >= 9 => {
+            external_modepack_child_denied_payload_schema_descriptor()
+        }
+        LedgerEventKind::ExternalModePackTaskProvenanceDenied if schema_version >= 9 => {
+            external_modepack_task_denied_payload_schema_descriptor()
         }
         LedgerEventKind::TaskCompleted => "typed_known_fields_open{known_optional_fields:completion_evidence:object,git:object,late_tool_response:boolean,mcp:object,runtime_deadline:object,status:string,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:legacy_open;known_field_required:true;additional_fields:true;strict_typed_payload_required_before_release:true}".to_string(),
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
@@ -9398,6 +9824,23 @@ mod tests {
             LedgerEventKind::SecondPassLlmRequestCreated,
             LedgerEventKind::SecondPassLlmRequestFailed,
             LedgerEventKind::SecondPassLlmResponseReceived,
+        ] {
+            let classification = ledger_payload_schema_classification(&kind);
+            assert_eq!(classification.as_str(), "strict_typed", "{kind:?}");
+            assert_eq!(classification.contract_status(), "closed", "{kind:?}");
+            assert!(!classification.release_blocking(), "{kind:?}");
+            assert!(
+                ledger_payload_schema_descriptor(&kind).contains("additional_fields:false"),
+                "{kind:?}"
+            );
+        }
+
+        for kind in [
+            LedgerEventKind::TaskStarted,
+            LedgerEventKind::TaskRunning,
+            LedgerEventKind::ModeResolved,
+            LedgerEventKind::ExternalModePackChildProvenanceDenied,
+            LedgerEventKind::ExternalModePackTaskProvenanceDenied,
         ] {
             let classification = ledger_payload_schema_classification(&kind);
             assert_eq!(classification.as_str(), "strict_typed", "{kind:?}");
@@ -10459,6 +10902,135 @@ mod tests {
                 ],
             )
             .expect("valid lifecycle payloads should append");
+    }
+
+    #[test]
+    fn ledger_payload_write_rejects_malformed_task_admission_and_mode_payloads() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = TaskStore::new(temp.path());
+        let record = store
+            .start_task(TaskStartParams {
+                goal: "task admission payload schema".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start task");
+
+        for (kind, payload) in [
+            (
+                LedgerEventKind::TaskStarted,
+                serde_json::json!({
+                    "mode_id": "orchestrator",
+                    "raw_goal": "not allowed"
+                }),
+            ),
+            (
+                LedgerEventKind::TaskRunning,
+                serde_json::json!({
+                    "runtime_deadline": {
+                        "deadline_unix_ms": 1_780_000_000_000u64
+                    }
+                }),
+            ),
+            (
+                LedgerEventKind::ModeResolved,
+                serde_json::json!({
+                    "mode_id": "orchestrator",
+                    "display_name": "Orchestrator"
+                }),
+            ),
+            (
+                LedgerEventKind::ExternalModePackChildProvenanceDenied,
+                serde_json::json!({
+                    "status": "Allowed",
+                    "reason": "stale_external_modepack_child_policy_mismatch",
+                    "task_id": record.task_id.clone(),
+                    "run_id": record.run_id.clone()
+                }),
+            ),
+            (
+                LedgerEventKind::ExternalModePackTaskProvenanceDenied,
+                serde_json::json!({
+                    "status": "Denied",
+                    "reason": "stale_external_modepack_task_policy_missing",
+                    "task_id": record.task_id.clone(),
+                    "run_id": record.run_id.clone(),
+                    "source_kind": "workspace_modepack"
+                }),
+            ),
+        ] {
+            let error = store
+                .append_task_events_with_payloads(&record, vec![(kind.clone(), Some(payload))])
+                .expect_err("malformed task admission or mode payload should fail closed");
+            assert!(
+                error.to_string().contains("ledger payload"),
+                "{kind:?}: {error}"
+            );
+        }
+
+        store
+            .append_task_events_with_payloads(
+                &record,
+                vec![
+                    (
+                        LedgerEventKind::TaskStarted,
+                        Some(serde_json::json!({
+                            "status": "Queued",
+                            "reason": "bounded task admission recorded"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::TaskRunning,
+                        Some(serde_json::json!({
+                            "admission_id": "task_run_admission_1",
+                            "admission_kind": "runtime_task_run",
+                            "reason": "task admitted"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::ModeResolved,
+                        Some(serde_json::json!({
+                            "mode_id": "orchestrator",
+                            "display_name": "Orchestrator",
+                            "role_definition": "Coordinate bounded runtime work.",
+                            "prompt_sections": [],
+                            "instruction_fingerprint": format!("sha256:{}", "2".repeat(64)),
+                            "workspace_write_scopes": [],
+                            "mcp_access": [],
+                            "completion_rules": [],
+                            "permissions": {}
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::ExternalModePackChildProvenanceDenied,
+                        Some(serde_json::json!({
+                            "status": "Denied",
+                            "reason": "stale_external_modepack_child_policy_mismatch",
+                            "task_id": record.task_id.clone(),
+                            "run_id": record.run_id.clone(),
+                            "source_candidate_id": null,
+                            "source_handoff_envelope_id": null,
+                            "source_handoff_envelope_fingerprint": null
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::ExternalModePackTaskProvenanceDenied,
+                        Some(serde_json::json!({
+                            "status": "Denied",
+                            "reason": "stale_external_modepack_task_policy_missing",
+                            "task_id": record.task_id.clone(),
+                            "run_id": record.run_id.clone(),
+                            "source_kind": "workspace_modepack",
+                            "source_path": ".brownie/modepack.json"
+                        })),
+                    ),
+                ],
+            )
+            .expect("strict task admission and mode payloads should append");
     }
 
     #[test]
