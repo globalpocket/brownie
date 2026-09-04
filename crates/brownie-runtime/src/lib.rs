@@ -2130,8 +2130,8 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             provider_selection.budget.max_prompt_chars,
         ))
     });
-    if task_run_requires_access_network_permission(&provider_selection) {
-        let decision = RuntimePermissionGate::check(&policy, RuntimeAction::AccessNetwork);
+    if task_run_requires_llm_provider_permission(&provider_selection) {
+        let decision = RuntimePermissionGate::check(&policy, RuntimeAction::AccessLlmProvider);
         let payload = permission_payload(&policy, &decision);
         if let Err(error) = store.tasks().append_task_event_with_payload(
             &running,
@@ -2154,7 +2154,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 id,
                 provider_selection,
                 &format!(
-                    "real-provider task.run requires AccessNetwork runtime permission: {}",
+                    "real-provider task.run requires AccessLlmProvider runtime permission: {}",
                     decision.reason
                 ),
                 LedgerEventKind::LlmRequestFailed,
@@ -3115,6 +3115,7 @@ fn llm_provider_failure_outcome(
     let next_action = match failure_class {
         "configuration_missing" | "configuration_invalid" => "fix_provider_configuration",
         "network_not_authorized" => "authorize_task_run_network",
+        "llm_provider_not_authorized" => "authorize_llm_provider_access",
         "sensitive_prompt_denied" => "reduce_or_redact_prompt_context",
         "http_status" | "transport_or_timeout" => "inspect_llm_health",
         "invalid_provider_response" | "missing_provider_content" => {
@@ -3169,6 +3170,9 @@ fn llm_provider_failure_class(reason: &str) -> &'static str {
     if lower.contains("real-provider task.run requires accessnetwork runtime permission") {
         return "network_not_authorized";
     }
+    if lower.contains("real-provider task.run requires accessllmprovider runtime permission") {
+        return "llm_provider_not_authorized";
+    }
     if lower.contains("prompt sensitive-content guard failed") {
         return "sensitive_prompt_denied";
     }
@@ -3205,7 +3209,7 @@ fn llm_provider_failure_class(reason: &str) -> &'static str {
     "unknown_provider_failure"
 }
 
-fn task_run_requires_access_network_permission(selection: &RuntimeLlmProviderStatus) -> bool {
+fn task_run_requires_llm_provider_permission(selection: &RuntimeLlmProviderStatus) -> bool {
     selection.status.provider == LlmProviderKind::OpenAiCompatible
         && selection.status.enabled
         && selection.strict
@@ -12746,6 +12750,7 @@ fn mode_summary(policy: CompiledModePolicy) -> ModeSummary {
             git_inspect: policy.permissions.git_inspect,
             git_commit: policy.permissions.git_commit,
             network_access: policy.permissions.network_access,
+            llm_provider_access: policy.permissions.llm_provider_access,
             service_control: policy.permissions.service_control,
             destructive: policy.permissions.destructive,
             can_spawn_subtasks: policy.permissions.can_spawn_subtasks,
@@ -12776,6 +12781,7 @@ fn mode_resolved_payload(policy: &CompiledModePolicy) -> Value {
             "git_inspect": policy.permissions.git_inspect,
             "git_commit": policy.permissions.git_commit,
             "network_access": policy.permissions.network_access,
+            "llm_provider_access": policy.permissions.llm_provider_access,
             "service_control": policy.permissions.service_control,
             "destructive": policy.permissions.destructive,
             "can_spawn_subtasks": policy.permissions.can_spawn_subtasks,
@@ -12958,6 +12964,10 @@ fn compiled_mode_policy_from_payload(payload: &Value) -> Option<CompiledModePoli
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             network_access: permissions.get("network_access")?.as_bool()?,
+            llm_provider_access: permissions
+                .get("llm_provider_access")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             service_control: permissions.get("service_control")?.as_bool()?,
             destructive: permissions.get("destructive")?.as_bool()?,
             can_spawn_subtasks: permissions.get("can_spawn_subtasks")?.as_bool()?,
@@ -13027,6 +13037,7 @@ fn external_modepack_policy_fingerprint(
             "git_inspect": policy.permissions.git_inspect,
             "git_commit": policy.permissions.git_commit,
             "network_access": policy.permissions.network_access,
+            "llm_provider_access": policy.permissions.llm_provider_access,
             "service_control": policy.permissions.service_control,
             "destructive": policy.permissions.destructive,
             "can_spawn_subtasks": policy.permissions.can_spawn_subtasks,
@@ -13833,6 +13844,7 @@ fn append_permission_checks(
         RuntimeAction::SpawnSubtask,
         RuntimeAction::WriteWorkspace,
         RuntimeAction::ExecuteProcess,
+        RuntimeAction::AccessLlmProvider,
     ] {
         let decision = RuntimePermissionGate::check(policy, action);
         debug_assert!(
@@ -13874,6 +13886,7 @@ fn runtime_action_from_name(action: &RuntimeActionName) -> RuntimeAction {
         RuntimeActionName::WriteWorkspace => RuntimeAction::WriteWorkspace,
         RuntimeActionName::ExecuteProcess => RuntimeAction::ExecuteProcess,
         RuntimeActionName::AccessNetwork => RuntimeAction::AccessNetwork,
+        RuntimeActionName::AccessLlmProvider => RuntimeAction::AccessLlmProvider,
         RuntimeActionName::ControlService => RuntimeAction::ControlService,
         RuntimeActionName::DestructiveOperation => RuntimeAction::DestructiveOperation,
         RuntimeActionName::SpawnSubtask => RuntimeAction::SpawnSubtask,
@@ -13891,6 +13904,7 @@ fn runtime_action_name(action: &RuntimeAction) -> RuntimeActionName {
         RuntimeAction::WriteWorkspace => RuntimeActionName::WriteWorkspace,
         RuntimeAction::ExecuteProcess => RuntimeActionName::ExecuteProcess,
         RuntimeAction::AccessNetwork => RuntimeActionName::AccessNetwork,
+        RuntimeAction::AccessLlmProvider => RuntimeActionName::AccessLlmProvider,
         RuntimeAction::ControlService => RuntimeActionName::ControlService,
         RuntimeAction::DestructiveOperation => RuntimeActionName::DestructiveOperation,
         RuntimeAction::SpawnSubtask => RuntimeActionName::SpawnSubtask,
@@ -33703,6 +33717,7 @@ modes:
                 LedgerEventKind::PermissionDenied,
                 LedgerEventKind::PermissionChecked,
                 LedgerEventKind::PermissionDenied,
+                LedgerEventKind::PermissionChecked,
                 LedgerEventKind::ToolPlanned,
                 LedgerEventKind::ToolPermissionChecked,
                 LedgerEventKind::ToolPlanApproved,
@@ -55452,7 +55467,8 @@ modes:
         assert_eq!(modes.len(), 4);
         assert!(modes.iter().any(|mode| mode["mode_id"] == "orchestrator"));
         assert!(modes.iter().any(|mode| mode["mode_id"] == "provider-runner"
-            && mode["permissions"]["network_access"] == true));
+            && mode["permissions"]["network_access"] == false
+            && mode["permissions"]["llm_provider_access"] == true));
 
         let get = parse_line(
             r#"{"jsonrpc":"2.0","id":2,"method":"mode.get","params":{"mode_id":"orchestrator"}}"#,
@@ -55619,6 +55635,7 @@ modes:
         assert_eq!(mode["permissions"]["workspace_write"], false);
         assert_eq!(mode["permissions"]["process_exec"], false);
         assert_eq!(mode["permissions"]["network_access"], false);
+        assert_eq!(mode["permissions"]["llm_provider_access"], false);
         assert_eq!(mode["permissions"]["service_control"], false);
         assert_eq!(mode["permissions"]["destructive"], false);
         assert_eq!(mode["permissions"]["can_spawn_subtasks"], false);
@@ -55631,9 +55648,10 @@ modes:
             (3, "WriteWorkspace"),
             (4, "ExecuteProcess"),
             (5, "AccessNetwork"),
-            (6, "ControlService"),
-            (7, "DestructiveOperation"),
-            (8, "SpawnSubtask"),
+            (6, "AccessLlmProvider"),
+            (7, "ControlService"),
+            (8, "DestructiveOperation"),
+            (9, "SpawnSubtask"),
         ] {
             let permission = parse_line(
                 &json!({
@@ -55653,7 +55671,6 @@ modes:
                 "{action} should be narrowed for repository-local raw Mode Packs"
             );
         }
-
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
@@ -60350,7 +60367,7 @@ modes:
                 .iter()
                 .filter(|event| event.kind == LedgerEventKind::PermissionChecked)
                 .count(),
-            4
+            5
         );
         assert_eq!(
             events
@@ -60473,7 +60490,7 @@ modes:
             .as_array()
             .expect("tools")
             .clone();
-        assert_eq!(tools.len(), 14);
+        assert_eq!(tools.len(), 15);
         assert!(tools.iter().any(|tool| tool["tool_id"] == "workspace.read"));
         assert!(tools
             .iter()
@@ -60487,6 +60504,9 @@ modes:
         assert!(tools
             .iter()
             .any(|tool| tool["tool_id"] == "verification.cargo_test"));
+        assert!(tools
+            .iter()
+            .any(|tool| tool["tool_id"] == "llm.provider.access"));
         assert!(tools
             .iter()
             .any(|tool| tool["tool_id"] == GIT_STATUS_TOOL_ID));
@@ -61331,6 +61351,26 @@ mod phase_2_3_tests {
         .unwrap();
     }
 
+    fn append_mode_resolved_without_llm_provider_access(
+        root: &std::path::Path,
+        task_id: &str,
+        mode_id: &str,
+    ) {
+        let store = BrownieStore::new(root);
+        let record = store
+            .tasks()
+            .get_task(task_id)
+            .expect("read task")
+            .expect("task exists");
+        let policy = BuiltinModeRegistry::get(mode_id).expect("builtin mode");
+        let mut payload = mode_resolved_payload(&policy);
+        payload["permissions"]["llm_provider_access"] = json!(false);
+        store
+            .tasks()
+            .append_task_event_with_payload(&record, LedgerEventKind::ModeResolved, Some(payload))
+            .expect("append legacy mode resolved");
+    }
+
     fn spawn_mock(
         status: &str,
         body: &'static str,
@@ -61537,7 +61577,7 @@ content-length: {}
     }
 
     #[test]
-    fn strict_openai_task_run_denies_without_access_network_permission_before_provider_request() {
+    fn strict_openai_task_run_denies_without_llm_provider_permission_before_provider_request() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let _guard = EnvGuard::clear();
         let temp = tempfile::tempdir().unwrap();
@@ -61552,6 +61592,7 @@ content-length: {}
         let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Deny provider request","mode_id":"orchestrator"}}"#).result.unwrap();
         let task_id = start["task_id"].as_str().unwrap();
         let run_id = start["run_id"].as_str().unwrap();
+        append_mode_resolved_without_llm_provider_access(temp.path(), task_id, "orchestrator");
         let first = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
         ))
@@ -61559,11 +61600,11 @@ content-length: {}
         .unwrap();
         assert_eq!(first["status"], "Failed");
         let failure = &first["llm_provider_failure"];
-        assert_eq!(failure["failure_class"], "network_not_authorized");
+        assert_eq!(failure["failure_class"], "llm_provider_not_authorized");
         assert!(failure["reason"]
             .as_str()
             .unwrap()
-            .contains("AccessNetwork runtime permission"));
+            .contains("AccessLlmProvider runtime permission"));
         match listener.accept() {
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
             Ok(_) => panic!("provider request reached mock listener despite denied permission"),
@@ -61593,7 +61634,7 @@ content-length: {}
                     && event["payload"]["allowed"] == false
                     && event["payload"]["reason"]
                         .as_str()
-                        .is_some_and(|reason| reason.contains("network access"))
+                        .is_some_and(|reason| reason.contains("LLM provider access"))
             }),
             "{serialized_events}"
         );
@@ -62469,7 +62510,7 @@ content-length: {}
     }
 
     #[test]
-    fn headless_llm_provider_failure_retry_task_run_denies_without_access_network_permission() {
+    fn headless_llm_provider_failure_retry_task_run_denies_without_llm_provider_permission() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let _guard = EnvGuard::clear();
         let (_temp, _run, source_task_id, source_run_id, failure_fingerprint) =
@@ -62506,6 +62547,11 @@ content-length: {}
             .clone();
         let retry_task_id = admission["retry_task_id"].as_str().unwrap();
         let retry_run_id = admission["retry_run_id"].as_str().unwrap();
+        append_mode_resolved_without_llm_provider_access(
+            _temp.path(),
+            retry_task_id,
+            "orchestrator",
+        );
         let run_progress = parse_line(r#"{"jsonrpc":"2.0","id":5,"method":"task.list"}"#)
             .result
             .unwrap()["progress_overview"]
@@ -62539,13 +62585,13 @@ content-length: {}
         assert_eq!(retry_run["status"], "task_executed");
         assert_eq!(
             retry_run["task_run_result"]["llm_provider_failure"]["failure_class"],
-            "network_not_authorized"
+            "llm_provider_not_authorized"
         );
         assert!(
             retry_run["task_run_result"]["llm_provider_failure"]["reason"]
                 .as_str()
                 .unwrap()
-                .contains("AccessNetwork runtime permission")
+                .contains("AccessLlmProvider runtime permission")
         );
 
         let events = parse_line(&format!(
@@ -62561,7 +62607,7 @@ content-length: {}
                     && event["payload"]["allowed"] == false
                     && event["payload"]["reason"]
                         .as_str()
-                        .is_some_and(|reason| reason.contains("network access"))
+                        .is_some_and(|reason| reason.contains("LLM provider access"))
             }),
             "{serialized_events}"
         );
@@ -62648,7 +62694,7 @@ content-length: {}
     }
 
     #[test]
-    fn llm_provider_failure_retry_task_run_denies_without_access_network_permission() {
+    fn llm_provider_failure_retry_task_run_denies_without_llm_provider_permission() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let _guard = EnvGuard::clear();
         let (_temp, _run, source_task_id, source_run_id, failure_fingerprint) =
@@ -62676,6 +62722,11 @@ content-length: {}
         let admission = &retry_start["llm_provider_failure_retry_admission"];
         let retry_task_id = admission["retry_task_id"].as_str().unwrap();
         let retry_run_id = admission["retry_run_id"].as_str().unwrap();
+        append_mode_resolved_without_llm_provider_access(
+            _temp.path(),
+            retry_task_id,
+            "orchestrator",
+        );
 
         let retry_run = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{retry_task_id}"}}}}"#
@@ -62685,12 +62736,12 @@ content-length: {}
         assert_eq!(retry_run["status"], "Failed");
         assert_eq!(
             retry_run["llm_provider_failure"]["failure_class"],
-            "network_not_authorized"
+            "llm_provider_not_authorized"
         );
         assert!(retry_run["llm_provider_failure"]["reason"]
             .as_str()
             .unwrap()
-            .contains("AccessNetwork runtime permission"));
+            .contains("AccessLlmProvider runtime permission"));
 
         let events = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":5,"method":"run.events","params":{{"run_id":"{retry_run_id}"}}}}"#
@@ -62705,7 +62756,7 @@ content-length: {}
                     && event["payload"]["allowed"] == false
                     && event["payload"]["reason"]
                         .as_str()
-                        .is_some_and(|reason| reason.contains("network access"))
+                        .is_some_and(|reason| reason.contains("LLM provider access"))
             }),
             "{serialized_events}"
         );

@@ -40,6 +40,7 @@ const modeSummary = {
     workspace_write: false,
     process_exec: false,
     network_access: false,
+    llm_provider_access: true,
     service_control: false,
     destructive: false,
     can_spawn_subtasks: true,

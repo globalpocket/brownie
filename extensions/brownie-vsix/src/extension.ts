@@ -177,6 +177,7 @@ export function activate(context: vscode.ExtensionContext): void {
       'WriteWorkspace',
       'ExecuteProcess',
       'AccessNetwork',
+      'AccessLlmProvider',
       'ControlService',
       'DestructiveOperation',
       'SpawnSubtask',

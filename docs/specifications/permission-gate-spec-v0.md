@@ -10,6 +10,8 @@ Phase 1.4 introduces the runtime permission gate foundation. The gate is a runti
 - `WriteWorkspace` — controlled by `workspace_write`.
 - `ExecuteProcess` — controlled by `process_exec`.
 - `AccessNetwork` — controlled by `network_access`.
+- `AccessLlmProvider` — controlled by `llm_provider_access`; this authorizes
+  configured LLM provider calls and is separate from generic network access.
 - `ControlService` — controlled by `service_control`.
 - `DestructiveOperation` — controlled by `destructive`.
 - `SpawnSubtask` — controlled by `can_spawn_subtasks`.

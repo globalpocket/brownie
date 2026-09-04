@@ -155,6 +155,8 @@ pub struct ModePermissionsSummary {
     #[serde(default)]
     pub git_commit: bool,
     pub network_access: bool,
+    #[serde(default)]
+    pub llm_provider_access: bool,
     pub service_control: bool,
     pub destructive: bool,
     pub can_spawn_subtasks: bool,
@@ -667,6 +669,7 @@ pub enum RuntimeActionName {
     WriteWorkspace,
     ExecuteProcess,
     AccessNetwork,
+    AccessLlmProvider,
     ControlService,
     DestructiveOperation,
     SpawnSubtask,

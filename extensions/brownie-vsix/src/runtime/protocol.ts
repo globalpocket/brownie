@@ -121,6 +121,7 @@ export type RuntimeActionName =
   | 'WriteWorkspace'
   | 'ExecuteProcess'
   | 'AccessNetwork'
+  | 'AccessLlmProvider'
   | 'ControlService'
   | 'DestructiveOperation'
   | 'SpawnSubtask'
@@ -132,6 +133,7 @@ export interface ModePermissionsSummary {
   workspace_write: boolean;
   process_exec: boolean;
   network_access: boolean;
+  llm_provider_access: boolean;
   service_control: boolean;
   destructive: boolean;
   can_spawn_subtasks: boolean;
@@ -9914,6 +9916,7 @@ function isModePermissionsSummary(value: unknown): value is ModePermissionsSumma
     typeof value.workspace_write === 'boolean' &&
     typeof value.process_exec === 'boolean' &&
     typeof value.network_access === 'boolean' &&
+    typeof value.llm_provider_access === 'boolean' &&
     typeof value.service_control === 'boolean' &&
     typeof value.destructive === 'boolean' &&
     typeof value.can_spawn_subtasks === 'boolean' &&
@@ -9927,6 +9930,7 @@ function isRuntimeActionName(value: unknown): value is RuntimeActionName {
     value === 'WriteWorkspace' ||
     value === 'ExecuteProcess' ||
     value === 'AccessNetwork' ||
+    value === 'AccessLlmProvider' ||
     value === 'ControlService' ||
     value === 'DestructiveOperation' ||
     value === 'SpawnSubtask' ||

@@ -74,6 +74,7 @@ pub struct ModePackCapabilityCeiling {
     pub git_inspect: bool,
     pub git_commit: bool,
     pub network_access: bool,
+    pub llm_provider_access: bool,
     pub service_control: bool,
     pub destructive: bool,
     pub can_spawn_subtasks: bool,
@@ -88,6 +89,7 @@ impl Default for ModePackCapabilityCeiling {
             git_inspect: true,
             git_commit: true,
             network_access: false,
+            llm_provider_access: true,
             service_control: false,
             destructive: false,
             can_spawn_subtasks: true,
@@ -451,6 +453,9 @@ fn effective_permissions(
     let git_commit =
         declared.git_commit && trusted_side_effect_source && options.capability_ceiling.git_commit;
     let network_access = false;
+    let llm_provider_access = declared.llm_provider_access
+        && trusted_side_effect_source
+        && options.capability_ceiling.llm_provider_access;
     let service_control = false;
     let destructive = false;
     let can_spawn_subtasks = declared.can_spawn_subtasks
@@ -475,6 +480,7 @@ fn effective_permissions(
         git_inspect,
         git_commit,
         network_access,
+        llm_provider_access,
         service_control,
         destructive,
         can_spawn_subtasks,
@@ -1639,6 +1645,7 @@ modes:
                     git_inspect: true,
                     git_commit: true,
                     network_access: true,
+                    llm_provider_access: true,
                     service_control: true,
                     destructive: true,
                     can_spawn_subtasks: true,
