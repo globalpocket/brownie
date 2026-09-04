@@ -650,6 +650,29 @@ pub fn runtime_semantic_protocol_contract() -> Value {
         "allowed": true,
         "reason": "allowed by policy"
     });
+    let tool_planned_payload = json!({
+        "tool_ids": ["workspace.read", "git.status"]
+    });
+    let tool_intent_parsed_payload = json!({
+        "tool_ids": ["workspace.write"],
+        "parser": {
+            "found_blocks": 1,
+            "accepted_blocks": 1,
+            "accepted_requests": 1,
+            "rejected_requests": 0,
+            "max_blocks": 4,
+            "max_block_bytes": 8192,
+            "max_tool_requests": 8,
+            "max_input_bytes": 65536,
+            "max_reason_chars": 512,
+            "max_workspace_write_content_chars": 200000
+        }
+    });
+    let tool_intent_rejected_payload = json!({
+        "tool_id": "unsafe.tool",
+        "reason": "tool is not available in the task-pinned mode policy",
+        "code": "tool_not_allowed"
+    });
     let tool_intent_payload = json!({
         "tool_id": "workspace.read",
         "required_action": "ReadWorkspace",
@@ -1116,6 +1139,7 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&permission_denied_payload),
             "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("PermissionDenied", &permission_denied_payload)
         }),
+        payload_schema_fixture("ToolPlanned", &tool_planned_payload),
         json!({
             "ledger_event_kind": "ToolPermissionChecked",
             "payload": tool_plan_payload,
@@ -1126,6 +1150,8 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&tool_plan_payload),
             "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("ToolPermissionChecked", &tool_plan_payload)
         }),
+        payload_schema_fixture("ToolIntentParsed", &tool_intent_parsed_payload),
+        payload_schema_fixture("ToolIntentRejected", &tool_intent_rejected_payload),
         json!({
             "ledger_event_kind": "ToolIntentPermissionChecked",
             "payload": tool_intent_payload,
@@ -1253,7 +1279,7 @@ pub fn runtime_semantic_protocol_contract() -> Value {
         "schema_version": 10,
         "contract_id": "runtime-semantic-protocol-contract-v1",
         "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-        "phase": "RRP-5.13",
+        "phase": "RRP-5.14",
         "owner": "runtime",
         "runtime_release_debt_id": "protocol-event-canonization",
         "runtime_release_ready": false,
@@ -1359,7 +1385,7 @@ pub fn runtime_semantic_protocol_contract() -> Value {
                 "ledger_event_payload_typed_schema_coverage": "partial"
             },
             "ledger_payload_schema_classification_policy": "Every LedgerEventKind must carry an explicit payload schema classification. versioned_open and typed_known_fields_open are allowed only as required-before-release debt evidence and must not be treated as fully typed ledger payload schemas. TaskCompleted, TaskFailed, TaskCancelled, PermissionChecked, PermissionDenied, ToolPermissionChecked, ToolPlanApproved, ToolPlanDenied, ToolIntentPermissionChecked, ToolIntentApproved, ToolIntentDenied, ToolExecutionRequested, McpToolExecutionApproved, ToolExecutionPermissionChecked, ToolExecutionCompleted, ToolExecutionDenied, ToolExecutionFailed, CodebaseIndexPermissionChecked, CodebaseIndexSnapshotBuilt, CodebaseIndexQueryCompleted, CodebaseIndexSelectionReadCompleted, CodebaseIndexPromptContextMaterialized, VerificationRecoveryContextReadMaterialized, AgentLoopStarted, AgentLoopCompleted, TaskCompletionAccepted, PromptBuilt, PromptSensitiveScanCompleted, PromptSensitiveScanFailed, LlmRequestCreated, LlmRequestFailed, LlmResponseReceived, SecondPassPromptBuilt, SecondPassLlmRequestCreated, SecondPassLlmRequestFailed, and SecondPassLlmResponseReceived are strict typed payload families.",
-            "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Versioned-open payload classifications keep protocol-event-canonization partial until every payload-bearing event has a strict typed schema, an explicit payload_absent contract, or a legacy-only compatibility entry. Current v8 terminal task, permission, selected tool, MCP approval, tool terminal, codebase index, verification recovery context, agent loop, prompt, LLM request/response/failure, and completion-acceptance payload schemas preserve v1 through v7 read compatibility while requiring strict field validation for new appends.",
+            "policy": "Durable event kind or typed payload schema changes require an explicit brownie-store schema migration or compatibility entry before Runtime release. Runtime payload envelopes carry both a fixed schema_fingerprint and a separate diagnostic instance_shape_fingerprint. Versioned-open payload classifications keep protocol-event-canonization partial until every payload-bearing event has a strict typed schema, an explicit payload_absent contract, or a legacy-only compatibility entry. Current v10 terminal task, permission, selected tool, MCP approval, tool terminal, codebase index, verification recovery context, agent loop, prompt, LLM request/response/failure, completion-acceptance, task admission, mode-resolution, tool planning, and intent parsing payload schemas preserve v1 through v9 read compatibility while requiring strict field validation for new appends.",
             "guard": "guard:protocol-event-canonization",
             "event_payload_schema_classification_count": event_payload_schema_classifications.len(),
             "event_payload_schema_classifications": event_payload_schema_classifications,
@@ -2074,7 +2100,7 @@ fn canonical_value(value: &Value) -> Value {
     }
 }
 
-const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 9;
+const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 10;
 
 fn ledger_payload_schema_id(kind: &str) -> String {
     format!("ledger_payload.{kind}.v{LEDGER_PAYLOAD_SCHEMA_VERSION}")
@@ -2094,9 +2120,12 @@ fn ledger_payload_schema_classification(kind: &str) -> &'static str {
         | "TaskCancelled"
         | "PermissionChecked"
         | "PermissionDenied"
+        | "ToolPlanned"
         | "ToolPermissionChecked"
         | "ToolPlanApproved"
         | "ToolPlanDenied"
+        | "ToolIntentParsed"
+        | "ToolIntentRejected"
         | "ToolIntentPermissionChecked"
         | "ToolIntentApproved"
         | "ToolIntentDenied"
@@ -2153,9 +2182,12 @@ fn ledger_payload_schema_descriptor(kind: &str) -> String {
         "TaskFailed" => terminal_task_payload_schema_descriptor("Failed"),
         "TaskCancelled" => terminal_task_payload_schema_descriptor("Cancelled"),
         "PermissionChecked" | "PermissionDenied" => permission_payload_schema_descriptor(),
+        "ToolPlanned" => tool_planned_payload_schema_descriptor(),
         "ToolPermissionChecked" | "ToolPlanApproved" | "ToolPlanDenied" => {
             tool_plan_payload_schema_descriptor()
         }
+        "ToolIntentParsed" => tool_intent_parsed_payload_schema_descriptor(),
+        "ToolIntentRejected" => tool_intent_rejected_payload_schema_descriptor(),
         "ToolIntentPermissionChecked" | "ToolIntentApproved" | "ToolIntentDenied" => {
             tool_intent_payload_schema_descriptor()
         }
@@ -2218,6 +2250,18 @@ fn permission_payload_schema_descriptor() -> String {
 
 fn tool_plan_payload_schema_descriptor() -> String {
     "strict_typed{payload_optional:false;required_fields:allowed:boolean,reason:string,required_action:string,tool_id:string;additional_fields:false;tool_plan_decision_payload:true}".to_string()
+}
+
+fn tool_planned_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:tool_ids:array<string>;additional_fields:false;tool_planned_inventory_payload:true}".to_string()
+}
+
+fn tool_intent_parsed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:parser:object,tool_ids:array<string>;additional_fields:false;tool_intent_parsed_payload:true}".to_string()
+}
+
+fn tool_intent_rejected_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:code:string,reason:string,tool_id:string;additional_fields:false;tool_intent_rejected_payload:true}".to_string()
 }
 
 fn tool_intent_payload_schema_descriptor() -> String {

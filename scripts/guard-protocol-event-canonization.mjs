@@ -175,7 +175,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
   requireValue(contract.contract_id === 'runtime-semantic-protocol-contract-v1', errors, `${contractPath} contract_id must identify the Runtime semantic protocol contract.`);
   requireValue(contract.campaign === 'runtime-release-readiness-p0-p1-finite-closure', errors, `${contractPath} campaign must match Runtime release readiness.`);
-  requireValue(contract.phase === 'RRP-5.13', errors, `${contractPath} phase must be RRP-5.13.`);
+  requireValue(contract.phase === 'RRP-5.14', errors, `${contractPath} phase must be RRP-5.14.`);
   requireValue(contract.owner === 'runtime', errors, `${contractPath} owner must be runtime.`);
   requireValue(contract.runtime_release_debt_id === 'protocol-event-canonization', errors, `${contractPath} must bind to protocol-event-canonization.`);
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must not declare Runtime Release Ready.`);
@@ -392,7 +392,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   for (const variant of ledgerVariants) {
     const entry = fingerprintByKind.get(variant);
     requireValue(Boolean(entry), errors, `${contractPath} durable_event_migration_coupling.event_payload_schema_fingerprints must include ${variant}.`);
-    requireValue(entry?.payload_schema_version === 9, errors, `${contractPath} ${variant} payload_schema_version must be 9.`);
+    requireValue(entry?.payload_schema_version === 10, errors, `${contractPath} ${variant} payload_schema_version must be 10.`);
     requireValue(entry?.store_schema_version === durableCoupling.store_schema_version, errors, `${contractPath} ${variant} store_schema_version must match durable coupling schema version.`);
     requireValue(isNonEmptyString(entry?.payload_schema_id), errors, `${contractPath} ${variant} payload_schema_id must be present.`);
     requireValue(isNonEmptyString(entry?.payload_schema_fingerprint), errors, `${contractPath} ${variant} payload_schema_fingerprint must be present.`);
@@ -449,9 +449,12 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
     );
   }
   const toolDescriptorRequirements = new Map([
+    ['ToolPlanned', 'tool_planned_inventory_payload:true'],
     ['ToolPermissionChecked', 'tool_plan_decision_payload:true'],
     ['ToolPlanApproved', 'tool_plan_decision_payload:true'],
     ['ToolPlanDenied', 'tool_plan_decision_payload:true'],
+    ['ToolIntentParsed', 'tool_intent_parsed_payload:true'],
+    ['ToolIntentRejected', 'tool_intent_rejected_payload:true'],
     ['ToolIntentPermissionChecked', 'tool_intent_decision_payload:true'],
     ['ToolIntentApproved', 'tool_intent_decision_payload:true'],
     ['ToolIntentDenied', 'tool_intent_decision_payload:true'],
