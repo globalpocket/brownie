@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-  "phase": "RRP-8.2",
-  "phase_title": "Release Contract and Local Gate Baseline",
+  "phase": "RRP-8.4",
+  "phase_title": "Supply Chain and Artifact Evidence Baseline",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "8016b67262f6e951fd834589637df475e03adb2b",
+  "audited_main_commit": "26de9a83f2da77377f58f031e3b3c55b598b654c",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
     "runtime-release-guard-ci"
@@ -12,11 +12,12 @@
   "release_engineering_contract": {
     "contract_path": "docs/architecture/runtime-release-contract.json",
     "status": "partial",
-    "phase": "RRP-8.2",
-    "audited_base_commit": "8016b67262f6e951fd834589637df475e03adb2b",
+    "phase": "RRP-8.4",
+    "audited_base_commit": "26de9a83f2da77377f58f031e3b3c55b598b654c",
     "local_release_gate_script": "pnpm release:gate",
     "direct_workflow_gate_status": "blocked_external_workflow_scope_required",
-    "runtime_release_ready_after_phase": false
+    "runtime_release_ready_after_phase": false,
+    "supply_chain_artifact_evidence_status": "local_baseline_available_release_blocking_gaps_preserved"
   },
   "owner_decisions": [
     {
@@ -129,9 +130,14 @@
         "RRP-5.17 extends guard:protocol-event-canonization in the existing CI-invoked VSIX check path to require strict typed headless payload descriptor tokens, fixtures, full typed coverage closure, and release_blocking_open_payload_count 0.",
         "RRP-5.18 updates guard:protocol-event-canonization so the CI-invoked guard requires protocol-owned event-specific ledger payload schema versions and rejects a single global current schema version for every event; direct .github workflow hardening still requires workflow-scope credentials or an owner-approved equivalent path.",
         "RRP-8.2 adds docs/architecture/runtime-release-contract.json as the fail-closed Release Engineering Contract, adds pnpm release:gate as the repository-local command plan for Rust, Node, Brownie guard, and recovery evidence, and wires guard:release-contract plus guard:release-contract:test into the existing CI-invoked VSIX check path without editing .github/workflows/ci.yml.",
-        "RRP-8.2 local release:gate evidence passes rust_fmt and rust_check, then fails closed at rust_clippy because existing Runtime clippy warnings remain; this is not treated as Release Ready."
+        "RRP-8.2 local release:gate evidence passes rust_fmt and rust_check, then fails closed at rust_clippy because existing Runtime clippy warnings remain; this is not treated as Release Ready.",
+        "RRP-8.3 clears the local clippy -D warnings baseline and makes pnpm release:gate pass every previously configured local mandatory command while keeping runtime_release_ready=false.",
+        "RRP-8.4 adds pnpm --workspace-root release:supply-chain-artifact-evidence, guard:supply-chain-artifact-evidence, and guard:supply-chain-artifact-evidence:test to the repository-local release gate and existing CI-invoked VSIX check path.",
+        "RRP-8.4 generated evidence records lockfile hashes, cargo metadata lockfile validation, high-confidence secret scan results, local SBOM baseline, SHA256SUMS, local provenance, artifact inventory, smoke-test status, and signature/integrity owner-action state without storing raw process output or absolute paths.",
+        "RRP-8.4 remains fail-closed: missing cargo audit/cargo deny/pnpm audit execution, missing release artifacts, missing artifact smoke tests, missing release artifact checksums, missing workflow provenance, and missing owner-controlled signing or integrity proof keep runtime_release_ready=false.",
+        "RRP-8.4 stabilizes the installed_run_timeout_retry_uses_same_admission_without_duplicate_task release-gate failure by warming read-only first-touch runtime setup before the short post-admission timeout assertion."
       ],
-      "next_action": "Continue runtime-release-guard-ci by adding supply-chain, artifact, provenance, cross-platform, soak, and governance evidence in repo-local scripts where possible; close direct workflow wiring only after workflow-scope credentials or an owner-approved equivalent CI-hardening path are available."
+      "next_action": "Continue runtime-release-guard-ci by adding actual vulnerability/license audit execution, cross-platform release artifacts and smoke tests, workflow or owner-approved CI enforcement, branch protection/status-check evidence, independent review evidence, and owner signing/integrity decisions before any Runtime Release Ready claim."
     },
     {
       "id": "mcp-runtime-safety-policy",
