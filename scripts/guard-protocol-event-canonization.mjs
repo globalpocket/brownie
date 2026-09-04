@@ -175,7 +175,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
   requireValue(contract.contract_id === 'runtime-semantic-protocol-contract-v1', errors, `${contractPath} contract_id must identify the Runtime semantic protocol contract.`);
   requireValue(contract.campaign === 'runtime-release-readiness-p0-p1-finite-closure', errors, `${contractPath} campaign must match Runtime release readiness.`);
-  requireValue(contract.phase === 'RRP-5.16', errors, `${contractPath} phase must be RRP-5.16.`);
+  requireValue(contract.phase === 'RRP-5.17', errors, `${contractPath} phase must be RRP-5.17.`);
   requireValue(contract.owner === 'runtime', errors, `${contractPath} owner must be runtime.`);
   requireValue(contract.runtime_release_debt_id === 'protocol-event-canonization', errors, `${contractPath} must bind to protocol-event-canonization.`);
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must not declare Runtime Release Ready.`);
@@ -350,7 +350,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   requireValue(contractScope.jsonrpc_request_result_contract === 'closed', errors, `${contractPath} must keep JSON-RPC request/result contract closed.`);
   requireValue(contractScope.schema_and_instance_fingerprint_split === 'closed', errors, `${contractPath} must keep ledger schema/instance fingerprint split closed.`);
   requireValue(contractScope.ledger_event_payload_inventory === 'closed', errors, `${contractPath} must close ledger event payload inventory.`);
-  requireValue(contractScope.ledger_event_payload_typed_schema_coverage === 'partial', errors, `${contractPath} must keep full ledger payload typed schema coverage partial until all open payload contracts close.`);
+  requireValue(contractScope.ledger_event_payload_typed_schema_coverage === 'closed', errors, `${contractPath} must close full ledger payload typed schema coverage once all open payload contracts close.`);
   requireValue(
     typeof durableCoupling.ledger_payload_schema_classification_policy === 'string' &&
       durableCoupling.ledger_payload_schema_classification_policy.includes('Every LedgerEventKind'),
@@ -358,10 +358,9 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
     `${contractPath} durable coupling must require explicit LedgerEventKind payload schema classifications.`
   );
   requireValue(
-    Number.isInteger(durableCoupling.release_blocking_open_payload_count) &&
-      durableCoupling.release_blocking_open_payload_count > 0,
+    durableCoupling.release_blocking_open_payload_count === 0,
     errors,
-    `${contractPath} must retain release_blocking_open_payload_count while ledger payload schemas remain partial.`
+    `${contractPath} must keep release_blocking_open_payload_count at 0 after ledger payload typed schema closure.`
   );
   requireValue(
     durableCoupling.event_payload_schema_classification_count === ledgerVariants.length,
@@ -384,6 +383,11 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
       errors,
       `${contractPath} ${variant} payload_schema_contract_status must be explicit.`
     );
+    requireValue(
+      entry?.release_blocking_until_typed === false,
+      errors,
+      `${contractPath} ${variant} must not remain release-blocking after full ledger payload typing closure.`
+    );
   }
   requireValue(durableCoupling.event_payload_schema_fingerprint_count === ledgerVariants.length, errors, `${contractPath} durable event schema fingerprint count must match LedgerEventKind variants.`);
   const fingerprintByKind = new Map(
@@ -392,7 +396,7 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
   for (const variant of ledgerVariants) {
     const entry = fingerprintByKind.get(variant);
     requireValue(Boolean(entry), errors, `${contractPath} durable_event_migration_coupling.event_payload_schema_fingerprints must include ${variant}.`);
-    requireValue(entry?.payload_schema_version === 12, errors, `${contractPath} ${variant} payload_schema_version must be 12.`);
+    requireValue(entry?.payload_schema_version === 13, errors, `${contractPath} ${variant} payload_schema_version must be 13.`);
     requireValue(entry?.store_schema_version === durableCoupling.store_schema_version, errors, `${contractPath} ${variant} store_schema_version must match durable coupling schema version.`);
     requireValue(isNonEmptyString(entry?.payload_schema_id), errors, `${contractPath} ${variant} payload_schema_id must be present.`);
     requireValue(isNonEmptyString(entry?.payload_schema_fingerprint), errors, `${contractPath} ${variant} payload_schema_fingerprint must be present.`);
@@ -519,6 +523,39 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
     errors,
     `${contractPath} WorkspacePatchApprovalRequested payload-absent descriptor must be closed and non-release-blocking.`
   );
+  const headlessDescriptorRequirements = new Map([
+    ['HeadlessContinuationDecisionRecorded', 'headless_continuation_decision_payload:true'],
+    ['HeadlessRunSessionAdvanced', 'headless_run_session_advanced_payload:true'],
+    ['HeadlessRunSessionDriveCompleted', 'headless_run_session_drive_completed_payload:true'],
+    ['HeadlessRunProductEvidenceMatrixDerived', 'headless_product_evidence_matrix_payload:true'],
+    ['HeadlessRunSelectedProductGapClosureRecorded', 'headless_selected_product_gap_closure_payload:true'],
+    ['HeadlessRunProductCompletionDecisionRecorded', 'headless_product_completion_decision_payload:true'],
+    ['HeadlessJourneyStarted', 'headless_journey_started_payload:true'],
+    ['HeadlessJourneyRouteResumed', 'headless_journey_route_resumed_payload:true'],
+    ['HeadlessJourneyClosed', 'headless_journey_closed_payload:true'],
+    ['HeadlessJourneyExecuted', 'headless_journey_executed_payload:true'],
+    ['HeadlessRunCompletionFinalized', 'headless_run_completion_finalized_payload:true'],
+  ]);
+  for (const [eventKind, descriptorToken] of headlessDescriptorRequirements) {
+    const entry = fingerprintByKind.get(eventKind);
+    requireValue(
+      entry?.payload_schema_classification === 'strict_typed',
+      errors,
+      `${contractPath} ${eventKind} must be classified as strict_typed.`
+    );
+    requireValue(
+      entry?.payload_schema_contract_status === 'closed' &&
+        entry?.release_blocking_until_typed === false,
+      errors,
+      `${contractPath} ${eventKind} strict typed headless payload schema must be closed and non-release-blocking.`
+    );
+    requireValue(
+      entry?.payload_schema_descriptor?.includes(descriptorToken) &&
+        entry?.payload_schema_descriptor?.includes('additional_fields:false'),
+      errors,
+      `${contractPath} ${eventKind} payload schema descriptor must capture ${descriptorToken} and reject additional fields.`
+    );
+  }
   const codebaseDescriptorRequirements = new Map([
     ['CodebaseIndexPermissionChecked', 'codebase_index_permission_payload:true'],
     ['CodebaseIndexSnapshotBuilt', 'codebase_index_snapshot_payload:true'],
@@ -657,6 +694,13 @@ export function validateRuntimeSemanticProtocolContract(contract, map, options =
       schemaFixtures.some((fixture) => fixture?.ledger_event_kind === eventKind),
       errors,
       `${contractPath} must include ${eventKind} strict typed task admission/mode payload fixture.`
+    );
+  }
+  for (const eventKind of headlessDescriptorRequirements.keys()) {
+    requireValue(
+      schemaFixtures.some((fixture) => fixture?.ledger_event_kind === eventKind),
+      errors,
+      `${contractPath} must include ${eventKind} strict typed headless payload fixture.`
     );
   }
   requireValue(

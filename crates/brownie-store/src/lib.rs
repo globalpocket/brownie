@@ -6088,7 +6088,7 @@ pub struct LedgerPayloadEnvelope {
     pub instance_shape_fingerprint: String,
 }
 
-pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 12;
+pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 13;
 pub const LEDGER_PAYLOAD_SHAPE_VERSION: u64 = LEDGER_PAYLOAD_SCHEMA_VERSION;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6192,13 +6192,23 @@ pub fn ledger_payload_schema_classification(
         | LedgerEventKind::WorkspacePatchApplyCapabilityChecked
         | LedgerEventKind::WorkspacePatchApplyDryRunChecked
         | LedgerEventKind::WorkspacePatchApplyResultRecorded
-        | LedgerEventKind::WorkspacePatchReadinessReportCreated => {
+        | LedgerEventKind::WorkspacePatchReadinessReportCreated
+        | LedgerEventKind::HeadlessContinuationDecisionRecorded
+        | LedgerEventKind::HeadlessRunSessionAdvanced
+        | LedgerEventKind::HeadlessRunSessionDriveCompleted
+        | LedgerEventKind::HeadlessRunProductEvidenceMatrixDerived
+        | LedgerEventKind::HeadlessRunSelectedProductGapClosureRecorded
+        | LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded
+        | LedgerEventKind::HeadlessJourneyStarted
+        | LedgerEventKind::HeadlessJourneyRouteResumed
+        | LedgerEventKind::HeadlessJourneyClosed
+        | LedgerEventKind::HeadlessJourneyExecuted
+        | LedgerEventKind::HeadlessRunCompletionFinalized => {
             LedgerPayloadSchemaClassification::StrictTyped
         }
         LedgerEventKind::WorkspacePatchApprovalRequested => {
             LedgerPayloadSchemaClassification::PayloadAbsent
         }
-        _ => LedgerPayloadSchemaClassification::VersionedOpen,
     }
 }
 
@@ -6466,6 +6476,39 @@ fn validate_strict_ledger_payload_schema(
         }
         LedgerEventKind::WorkspacePatchReadinessReportCreated => {
             validate_workspace_patch_readiness_report_payload_schema(kind, payload)
+        }
+        LedgerEventKind::HeadlessContinuationDecisionRecorded => {
+            validate_headless_continuation_decision_payload_schema(kind, payload)
+        }
+        LedgerEventKind::HeadlessRunSessionAdvanced => {
+            validate_headless_run_session_advanced_payload_schema(kind, payload)
+        }
+        LedgerEventKind::HeadlessRunSessionDriveCompleted => {
+            validate_headless_run_session_drive_completed_payload_schema(kind, payload)
+        }
+        LedgerEventKind::HeadlessRunProductEvidenceMatrixDerived => {
+            validate_headless_product_evidence_matrix_payload_schema(kind, payload)
+        }
+        LedgerEventKind::HeadlessRunSelectedProductGapClosureRecorded => {
+            validate_headless_selected_product_gap_closure_payload_schema(kind, payload)
+        }
+        LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded => {
+            validate_headless_product_completion_decision_payload_schema(kind, payload)
+        }
+        LedgerEventKind::HeadlessJourneyStarted => {
+            validate_headless_journey_started_payload_schema(kind, payload)
+        }
+        LedgerEventKind::HeadlessJourneyRouteResumed => {
+            validate_headless_journey_route_resumed_payload_schema(kind, payload)
+        }
+        LedgerEventKind::HeadlessJourneyClosed => {
+            validate_headless_journey_closed_payload_schema(kind, payload)
+        }
+        LedgerEventKind::HeadlessJourneyExecuted => {
+            validate_headless_journey_executed_payload_schema(kind, payload)
+        }
+        LedgerEventKind::HeadlessRunCompletionFinalized => {
+            validate_headless_run_completion_finalized_payload_schema(kind, payload)
         }
         _ => bail!("{kind:?} strict ledger payload schema is not registered"),
     }
@@ -7541,6 +7584,418 @@ fn validate_workspace_patch_readiness_report_payload_schema(
     }
     for field in ["failed_checks", "blocked_checks"] {
         validate_required_payload_string_array_field(object, field)?;
+    }
+    Ok(())
+}
+
+fn validate_headless_continuation_decision_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        HEADLESS_CONTINUATION_DECISION_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    validate_payload_has_known_field(kind, object)?;
+    for field in [
+        "expected_aggregate_sequence",
+        "candidate_count",
+        "child_completion_child_count",
+        "child_terminal_completed_count",
+        "child_terminal_failed_count",
+        "diagnostic_index",
+        "end_session_sequence",
+        "excerpt_bytes",
+        "hunk_count",
+        "replacement_content_bytes",
+        "replacement_content_chars",
+    ] {
+        validate_optional_payload_u64_or_null_field(object, field)?;
+    }
+    for field in HEADLESS_CONTINUATION_DECISION_BOOL_FIELDS {
+        validate_optional_payload_bool_field(object, field)?;
+    }
+    for field in HEADLESS_CONTINUATION_DECISION_STRING_OR_NULL_FIELDS {
+        validate_optional_payload_string_or_null_field(object, field)?;
+    }
+    for field in HEADLESS_CONTINUATION_DECISION_STRING_FIELDS {
+        validate_optional_payload_string_field(object, field)?;
+    }
+    Ok(())
+}
+
+fn validate_headless_run_session_advanced_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        HEADLESS_RUN_SESSION_ADVANCED_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    validate_payload_has_known_field(kind, object)?;
+    for field in [
+        "advance_id",
+        "checkpoint_fingerprint",
+        "next_action",
+        "reason",
+        "selected_run_id",
+        "selected_task_id",
+        "session_id",
+        "start_progress_fingerprint",
+    ] {
+        validate_optional_payload_string_field(object, field)?;
+    }
+    for field in [
+        "post_progress_fingerprint",
+        "stop_reason",
+        "verification_completion_gate_status",
+        "gate_status",
+    ] {
+        validate_optional_payload_string_or_null_field(object, field)?;
+    }
+    for field in [
+        "post_aggregate_sequence",
+        "proposal_count",
+        "required_verifier_count",
+        "session_sequence",
+        "start_aggregate_sequence",
+        "step_index",
+    ] {
+        validate_optional_payload_u64_or_null_field(object, field)?;
+    }
+    validate_optional_payload_object_or_null_field(object, "terminal_completion_evidence")?;
+    validate_optional_payload_bool_field(object, "verification_recovery_repair")?;
+    Ok(())
+}
+
+fn validate_headless_run_session_drive_completed_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        HEADLESS_RUN_SESSION_DRIVE_COMPLETED_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "advance_id",
+        "drive_fingerprint",
+        "drive_id",
+        "next_action",
+        "reason",
+        "selected_run_id",
+        "selected_task_id",
+        "session_id",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    validate_required_payload_string_or_null_field(object, "stop_reason")?;
+    validate_required_payload_object_field(object, "completion_closure")?;
+    for field in [
+        "end_session_sequence",
+        "session_sequence",
+        "start_session_sequence",
+        "step_index",
+    ] {
+        validate_required_payload_u64_field(object, field)?;
+    }
+    validate_required_payload_object_or_null_field(object, "terminal_completion_evidence")?;
+    Ok(())
+}
+
+fn validate_headless_product_evidence_matrix_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        HEADLESS_PRODUCT_EVIDENCE_MATRIX_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "derivation_id",
+        "task_id",
+        "run_id",
+        "acceptance_id",
+        "phase_id",
+        "milestone",
+        "target_capability",
+        "concrete_capability_transition",
+        "accepted_completion_fingerprint",
+        "terminal_completion_fingerprint",
+        "completion_closure_fingerprint",
+        "product_evidence_matrix_fingerprint",
+        "next_action",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    for field in [
+        "artifact_count",
+        "behavior_evidence_count",
+        "rejected_alternatives_count",
+    ] {
+        validate_required_payload_u64_field(object, field)?;
+    }
+    for field in [
+        "product_completion_claim",
+        "safety_boundary_reviewed",
+        "non_goals_reviewed",
+        "technical_debt_reviewed",
+        "replayed",
+    ] {
+        validate_required_payload_bool_field(object, field)?;
+    }
+    validate_required_payload_array_field(object, "artifact_hashes")?;
+    validate_required_payload_array_field(object, "validated_gate_categories")?;
+    validate_required_payload_object_or_null_field(object, "selected_remaining_gap")?;
+    validate_required_payload_object_or_null_field(object, "selected_gap_closure_evidence")?;
+    validate_required_payload_array_field(object, "selected_gap_closure_evidence_set")?;
+    validate_required_payload_string_or_null_field(object, "selected_gap_closure_set_fingerprint")?;
+    Ok(())
+}
+
+fn validate_headless_selected_product_gap_closure_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        HEADLESS_SELECTED_PRODUCT_GAP_CLOSURE_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "closure_id",
+        "task_id",
+        "run_id",
+        "acceptance_id",
+        "source_decision_id",
+        "source_decision_fingerprint",
+        "product_evidence_fingerprint",
+        "product_objective_fingerprint",
+        "accepted_completion_fingerprint",
+        "terminal_completion_fingerprint",
+        "completion_closure_fingerprint",
+        "closure_evidence_fingerprint",
+        "status",
+        "next_action",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    validate_required_payload_object_field(object, "selected_remaining_gap")?;
+    validate_required_payload_bool_field(object, "replayed")?;
+    Ok(())
+}
+
+fn validate_headless_product_completion_decision_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        HEADLESS_PRODUCT_COMPLETION_DECISION_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "decision_id",
+        "task_id",
+        "run_id",
+        "acceptance_id",
+        "status",
+        "next_action",
+        "target_capability",
+        "concrete_capability_transition",
+        "accepted_completion_fingerprint",
+        "terminal_completion_fingerprint",
+        "completion_closure_fingerprint",
+        "product_evidence_fingerprint",
+        "decision_fingerprint",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    validate_required_payload_string_array_field(object, "validated_gate_categories")?;
+    validate_required_payload_string_or_null_field(
+        object,
+        "derived_product_evidence_matrix_fingerprint",
+    )?;
+    validate_required_payload_u64_field(object, "behavior_evidence_count")?;
+    validate_required_payload_u64_field(object, "rejected_alternatives_count")?;
+    validate_required_payload_bool_field(object, "safety_boundary_reviewed")?;
+    validate_required_payload_bool_field(object, "non_goals_reviewed")?;
+    validate_required_payload_bool_field(object, "technical_debt_reviewed")?;
+    validate_required_payload_string_or_null_field(object, "remaining_capability")?;
+    validate_required_payload_object_or_null_field(object, "selected_remaining_gap")?;
+    validate_required_payload_string_or_null_field(object, "milestone_exit_rationale")?;
+    validate_required_payload_object_or_null_field(object, "technical_debt_carry_forward")?;
+    validate_required_payload_bool_field(object, "replayed")?;
+    Ok(())
+}
+
+fn validate_headless_journey_started_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        HEADLESS_JOURNEY_STARTED_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "journey_id",
+        "session_id",
+        "drive_id",
+        "task_id",
+        "run_id",
+        "task_start_fingerprint",
+        "start_progress_fingerprint",
+        "journey_fingerprint",
+        "next_action",
+        "reason",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    validate_required_payload_u64_field(object, "start_aggregate_sequence")?;
+    validate_optional_payload_object_field(object, "task_start")?;
+    validate_optional_payload_object_field(object, "objective_context")?;
+    validate_optional_payload_object_field(object, "product_objective_continuation_provenance")?;
+    for field in [
+        "remaining_capability",
+        "remaining_capability_fingerprint",
+        "derived_objective_fingerprint",
+        "derived_goal_fingerprint",
+    ] {
+        validate_optional_payload_string_field(object, field)?;
+    }
+    Ok(())
+}
+
+fn validate_headless_journey_route_resumed_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        HEADLESS_JOURNEY_ROUTE_RESUMED_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "journey_id",
+        "session_id",
+        "drive_id",
+        "task_id",
+        "run_id",
+        "route_kind",
+        "source_continuation_id",
+        "source_decision_id",
+        "source_checkpoint_fingerprint",
+        "derived_target_class",
+        "result_advance_id",
+        "result_continuation_id",
+        "post_route_progress_fingerprint",
+        "next_action",
+        "resume_fingerprint",
+        "reason",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    validate_required_payload_u64_or_null_field(object, "post_route_aggregate_sequence")?;
+    Ok(())
+}
+
+fn validate_headless_journey_closed_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object =
+        validate_known_payload_object(kind, payload, HEADLESS_JOURNEY_CLOSED_KNOWN_PAYLOAD_FIELDS)?;
+    for field in [
+        "journey_id",
+        "session_id",
+        "drive_id",
+        "task_id",
+        "run_id",
+        "replacement_route_kind",
+        "replacement_continuation_id",
+        "replacement_checkpoint_fingerprint",
+        "active_modepack_activation_fingerprint",
+        "closure_fingerprint",
+        "finalization_fingerprint",
+        "terminal_completion_fingerprint",
+        "progress_fingerprint",
+        "next_action",
+        "journey_closure_fingerprint",
+        "reason",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    validate_required_payload_string_or_null_field(object, "source_replacement_drive_id")?;
+    validate_required_payload_string_or_null_field(
+        object,
+        "source_replacement_resume_fingerprint",
+    )?;
+    validate_required_payload_u64_field(object, "aggregate_sequence")?;
+    Ok(())
+}
+
+fn validate_headless_journey_executed_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        HEADLESS_JOURNEY_EXECUTED_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "journey_id",
+        "session_id",
+        "drive_id",
+        "task_id",
+        "run_id",
+        "journey_fingerprint",
+        "next_action",
+        "execution_checkpoint_fingerprint",
+        "reason",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    validate_required_payload_u64_field(object, "completed_boundary_count")?;
+    validate_required_payload_bool_field(object, "complete")?;
+    Ok(())
+}
+
+fn validate_headless_run_completion_finalized_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(
+        kind,
+        payload,
+        HEADLESS_RUN_COMPLETION_FINALIZED_KNOWN_PAYLOAD_FIELDS,
+    )?;
+    for field in [
+        "session_id",
+        "drive_id",
+        "closure_fingerprint",
+        "progress_fingerprint",
+        "owner_task_id",
+        "owner_run_id",
+        "terminal_completion_fingerprint",
+        "finalization_fingerprint",
+        "next_action",
+        "reason",
+    ] {
+        validate_required_payload_string_field(object, field)?;
+    }
+    for field in [
+        "start_session_sequence",
+        "end_session_sequence",
+        "aggregate_sequence",
+        "terminal_task_count",
+        "total_task_count",
+    ] {
+        validate_required_payload_u64_field(object, field)?;
     }
     Ok(())
 }
@@ -9041,6 +9496,425 @@ const WORKSPACE_PATCH_READINESS_REPORT_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "report_id",
 ];
 
+const HEADLESS_CONTINUATION_DECISION_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "acceptance_status",
+    "admission_route_kind",
+    "applied",
+    "apply_fingerprint",
+    "apply_id",
+    "apply_status",
+    "authorization_preflight_continuation_id",
+    "authorization_preflight_decision_id",
+    "authorization_preflight_fingerprint",
+    "authorize",
+    "authorize_objective_apply_verification",
+    "authorize_objective_completion_acceptance",
+    "authorize_objective_proposal_apply",
+    "authorize_parent_join_run",
+    "authorize_patch_apply_recovery",
+    "authorize_patch_apply_recovery_apply",
+    "authorize_patch_apply_recovery_run",
+    "authorize_product_continuation_run",
+    "authorize_provider_failure_retry",
+    "authorize_provider_failure_retry_run",
+    "authorize_recovery",
+    "authorize_recovery_apply",
+    "authorize_recovery_run",
+    "authorize_verification_retry",
+    "authorize_verification_retry_run",
+    "candidate_count",
+    "child_completion_child_count",
+    "child_completion_fingerprint",
+    "child_terminal_completed_count",
+    "child_terminal_failed_count",
+    "completion_result_fingerprint",
+    "completion_summary",
+    "context_read_id",
+    "continuation_id",
+    "continuation_running_enabled",
+    "current_target_sha256",
+    "decision_fingerprint",
+    "decision_id",
+    "diagnostic_index",
+    "drive_fingerprint",
+    "end_session_sequence",
+    "excerpt_bytes",
+    "excerpt_sha256",
+    "execution_enabled",
+    "expected_aggregate_sequence",
+    "expected_apply_fingerprint",
+    "expected_current_target_sha256",
+    "expected_post_write_sha256",
+    "expected_progress_fingerprint",
+    "expected_target_sha256",
+    "expected_verification_fingerprint",
+    "failure_class",
+    "failure_fingerprint",
+    "final_state",
+    "hunk_count",
+    "journey_id",
+    "next_action",
+    "next_route_fingerprint",
+    "objective_apply_continuation_id",
+    "objective_apply_decision_id",
+    "objective_apply_verification_continuation_id",
+    "objective_apply_verification_decision_id",
+    "operation",
+    "parent_run_id",
+    "parent_task_id",
+    "path_fingerprint",
+    "policy_version",
+    "product_evidence_fingerprint",
+    "proposal_id",
+    "read_path_fingerprint",
+    "reason",
+    "recovery_boundary_fingerprint",
+    "recovery_proposal_id",
+    "recovery_run_id",
+    "recovery_task_id",
+    "replacement_content_bytes",
+    "replacement_content_chars",
+    "replacement_content_sha256",
+    "request_fingerprint",
+    "retry_run_id",
+    "retry_task_id",
+    "retryable",
+    "route_kind",
+    "scheduler_handoff_enabled",
+    "selected_remaining_gap_fingerprint",
+    "selected_run_id",
+    "selected_task_id",
+    "session_id",
+    "source_apply_fingerprint",
+    "source_apply_id",
+    "source_decision_id",
+    "source_drive_id",
+    "source_event_id",
+    "source_event_kind",
+    "source_progress_fingerprint",
+    "source_proposal_id",
+    "source_run_id",
+    "source_session_id",
+    "source_task_id",
+    "stop_class",
+    "stop_reason",
+    "verification_recovery_context_read",
+    "verification_status",
+];
+
+const HEADLESS_CONTINUATION_DECISION_BOOL_FIELDS: &[&str] = &[
+    "applied",
+    "authorize",
+    "authorize_objective_apply_verification",
+    "authorize_objective_completion_acceptance",
+    "authorize_objective_proposal_apply",
+    "authorize_parent_join_run",
+    "authorize_patch_apply_recovery",
+    "authorize_patch_apply_recovery_apply",
+    "authorize_patch_apply_recovery_run",
+    "authorize_product_continuation_run",
+    "authorize_provider_failure_retry",
+    "authorize_provider_failure_retry_run",
+    "authorize_recovery",
+    "authorize_recovery_apply",
+    "authorize_recovery_run",
+    "authorize_verification_retry",
+    "authorize_verification_retry_run",
+    "continuation_running_enabled",
+    "execution_enabled",
+    "retryable",
+    "scheduler_handoff_enabled",
+    "verification_recovery_context_read",
+];
+
+const HEADLESS_CONTINUATION_DECISION_STRING_OR_NULL_FIELDS: &[&str] = &[
+    "acceptance_status",
+    "admission_route_kind",
+    "apply_fingerprint",
+    "apply_id",
+    "apply_status",
+    "authorization_preflight_continuation_id",
+    "authorization_preflight_decision_id",
+    "authorization_preflight_fingerprint",
+    "child_completion_fingerprint",
+    "completion_result_fingerprint",
+    "completion_summary",
+    "context_read_id",
+    "current_target_sha256",
+    "decision_fingerprint",
+    "drive_fingerprint",
+    "excerpt_sha256",
+    "expected_apply_fingerprint",
+    "expected_current_target_sha256",
+    "expected_post_write_sha256",
+    "expected_progress_fingerprint",
+    "expected_target_sha256",
+    "expected_verification_fingerprint",
+    "failure_class",
+    "failure_fingerprint",
+    "final_state",
+    "journey_id",
+    "next_route_fingerprint",
+    "objective_apply_continuation_id",
+    "objective_apply_decision_id",
+    "objective_apply_verification_continuation_id",
+    "objective_apply_verification_decision_id",
+    "operation",
+    "parent_run_id",
+    "parent_task_id",
+    "path_fingerprint",
+    "policy_version",
+    "product_evidence_fingerprint",
+    "proposal_id",
+    "read_path_fingerprint",
+    "recovery_boundary_fingerprint",
+    "recovery_proposal_id",
+    "recovery_run_id",
+    "recovery_task_id",
+    "replacement_content_sha256",
+    "request_fingerprint",
+    "retry_run_id",
+    "retry_task_id",
+    "route_kind",
+    "selected_remaining_gap_fingerprint",
+    "session_id",
+    "source_apply_fingerprint",
+    "source_apply_id",
+    "source_decision_id",
+    "source_drive_id",
+    "source_event_id",
+    "source_event_kind",
+    "source_progress_fingerprint",
+    "source_proposal_id",
+    "source_run_id",
+    "source_session_id",
+    "source_task_id",
+    "stop_class",
+    "stop_reason",
+    "verification_status",
+];
+
+const HEADLESS_CONTINUATION_DECISION_STRING_FIELDS: &[&str] = &[
+    "decision_id",
+    "selected_run_id",
+    "selected_task_id",
+    "next_action",
+    "reason",
+];
+
+const HEADLESS_RUN_SESSION_ADVANCED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "advance_id",
+    "checkpoint_fingerprint",
+    "gate_status",
+    "next_action",
+    "post_aggregate_sequence",
+    "post_progress_fingerprint",
+    "proposal_count",
+    "reason",
+    "required_verifier_count",
+    "selected_run_id",
+    "selected_task_id",
+    "session_id",
+    "session_sequence",
+    "start_aggregate_sequence",
+    "start_progress_fingerprint",
+    "step_index",
+    "stop_reason",
+    "terminal_completion_evidence",
+    "verification_completion_gate_status",
+    "verification_recovery_repair",
+];
+
+const HEADLESS_RUN_SESSION_DRIVE_COMPLETED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "advance_id",
+    "completion_closure",
+    "drive_fingerprint",
+    "drive_id",
+    "end_session_sequence",
+    "next_action",
+    "reason",
+    "selected_run_id",
+    "selected_task_id",
+    "session_id",
+    "session_sequence",
+    "start_session_sequence",
+    "step_index",
+    "stop_reason",
+    "terminal_completion_evidence",
+];
+
+const HEADLESS_PRODUCT_EVIDENCE_MATRIX_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "accepted_completion_fingerprint",
+    "acceptance_id",
+    "artifact_count",
+    "artifact_hashes",
+    "behavior_evidence_count",
+    "completion_closure_fingerprint",
+    "concrete_capability_transition",
+    "derivation_id",
+    "milestone",
+    "next_action",
+    "non_goals_reviewed",
+    "phase_id",
+    "product_completion_claim",
+    "product_evidence_matrix_fingerprint",
+    "rejected_alternatives_count",
+    "replayed",
+    "run_id",
+    "safety_boundary_reviewed",
+    "selected_gap_closure_evidence",
+    "selected_gap_closure_evidence_set",
+    "selected_gap_closure_set_fingerprint",
+    "selected_remaining_gap",
+    "target_capability",
+    "task_id",
+    "technical_debt_reviewed",
+    "terminal_completion_fingerprint",
+    "validated_gate_categories",
+];
+
+const HEADLESS_SELECTED_PRODUCT_GAP_CLOSURE_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "accepted_completion_fingerprint",
+    "acceptance_id",
+    "closure_evidence_fingerprint",
+    "closure_id",
+    "completion_closure_fingerprint",
+    "next_action",
+    "product_evidence_fingerprint",
+    "product_objective_fingerprint",
+    "replayed",
+    "run_id",
+    "selected_remaining_gap",
+    "source_decision_fingerprint",
+    "source_decision_id",
+    "status",
+    "task_id",
+    "terminal_completion_fingerprint",
+];
+
+const HEADLESS_PRODUCT_COMPLETION_DECISION_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "accepted_completion_fingerprint",
+    "acceptance_id",
+    "behavior_evidence_count",
+    "completion_closure_fingerprint",
+    "concrete_capability_transition",
+    "decision_fingerprint",
+    "decision_id",
+    "derived_product_evidence_matrix_fingerprint",
+    "milestone_exit_rationale",
+    "next_action",
+    "non_goals_reviewed",
+    "product_evidence_fingerprint",
+    "rejected_alternatives_count",
+    "remaining_capability",
+    "replayed",
+    "run_id",
+    "safety_boundary_reviewed",
+    "selected_remaining_gap",
+    "status",
+    "target_capability",
+    "task_id",
+    "technical_debt_carry_forward",
+    "technical_debt_reviewed",
+    "terminal_completion_fingerprint",
+    "validated_gate_categories",
+];
+
+const HEADLESS_JOURNEY_STARTED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "derived_goal_fingerprint",
+    "derived_objective_fingerprint",
+    "drive_id",
+    "journey_fingerprint",
+    "journey_id",
+    "next_action",
+    "objective_context",
+    "product_objective_continuation_provenance",
+    "reason",
+    "remaining_capability",
+    "remaining_capability_fingerprint",
+    "run_id",
+    "session_id",
+    "start_aggregate_sequence",
+    "start_progress_fingerprint",
+    "task_id",
+    "task_start",
+    "task_start_fingerprint",
+];
+
+const HEADLESS_JOURNEY_ROUTE_RESUMED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "derived_target_class",
+    "drive_id",
+    "journey_id",
+    "next_action",
+    "post_route_aggregate_sequence",
+    "post_route_progress_fingerprint",
+    "reason",
+    "result_advance_id",
+    "result_continuation_id",
+    "resume_fingerprint",
+    "route_kind",
+    "run_id",
+    "session_id",
+    "source_checkpoint_fingerprint",
+    "source_continuation_id",
+    "source_decision_id",
+    "task_id",
+];
+
+const HEADLESS_JOURNEY_CLOSED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "active_modepack_activation_fingerprint",
+    "aggregate_sequence",
+    "closure_fingerprint",
+    "drive_id",
+    "finalization_fingerprint",
+    "journey_closure_fingerprint",
+    "journey_id",
+    "next_action",
+    "progress_fingerprint",
+    "reason",
+    "replacement_checkpoint_fingerprint",
+    "replacement_continuation_id",
+    "replacement_route_kind",
+    "run_id",
+    "session_id",
+    "source_replacement_drive_id",
+    "source_replacement_resume_fingerprint",
+    "task_id",
+    "terminal_completion_fingerprint",
+];
+
+const HEADLESS_JOURNEY_EXECUTED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "complete",
+    "completed_boundary_count",
+    "drive_id",
+    "execution_checkpoint_fingerprint",
+    "journey_fingerprint",
+    "journey_id",
+    "next_action",
+    "reason",
+    "run_id",
+    "session_id",
+    "task_id",
+];
+
+const HEADLESS_RUN_COMPLETION_FINALIZED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
+    "aggregate_sequence",
+    "closure_fingerprint",
+    "drive_id",
+    "end_session_sequence",
+    "finalization_fingerprint",
+    "next_action",
+    "owner_run_id",
+    "owner_task_id",
+    "progress_fingerprint",
+    "reason",
+    "session_id",
+    "start_session_sequence",
+    "terminal_completion_fingerprint",
+    "terminal_task_count",
+    "total_task_count",
+];
+
 const SUBTASK_ORCHESTRATION_QUEUED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "execution_enabled",
     "input_summary",
@@ -9764,6 +10638,19 @@ fn validate_required_payload_object_field(
     Ok(())
 }
 
+fn validate_required_payload_object_or_null_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<()> {
+    let Some(value) = object.get(field) else {
+        bail!("ledger payload field {field} is required");
+    };
+    if !value.is_object() && !value.is_null() {
+        bail!("ledger payload field {field} must be an object or null");
+    }
+    Ok(())
+}
+
 fn validate_required_payload_u64_field(
     object: &serde_json::Map<String, serde_json::Value>,
     field: &str,
@@ -10150,7 +11037,9 @@ fn ledger_payload_schema_descriptor(kind: &LedgerEventKind) -> String {
         LedgerEventKind::SubtaskOrchestrationQueued => {
             subtask_orchestration_queued_payload_schema_descriptor()
         }
-        LedgerEventKind::SubtaskHandoffPrepared => subtask_handoff_prepared_payload_schema_descriptor(),
+        LedgerEventKind::SubtaskHandoffPrepared => {
+            subtask_handoff_prepared_payload_schema_descriptor()
+        }
         LedgerEventKind::SubtaskSchedulerReadinessRecorded => {
             subtask_scheduler_readiness_payload_schema_descriptor()
         }
@@ -10211,7 +11100,39 @@ fn ledger_payload_schema_descriptor(kind: &LedgerEventKind) -> String {
         LedgerEventKind::WorkspacePatchReadinessReportCreated => {
             workspace_patch_readiness_report_payload_schema_descriptor()
         }
-        _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
+        LedgerEventKind::HeadlessContinuationDecisionRecorded => {
+            headless_continuation_decision_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessRunSessionAdvanced => {
+            headless_run_session_advanced_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessRunSessionDriveCompleted => {
+            headless_run_session_drive_completed_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessRunProductEvidenceMatrixDerived => {
+            headless_product_evidence_matrix_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessRunSelectedProductGapClosureRecorded => {
+            headless_selected_product_gap_closure_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded => {
+            headless_product_completion_decision_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessJourneyStarted => {
+            headless_journey_started_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessJourneyRouteResumed => {
+            headless_journey_route_resumed_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessJourneyClosed => {
+            headless_journey_closed_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessJourneyExecuted => {
+            headless_journey_executed_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessRunCompletionFinalized => {
+            headless_run_completion_finalized_payload_schema_descriptor()
+        }
     }
 }
 
@@ -10432,6 +11353,50 @@ fn workspace_patch_readiness_report_payload_schema_descriptor() -> String {
     "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,check_count:u64,failed_checks:array<string>,fingerprint_input_count:u64,generated_at:string,proposal_id:string,readiness_fingerprint:string,readiness_reason:string_or_null,readiness_status:string,report_id:string;additional_fields:false;workspace_patch_readiness_report_payload:true}".to_string()
 }
 
+fn headless_continuation_decision_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;known_field_required:true;known_optional_fields:acceptance_status:string_or_null,admission_route_kind:string_or_null,applied:boolean,apply_fingerprint:string_or_null,apply_id:string_or_null,apply_status:string_or_null,authorization_preflight_continuation_id:string_or_null,authorization_preflight_decision_id:string_or_null,authorization_preflight_fingerprint:string_or_null,authorize:boolean,authorize_objective_apply_verification:boolean,authorize_objective_completion_acceptance:boolean,authorize_objective_proposal_apply:boolean,authorize_parent_join_run:boolean,authorize_patch_apply_recovery:boolean,authorize_patch_apply_recovery_apply:boolean,authorize_patch_apply_recovery_run:boolean,authorize_product_continuation_run:boolean,authorize_provider_failure_retry:boolean,authorize_provider_failure_retry_run:boolean,authorize_recovery:boolean,authorize_recovery_apply:boolean,authorize_recovery_run:boolean,authorize_verification_retry:boolean,authorize_verification_retry_run:boolean,candidate_count:u64_or_null,child_completion_child_count:u64_or_null,child_completion_fingerprint:string_or_null,child_terminal_completed_count:u64_or_null,child_terminal_failed_count:u64_or_null,completion_result_fingerprint:string_or_null,completion_summary:string_or_null,context_read_id:string_or_null,continuation_id:string_or_null,continuation_running_enabled:boolean,current_target_sha256:string_or_null,decision_fingerprint:string_or_null,decision_id:string,diagnostic_index:u64_or_null,drive_fingerprint:string_or_null,end_session_sequence:u64_or_null,excerpt_bytes:u64_or_null,excerpt_sha256:string_or_null,execution_enabled:boolean,expected_aggregate_sequence:u64_or_null,expected_apply_fingerprint:string_or_null,expected_current_target_sha256:string_or_null,expected_post_write_sha256:string_or_null,expected_progress_fingerprint:string_or_null,expected_target_sha256:string_or_null,expected_verification_fingerprint:string_or_null,failure_class:string_or_null,failure_fingerprint:string_or_null,final_state:string_or_null,hunk_count:u64_or_null,journey_id:string_or_null,next_action:string,next_route_fingerprint:string_or_null,objective_apply_continuation_id:string_or_null,objective_apply_decision_id:string_or_null,objective_apply_verification_continuation_id:string_or_null,objective_apply_verification_decision_id:string_or_null,operation:string_or_null,parent_run_id:string_or_null,parent_task_id:string_or_null,path_fingerprint:string_or_null,policy_version:string_or_null,product_evidence_fingerprint:string_or_null,proposal_id:string_or_null,read_path_fingerprint:string_or_null,reason:string,recovery_boundary_fingerprint:string_or_null,recovery_proposal_id:string_or_null,recovery_run_id:string_or_null,recovery_task_id:string_or_null,replacement_content_bytes:u64_or_null,replacement_content_chars:u64_or_null,replacement_content_sha256:string_or_null,request_fingerprint:string_or_null,retry_run_id:string_or_null,retry_task_id:string_or_null,retryable:boolean,route_kind:string_or_null,scheduler_handoff_enabled:boolean,selected_remaining_gap_fingerprint:string_or_null,selected_run_id:string,selected_task_id:string,session_id:string_or_null,source_apply_fingerprint:string_or_null,source_apply_id:string_or_null,source_decision_id:string_or_null,source_drive_id:string_or_null,source_event_id:string_or_null,source_event_kind:string_or_null,source_progress_fingerprint:string_or_null,source_proposal_id:string_or_null,source_run_id:string_or_null,source_session_id:string_or_null,source_task_id:string_or_null,stop_class:string_or_null,stop_reason:string_or_null,verification_recovery_context_read:boolean,verification_status:string_or_null;additional_fields:false;headless_continuation_decision_payload:true}".to_string()
+}
+
+fn headless_run_session_advanced_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;known_field_required:true;known_optional_fields:advance_id:string,checkpoint_fingerprint:string,gate_status:string_or_null,next_action:string,post_aggregate_sequence:u64_or_null,post_progress_fingerprint:string_or_null,proposal_count:u64_or_null,reason:string,required_verifier_count:u64_or_null,selected_run_id:string,selected_task_id:string,session_id:string,session_sequence:u64_or_null,start_aggregate_sequence:u64_or_null,start_progress_fingerprint:string,step_index:u64_or_null,stop_reason:string_or_null,terminal_completion_evidence:object_or_null,verification_completion_gate_status:string_or_null,verification_recovery_repair:boolean;additional_fields:false;headless_run_session_advanced_payload:true}".to_string()
+}
+
+fn headless_run_session_drive_completed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:advance_id:string,completion_closure:object,drive_fingerprint:string,drive_id:string,end_session_sequence:u64,next_action:string,reason:string,selected_run_id:string,selected_task_id:string,session_id:string,session_sequence:u64,start_session_sequence:u64,step_index:u64,stop_reason:string_or_null,terminal_completion_evidence:object_or_null;additional_fields:false;headless_run_session_drive_completed_payload:true}".to_string()
+}
+
+fn headless_product_evidence_matrix_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:accepted_completion_fingerprint:string,acceptance_id:string,artifact_count:u64,artifact_hashes:array,behavior_evidence_count:u64,completion_closure_fingerprint:string,concrete_capability_transition:string,derivation_id:string,milestone:string,next_action:string,non_goals_reviewed:boolean,phase_id:string,product_completion_claim:boolean,product_evidence_matrix_fingerprint:string,rejected_alternatives_count:u64,replayed:boolean,run_id:string,safety_boundary_reviewed:boolean,selected_gap_closure_evidence:object_or_null,selected_gap_closure_evidence_set:array,selected_gap_closure_set_fingerprint:string_or_null,selected_remaining_gap:object_or_null,target_capability:string,task_id:string,technical_debt_reviewed:boolean,terminal_completion_fingerprint:string,validated_gate_categories:array;additional_fields:false;headless_product_evidence_matrix_payload:true}".to_string()
+}
+
+fn headless_selected_product_gap_closure_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:accepted_completion_fingerprint:string,acceptance_id:string,closure_evidence_fingerprint:string,closure_id:string,completion_closure_fingerprint:string,next_action:string,product_evidence_fingerprint:string,product_objective_fingerprint:string,replayed:boolean,run_id:string,selected_remaining_gap:object,source_decision_fingerprint:string,source_decision_id:string,status:string,task_id:string,terminal_completion_fingerprint:string;additional_fields:false;headless_selected_product_gap_closure_payload:true}".to_string()
+}
+
+fn headless_product_completion_decision_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:accepted_completion_fingerprint:string,acceptance_id:string,behavior_evidence_count:u64,completion_closure_fingerprint:string,concrete_capability_transition:string,decision_fingerprint:string,decision_id:string,derived_product_evidence_matrix_fingerprint:string_or_null,milestone_exit_rationale:string_or_null,next_action:string,non_goals_reviewed:boolean,product_evidence_fingerprint:string,rejected_alternatives_count:u64,remaining_capability:string_or_null,replayed:boolean,run_id:string,safety_boundary_reviewed:boolean,selected_remaining_gap:object_or_null,status:string,target_capability:string,task_id:string,technical_debt_carry_forward:object_or_null,technical_debt_reviewed:boolean,terminal_completion_fingerprint:string,validated_gate_categories:array<string>;additional_fields:false;headless_product_completion_decision_payload:true}".to_string()
+}
+
+fn headless_journey_started_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:drive_id:string,journey_fingerprint:string,journey_id:string,next_action:string,reason:string,run_id:string,session_id:string,start_aggregate_sequence:u64,start_progress_fingerprint:string,task_id:string,task_start_fingerprint:string;known_optional_fields:derived_goal_fingerprint:string,derived_objective_fingerprint:string,objective_context:object,product_objective_continuation_provenance:object,remaining_capability:string,remaining_capability_fingerprint:string,task_start:object;additional_fields:false;headless_journey_started_payload:true}".to_string()
+}
+
+fn headless_journey_route_resumed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:derived_target_class:string,drive_id:string,journey_id:string,next_action:string,post_route_aggregate_sequence:u64_or_null,post_route_progress_fingerprint:string,reason:string,result_advance_id:string,result_continuation_id:string,resume_fingerprint:string,route_kind:string,run_id:string,session_id:string,source_checkpoint_fingerprint:string,source_continuation_id:string,source_decision_id:string,task_id:string;additional_fields:false;headless_journey_route_resumed_payload:true}".to_string()
+}
+
+fn headless_journey_closed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:active_modepack_activation_fingerprint:string,aggregate_sequence:u64,closure_fingerprint:string,drive_id:string,finalization_fingerprint:string,journey_closure_fingerprint:string,journey_id:string,next_action:string,progress_fingerprint:string,reason:string,replacement_checkpoint_fingerprint:string,replacement_continuation_id:string,replacement_route_kind:string,run_id:string,session_id:string,source_replacement_drive_id:string_or_null,source_replacement_resume_fingerprint:string_or_null,task_id:string,terminal_completion_fingerprint:string;additional_fields:false;headless_journey_closed_payload:true}".to_string()
+}
+
+fn headless_journey_executed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:complete:boolean,completed_boundary_count:u64,drive_id:string,execution_checkpoint_fingerprint:string,journey_fingerprint:string,journey_id:string,next_action:string,reason:string,run_id:string,session_id:string,task_id:string;additional_fields:false;headless_journey_executed_payload:true}".to_string()
+}
+
+fn headless_run_completion_finalized_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:aggregate_sequence:u64,closure_fingerprint:string,drive_id:string,end_session_sequence:u64,finalization_fingerprint:string,next_action:string,owner_run_id:string,owner_task_id:string,progress_fingerprint:string,reason:string,session_id:string,start_session_sequence:u64,terminal_completion_fingerprint:string,terminal_task_count:u64,total_task_count:u64;additional_fields:false;headless_run_completion_finalized_payload:true}".to_string()
+}
+
 fn ledger_payload_legacy_schema_descriptor(kind: &LedgerEventKind, schema_version: u64) -> String {
     match kind {
         LedgerEventKind::TaskCompleted
@@ -10625,6 +11590,39 @@ fn ledger_payload_legacy_schema_descriptor(kind: &LedgerEventKind, schema_versio
         }
         LedgerEventKind::WorkspacePatchReadinessReportCreated if schema_version >= 12 => {
             workspace_patch_readiness_report_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessContinuationDecisionRecorded if schema_version >= 13 => {
+            headless_continuation_decision_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessRunSessionAdvanced if schema_version >= 13 => {
+            headless_run_session_advanced_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessRunSessionDriveCompleted if schema_version >= 13 => {
+            headless_run_session_drive_completed_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessRunProductEvidenceMatrixDerived if schema_version >= 13 => {
+            headless_product_evidence_matrix_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessRunSelectedProductGapClosureRecorded if schema_version >= 13 => {
+            headless_selected_product_gap_closure_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded if schema_version >= 13 => {
+            headless_product_completion_decision_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessJourneyStarted if schema_version >= 13 => {
+            headless_journey_started_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessJourneyRouteResumed if schema_version >= 13 => {
+            headless_journey_route_resumed_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessJourneyClosed if schema_version >= 13 => {
+            headless_journey_closed_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessJourneyExecuted if schema_version >= 13 => {
+            headless_journey_executed_payload_schema_descriptor()
+        }
+        LedgerEventKind::HeadlessRunCompletionFinalized if schema_version >= 13 => {
+            headless_run_completion_finalized_payload_schema_descriptor()
         }
         LedgerEventKind::TaskCompleted => "typed_known_fields_open{known_optional_fields:completion_evidence:object,git:object,late_tool_response:boolean,mcp:object,runtime_deadline:object,status:string,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:legacy_open;known_field_required:true;additional_fields:true;strict_typed_payload_required_before_release:true}".to_string(),
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
@@ -11627,6 +12625,33 @@ mod tests {
                 "{kind:?}"
             );
         }
+
+        for kind in [
+            LedgerEventKind::HeadlessContinuationDecisionRecorded,
+            LedgerEventKind::HeadlessRunSessionAdvanced,
+            LedgerEventKind::HeadlessRunSessionDriveCompleted,
+            LedgerEventKind::HeadlessRunProductEvidenceMatrixDerived,
+            LedgerEventKind::HeadlessRunSelectedProductGapClosureRecorded,
+            LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded,
+            LedgerEventKind::HeadlessJourneyStarted,
+            LedgerEventKind::HeadlessJourneyRouteResumed,
+            LedgerEventKind::HeadlessJourneyClosed,
+            LedgerEventKind::HeadlessJourneyExecuted,
+            LedgerEventKind::HeadlessRunCompletionFinalized,
+        ] {
+            let classification = ledger_payload_schema_classification(&kind);
+            assert_eq!(classification.as_str(), "strict_typed", "{kind:?}");
+            assert_eq!(classification.contract_status(), "closed", "{kind:?}");
+            assert!(!classification.release_blocking(), "{kind:?}");
+            assert!(
+                ledger_payload_schema_descriptor(&kind).contains("additional_fields:false"),
+                "{kind:?}"
+            );
+            assert!(
+                ledger_payload_schema_descriptor(&kind).contains("headless_"),
+                "{kind:?}"
+            );
+        }
     }
 
     #[test]
@@ -12525,6 +13550,334 @@ mod tests {
                 ],
             )
             .expect("strict workspace patch payloads should append");
+    }
+
+    #[test]
+    fn ledger_payload_write_rejects_malformed_headless_payloads() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = TaskStore::new(temp.path());
+        let record = store
+            .start_task(TaskStartParams {
+                goal: "headless payload schema".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start task");
+
+        for (kind, payload) in [
+            (
+                LedgerEventKind::HeadlessContinuationDecisionRecorded,
+                serde_json::json!({
+                    "decision_id": "decision_1",
+                    "continuation_id": "continuation_1",
+                    "selected_task_id": record.task_id.clone(),
+                    "selected_run_id": record.run_id.clone(),
+                    "next_action": "run_task",
+                    "reason": "selected",
+                    "raw_provider_response": "not allowed"
+                }),
+            ),
+            (
+                LedgerEventKind::HeadlessRunSessionDriveCompleted,
+                serde_json::json!({
+                    "drive_id": "drive_1",
+                    "advance_id": "advance_1",
+                    "session_id": "session_1",
+                    "selected_task_id": record.task_id.clone(),
+                    "selected_run_id": record.run_id.clone(),
+                    "next_action": "complete",
+                    "reason": "done",
+                    "terminal_completion_evidence": "true"
+                }),
+            ),
+            (
+                LedgerEventKind::HeadlessJourneyStarted,
+                serde_json::json!({
+                    "journey_id": "journey_1",
+                    "session_id": "session_1",
+                    "task_id": record.task_id.clone(),
+                    "run_id": record.run_id.clone(),
+                    "task_start_fingerprint": "sha256:start",
+                    "start_aggregate_sequence": 0,
+                    "start_progress_fingerprint": "sha256:progress",
+                    "journey_fingerprint": "sha256:journey",
+                    "next_action": "drive",
+                    "reason": "started",
+                    "prompt": "not allowed"
+                }),
+            ),
+            (
+                LedgerEventKind::HeadlessRunCompletionFinalized,
+                serde_json::json!({
+                    "session_id": "session_1",
+                    "drive_id": "drive_1",
+                    "closure_fingerprint": "sha256:closure",
+                    "progress_fingerprint": "sha256:progress",
+                    "owner_task_id": record.task_id.clone(),
+                    "owner_run_id": record.run_id.clone(),
+                    "terminal_completion_fingerprint": "sha256:terminal",
+                    "finalization_fingerprint": "sha256:final",
+                    "next_action": "inspect",
+                    "reason": "finalized",
+                    "terminal_task_count": 1,
+                    "total_task_count": 1
+                }),
+            ),
+        ] {
+            let error = store
+                .append_task_events_with_payloads(&record, vec![(kind.clone(), Some(payload))])
+                .expect_err("malformed headless payload should fail closed");
+            assert!(
+                error.to_string().contains("ledger payload"),
+                "{kind:?}: {error}"
+            );
+        }
+
+        store
+            .append_task_events_with_payloads(
+                &record,
+                vec![
+                    (
+                        LedgerEventKind::HeadlessContinuationDecisionRecorded,
+                        Some(serde_json::json!({
+                            "decision_id": "decision_1",
+                            "continuation_id": "continuation_1",
+                            "selected_task_id": record.task_id.clone(),
+                            "selected_run_id": record.run_id.clone(),
+                            "next_action": "run_task",
+                            "reason": "selected",
+                            "expected_aggregate_sequence": 0,
+                            "candidate_count": 1,
+                            "authorize": true,
+                            "policy_version": "headless_continue_once_v1"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::HeadlessRunSessionAdvanced,
+                        Some(serde_json::json!({
+                            "advance_id": "advance_1",
+                            "checkpoint_fingerprint": "sha256:checkpoint",
+                            "next_action": "continue",
+                            "reason": "advanced",
+                            "selected_task_id": record.task_id.clone(),
+                            "selected_run_id": record.run_id.clone(),
+                            "session_id": "session_1",
+                            "session_sequence": 1,
+                            "start_aggregate_sequence": 0,
+                            "start_progress_fingerprint": "sha256:start-progress",
+                            "post_aggregate_sequence": 1,
+                            "post_progress_fingerprint": "sha256:post-progress"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::HeadlessRunSessionDriveCompleted,
+                        Some(serde_json::json!({
+                            "drive_id": "drive_1",
+                            "advance_id": "advance_1",
+                            "session_id": "session_1",
+                            "selected_task_id": record.task_id.clone(),
+                            "selected_run_id": record.run_id.clone(),
+                            "start_session_sequence": 0,
+                            "end_session_sequence": 1,
+                            "session_sequence": 1,
+                            "step_index": 0,
+                            "drive_fingerprint": "sha256:drive",
+                            "completion_closure": {},
+                            "terminal_completion_evidence": {},
+                            "next_action": "finalize",
+                            "stop_reason": null,
+                            "reason": "drive completed"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::HeadlessRunProductEvidenceMatrixDerived,
+                        Some(serde_json::json!({
+                            "derivation_id": "derivation_1",
+                            "task_id": record.task_id.clone(),
+                            "run_id": record.run_id.clone(),
+                            "acceptance_id": "acceptance_1",
+                            "phase_id": "RRP-5.17",
+                            "milestone": "runtime_release_readiness",
+                            "target_capability": "protocol-event-canonization",
+                            "concrete_capability_transition": "headless payload strict coverage",
+                            "accepted_completion_fingerprint": "sha256:accepted",
+                            "terminal_completion_fingerprint": "sha256:terminal",
+                            "completion_closure_fingerprint": "sha256:closure",
+                            "product_evidence_matrix_fingerprint": "sha256:matrix",
+                            "artifact_count": 1,
+                            "artifact_hashes": ["sha256:artifact"],
+                            "behavior_evidence_count": 1,
+                            "validated_gate_categories": ["payload_schema"],
+                            "product_completion_claim": false,
+                            "safety_boundary_reviewed": true,
+                            "non_goals_reviewed": true,
+                            "technical_debt_reviewed": true,
+                            "rejected_alternatives_count": 0,
+                            "selected_remaining_gap": null,
+                            "selected_gap_closure_evidence": null,
+                            "selected_gap_closure_evidence_set": [],
+                            "selected_gap_closure_set_fingerprint": null,
+                            "replayed": false,
+                            "next_action": "continue"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::HeadlessRunSelectedProductGapClosureRecorded,
+                        Some(serde_json::json!({
+                            "closure_id": "closure_1",
+                            "task_id": record.task_id.clone(),
+                            "run_id": record.run_id.clone(),
+                            "acceptance_id": "acceptance_1",
+                            "source_decision_id": "decision_1",
+                            "source_decision_fingerprint": "sha256:decision",
+                            "product_evidence_fingerprint": "sha256:product",
+                            "product_objective_fingerprint": "sha256:objective",
+                            "accepted_completion_fingerprint": "sha256:accepted",
+                            "terminal_completion_fingerprint": "sha256:terminal",
+                            "completion_closure_fingerprint": "sha256:completion",
+                            "closure_evidence_fingerprint": "sha256:evidence",
+                            "selected_remaining_gap": {},
+                            "status": "recorded",
+                            "replayed": false,
+                            "next_action": "continue"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded,
+                        Some(serde_json::json!({
+                            "decision_id": "product_decision_1",
+                            "task_id": record.task_id.clone(),
+                            "run_id": record.run_id.clone(),
+                            "acceptance_id": "acceptance_1",
+                            "status": "incomplete",
+                            "target_capability": "protocol-event-canonization",
+                            "concrete_capability_transition": "headless payload strict coverage",
+                            "accepted_completion_fingerprint": "sha256:accepted",
+                            "terminal_completion_fingerprint": "sha256:terminal",
+                            "completion_closure_fingerprint": "sha256:closure",
+                            "product_evidence_fingerprint": "sha256:product",
+                            "decision_fingerprint": "sha256:decision",
+                            "derived_product_evidence_matrix_fingerprint": null,
+                            "behavior_evidence_count": 1,
+                            "validated_gate_categories": ["payload_schema"],
+                            "safety_boundary_reviewed": true,
+                            "non_goals_reviewed": true,
+                            "technical_debt_reviewed": true,
+                            "rejected_alternatives_count": 0,
+                            "remaining_capability": null,
+                            "selected_remaining_gap": null,
+                            "milestone_exit_rationale": null,
+                            "technical_debt_carry_forward": null,
+                            "replayed": false,
+                            "next_action": "continue"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::HeadlessJourneyStarted,
+                        Some(serde_json::json!({
+                            "journey_id": "journey_1",
+                            "session_id": "session_1",
+                            "drive_id": "drive_1",
+                            "task_id": record.task_id.clone(),
+                            "run_id": record.run_id.clone(),
+                            "task_start_fingerprint": "sha256:start",
+                            "start_aggregate_sequence": 0,
+                            "start_progress_fingerprint": "sha256:progress",
+                            "journey_fingerprint": "sha256:journey",
+                            "next_action": "drive",
+                            "reason": "started",
+                            "task_start": {}
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::HeadlessJourneyRouteResumed,
+                        Some(serde_json::json!({
+                            "journey_id": "journey_1",
+                            "session_id": "session_1",
+                            "drive_id": "drive_1",
+                            "task_id": record.task_id.clone(),
+                            "run_id": record.run_id.clone(),
+                            "route_kind": "continue",
+                            "source_continuation_id": "continuation_1",
+                            "source_decision_id": "decision_1",
+                            "source_checkpoint_fingerprint": "sha256:checkpoint",
+                            "derived_target_class": "task_run",
+                            "result_advance_id": "advance_1",
+                            "result_continuation_id": "continuation_2",
+                            "post_route_aggregate_sequence": 1,
+                            "post_route_progress_fingerprint": "sha256:post-progress",
+                            "resume_fingerprint": "sha256:resume",
+                            "next_action": "drive",
+                            "reason": "resumed"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::HeadlessJourneyClosed,
+                        Some(serde_json::json!({
+                            "journey_id": "journey_1",
+                            "session_id": "session_1",
+                            "drive_id": "drive_1",
+                            "task_id": record.task_id.clone(),
+                            "run_id": record.run_id.clone(),
+                            "replacement_route_kind": "terminal",
+                            "replacement_continuation_id": "continuation_3",
+                            "replacement_checkpoint_fingerprint": "sha256:replacement",
+                            "active_modepack_activation_fingerprint": "sha256:modepack",
+                            "closure_fingerprint": "sha256:closure",
+                            "finalization_fingerprint": "sha256:final",
+                            "terminal_completion_fingerprint": "sha256:terminal",
+                            "progress_fingerprint": "sha256:progress",
+                            "aggregate_sequence": 2,
+                            "source_replacement_drive_id": null,
+                            "source_replacement_resume_fingerprint": null,
+                            "journey_closure_fingerprint": "sha256:journey-closure",
+                            "next_action": "finalize",
+                            "reason": "closed"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::HeadlessJourneyExecuted,
+                        Some(serde_json::json!({
+                            "journey_id": "journey_1",
+                            "session_id": "session_1",
+                            "drive_id": "drive_1",
+                            "task_id": record.task_id.clone(),
+                            "run_id": record.run_id.clone(),
+                            "journey_fingerprint": "sha256:journey",
+                            "execution_checkpoint_fingerprint": "sha256:checkpoint",
+                            "completed_boundary_count": 1,
+                            "complete": true,
+                            "next_action": "close",
+                            "reason": "executed"
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::HeadlessRunCompletionFinalized,
+                        Some(serde_json::json!({
+                            "session_id": "session_1",
+                            "drive_id": "drive_1",
+                            "closure_fingerprint": "sha256:closure",
+                            "progress_fingerprint": "sha256:progress",
+                            "owner_task_id": record.task_id.clone(),
+                            "owner_run_id": record.run_id.clone(),
+                            "start_session_sequence": 0,
+                            "end_session_sequence": 1,
+                            "aggregate_sequence": 2,
+                            "terminal_task_count": 1,
+                            "total_task_count": 1,
+                            "terminal_completion_fingerprint": "sha256:terminal",
+                            "finalization_fingerprint": "sha256:final",
+                            "next_action": "inspect",
+                            "reason": "finalized"
+                        })),
+                    ),
+                ],
+            )
+            .expect("strict headless payloads should append");
     }
 
     #[test]

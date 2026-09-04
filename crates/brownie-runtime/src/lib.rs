@@ -18234,8 +18234,16 @@ modes:
                 LedgerEventKind::HeadlessJourneyStarted,
                 Some(json!({
                     "journey_id": "git.commit.journey.1",
+                    "session_id": "git.commit.session.1",
+                    "drive_id": "git.commit.drive.1",
                     "task_id": task.task_id,
                     "run_id": task.run_id,
+                    "task_start_fingerprint": "sha256:git-commit-task-start",
+                    "start_progress_fingerprint": "sha256:git-commit-start-progress",
+                    "start_aggregate_sequence": 0,
+                    "journey_fingerprint": "sha256:git-commit-journey",
+                    "next_action": "drive_headless_journey",
+                    "reason": "Test fixture records bounded journey admission evidence.",
                 })),
             )
             .expect("append journey");
