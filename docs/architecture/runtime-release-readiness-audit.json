@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-  "phase": "RRP-8.4",
-  "phase_title": "Supply Chain and Artifact Evidence Baseline",
+  "phase": "RRP-8.5",
+  "phase_title": "Dependency Audit and License Tooling Gate",
   "repository": "globalpocket/brownie",
   "audited_main_commit": "26de9a83f2da77377f58f031e3b3c55b598b654c",
   "runtime_release_ready": false,
@@ -12,12 +12,13 @@
   "release_engineering_contract": {
     "contract_path": "docs/architecture/runtime-release-contract.json",
     "status": "partial",
-    "phase": "RRP-8.4",
+    "phase": "RRP-8.5",
     "audited_base_commit": "26de9a83f2da77377f58f031e3b3c55b598b654c",
     "local_release_gate_script": "pnpm release:gate",
     "direct_workflow_gate_status": "blocked_external_workflow_scope_required",
     "runtime_release_ready_after_phase": false,
-    "supply_chain_artifact_evidence_status": "local_baseline_available_release_blocking_gaps_preserved"
+    "supply_chain_artifact_evidence_status": "local_baseline_available_release_blocking_gaps_preserved",
+    "dependency_security_license_audit_status": "mandatory_local_gate_added_release_blocking_until_tools_execute_and_pass"
   },
   "owner_decisions": [
     {
@@ -260,5 +261,14 @@
       "next_action": "Do not use these items to block Brownie Runtime release."
     }
   ],
-  "updated_at": "2026-09-04T05:50:00Z"
+  "updated_at": "2026-09-04T05:50:00Z",
+  "evidence": [
+    "RRP-8.5 adds pnpm --workspace-root release:dependency-security-license-audit to pnpm release:gate, plus contract guards and CI-invoked tests. Missing cargo audit, cargo deny, pnpm audit execution, missing lockfiles, missing deny.toml, or failed audit results are release-blocking and cannot be counted as Release Ready."
+  ],
+  "blockers": [
+    "runtime-release-guard-ci"
+  ],
+  "release_blockers": [
+    "runtime-release-guard-ci"
+  ]
 }

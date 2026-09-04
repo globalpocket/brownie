@@ -35,7 +35,7 @@ function validContract(overrides = {}) {
   return {
     schema_version: 1,
     contract_id: 'runtime-release-engineering-contract-v1',
-    phase: 'RRP-8.4',
+    phase: 'RRP-8.5',
     owner: 'runtime',
     runtime_release_ready: false,
     release_engineering_maturity: {
@@ -102,6 +102,11 @@ function validContract(overrides = {}) {
         'provenance'
       ]
     },
+    dependency_security_license_audit: {
+      contract_id: 'brownie-dependency-security-license-audit-v1',
+      default_path: '.brownie/release-evidence/dependency-security-license-audit.json',
+      required_checks: ['cargo_audit_locked', 'cargo_deny_policy', 'pnpm_audit_prod']
+    },
     ...overrides
   };
 }
@@ -120,9 +125,15 @@ function validAudit(overrides = {}) {
 const validPackageJson = {
   scripts: {
     'release:gate': 'node scripts/release-gate.mjs',
+    'release:dependency-security-license-audit': 'node scripts/release-dependency-security-license-audit.mjs',
+    'release:dependency-security-license-audit:test':
+      'node --test scripts/release-dependency-security-license-audit.test.mjs',
     'release:supply-chain-artifact-evidence': 'node scripts/release-supply-chain-artifact-evidence.mjs',
     'guard:release-contract': 'node scripts/guard-release-contract.mjs',
     'guard:release-contract:test': 'node --test scripts/guard-release-contract.test.mjs',
+    'guard:dependency-security-license-audit': 'node scripts/guard-dependency-security-license-audit.mjs',
+    'guard:dependency-security-license-audit:test':
+      'node --test scripts/guard-dependency-security-license-audit.test.mjs',
     'guard:supply-chain-artifact-evidence': 'node scripts/guard-supply-chain-artifact-evidence.mjs',
     'guard:supply-chain-artifact-evidence:test': 'node --test scripts/guard-supply-chain-artifact-evidence.test.mjs'
   }
@@ -130,7 +141,7 @@ const validPackageJson = {
 
 const validVsixPackageJson = {
   scripts: {
-    check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root guard:supply-chain-artifact-evidence && pnpm --workspace-root guard:supply-chain-artifact-evidence:test'
+    check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root release:dependency-security-license-audit:test && pnpm --workspace-root guard:dependency-security-license-audit && pnpm --workspace-root guard:dependency-security-license-audit:test && pnpm --workspace-root guard:supply-chain-artifact-evidence && pnpm --workspace-root guard:supply-chain-artifact-evidence:test'
   }
 };
 
@@ -177,9 +188,13 @@ test('rejects fake satisfied artifact evidence', () => {
 test('rejects missing release gate package scripts', () => {
   const errors = validate(validContract(), { packageJson: { scripts: {} } });
   assert(errors.some((error) => error.includes('release:gate')));
+  assert(errors.some((error) => error.includes('release:dependency-security-license-audit')));
+  assert(errors.some((error) => error.includes('release:dependency-security-license-audit:test')));
   assert(errors.some((error) => error.includes('release:supply-chain-artifact-evidence')));
   assert(errors.some((error) => error.includes('guard:release-contract')));
   assert(errors.some((error) => error.includes('guard:release-contract:test')));
+  assert(errors.some((error) => error.includes('guard:dependency-security-license-audit')));
+  assert(errors.some((error) => error.includes('guard:dependency-security-license-audit:test')));
   assert(errors.some((error) => error.includes('guard:supply-chain-artifact-evidence')));
   assert(errors.some((error) => error.includes('guard:supply-chain-artifact-evidence:test')));
 });
@@ -208,6 +223,11 @@ test('rejects VSIX check path that omits supply-chain evidence guard', () => {
 test('rejects missing supply-chain evidence contract section', () => {
   const errors = validate(validContract({ supply_chain_artifact_evidence: undefined }));
   assert(errors.some((error) => error.includes('supply_chain_artifact_evidence.contract_id')));
+});
+
+test('rejects missing dependency audit contract section', () => {
+  const errors = validate(validContract({ dependency_security_license_audit: undefined }));
+  assert(errors.some((error) => error.includes('dependency_security_license_audit.contract_id')));
 });
 
 test('rejects missing workflow-scope blocker while workflow edit remains unavailable', () => {

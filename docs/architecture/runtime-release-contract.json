@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "contract_id": "runtime-release-engineering-contract-v1",
-  "phase": "RRP-8.4",
+  "phase": "RRP-8.5",
   "phase_title": "Supply Chain and Artifact Evidence Baseline",
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
   "repository": "globalpocket/brownie",
@@ -10,8 +10,8 @@
   "release_engineering_maturity": {
     "baseline_percent": 58,
     "target_percent": 90,
-    "current_percent": 66,
-    "scoring_basis": "Repository-local supply-chain and artifact evidence generation is now machine-checkable, but Release Ready remains false until artifacts, vulnerability/license scans, signatures or owner-approved integrity proof, workflow enforcement, and owner settings are complete."
+    "current_percent": 68,
+    "scoring_basis": "RRP-8.5 adds a mandatory repository-local dependency/security/license audit gate; runtime_release_ready remains false until every required release gate and owner-controlled condition is satisfied."
   },
   "commit_trace": {
     "audited_base_commit": "26de9a83f2da77377f58f031e3b3c55b598b654c",
@@ -293,6 +293,18 @@
         "command": "pnpm --workspace-root guard:release-contract:test"
       },
       {
+        "id": "dependency_security_license_audit",
+        "command": "pnpm --workspace-root release:dependency-security-license-audit"
+      },
+      {
+        "id": "dependency_security_license_audit_guard",
+        "command": "pnpm --workspace-root guard:dependency-security-license-audit"
+      },
+      {
+        "id": "dependency_security_license_audit_guard_test",
+        "command": "pnpm --workspace-root guard:dependency-security-license-audit:test"
+      },
+      {
         "id": "supply_chain_artifact_evidence_generate",
         "command": "pnpm --workspace-root release:supply-chain-artifact-evidence"
       },
@@ -385,7 +397,9 @@
     "Do not set runtime_release_ready=true while any release_ready_condition is not satisfied.",
     "Do not treat missing artifacts, missing scans, missing SBOM, missing checksum, missing signature/integrity proof, missing provenance, missing tested_commit, or missing workflow run as success.",
     "Do not edit .github workflow files without workflow scope or an owner-approved equivalent path.",
-    "Do not change license, publish settings, tags, or release assets in this phase."
+    "Do not change license, publish settings, tags, or release assets in this phase.",
+    "Do not treat dependency/security/license audit tooling absence as success.",
+    "Do not claim Runtime Release Ready until release:dependency-security-license-audit has executed and passed."
   ],
   "supply_chain_artifact_evidence": {
     "contract_id": "brownie-supply-chain-artifact-evidence-v1",
@@ -407,6 +421,24 @@
       "Missing evidence section is a guard failure.",
       "Missing artifacts, smoke tests, checksums, SBOM, provenance, vulnerability/license audit, or signature/integrity proof keeps runtime_release_ready=false.",
       "Generated evidence uses repository-relative paths only and stores no raw prompt, provider response, file content, absolute/canonical path, secret, environment value, executable content, or process output."
+    ]
+  },
+  "dependency_security_license_audit": {
+    "contract_id": "brownie-dependency-security-license-audit-v1",
+    "generator_script": "pnpm --workspace-root release:dependency-security-license-audit",
+    "guard_script": "pnpm --workspace-root guard:dependency-security-license-audit",
+    "default_path": ".brownie/release-evidence/dependency-security-license-audit.json",
+    "required_checks": [
+      "cargo_audit_locked",
+      "cargo_deny_policy",
+      "pnpm_audit_prod"
+    ],
+    "mandatory_gate_policy": [
+      "cargo audit --locked must execute and pass before Runtime Release Ready can be true.",
+      "cargo deny check must execute and pass against repo-root deny.toml before Runtime Release Ready can be true.",
+      "pnpm audit --prod --audit-level moderate --json must execute and pass before Runtime Release Ready can be true.",
+      "Missing audit tooling, missing lockfiles, missing deny.toml, or failing audit results are release-blocking.",
+      "Dependency audit evidence stores command identifiers, exit codes, bounded paths, hashes, and statuses only; it does not store raw process output or secret/environment values."
     ]
   }
 }

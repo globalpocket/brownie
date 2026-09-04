@@ -69,6 +69,24 @@ export const requiredReleaseGateCommands = [
     args: ['--workspace-root', 'guard:release-contract:test']
   },
   {
+    id: 'dependency_security_license_audit',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'release:dependency-security-license-audit']
+  },
+  {
+    id: 'dependency_security_license_audit_guard',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:dependency-security-license-audit']
+  },
+  {
+    id: 'dependency_security_license_audit_guard_test',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:dependency-security-license-audit:test']
+  },
+  {
     id: 'supply_chain_artifact_evidence_generate',
     category: 'brownie_release_guard',
     command: 'pnpm',

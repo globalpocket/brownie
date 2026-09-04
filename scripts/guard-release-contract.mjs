@@ -106,7 +106,7 @@ function validateRuntimeReleaseContract(contract, options = {}) {
   requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
   requireValue(contract.contract_id === 'runtime-release-engineering-contract-v1', errors, `${contractPath} contract_id must identify the Runtime release engineering contract.`);
   requireValue(contract.owner === 'runtime', errors, `${contractPath} owner must be runtime.`);
-  requireValue(contract.phase === 'RRP-8.4', errors, `${contractPath} phase must be RRP-8.4.`);
+  requireValue(contract.phase === 'RRP-8.5', errors, `${contractPath} phase must be RRP-8.5.`);
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must keep runtime_release_ready false until all release evidence exists.`);
 
   validateCommitTrace(contract.commit_trace, errors, contractPath);
@@ -141,15 +141,22 @@ function validateRuntimeReleaseContract(contract, options = {}) {
     requireValue(contractCommands.has(command), errors, `${contractPath} local_release_gate.commands must include ${command}.`);
   }
   requireValue(packageJson.scripts?.['release:gate'] === 'node scripts/release-gate.mjs', errors, `${defaultPackagePath} must define release:gate.`);
+  requireValue(packageJson.scripts?.['release:dependency-security-license-audit'] === 'node scripts/release-dependency-security-license-audit.mjs', errors, `${defaultPackagePath} must define release:dependency-security-license-audit.`);
+  requireValue(packageJson.scripts?.['release:dependency-security-license-audit:test'] === 'node --test scripts/release-dependency-security-license-audit.test.mjs', errors, `${defaultPackagePath} must define release:dependency-security-license-audit:test.`);
   requireValue(packageJson.scripts?.['release:supply-chain-artifact-evidence'] === 'node scripts/release-supply-chain-artifact-evidence.mjs', errors, `${defaultPackagePath} must define release:supply-chain-artifact-evidence.`);
   requireValue(packageJson.scripts?.['guard:release-contract'] === 'node scripts/guard-release-contract.mjs', errors, `${defaultPackagePath} must define guard:release-contract.`);
   requireValue(packageJson.scripts?.['guard:release-contract:test'] === 'node --test scripts/guard-release-contract.test.mjs', errors, `${defaultPackagePath} must define guard:release-contract:test.`);
+  requireValue(packageJson.scripts?.['guard:dependency-security-license-audit'] === 'node scripts/guard-dependency-security-license-audit.mjs', errors, `${defaultPackagePath} must define guard:dependency-security-license-audit.`);
+  requireValue(packageJson.scripts?.['guard:dependency-security-license-audit:test'] === 'node --test scripts/guard-dependency-security-license-audit.test.mjs', errors, `${defaultPackagePath} must define guard:dependency-security-license-audit:test.`);
   requireValue(packageJson.scripts?.['guard:supply-chain-artifact-evidence'] === 'node scripts/guard-supply-chain-artifact-evidence.mjs', errors, `${defaultPackagePath} must define guard:supply-chain-artifact-evidence.`);
   requireValue(packageJson.scripts?.['guard:supply-chain-artifact-evidence:test'] === 'node --test scripts/guard-supply-chain-artifact-evidence.test.mjs', errors, `${defaultPackagePath} must define guard:supply-chain-artifact-evidence:test.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:release-contract'), errors, `${defaultVsixPackagePath} check must invoke guard:release-contract.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:release-contract:test'), errors, `${defaultVsixPackagePath} check must invoke guard:release-contract:test.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:supply-chain-artifact-evidence'), errors, `${defaultVsixPackagePath} check must invoke guard:supply-chain-artifact-evidence.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:supply-chain-artifact-evidence:test'), errors, `${defaultVsixPackagePath} check must invoke guard:supply-chain-artifact-evidence:test.`);
+  requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root release:dependency-security-license-audit:test'), errors, `${defaultVsixPackagePath} check must invoke release:dependency-security-license-audit:test.`);
+  requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:dependency-security-license-audit'), errors, `${defaultVsixPackagePath} check must invoke guard:dependency-security-license-audit.`);
+  requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:dependency-security-license-audit:test'), errors, `${defaultVsixPackagePath} check must invoke guard:dependency-security-license-audit:test.`);
 
   const external = Array.isArray(contract.external_blockers) ? contract.external_blockers : [];
   requireValue(
@@ -194,6 +201,25 @@ function validateRuntimeReleaseContract(contract, options = {}) {
       Array.isArray(supplyChainEvidence.required_sections) && supplyChainEvidence.required_sections.includes(section),
       errors,
       `${contractPath} supply_chain_artifact_evidence.required_sections must include ${section}.`
+    );
+  }
+
+  const dependencyAudit = contract.dependency_security_license_audit ?? {};
+  requireValue(
+    dependencyAudit.contract_id === 'brownie-dependency-security-license-audit-v1',
+    errors,
+    `${contractPath} dependency_security_license_audit.contract_id must match.`
+  );
+  requireValue(
+    dependencyAudit.default_path === '.brownie/release-evidence/dependency-security-license-audit.json',
+    errors,
+    `${contractPath} dependency_security_license_audit.default_path must point to the ignored local dependency audit evidence path.`
+  );
+  for (const check of ['cargo_audit_locked', 'cargo_deny_policy', 'pnpm_audit_prod']) {
+    requireValue(
+      Array.isArray(dependencyAudit.required_checks) && dependencyAudit.required_checks.includes(check),
+      errors,
+      `${contractPath} dependency_security_license_audit.required_checks must include ${check}.`
     );
   }
 

@@ -160,13 +160,16 @@ export function validateSupplyChainArtifactContract(contract, options = {}) {
   const errors = [];
 
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must keep runtime_release_ready false.`);
-  requireValue(contract.phase === 'RRP-8.4', errors, `${contractPath} phase must be RRP-8.4.`);
+  requireValue(contract.phase === 'RRP-8.5', errors, `${contractPath} phase must be RRP-8.5.`);
   requireValue(contract.release_engineering_maturity?.current_percent < contract.release_engineering_maturity?.target_percent, errors, `${contractPath} must not claim target release maturity before full evidence exists.`);
 
   const localGateCommands = new Set(
     (Array.isArray(contract.local_release_gate?.commands) ? contract.local_release_gate.commands : []).map((entry) => entry?.command)
   );
   for (const command of [
+    'pnpm --workspace-root release:dependency-security-license-audit',
+    'pnpm --workspace-root guard:dependency-security-license-audit',
+    'pnpm --workspace-root guard:dependency-security-license-audit:test',
     'pnpm --workspace-root release:supply-chain-artifact-evidence',
     'pnpm --workspace-root guard:supply-chain-artifact-evidence',
     'pnpm --workspace-root guard:supply-chain-artifact-evidence:test'
