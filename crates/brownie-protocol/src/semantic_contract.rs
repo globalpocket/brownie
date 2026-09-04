@@ -963,6 +963,77 @@ pub fn runtime_semantic_protocol_contract() -> Value {
         "response_preview_chars": 2000,
         "content_preview": "bounded model response"
     });
+    let task_started_payload = json!({
+        "status": "Queued",
+        "parent_task_id": "task_parent",
+        "parent_run_id": "run_parent",
+        "source_candidate_id": "subtask_candidate_1",
+        "source_handoff_envelope_id": "handoff_envelope_1",
+        "source_handoff_envelope_fingerprint": format!("sha256:{}", "2".repeat(64)),
+        "source_intent_summary": {
+            "tool_id": "subtask.spawn",
+            "required_action": "SpawnSubtask"
+        },
+        "external_modepack_child_provenance": null,
+        "execution_enabled": false,
+        "scheduler_handoff_enabled": false,
+        "reason": "Controlled child task materialized from bounded handoff evidence."
+    });
+    let task_running_payload = json!({
+        "runtime_deadline": {
+            "deadline_unix_ms": 1780000000000u64,
+            "budget_ms": 120000u64
+        },
+        "deadline_scope": "task_run",
+        "deadline_persisted": true
+    });
+    let mode_resolved_payload = json!({
+        "mode_id": "orchestrator",
+        "display_name": "Orchestrator",
+        "role_definition": "Coordinate bounded runtime work.",
+        "when_to_use": null,
+        "description": null,
+        "prompt_sections": [],
+        "verification_responsibility": null,
+        "instruction_fingerprint": format!("sha256:{}", "3".repeat(64)),
+        "workspace_write_scopes": [],
+        "allowed_handoff_targets": null,
+        "mcp_access": [],
+        "completion_rules": [],
+        "permissions": {
+            "read_only": true,
+            "workspace_write": false,
+            "process_exec": false,
+            "git_inspect": false,
+            "git_commit": false,
+            "network_access": false,
+            "service_control": false,
+            "destructive": false,
+            "can_spawn_subtasks": false,
+            "codebase_index": false,
+            "mcp_tool_access": false
+        }
+    });
+    let external_modepack_child_denied_payload = json!({
+        "status": "Denied",
+        "reason": "stale_external_modepack_child_policy_mismatch",
+        "task_id": "task_child",
+        "run_id": "run_child",
+        "parent_run_id": "run_parent",
+        "source_candidate_id": "subtask_candidate_1",
+        "source_handoff_envelope_id": "handoff_envelope_1",
+        "source_handoff_envelope_fingerprint": format!("sha256:{}", "4".repeat(64)),
+        "mode_id": "reviewer-lite"
+    });
+    let external_modepack_task_denied_payload = json!({
+        "status": "Denied",
+        "reason": "stale_external_modepack_task_policy_missing",
+        "task_id": "task_1",
+        "run_id": "run_1",
+        "mode_id": "reviewer-lite",
+        "source_kind": "workspace_modepack",
+        "source_path": ".brownie/modepack.json"
+    });
     let event_payload_schema_classifications = ledger_event_kinds
         .iter()
         .map(|kind| {
@@ -1165,13 +1236,24 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             "SecondPassLlmResponseReceived",
             &llm_response_received_payload,
         ),
+        payload_schema_fixture("TaskStarted", &task_started_payload),
+        payload_schema_fixture("TaskRunning", &task_running_payload),
+        payload_schema_fixture("ModeResolved", &mode_resolved_payload),
+        payload_schema_fixture(
+            "ExternalModePackChildProvenanceDenied",
+            &external_modepack_child_denied_payload,
+        ),
+        payload_schema_fixture(
+            "ExternalModePackTaskProvenanceDenied",
+            &external_modepack_task_denied_payload,
+        ),
     ];
 
     json!({
         "schema_version": 10,
         "contract_id": "runtime-semantic-protocol-contract-v1",
         "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-        "phase": "RRP-5.12",
+        "phase": "RRP-5.13",
         "owner": "runtime",
         "runtime_release_debt_id": "protocol-event-canonization",
         "runtime_release_ready": false,
@@ -1992,7 +2074,7 @@ fn canonical_value(value: &Value) -> Value {
     }
 }
 
-const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 8;
+const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 9;
 
 fn ledger_payload_schema_id(kind: &str) -> String {
     format!("ledger_payload.{kind}.v{LEDGER_PAYLOAD_SCHEMA_VERSION}")
@@ -2042,7 +2124,12 @@ fn ledger_payload_schema_classification(kind: &str) -> &'static str {
         | "SecondPassPromptBuilt"
         | "SecondPassLlmRequestCreated"
         | "SecondPassLlmRequestFailed"
-        | "SecondPassLlmResponseReceived" => "strict_typed",
+        | "SecondPassLlmResponseReceived"
+        | "TaskStarted"
+        | "TaskRunning"
+        | "ModeResolved"
+        | "ExternalModePackChildProvenanceDenied"
+        | "ExternalModePackTaskProvenanceDenied" => "strict_typed",
         _ => "versioned_open",
     }
 }
@@ -2105,6 +2192,15 @@ fn ledger_payload_schema_descriptor(kind: &str) -> String {
         }
         "LlmResponseReceived" | "SecondPassLlmResponseReceived" => {
             llm_response_received_payload_schema_descriptor()
+        }
+        "TaskStarted" => task_started_payload_schema_descriptor(),
+        "TaskRunning" => task_running_payload_schema_descriptor(),
+        "ModeResolved" => mode_resolved_payload_schema_descriptor(),
+        "ExternalModePackChildProvenanceDenied" => {
+            external_modepack_child_denied_payload_schema_descriptor()
+        }
+        "ExternalModePackTaskProvenanceDenied" => {
+            external_modepack_task_denied_payload_schema_descriptor()
         }
         _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
     }
@@ -2204,6 +2300,26 @@ fn llm_request_failed_payload_schema_descriptor() -> String {
 
 fn llm_response_received_payload_schema_descriptor() -> String {
     "strict_typed{payload_optional:false;required_fields:provider:string;one_of_required:content_preview:string|content_preview_redacted:boolean;known_optional_fields:content_preview:string,content_preview_redacted:boolean,content_preview_redaction_reason:string,response_preview_chars:u64;additional_fields:false;llm_response_received_payload:true}".to_string()
+}
+
+fn task_started_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:true;known_optional_fields:apply_fingerprint:string_or_null,apply_id:string_or_null,decision_fingerprint:string_or_null,derived_goal_fingerprint:string_or_null,derived_objective_fingerprint:string_or_null,drive_fingerprint:string_or_null,end_session_sequence:u64_or_null,execution_enabled:boolean,external_modepack_child_provenance:object_or_null,failure_class:string_or_null,failure_fingerprint:string_or_null,llm_provider_failure_retry_provenance:object_or_null,next_action:string,next_route_fingerprint:string_or_null,parent_run_id:string_or_null,parent_task_id:string_or_null,patch_apply_recovery_provenance:object_or_null,product_continuation_provenance:object_or_null,product_continuation_running_enabled:boolean,product_evidence_fingerprint:string_or_null,product_loop_stop_recovery_provenance:object_or_null,product_loop_stop_recovery_running_enabled:boolean,product_objective_continuation_provenance:object_or_null,proposal_id:string_or_null,reason:string,recovery_boundary_fingerprint:string_or_null,recovery_cycle_provenance:object_or_null,recovery_run_id:string_or_null,recovery_running_enabled:boolean,recovery_task_id:string_or_null,retried_verifier_tool_ids:array_or_null,retry_running_enabled:boolean,retryable:boolean_or_null,scheduler_handoff_enabled:boolean,source_apply_id:string_or_null,source_candidate_id:string_or_null,source_decision_id:string_or_null,source_drive_id:string_or_null,source_handoff_envelope_fingerprint:string_or_null,source_handoff_envelope_id:string_or_null,source_intent_summary:object_or_null,source_progress_fingerprint:string_or_null,source_proposal_id:string_or_null,source_run_id:string_or_null,source_session_id:string_or_null,source_task_id:string_or_null,status:string,stop_class:string_or_null,stop_reason:string_or_null,verification_recovery_provenance:object_or_null,verification_recovery_retry_provenance:object_or_null;known_field_required:true;additional_fields:false;task_started_payload:true}".to_string()
+}
+
+fn task_running_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:true;known_optional_fields:admission_id:string,admission_kind:string,deadline_persisted:boolean,deadline_scope:string,reason:string,runtime_deadline:object;known_field_required:true;conditional_required:runtime_deadline=>deadline_scope+deadline_persisted,admission_id|admission_kind=>admission_id+admission_kind+reason;additional_fields:false;task_running_payload:true}".to_string()
+}
+
+fn mode_resolved_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:completion_rules:array,display_name:string,instruction_fingerprint:string_or_null,mcp_access:array,mode_id:string,permissions:object,prompt_sections:array,role_definition:string,workspace_write_scopes:array;known_optional_fields:allowed_handoff_targets:array_or_null,description:string_or_null,external_modepack_task_provenance:object,mcp_tool_catalogs:array,verification_responsibility:string_or_null,when_to_use:string_or_null;additional_fields:false;mode_resolved_payload:true}".to_string()
+}
+
+fn external_modepack_child_denied_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:reason:string,run_id:string,status:string,task_id:string;known_optional_fields:mode_id:string_or_null,parent_run_id:string_or_null,source_candidate_id:string_or_null,source_handoff_envelope_fingerprint:string_or_null,source_handoff_envelope_id:string_or_null;additional_fields:false;external_modepack_child_provenance_denied_payload:true;status:Denied}".to_string()
+}
+
+fn external_modepack_task_denied_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:reason:string,run_id:string,source_kind:string,source_path:string,status:string,task_id:string;known_optional_fields:mode_id:string_or_null;additional_fields:false;external_modepack_task_provenance_denied_payload:true;status:Denied}".to_string()
 }
 
 fn ledger_payload_instance_shape_fingerprint_for_value(kind: &str, payload: &Value) -> String {
