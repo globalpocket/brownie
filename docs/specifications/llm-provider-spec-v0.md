@@ -11,6 +11,7 @@ Phase 2.0 introduces a configurable LLM provider boundary for connecting real LL
   - `BROWNIE_LLM_MODEL`
   - `BROWNIE_LLM_API_KEY_ENV` (defaults to `BROWNIE_LLM_API_KEY`)
   - the API key variable named by `BROWNIE_LLM_API_KEY_ENV`
+  - `BROWNIE_LLM_MAX_TOKENS` (optional; defaults to `4096`)
 - If required OpenAI-compatible configuration is missing, `llm.status` reports `enabled=false` with a missing-config reason, and `task.run` falls back to Fake for Phase 2.0 stability.
 
 ## Safety rules
@@ -19,6 +20,8 @@ Phase 2.0 introduces a configurable LLM provider boundary for connecting real LL
 - API keys and Authorization/Bearer values are never returned by `llm.status`, ledger inspection, or error messages.
 - Phase 2.0 supports non-streaming chat completions only.
 - Phase 2.0 does not add tool execution capability.
+- OpenAI-compatible chat completion requests include bounded generation
+  parameters: `max_tokens`, `temperature: 0`, and `stream: false`.
 
 ## Ledger metadata
 
@@ -39,6 +42,11 @@ OpenAI-compatible failures report only provider type, redacted base URL, model, 
 ## Phase 2.2 runtime config profiles
 
 Provider selection now follows explicit environment override, then `.brownie/config.json` `active_profile`, then the default Fake provider. The default remains Fake and Brownie does not contact a real LLM API unless explicitly configured. OpenAI-compatible workspace profiles use `api_key_env`; direct `api_key` fields are rejected.
+
+OpenAI-compatible workspace profiles may set `max_tokens` or `maxTokens`.
+If omitted, the runtime sends `max_tokens: 4096`. The request remains
+non-streaming and deterministic-temperature: `stream: false`,
+`temperature: 0`.
 
 `llm.status` includes `config_source` and `active_profile` so callers can distinguish `Env`, `WorkspaceConfig`, and `Default` selection.
 

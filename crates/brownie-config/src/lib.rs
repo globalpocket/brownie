@@ -7,7 +7,9 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use brownie_llm::{validate_llm_request_budget, LlmRequestBudget};
+use brownie_llm::{
+    validate_llm_request_budget, validate_openai_compatible_max_tokens, LlmRequestBudget,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -39,6 +41,8 @@ pub enum LlmProfile {
         model: String,
         api_key_env: Option<String>,
         strict: Option<bool>,
+        #[serde(default, alias = "maxTokens")]
+        max_tokens: Option<u32>,
         budget: Option<LlmRequestBudgetConfig>,
         sensitive_guard: Option<String>,
     },
@@ -114,16 +118,31 @@ pub fn validate_config(config: &BrownieConfig) -> Result<()> {
                     budget,
                     sensitive_guard,
                     ..
+                } => {
+                    if let Some(value) = sensitive_guard {
+                        if brownie_llm::PromptSensitiveGuardMode::parse(value).is_none() {
+                            anyhow::bail!("invalid sensitive_guard for profile {name}: expected off, warn, or fail");
+                        }
+                    }
+                    budget
                 }
-                | LlmProfile::OpenAiCompatible {
+                LlmProfile::OpenAiCompatible {
                     budget,
                     sensitive_guard,
+                    max_tokens,
                     ..
                 } => {
                     if let Some(value) = sensitive_guard {
                         if brownie_llm::PromptSensitiveGuardMode::parse(value).is_none() {
                             anyhow::bail!("invalid sensitive_guard for profile {name}: expected off, warn, or fail");
                         }
+                    }
+                    if let Some(max_tokens) = max_tokens {
+                        validate_openai_compatible_max_tokens(*max_tokens).map_err(|e| {
+                            anyhow::anyhow!(
+                                "invalid openai-compatible max_tokens for profile {name}: {e}"
+                            )
+                        })?;
                     }
                     budget
                 }
@@ -169,5 +188,57 @@ mod tests {
             .to_string();
         assert!(err.contains("api_key"));
         assert!(!err.contains("DO_NOT_ALLOW"));
+    }
+
+    #[test]
+    fn openai_profile_accepts_max_tokens_alias_and_rejects_out_of_bounds() {
+        let config: BrownieConfig = serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "active_profile": "qwen-lan",
+            "llm": {
+                "profiles": {
+                    "qwen-lan": {
+                        "provider": "openai-compatible",
+                        "base_url": "http://127.0.0.1:8080/v1",
+                        "model": "qwen35-MTP",
+                        "api_key_env": "BROWNIE_LLM_API_KEY",
+                        "strict": true,
+                        "maxTokens": 4096
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        validate_config(&config).unwrap();
+        let profile = config
+            .llm
+            .as_ref()
+            .unwrap()
+            .profiles
+            .get("qwen-lan")
+            .unwrap();
+        let LlmProfile::OpenAiCompatible { max_tokens, .. } = profile else {
+            panic!("expected openai-compatible profile");
+        };
+        assert_eq!(*max_tokens, Some(4096));
+
+        let invalid: BrownieConfig = serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "active_profile": "bad",
+            "llm": {
+                "profiles": {
+                    "bad": {
+                        "provider": "openai-compatible",
+                        "base_url": "http://127.0.0.1:8080/v1",
+                        "model": "qwen35-MTP",
+                        "api_key_env": "BROWNIE_LLM_API_KEY",
+                        "max_tokens": 0
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        let error = validate_config(&invalid).unwrap_err().to_string();
+        assert!(error.contains("max_tokens"));
     }
 }

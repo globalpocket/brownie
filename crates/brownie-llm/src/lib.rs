@@ -258,12 +258,26 @@ pub struct OpenAiCompatibleConfig {
     pub base_url: String,
     pub model: String,
     pub api_key_env: String,
+    pub max_tokens: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpenAiCompatibleConfigFromEnv {
     Enabled(OpenAiCompatibleConfig),
     Disabled(LlmProviderStatus),
+}
+
+pub const OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS: u32 = 4_096;
+pub const OPENAI_COMPATIBLE_MAX_TOKENS_UPPER_BOUND: u32 = 262_144;
+
+pub fn validate_openai_compatible_max_tokens(max_tokens: u32) -> Result<(), String> {
+    if !(1..=OPENAI_COMPATIBLE_MAX_TOKENS_UPPER_BOUND).contains(&max_tokens) {
+        return Err(format!(
+            "max_tokens must be between 1 and {}",
+            OPENAI_COMPATIBLE_MAX_TOKENS_UPPER_BOUND
+        ));
+    }
+    Ok(())
 }
 
 pub struct FakeLlm;
@@ -620,6 +634,24 @@ impl OpenAiCompatibleLlmProvider {
             .ok()
             .filter(|v| !v.trim().is_empty())
             .is_some();
+        let max_tokens = match env::var("BROWNIE_LLM_MAX_TOKENS")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+        {
+            Some(value) => match value.trim().parse::<u32>() {
+                Ok(parsed) if validate_openai_compatible_max_tokens(parsed).is_ok() => parsed,
+                _ => {
+                    return OpenAiCompatibleConfigFromEnv::Disabled(LlmProviderStatus {
+                        provider: LlmProviderKind::OpenAiCompatible,
+                        enabled: false,
+                        model: model.unwrap_or_default(),
+                        base_url: base_url.map(|v| redact_secret(&v)),
+                        reason: Some("invalid BROWNIE_LLM_MAX_TOKENS".to_string()),
+                    });
+                }
+            },
+            None => OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS,
+        };
 
         let mut missing = Vec::new();
         if base_url.is_none() {
@@ -645,6 +677,7 @@ impl OpenAiCompatibleLlmProvider {
             base_url: base_url.expect("checked"),
             model: model.expect("checked"),
             api_key_env,
+            max_tokens,
         })
     }
 
@@ -734,7 +767,13 @@ impl LlmProvider for OpenAiCompatibleLlmProvider {
         let response = client
             .post(url)
             .bearer_auth(&self.api_key)
-            .json(&serde_json::json!({ "model": request.model, "messages": request.messages }))
+            .json(&serde_json::json!({
+                "model": request.model,
+                "messages": request.messages,
+                "max_tokens": self.config.max_tokens,
+                "temperature": 0,
+                "stream": false,
+            }))
             .send()
             .map_err(|e| {
                 anyhow!(
@@ -852,6 +891,14 @@ fn extract_goal_signal(prompt: &str) -> Option<&str> {
 mod tests {
     use super::*;
 
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static ENV_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        ENV_LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap()
+    }
+
     fn clear_env() {
         for key in [
             "BROWNIE_LLM_PROVIDER",
@@ -859,6 +906,7 @@ mod tests {
             "BROWNIE_LLM_MODEL",
             "BROWNIE_LLM_API_KEY_ENV",
             "BROWNIE_LLM_API_KEY",
+            "BROWNIE_LLM_MAX_TOKENS",
         ] {
             env::remove_var(key);
         }
@@ -1008,6 +1056,7 @@ mod tests {
 
     #[test]
     fn openai_config_disabled_when_required_env_missing() {
+        let _env = env_lock();
         clear_env();
         env::set_var("BROWNIE_LLM_PROVIDER", "openai-compatible");
         match OpenAiCompatibleLlmProvider::from_env() {
@@ -1019,6 +1068,129 @@ mod tests {
             OpenAiCompatibleConfigFromEnv::Enabled(_) => panic!("expected disabled config"),
         }
         clear_env();
+    }
+
+    #[test]
+    fn openai_config_uses_bounded_default_and_env_max_tokens() {
+        let _env = env_lock();
+        clear_env();
+        env::set_var("BROWNIE_LLM_PROVIDER", "openai-compatible");
+        env::set_var("BROWNIE_LLM_BASE_URL", "http://127.0.0.1:1/v1");
+        env::set_var("BROWNIE_LLM_MODEL", "qwen35-MTP");
+        env::set_var("BROWNIE_LLM_API_KEY", "local");
+        match OpenAiCompatibleLlmProvider::from_env() {
+            OpenAiCompatibleConfigFromEnv::Enabled(config) => {
+                assert_eq!(config.max_tokens, OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS);
+            }
+            OpenAiCompatibleConfigFromEnv::Disabled(status) => {
+                panic!("expected enabled config: {:?}", status.reason)
+            }
+        }
+
+        env::set_var("BROWNIE_LLM_MAX_TOKENS", "512");
+        match OpenAiCompatibleLlmProvider::from_env() {
+            OpenAiCompatibleConfigFromEnv::Enabled(config) => {
+                assert_eq!(config.max_tokens, 512);
+            }
+            OpenAiCompatibleConfigFromEnv::Disabled(status) => {
+                panic!("expected enabled config: {:?}", status.reason)
+            }
+        }
+
+        env::set_var("BROWNIE_LLM_MAX_TOKENS", "0");
+        match OpenAiCompatibleLlmProvider::from_env() {
+            OpenAiCompatibleConfigFromEnv::Disabled(status) => {
+                assert_eq!(
+                    status.reason.as_deref(),
+                    Some("invalid BROWNIE_LLM_MAX_TOKENS")
+                );
+            }
+            OpenAiCompatibleConfigFromEnv::Enabled(_) => panic!("expected disabled config"),
+        }
+        clear_env();
+    }
+
+    #[test]
+    fn openai_request_includes_generation_parameters() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = Vec::new();
+            let mut temp = [0_u8; 1024];
+            let header_end = loop {
+                let read = stream.read(&mut temp).unwrap();
+                assert!(read > 0, "client closed before request body");
+                buffer.extend_from_slice(&temp[..read]);
+                if let Some(index) = buffer.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break index + 4;
+                }
+            };
+            let headers = String::from_utf8_lossy(&buffer[..header_end]).to_string();
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().unwrap())
+                })
+                .unwrap();
+            while buffer.len() < header_end + content_length {
+                let read = stream.read(&mut temp).unwrap();
+                assert!(read > 0, "client closed before full request body");
+                buffer.extend_from_slice(&temp[..read]);
+            }
+            let body = String::from_utf8(buffer[header_end..header_end + content_length].to_vec())
+                .unwrap();
+            tx.send((headers, body)).unwrap();
+            let response_body = r#"{"choices":[{"message":{"content":"Hello from local model"}}]}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            )
+            .unwrap();
+        });
+
+        let provider = OpenAiCompatibleLlmProvider::new(
+            OpenAiCompatibleConfig {
+                base_url: format!("http://{addr}/v1"),
+                model: "qwen35-MTP".to_string(),
+                api_key_env: "BROWNIE_LLM_API_KEY".to_string(),
+                max_tokens: 4_096,
+            },
+            "local".to_string(),
+        );
+        let request = LlmRequest {
+            model: "qwen35-MTP".to_string(),
+            messages: vec![LlmMessage {
+                role: "user".to_string(),
+                content: "Hello".to_string(),
+            }],
+        };
+
+        let response = provider
+            .complete(&request, &LlmRequestBudget::default())
+            .unwrap();
+        assert_eq!(response.content, "Hello from local model");
+        let (headers, body) = rx.recv().unwrap();
+        assert!(headers.starts_with("POST /v1/chat/completions "));
+        assert!(headers.contains("authorization: Bearer local"));
+        let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(body["model"], "qwen35-MTP");
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert_eq!(body["messages"][0]["content"], "Hello");
+        assert_eq!(body["max_tokens"], 4_096);
+        assert_eq!(body["temperature"], 0);
+        assert_eq!(body["stream"], false);
+        server.join().unwrap();
     }
 
     #[test]
