@@ -26,6 +26,7 @@ const HEADLESS_RUN_RECOVERY_PROBE_METHOD: &str = "headless.run.recovery_probe";
 const RUNTIME_PATH_ENV: &str = "BROWNIE_RUNTIME_PATH";
 const RUNTIME_TIMEOUT_MS_ENV: &str = "BROWNIE_RUNTIME_TIMEOUT_MS";
 const RUNTIME_OBJECTIVE_TIMEOUT_MS_ENV: &str = "BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS";
+const CLI_RUN_MODE_ID_ENV: &str = "BROWNIE_CLI_RUN_MODE_ID";
 const DEFAULT_READ_ONLY_TIMEOUT_MS: u64 = 2_000;
 const DEFAULT_OBJECTIVE_EXECUTION_TIMEOUT_MS: u64 = 120_000;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024;
@@ -45,6 +46,7 @@ const CLI_RUN_MAX_ADVANCES: u8 = 3;
 const CLI_RUN_MAX_STEPS_PER_ADVANCE: u8 = 1;
 const CLI_RUN_MAX_PARENT_JOIN_ROUTES: u8 = 3;
 const CLI_RUN_MAX_OBJECTIVE_CHARS: usize = 4_096;
+const CLI_RUN_MAX_MODE_ID_CHARS: usize = 128;
 const CLI_RESUME_MAX_STEPS: u8 = 1;
 const CLI_RUN_SESSION_PREFIX: &str = "cli.run.";
 
@@ -93,6 +95,7 @@ pub enum RuntimeClientError {
     TimedOut,
     RunCommunicationFailedAdmissionUnknown(RunRecoveryIdentity),
     RunTimedOutAdmissionUnknown(RunRecoveryIdentity),
+    InvalidRunModeConfig,
     InvalidResponse,
     RuntimeError,
 }
@@ -2593,8 +2596,21 @@ fn cli_resume_params(
 fn cli_run_drive_params(objective: &str) -> Result<Value, RuntimeClientError> {
     let objective = objective.trim();
     validate_cli_objective(objective)?;
+    cli_run_drive_params_with_mode(objective, configured_cli_run_mode_id()?)
+}
+
+fn cli_run_drive_params_with_mode(
+    objective: &str,
+    mode_id: Option<String>,
+) -> Result<Value, RuntimeClientError> {
     let invocation_id = cli_run_invocation_id();
     let session_id = format!("{CLI_RUN_SESSION_PREFIX}{invocation_id}");
+    let mut task_start = json!({
+        "goal": objective
+    });
+    if let Some(mode_id) = mode_id {
+        task_start["mode_id"] = Value::String(mode_id);
+    }
     Ok(json!({
         "authorize": true,
         "session_id": session_id.clone(),
@@ -2606,9 +2622,7 @@ fn cli_run_drive_params(objective: &str) -> Result<Value, RuntimeClientError> {
             "journey_id": format!("{session_id}.journey"),
             "authorize_journey_start": true,
             "admission_id": format!("{session_id}.admission"),
-            "task_start": {
-                "goal": objective
-            }
+            "task_start": task_start
         }
     }))
 }
@@ -3548,6 +3562,24 @@ fn validate_cli_objective(objective: &str) -> Result<(), RuntimeClientError> {
     Ok(())
 }
 
+fn configured_cli_run_mode_id() -> Result<Option<String>, RuntimeClientError> {
+    let Some(mode_id) = env::var(CLI_RUN_MODE_ID_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    if mode_id.chars().count() > CLI_RUN_MAX_MODE_ID_CHARS
+        || !mode_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
+    {
+        return Err(RuntimeClientError::InvalidRunModeConfig);
+    }
+    Ok(Some(mode_id))
+}
+
 fn cli_run_invocation_id() -> String {
     Uuid::new_v4()
         .simple()
@@ -4231,6 +4263,17 @@ mod tests {
             .as_str()
             .unwrap()
             .ends_with(".journey"));
+    }
+
+    #[test]
+    fn cli_run_params_include_configured_mode_hint() {
+        let params =
+            cli_run_drive_params_with_mode("Hello", Some("provider-runner".to_string())).unwrap();
+        assert_eq!(params["journey_admission"]["task_start"]["goal"], "Hello");
+        assert_eq!(
+            params["journey_admission"]["task_start"]["mode_id"],
+            "provider-runner"
+        );
     }
 
     #[test]

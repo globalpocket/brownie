@@ -11,9 +11,16 @@ Mock smoke coverage uses a local OpenAI-compatible server implementing `/v1/chat
 Optional local endpoint smoke:
 
 1. Configure `.brownie/config.json` with an OpenAI-compatible strict profile.
-2. Export `BROWNIE_LLM_API_KEY` and `BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true`.
+2. Export `BROWNIE_LLM_API_KEY`, `BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true`, and `BROWNIE_CLI_RUN_MODE_ID=provider-runner`.
 3. Run `llm.health` with `allow_network=true` to probe `/models`.
-4. Run `task.start`, `task.run`, and `run.inspect` to verify provider metadata.
+4. Run `brownie run "Hello"` or the equivalent `task.start`, `task.run`, and `run.inspect` sequence to verify provider metadata.
+
+`BROWNIE_CLI_RUN_MODE_ID` is a CLI transport hint only. It requests the task
+mode in the runtime-owned `task.start` admission payload and does not grant
+network access by itself. The runtime still resolves the mode, checks
+`AccessNetwork`, requires `BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true`, applies
+provider budget and sensitive-content guards, and denies the task before any
+provider request when those checks fail.
 
 Phase 2.6 does not add streaming, workspace.write, file write, patch apply, process execution, network tools, service control, destructive operations, subtask spawning, AgentModes YAML parsing, ModePack activation, Qdrant, llama-server lifecycle control, or indexing. Ledgers, inspection, diagnostics, status, health, and errors must not expose API keys, Authorization headers, Bearer tokens, query-string secrets, full prompts, full provider responses, or full README content.
 

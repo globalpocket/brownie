@@ -114,6 +114,12 @@ fn runtime_error_output(error: RuntimeClientError, json: bool, command: &'static
             "runtime request timed out",
             Some(recovery_identity),
         ),
+        RuntimeClientError::InvalidRunModeConfig => (
+            ExitCode::InvalidInvocation,
+            "invalid_invocation",
+            "BROWNIE_CLI_RUN_MODE_ID must be a non-empty bounded mode id using only ASCII letters, digits, '-', '_', '.', or ':'",
+            None,
+        ),
         RuntimeClientError::InvalidResponse => (
             ExitCode::InternalCommunication,
             "runtime_invalid_response",
