@@ -8,18 +8,19 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use brownie_protocol::{
-    ChildTaskSourceIntentSummary, CodebaseIndexSnapshotManifest, HeadlessContinueRouteKind,
-    HeadlessRunAdvanceResult, HeadlessRunCompletionFinalization, HeadlessRunDriveResult,
-    HeadlessRunJourneyExecutionMetadata, HeadlessRunJourneyObjectiveContextMetadata,
-    HeadlessRunObjectiveProposalAuthorizationPreflight, HeadlessRunProgressCheckpoint,
-    HeadlessRunRecoveryIdentityEvidence, LlmProviderFailureRetryProvenance,
-    ModePackActiveSnapshotSummary, ModePackApproveCandidateResult,
-    ModePackApprovedCandidateSummary, ModePackCandidateProvenanceSummary, ModePackCandidateSummary,
-    ModePackFetchCandidateResult, ModePackRegistryUpdateSelectionSummary,
-    ModePackReplaceActiveResult, ModePackRevokedSignerSummary, ModePackRollbackActiveResult,
-    ModePackSelectRegistryUpdateResult, ModePackTrustedSignerSummary,
-    ModePackUpdateAdmissionSummary, ModePackVerifyCandidateProvenanceResult,
-    PatchApplyRecoveryProvenance, ProductContinuationProvenance, ProductLoopStopRecoveryProvenance,
+    semantic_contract as ledger_payload_contract, ChildTaskSourceIntentSummary,
+    CodebaseIndexSnapshotManifest, HeadlessContinueRouteKind, HeadlessRunAdvanceResult,
+    HeadlessRunCompletionFinalization, HeadlessRunDriveResult, HeadlessRunJourneyExecutionMetadata,
+    HeadlessRunJourneyObjectiveContextMetadata, HeadlessRunObjectiveProposalAuthorizationPreflight,
+    HeadlessRunProgressCheckpoint, HeadlessRunRecoveryIdentityEvidence,
+    LlmProviderFailureRetryProvenance, ModePackActiveSnapshotSummary,
+    ModePackApproveCandidateResult, ModePackApprovedCandidateSummary,
+    ModePackCandidateProvenanceSummary, ModePackCandidateSummary, ModePackFetchCandidateResult,
+    ModePackRegistryUpdateSelectionSummary, ModePackReplaceActiveResult,
+    ModePackRevokedSignerSummary, ModePackRollbackActiveResult, ModePackSelectRegistryUpdateResult,
+    ModePackTrustedSignerSummary, ModePackUpdateAdmissionSummary,
+    ModePackVerifyCandidateProvenanceResult, PatchApplyRecoveryProvenance,
+    ProductContinuationProvenance, ProductLoopStopRecoveryProvenance,
     ProductObjectiveContinuationProvenance, ProposalApplyResult, RecoveryCycleChildProvenance,
     RuntimeDeadline, TaskRecord, TaskStartParams, TaskStatus, VerificationRecoveryProvenance,
     VerificationRecoveryRetryProvenance,
@@ -3008,10 +3009,8 @@ impl BuildLockOwner {
                         owner.nonce = Some(value.trim().to_string());
                     }
                 }
-                "lock_file" => {
-                    if !value.trim().is_empty() {
-                        owner.lock_file = Some(value.trim().to_string());
-                    }
+                "lock_file" if !value.trim().is_empty() => {
+                    owner.lock_file = Some(value.trim().to_string());
                 }
                 _ => {}
             }
@@ -6088,8 +6087,8 @@ pub struct LedgerPayloadEnvelope {
     pub instance_shape_fingerprint: String,
 }
 
-pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 13;
-pub const LEDGER_PAYLOAD_SHAPE_VERSION: u64 = LEDGER_PAYLOAD_SCHEMA_VERSION;
+pub const LEDGER_PAYLOAD_LEGACY_GLOBAL_SCHEMA_MAX_VERSION: u64 =
+    ledger_payload_contract::LEDGER_PAYLOAD_LEGACY_GLOBAL_SCHEMA_MAX_VERSION;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LedgerPayloadSchemaClassification {
@@ -6127,88 +6126,13 @@ impl LedgerPayloadSchemaClassification {
 pub fn ledger_payload_schema_classification(
     kind: &LedgerEventKind,
 ) -> LedgerPayloadSchemaClassification {
-    match kind {
-        LedgerEventKind::TaskCompleted
-        | LedgerEventKind::TaskFailed
-        | LedgerEventKind::TaskCancelled
-        | LedgerEventKind::PermissionChecked
-        | LedgerEventKind::PermissionDenied
-        | LedgerEventKind::ToolPlanned
-        | LedgerEventKind::ToolPermissionChecked
-        | LedgerEventKind::ToolPlanApproved
-        | LedgerEventKind::ToolPlanDenied
-        | LedgerEventKind::ToolIntentParsed
-        | LedgerEventKind::ToolIntentRejected
-        | LedgerEventKind::ToolIntentPermissionChecked
-        | LedgerEventKind::ToolIntentApproved
-        | LedgerEventKind::ToolIntentDenied
-        | LedgerEventKind::ToolExecutionRequested
-        | LedgerEventKind::McpToolExecutionApproved
-        | LedgerEventKind::ToolExecutionPermissionChecked
-        | LedgerEventKind::ToolExecutionCompleted
-        | LedgerEventKind::ToolExecutionFailed
-        | LedgerEventKind::ToolExecutionDenied
-        | LedgerEventKind::CodebaseIndexPermissionChecked
-        | LedgerEventKind::CodebaseIndexSnapshotBuilt
-        | LedgerEventKind::CodebaseIndexQueryCompleted
-        | LedgerEventKind::CodebaseIndexSelectionReadCompleted
-        | LedgerEventKind::CodebaseIndexPromptContextMaterialized
-        | LedgerEventKind::VerificationRecoveryContextReadMaterialized
-        | LedgerEventKind::AgentLoopStarted
-        | LedgerEventKind::AgentLoopCompleted
-        | LedgerEventKind::TaskCompletionAccepted
-        | LedgerEventKind::PromptBuilt
-        | LedgerEventKind::PromptSensitiveScanCompleted
-        | LedgerEventKind::PromptSensitiveScanFailed
-        | LedgerEventKind::LlmRequestCreated
-        | LedgerEventKind::LlmRequestFailed
-        | LedgerEventKind::LlmResponseReceived
-        | LedgerEventKind::SecondPassPromptBuilt
-        | LedgerEventKind::SecondPassLlmRequestCreated
-        | LedgerEventKind::SecondPassLlmRequestFailed
-        | LedgerEventKind::SecondPassLlmResponseReceived
-        | LedgerEventKind::TaskStarted
-        | LedgerEventKind::TaskRunning
-        | LedgerEventKind::ModeResolved
-        | LedgerEventKind::ExternalModePackChildProvenanceDenied
-        | LedgerEventKind::ExternalModePackTaskProvenanceDenied
-        | LedgerEventKind::SubtaskOrchestrationQueued
-        | LedgerEventKind::SubtaskHandoffPrepared
-        | LedgerEventKind::SubtaskSchedulerReadinessRecorded
-        | LedgerEventKind::SubtaskDispatchPlanPrepared
-        | LedgerEventKind::SubtaskDispatchContractPrepared
-        | LedgerEventKind::SubtaskDispatchAdmissionEvaluated
-        | LedgerEventKind::SubtaskDispatchReadinessSnapshotRecorded
-        | LedgerEventKind::SubtaskDispatcherGuardVerdictRecorded
-        | LedgerEventKind::SubtaskDispatchDecisionRecorded
-        | LedgerEventKind::SubtaskDispatchCandidateManifestRecorded
-        | LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded
-        | LedgerEventKind::ParentJoinContinuationFingerprintConsumed
-        | LedgerEventKind::WorkspacePatchProposed
-        | LedgerEventKind::WorkspacePatchApproved
-        | LedgerEventKind::WorkspacePatchRejected
-        | LedgerEventKind::WorkspacePatchPreflightSnapshotCreated
-        | LedgerEventKind::WorkspacePatchApplyPlanCreated
-        | LedgerEventKind::WorkspacePatchApplyCapabilityChecked
-        | LedgerEventKind::WorkspacePatchApplyDryRunChecked
-        | LedgerEventKind::WorkspacePatchApplyResultRecorded
-        | LedgerEventKind::WorkspacePatchReadinessReportCreated
-        | LedgerEventKind::HeadlessContinuationDecisionRecorded
-        | LedgerEventKind::HeadlessRunSessionAdvanced
-        | LedgerEventKind::HeadlessRunSessionDriveCompleted
-        | LedgerEventKind::HeadlessRunProductEvidenceMatrixDerived
-        | LedgerEventKind::HeadlessRunSelectedProductGapClosureRecorded
-        | LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded
-        | LedgerEventKind::HeadlessJourneyStarted
-        | LedgerEventKind::HeadlessJourneyRouteResumed
-        | LedgerEventKind::HeadlessJourneyClosed
-        | LedgerEventKind::HeadlessJourneyExecuted
-        | LedgerEventKind::HeadlessRunCompletionFinalized => {
-            LedgerPayloadSchemaClassification::StrictTyped
-        }
-        LedgerEventKind::WorkspacePatchApprovalRequested => {
-            LedgerPayloadSchemaClassification::PayloadAbsent
-        }
+    match ledger_payload_contract::ledger_payload_schema_classification(&format!("{kind:?}")) {
+        "payload_absent" => LedgerPayloadSchemaClassification::PayloadAbsent,
+        "strict_typed" => LedgerPayloadSchemaClassification::StrictTyped,
+        "typed_known_fields_open" => LedgerPayloadSchemaClassification::TypedKnownFieldsOpen,
+        "versioned_open" => LedgerPayloadSchemaClassification::VersionedOpen,
+        "legacy_compatibility_only" => LedgerPayloadSchemaClassification::LegacyCompatibilityOnly,
+        other => panic!("unknown ledger payload schema classification {other} for {kind:?}"),
     }
 }
 
@@ -6217,7 +6141,7 @@ pub fn ledger_payload_shape_id(kind: &LedgerEventKind) -> String {
 }
 
 pub fn ledger_payload_schema_id(kind: &LedgerEventKind) -> String {
-    format!("ledger_payload.{kind:?}.v{LEDGER_PAYLOAD_SCHEMA_VERSION}")
+    ledger_payload_contract::ledger_payload_schema_id(&format!("{kind:?}"))
 }
 
 pub fn ledger_payload_shape_fingerprint(kind: &LedgerEventKind) -> String {
@@ -6225,7 +6149,7 @@ pub fn ledger_payload_shape_fingerprint(kind: &LedgerEventKind) -> String {
 }
 
 pub fn ledger_payload_schema_fingerprint(kind: &LedgerEventKind) -> String {
-    stable_ledger_payload_fingerprint(&ledger_payload_schema_fingerprint_input(kind))
+    ledger_payload_contract::ledger_payload_schema_fingerprint(&format!("{kind:?}"))
 }
 
 pub fn ledger_payload_shape_fingerprint_for_value(
@@ -6239,10 +6163,14 @@ pub fn ledger_payload_instance_shape_fingerprint_for_value(
     kind: &LedgerEventKind,
     payload: &serde_json::Value,
 ) -> String {
-    stable_ledger_payload_fingerprint(&ledger_payload_instance_shape_fingerprint_input(
-        kind,
-        &ledger_payload_shape_descriptor(payload),
-    ))
+    ledger_payload_contract::ledger_payload_instance_shape_fingerprint_for_value(
+        &format!("{kind:?}"),
+        payload,
+    )
+}
+
+pub fn ledger_payload_schema_version(kind: &LedgerEventKind) -> u64 {
+    ledger_payload_contract::ledger_payload_schema_version(&format!("{kind:?}"))
 }
 
 fn ledger_payload_envelope(
@@ -6256,7 +6184,7 @@ fn ledger_payload_envelope(
     let schema_id = ledger_payload_schema_id(kind);
     let schema_fingerprint = ledger_payload_schema_fingerprint(kind);
     Ok(Some(LedgerPayloadEnvelope {
-        schema_version: LEDGER_PAYLOAD_SCHEMA_VERSION,
+        schema_version: ledger_payload_schema_version(kind),
         shape_id: schema_id.clone(),
         shape_fingerprint: schema_fingerprint.clone(),
         schema_id,
@@ -6279,7 +6207,8 @@ fn validate_ledger_event_payload_contract(
         }
         (Some(_), None) => bail!("ledger event payload is missing payload_envelope"),
         (Some(payload), Some(envelope))
-            if !require_current && envelope.schema_version < LEDGER_PAYLOAD_SCHEMA_VERSION =>
+            if !require_current
+                && envelope.schema_version != ledger_payload_schema_version(&event.kind) =>
         {
             validate_legacy_ledger_payload_envelope(&event.kind, payload, envelope)
         }
@@ -10562,6 +10491,81 @@ const TERMINAL_TASK_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "verification_requirement_source_kind",
 ];
 
+const LEDGER_PAYLOAD_OPAQUE_MAX_DEPTH: usize = 6;
+const LEDGER_PAYLOAD_OPAQUE_MAX_FIELDS: usize = 64;
+const LEDGER_PAYLOAD_OPAQUE_MAX_ARRAY_ITEMS: usize = 256;
+const LEDGER_PAYLOAD_OPAQUE_MAX_STRING_CHARS: usize = 4096;
+const LEDGER_PAYLOAD_OPAQUE_MAX_KEY_CHARS: usize = 128;
+const LEDGER_PAYLOAD_OPAQUE_FORBIDDEN_KEYS: &[&str] = &[
+    "rawprompt",
+    "providerresponse",
+    "rawproviderresponse",
+    "filecontent",
+    "rawfilecontent",
+    "absolutepath",
+    "canonicalpath",
+    "secret",
+    "environmentvalue",
+    "executablecontent",
+    "processoutput",
+    "stdout",
+    "stderr",
+];
+
+fn validate_bounded_opaque_payload_value(
+    field: &str,
+    value: &serde_json::Value,
+    depth: usize,
+) -> Result<()> {
+    if depth > LEDGER_PAYLOAD_OPAQUE_MAX_DEPTH {
+        bail!("ledger payload field {field} exceeds bounded opaque max depth");
+    }
+    match value {
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
+        serde_json::Value::String(value) => {
+            if value.chars().count() > LEDGER_PAYLOAD_OPAQUE_MAX_STRING_CHARS {
+                bail!("ledger payload field {field} exceeds bounded opaque string limit");
+            }
+        }
+        serde_json::Value::Array(values) => {
+            if values.len() > LEDGER_PAYLOAD_OPAQUE_MAX_ARRAY_ITEMS {
+                bail!("ledger payload field {field} exceeds bounded opaque array limit");
+            }
+            for entry in values {
+                validate_bounded_opaque_payload_value(field, entry, depth + 1)?;
+            }
+        }
+        serde_json::Value::Object(object) => {
+            if object.len() > LEDGER_PAYLOAD_OPAQUE_MAX_FIELDS {
+                bail!("ledger payload field {field} exceeds bounded opaque field limit");
+            }
+            for (key, value) in object {
+                validate_bounded_opaque_payload_key(field, key)?;
+                validate_bounded_opaque_payload_value(field, value, depth + 1)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_bounded_opaque_payload_key(field: &str, key: &str) -> Result<()> {
+    if key.chars().count() > LEDGER_PAYLOAD_OPAQUE_MAX_KEY_CHARS {
+        bail!("ledger payload field {field} has an overlong bounded opaque key");
+    }
+    let normalized = key
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    if LEDGER_PAYLOAD_OPAQUE_FORBIDDEN_KEYS
+        .iter()
+        .any(|forbidden| normalized == *forbidden)
+    {
+        bail!("ledger payload field {field} contains forbidden bounded opaque key {key}");
+    }
+    Ok(())
+}
+
 fn validate_optional_payload_string_field(
     object: &serde_json::Map<String, serde_json::Value>,
     field: &str,
@@ -10635,6 +10639,7 @@ fn validate_required_payload_object_field(
     if !value.is_object() {
         bail!("ledger payload field {field} must be an object");
     }
+    validate_bounded_opaque_payload_value(field, value, 0)?;
     Ok(())
 }
 
@@ -10647,6 +10652,9 @@ fn validate_required_payload_object_or_null_field(
     };
     if !value.is_object() && !value.is_null() {
         bail!("ledger payload field {field} must be an object or null");
+    }
+    if value.is_object() {
+        validate_bounded_opaque_payload_value(field, value, 0)?;
     }
     Ok(())
 }
@@ -10721,6 +10729,9 @@ fn validate_optional_payload_object_or_null_field(
         if !value.is_object() && !value.is_null() {
             bail!("ledger payload field {field} must be an object or null");
         }
+        if value.is_object() {
+            validate_bounded_opaque_payload_value(field, value, 0)?;
+        }
     }
     Ok(())
 }
@@ -10733,6 +10744,7 @@ fn validate_optional_payload_object_field(
         if !value.is_object() {
             bail!("ledger payload field {field} must be an object");
         }
+        validate_bounded_opaque_payload_value(field, value, 0)?;
     }
     Ok(())
 }
@@ -10785,6 +10797,9 @@ fn validate_optional_payload_string_array_field(
         if values.iter().any(|entry| !entry.is_string()) {
             bail!("ledger payload field {field} must contain only strings");
         }
+        if values.len() > LEDGER_PAYLOAD_OPAQUE_MAX_ARRAY_ITEMS {
+            bail!("ledger payload field {field} exceeds bounded array limit");
+        }
     }
     Ok(())
 }
@@ -10802,6 +10817,9 @@ fn validate_required_payload_string_array_field(
     if values.iter().any(|entry| !entry.is_string()) {
         bail!("ledger payload field {field} must contain only strings");
     }
+    if values.len() > LEDGER_PAYLOAD_OPAQUE_MAX_ARRAY_ITEMS {
+        bail!("ledger payload field {field} exceeds bounded array limit");
+    }
     Ok(())
 }
 
@@ -10818,6 +10836,9 @@ fn validate_required_payload_u64_array_field(
     if values.iter().any(|entry| entry.as_u64().is_none()) {
         bail!("ledger payload field {field} must contain only unsigned integers");
     }
+    if values.len() > LEDGER_PAYLOAD_OPAQUE_MAX_ARRAY_ITEMS {
+        bail!("ledger payload field {field} exceeds bounded array limit");
+    }
     Ok(())
 }
 
@@ -10829,6 +10850,7 @@ fn validate_optional_payload_array_field(
         if !value.is_array() {
             bail!("ledger payload field {field} must be an array");
         }
+        validate_bounded_opaque_payload_value(field, value, 0)?;
     }
     Ok(())
 }
@@ -10843,6 +10865,7 @@ fn validate_required_payload_array_field(
     if !value.is_array() {
         bail!("ledger payload field {field} must be an array");
     }
+    validate_bounded_opaque_payload_value(field, value, 0)?;
     Ok(())
 }
 
@@ -10854,6 +10877,9 @@ fn validate_optional_payload_array_or_null_field(
         if !(value.is_array() || value.is_null()) {
             bail!("ledger payload field {field} must be an array or null");
         }
+        if value.is_array() {
+            validate_bounded_opaque_payload_value(field, value, 0)?;
+        }
     }
     Ok(())
 }
@@ -10863,20 +10889,7 @@ fn validate_ledger_payload_envelope(
     payload: &serde_json::Value,
     envelope: &LedgerPayloadEnvelope,
 ) -> Result<()> {
-    if envelope.schema_version == 1 && envelope.schema_id.is_empty() {
-        let expected_shape_id = ledger_payload_legacy_v1_shape_id(kind);
-        if envelope.shape_id != expected_shape_id {
-            bail!("legacy ledger payload envelope shape_id mismatch");
-        }
-        let expected_shape_fingerprint =
-            ledger_payload_legacy_v1_shape_fingerprint_for_value(kind, payload);
-        if envelope.shape_fingerprint != expected_shape_fingerprint {
-            bail!("legacy ledger payload envelope shape_fingerprint mismatch");
-        }
-        return Ok(());
-    }
-
-    if envelope.schema_version != LEDGER_PAYLOAD_SCHEMA_VERSION {
+    if envelope.schema_version != ledger_payload_schema_version(kind) {
         bail!("ledger payload envelope schema_version mismatch");
     }
     let expected_schema_id = ledger_payload_schema_id(kind);
@@ -10915,26 +10928,32 @@ fn validate_legacy_ledger_payload_envelope(
         return Ok(());
     }
 
-    if (2..LEDGER_PAYLOAD_SCHEMA_VERSION).contains(&envelope.schema_version) {
-        let expected_schema_id = format!("ledger_payload.{kind:?}.v{}", envelope.schema_version);
+    if (2..=LEDGER_PAYLOAD_LEGACY_GLOBAL_SCHEMA_MAX_VERSION).contains(&envelope.schema_version)
+        && envelope.schema_version >= ledger_payload_schema_version(kind)
+    {
+        let expected_schema_id = ledger_payload_contract::ledger_payload_legacy_schema_id(
+            &format!("{kind:?}"),
+            envelope.schema_version,
+        );
         if envelope.schema_id != expected_schema_id || envelope.shape_id != expected_schema_id {
             bail!("legacy ledger payload envelope schema_id mismatch");
         }
-        let expected_schema_fingerprint = stable_ledger_payload_fingerprint(&format!(
-            "{kind:?}:payload_schema_v{}:descriptor:{}",
-            envelope.schema_version,
-            ledger_payload_legacy_schema_descriptor(kind, envelope.schema_version)
-        ));
+        let expected_schema_fingerprint =
+            ledger_payload_contract::ledger_payload_schema_fingerprint_for_version(
+                &format!("{kind:?}"),
+                envelope.schema_version,
+            );
         if envelope.schema_fingerprint != expected_schema_fingerprint
             || envelope.shape_fingerprint != expected_schema_fingerprint
         {
             bail!("legacy ledger payload envelope schema_fingerprint mismatch");
         }
-        let expected_instance_fingerprint = stable_ledger_payload_fingerprint(&format!(
-            "{kind:?}:payload_instance_shape_v{}:descriptor:{}",
-            envelope.schema_version,
-            ledger_payload_shape_descriptor(payload)
-        ));
+        let expected_instance_fingerprint =
+            ledger_payload_contract::ledger_payload_instance_shape_fingerprint_for_version(
+                &format!("{kind:?}"),
+                envelope.schema_version,
+                payload,
+            );
         if envelope.instance_shape_fingerprint != expected_instance_fingerprint {
             bail!("legacy ledger payload envelope instance_shape_fingerprint mismatch");
         }
@@ -10944,698 +10963,9 @@ fn validate_legacy_ledger_payload_envelope(
     bail!("unsupported legacy ledger payload envelope schema_version");
 }
 
-fn ledger_payload_schema_fingerprint_input(kind: &LedgerEventKind) -> String {
-    format!(
-        "{kind:?}:payload_schema_v{LEDGER_PAYLOAD_SCHEMA_VERSION}:descriptor:{}",
-        ledger_payload_schema_descriptor(kind)
-    )
-}
-
+#[cfg(test)]
 fn ledger_payload_schema_descriptor(kind: &LedgerEventKind) -> String {
-    match kind {
-        LedgerEventKind::TaskCompleted => terminal_task_payload_schema_descriptor("Completed"),
-        LedgerEventKind::TaskFailed => terminal_task_payload_schema_descriptor("Failed"),
-        LedgerEventKind::TaskCancelled => terminal_task_payload_schema_descriptor("Cancelled"),
-        LedgerEventKind::PermissionChecked | LedgerEventKind::PermissionDenied => {
-            permission_payload_schema_descriptor()
-        }
-        LedgerEventKind::ToolPlanned => tool_planned_payload_schema_descriptor(),
-        LedgerEventKind::ToolPermissionChecked
-        | LedgerEventKind::ToolPlanApproved
-        | LedgerEventKind::ToolPlanDenied => tool_plan_payload_schema_descriptor(),
-        LedgerEventKind::ToolIntentParsed => tool_intent_parsed_payload_schema_descriptor(),
-        LedgerEventKind::ToolIntentRejected => tool_intent_rejected_payload_schema_descriptor(),
-        LedgerEventKind::ToolIntentPermissionChecked
-        | LedgerEventKind::ToolIntentApproved
-        | LedgerEventKind::ToolIntentDenied => tool_intent_payload_schema_descriptor(),
-        LedgerEventKind::ToolExecutionRequested => {
-            tool_execution_requested_payload_schema_descriptor()
-        }
-        LedgerEventKind::McpToolExecutionApproved => {
-            mcp_tool_execution_approved_payload_schema_descriptor()
-        }
-        LedgerEventKind::ToolExecutionPermissionChecked => {
-            tool_execution_permission_payload_schema_descriptor()
-        }
-        LedgerEventKind::ToolExecutionCompleted => {
-            tool_execution_terminal_payload_schema_descriptor("Completed")
-        }
-        LedgerEventKind::ToolExecutionDenied => {
-            tool_execution_terminal_payload_schema_descriptor("Denied")
-        }
-        LedgerEventKind::ToolExecutionFailed => {
-            tool_execution_terminal_payload_schema_descriptor("Failed")
-        }
-        LedgerEventKind::CodebaseIndexPermissionChecked => {
-            codebase_index_permission_payload_schema_descriptor()
-        }
-        LedgerEventKind::CodebaseIndexSnapshotBuilt => {
-            codebase_index_snapshot_built_payload_schema_descriptor()
-        }
-        LedgerEventKind::CodebaseIndexQueryCompleted => {
-            codebase_index_query_completed_payload_schema_descriptor()
-        }
-        LedgerEventKind::CodebaseIndexSelectionReadCompleted => {
-            codebase_index_selection_read_completed_payload_schema_descriptor()
-        }
-        LedgerEventKind::CodebaseIndexPromptContextMaterialized => {
-            codebase_index_prompt_context_materialized_payload_schema_descriptor()
-        }
-        LedgerEventKind::VerificationRecoveryContextReadMaterialized => {
-            verification_recovery_context_read_payload_schema_descriptor()
-        }
-        LedgerEventKind::AgentLoopStarted => agent_loop_started_payload_schema_descriptor(),
-        LedgerEventKind::AgentLoopCompleted => agent_loop_completed_payload_schema_descriptor(),
-        LedgerEventKind::TaskCompletionAccepted => {
-            task_completion_accepted_payload_schema_descriptor()
-        }
-        LedgerEventKind::PromptBuilt | LedgerEventKind::SecondPassPromptBuilt => {
-            prompt_built_payload_schema_descriptor()
-        }
-        LedgerEventKind::PromptSensitiveScanCompleted
-        | LedgerEventKind::PromptSensitiveScanFailed => {
-            prompt_sensitive_scan_payload_schema_descriptor()
-        }
-        LedgerEventKind::LlmRequestCreated | LedgerEventKind::SecondPassLlmRequestCreated => {
-            llm_request_created_payload_schema_descriptor()
-        }
-        LedgerEventKind::LlmRequestFailed | LedgerEventKind::SecondPassLlmRequestFailed => {
-            llm_request_failed_payload_schema_descriptor()
-        }
-        LedgerEventKind::LlmResponseReceived | LedgerEventKind::SecondPassLlmResponseReceived => {
-            llm_response_received_payload_schema_descriptor()
-        }
-        LedgerEventKind::TaskStarted => task_started_payload_schema_descriptor(),
-        LedgerEventKind::TaskRunning => task_running_payload_schema_descriptor(),
-        LedgerEventKind::ModeResolved => mode_resolved_payload_schema_descriptor(),
-        LedgerEventKind::ExternalModePackChildProvenanceDenied => {
-            external_modepack_child_denied_payload_schema_descriptor()
-        }
-        LedgerEventKind::ExternalModePackTaskProvenanceDenied => {
-            external_modepack_task_denied_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskOrchestrationQueued => {
-            subtask_orchestration_queued_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskHandoffPrepared => {
-            subtask_handoff_prepared_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskSchedulerReadinessRecorded => {
-            subtask_scheduler_readiness_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskDispatchPlanPrepared => {
-            subtask_dispatch_plan_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskDispatchContractPrepared => {
-            subtask_dispatch_contract_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskDispatchAdmissionEvaluated => {
-            subtask_dispatch_admission_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskDispatchReadinessSnapshotRecorded => {
-            subtask_dispatch_readiness_snapshot_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskDispatcherGuardVerdictRecorded => {
-            subtask_dispatcher_guard_verdict_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskDispatchDecisionRecorded => {
-            subtask_dispatch_decision_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskDispatchCandidateManifestRecorded => {
-            subtask_dispatch_candidate_manifest_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded => {
-            subtask_dispatch_handoff_envelope_payload_schema_descriptor()
-        }
-        LedgerEventKind::ParentJoinContinuationFingerprintConsumed => {
-            parent_join_continuation_consumed_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchProposed => {
-            workspace_patch_proposed_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchApprovalRequested => {
-            workspace_patch_approval_requested_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchApproved => {
-            workspace_patch_approved_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchRejected => {
-            workspace_patch_rejected_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchPreflightSnapshotCreated => {
-            workspace_patch_preflight_snapshot_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchApplyPlanCreated => {
-            workspace_patch_apply_plan_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchApplyCapabilityChecked => {
-            workspace_patch_apply_capability_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchApplyDryRunChecked => {
-            workspace_patch_apply_dry_run_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchApplyResultRecorded => {
-            workspace_patch_apply_result_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchReadinessReportCreated => {
-            workspace_patch_readiness_report_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessContinuationDecisionRecorded => {
-            headless_continuation_decision_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessRunSessionAdvanced => {
-            headless_run_session_advanced_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessRunSessionDriveCompleted => {
-            headless_run_session_drive_completed_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessRunProductEvidenceMatrixDerived => {
-            headless_product_evidence_matrix_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessRunSelectedProductGapClosureRecorded => {
-            headless_selected_product_gap_closure_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded => {
-            headless_product_completion_decision_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessJourneyStarted => {
-            headless_journey_started_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessJourneyRouteResumed => {
-            headless_journey_route_resumed_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessJourneyClosed => {
-            headless_journey_closed_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessJourneyExecuted => {
-            headless_journey_executed_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessRunCompletionFinalized => {
-            headless_run_completion_finalized_payload_schema_descriptor()
-        }
-    }
-}
-
-fn terminal_task_payload_schema_descriptor(status: &str) -> String {
-    format!(
-        "strict_typed{{payload_optional:true;known_optional_fields:apply_enabled:boolean,bounded_cargo_diagnostics:array,caller_authorized:boolean,cancel_fingerprint:string,cancel_id:string,cancel_status:string,completion_evidence:object,expected_task_updated_at:string,failed_verifier_count:u64,failed_verifier_tool_ids:array<string>,failure_fingerprint:string,failure_reason:string,failure_reasons:array<string>,git:object,late_tool_response:boolean,mcp:object,missing_verifier_tool_ids:array<string>,next_action:string,passed_verifier_count:u64,passed_verifier_tool_ids:array<string>,previous_status:string,proposal_count:u64,proposal_id:string,reason:string,recovery_run_id:string,recovery_task_id:string,request_fingerprint_version:string,required_verifier_count:u64,required_verifier_tool_ids:array<string>,requirement_fingerprint:string,run_id:string,runtime_deadline:object,source_apply_id:string,source_run_id:string,source_task_id:string,status:string,task_id:string,terminal_evidence:boolean,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:string,verification_recovery_repair:boolean,verification_recovery_repair_gate_status:string,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;known_field_required:true;additional_fields:false;terminal_status:{status}}}"
-    )
-}
-
-fn permission_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:allowed:boolean,mode_id:string,reason:string;one_of_required:action:string|required_action:string;known_optional_fields:action:string,apply_id:string,operation:string,path:string,proposal_id:string,required_action:string,scope:string,tool_id:string,workspace_write_scope_count:u64;additional_fields:false;permission_decision_payload:true}".to_string()
-}
-
-fn tool_plan_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:allowed:boolean,reason:string,required_action:string,tool_id:string;additional_fields:false;tool_plan_decision_payload:true}".to_string()
-}
-
-fn tool_planned_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:tool_ids:array<string>;additional_fields:false;tool_planned_inventory_payload:true}".to_string()
-}
-
-fn tool_intent_parsed_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:parser:object,tool_ids:array<string>;additional_fields:false;tool_intent_parsed_payload:true}".to_string()
-}
-
-fn tool_intent_rejected_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:code:string,reason:string,tool_id:string;additional_fields:false;tool_intent_rejected_payload:true}".to_string()
-}
-
-fn tool_intent_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:allowed:boolean,input_summary:object,reason:string,request_reason:string,required_action:string,tool_id:string;known_optional_fields:mode_id:string,requested_mode_id:string,source_apply_id:string,source_run_id:string,source_task_id:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_intent_decision_payload:true}".to_string()
-}
-
-fn tool_execution_requested_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:input_summary:object,tool_id:string;known_optional_fields:request_fingerprint:string,source_apply_id:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_execution_request_payload:true}".to_string()
-}
-
-fn tool_execution_permission_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:allowed:boolean,reason:string,required_action:string,tool_id:string;known_optional_fields:mcp_safety_policy:object_or_null,request_fingerprint:string,server_id:string,source_apply_id:string,tool_name:string,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string;additional_fields:false;tool_execution_permission_payload:true}".to_string()
-}
-
-fn mcp_tool_execution_approved_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:approval_fingerprint:string,approval_schema_version:u64,approval_state_fingerprint:string,catalog_provenance:object,mcp_safety_policy:object_or_null,request_fingerprint:string,run_id:string,server_id:string,status:string,task_id:string,tool_id:string,tool_name:string;known_optional_fields:approval_id_fingerprint:string,outcome:string,outcome_fingerprint:string,recovery_fingerprint:string,recovery_reason:string,recovery_source_state_fingerprint:string;additional_fields:false;mcp_tool_execution_approval_payload:true}".to_string()
-}
-
-fn tool_execution_terminal_payload_schema_descriptor(status: &str) -> String {
-    let required_fields = match status {
-        "Completed" => "required_fields:status:string,tool_id:string",
-        _ => "required_fields:reason:string,status:string,tool_id:string",
-    };
-    format!(
-        "strict_typed{{payload_optional:false;{required_fields};known_optional_fields:absolute_paths_redacted:boolean,ambient_index_ignored:boolean,authorized_change_set_fingerprint:string,authorized_path_count:u64,bounded_cargo_diagnostics:array,bytes_read:u64,captured_bytes:u64,cargo_dependency_fetch_offline:boolean,catalog_provenance:object,check_id:string,cleanup_succeeded:boolean,commit_id:string,committed_tree_fingerprint:string,compile_time_code_sandboxed:boolean,duration_ms:u64,exit_code:integer_or_null,expected_parent_head:string,failed_git_operation:string,git:object,git_environment_hardened:boolean,git_optional_locks_disabled:boolean,git_process_count:u64,git_processes_bounded:boolean,git_prompts_disabled:boolean,line_count:u64,logical_invocation_fingerprint:string,mcp:object,mcp_approval_binding:object,mcp_safety_policy:object_or_null,message_fingerprint:string,mutation_process_launched:boolean,operation:string,os_network_isolated:boolean,output_oversized:boolean,output_preview:string,output_redacted:boolean,output_truncated:boolean,process_launched:boolean,process_tree_kill_attempted:boolean,process_tree_kill_reason:string,process_tree_kill_succeeded:boolean,process_tree_timeout_supported:boolean,raw_diff_redacted:boolean,raw_file_content_redacted:boolean,raw_message_redacted:boolean,reason:string,reader_thread_joined:boolean,replayed:boolean,repository_hooks_bypassed:boolean,runtime_authorization_required:boolean,source_apply_id:string,standard_error_bytes:u64,standard_error_truncated:boolean,standard_output_bytes:u64,standard_output_truncated:boolean,target_dir_isolated:boolean,temporary_index_cleaned:boolean,test_code_executed:boolean,timed_out:boolean,truncated:boolean,trusted_workspace_required:boolean,used_git_plumbing:boolean,used_temporary_index:boolean,verification_recovery_retry:boolean,verification_requirement_fingerprint:string,verification_requirement_id:string,verification_requirement_source_kind:string,verification_status:string,workspace_write_scope_fingerprint:string;additional_fields:false;tool_execution_terminal_payload:true;terminal_status:{status}}}"
-    )
-}
-
-fn codebase_index_permission_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:action:string,allowed:boolean,mode_id:string,reason:string;known_optional_fields:entry_count:u64,file_kind_filter:string,index_id:string,max_results:u64,query_fingerprint:string,query_id:string,query_length_chars:u64,query_token_count:u64,request_kind:string,requested_force_refresh:boolean,requested_root_present:boolean,selection_fingerprint:string,selection_id:string,snapshot_fingerprint:string,workspace_fingerprint:string;additional_fields:false;codebase_index_permission_payload:true;action:IndexCodebase}".to_string()
-}
-
-fn codebase_index_snapshot_built_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:built_at:string,ignore_rule_count:u64,ignore_rule_files_loaded:u64,index_id:string,indexed_files:u64,max_directories:u64,max_directory_entries:u64,max_file_bytes:u64,max_files:u64,max_path_chars:u64,max_visited_entries:u64,mode_id:string,next_action:string,requested_force_refresh:boolean,root:string,sensitive_finding_count:u64,skipped_binary_like:u64,skipped_ignored:u64,skipped_other:u64,skipped_protected:u64,skipped_sensitive:u64,skipped_symlink:u64,skipped_too_large:u64,skipped_unreadable:u64,skipped_unsafe_path:u64,snapshot_fingerprint:string,truncated:boolean,truncated_directories:u64,truncated_entries:u64,visited_entries:u64,walked_directories:u64,workspace_fingerprint:string;additional_fields:false;codebase_index_snapshot_payload:true;next_action:build_bounded_index_query_file_selection}".to_string()
-}
-
-fn codebase_index_query_completed_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:file_kind_filter:string,index_id:string,match_reason_counts:object,matched_entry_count:u64,max_results:u64,mode_id:string,next_action:string,query_fingerprint:string,query_id:string,returned_entry_count:u64,selection_fingerprint:string,selection_id:string,skipped_entry_count:u64,snapshot_fingerprint:string,snapshot_truncated:boolean,workspace_fingerprint:string;additional_fields:false;codebase_index_query_payload:true;next_action:read_selected_files_with_controlled_workspace_read}".to_string()
-}
-
-fn codebase_index_selection_read_completed_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:byte_length:u64,bytes_read:u64,content_hash_verified:boolean,content_sha256:string,entry_count:u64,file_kind:string,file_kind_filter:string,index_id:string,max_results:u64,mode_id:string,next_action:string,query_fingerprint:string,query_id:string,read_path_fingerprint:string,selection_fingerprint:string,selection_id:string,snapshot_fingerprint:string,snapshot_truncated:boolean,tool_id:string,truncated:boolean,workspace_fingerprint:string;additional_fields:false;codebase_index_selection_read_payload:true;tool_id:codebase.index.selection.read;content_hash_verified:true;next_action:use_selected_file_context_for_prompt_materialization}".to_string()
-}
-
-fn codebase_index_prompt_context_materialized_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:bytes_read:u64,content_char_count:u64,content_hash_verified:boolean,content_sha256:string,file_kind:string,index_id:string,mode_id:string,next_action:string,prompt_context_id:string,prompt_preview_redacted:boolean,query_fingerprint:string,query_id:string,read_path_fingerprint:string,run_id:string,selection_fingerprint:string,selection_id:string,snapshot_fingerprint:string,source_event_id:string,source_event_kind:string,task_id:string,workspace_fingerprint:string;additional_fields:false;codebase_index_prompt_context_payload:true;source_event_kind:CodebaseIndexSelectionReadCompleted;content_hash_verified:true;prompt_preview_redacted:true;next_action:continue_task_execution_with_materialized_context}".to_string()
-}
-
-fn verification_recovery_context_read_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:check_id:string,column:u64_or_null,context_read_id:string,diagnostic_index:u64,diagnostic_kind:string,excerpt_bytes:u64,excerpt_end_line:u64,excerpt_sha256:string,excerpt_start_line:u64,excerpt_truncated:boolean,failure_fingerprint:string,line:u64_or_null,mode_id:string,next_action:string,prompt_preview_redacted:boolean,read_path_fingerprint:string,recovery_run_id:string,recovery_task_id:string,required_action:string,severity:string,source_run_id:string,source_task_id:string,test_name_hash:string_or_null,tool_id:string,verification_recovery_context_read:boolean;additional_fields:false;verification_recovery_context_read_payload:true;required_action:ReadWorkspace;verification_recovery_context_read:true;prompt_preview_redacted:true;next_action:run_recovery_task_with_context}".to_string()
-}
-
-fn agent_loop_started_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:entrypoint:string,state:string;known_optional_fields:verification_recovery_retry:boolean;additional_fields:false;agent_loop_started_payload:true}".to_string()
-}
-
-fn agent_loop_completed_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:completion_summary:string,final_state:string;known_optional_fields:completion_result_fingerprint:string,final_response_chars:u64,final_response_present:boolean,verification_recovery_retry:boolean;additional_fields:false;agent_loop_completed_payload:true}".to_string()
-}
-
-fn task_completion_accepted_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:acceptance_fingerprint:string,acceptance_id:string,next_action:string,replayed:boolean,run_id:string,status:string,task_id:string,terminal_completion_fingerprint:string,verifier_gate_status:string;additional_fields:false;task_completion_accepted_payload:true;status:AcceptedComplete;next_action:inspect_accepted_completion}".to_string()
-}
-
-fn prompt_built_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;known_optional_fields:context_budget_max_ledger_events:u64,context_budget_max_prompt_chars:u64,context_budget_max_selected_index_chars:u64,context_budget_prompt_chars:u64,context_budget_prompt_within_budget:boolean,context_budget_protected_context_chars:u64,context_budget_requested:boolean,context_budget_selected_index_content_chars:u64,context_budget_selected_index_context_present:boolean,context_budget_selected_index_materialized_chars:u64,context_budget_selected_index_truncated:boolean,context_first_included_event:string,context_included_events:u64,context_last_included_event:string,context_max_events:u64,context_omitted_events:u64,context_total_events:u64,context_window_bounded:boolean,max_prompt_chars:u64,message_count:u64,prompt_preview:string,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string;known_field_required:true;additional_fields:false;prompt_built_payload:true}".to_string()
-}
-
-fn prompt_sensitive_scan_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:categories:array<string>,finding_count:u64,message_indexes:array<u64>,mode:string,sensitive_guard:string;additional_fields:false;prompt_sensitive_scan_payload:true}".to_string()
-}
-
-fn llm_request_created_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:base_url:string_or_null,message_count:u64,model:string,provider:string,strict:boolean;additional_fields:false;llm_request_created_payload:true}".to_string()
-}
-
-fn llm_request_failed_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;known_optional_fields:base_url:string_or_null,llm_provider_failure:object,model:string,provider:string,reason:string,reason_chars:u64,reason_sha256:string,reason_truncated:boolean,sensitive_guard:string,strict:boolean;known_field_required:true;additional_fields:false;llm_request_failed_payload:true}".to_string()
-}
-
-fn llm_response_received_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:provider:string;one_of_required:content_preview:string|content_preview_redacted:boolean;known_optional_fields:content_preview:string,content_preview_redacted:boolean,content_preview_redaction_reason:string,response_preview_chars:u64;additional_fields:false;llm_response_received_payload:true}".to_string()
-}
-
-fn task_started_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:true;known_optional_fields:apply_fingerprint:string_or_null,apply_id:string_or_null,decision_fingerprint:string_or_null,derived_goal_fingerprint:string_or_null,derived_objective_fingerprint:string_or_null,drive_fingerprint:string_or_null,end_session_sequence:u64_or_null,execution_enabled:boolean,external_modepack_child_provenance:object_or_null,failure_class:string_or_null,failure_fingerprint:string_or_null,llm_provider_failure_retry_provenance:object_or_null,next_action:string,next_route_fingerprint:string_or_null,parent_run_id:string_or_null,parent_task_id:string_or_null,patch_apply_recovery_provenance:object_or_null,product_continuation_provenance:object_or_null,product_continuation_running_enabled:boolean,product_evidence_fingerprint:string_or_null,product_loop_stop_recovery_provenance:object_or_null,product_loop_stop_recovery_running_enabled:boolean,product_objective_continuation_provenance:object_or_null,proposal_id:string_or_null,reason:string,recovery_boundary_fingerprint:string_or_null,recovery_cycle_provenance:object_or_null,recovery_run_id:string_or_null,recovery_running_enabled:boolean,recovery_task_id:string_or_null,retried_verifier_tool_ids:array_or_null,retry_running_enabled:boolean,retryable:boolean_or_null,scheduler_handoff_enabled:boolean,source_apply_id:string_or_null,source_candidate_id:string_or_null,source_decision_id:string_or_null,source_drive_id:string_or_null,source_handoff_envelope_fingerprint:string_or_null,source_handoff_envelope_id:string_or_null,source_intent_summary:object_or_null,source_progress_fingerprint:string_or_null,source_proposal_id:string_or_null,source_run_id:string_or_null,source_session_id:string_or_null,source_task_id:string_or_null,status:string,stop_class:string_or_null,stop_reason:string_or_null,verification_recovery_provenance:object_or_null,verification_recovery_retry_provenance:object_or_null;known_field_required:true;additional_fields:false;task_started_payload:true}".to_string()
-}
-
-fn task_running_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:true;known_optional_fields:admission_id:string,admission_kind:string,deadline_persisted:boolean,deadline_scope:string,reason:string,runtime_deadline:object;known_field_required:true;conditional_required:runtime_deadline=>deadline_scope+deadline_persisted,admission_id|admission_kind=>admission_id+admission_kind+reason;additional_fields:false;task_running_payload:true}".to_string()
-}
-
-fn mode_resolved_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:completion_rules:array,display_name:string,instruction_fingerprint:string_or_null,mcp_access:array,mode_id:string,permissions:object,prompt_sections:array,role_definition:string,workspace_write_scopes:array;known_optional_fields:allowed_handoff_targets:array_or_null,description:string_or_null,external_modepack_task_provenance:object,mcp_tool_catalogs:array,verification_responsibility:string_or_null,when_to_use:string_or_null;additional_fields:false;mode_resolved_payload:true}".to_string()
-}
-
-fn external_modepack_child_denied_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:reason:string,run_id:string,status:string,task_id:string;known_optional_fields:mode_id:string_or_null,parent_run_id:string_or_null,source_candidate_id:string_or_null,source_handoff_envelope_fingerprint:string_or_null,source_handoff_envelope_id:string_or_null;additional_fields:false;external_modepack_child_provenance_denied_payload:true;status:Denied}".to_string()
-}
-
-fn external_modepack_task_denied_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:reason:string,run_id:string,source_kind:string,source_path:string,status:string,task_id:string;known_optional_fields:mode_id:string_or_null;additional_fields:false;external_modepack_task_provenance_denied_payload:true;status:Denied}".to_string()
-}
-
-fn subtask_orchestration_queued_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:execution_enabled:boolean,input_summary:object,parent_run_id:string,parent_task_id:string,queue_position:u64,reason:string,request_reason:string,required_action:string,status:string,subtask_id:string,tool_id:string;known_optional_fields:requested_goal_preview:string,requested_mode_id:string;additional_fields:false;subtask_orchestration_payload:true}".to_string()
-}
-
-fn subtask_handoff_prepared_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:execution_enabled:boolean,handoff_id:string,next_action:string,parent_run_id:string,parent_task_id:string,queued_count:u64,queued_subtask_ids:array<string>,reason:string,source_event_count:u64,status:string;additional_fields:false;subtask_handoff_prepared_payload:true}".to_string()
-}
-
-fn subtask_scheduler_readiness_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,check_count:u64,dispatch_enabled:boolean,execution_enabled:boolean,handoff_count:u64,handoff_id:string,next_action:string,parent_run_id:string,parent_task_id:string,queued_count:u64,readiness_id:string,readiness_reason:string,readiness_status:string,reason:string,source_event_count:u64,status:string;additional_fields:false;subtask_scheduler_readiness_payload:true}".to_string()
-}
-
-fn subtask_dispatch_plan_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,check_count:u64,dispatch_enabled:boolean,dispatch_plan_status:string,dispatch_reason:string,execution_enabled:boolean,next_action:string,parent_run_id:string,parent_task_id:string,plan_id:string,queued_count:u64,readiness_count:u64,readiness_id:string,reason:string,required_capability:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_plan_payload:true}".to_string()
-}
-
-fn subtask_dispatch_contract_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,check_count:u64,contract_id:string,dispatch_contract_reason:string,dispatch_contract_status:string,dispatch_enabled:boolean,eligibility_status:string,execution_enabled:boolean,next_action:string,parent_run_id:string,parent_task_id:string,plan_count:u64,plan_id:string,queued_count:u64,reason:string,required_capability:string,required_preconditions:array<string>,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_contract_payload:true}".to_string()
-}
-
-fn subtask_dispatch_admission_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:admission_id:string,admission_reason:string,admission_status:string,blocked_checks:array<string>,blocked_preconditions:array<string>,check_count:u64,contract_count:u64,contract_id:string,dispatch_enabled:boolean,execution_enabled:boolean,execution_gate_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,reason:string,required_capability:string,satisfied_precondition_count:u64,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_admission_payload:true}".to_string()
-}
-
-fn subtask_dispatch_readiness_snapshot_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:admission_count:u64,admission_id:string,blocked_checks:array<string>,blocked_preconditions:array<string>,check_count:u64,dispatch_enabled:boolean,execution_enabled:boolean,fingerprint_input_count:u64,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,readiness_fingerprint:string,readiness_reason:string,readiness_status:string,reason:string,required_capability:string,satisfied_precondition_count:u64,scheduler_handoff_status:string,snapshot_id:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_readiness_snapshot_payload:true}".to_string()
-}
-
-fn subtask_dispatcher_guard_verdict_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,blocked_preconditions:array<string>,check_count:u64,dispatch_enabled:boolean,execution_enabled:boolean,fingerprint_input_count:u64,guard_id:string,guard_reason:string,guard_status:string,handoff_preflight_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,reason:string,required_capability:string,satisfied_precondition_count:u64,scheduler_handoff_status:string,snapshot_count:u64,snapshot_fingerprint:string,snapshot_fingerprint_count:u64,snapshot_id:string,snapshot_validity_status:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatcher_guard_verdict_payload:true}".to_string()
-}
-
-fn subtask_dispatch_decision_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:blocked_candidate_count:u64,blocked_checks:array<string>,blocked_preconditions:array<string>,candidate_status:string,check_count:u64,decision_id:string,decision_status:string,dispatch_candidate_count:u64,dispatch_decision:string,dispatch_denial_reason:string,dispatch_enabled:boolean,eligible_candidate_count:u64,execution_enabled:boolean,fingerprint_input_count:u64,guard_count:u64,guard_id:string,guard_status:string,handoff_preflight_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,reason:string,required_capability:string,satisfied_precondition_count:u64,snapshot_fingerprint:string,snapshot_fingerprint_count:u64,snapshot_id:string,snapshot_validity_status:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_decision_payload:true}".to_string()
-}
-
-fn subtask_dispatch_candidate_manifest_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:blocked_candidate_count:u64,blocked_candidate_ids:array<string>,blocked_checks:array<string>,blocked_preconditions:array<string>,candidate_count:u64,candidate_denial_reason:string,candidate_ids:array<string>,candidate_manifest_fingerprint:string,candidate_status:string,check_count:u64,decision_count:u64,decision_id:string,dispatch_candidate_count:u64,dispatch_decision:string,dispatch_enabled:boolean,eligible_candidate_count:u64,eligible_candidate_ids:array<string>,execution_enabled:boolean,fingerprint_input_count:u64,guard_id:string,manifest_id:string,manifest_status:string,next_action:string,parent_run_id:string,parent_task_id:string,precondition_count:u64,queued_count:u64,reason:string,required_capability:string,satisfied_precondition_count:u64,snapshot_fingerprint:string,snapshot_id:string,source_event_count:u64,status:string;additional_fields:false;subtask_dispatch_candidate_manifest_payload:true}".to_string()
-}
-
-fn subtask_dispatch_handoff_envelope_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:blocked_candidate_count:u64,blocked_candidate_ids:array<string>,candidate_count:u64,candidate_ids:array<string>,candidate_status:string,dispatch_decision:string,dispatch_enabled:boolean,eligible_candidate_count:u64,eligible_candidate_ids:array<string>,execution_enabled:boolean,fingerprint_input_count:u64,handoff_envelope_fingerprint:string,handoff_envelope_id:string,handoff_envelope_status:string,next_action:string,parent_run_id:string,parent_task_id:string,reason:string,required_capability:string,scheduler_handoff_status:string,status:string;known_optional_fields:blocked_checks:array<string>,blocked_preconditions:array<string>,candidate_denial_reason:string,candidate_manifest_fingerprint:string,check_count:u64,continuation_materialization:boolean,continuation_source:string,decision_id:string,dispatch_candidate_count:u64,handoff_ticket_count:u64,handoff_ticket_status:string,manifest_count:u64,manifest_id:string,max_recovery_cycle_depth:u64,parent_join_admission_id:string,parent_join_child_completion_child_count:u64,parent_join_child_completion_fingerprint:string,parent_join_fingerprint_input_count:u64,parent_join_recovery_cycle:boolean,parent_join_recovery_cycle_depth:u64,parent_join_terminal_completed_child_count:u64,parent_join_terminal_failed_child_count:u64,precondition_count:u64,queued_count:u64,recovery_cycle_budget_status:string,replay_guard_reason:string,replay_guard_status:string,satisfied_precondition_count:u64,source_event_count:u64;additional_fields:false;subtask_dispatch_handoff_envelope_payload:true}".to_string()
-}
-
-fn parent_join_continuation_consumed_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:admission_id:string,child_completion_child_count:u64,child_completion_fingerprint:string,child_recovery_cycle_depth:u64,child_terminal_completed_count:u64,child_terminal_failed_count:u64,fingerprint_input_count:u64,parent_join_continuation_status:string,reason:string;additional_fields:false;parent_join_continuation_consumed_payload:true}".to_string()
-}
-
-fn workspace_patch_proposed_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:content_chars:u64,content_preview:string,diff_preview:string_or_null,diff_redacted:boolean,diff_truncated:boolean,operation:string,path:string,proposal_id:string,tool_id:string,truncated:boolean,validation_reason:string_or_null,validation_status:string;known_optional_fields:failed_verifier_tool_ids:array<string>,failure_class:string,failure_fingerprint:string,hunk_count:u64,hunk_fingerprint:string,patch_apply_recovery_repair:boolean,recovery_run_id:string,recovery_task_id:string,source_apply_fingerprint:string,source_apply_id:string,source_hunk_count:u64,source_hunk_fingerprint:string,source_operation:string,source_path:string,source_proposal_id:string,source_run_id:string,source_task_id:string,verification_recovery_repair:boolean;additional_fields:false;workspace_patch_proposed_payload:true}".to_string()
-}
-
-fn workspace_patch_approval_requested_payload_schema_descriptor() -> String {
-    "payload_absent{payload_optional:false;workspace_patch_approval_requested_payload_absent:true}"
-        .to_string()
-}
-
-fn workspace_patch_approved_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:approval_reason:string_or_null,approval_reason_redacted:boolean,approval_status:string,approved_at:string,proposal_id:string;known_optional_fields:rejected_at:string;additional_fields:false;workspace_patch_approved_payload:true;approval_status:Approved}".to_string()
-}
-
-fn workspace_patch_rejected_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:approval_reason:string_or_null,approval_reason_redacted:boolean,approval_status:string,proposal_id:string,rejected_at:string;known_optional_fields:approved_at:string;additional_fields:false;workspace_patch_rejected_payload:true;approval_status:Rejected}".to_string()
-}
-
-fn workspace_patch_preflight_snapshot_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:canonical_path_hash:string,captured_at:string,file_exists:boolean,file_kind:string,file_modified_unix_ms:integer_or_null,file_sha256:string_or_null,file_size_bytes:u64_or_null,path:string,proposal_id:string,snapshot_id:string,stale:boolean,stale_reason:string_or_null;additional_fields:false;workspace_patch_preflight_snapshot_payload:true}".to_string()
-}
-
-fn workspace_patch_apply_plan_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:check_count:u64,failed_checks:array<string>,operation:string,plan_id:string,proposal_id:string,status:string;additional_fields:false;workspace_patch_apply_plan_payload:true}".to_string()
-}
-
-fn workspace_patch_apply_capability_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:apply_enabled:boolean,apply_supported:boolean,blocked_checks:array<string>,can_apply_now:boolean,capability_id:string,check_count:u64,checked_at:string,failed_checks:array<string>,mode:string,proposal_id:string,reason:string,required_gates:array<string>;additional_fields:false;workspace_patch_apply_capability_payload:true}".to_string()
-}
-
-fn workspace_patch_apply_dry_run_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:apply_executed:boolean,blocked_checks:array<string>,check_count:u64,checked_at:string,dry_run_id:string,dry_run_reason:string,dry_run_status:string,failed_checks:array<string>,no_patch_applied:boolean,proposal_id:string,required_gates:array<string>,workspace_files_changed:boolean;additional_fields:false;workspace_patch_apply_dry_run_payload:true}".to_string()
-}
-
-fn workspace_patch_apply_result_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:applied:boolean,apply_id:string,apply_reason:string,apply_status:string,authorization_consumed:boolean,blocked_checks:array<string>,failed_checks:array<string>,operation:string,path:string,proposal_id:string;known_optional_fields:applied_at:string_or_null,atomic_create_completed:boolean_or_null,atomic_delete_completed:boolean_or_null,atomic_replacement_completed:boolean_or_null,authorization_id:string_or_null,check_count:u64,checked_at:string_or_null,content_bytes:u64,content_chars:u64,expected_target_absent:boolean_or_null,expected_target_sha256:string_or_null,hunk_count:u64,hunk_fingerprint:string_or_null,post_delete_target_exists:boolean_or_null,post_write_sha256:string_or_null,pre_write_target_exists:boolean_or_null,pre_write_target_sha256:string_or_null,temp_file_cleaned:boolean_or_null,transaction_id:string_or_null,transaction_item_count:u64,transaction_items:array,transaction_recovery_source:object,transaction_recovery_status:string_or_null,transaction_status:string_or_null;additional_fields:false;workspace_patch_apply_result_payload:true}".to_string()
-}
-
-fn workspace_patch_readiness_report_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:blocked_checks:array<string>,check_count:u64,failed_checks:array<string>,fingerprint_input_count:u64,generated_at:string,proposal_id:string,readiness_fingerprint:string,readiness_reason:string_or_null,readiness_status:string,report_id:string;additional_fields:false;workspace_patch_readiness_report_payload:true}".to_string()
-}
-
-fn headless_continuation_decision_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;known_field_required:true;known_optional_fields:acceptance_status:string_or_null,admission_route_kind:string_or_null,applied:boolean,apply_fingerprint:string_or_null,apply_id:string_or_null,apply_status:string_or_null,authorization_preflight_continuation_id:string_or_null,authorization_preflight_decision_id:string_or_null,authorization_preflight_fingerprint:string_or_null,authorize:boolean,authorize_objective_apply_verification:boolean,authorize_objective_completion_acceptance:boolean,authorize_objective_proposal_apply:boolean,authorize_parent_join_run:boolean,authorize_patch_apply_recovery:boolean,authorize_patch_apply_recovery_apply:boolean,authorize_patch_apply_recovery_run:boolean,authorize_product_continuation_run:boolean,authorize_provider_failure_retry:boolean,authorize_provider_failure_retry_run:boolean,authorize_recovery:boolean,authorize_recovery_apply:boolean,authorize_recovery_run:boolean,authorize_verification_retry:boolean,authorize_verification_retry_run:boolean,candidate_count:u64_or_null,child_completion_child_count:u64_or_null,child_completion_fingerprint:string_or_null,child_terminal_completed_count:u64_or_null,child_terminal_failed_count:u64_or_null,completion_result_fingerprint:string_or_null,completion_summary:string_or_null,context_read_id:string_or_null,continuation_id:string_or_null,continuation_running_enabled:boolean,current_target_sha256:string_or_null,decision_fingerprint:string_or_null,decision_id:string,diagnostic_index:u64_or_null,drive_fingerprint:string_or_null,end_session_sequence:u64_or_null,excerpt_bytes:u64_or_null,excerpt_sha256:string_or_null,execution_enabled:boolean,expected_aggregate_sequence:u64_or_null,expected_apply_fingerprint:string_or_null,expected_current_target_sha256:string_or_null,expected_post_write_sha256:string_or_null,expected_progress_fingerprint:string_or_null,expected_target_sha256:string_or_null,expected_verification_fingerprint:string_or_null,failure_class:string_or_null,failure_fingerprint:string_or_null,final_state:string_or_null,hunk_count:u64_or_null,journey_id:string_or_null,next_action:string,next_route_fingerprint:string_or_null,objective_apply_continuation_id:string_or_null,objective_apply_decision_id:string_or_null,objective_apply_verification_continuation_id:string_or_null,objective_apply_verification_decision_id:string_or_null,operation:string_or_null,parent_run_id:string_or_null,parent_task_id:string_or_null,path_fingerprint:string_or_null,policy_version:string_or_null,product_evidence_fingerprint:string_or_null,proposal_id:string_or_null,read_path_fingerprint:string_or_null,reason:string,recovery_boundary_fingerprint:string_or_null,recovery_proposal_id:string_or_null,recovery_run_id:string_or_null,recovery_task_id:string_or_null,replacement_content_bytes:u64_or_null,replacement_content_chars:u64_or_null,replacement_content_sha256:string_or_null,request_fingerprint:string_or_null,retry_run_id:string_or_null,retry_task_id:string_or_null,retryable:boolean,route_kind:string_or_null,scheduler_handoff_enabled:boolean,selected_remaining_gap_fingerprint:string_or_null,selected_run_id:string,selected_task_id:string,session_id:string_or_null,source_apply_fingerprint:string_or_null,source_apply_id:string_or_null,source_decision_id:string_or_null,source_drive_id:string_or_null,source_event_id:string_or_null,source_event_kind:string_or_null,source_progress_fingerprint:string_or_null,source_proposal_id:string_or_null,source_run_id:string_or_null,source_session_id:string_or_null,source_task_id:string_or_null,stop_class:string_or_null,stop_reason:string_or_null,verification_recovery_context_read:boolean,verification_status:string_or_null;additional_fields:false;headless_continuation_decision_payload:true}".to_string()
-}
-
-fn headless_run_session_advanced_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;known_field_required:true;known_optional_fields:advance_id:string,checkpoint_fingerprint:string,gate_status:string_or_null,next_action:string,post_aggregate_sequence:u64_or_null,post_progress_fingerprint:string_or_null,proposal_count:u64_or_null,reason:string,required_verifier_count:u64_or_null,selected_run_id:string,selected_task_id:string,session_id:string,session_sequence:u64_or_null,start_aggregate_sequence:u64_or_null,start_progress_fingerprint:string,step_index:u64_or_null,stop_reason:string_or_null,terminal_completion_evidence:object_or_null,verification_completion_gate_status:string_or_null,verification_recovery_repair:boolean;additional_fields:false;headless_run_session_advanced_payload:true}".to_string()
-}
-
-fn headless_run_session_drive_completed_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:advance_id:string,completion_closure:object,drive_fingerprint:string,drive_id:string,end_session_sequence:u64,next_action:string,reason:string,selected_run_id:string,selected_task_id:string,session_id:string,session_sequence:u64,start_session_sequence:u64,step_index:u64,stop_reason:string_or_null,terminal_completion_evidence:object_or_null;additional_fields:false;headless_run_session_drive_completed_payload:true}".to_string()
-}
-
-fn headless_product_evidence_matrix_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:accepted_completion_fingerprint:string,acceptance_id:string,artifact_count:u64,artifact_hashes:array,behavior_evidence_count:u64,completion_closure_fingerprint:string,concrete_capability_transition:string,derivation_id:string,milestone:string,next_action:string,non_goals_reviewed:boolean,phase_id:string,product_completion_claim:boolean,product_evidence_matrix_fingerprint:string,rejected_alternatives_count:u64,replayed:boolean,run_id:string,safety_boundary_reviewed:boolean,selected_gap_closure_evidence:object_or_null,selected_gap_closure_evidence_set:array,selected_gap_closure_set_fingerprint:string_or_null,selected_remaining_gap:object_or_null,target_capability:string,task_id:string,technical_debt_reviewed:boolean,terminal_completion_fingerprint:string,validated_gate_categories:array;additional_fields:false;headless_product_evidence_matrix_payload:true}".to_string()
-}
-
-fn headless_selected_product_gap_closure_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:accepted_completion_fingerprint:string,acceptance_id:string,closure_evidence_fingerprint:string,closure_id:string,completion_closure_fingerprint:string,next_action:string,product_evidence_fingerprint:string,product_objective_fingerprint:string,replayed:boolean,run_id:string,selected_remaining_gap:object,source_decision_fingerprint:string,source_decision_id:string,status:string,task_id:string,terminal_completion_fingerprint:string;additional_fields:false;headless_selected_product_gap_closure_payload:true}".to_string()
-}
-
-fn headless_product_completion_decision_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:accepted_completion_fingerprint:string,acceptance_id:string,behavior_evidence_count:u64,completion_closure_fingerprint:string,concrete_capability_transition:string,decision_fingerprint:string,decision_id:string,derived_product_evidence_matrix_fingerprint:string_or_null,milestone_exit_rationale:string_or_null,next_action:string,non_goals_reviewed:boolean,product_evidence_fingerprint:string,rejected_alternatives_count:u64,remaining_capability:string_or_null,replayed:boolean,run_id:string,safety_boundary_reviewed:boolean,selected_remaining_gap:object_or_null,status:string,target_capability:string,task_id:string,technical_debt_carry_forward:object_or_null,technical_debt_reviewed:boolean,terminal_completion_fingerprint:string,validated_gate_categories:array<string>;additional_fields:false;headless_product_completion_decision_payload:true}".to_string()
-}
-
-fn headless_journey_started_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:drive_id:string,journey_fingerprint:string,journey_id:string,next_action:string,reason:string,run_id:string,session_id:string,start_aggregate_sequence:u64,start_progress_fingerprint:string,task_id:string,task_start_fingerprint:string;known_optional_fields:derived_goal_fingerprint:string,derived_objective_fingerprint:string,objective_context:object,product_objective_continuation_provenance:object,remaining_capability:string,remaining_capability_fingerprint:string,task_start:object;additional_fields:false;headless_journey_started_payload:true}".to_string()
-}
-
-fn headless_journey_route_resumed_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:derived_target_class:string,drive_id:string,journey_id:string,next_action:string,post_route_aggregate_sequence:u64_or_null,post_route_progress_fingerprint:string,reason:string,result_advance_id:string,result_continuation_id:string,resume_fingerprint:string,route_kind:string,run_id:string,session_id:string,source_checkpoint_fingerprint:string,source_continuation_id:string,source_decision_id:string,task_id:string;additional_fields:false;headless_journey_route_resumed_payload:true}".to_string()
-}
-
-fn headless_journey_closed_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:active_modepack_activation_fingerprint:string,aggregate_sequence:u64,closure_fingerprint:string,drive_id:string,finalization_fingerprint:string,journey_closure_fingerprint:string,journey_id:string,next_action:string,progress_fingerprint:string,reason:string,replacement_checkpoint_fingerprint:string,replacement_continuation_id:string,replacement_route_kind:string,run_id:string,session_id:string,source_replacement_drive_id:string_or_null,source_replacement_resume_fingerprint:string_or_null,task_id:string,terminal_completion_fingerprint:string;additional_fields:false;headless_journey_closed_payload:true}".to_string()
-}
-
-fn headless_journey_executed_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:complete:boolean,completed_boundary_count:u64,drive_id:string,execution_checkpoint_fingerprint:string,journey_fingerprint:string,journey_id:string,next_action:string,reason:string,run_id:string,session_id:string,task_id:string;additional_fields:false;headless_journey_executed_payload:true}".to_string()
-}
-
-fn headless_run_completion_finalized_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:aggregate_sequence:u64,closure_fingerprint:string,drive_id:string,end_session_sequence:u64,finalization_fingerprint:string,next_action:string,owner_run_id:string,owner_task_id:string,progress_fingerprint:string,reason:string,session_id:string,start_session_sequence:u64,terminal_completion_fingerprint:string,terminal_task_count:u64,total_task_count:u64;additional_fields:false;headless_run_completion_finalized_payload:true}".to_string()
-}
-
-fn ledger_payload_legacy_schema_descriptor(kind: &LedgerEventKind, schema_version: u64) -> String {
-    match kind {
-        LedgerEventKind::TaskCompleted
-        | LedgerEventKind::TaskFailed
-        | LedgerEventKind::TaskCancelled
-            if schema_version >= 3 =>
-        {
-            let status = match kind {
-                LedgerEventKind::TaskCompleted => "Completed",
-                LedgerEventKind::TaskFailed => "Failed",
-                LedgerEventKind::TaskCancelled => "Cancelled",
-                _ => unreachable!(),
-            };
-            terminal_task_payload_schema_descriptor(status)
-        }
-        LedgerEventKind::PermissionChecked | LedgerEventKind::PermissionDenied
-            if schema_version >= 4 =>
-        {
-            permission_payload_schema_descriptor()
-        }
-        LedgerEventKind::ToolPlanned if schema_version >= 10 => {
-            tool_planned_payload_schema_descriptor()
-        }
-        LedgerEventKind::ToolPermissionChecked
-        | LedgerEventKind::ToolPlanApproved
-        | LedgerEventKind::ToolPlanDenied
-            if schema_version >= 5 =>
-        {
-            tool_plan_payload_schema_descriptor()
-        }
-        LedgerEventKind::ToolIntentParsed if schema_version >= 10 => {
-            tool_intent_parsed_payload_schema_descriptor()
-        }
-        LedgerEventKind::ToolIntentRejected if schema_version >= 10 => {
-            tool_intent_rejected_payload_schema_descriptor()
-        }
-        LedgerEventKind::ToolIntentPermissionChecked
-        | LedgerEventKind::ToolIntentApproved
-        | LedgerEventKind::ToolIntentDenied
-            if schema_version >= 5 =>
-        {
-            tool_intent_payload_schema_descriptor()
-        }
-        LedgerEventKind::ToolExecutionRequested if schema_version >= 5 => {
-            tool_execution_requested_payload_schema_descriptor()
-        }
-        LedgerEventKind::ToolExecutionPermissionChecked if schema_version >= 5 => {
-            tool_execution_permission_payload_schema_descriptor()
-        }
-        LedgerEventKind::ToolExecutionDenied if schema_version >= 5 => {
-            tool_execution_terminal_payload_schema_descriptor("Denied")
-        }
-        LedgerEventKind::McpToolExecutionApproved if schema_version >= 6 => {
-            mcp_tool_execution_approved_payload_schema_descriptor()
-        }
-        LedgerEventKind::ToolExecutionCompleted if schema_version >= 6 => {
-            tool_execution_terminal_payload_schema_descriptor("Completed")
-        }
-        LedgerEventKind::ToolExecutionFailed if schema_version >= 6 => {
-            tool_execution_terminal_payload_schema_descriptor("Failed")
-        }
-        LedgerEventKind::CodebaseIndexPermissionChecked if schema_version >= 7 => {
-            codebase_index_permission_payload_schema_descriptor()
-        }
-        LedgerEventKind::CodebaseIndexSnapshotBuilt if schema_version >= 7 => {
-            codebase_index_snapshot_built_payload_schema_descriptor()
-        }
-        LedgerEventKind::CodebaseIndexQueryCompleted if schema_version >= 7 => {
-            codebase_index_query_completed_payload_schema_descriptor()
-        }
-        LedgerEventKind::CodebaseIndexSelectionReadCompleted if schema_version >= 7 => {
-            codebase_index_selection_read_completed_payload_schema_descriptor()
-        }
-        LedgerEventKind::CodebaseIndexPromptContextMaterialized if schema_version >= 7 => {
-            codebase_index_prompt_context_materialized_payload_schema_descriptor()
-        }
-        LedgerEventKind::VerificationRecoveryContextReadMaterialized if schema_version >= 7 => {
-            verification_recovery_context_read_payload_schema_descriptor()
-        }
-        LedgerEventKind::AgentLoopStarted if schema_version >= 8 => {
-            agent_loop_started_payload_schema_descriptor()
-        }
-        LedgerEventKind::AgentLoopCompleted if schema_version >= 8 => {
-            agent_loop_completed_payload_schema_descriptor()
-        }
-        LedgerEventKind::TaskCompletionAccepted if schema_version >= 8 => {
-            task_completion_accepted_payload_schema_descriptor()
-        }
-        LedgerEventKind::PromptBuilt | LedgerEventKind::SecondPassPromptBuilt
-            if schema_version >= 8 =>
-        {
-            prompt_built_payload_schema_descriptor()
-        }
-        LedgerEventKind::PromptSensitiveScanCompleted | LedgerEventKind::PromptSensitiveScanFailed
-            if schema_version >= 8 =>
-        {
-            prompt_sensitive_scan_payload_schema_descriptor()
-        }
-        LedgerEventKind::LlmRequestCreated | LedgerEventKind::SecondPassLlmRequestCreated
-            if schema_version >= 8 =>
-        {
-            llm_request_created_payload_schema_descriptor()
-        }
-        LedgerEventKind::LlmRequestFailed | LedgerEventKind::SecondPassLlmRequestFailed
-            if schema_version >= 8 =>
-        {
-            llm_request_failed_payload_schema_descriptor()
-        }
-        LedgerEventKind::LlmResponseReceived | LedgerEventKind::SecondPassLlmResponseReceived
-            if schema_version >= 8 =>
-        {
-            llm_response_received_payload_schema_descriptor()
-        }
-        LedgerEventKind::TaskStarted if schema_version >= 9 => {
-            task_started_payload_schema_descriptor()
-        }
-        LedgerEventKind::TaskRunning if schema_version >= 9 => {
-            task_running_payload_schema_descriptor()
-        }
-        LedgerEventKind::ModeResolved if schema_version >= 9 => {
-            mode_resolved_payload_schema_descriptor()
-        }
-        LedgerEventKind::ExternalModePackChildProvenanceDenied if schema_version >= 9 => {
-            external_modepack_child_denied_payload_schema_descriptor()
-        }
-        LedgerEventKind::ExternalModePackTaskProvenanceDenied if schema_version >= 9 => {
-            external_modepack_task_denied_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskOrchestrationQueued if schema_version >= 11 => {
-            subtask_orchestration_queued_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskHandoffPrepared if schema_version >= 11 => {
-            subtask_handoff_prepared_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskSchedulerReadinessRecorded if schema_version >= 11 => {
-            subtask_scheduler_readiness_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskDispatchPlanPrepared if schema_version >= 11 => {
-            subtask_dispatch_plan_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskDispatchContractPrepared if schema_version >= 11 => {
-            subtask_dispatch_contract_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskDispatchAdmissionEvaluated if schema_version >= 11 => {
-            subtask_dispatch_admission_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskDispatchReadinessSnapshotRecorded if schema_version >= 11 => {
-            subtask_dispatch_readiness_snapshot_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskDispatcherGuardVerdictRecorded if schema_version >= 11 => {
-            subtask_dispatcher_guard_verdict_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskDispatchDecisionRecorded if schema_version >= 11 => {
-            subtask_dispatch_decision_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskDispatchCandidateManifestRecorded if schema_version >= 11 => {
-            subtask_dispatch_candidate_manifest_payload_schema_descriptor()
-        }
-        LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded if schema_version >= 11 => {
-            subtask_dispatch_handoff_envelope_payload_schema_descriptor()
-        }
-        LedgerEventKind::ParentJoinContinuationFingerprintConsumed if schema_version >= 11 => {
-            parent_join_continuation_consumed_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchProposed if schema_version >= 12 => {
-            workspace_patch_proposed_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchApprovalRequested if schema_version >= 12 => {
-            workspace_patch_approval_requested_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchApproved if schema_version >= 12 => {
-            workspace_patch_approved_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchRejected if schema_version >= 12 => {
-            workspace_patch_rejected_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchPreflightSnapshotCreated if schema_version >= 12 => {
-            workspace_patch_preflight_snapshot_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchApplyPlanCreated if schema_version >= 12 => {
-            workspace_patch_apply_plan_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchApplyCapabilityChecked if schema_version >= 12 => {
-            workspace_patch_apply_capability_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchApplyDryRunChecked if schema_version >= 12 => {
-            workspace_patch_apply_dry_run_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchApplyResultRecorded if schema_version >= 12 => {
-            workspace_patch_apply_result_payload_schema_descriptor()
-        }
-        LedgerEventKind::WorkspacePatchReadinessReportCreated if schema_version >= 12 => {
-            workspace_patch_readiness_report_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessContinuationDecisionRecorded if schema_version >= 13 => {
-            headless_continuation_decision_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessRunSessionAdvanced if schema_version >= 13 => {
-            headless_run_session_advanced_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessRunSessionDriveCompleted if schema_version >= 13 => {
-            headless_run_session_drive_completed_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessRunProductEvidenceMatrixDerived if schema_version >= 13 => {
-            headless_product_evidence_matrix_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessRunSelectedProductGapClosureRecorded if schema_version >= 13 => {
-            headless_selected_product_gap_closure_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded if schema_version >= 13 => {
-            headless_product_completion_decision_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessJourneyStarted if schema_version >= 13 => {
-            headless_journey_started_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessJourneyRouteResumed if schema_version >= 13 => {
-            headless_journey_route_resumed_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessJourneyClosed if schema_version >= 13 => {
-            headless_journey_closed_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessJourneyExecuted if schema_version >= 13 => {
-            headless_journey_executed_payload_schema_descriptor()
-        }
-        LedgerEventKind::HeadlessRunCompletionFinalized if schema_version >= 13 => {
-            headless_run_completion_finalized_payload_schema_descriptor()
-        }
-        LedgerEventKind::TaskCompleted => "typed_known_fields_open{known_optional_fields:completion_evidence:object,git:object,late_tool_response:boolean,mcp:object,runtime_deadline:object,status:string,terminal_process_loss:boolean,terminal_race_candidate:string,verification_completion_gate_status:legacy_open;known_field_required:true;additional_fields:true;strict_typed_payload_required_before_release:true}".to_string(),
-        _ => "versioned_open{schema_contract:event-kind-versioned-payload;typed_schema_required_before_release:true}".to_string(),
-    }
-}
-
-fn ledger_payload_instance_shape_fingerprint_input(
-    kind: &LedgerEventKind,
-    descriptor: &str,
-) -> String {
-    format!(
-        "{kind:?}:payload_instance_shape_v{LEDGER_PAYLOAD_SCHEMA_VERSION}:descriptor:{descriptor}"
-    )
+    ledger_payload_contract::ledger_payload_schema_descriptor(&format!("{kind:?}"))
 }
 
 fn ledger_payload_legacy_v1_shape_id(kind: &LedgerEventKind) -> String {
@@ -11646,52 +10976,11 @@ fn ledger_payload_legacy_v1_shape_fingerprint_for_value(
     kind: &LedgerEventKind,
     payload: &serde_json::Value,
 ) -> String {
-    stable_ledger_payload_fingerprint(&format!(
-        "{kind:?}:payload_shape_v1:descriptor:{}",
-        ledger_payload_shape_descriptor(payload)
-    ))
-}
-
-fn ledger_payload_shape_descriptor(value: &serde_json::Value) -> String {
-    match value {
-        serde_json::Value::Null => "null".to_string(),
-        serde_json::Value::Bool(_) => "boolean".to_string(),
-        serde_json::Value::Number(number) if number.is_i64() || number.is_u64() => {
-            "integer".to_string()
-        }
-        serde_json::Value::Number(_) => "number".to_string(),
-        serde_json::Value::String(_) => "string".to_string(),
-        serde_json::Value::Array(values) => {
-            if values.is_empty() {
-                "array<empty>".to_string()
-            } else {
-                let mut item_shapes = values
-                    .iter()
-                    .map(ledger_payload_shape_descriptor)
-                    .collect::<Vec<_>>();
-                item_shapes.sort();
-                item_shapes.dedup();
-                format!("array<{}>", item_shapes.join("|"))
-            }
-        }
-        serde_json::Value::Object(object) => {
-            let fields = object
-                .iter()
-                .map(|(key, value)| format!("{key}:{}", ledger_payload_shape_descriptor(value)))
-                .collect::<Vec<_>>()
-                .join(",");
-            format!("object{{{fields}}}")
-        }
-    }
-}
-
-fn stable_ledger_payload_fingerprint(input: &str) -> String {
-    let mut hash = 0xcbf29ce484222325u64;
-    for byte in input.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    format!("shape-fnv1a64:{hash:016x}")
+    ledger_payload_contract::ledger_payload_instance_shape_fingerprint_for_version(
+        &format!("{kind:?}"),
+        1,
+        payload,
+    )
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -12460,7 +11749,15 @@ mod tests {
                 .expect("build envelope")
                 .expect("payload envelope");
 
-        assert_eq!(base_envelope.schema_version, LEDGER_PAYLOAD_SCHEMA_VERSION);
+        assert_eq!(
+            base_envelope.schema_version,
+            ledger_payload_schema_version(&LedgerEventKind::TaskCompleted)
+        );
+        assert_eq!(base_envelope.schema_version, 3);
+        assert_eq!(
+            ledger_payload_schema_version(&LedgerEventKind::HeadlessRunCompletionFinalized),
+            13
+        );
         assert_eq!(base_envelope.shape_id, base_envelope.schema_id);
         assert_eq!(base_envelope.shape_fingerprint, base_schema);
         assert_eq!(base_envelope.schema_fingerprint, base_schema);
@@ -13107,6 +12404,27 @@ mod tests {
             .expect_err("tool intent payload with unknown field should fail closed");
         assert!(format!("{unknown_field:#}").contains("strict tool schema"));
 
+        let nested_raw_prompt = store
+            .append_task_events_with_payloads(
+                &record,
+                vec![(
+                    LedgerEventKind::ToolIntentApproved,
+                    Some(serde_json::json!({
+                        "tool_id": "workspace.read",
+                        "required_action": "ReadWorkspace",
+                        "allowed": true,
+                        "reason": "allowed by policy",
+                        "request_reason": "Need context.",
+                        "input_summary": {
+                            "bounded": true,
+                            "raw_prompt": "must not be hidden inside opaque evidence"
+                        }
+                    })),
+                )],
+            )
+            .expect_err("nested opaque payload evidence with forbidden keys should fail closed");
+        assert!(format!("{nested_raw_prompt:#}").contains("forbidden bounded opaque key"));
+
         let missing_input_summary = store
             .append_task_events_with_payloads(
                 &record,
@@ -13700,7 +13018,7 @@ mod tests {
                             "task_id": record.task_id.clone(),
                             "run_id": record.run_id.clone(),
                             "acceptance_id": "acceptance_1",
-                            "phase_id": "RRP-5.17",
+                            "phase_id": "RRP-5.18",
                             "milestone": "runtime_release_readiness",
                             "target_capability": "protocol-event-canonization",
                             "concrete_capability_transition": "headless payload strict coverage",
@@ -13947,6 +13265,81 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].kind, LedgerEventKind::TaskCompleted);
+    }
+
+    #[test]
+    fn ledger_read_accepts_legacy_global_v13_but_current_append_uses_event_version() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let run_dir = temp.path().join("runs").join("run_1");
+        fs::create_dir_all(&run_dir).expect("create run dir");
+        let payload = serde_json::json!({"status": "Completed"});
+        let current_envelope =
+            ledger_payload_envelope(&LedgerEventKind::TaskCompleted, Some(&payload))
+                .expect("build envelope")
+                .expect("payload envelope");
+
+        assert_eq!(current_envelope.schema_version, 3);
+        assert_eq!(
+            current_envelope.schema_id,
+            "ledger_payload.TaskCompleted.v3"
+        );
+
+        let legacy_schema_id =
+            ledger_payload_contract::ledger_payload_legacy_schema_id("TaskCompleted", 13);
+        let legacy_schema_fingerprint =
+            ledger_payload_contract::ledger_payload_schema_fingerprint_for_version(
+                "TaskCompleted",
+                13,
+            );
+        let legacy_envelope = LedgerPayloadEnvelope {
+            schema_version: 13,
+            shape_id: legacy_schema_id.clone(),
+            shape_fingerprint: legacy_schema_fingerprint.clone(),
+            schema_id: legacy_schema_id,
+            schema_fingerprint: legacy_schema_fingerprint,
+            instance_shape_fingerprint:
+                ledger_payload_contract::ledger_payload_instance_shape_fingerprint_for_version(
+                    "TaskCompleted",
+                    13,
+                    &payload,
+                ),
+        };
+
+        let append_error = validate_ledger_payload_envelope(
+            &LedgerEventKind::TaskCompleted,
+            &payload,
+            &legacy_envelope,
+        )
+        .expect_err("legacy global v13 envelope must not be accepted for current append");
+        assert!(format!("{append_error:#}").contains("schema_version mismatch"));
+
+        let event = LedgerEvent {
+            event_id: "evt_1".into(),
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            kind: LedgerEventKind::TaskCompleted,
+            timestamp: "2026-09-03T00:00:00Z".into(),
+            payload: Some(payload),
+            payload_envelope: Some(legacy_envelope),
+        };
+        let body = format!(
+            "{}\n",
+            serde_json::to_string(&event).expect("serialize event")
+        );
+        fs::write(run_dir.join("ledger.jsonl"), body).expect("write ledger");
+
+        let events = RunLedger::new(run_dir).read_events().expect("read ledger");
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, LedgerEventKind::TaskCompleted);
+        assert_eq!(
+            events[0]
+                .payload_envelope
+                .as_ref()
+                .expect("legacy envelope")
+                .schema_version,
+            13
+        );
     }
 
     #[test]
@@ -14955,7 +14348,7 @@ mod tests {
         });
         barrier.wait();
 
-        let outcomes = vec![
+        let outcomes = [
             completion.join().expect("completion thread"),
             cancel.join().expect("cancel thread"),
         ];

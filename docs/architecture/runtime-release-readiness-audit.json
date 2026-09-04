@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-  "phase": "RRP-5.17",
-  "phase_title": "Strict Ledger Subtask Orchestration and Dispatch Payload Coverage",
+  "phase": "RRP-5.18",
+  "phase_title": "Ledger Payload Contract Registry and Event Version Baseline",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "5320e89d61db940c4168b0e339cfe7ad1a7db924",
+  "audited_main_commit": "e98590ac81c3b611c8d055bad5b493c960429830",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
     "runtime-release-guard-ci"
@@ -117,7 +117,8 @@
         "Full CI Release Gate hardening remains a later P0 closure phase for frozen install, fmt, audit/SBOM/secret/dependency, and complete release gate policy coverage.",
         "RRP-5.15 extends guard:protocol-event-canonization in the existing CI-invoked VSIX check path to require strict typed subtask orchestration/dispatch payload descriptor tokens, fixtures, and release-blocking open-count accounting.",
         "RRP-5.16 extends guard:protocol-event-canonization in the existing CI-invoked VSIX check path to require strict typed workspace patch payload descriptor tokens, payload_absent approval-request evidence, fixtures, and release-blocking open-count accounting.",
-        "RRP-5.17 extends guard:protocol-event-canonization in the existing CI-invoked VSIX check path to require strict typed headless payload descriptor tokens, fixtures, full typed coverage closure, and release_blocking_open_payload_count 0."
+        "RRP-5.17 extends guard:protocol-event-canonization in the existing CI-invoked VSIX check path to require strict typed headless payload descriptor tokens, fixtures, full typed coverage closure, and release_blocking_open_payload_count 0.",
+        "RRP-5.18 updates guard:protocol-event-canonization so the CI-invoked guard requires protocol-owned event-specific ledger payload schema versions and rejects a single global current schema version for every event; direct .github workflow hardening still requires workflow-scope credentials or an owner-approved equivalent path."
       ],
       "next_action": "Close direct workflow wiring and remaining full CI release-gate hardening only after workflow-scope credentials or an owner-approved equivalent CI-hardening path are available."
     },
@@ -165,9 +166,10 @@
         "RRP-5.5 records one explicit LedgerPayloadSchemaClassification per LedgerEventKind and blocks release while typed_known_fields_open or versioned_open payload families remain.",
         "RRP-5.6 through RRP-5.16 progressively move terminal task, permission decision, selected tool, MCP approval/tool terminal, Codebase Index/verification context, task/LLM lifecycle, task admission/mode-resolution, tool planning/intent parsing, subtask orchestration/dispatch, and workspace patch payload families to strict_typed contracts, with WorkspacePatchApprovalRequested payload_absent.",
         "RRP-5.17 moves the final 11 headless continuation, run-session, product-evidence, journey, and completion-finalization payload families to strict_typed contracts, rejects additional fields and malformed or missing bounded headless evidence, preserves v1 through v12 payload-envelope read compatibility, and reduces release_blocking_open_payload_count from 11 to 0.",
-        "The generated semantic contract records event_payload_schema_classifications, event_payload_schema_fingerprints, strict typed descriptor evidence, payload_schema_fixtures for every typed family including headless events, ledger_event_payload_typed_schema_coverage closed, and release_blocking_open_payload_count 0."
+        "The generated semantic contract records event_payload_schema_classifications, event_payload_schema_fingerprints, strict typed descriptor evidence, payload_schema_fixtures for every typed family including headless events, ledger_event_payload_typed_schema_coverage closed, and release_blocking_open_payload_count 0.",
+        "RRP-5.18 consolidates ledger payload schema authority in brownie-protocol::semantic_contract, replaces the global current payload schema version with event-specific schema versions, keeps legacy v1 through v13 envelope read compatibility, makes brownie-store consume the protocol registry for schema IDs/fingerprints/descriptors, and bounds nested opaque payload object/array evidence recursively."
       ],
-      "next_action": "Closed for current Runtime protocol and ledger payload contract coverage. Future Runtime method, result, enum, LedgerEventKind, or payload schema changes must update the generated semantic contract, compatibility evidence, and guard coverage before release."
+      "next_action": "Closed for current Runtime protocol and ledger payload contract coverage. Future Runtime method, result, enum, LedgerEventKind, or payload schema changes must update the protocol-owned event-specific registry, generated semantic contract, compatibility evidence, and guard coverage before release."
     },
     {
       "id": "runtime-module-decomposition-reevaluation",
@@ -241,5 +243,5 @@
       "next_action": "Do not use these items to block Brownie Runtime release."
     }
   ],
-  "updated_at": "2026-09-04T10:25:00+09:00"
+  "updated_at": "2026-09-04T00:00:00Z"
 }
