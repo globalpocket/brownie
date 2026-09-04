@@ -4969,6 +4969,7 @@ pub(super) fn mode_permissions_payload(policy: &CompiledModePolicy) -> Value {
         "git_inspect": policy.permissions.git_inspect,
         "git_commit": policy.permissions.git_commit,
         "network_access": policy.permissions.network_access,
+        "llm_provider_access": policy.permissions.llm_provider_access,
         "service_control": policy.permissions.service_control,
         "destructive": policy.permissions.destructive,
         "can_spawn_subtasks": policy.permissions.can_spawn_subtasks,

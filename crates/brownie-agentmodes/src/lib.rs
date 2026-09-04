@@ -203,6 +203,8 @@ pub struct ModePermissions {
     #[serde(default)]
     pub git_commit: bool,
     pub network_access: bool,
+    #[serde(default)]
+    pub llm_provider_access: bool,
     pub service_control: bool,
     pub destructive: bool,
     pub can_spawn_subtasks: bool,
@@ -226,6 +228,7 @@ pub enum RuntimeAction {
     WriteWorkspace,
     ExecuteProcess,
     AccessNetwork,
+    AccessLlmProvider,
     ControlService,
     DestructiveOperation,
     SpawnSubtask,
@@ -382,6 +385,7 @@ impl RuntimePermissionGate {
             RuntimeAction::WriteWorkspace => policy.permissions.workspace_write,
             RuntimeAction::ExecuteProcess => policy.permissions.process_exec,
             RuntimeAction::AccessNetwork => policy.permissions.network_access,
+            RuntimeAction::AccessLlmProvider => policy.permissions.llm_provider_access,
             RuntimeAction::ControlService => policy.permissions.service_control,
             RuntimeAction::DestructiveOperation => policy.permissions.destructive,
             RuntimeAction::SpawnSubtask => policy.permissions.can_spawn_subtasks,
@@ -512,6 +516,7 @@ fn permission_reason(policy: &CompiledModePolicy, action: &RuntimeAction, allowe
         RuntimeAction::WriteWorkspace => "workspace writes",
         RuntimeAction::ExecuteProcess => "process execution",
         RuntimeAction::AccessNetwork => "network access",
+        RuntimeAction::AccessLlmProvider => "LLM provider access",
         RuntimeAction::ControlService => "service control",
         RuntimeAction::DestructiveOperation => "destructive operations",
         RuntimeAction::SpawnSubtask => "subtask spawning",
@@ -1217,6 +1222,7 @@ fn permissions_from_agentmodes_v2_permissions(
         git_inspect: false,
         git_commit: false,
         network_access: false,
+        llm_provider_access: true,
         service_control: false,
         destructive: false,
         can_spawn_subtasks: false,
@@ -1679,6 +1685,7 @@ fn permissions_from_agentmodes_groups(
         git_inspect: false,
         git_commit: false,
         network_access: false,
+        llm_provider_access: true,
         service_control: false,
         destructive: false,
         can_spawn_subtasks: false,
@@ -1879,6 +1886,7 @@ fn permissions(
     codebase_index: bool,
     git_inspect: bool,
     git_commit: bool,
+    llm_provider_access: bool,
 ) -> ModePermissions {
     ModePermissions {
         read_only: !workspace_write,
@@ -1887,6 +1895,7 @@ fn permissions(
         git_inspect,
         git_commit,
         network_access: false,
+        llm_provider_access,
         service_control: false,
         destructive: false,
         can_spawn_subtasks,
@@ -1907,7 +1916,7 @@ fn orchestrator() -> CompiledModePolicy {
         prompt_sections: vec![],
         verification_responsibility: None,
         instruction_fingerprint: None,
-        permissions: permissions(false, false, true, true, false, false),
+        permissions: permissions(false, false, true, true, false, false, true),
         workspace_write_scopes: vec![],
         allowed_handoff_targets: None,
         mcp_access: vec![],
@@ -1927,7 +1936,7 @@ fn implementer() -> CompiledModePolicy {
         prompt_sections: vec![],
         verification_responsibility: None,
         instruction_fingerprint: None,
-        permissions: permissions(true, true, false, true, true, true),
+        permissions: permissions(true, true, false, true, true, true, true),
         workspace_write_scopes: vec![],
         allowed_handoff_targets: None,
         mcp_access: vec![],
@@ -1949,7 +1958,7 @@ fn verifier() -> CompiledModePolicy {
         prompt_sections: vec![],
         verification_responsibility: None,
         instruction_fingerprint: None,
-        permissions: permissions(false, true, false, false, true, false),
+        permissions: permissions(false, true, false, false, true, false, true),
         workspace_write_scopes: vec![],
         allowed_handoff_targets: None,
         mcp_access: vec![],
@@ -1977,7 +1986,8 @@ fn provider_runner() -> CompiledModePolicy {
             process_exec: false,
             git_inspect: false,
             git_commit: false,
-            network_access: true,
+            network_access: false,
+            llm_provider_access: true,
             service_control: false,
             destructive: false,
             can_spawn_subtasks: false,
@@ -2078,7 +2088,11 @@ mod tests {
 
         let provider_runner = BuiltinModeRegistry::get("provider-runner").expect("provider-runner");
         assert!(
-            RuntimePermissionGate::check(&provider_runner, RuntimeAction::AccessNetwork).allowed
+            RuntimePermissionGate::check(&provider_runner, RuntimeAction::AccessLlmProvider)
+                .allowed
+        );
+        assert!(
+            !RuntimePermissionGate::check(&provider_runner, RuntimeAction::AccessNetwork).allowed
         );
         assert!(
             !RuntimePermissionGate::check(&provider_runner, RuntimeAction::WriteWorkspace).allowed
@@ -2114,6 +2128,7 @@ mod tests {
                 git_inspect: false,
                 git_commit: false,
                 network_access: false,
+                llm_provider_access: true,
                 service_control: false,
                 destructive: false,
                 can_spawn_subtasks: false,
@@ -2146,6 +2161,7 @@ mod tests {
                 git_inspect: true,
                 git_commit: false,
                 network_access: false,
+                llm_provider_access: true,
                 service_control: false,
                 destructive: false,
                 can_spawn_subtasks: false,

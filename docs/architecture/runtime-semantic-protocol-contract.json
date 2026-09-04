@@ -3308,6 +3308,7 @@
         "WriteWorkspace",
         "ExecuteProcess",
         "AccessNetwork",
+        "AccessLlmProvider",
         "ControlService",
         "DestructiveOperation",
         "SpawnSubtask",
@@ -4270,7 +4271,7 @@
       "required_fields": [
         "task_id"
       ],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:95ca67dc3d1b5653",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:fb775e2d5c068403",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:c403e977c6508e17",
@@ -4511,7 +4512,7 @@
       "result_schema_ref": "#/type_schemas/TaskRecord",
       "result_semantics": "TaskRecord",
       "result_type": "TaskRecord",
-      "schema_fingerprint": "shape-fnv1a64:54ff6adda58a9b0d",
+      "schema_fingerprint": "shape-fnv1a64:f6285e043316531f",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -5008,7 +5009,7 @@
       "required_fields": [
         "task_id"
       ],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:11e11688aa94d376",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:2630f7628da98d3e",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:f8daecb217ef1613",
@@ -5063,7 +5064,7 @@
       "result_schema_ref": "#/type_schemas/TaskInspectResult",
       "result_semantics": "TaskInspectResult",
       "result_type": "TaskInspectResult",
-      "schema_fingerprint": "shape-fnv1a64:37277cc48556df4d",
+      "schema_fingerprint": "shape-fnv1a64:a6c6127fe8218b03",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -5105,7 +5106,7 @@
       "request_schema_ref": "#/type_schemas/TaskListParams",
       "request_semantics": "List bounded task progress overview",
       "required_fields": [],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:2ee880bcd44f0310",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:fe02efbb6ad1de00",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:25faeef432d4903f",
@@ -5138,7 +5139,7 @@
       "result_schema_ref": "#/type_schemas/TaskListResult",
       "result_semantics": "TaskListResult",
       "result_type": "TaskListResult",
-      "schema_fingerprint": "shape-fnv1a64:2b7411e2d137a75c",
+      "schema_fingerprint": "shape-fnv1a64:2cd1440ae03a42a0",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity_with_optional_bounds"
     },
@@ -7205,7 +7206,7 @@
       "request_schema_ref": null,
       "request_semantics": "List active Runtime mode summaries",
       "required_fields": [],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:5c38bc19f440780d",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:e9cae3954e5a1cc7",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:c7ae9a0b84677027",
@@ -7229,7 +7230,7 @@
       "result_schema_ref": "#/type_schemas/ModeListResult",
       "result_semantics": "ModeListResult",
       "result_type": "ModeListResult",
-      "schema_fingerprint": "shape-fnv1a64:9264ef61b8037dd2",
+      "schema_fingerprint": "shape-fnv1a64:4e46b0677f90b656",
       "unknown_field_policy": "no_params",
       "wire_transform": "no_params"
     },
@@ -7268,7 +7269,7 @@
       "required_fields": [
         "mode_id"
       ],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:5da3b628c5c0e05a",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:f2d6fcaa5d843570",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:c59f0a7e20ca514c",
@@ -7319,7 +7320,7 @@
       "result_schema_ref": "#/type_schemas/ModeSummary",
       "result_semantics": "ModeSummary",
       "result_type": "ModeSummary",
-      "schema_fingerprint": "shape-fnv1a64:be020491ad5d9490",
+      "schema_fingerprint": "shape-fnv1a64:862cc193f3f89926",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -8623,7 +8624,7 @@
       "method": "permission.check",
       "optional_fields": [],
       "param_type": "PermissionCheckParams",
-      "request_recursive_schema_fingerprint": "shape-fnv1a64:cac2a4c2e2825f4e",
+      "request_recursive_schema_fingerprint": "shape-fnv1a64:dbb2964a010c81be",
       "request_schema": {
         "deny_unknown_fields": true,
         "field_shape_fingerprint": "shape-fnv1a64:0a3ee66cd2bfbe70",
@@ -8659,7 +8660,7 @@
         "mode_id",
         "action"
       ],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:4dbee504737990ab",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:11bdf339ba45cc3b",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:f23a0304e0cb6851",
@@ -8710,7 +8711,7 @@
       "result_schema_ref": "#/type_schemas/PermissionCheckResult",
       "result_semantics": "PermissionCheckResult",
       "result_type": "PermissionCheckResult",
-      "schema_fingerprint": "shape-fnv1a64:84d875a9e7ee47a4",
+      "schema_fingerprint": "shape-fnv1a64:5cc37b70ac90125b",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -8733,7 +8734,7 @@
       "request_schema_ref": null,
       "request_semantics": "List Runtime controlled tools",
       "required_fields": [],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:0aa318275bc97ecd",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:6333b139a2e514dd",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:59d0e17999ed58c7",
@@ -8757,7 +8758,7 @@
       "result_schema_ref": "#/type_schemas/ToolListResult",
       "result_semantics": "ToolListResult",
       "result_type": "ToolListResult",
-      "schema_fingerprint": "shape-fnv1a64:828a3648a341638a",
+      "schema_fingerprint": "shape-fnv1a64:fb56703365c79def",
       "unknown_field_policy": "no_params",
       "wire_transform": "no_params"
     },
@@ -8795,7 +8796,7 @@
       "required_fields": [
         "task_id"
       ],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:71c18ae10f0fcd54",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:aeaa9000275344c4",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:0e14fd38ba6d0bf4",
@@ -8846,7 +8847,7 @@
       "result_schema_ref": "#/type_schemas/ToolPlanResult",
       "result_semantics": "ToolPlanResult",
       "result_type": "ToolPlanResult",
-      "schema_fingerprint": "shape-fnv1a64:0f55958d31f87bd2",
+      "schema_fingerprint": "shape-fnv1a64:8db3cc32c37854c4",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -8908,7 +8909,7 @@
         "assistant_content",
         "mode_id"
       ],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:c97315c708d656c8",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:957bf64f329c1e38",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:50a5da7f45c3412d",
@@ -8959,7 +8960,7 @@
       "result_schema_ref": "#/type_schemas/ToolIntentParseResult",
       "result_semantics": "ToolIntentParseResult",
       "result_type": "ToolIntentParseResult",
-      "schema_fingerprint": "shape-fnv1a64:478ae79afab9754b",
+      "schema_fingerprint": "shape-fnv1a64:16cf10558932011e",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -9313,7 +9314,7 @@
       "required_fields": [
         "run_id"
       ],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:1a71fd518b5b2c8e",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:518b6577a0c5551e",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:8d713b46d0098b9c",
@@ -9337,7 +9338,7 @@
       "result_schema_ref": "#/type_schemas/RunInspectResult",
       "result_semantics": "RunInspectResult",
       "result_type": "RunInspectResult",
-      "schema_fingerprint": "shape-fnv1a64:102e4645e25d32a2",
+      "schema_fingerprint": "shape-fnv1a64:ce0a1e597d88f037",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -22372,6 +22373,10 @@
               "default": false,
               "type": "boolean"
             },
+            "llm_provider_access": {
+              "default": false,
+              "type": "boolean"
+            },
             "mcp_tool_access": {
               "default": false,
               "type": "boolean"
@@ -24050,6 +24055,10 @@
               "default": false,
               "type": "boolean"
             },
+            "llm_provider_access": {
+              "default": false,
+              "type": "boolean"
+            },
             "mcp_tool_access": {
               "default": false,
               "type": "boolean"
@@ -24115,6 +24124,7 @@
             "WriteWorkspace",
             "ExecuteProcess",
             "AccessNetwork",
+            "AccessLlmProvider",
             "ControlService",
             "DestructiveOperation",
             "SpawnSubtask",
@@ -24152,6 +24162,7 @@
             "WriteWorkspace",
             "ExecuteProcess",
             "AccessNetwork",
+            "AccessLlmProvider",
             "ControlService",
             "DestructiveOperation",
             "SpawnSubtask",
@@ -30677,6 +30688,7 @@
             "WriteWorkspace",
             "ExecuteProcess",
             "AccessNetwork",
+            "AccessLlmProvider",
             "ControlService",
             "DestructiveOperation",
             "SpawnSubtask",
@@ -32765,6 +32777,7 @@
             "WriteWorkspace",
             "ExecuteProcess",
             "AccessNetwork",
+            "AccessLlmProvider",
             "ControlService",
             "DestructiveOperation",
             "SpawnSubtask",
@@ -33899,6 +33912,7 @@
             "WriteWorkspace",
             "ExecuteProcess",
             "AccessNetwork",
+            "AccessLlmProvider",
             "ControlService",
             "DestructiveOperation",
             "SpawnSubtask",
@@ -35293,6 +35307,7 @@
             "WriteWorkspace",
             "ExecuteProcess",
             "AccessNetwork",
+            "AccessLlmProvider",
             "ControlService",
             "DestructiveOperation",
             "SpawnSubtask",
@@ -37814,6 +37829,7 @@
             "WriteWorkspace",
             "ExecuteProcess",
             "AccessNetwork",
+            "AccessLlmProvider",
             "ControlService",
             "DestructiveOperation",
             "SpawnSubtask",
@@ -38000,6 +38016,7 @@
             "WriteWorkspace",
             "ExecuteProcess",
             "AccessNetwork",
+            "AccessLlmProvider",
             "ControlService",
             "DestructiveOperation",
             "SpawnSubtask",
@@ -38072,6 +38089,7 @@
             "WriteWorkspace",
             "ExecuteProcess",
             "AccessNetwork",
+            "AccessLlmProvider",
             "ControlService",
             "DestructiveOperation",
             "SpawnSubtask",

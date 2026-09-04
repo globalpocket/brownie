@@ -72,10 +72,22 @@ Phase 2.5 adds the explicit `llm.health` JSON-RPC method, specified in `docs/spe
 
 `BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true` is required before strict enabled OpenAI-compatible `task.run` may make network LLM calls. The default is false. `llm.status` and `runtime.config.get` expose `task_run_network_allowed`; `runtime.diagnostics.get` reports `TASK_RUN_NETWORK_ALLOWED` or `TASK_RUN_NETWORK_NOT_ALLOWED` for strict enabled OpenAI-compatible profiles. Missing guard is a warning in diagnostics and a pre-network `task.run` error. Non-strict OpenAI-compatible `task.run` falls back to Fake. See `docs/specifications/real-provider-task-run-smoke-spec-v0.md`.
 
-M15.2 additionally requires the task's resolved runtime mode to allow `AccessNetwork` before strict enabled OpenAI-compatible `task.run` may enter real-provider execution. This is separate from `BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK`: the environment/config guard opts the process into provider network use, while the runtime permission check authorizes the individual task mode at the final side-effect boundary. Denial records only bounded permission and provider-failure metadata and must not append provider request/response evidence, contact the provider, or expose raw prompts, provider responses, request bodies, API keys, Authorization/Bearer values, file content, commands, environment values, absolute paths, or canonical paths. Fake-provider and non-strict fallback task runs do not require `AccessNetwork`.
+Strict enabled OpenAI-compatible `task.run` real-provider execution requires
+the task's resolved runtime mode to allow `AccessLlmProvider`. This is separate
+from `BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK`: the environment/config guard opts the
+process into provider network use, while the runtime permission check authorizes
+the individual task mode at the final LLM provider side-effect boundary.
+Generic `AccessNetwork` remains reserved for non-provider network tools and
+does not gate the configured LLM provider path. Denial records only bounded
+permission and provider-failure metadata and must not append provider
+request/response evidence, contact the provider, or expose raw prompts,
+provider responses, request bodies, API keys, Authorization/Bearer values, file
+content, commands, environment values, absolute paths, or canonical paths.
+Fake-provider and non-strict fallback task runs do not require
+`AccessLlmProvider`.
 
 For CLI-driven local provider smoke runs, `BROWNIE_CLI_RUN_MODE_ID=provider-runner`
-requests Brownie's built-in network-capable provider-runner mode for the
+requests Brownie's built-in provider-capable provider-runner mode for the
 admitted task while keeping runtime permission enforcement authoritative.
 With a strict OpenAI-compatible LAN endpoint configured and
 `BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true`, this permits the expected

@@ -123,6 +123,7 @@ impl BuiltinToolRegistry {
             tool("process.exec", "Process Exec", "Dry-run definition for process execution requests; no commands are executed in Phase 1.6.", RuntimeAction::ExecuteProcess),
             subtask_spawn_tool(),
             tool("network.access", "Network Access", "Dry-run definition for network access requests.", RuntimeAction::AccessNetwork),
+            tool("llm.provider.access", "LLM Provider Access", "Dry-run definition for configured LLM provider access requests.", RuntimeAction::AccessLlmProvider),
             tool("service.control", "Service Control", "Dry-run definition for service control requests.", RuntimeAction::ControlService),
             tool("destructive.operation", "Destructive Operation", "Dry-run definition for destructive operation requests.", RuntimeAction::DestructiveOperation),
         ]
@@ -4054,6 +4055,7 @@ mod tests {
                 "process.exec",
                 "subtask.spawn",
                 "network.access",
+                "llm.provider.access",
                 "service.control",
                 "destructive.operation"
             ]
@@ -4075,6 +4077,7 @@ mod tests {
                 "workspace_write": true,
                 "process_exec": true,
                 "network_access": true,
+                "llm_provider_access": true,
                 "service_control": true,
                 "destructive": true,
                 "can_spawn_subtasks": true,
@@ -4096,6 +4099,7 @@ mod tests {
                     git_inspect: true,
                     git_commit: true,
                     network_access: true,
+                    llm_provider_access: true,
                     service_control: true,
                     destructive: true,
                     can_spawn_subtasks: true,
@@ -4123,6 +4127,14 @@ mod tests {
                 "{tool_id} must remain denied for trusted external Mode Packs in v0"
             );
         }
+        let llm_provider_tool =
+            BuiltinToolRegistry::get("llm.provider.access").expect("builtin tool");
+        let llm_provider_decision =
+            RuntimePermissionGate::check(policy, llm_provider_tool.required_action);
+        assert!(
+            llm_provider_decision.allowed,
+            "configured LLM provider access is separate from generic network access"
+        );
     }
 
     #[test]

@@ -1113,6 +1113,7 @@ fn mode_list_payload(result: &Value) -> Result<Value, RuntimeClientError> {
             "workspace_write",
             "process_exec",
             "network_access",
+            "llm_provider_access",
             "service_control",
             "destructive",
             "can_spawn_subtasks",
@@ -1376,6 +1377,7 @@ fn validate_mode_list_result(result: &Value) -> Result<(), RuntimeClientError> {
             "workspace_write",
             "process_exec",
             "network_access",
+            "llm_provider_access",
             "service_control",
             "destructive",
             "can_spawn_subtasks",
@@ -3888,11 +3890,12 @@ fn render_mode_list(result: &Value) -> Result<String, RuntimeClientError> {
         output.push_str(&format!("  {mode_id} {display_name}\n"));
         output.push_str(&format!("    role: {role}\n"));
         output.push_str(&format!(
-            "    permissions: read_only={} workspace_write={} process_exec={} network_access={} service_control={} destructive={} can_spawn_subtasks={} codebase_index={}\n",
+            "    permissions: read_only={} workspace_write={} process_exec={} network_access={} llm_provider_access={} service_control={} destructive={} can_spawn_subtasks={} codebase_index={}\n",
             display_bool(permissions, "read_only")?,
             display_bool(permissions, "workspace_write")?,
             display_bool(permissions, "process_exec")?,
             display_bool(permissions, "network_access")?,
+            display_bool(permissions, "llm_provider_access")?,
             display_bool(permissions, "service_control")?,
             display_bool(permissions, "destructive")?,
             display_bool(permissions, "can_spawn_subtasks")?,

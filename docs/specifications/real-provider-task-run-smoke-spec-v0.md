@@ -17,8 +17,8 @@ Optional local endpoint smoke:
 
 `BROWNIE_CLI_RUN_MODE_ID` is a CLI transport hint only. It requests the task
 mode in the runtime-owned `task.start` admission payload and does not grant
-network access by itself. The runtime still resolves the mode, checks
-`AccessNetwork`, requires `BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true`, applies
+provider access by itself. The runtime still resolves the mode, checks
+`AccessLlmProvider`, requires `BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true`, applies
 provider budget and sensitive-content guards, and denies the task before any
 provider request when those checks fail.
 

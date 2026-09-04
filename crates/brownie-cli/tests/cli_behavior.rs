@@ -1094,7 +1094,7 @@ fn list_tasks_rejects_malformed_runtime_progress_groups() {
 fn mode_list_invokes_runtime_mode_list_and_prints_bounded_human_output() {
     let runtime = fake_runtime(
         "mode-list",
-        r#"{"jsonrpc":"2.0","id":1,"result":{"modes":[{"mode_id":"orchestrator","display_name":"Orchestrator","role_definition":"Break down and coordinate bounded work","permissions":{"read_only":true,"workspace_write":false,"process_exec":false,"network_access":false,"service_control":false,"destructive":false,"can_spawn_subtasks":true,"codebase_index":true}}]}}"#,
+        r#"{"jsonrpc":"2.0","id":1,"result":{"modes":[{"mode_id":"orchestrator","display_name":"Orchestrator","role_definition":"Break down and coordinate bounded work","permissions":{"read_only":true,"workspace_write":false,"process_exec":false,"network_access":false,"llm_provider_access":true,"service_control":false,"destructive":false,"can_spawn_subtasks":true,"codebase_index":true}}]}}"#,
     );
     let capture = runtime.with_file_name("request.json");
 
@@ -1128,7 +1128,7 @@ fn mode_list_invokes_runtime_mode_list_and_prints_bounded_human_output() {
 fn mode_list_json_uses_runtime_owned_bounded_projection() {
     let runtime = fake_runtime(
         "mode-list-json",
-        r#"{"jsonrpc":"2.0","id":1,"result":{"modes":[{"mode_id":"orchestrator","display_name":"Orchestrator","role_definition":"Break down and coordinate bounded work","permissions":{"read_only":true,"workspace_write":false,"process_exec":false,"network_access":false,"service_control":false,"destructive":false,"can_spawn_subtasks":true,"codebase_index":true}}]}}"#,
+        r#"{"jsonrpc":"2.0","id":1,"result":{"modes":[{"mode_id":"orchestrator","display_name":"Orchestrator","role_definition":"Break down and coordinate bounded work","permissions":{"read_only":true,"workspace_write":false,"process_exec":false,"network_access":false,"llm_provider_access":true,"service_control":false,"destructive":false,"can_spawn_subtasks":true,"codebase_index":true}}]}}"#,
     );
 
     let output = Command::new(brownie())
@@ -3499,6 +3499,7 @@ fn activate_trusted_current_agentmodes_via_signed_candidate_for_cli(
             "git_inspect": false,
             "git_commit": false,
             "network_access": false,
+            "llm_provider_access": true,
             "service_control": false,
             "destructive": false,
             "can_spawn_subtasks": false,
@@ -3809,6 +3810,7 @@ fn cli_mode_permissions_payload(
         "git_inspect": policy.permissions.git_inspect,
         "git_commit": policy.permissions.git_commit,
         "network_access": policy.permissions.network_access,
+        "llm_provider_access": policy.permissions.llm_provider_access,
         "service_control": policy.permissions.service_control,
         "destructive": policy.permissions.destructive,
         "can_spawn_subtasks": policy.permissions.can_spawn_subtasks,
@@ -3886,6 +3888,7 @@ fn cli_external_modepack_policy_fingerprint(
             "git_inspect": policy.permissions.git_inspect,
             "git_commit": policy.permissions.git_commit,
             "network_access": policy.permissions.network_access,
+            "llm_provider_access": policy.permissions.llm_provider_access,
             "service_control": policy.permissions.service_control,
             "destructive": policy.permissions.destructive,
             "can_spawn_subtasks": policy.permissions.can_spawn_subtasks,

@@ -118,13 +118,14 @@ request budgets, strict/fallback behavior, and provider selection remain
 unchanged. Replaying a terminal retry task reuses the existing terminal replay
 path without duplicate `TaskRunning` or provider failure events.
 
-M15.2 adds a runtime permission check to that provider boundary. Before strict
-OpenAI-compatible `task.run` may enter real-provider execution, the Rust runtime
-revalidates the running task's resolved mode policy for `AccessNetwork`. The
-process-level task-run network guard, provider configuration, request budget,
-and sensitive prompt guard still apply; the new check binds the external
-provider side effect to runtime mode permission at the point of use. Modes that
-lack `AccessNetwork`, or missing/malformed mode evidence, fail closed with
+Strict OpenAI-compatible `task.run` real-provider execution has a dedicated
+runtime permission check. The Rust runtime revalidates the running task's
+resolved mode policy for `AccessLlmProvider`, while generic `AccessNetwork`
+remains reserved for non-provider network tools. The process-level task-run
+network guard, provider configuration, request budget, and sensitive prompt
+guard still apply; the provider permission binds the configured external LLM
+side effect to runtime mode permission at the point of use. Modes that lack
+`AccessLlmProvider`, or missing/malformed mode evidence, fail closed with
 bounded provider-failure metadata before provider request/response ledger
 evidence or an external provider hit. Fake-provider and non-strict fallback
 paths remain no-network-compatible.
