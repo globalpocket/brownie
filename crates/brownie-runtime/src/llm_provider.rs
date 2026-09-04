@@ -337,6 +337,7 @@ fn status_from_config(config: &BrownieConfig) -> Result<RuntimeLlmProviderStatus
             model,
             api_key_env,
             strict,
+            max_tokens: _,
             budget,
             sensitive_guard,
         } => {
@@ -444,6 +445,7 @@ pub fn llm_provider_from_workspace_for_task_run(
         base_url,
         model,
         api_key_env,
+        max_tokens,
         ..
     } = profile
     {
@@ -456,6 +458,7 @@ pub fn llm_provider_from_workspace_for_task_run(
                 base_url: base_url.clone(),
                 model: model.clone(),
                 api_key_env,
+                max_tokens: max_tokens.unwrap_or(brownie_llm::OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS),
             },
             api_key,
         )))
@@ -959,6 +962,7 @@ fn openai_provider_from_workspace_for_health(
         base_url,
         model,
         api_key_env,
+        max_tokens,
         ..
     } = profile
     else {
@@ -974,6 +978,7 @@ fn openai_provider_from_workspace_for_health(
             base_url: base_url.clone(),
             model: model.clone(),
             api_key_env,
+            max_tokens: max_tokens.unwrap_or(brownie_llm::OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS),
         },
         api_key,
     ))
