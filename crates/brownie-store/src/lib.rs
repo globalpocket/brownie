@@ -6088,7 +6088,7 @@ pub struct LedgerPayloadEnvelope {
     pub instance_shape_fingerprint: String,
 }
 
-pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 9;
+pub const LEDGER_PAYLOAD_SCHEMA_VERSION: u64 = 10;
 pub const LEDGER_PAYLOAD_SHAPE_VERSION: u64 = LEDGER_PAYLOAD_SCHEMA_VERSION;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6133,9 +6133,12 @@ pub fn ledger_payload_schema_classification(
         | LedgerEventKind::TaskCancelled
         | LedgerEventKind::PermissionChecked
         | LedgerEventKind::PermissionDenied
+        | LedgerEventKind::ToolPlanned
         | LedgerEventKind::ToolPermissionChecked
         | LedgerEventKind::ToolPlanApproved
         | LedgerEventKind::ToolPlanDenied
+        | LedgerEventKind::ToolIntentParsed
+        | LedgerEventKind::ToolIntentRejected
         | LedgerEventKind::ToolIntentPermissionChecked
         | LedgerEventKind::ToolIntentApproved
         | LedgerEventKind::ToolIntentDenied
@@ -6294,9 +6297,16 @@ fn validate_strict_ledger_payload_schema(
         LedgerEventKind::PermissionChecked | LedgerEventKind::PermissionDenied => {
             validate_permission_payload_schema(kind, payload)
         }
+        LedgerEventKind::ToolPlanned => validate_tool_planned_payload_schema(kind, payload),
         LedgerEventKind::ToolPermissionChecked
         | LedgerEventKind::ToolPlanApproved
         | LedgerEventKind::ToolPlanDenied => validate_tool_plan_payload_schema(kind, payload),
+        LedgerEventKind::ToolIntentParsed => {
+            validate_tool_intent_parsed_payload_schema(kind, payload)
+        }
+        LedgerEventKind::ToolIntentRejected => {
+            validate_tool_intent_rejected_payload_schema(kind, payload)
+        }
         LedgerEventKind::ToolIntentPermissionChecked
         | LedgerEventKind::ToolIntentApproved
         | LedgerEventKind::ToolIntentDenied => validate_tool_intent_payload_schema(kind, payload),
@@ -6529,6 +6539,38 @@ fn validate_tool_plan_payload_schema(
     validate_required_payload_string_field(object, "required_action")?;
     validate_required_payload_bool_field(object, "allowed")?;
     validate_required_payload_string_field(object, "reason")?;
+    Ok(())
+}
+
+fn validate_tool_planned_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object = validate_known_payload_object(kind, payload, TOOL_PLANNED_KNOWN_PAYLOAD_FIELDS)?;
+    validate_required_payload_string_array_field(object, "tool_ids")?;
+    Ok(())
+}
+
+fn validate_tool_intent_parsed_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object =
+        validate_known_payload_object(kind, payload, TOOL_INTENT_PARSED_KNOWN_PAYLOAD_FIELDS)?;
+    validate_required_payload_string_array_field(object, "tool_ids")?;
+    validate_required_payload_object_field(object, "parser")?;
+    Ok(())
+}
+
+fn validate_tool_intent_rejected_payload_schema(
+    kind: &LedgerEventKind,
+    payload: &serde_json::Value,
+) -> Result<()> {
+    let object =
+        validate_known_payload_object(kind, payload, TOOL_INTENT_REJECTED_KNOWN_PAYLOAD_FIELDS)?;
+    validate_required_payload_string_field(object, "tool_id")?;
+    validate_required_payload_string_field(object, "reason")?;
+    validate_required_payload_string_field(object, "code")?;
     Ok(())
 }
 
@@ -7876,6 +7918,12 @@ const EXTERNAL_MODEPACK_TASK_DENIED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
 const TOOL_PLAN_KNOWN_PAYLOAD_FIELDS: &[&str] =
     &["allowed", "reason", "required_action", "tool_id"];
 
+const TOOL_PLANNED_KNOWN_PAYLOAD_FIELDS: &[&str] = &["tool_ids"];
+
+const TOOL_INTENT_PARSED_KNOWN_PAYLOAD_FIELDS: &[&str] = &["parser", "tool_ids"];
+
+const TOOL_INTENT_REJECTED_KNOWN_PAYLOAD_FIELDS: &[&str] = &["code", "reason", "tool_id"];
+
 const TOOL_INTENT_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "allowed",
     "input_summary",
@@ -8588,9 +8636,12 @@ fn ledger_payload_schema_descriptor(kind: &LedgerEventKind) -> String {
         LedgerEventKind::PermissionChecked | LedgerEventKind::PermissionDenied => {
             permission_payload_schema_descriptor()
         }
+        LedgerEventKind::ToolPlanned => tool_planned_payload_schema_descriptor(),
         LedgerEventKind::ToolPermissionChecked
         | LedgerEventKind::ToolPlanApproved
         | LedgerEventKind::ToolPlanDenied => tool_plan_payload_schema_descriptor(),
+        LedgerEventKind::ToolIntentParsed => tool_intent_parsed_payload_schema_descriptor(),
+        LedgerEventKind::ToolIntentRejected => tool_intent_rejected_payload_schema_descriptor(),
         LedgerEventKind::ToolIntentPermissionChecked
         | LedgerEventKind::ToolIntentApproved
         | LedgerEventKind::ToolIntentDenied => tool_intent_payload_schema_descriptor(),
@@ -8676,6 +8727,18 @@ fn permission_payload_schema_descriptor() -> String {
 
 fn tool_plan_payload_schema_descriptor() -> String {
     "strict_typed{payload_optional:false;required_fields:allowed:boolean,reason:string,required_action:string,tool_id:string;additional_fields:false;tool_plan_decision_payload:true}".to_string()
+}
+
+fn tool_planned_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:tool_ids:array<string>;additional_fields:false;tool_planned_inventory_payload:true}".to_string()
+}
+
+fn tool_intent_parsed_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:parser:object,tool_ids:array<string>;additional_fields:false;tool_intent_parsed_payload:true}".to_string()
+}
+
+fn tool_intent_rejected_payload_schema_descriptor() -> String {
+    "strict_typed{payload_optional:false;required_fields:code:string,reason:string,tool_id:string;additional_fields:false;tool_intent_rejected_payload:true}".to_string()
 }
 
 fn tool_intent_payload_schema_descriptor() -> String {
@@ -8800,12 +8863,21 @@ fn ledger_payload_legacy_schema_descriptor(kind: &LedgerEventKind, schema_versio
         {
             permission_payload_schema_descriptor()
         }
+        LedgerEventKind::ToolPlanned if schema_version >= 10 => {
+            tool_planned_payload_schema_descriptor()
+        }
         LedgerEventKind::ToolPermissionChecked
         | LedgerEventKind::ToolPlanApproved
         | LedgerEventKind::ToolPlanDenied
             if schema_version >= 5 =>
         {
             tool_plan_payload_schema_descriptor()
+        }
+        LedgerEventKind::ToolIntentParsed if schema_version >= 10 => {
+            tool_intent_parsed_payload_schema_descriptor()
+        }
+        LedgerEventKind::ToolIntentRejected if schema_version >= 10 => {
+            tool_intent_rejected_payload_schema_descriptor()
         }
         LedgerEventKind::ToolIntentPermissionChecked
         | LedgerEventKind::ToolIntentApproved
@@ -9841,6 +9913,21 @@ mod tests {
             LedgerEventKind::ModeResolved,
             LedgerEventKind::ExternalModePackChildProvenanceDenied,
             LedgerEventKind::ExternalModePackTaskProvenanceDenied,
+        ] {
+            let classification = ledger_payload_schema_classification(&kind);
+            assert_eq!(classification.as_str(), "strict_typed", "{kind:?}");
+            assert_eq!(classification.contract_status(), "closed", "{kind:?}");
+            assert!(!classification.release_blocking(), "{kind:?}");
+            assert!(
+                ledger_payload_schema_descriptor(&kind).contains("additional_fields:false"),
+                "{kind:?}"
+            );
+        }
+
+        for kind in [
+            LedgerEventKind::ToolPlanned,
+            LedgerEventKind::ToolIntentParsed,
+            LedgerEventKind::ToolIntentRejected,
         ] {
             let classification = ledger_payload_schema_classification(&kind);
             assert_eq!(classification.as_str(), "strict_typed", "{kind:?}");
@@ -11031,6 +11118,100 @@ mod tests {
                 ],
             )
             .expect("strict task admission and mode payloads should append");
+    }
+
+    #[test]
+    fn ledger_payload_write_rejects_malformed_tool_planning_and_intent_parse_payloads() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = TaskStore::new(temp.path());
+        let record = store
+            .start_task(TaskStartParams {
+                goal: "tool planning payload schema".into(),
+                mode_id: None,
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start task");
+
+        for (kind, payload) in [
+            (
+                LedgerEventKind::ToolPlanned,
+                serde_json::json!({"tool_ids": ["workspace.read"], "raw_plan": "not allowed"}),
+            ),
+            (
+                LedgerEventKind::ToolPlanned,
+                serde_json::json!({"tool_ids": [1]}),
+            ),
+            (
+                LedgerEventKind::ToolIntentParsed,
+                serde_json::json!({"tool_ids": ["workspace.write"]}),
+            ),
+            (
+                LedgerEventKind::ToolIntentParsed,
+                serde_json::json!({"tool_ids": ["workspace.write"], "parser": 1}),
+            ),
+            (
+                LedgerEventKind::ToolIntentRejected,
+                serde_json::json!({"tool_id": "unknown"}),
+            ),
+            (
+                LedgerEventKind::ToolIntentRejected,
+                serde_json::json!({
+                    "tool_id": "unknown",
+                    "reason": "not allowed",
+                    "code": false
+                }),
+            ),
+        ] {
+            let error = store
+                .append_task_events_with_payloads(&record, vec![(kind.clone(), Some(payload))])
+                .expect_err("malformed tool planning or intent parse payload should fail closed");
+            assert!(
+                error.to_string().contains("ledger payload"),
+                "{kind:?}: {error}"
+            );
+        }
+
+        store
+            .append_task_events_with_payloads(
+                &record,
+                vec![
+                    (
+                        LedgerEventKind::ToolPlanned,
+                        Some(serde_json::json!({"tool_ids": ["workspace.read", "git.status"]})),
+                    ),
+                    (
+                        LedgerEventKind::ToolIntentParsed,
+                        Some(serde_json::json!({
+                            "tool_ids": ["workspace.write"],
+                            "parser": {
+                                "found_blocks": 1,
+                                "accepted_blocks": 1,
+                                "accepted_requests": 1,
+                                "rejected_requests": 0,
+                                "max_blocks": 4,
+                                "max_block_bytes": 8192,
+                                "max_tool_requests": 8,
+                                "max_input_bytes": 65536,
+                                "max_reason_chars": 512,
+                                "max_workspace_write_content_chars": 200000
+                            }
+                        })),
+                    ),
+                    (
+                        LedgerEventKind::ToolIntentRejected,
+                        Some(serde_json::json!({
+                            "tool_id": "unsafe.tool",
+                            "reason": "tool is not available in the task-pinned mode policy",
+                            "code": "tool_not_allowed"
+                        })),
+                    ),
+                ],
+            )
+            .expect("strict tool planning and intent parse payloads should append");
     }
 
     #[test]
