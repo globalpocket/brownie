@@ -31,23 +31,23 @@
   "metrics": {
     "files": {
       "crates/brownie-runtime/src/lib.rs": {
-        "line_count": 66149,
+        "line_count": 66186,
         "public_items": 3,
         "private_items": 487,
-        "production_line_count": 14368,
-        "test_line_count": 51781,
+        "production_line_count": 14376,
+        "test_line_count": 51810,
         "state_mutation_mentions": 303,
         "durable_write_mentions": 224,
         "permission_decision_mentions": 176,
         "recovery_mentions": 2243,
         "rpc_dispatch_mentions": 90,
         "approval_mentions": 533,
-        "mcp_mentions": 599,
+        "mcp_mentions": 600,
         "product_dod_mentions": 901,
         "diagnostics_mentions": 1814
       },
       "crates/brownie-runtime/src/codebase_index.rs": {
-        "line_count": 1581,
+        "line_count": 1589,
         "public_items": 13,
         "private_items": 35,
         "state_mutation_mentions": 2,
@@ -61,9 +61,9 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/controlled_tool_execution.rs": {
-        "line_count": 5160,
+        "line_count": 5189,
         "public_items": 71,
-        "private_items": 54,
+        "private_items": 57,
         "state_mutation_mentions": 38,
         "durable_write_mentions": 38,
         "permission_decision_mentions": 44,
@@ -89,7 +89,7 @@
         "diagnostics_mentions": 2
       },
       "crates/brownie-runtime/src/headless_journey.rs": {
-        "line_count": 6038,
+        "line_count": 6046,
         "public_items": 16,
         "private_items": 62,
         "state_mutation_mentions": 18,
@@ -103,7 +103,7 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/llm_provider.rs": {
-        "line_count": 972,
+        "line_count": 980,
         "public_items": 13,
         "private_items": 12,
         "state_mutation_mentions": 0,
@@ -117,7 +117,7 @@
         "diagnostics_mentions": 96
       },
       "crates/brownie-runtime/src/mcp_client.rs": {
-        "line_count": 1898,
+        "line_count": 1896,
         "public_items": 19,
         "private_items": 61,
         "state_mutation_mentions": 0,
@@ -173,7 +173,7 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/product_completion.rs": {
-        "line_count": 2214,
+        "line_count": 2224,
         "public_items": 14,
         "private_items": 34,
         "state_mutation_mentions": 3,
@@ -183,7 +183,7 @@
         "rpc_dispatch_mentions": 0,
         "approval_mentions": 0,
         "mcp_mentions": 0,
-        "product_dod_mentions": 403,
+        "product_dod_mentions": 405,
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/product_continuation.rs": {
@@ -201,7 +201,7 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/proposal_apply.rs": {
-        "line_count": 6456,
+        "line_count": 6443,
         "public_items": 4,
         "private_items": 46,
         "state_mutation_mentions": 6,
@@ -229,7 +229,7 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/task_progress.rs": {
-        "line_count": 2342,
+        "line_count": 2354,
         "public_items": 33,
         "private_items": 20,
         "state_mutation_mentions": 0,
@@ -243,7 +243,7 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/verification_recovery.rs": {
-        "line_count": 2544,
+        "line_count": 2517,
         "public_items": 43,
         "private_items": 16,
         "state_mutation_mentions": 6,
@@ -385,5 +385,10 @@
     "module extraction cannot move Runtime permission authority out of Rust Runtime",
     "runtime_release_ready remains false until remaining blockers and owner decisions close",
     "raw prompt/provider response/file content/absolute path/canonical path/secret/environment values/process output are not decomposition evidence"
+  ],
+  "updated_at": "2026-09-04T07:22:30Z",
+  "notes": [
+    "RRP-8.3 updated module metrics after mandatory clippy gate cleanup; runtime-module-decomposition closure status remains unchanged.",
+    "RRP-8.3 updated module metrics after release gate evidence semantics and clippy cleanup; module-decomposition closure status remains unchanged."
   ]
 }

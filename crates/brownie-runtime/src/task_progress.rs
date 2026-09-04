@@ -542,6 +542,10 @@ fn task_list_headless_journey_candidate_contexts(
     Ok(contexts)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "route candidate builder preserves explicit bounded progress evidence fields"
+)]
 pub(super) fn task_list_headless_route_candidate(
     kind: HeadlessContinueRouteKind,
     reason: &str,
@@ -605,6 +609,10 @@ impl HeadlessRouteKindSortKey for TaskListHeadlessRouteCandidate {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "fingerprint intentionally names each route candidate evidence field"
+)]
 pub(super) fn task_list_headless_route_candidate_fingerprint(
     kind: &HeadlessContinueRouteKind,
     task_id: Option<&str>,
@@ -1194,6 +1202,10 @@ pub(super) fn task_list_progress_blocked_sets(
     .collect()
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "fingerprint intentionally names each progress overview evidence collection"
+)]
 pub(super) fn task_list_progress_overview_fingerprint(
     tasks: &[TaskRecord],
     aggregate_sequence: u64,

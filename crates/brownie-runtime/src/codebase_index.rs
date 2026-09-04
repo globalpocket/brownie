@@ -591,6 +591,10 @@ pub(super) fn codebase_index_selection_fingerprint(
     format!("sha256:{}", hex_sha256(parts.join("\n").as_bytes()))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "bounded ledger payload helper mirrors the query evidence fields"
+)]
 fn codebase_index_query_permission_payload(
     mode_id: &str,
     allowed: bool,
@@ -615,6 +619,10 @@ fn codebase_index_query_permission_payload(
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "bounded ledger payload helper mirrors the query and selection evidence fields"
+)]
 fn codebase_index_query_event_payload(
     manifest: &CodebaseIndexSnapshotManifest,
     mode_id: &str,
@@ -1174,10 +1182,10 @@ pub(super) fn validate_selected_index_context_evidence(
     if context.truncated {
         return invalid_selected_index_context("truncated selected content is not allowed");
     }
-    if context.content.as_bytes().len() > MAX_WORKSPACE_READ_BYTES {
+    if context.content.len() > MAX_WORKSPACE_READ_BYTES {
         return invalid_selected_index_context("content exceeds bounded read limit");
     }
-    if context.bytes_read != context.content.as_bytes().len() {
+    if context.bytes_read != context.content.len() {
         return invalid_selected_index_context("bytes_read does not match content byte length");
     }
     let actual_content_sha256 = format!("sha256:{}", hex_sha256(context.content.as_bytes()));

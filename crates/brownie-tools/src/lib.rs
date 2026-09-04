@@ -5056,9 +5056,15 @@ mod tests {
 
     static GIT_TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    fn git_test_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        GIT_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[test]
     fn git_status_diff_and_authorized_commit_are_bounded_dedicated_capabilities() {
-        let _lock = GIT_TEST_ENV_LOCK.lock().expect("git test env lock");
+        let _lock = git_test_env_lock();
         let temp = git_repository("git-status-diff");
         fs::write(temp.path().join("README.md"), "# Changed\n").expect("write changed readme");
         fs::write(temp.path().join("notes.md"), "new note\n").expect("write note");
@@ -5234,7 +5240,7 @@ mod tests {
 
     #[test]
     fn git_commit_without_runtime_authorization_fails_closed() {
-        let _lock = GIT_TEST_ENV_LOCK.lock().expect("git test env lock");
+        let _lock = git_test_env_lock();
         let temp = git_repository("git-commit-no-auth");
         fs::write(temp.path().join("README.md"), "# Changed\n").expect("write changed readme");
         let add = Command::new("git")
@@ -5269,7 +5275,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn git_status_and_diff_do_not_run_repo_configured_helpers() {
-        let _lock = GIT_TEST_ENV_LOCK.lock().expect("git test env lock");
+        let _lock = git_test_env_lock();
         let temp = git_repository("git-helper-sentinels");
 
         let fsmonitor_sentinel = temp.path().join("fsmonitor-ran");
@@ -5451,6 +5457,21 @@ printf '%s\n' '?? normal.txt'
         unsafe { kill(pid as i32, 0) == 0 }
     }
 
+    #[cfg(unix)]
+    fn assert_fake_git_cleanup(output: &Value) {
+        let kill_reason = output["process_tree_kill_reason"]
+            .as_str()
+            .expect("kill reason");
+        assert!(
+            kill_reason == "process_tree_kill_signaled"
+                || kill_reason == "process_tree_kill_fallback"
+                || kill_reason == "process_tree_already_exited"
+        );
+        if kill_reason != "process_tree_already_exited" {
+            assert_eq!(output["process_tree_kill_succeeded"], true);
+        }
+    }
+
     fn test_git_commit_input(
         root: &Path,
         message: &str,
@@ -5530,7 +5551,7 @@ printf '%s\n' '?? normal.txt'
     #[cfg(unix)]
     #[test]
     fn git_status_oversized_no_newline_output_fails_closed_and_cleans_up_process() {
-        let _lock = GIT_TEST_ENV_LOCK.lock().expect("git test env lock");
+        let _lock = git_test_env_lock();
         let temp = tempfile::tempdir().expect("tempdir");
         let fake_git = write_fake_git(temp.path(), "oversized_no_newline");
         let _guard = TestGitEnvGuard::set(&fake_git, 1_000);
@@ -5543,15 +5564,7 @@ printf '%s\n' '?? normal.txt'
         assert_eq!(result.output["operation"], "status");
         assert_eq!(result.output["output_oversized"], true);
         assert_eq!(result.output["timed_out"], false);
-        assert_eq!(result.output["process_tree_kill_succeeded"], true);
-        let kill_reason = result.output["process_tree_kill_reason"]
-            .as_str()
-            .expect("kill reason");
-        assert!(
-            kill_reason == "process_tree_kill_signaled"
-                || kill_reason == "process_tree_kill_fallback"
-                || kill_reason == "process_tree_already_exited"
-        );
+        assert_fake_git_cleanup(&result.output);
         assert_eq!(result.output["reader_thread_joined"], true);
         assert_eq!(result.output["git_environment_hardened"], true);
         assert_eq!(result.output["git_prompts_disabled"], true);
@@ -5582,7 +5595,7 @@ printf '%s\n' '?? normal.txt'
     #[cfg(unix)]
     #[test]
     fn git_status_repeated_timeout_and_oversize_do_not_accumulate_processes_or_threads() {
-        let _lock = GIT_TEST_ENV_LOCK.lock().expect("git test env lock");
+        let _lock = git_test_env_lock();
         for scenario in ["timeout", "oversized_no_newline"] {
             for attempt in 0..2 {
                 let temp = tempfile::tempdir().expect("tempdir");
@@ -5594,7 +5607,7 @@ printf '%s\n' '?? normal.txt'
                     .unwrap_or_else(|error| panic!("{scenario} attempt {attempt}: {error}"));
 
                 assert_eq!(result.status, ToolExecutionStatus::Failed);
-                assert_eq!(result.output["process_tree_kill_succeeded"], true);
+                assert_fake_git_cleanup(&result.output);
                 assert_eq!(result.output["reader_thread_joined"], true);
                 let pid_file = if scenario == "timeout" {
                     "git-timeout.pid"

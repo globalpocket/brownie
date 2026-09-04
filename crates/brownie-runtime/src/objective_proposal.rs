@@ -1051,7 +1051,7 @@ fn objective_proposal_apply_request_fingerprint(
         "expected_apply_plan_id": target.expected_apply_plan_id,
         "expected_target_sha256": target.expected_target_sha256,
         "replacement_content_sha256": replacement_content_sha256,
-        "replacement_content_bytes": target.replacement_content.as_bytes().len(),
+        "replacement_content_bytes": target.replacement_content.len(),
         "replacement_content_chars": target.replacement_content.chars().count(),
     });
     Ok(format!(
@@ -1305,7 +1305,7 @@ fn headless_continue_objective_proposal_apply(
                 "path_fingerprint": target.expected_path_fingerprint.clone(),
                 "expected_target_sha256": target.expected_target_sha256.clone(),
                 "replacement_content_sha256": replacement_content_sha256.clone(),
-                "replacement_content_bytes": target.replacement_content.as_bytes().len(),
+                "replacement_content_bytes": target.replacement_content.len(),
                 "replacement_content_chars": target.replacement_content.chars().count(),
                 "apply_id": proposal_apply_result.apply_result.apply_id.clone(),
                 "apply_status": proposal_apply_result.apply_result.apply_status.clone(),

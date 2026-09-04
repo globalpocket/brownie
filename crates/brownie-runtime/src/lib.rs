@@ -3329,7 +3329,7 @@ fn validate_verification_recovery_context_read(
     let Some(relative_path) = diagnostic.workspace_relative_path.as_deref() else {
         return invalid_verification_recovery_context_read("selected diagnostic has no path");
     };
-    let safe_path = sanitize_bounded_cargo_diagnostic_path(relative_path).ok_or_else(|| {
+    let safe_path = sanitize_bounded_cargo_diagnostic_path(relative_path).ok_or({
         TaskRunAdmissionRejection::InvalidParams(
             "invalid params: verification_recovery_context_read path is unsafe",
         )
@@ -3463,7 +3463,7 @@ fn read_verification_recovery_context_excerpt(
     })?;
     let (excerpt, start_line, end_line, excerpt_truncated) =
         bounded_line_excerpt(content, line, max_bytes);
-    let excerpt_bytes = excerpt.as_bytes().len();
+    let excerpt_bytes = excerpt.len();
     Ok(VerificationRecoveryContextExcerpt {
         sha256: format!("sha256:{}", hex_sha256(excerpt.as_bytes())),
         content: excerpt,
@@ -3487,7 +3487,7 @@ fn bounded_line_excerpt(
     let mut start = center.saturating_sub(3).max(1);
     let mut end = (center + 2).min(lines.len());
     let mut excerpt = join_lines_bounded(&lines, start, end, max_bytes);
-    while excerpt.as_bytes().len() > max_bytes && start < end {
+    while excerpt.len() > max_bytes && start < end {
         if center.saturating_sub(start) >= end.saturating_sub(center) {
             start += 1;
         } else {
@@ -3495,14 +3495,14 @@ fn bounded_line_excerpt(
         }
         excerpt = join_lines_bounded(&lines, start, end, max_bytes);
     }
-    let truncated = start > 1 || end < lines.len() || excerpt.as_bytes().len() >= max_bytes;
+    let truncated = start > 1 || end < lines.len() || excerpt.len() >= max_bytes;
     (excerpt, start, end, truncated)
 }
 
 fn join_lines_bounded(lines: &[&str], start: usize, end: usize, max_bytes: usize) -> String {
     let mut out = lines[(start - 1)..end].join("\n");
-    if out.as_bytes().len() > max_bytes {
-        while out.as_bytes().len() > max_bytes {
+    if out.len() > max_bytes {
+        while out.len() > max_bytes {
             out.pop();
         }
     }
@@ -3681,17 +3681,17 @@ fn validate_task_run_context_budget(
         .contains(&budget.max_prompt_chars)
     {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: context_budget.max_prompt_chars is out of range".into(),
+            "invalid params: context_budget.max_prompt_chars is out of range",
         ));
     }
     if budget.max_ledger_events > TASK_RUN_CONTEXT_BUDGET_MAX_LEDGER_EVENTS {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: context_budget.max_ledger_events is out of range".into(),
+            "invalid params: context_budget.max_ledger_events is out of range",
         ));
     }
     if budget.max_selected_index_chars > TASK_RUN_CONTEXT_BUDGET_MAX_SELECTED_INDEX_CHARS {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: context_budget.max_selected_index_chars is out of range".into(),
+            "invalid params: context_budget.max_selected_index_chars is out of range",
         ));
     }
     let protected_chars = record.task_id.chars().count()
@@ -3706,7 +3706,7 @@ fn validate_task_run_context_budget(
         + 128;
     if protected_chars > budget.max_prompt_chars {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: context_budget cannot fit protected task context".into(),
+            "invalid params: context_budget cannot fit protected task context",
         ));
     }
     Ok(Some(ContextBudget {
@@ -10717,7 +10717,7 @@ fn capture_preflight_snapshot(
     }
     if file_sha256
         .as_deref()
-        .is_some_and(|hash| scan_text_for_sensitive_content(hash))
+        .is_some_and(scan_text_for_sensitive_content)
     {
         file_sha256 = None;
     }
@@ -11431,9 +11431,9 @@ fn task_run_completion_acceptance_from_events(
     completion_evidence: &TaskRunCompletionEvidence,
     verifier_gate_status: &str,
 ) -> Result<Option<TaskRunCompletionAcceptance>, String> {
-    for event in events
+    if let Some(event) = events
         .iter()
-        .filter(|event| event.kind == LedgerEventKind::TaskCompletionAccepted)
+        .find(|event| event.kind == LedgerEventKind::TaskCompletionAccepted)
     {
         let Some(payload) = event.payload.as_ref() else {
             return Err(
@@ -13902,6 +13902,10 @@ fn runtime_action_name(action: &RuntimeAction) -> RuntimeActionName {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "bounded prompt ledger payload keeps prompt/context evidence explicit"
+)]
 fn prompt_built_payload(
     message_count: usize,
     prompt: &brownie_context::PromptView,
@@ -14319,6 +14323,10 @@ fn headless_run_drive_execution_outcome(result: &HeadlessRunDriveResult) -> Valu
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "bounded execution outcome payload keeps terminal evidence explicit"
+)]
 fn execution_outcome_value(
     class_name: &str,
     controller_action: &str,
@@ -15970,7 +15978,7 @@ mod tests {
         assert_eq!(replay_budget.max_ledger_events, 1);
         assert_eq!(replay_budget.selected_index_content_chars, 54);
         assert_eq!(replay_budget.selected_index_materialized_chars, 12);
-        assert_eq!(replay_budget.selected_index_truncated, true);
+        assert!(replay_budget.selected_index_truncated);
     }
 
     #[test]
@@ -20998,7 +21006,7 @@ modes:
             .expect("verification denied event");
         let payload = denied.payload.as_ref().expect("payload");
         assert_eq!(payload["status"], "Denied");
-        assert!(payload["reason"].as_str().expect("reason").len() > 0);
+        assert!(!payload["reason"].as_str().expect("reason").is_empty());
         let task_failed = events
             .iter()
             .find(|event| event.kind == LedgerEventKind::TaskFailed)
@@ -21073,7 +21081,7 @@ modes:
             .expect("verification denied event");
         let payload = denied.payload.as_ref().expect("payload");
         assert_eq!(payload["status"], "Denied");
-        assert!(payload["reason"].as_str().expect("reason").len() > 0);
+        assert!(!payload["reason"].as_str().expect("reason").is_empty());
         let task_failed = events
             .iter()
             .find(|event| event.kind == LedgerEventKind::TaskFailed)
@@ -27674,12 +27682,9 @@ modes:
             "continue_with_scoped_resume_after_persisted_identity_confirmation"
         );
         assert!(persisted.get("next_runtime_invocation").is_none());
-        assert!(
-            persisted
-                .to_string()
-                .contains("Recover exact failed run identity")
-                == false
-        );
+        assert!(!persisted
+            .to_string()
+            .contains("Recover exact failed run identity"));
 
         let conflicting_probe = serde_json::json!({
             "jsonrpc": "2.0",
@@ -27790,12 +27795,9 @@ modes:
         assert_eq!(first_probe["task_id"], tasks[0].task_id);
         assert_eq!(first_probe["run_id"], tasks[0].run_id);
         assert!(first_probe.get("journey_fingerprint").is_none());
-        assert!(
-            first_probe
-                .to_string()
-                .contains("Recover admission after task-only crash window")
-                == false
-        );
+        assert!(!first_probe
+            .to_string()
+            .contains("Recover admission after task-only crash window"));
 
         let second_probe = parse_line(&probe_request)
             .result
@@ -27836,6 +27838,10 @@ modes:
             format!("sha256:{}", seed.to_string().repeat(64))
         }
 
+        #[expect(
+            clippy::too_many_arguments,
+            reason = "test fixture writes explicit route drive evidence fields"
+        )]
         fn write_route_drive(
             store: &BrownieStore,
             base: &HeadlessRunDriveResult,
@@ -33605,7 +33611,7 @@ modes:
             source_intent_summary.request_reason,
             "Orchestrator mode may coordinate subtasks."
         );
-        assert_eq!(source_intent_summary.input_summary.has_path, false);
+        assert!(!source_intent_summary.input_summary.has_path);
         assert_eq!(source_intent_summary.input_summary.field_count, 0);
 
         let child_events = store
@@ -34267,7 +34273,7 @@ modes:
             .clone();
         assert_eq!(pending_sibling.status, TaskStatus::Queued);
 
-        let mut expected_pending_before = vec![first_child.clone(), pending_sibling.clone()];
+        let mut expected_pending_before = [first_child.clone(), pending_sibling.clone()];
         expected_pending_before.sort_by(|left, right| {
             left.source_candidate_id
                 .cmp(&right.source_candidate_id)
@@ -36854,6 +36860,10 @@ modes:
         );
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "test assertion helper checks the complete parent join evidence tuple"
+    )]
     fn assert_parent_join_readiness_outcome_with_child_set(
         outcome: &Value,
         parent_task_id: &str,
@@ -36879,6 +36889,10 @@ modes:
         );
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "test assertion helper checks the complete parent join evidence tuple"
+    )]
     fn assert_parent_join_readiness_outcome_with_child_set_and_non_runnable(
         outcome: &Value,
         parent_task_id: &str,
@@ -36965,6 +36979,10 @@ modes:
         );
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "test assertion helper checks the complete parent inspect evidence tuple"
+    )]
     fn assert_parent_inspect_join_readiness_summary_with_non_runnable(
         summary: &Value,
         parent_task_id: &str,
@@ -37028,6 +37046,10 @@ modes:
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "test assertion helper checks the complete child inspect evidence tuple"
+    )]
     fn assert_child_inspect_parent_join_readiness_summary(
         summary: &Value,
         parent_task_id: &str,
@@ -37096,6 +37118,10 @@ modes:
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "test assertion helper checks the complete consumed parent-join evidence tuple"
+    )]
     fn assert_child_inspect_consumed_parent_join_recovery_summary(
         summary: &Value,
         parent_task_id: &str,
@@ -37176,6 +37202,10 @@ modes:
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "test assertion helper checks the complete consumed parent inspect evidence tuple"
+    )]
     fn assert_parent_inspect_consumed_parent_join_recovery_summary(
         summary: &Value,
         parent_task_id: &str,
@@ -40277,6 +40307,10 @@ modes:
                 .expect("append parent join consumption");
         }
 
+        #[expect(
+            clippy::too_many_arguments,
+            reason = "test fixture creates terminal child records with explicit evidence fields"
+        )]
         fn start_terminal_child(
             store: &BrownieStore,
             parent: &TaskRecord,
@@ -41357,7 +41391,7 @@ modes:
         );
         let handle_a = std::thread::spawn(move || parse_line(&request_a));
         let handle_b = std::thread::spawn(move || parse_line(&request_b));
-        let responses = vec![
+        let responses = [
             handle_a.join().expect("join parent run a"),
             handle_b.join().expect("join parent run b"),
         ];
@@ -58860,8 +58894,7 @@ modes:
             fetched.candidate.content_sha256,
             fetched.candidate.compiled_policy_fingerprint,
             signer_fingerprint,
-            serde_json::to_string(&statement.replace("content_sha256", "content_sha256"))
-                .expect("statement string"),
+            serde_json::to_string(&statement).expect("statement string"),
             general_purpose::STANDARD.encode(signature.to_bytes()),
             general_purpose::STANDARD.encode(public_key_bytes),
         );
@@ -61419,7 +61452,7 @@ content-length: {}
                 .find(|event| event.kind == kind)
                 .unwrap_or_else(|| panic!("missing {kind:?}"));
             let payload = event.payload.as_ref().expect("prompt payload");
-            assert_eq!(payload["message_count"].as_u64().is_some(), true);
+            assert!(payload["message_count"].as_u64().is_some());
             assert_eq!(payload.get("prompt_preview"), None);
             assert_eq!(payload["prompt_preview_redacted"], true);
             assert!(!serde_json::to_string(payload)
@@ -65423,6 +65456,10 @@ content-length: {}
         );
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "test fixture writes explicit MCP tool policy fields"
+    )]
     fn write_mcp_modepack_with_tool_policy(
         workspace_root: &std::path::Path,
         server_command: &str,
