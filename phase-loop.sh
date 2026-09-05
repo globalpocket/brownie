@@ -14,6 +14,7 @@ SUPERVISOR_LOG="$LOG_DIR/supervisor.log"
 BROWNIE_BIN="${BROWNIE_BIN:-"$ROOT_DIR/target/debug/brownie"}"
 PHASE_LOOP_PROMPT="${PHASE_LOOP_PROMPT:-"$ROOT_DIR/phase-loop.md"}"
 PHASE_LOOP_WORKSPACE_ROOT="${PHASE_LOOP_WORKSPACE_ROOT:-"$ROOT_DIR"}"
+PHASE_LOOP_CONTROL_ROOT="${PHASE_LOOP_CONTROL_ROOT:-"/Users/satoshitanaka/.codex/automations/brownie-cli-phase-loop"}"
 PHASE_LOOP_INTERVAL_SECONDS="${PHASE_LOOP_INTERVAL_SECONDS:-5}"
 PHASE_LOOP_FAILURE_BACKOFF_SECONDS="${PHASE_LOOP_FAILURE_BACKOFF_SECONDS:-60}"
 PHASE_LOOP_MAX_FAILURE_BACKOFF_SECONDS="${PHASE_LOOP_MAX_FAILURE_BACKOFF_SECONDS:-900}"
@@ -43,6 +44,8 @@ write_status() {
   escaped_prompt="$(printf '%s' "$PHASE_LOOP_PROMPT" | json_escape)"
   local escaped_workspace
   escaped_workspace="$(printf '%s' "$PHASE_LOOP_WORKSPACE_ROOT" | json_escape)"
+  local escaped_control_root
+  escaped_control_root="$(printf '%s' "$PHASE_LOOP_CONTROL_ROOT" | json_escape)"
   tmp_status="$STATUS_FILE.$$.$RANDOM.tmp"
   cat > "$tmp_status" <<EOF
 {
@@ -55,7 +58,8 @@ write_status() {
   "pid_file": "$PID_FILE",
   "stop_file": "$STOP_FILE",
   "prompt": "$escaped_prompt",
-  "workspace_root": "$escaped_workspace"
+  "workspace_root": "$escaped_workspace",
+  "control_root": "$escaped_control_root"
 }
 EOF
   mv "$tmp_status" "$STATUS_FILE"
@@ -128,10 +132,17 @@ run_brownie_once() {
     write_status "blocked" "$detail" "$run_stamp" "66" "${CONSECUTIVE_FAILURES:-0}"
     return 66
   fi
+  if [ "${BROWNIE_LLM_PROVIDER:-}" = "openai-compatible" ] && [ -z "${BROWNIE_LLM_BASE_URL:-}" ]; then
+    detail="BROWNIE_LLM_BASE_URL is required for the OpenAI-compatible Brownie phase-loop provider."
+    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+    write_status "blocked" "$detail" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-0}"
+    return 78
+  fi
 
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
     export BROWNIE_WORKSPACE_ROOT="${BROWNIE_WORKSPACE_ROOT:-"$PHASE_LOOP_WORKSPACE_ROOT"}"
+    export PHASE_LOOP_CONTROL_ROOT
     if command -v timeout >/dev/null 2>&1; then
       timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" run --file "$PHASE_LOOP_PROMPT"
     else
