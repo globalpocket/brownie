@@ -2506,6 +2506,10 @@ pub(super) fn handle_approved_workspace_intents(
                 | GIT_STATUS_TOOL_ID
                 | GIT_DIFF_TOOL_ID
                 | GIT_COMMIT_TOOL_ID
+                | TIME_NOW_TOOL_ID
+                | RUNTIME_SLEEP_TOOL_ID
+                | WORKSPACE_APPEND_LINE_TOOL_ID
+                | PROCESS_EXEC_TOOL_ID
         );
         let mcp_execution_tool = mcp_client::split_normalized_tool_id(&decision.tool_id).is_some();
         if !decision.allowed {
