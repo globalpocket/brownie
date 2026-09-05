@@ -3386,7 +3386,7 @@ impl ToolIntentParser {
                 ));
                 continue;
             }
-            let input = match obj.get("input") {
+            let mut input = match obj.get("input") {
                 Some(value) if value.is_object() => value.clone(),
                 Some(_) => {
                     rejected.push(rejection(
@@ -3434,6 +3434,7 @@ impl ToolIntentParser {
                 }
             }
             if tool_id_value == RUNTIME_SLEEP_TOOL_ID {
+                normalize_runtime_sleep_input_aliases(&mut input);
                 if let Err(reason) = preflight_runtime_sleep_input(&input) {
                     rejected.push(rejection(Some(tool_id_value), reason, "invalid_input"));
                     continue;
@@ -3494,6 +3495,18 @@ impl ToolIntentParser {
             rejected,
             summary,
         }
+    }
+}
+
+fn normalize_runtime_sleep_input_aliases(input: &mut Value) {
+    let Some(object) = input.as_object_mut() else {
+        return;
+    };
+    if object.contains_key("duration_seconds") || !object.contains_key("seconds") {
+        return;
+    }
+    if let Some(seconds) = object.remove("seconds") {
+        object.insert("duration_seconds".to_string(), seconds);
     }
 }
 
@@ -4233,25 +4246,46 @@ impl ToolPlanner {
                 "edit",
                 "modify",
                 "implement",
-                "append",
                 "create",
                 "update",
                 "save",
+                "replace",
+                "overwrite",
+                "rewrite",
+                "patch",
+                "increment",
                 "修正",
                 "編集",
                 "実装",
-                "追記",
                 "書き込",
                 "作成",
                 "更新",
                 "保存",
-                "追加",
+                "置換",
+                "上書き",
+                "書き換",
+                "変更",
+                "加算",
+                "増や",
             ],
         ) {
             items.push(plan_item(
                 "workspace.write",
                 "Goal suggests implementation or editing work.",
             ));
+        }
+        if contains_any(
+            &goal,
+            &[
+                "append",
+                "append line",
+                "add line",
+                "log line",
+                "追記",
+                "行を追加",
+                "行追加",
+            ],
+        ) {
             items.push(plan_item(
                 WORKSPACE_APPEND_LINE_TOOL_ID,
                 "Goal suggests appending bounded lines to workspace files.",
@@ -4259,7 +4293,17 @@ impl ToolPlanner {
         }
         if contains_any(
             &goal,
-            &["time", "timestamp", "clock", "date", "現在時刻", "時刻"],
+            &[
+                "time",
+                "timestamp",
+                "clock",
+                "current date",
+                "today's date",
+                "todays date",
+                "日付",
+                "現在時刻",
+                "時刻",
+            ],
         ) {
             items.push(plan_item(
                 TIME_NOW_TOOL_ID,
@@ -4275,6 +4319,59 @@ impl ToolPlanner {
         if contains_any(
             &goal,
             &[
+                "git status",
+                "git inspection",
+                "git result context",
+                "working tree",
+                "worktree status",
+                "status result",
+            ],
+        ) {
+            items.push(plan_item(
+                GIT_STATUS_TOOL_ID,
+                "Goal asks for bounded Git status context.",
+            ));
+        }
+        if contains_any(&goal, &["git diff", "diff result", "diff context"]) {
+            items.push(plan_item(
+                GIT_DIFF_TOOL_ID,
+                "Goal asks for bounded Git diff context.",
+            ));
+        }
+        if contains_any(
+            &goal,
+            &[
+                "git commit",
+                "commit staged",
+                "commit change",
+                "commit changes",
+                "commit authorized",
+            ],
+        ) {
+            items.push(plan_item(
+                GIT_COMMIT_TOOL_ID,
+                "Goal asks for a Runtime-authorized Git commit.",
+            ));
+        }
+        if contains_any(
+            &goal,
+            &[
+                "cargo test",
+                "test suite",
+                "run tests",
+                "verify tests",
+                "test",
+                "tests",
+                "テスト",
+            ],
+        ) {
+            items.push(plan_item(
+                VERIFICATION_CARGO_TEST_TOOL_ID,
+                "Goal suggests running the controlled cargo test verifier.",
+            ));
+        } else if contains_any(
+            &goal,
+            &[
                 "cargo check",
                 "typecheck",
                 "type-check",
@@ -4287,19 +4384,38 @@ impl ToolPlanner {
                 VERIFICATION_CARGO_CHECK_TOOL_ID,
                 "Goal suggests running the controlled cargo check verifier.",
             ));
-        } else if contains_any(
-            &goal,
-            &["test", "check", "verify", "fmt", "format", "検証", "テスト"],
-        ) {
+        } else if contains_any(&goal, &["cargo fmt", "fmt", "format", "formatting", "検証"]) {
             items.push(plan_item(
                 VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
                 "Goal suggests running the controlled format verifier.",
             ));
         }
-        if input.mode_id == "orchestrator" {
+        let mode_id = input.mode_id.to_lowercase();
+        if input.mode_id == "orchestrator"
+            || contains_any(&mode_id, &["orchestrator", "coordinator", "dispatcher"])
+            || contains_any(
+                &goal,
+                &[
+                    "orchestrate",
+                    "orchestration",
+                    "coordinate",
+                    "delegate",
+                    "dispatch",
+                    "subtask",
+                    "handoff",
+                    "child task",
+                    "parent orchestration",
+                    "調整",
+                    "委任",
+                    "分担",
+                    "子タスク",
+                    "サブタスク",
+                ],
+            )
+        {
             items.push(plan_item(
                 "subtask.spawn",
-                "Orchestrator mode may coordinate subtasks.",
+                "Orchestration mode or goal may coordinate subtasks.",
             ));
         }
         ToolPlan { items }
@@ -4390,7 +4506,7 @@ mod tests {
     }
 
     #[test]
-    fn planner_includes_workspace_write_for_japanese_append_goals() {
+    fn planner_routes_japanese_append_goals_to_append_line() {
         let plan = ToolPlanner::plan(ToolPlanningInput {
             task_id: "task_1".to_string(),
             goal: "現在時刻を取得し、timestamp.txt に行を追記して、1分待機してください".to_string(),
@@ -4402,10 +4518,69 @@ mod tests {
             .map(|item| item.tool_id.as_str())
             .collect::<Vec<_>>();
         assert!(ids.contains(&WORKSPACE_READ_TOOL_ID));
-        assert!(ids.contains(&WORKSPACE_WRITE_TOOL_ID));
+        assert!(!ids.contains(&WORKSPACE_WRITE_TOOL_ID));
         assert!(ids.contains(&WORKSPACE_APPEND_LINE_TOOL_ID));
         assert!(ids.contains(&TIME_NOW_TOOL_ID));
         assert!(ids.contains(&RUNTIME_SLEEP_TOOL_ID));
+    }
+
+    #[test]
+    fn planner_routes_japanese_overwrite_increment_goals_to_workspace_write_only() {
+        let plan = ToolPlanner::plan(ToolPlanningInput {
+            task_id: "task_1".to_string(),
+            goal: "timestamp.txt の数字に1を加算して上書きしてください".to_string(),
+            mode_id: "implementer".to_string(),
+        });
+        let ids = plan
+            .items
+            .iter()
+            .map(|item| item.tool_id.as_str())
+            .collect::<Vec<_>>();
+        assert!(ids.contains(&WORKSPACE_READ_TOOL_ID));
+        assert!(ids.contains(&WORKSPACE_WRITE_TOOL_ID));
+        assert!(!ids.contains(&WORKSPACE_APPEND_LINE_TOOL_ID));
+    }
+
+    #[test]
+    fn planner_routes_git_inspection_goals_to_git_tools() {
+        let status_plan = ToolPlanner::plan(ToolPlanningInput {
+            task_id: "task_1".to_string(),
+            goal: "Use git status result context to identify the unknown changed file".to_string(),
+            mode_id: "implementer".to_string(),
+        });
+        let status_ids = status_plan
+            .items
+            .iter()
+            .map(|item| item.tool_id.as_str())
+            .collect::<Vec<_>>();
+        assert!(status_ids.contains(&WORKSPACE_READ_TOOL_ID));
+        assert!(status_ids.contains(&GIT_STATUS_TOOL_ID));
+
+        let diff_plan = ToolPlanner::plan(ToolPlanningInput {
+            task_id: "task_2".to_string(),
+            goal: "Inspect git diff context before summarizing the change".to_string(),
+            mode_id: "implementer".to_string(),
+        });
+        let diff_ids = diff_plan
+            .items
+            .iter()
+            .map(|item| item.tool_id.as_str())
+            .collect::<Vec<_>>();
+        assert!(diff_ids.contains(&WORKSPACE_READ_TOOL_ID));
+        assert!(diff_ids.contains(&GIT_DIFF_TOOL_ID));
+
+        let commit_plan = ToolPlanner::plan(ToolPlanningInput {
+            task_id: "task_3".to_string(),
+            goal: "Commit staged change".to_string(),
+            mode_id: "implementer".to_string(),
+        });
+        let commit_ids = commit_plan
+            .items
+            .iter()
+            .map(|item| item.tool_id.as_str())
+            .collect::<Vec<_>>();
+        assert!(commit_ids.contains(&WORKSPACE_READ_TOOL_ID));
+        assert!(commit_ids.contains(&GIT_COMMIT_TOOL_ID));
     }
 
     #[test]
@@ -4415,6 +4590,20 @@ mod tests {
         );
         assert_eq!(parsed.summary.accepted_requests, 1);
         assert_eq!(parsed.summary.rejected_requests, 0);
+    }
+
+    #[test]
+    fn parser_normalizes_runtime_sleep_seconds_alias() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"runtime.sleep\",\"reason\":\"Wait one minute.\",\"input\":{\"seconds\":60}}]}\n```",
+        );
+        assert_eq!(parsed.summary.accepted_requests, 1);
+        assert_eq!(parsed.summary.rejected_requests, 0);
+        assert_eq!(
+            parsed.requests[0].input.get("duration_seconds"),
+            Some(&serde_json::json!(60))
+        );
+        assert!(parsed.requests[0].input.get("seconds").is_none());
     }
 
     #[test]
@@ -4527,9 +4716,26 @@ mod tests {
             .collect();
         assert!(ids.contains(&"workspace.read"));
         assert!(ids.contains(&"workspace.write"));
-        assert!(ids.contains(&"verification.cargo_fmt_check"));
+        assert!(ids.contains(&"verification.cargo_test"));
         assert!(ids.contains(&"subtask.spawn"));
     }
+
+    #[test]
+    fn planner_routes_external_orchestration_to_subtask_spawn() {
+        let plan = ToolPlanner::plan(ToolPlanningInput {
+            task_id: "task_1".into(),
+            goal: "Parent orchestration".into(),
+            mode_id: "external-orchestrator".into(),
+        });
+        let ids: Vec<_> = plan
+            .items
+            .iter()
+            .map(|item| item.tool_id.as_str())
+            .collect();
+        assert!(ids.contains(&"workspace.read"));
+        assert!(ids.contains(&"subtask.spawn"));
+    }
+
     #[test]
     fn planner_routes_compile_goals_to_cargo_check_verifier() {
         let plan = ToolPlanner::plan(ToolPlanningInput {

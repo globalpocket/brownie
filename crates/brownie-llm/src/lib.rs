@@ -422,10 +422,16 @@ impl FakeLlm {
             };
         }
         if prompt.contains("tool execution:")
-            && (prompt.contains("git.status") || prompt.contains("git.diff"))
-            && prompt.contains("completed")
+            && (prompt.contains("git.status: completed")
+                || prompt.contains("git.diff: completed")
+                || prompt.contains("untrusted_git_result_context"))
         {
-            if prompt_text.contains("MP7_RESULT_91c7.rs") {
+            if prompt_text.contains("MP7_RESULT_91c7.rs")
+                || contains_any(
+                    &request_signal,
+                    &["git status", "git inspection", "git result context"],
+                )
+            {
                 return LlmResponse {
                     content:
                         "Fake LLM final response after using Git result context: MP7_RESULT_91c7.rs."
@@ -448,8 +454,44 @@ impl FakeLlm {
             };
         }
         if prompt.contains("tool execution:")
-            && prompt.contains("workspace.read")
-            && (prompt.contains("completed") || prompt.contains("bytes_read="))
+            && (prompt.contains("workspace.read: completed") || prompt.contains("bytes_read="))
+            && prompt.contains("workspacepatchproposed")
+            && contains_any(
+                &request_signal,
+                &["implement", "edit", "modify", "update", "修正", "実装"],
+            )
+        {
+            return LlmResponse {
+                content: "Fake LLM final response after preparing workspace proposal.".to_string(),
+            };
+        }
+        if prompt.contains("tool execution:")
+            && (prompt.contains("workspace.read: completed") || prompt.contains("bytes_read="))
+            && !contains_any(
+                &request_signal,
+                &[
+                    "cargo test",
+                    "test suite",
+                    "run tests",
+                    "verify tests",
+                    "cargo check",
+                    "typecheck",
+                    "type-check",
+                    "type check",
+                    "compile",
+                    "compilation",
+                    "cargo fmt",
+                    "fmt",
+                    "format",
+                    "formatting",
+                    "implement",
+                    "edit",
+                    "modify",
+                    "update",
+                    "修正",
+                    "実装",
+                ],
+            )
         {
             return LlmResponse {
                 content: "Fake LLM final response after reading workspace context.".to_string(),

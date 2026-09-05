@@ -11,6 +11,7 @@ pub enum CliCommand {
     Help { topic: Option<HelpTopic> },
     Version,
     Run { objective: String },
+    RunFile { path: String },
     Resume { scope: Option<ResumeScope> },
     Status,
     Inspect { target: InspectTarget },
@@ -114,10 +115,7 @@ impl Cli {
 
         let command = match command {
             "help" => parse_help(&args[1..])?,
-            "run" => {
-                let objective = join_required_tail(&args[1..], "objective")?;
-                CliCommand::Run { objective }
-            }
+            "run" => parse_run(&args[1..])?,
             "resume" => parse_resume(&args[1..])?,
             "status" => no_args(args, CliCommand::Status)?,
             "inspect" => parse_inspect(&args[1..])?,
@@ -140,6 +138,7 @@ impl Cli {
             "Commands:",
             "  help <topic>             Show command-specific help",
             "  run <objective>          Run a general autonomous objective",
+            "  run --file <path>        Run an objective loaded from a UTF-8 file",
             "  resume                   Resume the latest interrupted objective",
             "  status                   Show current runtime status",
             "  inspect task <task-id>   Inspect a task",
@@ -167,10 +166,13 @@ impl Cli {
                 "",
                 "Usage:",
                 "  brownie run <objective>",
+                "  brownie run --file <path>",
                 "  brownie --json run <objective>",
+                "  brownie --json run --file <path>",
                 "",
                 "Runs one general autonomous objective through the Rust runtime.",
                 "The objective is free text. Tokens after run, including --help, -V, --version, and --json, remain part of the objective.",
+                "With --file, the CLI reads the UTF-8 file and sends its contents as the objective.",
                 "Set BROWNIE_CLI_RUN_MODE_ID to request a specific runtime mode for the admitted task.",
                 "For strict OpenAI-compatible provider runs, use BROWNIE_CLI_RUN_MODE_ID=provider-runner together with BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true.",
                 "One invocation performs bounded progress, persists through the runtime, and exits.",
@@ -178,6 +180,7 @@ impl Cli {
                 "",
                 "Examples:",
                 "  brownie run \"summarize this repository\"",
+                "  brownie run --file sample.md",
                 "  BROWNIE_CLI_RUN_MODE_ID=provider-runner brownie run \"Hello\"",
                 "  brownie --json run \"inspect the current task state\"",
                 "",
@@ -264,6 +267,28 @@ impl Cli {
                 "",
             ]
             .join("\n"),
+        }
+    }
+}
+
+fn parse_run(args: &[String]) -> Result<CliCommand, CliError> {
+    match args {
+        [flag, path] if flag == "--file" || flag == "-f" => {
+            if path.trim().is_empty() {
+                Err(CliError::MissingValue("file"))
+            } else {
+                Ok(CliCommand::RunFile {
+                    path: path.to_string(),
+                })
+            }
+        }
+        [flag] if flag == "--file" || flag == "-f" => Err(CliError::MissingValue("file")),
+        [flag, ..] if flag == "--file" || flag == "-f" => Err(CliError::InvalidCommand(
+            "run --file expects exactly one path".to_string(),
+        )),
+        _ => {
+            let objective = join_required_tail(args, "objective")?;
+            Ok(CliCommand::Run { objective })
         }
     }
 }

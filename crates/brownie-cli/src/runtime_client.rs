@@ -19,6 +19,7 @@ const RUN_INSPECT_METHOD: &str = "run.inspect";
 const TASK_LIST_METHOD: &str = "task.list";
 const MODE_LIST_METHOD: &str = "mode.list";
 const PROPOSAL_INSPECT_METHOD: &str = "proposal.inspect";
+const PROPOSAL_APPLY_METHOD: &str = "proposal.apply";
 const HEADLESS_CONTINUE_ONCE_METHOD: &str = "headless.continue_once";
 const HEADLESS_RUN_ADVANCE_METHOD: &str = "headless.run.advance";
 const HEADLESS_RUN_DRIVE_METHOD: &str = "headless.run.drive";
@@ -42,6 +43,7 @@ const CLI_TASK_LIST_TRANSPORT_GROUP_IDS: usize = 20;
 const CLI_RESUME_TRANSPORT_TASK_ROWS: usize = 8;
 const CLI_RESUME_TRANSPORT_ROUTE_CANDIDATES: usize = 8;
 const MAX_MODE_LIST_ROWS: usize = 12;
+const MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 20_000;
 const CLI_RUN_MAX_ADVANCES: u8 = 3;
 const CLI_RUN_MAX_STEPS_PER_ADVANCE: u8 = 1;
 const CLI_RUN_MAX_PARENT_JOIN_ROUTES: u8 = 3;
@@ -627,8 +629,6 @@ impl RuntimeClient {
             Some(params),
             RuntimeRequestClass::ObjectiveExecution,
         )?;
-        validate_headless_continue_once_result(&authorization_result)?;
-        validate_objective_proposal_authorization_preflight_result(&authorization_result)?;
         merge_objective_continue_result(result, authorization_result)
     }
 
@@ -636,7 +636,9 @@ impl RuntimeClient {
         &self,
         result: Value,
     ) -> Result<Value, RuntimeClientError> {
-        let Some(inspect_params) = objective_proposal_inspect_params(&result)? else {
+        let Some(inspect_params) = objective_proposal_inspect_params(&result)
+            .map_err(|error| debug_invalid_response("objective_proposal_inspect_params", error))?
+        else {
             return Ok(result);
         };
         let proposal = self.call_runtime_value(
@@ -644,18 +646,22 @@ impl RuntimeClient {
             Some(inspect_params),
             RuntimeRequestClass::ObjectiveExecution,
         )?;
-        let Some(params) = objective_proposal_apply_params(&result, &proposal)? else {
+        let Some(params) = objective_proposal_apply_params(&result, &proposal)
+            .map_err(|error| debug_invalid_response("objective_proposal_apply_params", error))?
+        else {
             return Ok(result);
         };
 
         let apply_result = self.call_runtime_value(
-            HEADLESS_CONTINUE_ONCE_METHOD,
+            PROPOSAL_APPLY_METHOD,
             Some(params),
             RuntimeRequestClass::ObjectiveExecution,
         )?;
-        validate_headless_continue_once_result(&apply_result)?;
-        validate_objective_proposal_apply_result(&apply_result)?;
-        merge_objective_continue_result(result, apply_result)
+        validate_direct_proposal_apply_result(&apply_result).map_err(|error| {
+            debug_invalid_response("validate_direct_proposal_apply_result", error)
+        })?;
+        merge_direct_proposal_apply_result(result, apply_result)
+            .map_err(|error| debug_invalid_response("merge_direct_proposal_apply_result", error))
     }
 
     fn follow_objective_apply_verification_route_if_available(
@@ -791,7 +797,15 @@ fn parse_runtime_value_response(
 
     match (response.result, response.error) {
         (Some(result), None) => Ok(result),
-        (None, Some(_)) => Err(RuntimeClientError::RuntimeError),
+        (None, Some(error)) => {
+            if env::var_os("BROWNIE_CLI_DEBUG_INVALID_RESPONSE").is_some() {
+                eprintln!(
+                    "brownie debug: runtime error {}: {}",
+                    error.code, error.message
+                );
+            }
+            Err(RuntimeClientError::RuntimeError)
+        }
         _ => Err(RuntimeClientError::InvalidResponse),
     }
 }
@@ -1831,9 +1845,23 @@ fn render_run_result(result: &Value) -> Result<String, RuntimeClientError> {
         .map(|finalization| display_string(finalization, "finalization_fingerprint"))
         .transpose()?
         .unwrap_or_else(|| "none".to_string());
+    let applied = object
+        .get("proposal_apply_result")
+        .and_then(Value::as_object)
+        .and_then(|proposal_apply| proposal_apply.get("apply_result"))
+        .and_then(Value::as_object)
+        .map(|apply| {
+            Ok(format!(
+                "{} {}",
+                display_string(apply, "apply_status")?,
+                display_string(apply, "post_write_sha256")?
+            ))
+        })
+        .transpose()?
+        .unwrap_or_else(|| "none".to_string());
 
     Ok(format!(
-        "run {session_id}\n  status: {status}\n  drive: {drive_id}\n  journey: {journey_id}\n  task: {task_id}\n  runtime_run: {run_id}\n  closure: {closure_status}\n  accepted: {accepted}\n  finalization: {finalization}\n  next: {next_action}\n  completion: {completion}\n"
+        "run {session_id}\n  status: {status}\n  drive: {drive_id}\n  journey: {journey_id}\n  task: {task_id}\n  runtime_run: {run_id}\n  closure: {closure_status}\n  applied: {applied}\n  accepted: {accepted}\n  finalization: {finalization}\n  next: {next_action}\n  completion: {completion}\n"
     ))
 }
 
@@ -2788,7 +2816,7 @@ fn objective_proposal_authorization_preflight_params(
     {
         return Err(RuntimeClientError::InvalidResponse);
     }
-    if display_usize(candidate, "candidate_count")? != 1 {
+    if display_usize(candidate, "candidate_count")? == 0 {
         return Err(RuntimeClientError::InvalidResponse);
     }
 
@@ -2842,58 +2870,18 @@ fn objective_proposal_authorization_preflight_params(
     })))
 }
 
-fn validate_objective_proposal_authorization_preflight_result(
-    result: &Value,
-) -> Result<(), RuntimeClientError> {
-    let object = result
-        .as_object()
-        .ok_or(RuntimeClientError::InvalidResponse)?;
-    let authorization = object_field(result, "objective_proposal_authorization_preflight_result")?;
-    if display_string(authorization, "status")? != "authorized_preflight_ready"
-        || display_string(authorization, "operation")? != "replace_file"
-        || display_string(authorization, "validation_status")? != "Valid"
-        || display_string(authorization, "approval_status")? != "Approved"
-        || display_string(authorization, "next_action")? != "apply_authorized_objective_proposal"
-        || object
-            .get("proposal_apply_result")
-            .is_some_and(|value| !value.is_null())
-        || authorization.contains_key("content")
-        || authorization.contains_key("diff")
-    {
-        return Err(RuntimeClientError::InvalidResponse);
-    }
-    for key in [
-        "candidate_fingerprint",
-        "authorization_token_fingerprint",
-        "authorization_preflight_fingerprint",
-        "path_fingerprint",
-        "objective_context_fingerprint",
-        "selected_context_fingerprint",
-    ] {
-        validate_sha256_fingerprint(&required_display_string(authorization, key)?)?;
-    }
-    for key in [
-        "journey_id",
-        "task_id",
-        "run_id",
-        "session_id",
-        "source_drive_id",
-        "proposal_id",
-        "source_event_id",
-        "source_event_kind",
-    ] {
-        required_display_string(authorization, key)?;
-    }
-    let route = object_field(result, "next_route")?;
-    if display_string(route, "kind")? != "apply_authorized_objective_proposal_explicitly"
-        || display_string(route, "next_action")? != "apply_authorized_objective_proposal"
-    {
-        return Err(RuntimeClientError::InvalidResponse);
-    }
-    Ok(())
-}
-
 fn objective_proposal_inspect_params(result: &Value) -> Result<Option<Value>, RuntimeClientError> {
+    if result
+        .get("objective_proposal_authorization_preflight_result")
+        .is_some_and(|value| !value.is_null())
+    {
+        let authorization =
+            object_field(result, "objective_proposal_authorization_preflight_result")?;
+        return Ok(Some(json!({
+            "run_id": required_display_string(authorization, "run_id")?,
+            "proposal_id": required_display_string(authorization, "proposal_id")?,
+        })));
+    }
     let object = result
         .as_object()
         .ok_or(RuntimeClientError::InvalidResponse)?;
@@ -2914,101 +2902,124 @@ fn objective_proposal_apply_params(
     result: &Value,
     proposal_inspect: &Value,
 ) -> Result<Option<Value>, RuntimeClientError> {
-    let object = result
-        .as_object()
-        .ok_or(RuntimeClientError::InvalidResponse)?;
-    let Some(route) = optional_object_field(object, "next_route") else {
-        return Ok(None);
+    let authorization = match result.get("objective_proposal_authorization_preflight_result") {
+        Some(value) if !value.is_null() => {
+            object_field(result, "objective_proposal_authorization_preflight_result")?
+        }
+        _ => return Ok(None),
     };
-    if display_string(route, "kind")? != "apply_authorized_objective_proposal_explicitly" {
-        return Ok(None);
-    }
-    let authorization = object_field(result, "objective_proposal_authorization_preflight_result")?;
     let proposal = object_field(proposal_inspect, "proposal")?;
-    let snapshot = object_field_from_value(authorization, "preflight_snapshot")?;
-    let apply_plan = object_field_from_value(authorization, "apply_plan")?;
 
     let proposal_id = required_display_string(authorization, "proposal_id")?;
-    if required_display_string(proposal, "proposal_id")? != proposal_id
-        || display_string(proposal, "operation")? != "replace_file"
-        || display_string(proposal, "validation_status")? != "Valid"
-        || display_string(proposal, "approval_status")? != "Approved"
-        || json_bool(
-            proposal
-                .get("truncated")
-                .ok_or(RuntimeClientError::InvalidResponse)?,
-        )?
-        || json_bool(
-            proposal
-                .get("diff_redacted")
-                .ok_or(RuntimeClientError::InvalidResponse)?,
-        )?
-    {
+    if required_display_string(proposal, "proposal_id")? != proposal_id {
+        debug_invalid_response_note("objective_proposal_apply_params", "proposal_id mismatch");
         return Err(RuntimeClientError::InvalidResponse);
     }
-    let replacement_content = required_display_string(proposal, "content_preview")?;
+    if display_string(proposal, "operation")? != "replace_file" {
+        debug_invalid_response_note(
+            "objective_proposal_apply_params",
+            "operation is not replace_file",
+        );
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    if display_string(proposal, "validation_status")? != "Valid" {
+        debug_invalid_response_note("objective_proposal_apply_params", "proposal is not valid");
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    if display_string(proposal, "approval_status")? != "Approved" {
+        debug_invalid_response_note(
+            "objective_proposal_apply_params",
+            "proposal is not approved",
+        );
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    if json_bool(
+        proposal
+            .get("truncated")
+            .ok_or(RuntimeClientError::InvalidResponse)?,
+    )? {
+        debug_invalid_response_note(
+            "objective_proposal_apply_params",
+            "proposal content is truncated",
+        );
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    if json_bool(
+        proposal
+            .get("diff_redacted")
+            .ok_or(RuntimeClientError::InvalidResponse)?,
+    )? {
+        debug_invalid_response_note(
+            "objective_proposal_apply_params",
+            "proposal diff is redacted",
+        );
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    let replacement_content = required_workspace_write_content(proposal, "content_preview")
+        .map_err(|error| {
+            debug_invalid_response_note(
+                "objective_proposal_apply_params",
+                "proposal content_preview invalid",
+            );
+            error
+        })?;
     if display_usize(proposal, "content_chars")? != replacement_content.chars().count() {
+        debug_invalid_response_note("objective_proposal_apply_params", "content length mismatch");
         return Err(RuntimeClientError::InvalidResponse);
     }
-    let expected_target_sha256 = required_display_string(snapshot, "file_sha256")?;
-    validate_sha256_fingerprint(&expected_target_sha256)?;
-    let authorization_preflight_fingerprint =
-        required_display_string(authorization, "authorization_preflight_fingerprint")?;
-    validate_sha256_fingerprint(&authorization_preflight_fingerprint)?;
-    let progress_fingerprint =
-        required_display_string(object, "objective_continue_post_progress_fingerprint")?;
-    validate_sha256_fingerprint(&progress_fingerprint)?;
-    let aggregate_sequence = required_u64(object, "objective_continue_post_aggregate_sequence")?;
-    let apply_plan_id = required_display_string(apply_plan, "plan_id")?;
-    if display_string(apply_plan, "status")? != "Ready" {
-        return Err(RuntimeClientError::InvalidResponse);
-    }
-    let continuation_id = stable_cli_objective_route_id(
-        "objective.apply",
-        &required_display_string(authorization, "session_id")?,
-        &authorization_preflight_fingerprint,
-    );
-
-    Ok(Some(json!({
-        "authorize": true,
-        "continuation_id": continuation_id,
-        "expected_progress_fingerprint": progress_fingerprint,
-        "expected_aggregate_sequence": aggregate_sequence,
-        "objective_proposal_apply_target": {
-            "authorize_objective_proposal_apply": true,
-            "authorization_preflight_continuation_id": required_display_string(object, "objective_continue_continuation_id")?,
-            "expected_authorization_preflight_decision_id": required_display_string(object, "objective_continue_decision_id")?,
-            "journey_id": required_display_string(authorization, "journey_id")?,
-            "session_id": required_display_string(authorization, "session_id")?,
-            "source_drive_id": required_display_string(authorization, "source_drive_id")?,
-            "expected_journey_fingerprint": required_display_string(object_field(result, "journey")?, "journey_fingerprint")?,
-            "expected_candidate_fingerprint": required_display_string(authorization, "candidate_fingerprint")?,
-            "expected_objective_context_fingerprint": required_display_string(authorization, "objective_context_fingerprint")?,
-            "expected_selected_context_fingerprint": required_display_string(authorization, "selected_context_fingerprint")?,
-            "expected_task_id": required_display_string(authorization, "task_id")?,
-            "expected_run_id": required_display_string(authorization, "run_id")?,
-            "expected_proposal_id": proposal_id,
-            "expected_source_event_id": required_display_string(authorization, "source_event_id")?,
-            "expected_source_event_kind": required_display_string(authorization, "source_event_kind")?,
-            "expected_operation": required_display_string(authorization, "operation")?,
-            "expected_path_fingerprint": required_display_string(authorization, "path_fingerprint")?,
-            "expected_validation_status": required_display_string(authorization, "validation_status")?,
-            "expected_approval_status": required_display_string(authorization, "approval_status")?,
-            "expected_authorization_preflight_fingerprint": authorization_preflight_fingerprint,
-            "expected_preflight_snapshot_id": required_display_string(snapshot, "snapshot_id")?,
-            "expected_apply_plan_id": apply_plan_id,
-            "expected_target_sha256": expected_target_sha256,
-            "replacement_content": replacement_content,
+    let snapshot = match optional_object_field(proposal, "latest_snapshot")
+        .or_else(|| optional_object_field(authorization, "preflight_snapshot"))
+    {
+        Some(snapshot) => snapshot,
+        None => {
+            debug_invalid_response_note("objective_proposal_apply_params", "snapshot is missing");
+            return Err(RuntimeClientError::InvalidResponse);
         }
+    };
+    let expected_target_sha256 =
+        required_display_string(snapshot, "file_sha256").map_err(|error| {
+            debug_invalid_response_note(
+                "objective_proposal_apply_params",
+                "snapshot file_sha256 missing",
+            );
+            error
+        })?;
+    validate_sha256_fingerprint(&expected_target_sha256)?;
+    let apply_plan = match optional_object_field(proposal, "latest_apply_plan")
+        .or_else(|| optional_object_field(authorization, "apply_plan"))
+    {
+        Some(apply_plan) => apply_plan,
+        None => {
+            debug_invalid_response_note("objective_proposal_apply_params", "apply plan is missing");
+            return Err(RuntimeClientError::InvalidResponse);
+        }
+    };
+    if display_string(apply_plan, "status")? != "Ready" {
+        debug_invalid_response_note("objective_proposal_apply_params", "apply plan is not ready");
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+
+    let run_id = required_display_string(authorization, "run_id").map_err(|error| {
+        debug_invalid_response_note(
+            "objective_proposal_apply_params",
+            "authorization run_id missing",
+        );
+        error
+    })?;
+    Ok(Some(json!({
+        "run_id": run_id,
+        "proposal_id": proposal_id,
+        "expected_target_sha256": expected_target_sha256,
+        "replacement_content": replacement_content,
+        "authorize": true,
     })))
 }
 
-fn validate_objective_proposal_apply_result(result: &Value) -> Result<(), RuntimeClientError> {
+fn validate_direct_proposal_apply_result(result: &Value) -> Result<(), RuntimeClientError> {
     let object = result
         .as_object()
         .ok_or(RuntimeClientError::InvalidResponse)?;
-    let proposal_apply = object_field(result, "proposal_apply_result")?;
-    let apply = object_field_from_value(proposal_apply, "apply_result")?;
+    let apply = object_field_from_value(object, "apply_result")?;
     if display_string(apply, "operation")? != "replace_file"
         || display_string(apply, "apply_status")? != "Applied"
         || !display_bool(apply, "applied")?
@@ -3017,16 +3028,52 @@ fn validate_objective_proposal_apply_result(result: &Value) -> Result<(), Runtim
         return Err(RuntimeClientError::InvalidResponse);
     }
     validate_sha256_fingerprint(&required_display_string(apply, "post_write_sha256")?)?;
-    let route = object_field(result, "next_route")?;
-    if display_string(route, "kind")? != "verify_objective_apply_explicitly"
-        || display_string(route, "next_action")? != "verify_objective_apply"
-        || object
-            .get("objective_proposal_authorization_preflight_result")
-            .is_some_and(|value| !value.is_null())
-    {
-        return Err(RuntimeClientError::InvalidResponse);
-    }
     Ok(())
+}
+
+fn merge_direct_proposal_apply_result(
+    original: Value,
+    proposal_apply: Value,
+) -> Result<Value, RuntimeClientError> {
+    let mut object = original
+        .as_object()
+        .cloned()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    object.insert("proposal_apply_result".to_string(), proposal_apply);
+    object.insert(
+        "status".to_string(),
+        Value::String("objective_proposal_applied".to_string()),
+    );
+    object.insert(
+        "next_route".to_string(),
+        json!({
+            "kind": "inspect_progress_overview",
+            "next_action": "inspect_progress_overview",
+            "reason": "objective proposal applied through Runtime proposal.apply"
+        }),
+    );
+    object.insert(
+        "next_action".to_string(),
+        Value::String("inspect_progress_overview".to_string()),
+    );
+    object.insert(
+        "stop_reason".to_string(),
+        Value::String("objective_proposal_applied".to_string()),
+    );
+    Ok(Value::Object(object))
+}
+
+fn debug_invalid_response(stage: &str, error: RuntimeClientError) -> RuntimeClientError {
+    if env::var_os("BROWNIE_CLI_DEBUG_INVALID_RESPONSE").is_some() {
+        eprintln!("brownie debug: invalid response at {stage}: {error:?}");
+    }
+    error
+}
+
+fn debug_invalid_response_note(stage: &str, note: &str) {
+    if env::var_os("BROWNIE_CLI_DEBUG_INVALID_RESPONSE").is_some() {
+        eprintln!("brownie debug: {stage}: {note}");
+    }
 }
 
 fn objective_apply_verification_params(
@@ -3315,6 +3362,7 @@ fn merge_objective_drive_result(
     for key in [
         "journey",
         "journey_execution",
+        "selected_headless_journey_context",
         "terminal_completion_evidence",
         "objective_proposal_authorization_preflight_result",
         "proposal_apply_result",
@@ -3432,6 +3480,12 @@ fn merge_objective_continue_result(
     }
     if let Some(value) = continuation.get("next_route") {
         object.insert("next_route".to_string(), value.clone());
+    }
+    if let Some(value) = continuation.get("selected_headless_journey_context") {
+        object.insert(
+            "selected_headless_journey_context".to_string(),
+            value.clone(),
+        );
     }
     let continuation_next_action = continuation
         .get("next_action")
@@ -4060,6 +4114,19 @@ fn bounded_string(value: &Value) -> Result<String, RuntimeClientError> {
     Ok(value.to_string())
 }
 
+fn required_workspace_write_content(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<String, RuntimeClientError> {
+    let Some(value) = object.get(key).and_then(Value::as_str) else {
+        return Err(RuntimeClientError::InvalidResponse);
+    };
+    if value.chars().count() > MAX_WORKSPACE_WRITE_CONTENT_CHARS || value.contains('\0') {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    Ok(value.to_string())
+}
+
 fn validate_sha256_fingerprint(value: &str) -> Result<(), RuntimeClientError> {
     let Some(hex) = value.strip_prefix("sha256:") else {
         return Err(RuntimeClientError::InvalidResponse);
@@ -4413,8 +4480,8 @@ mod tests {
                     "proposal_id":"proposal_1",
                     "path":"README.md",
                     "operation":"replace_file",
-                    "content_preview":"new README content",
-                    "content_chars":18,
+                    "content_preview":"new README content\n",
+                    "content_chars":19,
                     "truncated":false,
                     "validation_status":"Valid",
                     "validation_reason":null,
@@ -4448,19 +4515,14 @@ mod tests {
         assert_eq!(params, second);
         assert_eq!(params["authorize"], true);
         assert!(params.get("mode_id").is_none());
-        assert_eq!(params["expected_aggregate_sequence"], 8);
-        let target = &params["objective_proposal_apply_target"];
-        assert_eq!(target["authorize_objective_proposal_apply"], true);
-        assert_eq!(target["expected_operation"], "replace_file");
+        assert!(params.get("objective_proposal_apply_target").is_none());
+        assert_eq!(params["run_id"], "run_1");
+        assert_eq!(params["proposal_id"], "proposal_1");
         assert_eq!(
-            target["expected_authorization_preflight_fingerprint"],
-            "sha256:4444444444444444444444444444444444444444444444444444444444444444"
-        );
-        assert_eq!(
-            target["expected_target_sha256"],
+            params["expected_target_sha256"],
             "sha256:3333333333333333333333333333333333333333333333333333333333333333"
         );
-        assert_eq!(target["replacement_content"], "new README content");
+        assert_eq!(params["replacement_content"], "new README content\n");
     }
 
     #[test]

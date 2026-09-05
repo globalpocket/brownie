@@ -453,9 +453,8 @@ fn effective_permissions(
     let git_commit =
         declared.git_commit && trusted_side_effect_source && options.capability_ceiling.git_commit;
     let network_access = false;
-    let llm_provider_access = declared.llm_provider_access
-        && trusted_side_effect_source
-        && options.capability_ceiling.llm_provider_access;
+    let llm_provider_access =
+        declared.llm_provider_access && options.capability_ceiling.llm_provider_access;
     let service_control = false;
     let destructive = false;
     let can_spawn_subtasks = declared.can_spawn_subtasks
@@ -2119,6 +2118,7 @@ customModes:
                     "workspace_write": false,
                     "process_exec": false,
                     "network_access": true,
+                    "llm_provider_access": true,
                     "service_control": false,
                     "destructive": false,
                     "can_spawn_subtasks": false
@@ -2140,7 +2140,9 @@ customModes:
         );
         assert!(networker.permissions.read_only);
         assert!(!networker.permissions.network_access);
+        assert!(networker.permissions.llm_provider_access);
         assert!(!RuntimePermissionGate::check(networker, RuntimeAction::AccessNetwork).allowed);
+        assert!(RuntimePermissionGate::check(networker, RuntimeAction::AccessLlmProvider).allowed);
     }
 
     #[test]

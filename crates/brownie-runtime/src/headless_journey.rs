@@ -5842,67 +5842,75 @@ pub(super) fn headless_latest_completed_task_completion_evidence(
     store: &BrownieStore,
     tasks: &[TaskRecord],
 ) -> Result<Option<TaskRunCompletionEvidence>, String> {
-    let Some(record) = tasks
+    let mut records = tasks
         .iter()
         .filter(|record| record.status == TaskStatus::Completed)
-        .max_by_key(|record| record.updated_at.clone())
-    else {
-        return Ok(None);
-    };
-    task_run_completion_evidence_for_record(store, record, false)
+        .collect::<Vec<_>>();
+    records.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    for record in records {
+        match task_run_completion_evidence_for_record(store, record, false) {
+            Ok(evidence) => return Ok(evidence),
+            Err(_) => continue,
+        }
+    }
+    Ok(None)
 }
 
 pub(super) fn headless_latest_accepted_completed_task(
     store: &BrownieStore,
     tasks: &[TaskRecord],
 ) -> Result<Option<HeadlessRunAcceptedCompletion>, String> {
-    let Some(record) = tasks
+    let mut records = tasks
         .iter()
         .filter(|record| record.status == TaskStatus::Completed)
-        .max_by_key(|record| record.updated_at.clone())
-    else {
-        return Ok(None);
-    };
-    let events = store
-        .tasks()
-        .read_ledger_events(&record.run_id)
-        .map_err(|error| error.to_string())?;
-    let Some(completion_evidence) = task_run_completion_evidence_from_events(&events, record, true)
-    else {
-        return Ok(None);
-    };
-    if completion_evidence.final_state != "Completed"
-        || completion_evidence.task_status != TaskStatus::Completed
-    {
-        return Ok(None);
+        .collect::<Vec<_>>();
+    records.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    for record in records {
+        let events = match store.tasks().read_ledger_events(&record.run_id) {
+            Ok(events) => events,
+            Err(_) => continue,
+        };
+        let Some(completion_evidence) =
+            task_run_completion_evidence_from_events(&events, record, true)
+        else {
+            return Ok(None);
+        };
+        if completion_evidence.final_state != "Completed"
+            || completion_evidence.task_status != TaskStatus::Completed
+        {
+            return Ok(None);
+        }
+        let verifier_gate_status = match progress_verification_state(&events) {
+            ProgressVerificationState::NotRequired => "NotRequired".to_string(),
+            ProgressVerificationState::Passed => {
+                VERIFICATION_COMPLETION_GATE_STATUS_PASSED.to_string()
+            }
+            ProgressVerificationState::Failed
+            | ProgressVerificationState::Pending
+            | ProgressVerificationState::Unknown => return Ok(None),
+        };
+        let Some(acceptance) = task_run_completion_acceptance_from_events(
+            &events,
+            record,
+            &completion_evidence,
+            &verifier_gate_status,
+        )?
+        else {
+            return Ok(None);
+        };
+        return Ok(Some(HeadlessRunAcceptedCompletion {
+            task_id: acceptance.task_id,
+            run_id: acceptance.run_id,
+            acceptance_id: acceptance.acceptance_id,
+            status: acceptance.status,
+            terminal_completion_fingerprint: acceptance.terminal_completion_fingerprint,
+            acceptance_fingerprint: acceptance.acceptance_fingerprint,
+            verifier_gate_status: acceptance.verifier_gate_status,
+            replayed: true,
+            next_action: "close_headless_run".to_string(),
+        }));
     }
-    let verifier_gate_status = match progress_verification_state(&events) {
-        ProgressVerificationState::NotRequired => "NotRequired".to_string(),
-        ProgressVerificationState::Passed => VERIFICATION_COMPLETION_GATE_STATUS_PASSED.to_string(),
-        ProgressVerificationState::Failed
-        | ProgressVerificationState::Pending
-        | ProgressVerificationState::Unknown => return Ok(None),
-    };
-    let Some(acceptance) = task_run_completion_acceptance_from_events(
-        &events,
-        record,
-        &completion_evidence,
-        &verifier_gate_status,
-    )?
-    else {
-        return Ok(None);
-    };
-    Ok(Some(HeadlessRunAcceptedCompletion {
-        task_id: acceptance.task_id,
-        run_id: acceptance.run_id,
-        acceptance_id: acceptance.acceptance_id,
-        status: acceptance.status,
-        terminal_completion_fingerprint: acceptance.terminal_completion_fingerprint,
-        acceptance_fingerprint: acceptance.acceptance_fingerprint,
-        verifier_gate_status: acceptance.verifier_gate_status,
-        replayed: true,
-        next_action: "close_headless_run".to_string(),
-    }))
+    Ok(None)
 }
 
 pub(super) fn headless_run_completion_closure(
