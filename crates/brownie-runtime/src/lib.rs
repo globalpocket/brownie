@@ -60554,8 +60554,15 @@ modes:
             .as_array()
             .expect("tools")
             .clone();
-        assert_eq!(tools.len(), 15);
+        assert_eq!(tools.len(), 18);
         assert!(tools.iter().any(|tool| tool["tool_id"] == "workspace.read"));
+        assert!(tools
+            .iter()
+            .any(|tool| tool["tool_id"] == WORKSPACE_APPEND_LINE_TOOL_ID));
+        assert!(tools.iter().any(|tool| tool["tool_id"] == TIME_NOW_TOOL_ID));
+        assert!(tools
+            .iter()
+            .any(|tool| tool["tool_id"] == RUNTIME_SLEEP_TOOL_ID));
         assert!(tools
             .iter()
             .any(|tool| tool["tool_id"] == CODEBASE_INDEX_SELECTION_READ_TOOL_ID));
@@ -63687,7 +63694,7 @@ content-length: {}
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         std::env::set_var("BROWNIE_LLM_PROVIDER", "fake");
 
-        let drive_request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32p.mcp.replay","drive_id":"mp32p.mcp.replay.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32p.mcp.replay.journey","authorize_journey_start":true,"admission_id":"mp32p.mcp.replay.admission","task_start":{"goal":"Use MCP search_code through the normal agent loop","mode_id":"reviewer"}}}}"#;
+        let drive_request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32p.mcp.replay","drive_id":"mp32p.mcp.replay.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32p.mcp.replay.journey","authorize_journey_start":true,"admission_id":"mp32p.mcp.replay.admission","task_start":{"goal":"Use MCP search_code through the normal agent loop","mode_id":"reviewer"}}}}"#;
         std::env::set_var(
             "BROWNIE_TEST_CRASH_AFTER_MCP_TOOL_EXECUTION_BEFORE_SECOND_PASS",
             "1",
@@ -63707,7 +63714,7 @@ content-length: {}
             .expect("progress")["progress_overview"]
             .clone();
         let replay_request = format!(
-            r#"{{"jsonrpc":"2.0","id":3,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"mp32p.mcp.replay.scoped","continuation_scope":{{"session_id":"mp32p.mcp.replay","journey_id":"mp32p.mcp.replay.journey","task_id":"{task_id}","run_id":"{run_id}"}},"context_budget":{{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0}}}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":3,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"mp32p.mcp.replay.scoped","continuation_scope":{{"session_id":"mp32p.mcp.replay","journey_id":"mp32p.mcp.replay.journey","task_id":"{task_id}","run_id":"{run_id}"}},"context_budget":{{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0}}}}}}"#,
             progress["source_fingerprint"]
                 .as_str()
                 .expect("progress fingerprint"),
