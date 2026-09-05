@@ -1597,6 +1597,30 @@ pub(super) fn build_tool_plan_result(
     }
 }
 
+fn allowed_planned_tool_ids(
+    record: &brownie_protocol::TaskRecord,
+    policy: &CompiledModePolicy,
+) -> BTreeSet<String> {
+    let plan = ToolPlanner::plan(ToolPlanningInput {
+        task_id: record.task_id.clone(),
+        goal: record.goal.clone(),
+        mode_id: policy.mode_id.clone(),
+    });
+    ToolPlanEvaluator::evaluate(policy, plan)
+        .items
+        .into_iter()
+        .filter(|decision| decision.allowed)
+        .map(|decision| decision.tool_id)
+        .collect()
+}
+
+fn builtin_tool_missing_from_runtime_plan(
+    tool_id: &str,
+    planned_allowed_tool_ids: &BTreeSet<String>,
+) -> bool {
+    BuiltinToolRegistry::get(tool_id).is_some() && !planned_allowed_tool_ids.contains(tool_id)
+}
+
 pub(super) fn tool_plan_decision_summary(decision: ToolPlanDecision) -> ToolPlanDecisionSummary {
     ToolPlanDecisionSummary {
         tool_id: decision.tool_id,
@@ -2427,6 +2451,7 @@ pub(super) fn append_tool_intent_events(
     let dynamic_tools = pinned_mcp_dynamic_tool_definitions(store, record)?;
     let evaluation =
         ToolIntentEvaluator::evaluate_with_dynamic_tools(policy, parsed, &dynamic_tools);
+    let planned_allowed_tool_ids = allowed_planned_tool_ids(record, policy);
     for rejected in evaluation.rejected {
         store.tasks().append_task_event_with_payload(
             record,
@@ -2435,14 +2460,27 @@ pub(super) fn append_tool_intent_events(
         )?;
     }
     for decision in evaluation.items {
-        let runtime_rejection_reason =
-            if decision.allowed && decision.tool_id == SUBTASK_SPAWN_TOOL_ID {
-                subtask_spawn_input_runtime_rejection_reason(store, policy, &decision.input)?
-            } else {
-                None
-            };
-        let allowed = decision.allowed && runtime_rejection_reason.is_none();
-        let reason = runtime_rejection_reason.unwrap_or(decision.reason.as_str());
+        let runtime_plan_rejection_reason = if decision.allowed
+            && builtin_tool_missing_from_runtime_plan(&decision.tool_id, &planned_allowed_tool_ids)
+        {
+            Some("Tool was not included in the Runtime-approved Tool Plan.")
+        } else {
+            None
+        };
+        let runtime_rejection_reason = if decision.allowed
+            && runtime_plan_rejection_reason.is_none()
+            && decision.tool_id == SUBTASK_SPAWN_TOOL_ID
+        {
+            subtask_spawn_input_runtime_rejection_reason(store, policy, &decision.input)?
+        } else {
+            None
+        };
+        let allowed = decision.allowed
+            && runtime_plan_rejection_reason.is_none()
+            && runtime_rejection_reason.is_none();
+        let reason = runtime_plan_rejection_reason
+            .or(runtime_rejection_reason)
+            .unwrap_or(decision.reason.as_str());
         let mut payload = json!({
             "tool_id": decision.tool_id,
             "required_action": runtime_action_name(&decision.required_action),
@@ -2451,6 +2489,12 @@ pub(super) fn append_tool_intent_events(
             "request_reason": decision.request_reason,
             "input_summary": summarize_intent_input(&decision.input),
         });
+        if runtime_plan_rejection_reason.is_some() {
+            payload["planned_allowed_tool_ids"] = json!(planned_allowed_tool_ids
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>());
+        }
         if runtime_rejection_reason.is_some() {
             payload["mode_id"] = json!(policy.mode_id);
             if let Some(mode_id) = normalized_subtask_spawn_mode_id(&decision.input) {
@@ -2487,6 +2531,23 @@ pub(super) fn handle_approved_workspace_intents(
         ToolIntentParser::parse_assistant_content(assistant_content),
         &dynamic_tools,
     );
+    let planned_allowed_tool_ids = allowed_planned_tool_ids(record, policy);
+    let edit_task_requires_workspace_write =
+        super::task_goal_requires_workspace_write_proposal(&record.goal);
+    let existing_events = store.tasks().read_ledger_events(&record.run_id)?;
+    let mut workspace_write_proposal_seen = existing_events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed);
+    let runtime_sleep_completed = existing_events.iter().any(|event| {
+        if event.kind != LedgerEventKind::ToolExecutionCompleted {
+            return false;
+        }
+        let Some(payload) = sanitize_ledger_payload(event.payload.clone()) else {
+            return false;
+        };
+        payload.get("tool_id").and_then(Value::as_str) == Some(RUNTIME_SLEEP_TOOL_ID)
+            && payload.get("status").and_then(Value::as_str) == Some("Completed")
+    });
     let is_verification_recovery_task = record.verification_recovery_provenance.is_some();
     let mut verification_recovery_proposal_seen =
         match record.verification_recovery_provenance.as_ref() {
@@ -2518,11 +2579,15 @@ pub(super) fn handle_approved_workspace_intents(
             }
             continue;
         }
+        if builtin_tool_missing_from_runtime_plan(&decision.tool_id, &planned_allowed_tool_ids) {
+            continue;
+        }
         if decision.tool_id == WORKSPACE_WRITE_TOOL_ID {
             if is_verification_recovery_task && verification_recovery_proposal_seen {
                 continue;
             }
             append_workspace_patch_proposal(store, record, policy, &decision)?;
+            workspace_write_proposal_seen = true;
             if is_verification_recovery_task {
                 verification_recovery_proposal_seen = true;
             }
@@ -2542,6 +2607,15 @@ pub(super) fn handle_approved_workspace_intents(
             continue;
         }
         if !builtin_controlled_execution_tool {
+            continue;
+        }
+        if edit_task_requires_workspace_write
+            && decision.tool_id == RUNTIME_SLEEP_TOOL_ID
+            && !workspace_write_proposal_seen
+        {
+            continue;
+        }
+        if decision.tool_id == RUNTIME_SLEEP_TOOL_ID && runtime_sleep_completed {
             continue;
         }
         store.tasks().append_task_event_with_payload(

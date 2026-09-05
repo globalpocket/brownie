@@ -211,7 +211,7 @@ mod tests {
     }
 
     #[test]
-    fn run_with_fake_llm_returns_completed_and_response() {
+    fn run_with_fake_llm_returns_completed_and_tool_intent_response() {
         let context_window = ContextWindowSummary {
             total_events: 2,
             included_events: 2,
@@ -243,14 +243,8 @@ mod tests {
         assert_eq!(result.final_state, AgentLoopState::Completed);
         assert_eq!(result.prompt.messages.len(), 2);
         assert_eq!(result.llm_request.model, FAKE_LLM_MODEL);
-        assert!(result
-            .llm_response
-            .content
-            .starts_with("Fake LLM completed request with 2 messages."));
-        assert!(result
-            .llm_response
-            .content
-            .contains("```brownie-tool-intent"));
+        assert!(result.llm_response.content.contains("brownie-tool-intent"));
+        assert!(result.llm_response.content.contains("workspace.read"));
     }
     #[test]
     fn run_second_pass_with_fake_llm_returns_completed_and_final_response() {

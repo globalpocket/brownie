@@ -2320,6 +2320,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     }
     let first_pass_tool_intent =
         ToolIntentParser::parse_assistant_content(&result.llm_response.content);
+    let mut rejected_tool_intent_requests = first_pass_tool_intent.summary.rejected_requests;
     if let Err(error) =
         append_tool_intent_events(&store, &running, &policy, &result.llm_response.content)
     {
@@ -2393,6 +2394,14 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     } else {
         None
     };
+    let repair_waits_for_review = verification_recovery_repair
+        .as_ref()
+        .map(|repair| repair.gate_status == VERIFICATION_COMPLETION_GATE_STATUS_PASSED)
+        .unwrap_or(false)
+        || patch_apply_recovery_repair
+            .as_ref()
+            .map(|repair| repair.gate_status == VERIFICATION_COMPLETION_GATE_STATUS_PASSED)
+            .unwrap_or(false);
     if let Err(error) = append_subtask_handoff_prepared(&store, &running) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
@@ -2469,6 +2478,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     if second_pass_events
         .iter()
         .any(|event| event.kind == LedgerEventKind::ToolExecutionCompleted)
+        && !repair_waits_for_review
     {
         let second_pass_prompt_input = ContextMaterializer::materialize(ContextMaterializerInput {
             task: running.clone(),
@@ -2586,6 +2596,22 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         ) {
             return error_response(id, -32603, &format!("internal error: {error}"));
         }
+        let second_pass_tool_intent =
+            ToolIntentParser::parse_assistant_content(&second_pass.llm_response.content);
+        rejected_tool_intent_requests += second_pass_tool_intent.summary.rejected_requests;
+        if let Err(error) =
+            append_tool_intent_events(&store, &running, &policy, &second_pass.llm_response.content)
+        {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+        if let Err(error) = handle_approved_workspace_intents(
+            &store,
+            &running,
+            &policy,
+            &second_pass.llm_response.content,
+        ) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
     }
 
     let completion_gate_events = match store.tasks().read_ledger_events(&running.run_id) {
@@ -2615,9 +2641,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             agent_loop_final_response_content.clear();
         }
     }
-    if task_goal_requires_tool_intent(&running.goal)
-        && first_pass_tool_intent.summary.rejected_requests > 0
-    {
+    if task_goal_requires_tool_intent(&running.goal) && rejected_tool_intent_requests > 0 {
         agent_loop_final_state = AgentLoopState::Failed;
         agent_loop_completion_summary =
             "LLM tool intent contained rejected requests for a side-effect task".to_string();
@@ -2638,6 +2662,17 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         } else {
             "LLM tool intent did not produce Runtime side-effect evidence".to_string()
         };
+        agent_loop_final_response_content.clear();
+    }
+    if task_goal_requires_workspace_write_proposal(&running.goal)
+        && !completion_gate_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+    {
+        agent_loop_final_state = AgentLoopState::Failed;
+        agent_loop_completion_summary =
+            "LLM tool intent did not produce a workspace.write proposal for a workspace edit task"
+                .to_string();
         agent_loop_final_response_content.clear();
     }
 
@@ -2805,6 +2840,56 @@ fn task_goal_requires_tool_intent(goal: &str) -> bool {
     ]
     .iter()
     .any(|needle| goal.contains(needle))
+}
+
+fn task_goal_requires_workspace_write_proposal(goal: &str) -> bool {
+    let goal = goal.to_lowercase();
+    [
+        "write",
+        "edit",
+        "modify",
+        "implement",
+        "create",
+        "delete",
+        "replace",
+        "overwrite",
+        "rewrite",
+        "patch",
+        "increment",
+        "修正",
+        "編集",
+        "実装",
+        "書き込",
+        "作成",
+        "削除",
+        "置換",
+        "上書き",
+        "書き換",
+        "変更",
+        "加算",
+        "増や",
+    ]
+    .iter()
+    .any(|needle| goal.contains(needle))
+}
+
+#[cfg(test)]
+mod workspace_edit_completion_gate_tests {
+    use super::*;
+
+    #[test]
+    fn overwrite_increment_goal_requires_workspace_write_proposal() {
+        assert!(task_goal_requires_workspace_write_proposal(
+            "timestamp.txt の数字に1を加算して上書きしてください"
+        ));
+    }
+
+    #[test]
+    fn append_line_goal_does_not_require_workspace_write_proposal() {
+        assert!(!task_goal_requires_workspace_write_proposal(
+            "timestamp.txt に現在時刻の行を追記してください"
+        ));
+    }
 }
 
 fn handle_verification_recovery_retry_task_run(
@@ -11373,6 +11458,14 @@ fn handle_task_run_completion_acceptance(
             "invalid params: completion acceptance expected fingerprint mismatch".to_string(),
         );
     }
+    if latest_valid_workspace_patch_proposal_exists(&events)
+        && !latest_valid_workspace_patch_proposal_was_applied(&events)
+    {
+        return Err(
+            "invalid params: completion acceptance requires the latest valid workspace.write proposal to be applied"
+                .to_string(),
+        );
+    }
 
     let runtime_requirement = runtime_verification_requirement_for_record(&record);
     let verification_completion_gate = verification_completion_gate_for_run_with_requirement(
@@ -11455,6 +11548,60 @@ fn handle_task_run_completion_acceptance(
         recovery_cycle_budget_outcome: None,
         child_orchestration_outcome: None,
         parent_join_readiness_outcome: None,
+    })
+}
+
+fn latest_valid_workspace_patch_proposal_was_applied(events: &[LedgerEvent]) -> bool {
+    let Some(proposal_id) = events.iter().rev().find_map(|event| {
+        if event.kind != LedgerEventKind::WorkspacePatchProposed {
+            return None;
+        }
+        let payload = sanitize_ledger_payload(event.payload.clone())?;
+        if payload.get("validation_status").and_then(Value::as_str) != Some("Valid") {
+            return None;
+        }
+        let proposal_id = payload.get("proposal_id").and_then(Value::as_str)?;
+        if proposal_id.trim().is_empty() {
+            return None;
+        }
+        Some(proposal_id.to_string())
+    }) else {
+        return false;
+    };
+
+    events.iter().any(|event| {
+        if event.kind != LedgerEventKind::WorkspacePatchApplyResultRecorded {
+            return false;
+        }
+        let Some(payload) = sanitize_ledger_payload(event.payload.clone()) else {
+            return false;
+        };
+        payload.get("proposal_id").and_then(Value::as_str) == Some(proposal_id.as_str())
+            && payload
+                .get("authorization_consumed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            && payload
+                .get("applied")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+    })
+}
+
+fn latest_valid_workspace_patch_proposal_exists(events: &[LedgerEvent]) -> bool {
+    events.iter().rev().any(|event| {
+        if event.kind != LedgerEventKind::WorkspacePatchProposed {
+            return false;
+        }
+        let Some(payload) = sanitize_ledger_payload(event.payload.clone()) else {
+            return false;
+        };
+        payload.get("validation_status").and_then(Value::as_str) == Some("Valid")
+            && payload
+                .get("proposal_id")
+                .and_then(Value::as_str)
+                .map(|proposal_id| !proposal_id.trim().is_empty())
+                .unwrap_or(false)
     })
 }
 
@@ -12537,10 +12684,22 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "final_state",
         "completion_summary",
     ];
-    let sanitized = map
+    let mut sanitized = map
         .into_iter()
         .filter(|(key, _)| ALLOWED_KEYS.contains(&key.as_str()))
         .collect::<serde_json::Map<_, _>>();
+    if sanitized.get("tool_id").and_then(Value::as_str) == Some(WORKSPACE_READ_TOOL_ID)
+        && sanitized.contains_key("output_preview")
+    {
+        sanitized.insert(
+            "output_preview".to_string(),
+            json!("[workspace.read output redacted]"),
+        );
+    }
+    if sanitized.contains_key("prompt_preview") {
+        sanitized.insert("prompt_preview".to_string(), json!("[prompt redacted]"));
+        sanitized.insert("prompt_preview_redacted".to_string(), json!(true));
+    }
     if sanitized.is_empty() {
         None
     } else {
@@ -14150,7 +14309,7 @@ fn preview_with_limit(content: &str, max_chars: usize) -> String {
 }
 
 fn preview_tool_output(content: &str) -> String {
-    const MAX_TOOL_OUTPUT_PREVIEW_CHARS: usize = 24;
+    const MAX_TOOL_OUTPUT_PREVIEW_CHARS: usize = 2048;
     content
         .chars()
         .take(MAX_TOOL_OUTPUT_PREVIEW_CHARS)
@@ -16988,6 +17147,7 @@ modes:
                     "workspace_write": true,
                     "process_exec": true,
                     "network_access": true,
+                    "llm_provider_access": true,
                     "service_control": true,
                     "destructive": true,
                     "can_spawn_subtasks": true
@@ -17010,6 +17170,7 @@ modes:
                     "workspace_write": false,
                     "process_exec": false,
                     "network_access": false,
+                    "llm_provider_access": true,
                     "service_control": false,
                     "destructive": false,
                     "can_spawn_subtasks": false
@@ -25176,6 +25337,121 @@ modes:
     }
 
     #[test]
+    fn headless_completion_candidate_scan_skips_unreadable_legacy_scratch_ledger() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let valid_task = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "valid completed task".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start valid task");
+        let completion_evidence = TaskRunCompletionEvidence {
+            final_state: "Completed".to_string(),
+            task_status: TaskStatus::Completed,
+            completion_result_fingerprint: format!("sha256:{}", "c".repeat(64)),
+            completion_summary_preview: "valid done".to_string(),
+            completion_summary_chars: 10,
+            completion_summary_truncated: false,
+            final_response_present: false,
+            final_response_chars: 0,
+            replayed: false,
+        };
+        let valid_task = store
+            .tasks()
+            .update_task_status_with_payload(
+                &valid_task.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+                Some(json!({
+                    "completion_evidence": completion_evidence
+                })),
+            )
+            .expect("complete valid task");
+        let completion_evidence =
+            task_run_completion_evidence_for_record(&store, &valid_task, false)
+                .expect("valid evidence lookup")
+                .expect("valid completion evidence");
+        let acceptance = build_task_run_completion_acceptance(
+            &TaskRunCompletionAcceptanceRequest {
+                authorize_completion_acceptance: true,
+                source_run_id: valid_task.run_id.clone(),
+                acceptance_id: "valid-accepted".to_string(),
+                expected_completion_result_fingerprint: completion_evidence
+                    .completion_result_fingerprint
+                    .clone(),
+            },
+            &valid_task,
+            &completion_evidence,
+            "NotRequired",
+            false,
+        );
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &valid_task,
+                LedgerEventKind::TaskCompletionAccepted,
+                Some(task_run_completion_acceptance_payload(&acceptance)),
+            )
+            .expect("write valid acceptance");
+
+        let mut legacy_scratch = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "unreadable legacy scratch task".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start legacy scratch task");
+        legacy_scratch.status = TaskStatus::Completed;
+        legacy_scratch.updated_at = "9999-01-01T00:00:00Z".to_string();
+        std::fs::write(
+            store
+                .tasks()
+                .run_dir(&legacy_scratch.run_id)
+                .join("state.json"),
+            serde_json::to_string_pretty(&legacy_scratch).expect("serialize legacy scratch state"),
+        )
+        .expect("write legacy scratch state");
+        std::fs::write(
+            store
+                .tasks()
+                .run_dir(&legacy_scratch.run_id)
+                .join("ledger.jsonl"),
+            "{not-json}\n",
+        )
+        .expect("write unreadable legacy scratch ledger");
+
+        let tasks = store.tasks().list_tasks().expect("list tasks");
+        assert!(store
+            .tasks()
+            .read_ledger_events(&legacy_scratch.run_id)
+            .is_err());
+        let latest_evidence = headless_latest_completed_task_completion_evidence(&store, &tasks)
+            .expect("latest evidence lookup")
+            .expect("valid fallback evidence");
+        assert_eq!(
+            latest_evidence.completion_result_fingerprint,
+            completion_evidence.completion_result_fingerprint
+        );
+        let accepted = headless_latest_accepted_completed_task(&store, &tasks)
+            .expect("accepted lookup")
+            .expect("valid accepted fallback");
+        assert_eq!(accepted.task_id, valid_task.task_id);
+        assert_eq!(accepted.acceptance_id, "valid-accepted");
+    }
+
+    #[test]
     fn headless_run_drive_completion_closure_rejects_failed_terminal_scope() {
         let progress = TaskListProgressOverview {
             source_fingerprint: format!("sha256:{}", "a".repeat(64)),
@@ -26268,7 +26544,7 @@ modes:
                 "max_advances": 1,
                 "max_steps_per_advance": 1,
                 "context_budget": {
-                    "max_prompt_chars": 4096,
+                    "max_prompt_chars": 8192,
                     "max_ledger_events": 16,
                     "max_selected_index_chars": 1024
                 },
@@ -26406,7 +26682,7 @@ modes:
                 "max_advances": 1,
                 "max_steps_per_advance": 1,
                 "context_budget": {
-                    "max_prompt_chars": 4096,
+                    "max_prompt_chars": 8192,
                     "max_ledger_events": 16,
                     "max_selected_index_chars": 1024
                 },
@@ -26606,7 +26882,7 @@ modes:
             WorkspacePatchOperation::ReplaceFile.as_str(),
             "updated README B",
         );
-        let ambiguous = headless_objective_proposal_candidate_outcome(
+        let latest_candidate = headless_objective_proposal_candidate_outcome(
             &store,
             &checkpoint,
             "m56.denial",
@@ -26615,10 +26891,16 @@ modes:
         )
         .expect("candidate outcome")
         .expect("candidate metadata");
-        assert_eq!(ambiguous.status, "blocked_ambiguous_candidates");
-        assert_eq!(ambiguous.candidate_count, 2);
-        assert!(ambiguous.proposal_id.is_none());
-        assert_eq!(ambiguous.next_action, "inspect_progress_overview");
+        assert_eq!(latest_candidate.status, "ready_for_review");
+        assert_eq!(latest_candidate.candidate_count, 2);
+        assert_eq!(
+            latest_candidate.proposal_id.as_deref(),
+            Some("proposal_m56_denial_b")
+        );
+        assert_eq!(
+            latest_candidate.next_action,
+            "review_and_authorize_objective_proposal"
+        );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         clear_llm_env_for_test();
@@ -26646,7 +26928,7 @@ modes:
                 "max_advances": 1,
                 "max_steps_per_advance": 1,
                 "context_budget": {
-                    "max_prompt_chars": 4096,
+                    "max_prompt_chars": 8192,
                     "max_ledger_events": 16,
                     "max_selected_index_chars": 1024
                 },
@@ -26838,7 +27120,7 @@ modes:
                 "max_advances": 1,
                 "max_steps_per_advance": 1,
                 "context_budget": {
-                    "max_prompt_chars": 4096,
+                    "max_prompt_chars": 8192,
                     "max_ledger_events": 16,
                     "max_selected_index_chars": 1024
                 },
@@ -55699,7 +55981,7 @@ modes:
         assert_eq!(mode["permissions"]["workspace_write"], false);
         assert_eq!(mode["permissions"]["process_exec"], false);
         assert_eq!(mode["permissions"]["network_access"], false);
-        assert_eq!(mode["permissions"]["llm_provider_access"], false);
+        assert_eq!(mode["permissions"]["llm_provider_access"], true);
         assert_eq!(mode["permissions"]["service_control"], false);
         assert_eq!(mode["permissions"]["destructive"], false);
         assert_eq!(mode["permissions"]["can_spawn_subtasks"], false);
@@ -55712,7 +55994,6 @@ modes:
             (3, "WriteWorkspace"),
             (4, "ExecuteProcess"),
             (5, "AccessNetwork"),
-            (6, "AccessLlmProvider"),
             (7, "ControlService"),
             (8, "DestructiveOperation"),
             (9, "SpawnSubtask"),
@@ -55735,6 +56016,14 @@ modes:
                 "{action} should be narrowed for repository-local raw Mode Packs"
             );
         }
+        let llm_permission = parse_line(
+            r#"{"jsonrpc":"2.0","id":6,"method":"permission.check","params":{"mode_id":"external-integrator","action":"AccessLlmProvider"}}"#,
+        );
+        assert_eq!(
+            llm_permission.result.expect("llm permission result")["allowed"],
+            true,
+            "AccessLlmProvider is intentionally separate from generic network access"
+        );
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
@@ -60610,9 +60899,9 @@ modes:
         assert!(items
             .iter()
             .any(|item| item["tool_id"] == "workspace.write" && item["allowed"] == false));
-        assert!(items.iter().any(|item| {
-            item["tool_id"] == "verification.cargo_fmt_check" && item["allowed"] == false
-        }));
+        assert!(items
+            .iter()
+            .any(|item| item["tool_id"] == "verification.cargo_test" && item["allowed"] == false));
         assert!(items
             .iter()
             .any(|item| item["tool_id"] == "subtask.spawn" && item["allowed"] == true));
@@ -61741,7 +62030,13 @@ content-length: {}
         .unwrap();
         let event_list = events["events"].as_array().unwrap();
         assert!(event_list.iter().any(|event| {
-            event["kind"] == "ToolExecutionDenied"
+            matches!(
+                event["kind"].as_str(),
+                Some("ToolIntentDenied" | "ToolExecutionDenied")
+            ) && event["payload"]["tool_id"] == PROCESS_EXEC_TOOL_ID
+        }));
+        assert!(!event_list.iter().any(|event| {
+            event["kind"] == "ToolExecutionRequested"
                 && event["payload"]["tool_id"] == PROCESS_EXEC_TOOL_ID
         }));
         let completion = event_list
@@ -63908,7 +64203,7 @@ content-length: {}
         std::env::set_var("BROWNIE_LLM_PROVIDER", "fake");
 
         let start = parse_line(
-            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use git status result context to identify the unknown changed file","mode_id":"verifier"}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use git status result context to identify the unknown changed file","mode_id":"implementer"}}"#,
         )
         .result
         .expect("task start");

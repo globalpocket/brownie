@@ -7953,6 +7953,7 @@ fn validate_tool_intent_payload_schema(
     validate_required_payload_string_field(object, "request_reason")?;
     validate_required_payload_object_field(object, "input_summary")?;
     validate_optional_payload_string_field(object, "mode_id")?;
+    validate_optional_payload_string_array_field(object, "planned_allowed_tool_ids")?;
     validate_optional_payload_string_field(object, "requested_mode_id")?;
     validate_optional_payload_string_field(object, "source_apply_id")?;
     validate_optional_payload_string_field(object, "source_run_id")?;
@@ -10154,6 +10155,7 @@ const TOOL_INTENT_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "allowed",
     "input_summary",
     "mode_id",
+    "planned_allowed_tool_ids",
     "reason",
     "request_reason",
     "requested_mode_id",

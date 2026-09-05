@@ -9,6 +9,15 @@ extensions/*/*.vsix
 
 # Brownie runtime state
 .brownie/
+.brownie-archive/
+.brownie-phase-loop/
+phase-loop.env
+
+# Local Brownie test/runtime scratch state
+!.test/
+.test/*
+!.test/*.example
+.test/brownie-loop.env
 
 # OS / editor
 .DS_Store
