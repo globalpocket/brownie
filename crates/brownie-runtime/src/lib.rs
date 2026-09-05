@@ -2784,8 +2784,6 @@ fn task_goal_requires_tool_intent(goal: &str) -> bool {
         "update",
         "save",
         "delete",
-        "run",
-        "execute",
         "wait",
         "sleep",
         "timestamp",
