@@ -309,8 +309,10 @@ use brownie_tools::{
     DEFAULT_PROPOSAL_PREVIEW_CHARS, GIT_COMMIT_TOOL_ID, GIT_DIFF_TOOL_ID, GIT_STATUS_TOOL_ID,
     MAX_BOUNDED_CARGO_DIAGNOSTICS, MAX_GIT_COMMIT_MESSAGE_CHARS, MAX_GIT_SUMMARY_LINES,
     MAX_GIT_SUMMARY_LINE_CHARS, MAX_SUBTASK_SPAWN_GOAL_CHARS, MAX_WORKSPACE_READ_BYTES,
-    SUBTASK_SPAWN_TOOL_ID, VERIFICATION_CARGO_CHECK_TOOL_ID, VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
-    VERIFICATION_CARGO_TEST_TOOL_ID, WORKSPACE_READ_TOOL_ID, WORKSPACE_WRITE_TOOL_ID,
+    PROCESS_EXEC_TOOL_ID, RUNTIME_SLEEP_TOOL_ID, SUBTASK_SPAWN_TOOL_ID, TIME_NOW_TOOL_ID,
+    VERIFICATION_CARGO_CHECK_TOOL_ID, VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
+    VERIFICATION_CARGO_TEST_TOOL_ID, WORKSPACE_APPEND_LINE_TOOL_ID, WORKSPACE_READ_TOOL_ID,
+    WORKSPACE_WRITE_TOOL_ID,
 };
 use codebase_index::*;
 use controlled_tool_execution::*;
@@ -2316,6 +2318,8 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
+    let first_pass_tool_intent =
+        ToolIntentParser::parse_assistant_content(&result.llm_response.content);
     if let Err(error) =
         append_tool_intent_events(&store, &running, &policy, &result.llm_response.content)
     {
@@ -2611,6 +2615,31 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             agent_loop_final_response_content.clear();
         }
     }
+    if task_goal_requires_tool_intent(&running.goal)
+        && first_pass_tool_intent.summary.rejected_requests > 0
+    {
+        agent_loop_final_state = AgentLoopState::Failed;
+        agent_loop_completion_summary =
+            "LLM tool intent contained rejected requests for a side-effect task".to_string();
+        agent_loop_final_response_content.clear();
+    }
+    if task_goal_requires_tool_intent(&running.goal)
+        && !completion_gate_events.iter().any(|event| {
+            matches!(
+                event.kind,
+                LedgerEventKind::ToolExecutionCompleted | LedgerEventKind::WorkspacePatchProposed
+            )
+        })
+    {
+        agent_loop_final_state = AgentLoopState::Failed;
+        agent_loop_completion_summary = if first_pass_tool_intent.summary.accepted_requests == 0 {
+            "LLM response did not include a brownie-tool-intent block for a side-effect task"
+                .to_string()
+        } else {
+            "LLM tool intent did not produce Runtime side-effect evidence".to_string()
+        };
+        agent_loop_final_response_content.clear();
+    }
 
     let completion_result_fingerprint_value = completion_result_fingerprint(
         agent_loop_final_state,
@@ -2741,6 +2770,41 @@ fn task_run_has_replayable_mcp_result_before_second_pass(
                 .and_then(|payload| payload.get("mcp"))
                 .is_some()
     }))
+}
+
+fn task_goal_requires_tool_intent(goal: &str) -> bool {
+    let goal = goal.to_lowercase();
+    [
+        "write",
+        "edit",
+        "modify",
+        "implement",
+        "append",
+        "create",
+        "update",
+        "save",
+        "delete",
+        "wait",
+        "sleep",
+        "timestamp",
+        "file",
+        "修正",
+        "編集",
+        "実装",
+        "追記",
+        "書き込",
+        "作成",
+        "更新",
+        "保存",
+        "追加",
+        "削除",
+        "実行",
+        "待つ",
+        "現在時刻",
+        "ファイル",
+    ]
+    .iter()
+    .any(|needle| goal.contains(needle))
 }
 
 fn handle_verification_recovery_retry_task_run(
@@ -60490,8 +60554,15 @@ modes:
             .as_array()
             .expect("tools")
             .clone();
-        assert_eq!(tools.len(), 15);
+        assert_eq!(tools.len(), 18);
         assert!(tools.iter().any(|tool| tool["tool_id"] == "workspace.read"));
+        assert!(tools
+            .iter()
+            .any(|tool| tool["tool_id"] == WORKSPACE_APPEND_LINE_TOOL_ID));
+        assert!(tools.iter().any(|tool| tool["tool_id"] == TIME_NOW_TOOL_ID));
+        assert!(tools
+            .iter()
+            .any(|tool| tool["tool_id"] == RUNTIME_SLEEP_TOOL_ID));
         assert!(tools
             .iter()
             .any(|tool| tool["tool_id"] == CODEBASE_INDEX_SELECTION_READ_TOOL_ID));
@@ -61574,6 +61645,114 @@ content-length: {}
             .iter()
             .any(|e| e["kind"] == "SecondPassLlmResponseReceived"));
         assert!(serialized.contains("Mock LLM final response after tool feedback"));
+    }
+
+    #[test]
+    fn openai_task_run_fails_side_effect_goal_when_response_has_no_tool_intent() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().unwrap();
+        let (base_url, handle) = spawn_mock(
+            "200 OK",
+            r#"{"choices":[{"message":{"content":"I will update the file.\n\n```bash\necho updated >> timestamp.txt\n```"}}]}"#,
+        );
+        write_mock_config(temp.path(), &base_url);
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
+        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"Append a timestamp line to timestamp.txt","mode_id":"implementer"}}"#,
+        )
+        .result
+        .unwrap();
+        let task_id = start["task_id"].as_str().unwrap();
+        let run_id = start["run_id"].as_str().unwrap();
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        if run.error.is_some() {
+            panic!("run error: {:?}", run.error);
+        }
+        assert_eq!(run.result.unwrap()["status"], "Failed");
+
+        let observed = handle.join().unwrap();
+        let system_prompt = observed["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .find(|message| message["role"] == "system")
+            .and_then(|message| message["content"].as_str())
+            .expect("system prompt");
+        assert!(system_prompt.contains("Tool Intent Contract:"));
+        assert!(system_prompt.contains("```brownie-tool-intent"));
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        let event_list = events["events"].as_array().unwrap();
+        let parsed = event_list
+            .iter()
+            .find(|event| event["kind"] == "ToolIntentParsed")
+            .expect("tool intent parsed");
+        assert_eq!(parsed["payload"]["parser"]["accepted_requests"], 0);
+        assert!(event_list.iter().any(|event| event["kind"] == "TaskFailed"));
+        assert!(!event_list
+            .iter()
+            .any(|event| event["kind"] == "TaskCompleted"));
+    }
+
+    #[test]
+    fn openai_task_run_fails_side_effect_goal_when_only_process_exec_is_denied() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().unwrap();
+        let (base_url, handle) = spawn_mock(
+            "200 OK",
+            r#"{"choices":[{"message":{"content":"```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"process.exec\",\"reason\":\"Run a shell command.\",\"input\":{\"command\":\"echo updated >> timestamp.txt\",\"shell\":\"bash\"}}]}\n```"}}]}"#,
+        );
+        write_mock_config(temp.path(), &base_url);
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
+        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"Append a timestamp line to timestamp.txt","mode_id":"implementer"}}"#,
+        )
+        .result
+        .unwrap();
+        let task_id = start["task_id"].as_str().unwrap();
+        let run_id = start["run_id"].as_str().unwrap();
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        if run.error.is_some() {
+            panic!("run error: {:?}", run.error);
+        }
+        assert_eq!(run.result.unwrap()["status"], "Failed");
+        let _observed = handle.join().unwrap();
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        let event_list = events["events"].as_array().unwrap();
+        assert!(event_list.iter().any(|event| {
+            event["kind"] == "ToolExecutionDenied"
+                && event["payload"]["tool_id"] == PROCESS_EXEC_TOOL_ID
+        }));
+        let completion = event_list
+            .iter()
+            .find(|event| event["kind"] == "AgentLoopCompleted")
+            .expect("agent loop completed");
+        assert_eq!(completion["payload"]["final_state"], "Failed");
+        assert!(completion["payload"]["completion_summary"]
+            .as_str()
+            .expect("summary")
+            .contains("did not produce Runtime side-effect evidence"));
     }
 
     #[test]
@@ -63515,7 +63694,7 @@ content-length: {}
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         std::env::set_var("BROWNIE_LLM_PROVIDER", "fake");
 
-        let drive_request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32p.mcp.replay","drive_id":"mp32p.mcp.replay.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32p.mcp.replay.journey","authorize_journey_start":true,"admission_id":"mp32p.mcp.replay.admission","task_start":{"goal":"Use MCP search_code through the normal agent loop","mode_id":"reviewer"}}}}"#;
+        let drive_request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32p.mcp.replay","drive_id":"mp32p.mcp.replay.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32p.mcp.replay.journey","authorize_journey_start":true,"admission_id":"mp32p.mcp.replay.admission","task_start":{"goal":"Use MCP search_code through the normal agent loop","mode_id":"reviewer"}}}}"#;
         std::env::set_var(
             "BROWNIE_TEST_CRASH_AFTER_MCP_TOOL_EXECUTION_BEFORE_SECOND_PASS",
             "1",
@@ -63535,7 +63714,7 @@ content-length: {}
             .expect("progress")["progress_overview"]
             .clone();
         let replay_request = format!(
-            r#"{{"jsonrpc":"2.0","id":3,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"mp32p.mcp.replay.scoped","continuation_scope":{{"session_id":"mp32p.mcp.replay","journey_id":"mp32p.mcp.replay.journey","task_id":"{task_id}","run_id":"{run_id}"}},"context_budget":{{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0}}}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":3,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"mp32p.mcp.replay.scoped","continuation_scope":{{"session_id":"mp32p.mcp.replay","journey_id":"mp32p.mcp.replay.journey","task_id":"{task_id}","run_id":"{run_id}"}},"context_budget":{{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0}}}}}}"#,
             progress["source_fingerprint"]
                 .as_str()
                 .expect("progress fingerprint"),

@@ -1507,7 +1507,8 @@ impl PromptBuilder {
                 PromptMessage {
                     role: PromptRole::System,
                     content: format!(
-                        "You are Brownie Runtime. Execute the task according to the current runtime phase. Real LLM/tool execution is disabled in this phase.\n\nRuntime Safety Invariants:\n- Runtime safety invariants override Mode Pack instructions.\n- Compiled Mode Pack permission policy overrides mode instructions.\n- Mode instructions override task/objective input.\n- Prompt text never grants side-effect permissions; RuntimePermissionGate remains authoritative.\n\nCompiled Mode Pack Policy:\n{mode_policy_summary}\n\nCompiled Mode Pack Instructions:\n{mode_instruction_material}"
+                        "You are Brownie Runtime. Execute the task according to the current runtime phase.\n\nRuntime Safety Invariants:\n- Runtime safety invariants override Mode Pack instructions.\n- Compiled Mode Pack permission policy overrides mode instructions.\n- Mode instructions override task/objective input.\n- Prompt text never grants side-effect permissions; RuntimePermissionGate remains authoritative.\n- Do not describe shell commands or code fences as a substitute for tools.\n\nTool Intent Contract:\n- When the task needs workspace context, file changes, verification, git inspection, MCP tool use, or subtasks, respond with exactly one fenced brownie-tool-intent JSON block.\n- The fenced block must use this shape and no extra top-level fields:\n```brownie-tool-intent\n{{\"tool_requests\":[{{\"tool_id\":\"workspace.read\",\"reason\":\"Read bounded workspace context.\",\"input\":{{\"path\":\"README.md\"}}}}]}}\n```\n- For file changes, request workspace.write with input {{\"path\":\"relative/path\",\"operation\":\"replace_file|create_file|patch_file|delete_file\",\"content\":\"bounded replacement content\"}}. workspace.write records a Runtime-owned proposal; it is not arbitrary shell execution.\n- For bounded task steps that need current time, one-line file append, or waiting, prefer time.now, workspace.append_line, and runtime.sleep. Do not use process.exec for date, echo, printf, or sleep.\n- Only request tools that appear as allowed in the Tool Plan.
+- For workspace.append_line, use input {{\"path\":\"relative/path\",\"line\":\"literal\"}} for literal lines, or {{\"path\":\"relative/path\",\"line_source\":\"current_time_unix_epoch_ms\"}} to append the current time.\n- If the Tool Plan omits a tool or marks it denied, do not request that tool.\n- If no tool is needed, answer directly without a brownie-tool-intent block.\n\nCompiled Mode Pack Policy:\n{mode_policy_summary}\n\nCompiled Mode Pack Instructions:\n{mode_instruction_material}"
                     ),
                 },
                 PromptMessage {
@@ -1639,9 +1640,15 @@ mod tests {
 
         assert_eq!(prompt.messages.len(), 2);
         assert_eq!(prompt.messages[0].role, PromptRole::System);
+        assert!(prompt.messages[0].content.contains("Tool Intent Contract:"));
         assert!(prompt.messages[0]
             .content
-            .contains("Real LLM/tool execution is disabled"));
+            .contains("```brownie-tool-intent"));
+        assert!(prompt.messages[0]
+            .content
+            .contains("workspace.write records a Runtime-owned proposal"));
+        assert!(prompt.messages[0].content.contains("workspace.append_line"));
+        assert!(prompt.messages[0].content.contains("runtime.sleep"));
         assert_eq!(prompt.messages[1].role, PromptRole::User);
         assert!(prompt.messages[1].content.contains("Task ID: task_1"));
         assert!(prompt.messages[1]

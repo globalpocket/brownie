@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
@@ -32,6 +32,10 @@ pub const VERIFICATION_CARGO_TEST_TOOL_ID: &str = "verification.cargo_test";
 pub const GIT_STATUS_TOOL_ID: &str = "git.status";
 pub const GIT_DIFF_TOOL_ID: &str = "git.diff";
 pub const GIT_COMMIT_TOOL_ID: &str = "git.commit";
+pub const PROCESS_EXEC_TOOL_ID: &str = "process.exec";
+pub const TIME_NOW_TOOL_ID: &str = "time.now";
+pub const RUNTIME_SLEEP_TOOL_ID: &str = "runtime.sleep";
+pub const WORKSPACE_APPEND_LINE_TOOL_ID: &str = "workspace.append_line";
 pub const MAX_WORKSPACE_READ_BYTES: usize = 65_536;
 pub const DEFAULT_VERIFICATION_TIMEOUT_MS: u64 = 30_000;
 pub const MAX_VERIFICATION_CAPTURE_BYTES: usize = 65_536;
@@ -61,6 +65,8 @@ pub const MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 200_000;
 pub const DEFAULT_PROPOSAL_PREVIEW_CHARS: usize = 2_000;
 pub const MAX_SUBTASK_SPAWN_GOAL_CHARS: usize = 1_000;
 pub const MAX_SUBTASK_SPAWN_MODE_ID_CHARS: usize = 128;
+pub const MAX_WORKSPACE_APPEND_LINE_CHARS: usize = 4_096;
+pub const MAX_RUNTIME_SLEEP_MS: u64 = 120_000;
 const AGENTMODES_NEW_TASK_ALIAS_TOOL_ID: &str = "new_task";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,7 +126,10 @@ impl BuiltinToolRegistry {
             git_status_tool(),
             git_diff_tool(),
             git_commit_tool(),
-            tool("process.exec", "Process Exec", "Dry-run definition for process execution requests; no commands are executed in Phase 1.6.", RuntimeAction::ExecuteProcess),
+            time_now_tool(),
+            runtime_sleep_tool(),
+            workspace_append_line_tool(),
+            tool(PROCESS_EXEC_TOOL_ID, "Process Exec", "Dry-run definition for process execution requests; no commands are executed in Phase 1.6.", RuntimeAction::ExecuteProcess),
             subtask_spawn_tool(),
             tool("network.access", "Network Access", "Dry-run definition for network access requests.", RuntimeAction::AccessNetwork),
             tool("llm.provider.access", "LLM Provider Access", "Dry-run definition for configured LLM provider access requests.", RuntimeAction::AccessLlmProvider),
@@ -291,6 +300,11 @@ impl ToolExecutor {
             GIT_STATUS_TOOL_ID => GitCommandExecutor::status(workspace_root, &request.input),
             GIT_DIFF_TOOL_ID => GitCommandExecutor::diff_summary(workspace_root, &request.input),
             GIT_COMMIT_TOOL_ID => GitCommandExecutor::commit(workspace_root, &request.input),
+            TIME_NOW_TOOL_ID => BoundedRuntimeToolExecutor::time_now(&request.input),
+            RUNTIME_SLEEP_TOOL_ID => BoundedRuntimeToolExecutor::sleep(&request.input),
+            WORKSPACE_APPEND_LINE_TOOL_ID => {
+                BoundedRuntimeToolExecutor::append_line(workspace_root, &request.input)
+            }
             _ => Ok(ToolExecutionResult {
                 tool_id: request.tool_id,
                 status: ToolExecutionStatus::Denied,
@@ -329,6 +343,117 @@ impl ToolExecutor {
             });
         };
         WorkspaceReadExecutor::read(workspace_root, path, MAX_WORKSPACE_READ_BYTES)
+    }
+}
+
+pub struct BoundedRuntimeToolExecutor;
+
+impl BoundedRuntimeToolExecutor {
+    fn time_now(input: &Value) -> anyhow::Result<ToolExecutionResult> {
+        if let Err(reason) = preflight_time_now_input(input) {
+            return Ok(ToolExecutionResult {
+                tool_id: TIME_NOW_TOOL_ID.to_string(),
+                status: ToolExecutionStatus::Failed,
+                output: json!({ "reason": reason }),
+            });
+        }
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("system clock is before unix epoch")?
+            .as_millis();
+        Ok(ToolExecutionResult {
+            tool_id: TIME_NOW_TOOL_ID.to_string(),
+            status: ToolExecutionStatus::Completed,
+            output: json!({
+                "unix_epoch_ms": now_ms,
+            }),
+        })
+    }
+
+    fn sleep(input: &Value) -> anyhow::Result<ToolExecutionResult> {
+        let duration_ms = match preflight_runtime_sleep_input(input) {
+            Ok(duration_ms) => duration_ms,
+            Err(reason) => {
+                return Ok(ToolExecutionResult {
+                    tool_id: RUNTIME_SLEEP_TOOL_ID.to_string(),
+                    status: ToolExecutionStatus::Failed,
+                    output: json!({ "reason": reason }),
+                })
+            }
+        };
+        thread::sleep(Duration::from_millis(duration_ms));
+        Ok(ToolExecutionResult {
+            tool_id: RUNTIME_SLEEP_TOOL_ID.to_string(),
+            status: ToolExecutionStatus::Completed,
+            output: json!({
+                "slept_ms": duration_ms,
+            }),
+        })
+    }
+
+    fn append_line(workspace_root: &Path, input: &Value) -> anyhow::Result<ToolExecutionResult> {
+        let (relative_path, line) = match preflight_workspace_append_line_input(input) {
+            Ok(value) => value,
+            Err(reason) => {
+                return Ok(ToolExecutionResult {
+                    tool_id: WORKSPACE_APPEND_LINE_TOOL_ID.to_string(),
+                    status: ToolExecutionStatus::Failed,
+                    output: json!({ "reason": reason }),
+                })
+            }
+        };
+        let line = match line {
+            WorkspaceAppendLine::Literal(line) => line.to_string(),
+            WorkspaceAppendLine::CurrentUnixEpochMs => SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .context("system clock is before unix epoch")?
+                .as_millis()
+                .to_string(),
+        };
+        let root = workspace_root.canonicalize().with_context(|| {
+            format!(
+                "failed to canonicalize workspace root {}",
+                workspace_root.display()
+            )
+        })?;
+        let target = root.join(Path::new(relative_path));
+        let parent = target
+            .parent()
+            .context("workspace.append_line target must have a parent")?;
+        let canonical_parent = parent
+            .canonicalize()
+            .with_context(|| format!("failed to inspect parent for {relative_path}"))?;
+        if !canonical_parent.starts_with(&root) {
+            bail!("path escapes workspace root");
+        }
+        if let Ok(metadata) = fs::symlink_metadata(&target) {
+            if metadata.file_type().is_symlink() {
+                bail!("symlink writes are not supported");
+            }
+            if metadata.is_dir() {
+                bail!("directory writes are not supported");
+            }
+        }
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&target)
+            .with_context(|| format!("failed to open append target {relative_path}"))?;
+        file.write_all(line.as_bytes())
+            .with_context(|| format!("failed to append line to {relative_path}"))?;
+        file.write_all(b"\n")
+            .with_context(|| format!("failed to append newline to {relative_path}"))?;
+        file.sync_all()
+            .with_context(|| format!("failed to sync append target {relative_path}"))?;
+        Ok(ToolExecutionResult {
+            tool_id: WORKSPACE_APPEND_LINE_TOOL_ID.to_string(),
+            status: ToolExecutionStatus::Completed,
+            output: json!({
+                "path": relative_path,
+                "bytes_appended": line.len() + 1,
+                "content_redacted": true,
+            }),
+        })
     }
 }
 
@@ -2606,6 +2731,73 @@ fn git_commit_tool() -> ToolDefinition {
     }
 }
 
+fn time_now_tool() -> ToolDefinition {
+    ToolDefinition {
+        tool_id: TIME_NOW_TOOL_ID.to_string(),
+        display_name: "Time Now".to_string(),
+        description: "Controlled current-time read. Returns the current Unix epoch time in milliseconds; callers cannot supply shell, command, environment, network, or file input.".to_string(),
+        required_action: RuntimeAction::ExecuteProcess,
+        input_schema: ToolInputSchema {
+            fields: vec![ToolInputField {
+                name: "format".to_string(),
+                required: false,
+                description: "Optional literal unix_epoch_ms output format.".to_string(),
+            }],
+        },
+    }
+}
+
+fn runtime_sleep_tool() -> ToolDefinition {
+    ToolDefinition {
+        tool_id: RUNTIME_SLEEP_TOOL_ID.to_string(),
+        display_name: "Runtime Sleep".to_string(),
+        description: "Controlled bounded wait. Sleeps for duration_ms up to the Runtime maximum; callers cannot supply shell, command, environment, network, or file input.".to_string(),
+        required_action: RuntimeAction::ExecuteProcess,
+        input_schema: ToolInputSchema {
+            fields: vec![
+                ToolInputField {
+                    name: "duration_ms".to_string(),
+                    required: false,
+                    description: "Bounded sleep duration in milliseconds. Use exactly one of duration_ms or duration_seconds.".to_string(),
+                },
+                ToolInputField {
+                    name: "duration_seconds".to_string(),
+                    required: false,
+                    description: "Bounded sleep duration in seconds. Use exactly one of duration_ms or duration_seconds.".to_string(),
+                },
+            ],
+        },
+    }
+}
+
+fn workspace_append_line_tool() -> ToolDefinition {
+    ToolDefinition {
+        tool_id: WORKSPACE_APPEND_LINE_TOOL_ID.to_string(),
+        display_name: "Workspace Append Line".to_string(),
+        description: "Controlled workspace mutation that appends exactly one UTF-8 line to a workspace-relative file. This is not arbitrary shell execution.".to_string(),
+        required_action: RuntimeAction::WriteWorkspace,
+        input_schema: ToolInputSchema {
+            fields: vec![
+                ToolInputField {
+                    name: "path".to_string(),
+                    required: true,
+                    description: "Workspace-relative file path.".to_string(),
+                },
+                ToolInputField {
+                    name: "line".to_string(),
+                    required: false,
+                    description: "Single literal UTF-8 line to append; newline characters are rejected. Use exactly one of line or line_source.".to_string(),
+                },
+                ToolInputField {
+                    name: "line_source".to_string(),
+                    required: false,
+                    description: "Optional Runtime-owned line source. Use current_time_unix_epoch_ms to append the current time without arbitrary process execution.".to_string(),
+                },
+            ],
+        },
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ToolIntentParserConfig {
     pub max_blocks: usize,
@@ -2860,6 +3052,91 @@ pub fn preflight_workspace_write_path(relative_path: &str) -> Result<(), &'stati
         }
     }
     Ok(())
+}
+
+pub enum WorkspaceAppendLine<'a> {
+    Literal(&'a str),
+    CurrentUnixEpochMs,
+}
+
+pub fn preflight_workspace_append_line_input(
+    input: &Value,
+) -> Result<(&str, WorkspaceAppendLine<'_>), &'static str> {
+    let Some(object) = input.as_object() else {
+        return Err("workspace.append_line input must be an object.");
+    };
+    for key in object.keys() {
+        match key.as_str() {
+            "path" | "line" | "line_source" => {}
+            _ => return Err("workspace.append_line input contains unsupported field."),
+        }
+    }
+    let Some(path) = object.get("path").and_then(Value::as_str) else {
+        return Err("workspace.append_line input.path must be a string.");
+    };
+    preflight_workspace_write_path(path)?;
+    let line = object.get("line").and_then(Value::as_str);
+    let line_source = object.get("line_source").and_then(Value::as_str);
+    if line.is_some() == line_source.is_some() {
+        return Err("workspace.append_line requires exactly one of line or line_source.");
+    }
+    if let Some(line) = line {
+        if line.contains('\n') || line.contains('\r') {
+            return Err("workspace.append_line input.line must be a single line.");
+        }
+        if line.chars().count() > MAX_WORKSPACE_APPEND_LINE_CHARS {
+            return Err("workspace.append_line input.line exceeds parser length limit.");
+        }
+        return Ok((path, WorkspaceAppendLine::Literal(line)));
+    }
+    if line_source != Some("current_time_unix_epoch_ms") {
+        return Err("workspace.append_line input.line_source must be current_time_unix_epoch_ms.");
+    }
+    Ok((path, WorkspaceAppendLine::CurrentUnixEpochMs))
+}
+
+fn preflight_time_now_input(input: &Value) -> Result<(), &'static str> {
+    let Some(object) = input.as_object() else {
+        return Err("time.now input must be an object.");
+    };
+    for key in object.keys() {
+        match key.as_str() {
+            "format" => {
+                if object.get("format").and_then(Value::as_str) != Some("unix_epoch_ms") {
+                    return Err("time.now input.format must be unix_epoch_ms when provided.");
+                }
+            }
+            _ => return Err("time.now input contains unsupported field."),
+        }
+    }
+    Ok(())
+}
+
+fn preflight_runtime_sleep_input(input: &Value) -> Result<u64, &'static str> {
+    let Some(object) = input.as_object() else {
+        return Err("runtime.sleep input must be an object.");
+    };
+    for key in object.keys() {
+        if key != "duration_ms" && key != "duration_seconds" {
+            return Err("runtime.sleep input contains unsupported field.");
+        }
+    }
+    let duration_ms = object.get("duration_ms").and_then(Value::as_u64);
+    let duration_seconds = object.get("duration_seconds").and_then(Value::as_u64);
+    if duration_ms.is_some() == duration_seconds.is_some() {
+        return Err("runtime.sleep requires exactly one of duration_ms or duration_seconds.");
+    };
+    let duration_ms = if let Some(duration_ms) = duration_ms {
+        duration_ms
+    } else {
+        duration_seconds
+            .and_then(|seconds| seconds.checked_mul(1_000))
+            .ok_or("runtime.sleep input.duration_seconds exceeds the maximum duration.")?
+    };
+    if duration_ms > MAX_RUNTIME_SLEEP_MS {
+        return Err("runtime.sleep input.duration_ms exceeds the maximum duration.");
+    }
+    Ok(duration_ms)
 }
 
 pub fn preflight_subtask_spawn_input(input: &Value) -> Result<(), &'static str> {
@@ -3140,6 +3417,24 @@ impl ToolIntentParser {
                     &input,
                     config.max_workspace_write_content_chars,
                 ) {
+                    rejected.push(rejection(Some(tool_id_value), reason, "invalid_input"));
+                    continue;
+                }
+            }
+            if tool_id_value == WORKSPACE_APPEND_LINE_TOOL_ID {
+                if let Err(reason) = preflight_workspace_append_line_input(&input) {
+                    rejected.push(rejection(Some(tool_id_value), reason, "invalid_input"));
+                    continue;
+                }
+            }
+            if tool_id_value == TIME_NOW_TOOL_ID {
+                if let Err(reason) = preflight_time_now_input(&input) {
+                    rejected.push(rejection(Some(tool_id_value), reason, "invalid_input"));
+                    continue;
+                }
+            }
+            if tool_id_value == RUNTIME_SLEEP_TOOL_ID {
+                if let Err(reason) = preflight_runtime_sleep_input(&input) {
                     rejected.push(rejection(Some(tool_id_value), reason, "invalid_input"));
                     continue;
                 }
@@ -3938,14 +4233,43 @@ impl ToolPlanner {
                 "edit",
                 "modify",
                 "implement",
+                "append",
+                "create",
+                "update",
+                "save",
                 "修正",
                 "編集",
                 "実装",
+                "追記",
+                "書き込",
+                "作成",
+                "更新",
+                "保存",
+                "追加",
             ],
         ) {
             items.push(plan_item(
                 "workspace.write",
                 "Goal suggests implementation or editing work.",
+            ));
+            items.push(plan_item(
+                WORKSPACE_APPEND_LINE_TOOL_ID,
+                "Goal suggests appending bounded lines to workspace files.",
+            ));
+        }
+        if contains_any(
+            &goal,
+            &["time", "timestamp", "clock", "date", "現在時刻", "時刻"],
+        ) {
+            items.push(plan_item(
+                TIME_NOW_TOOL_ID,
+                "Goal asks for current time evidence.",
+            ));
+        }
+        if contains_any(&goal, &["wait", "sleep", "待つ", "待機"]) {
+            items.push(plan_item(
+                RUNTIME_SLEEP_TOOL_ID,
+                "Goal asks for a bounded Runtime wait.",
             ));
         }
         if contains_any(
@@ -4052,6 +4376,9 @@ mod tests {
                 "git.status",
                 "git.diff",
                 "git.commit",
+                "time.now",
+                "runtime.sleep",
+                "workspace.append_line",
                 "process.exec",
                 "subtask.spawn",
                 "network.access",
@@ -4060,6 +4387,55 @@ mod tests {
                 "destructive.operation"
             ]
         );
+    }
+
+    #[test]
+    fn planner_includes_workspace_write_for_japanese_append_goals() {
+        let plan = ToolPlanner::plan(ToolPlanningInput {
+            task_id: "task_1".to_string(),
+            goal: "現在時刻を取得し、timestamp.txt に行を追記して、1分待機してください".to_string(),
+            mode_id: "implementer".to_string(),
+        });
+        let ids = plan
+            .items
+            .iter()
+            .map(|item| item.tool_id.as_str())
+            .collect::<Vec<_>>();
+        assert!(ids.contains(&WORKSPACE_READ_TOOL_ID));
+        assert!(ids.contains(&WORKSPACE_WRITE_TOOL_ID));
+        assert!(ids.contains(&WORKSPACE_APPEND_LINE_TOOL_ID));
+        assert!(ids.contains(&TIME_NOW_TOOL_ID));
+        assert!(ids.contains(&RUNTIME_SLEEP_TOOL_ID));
+    }
+
+    #[test]
+    fn parser_accepts_bounded_runtime_sleep_seconds() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"runtime.sleep\",\"reason\":\"Wait one minute.\",\"input\":{\"duration_seconds\":60}}]}\n```",
+        );
+        assert_eq!(parsed.summary.accepted_requests, 1);
+        assert_eq!(parsed.summary.rejected_requests, 0);
+    }
+
+    #[test]
+    fn controlled_append_line_can_append_runtime_current_time() {
+        let temp = tempfile::tempdir().unwrap();
+        let result = ToolExecutor::execute_controlled(
+            temp.path(),
+            ToolExecutionRequest {
+                tool_id: WORKSPACE_APPEND_LINE_TOOL_ID.to_string(),
+                input: json!({
+                    "path": "timestamp.txt",
+                    "line_source": "current_time_unix_epoch_ms",
+                }),
+            },
+        )
+        .unwrap();
+        assert_eq!(result.status, ToolExecutionStatus::Completed);
+        let content = fs::read_to_string(temp.path().join("timestamp.txt")).unwrap();
+        let line = content.trim();
+        assert!(!line.is_empty());
+        assert!(line.bytes().all(|byte| byte.is_ascii_digit()));
     }
 
     #[test]
