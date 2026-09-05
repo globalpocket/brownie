@@ -67,6 +67,12 @@ EOF
 
 load_env() {
   set -a
+  if [ -f "$ROOT_DIR/.test/brownie-loop.env" ]; then
+    # Match the local LAN LLM environment used by .test/sample.md smoke runs.
+    # This file is ignored and may contain local credentials.
+    # shellcheck disable=SC1091
+    . "$ROOT_DIR/.test/brownie-loop.env"
+  fi
   if [ -f "$ROOT_DIR/phase-loop.env" ]; then
     # shellcheck disable=SC1091
     . "$ROOT_DIR/phase-loop.env"
@@ -74,11 +80,6 @@ load_env() {
   if [ -f "$STATE_DIR/phase-loop.env" ]; then
     # shellcheck disable=SC1091
     . "$STATE_DIR/phase-loop.env"
-  fi
-  if [ -f "$ROOT_DIR/.test/brownie-loop.env" ]; then
-    # Backward-compatible local development fallback. This file is ignored.
-    # shellcheck disable=SC1091
-    . "$ROOT_DIR/.test/brownie-loop.env"
   fi
   set +a
 }
@@ -132,13 +133,6 @@ run_brownie_once() {
     write_status "blocked" "$detail" "$run_stamp" "66" "${CONSECUTIVE_FAILURES:-0}"
     return 66
   fi
-  if [ "${BROWNIE_LLM_PROVIDER:-}" = "openai-compatible" ] && [ -z "${BROWNIE_LLM_BASE_URL:-}" ]; then
-    detail="BROWNIE_LLM_BASE_URL is required for the OpenAI-compatible Brownie phase-loop provider."
-    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
-    write_status "blocked" "$detail" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-0}"
-    return 78
-  fi
-
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
     export BROWNIE_WORKSPACE_ROOT="${BROWNIE_WORKSPACE_ROOT:-"$PHASE_LOOP_WORKSPACE_ROOT"}"
