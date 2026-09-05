@@ -2320,6 +2320,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     }
     let first_pass_tool_intent =
         ToolIntentParser::parse_assistant_content(&result.llm_response.content);
+    let mut rejected_tool_intent_requests = first_pass_tool_intent.summary.rejected_requests;
     if let Err(error) =
         append_tool_intent_events(&store, &running, &policy, &result.llm_response.content)
     {
@@ -2586,6 +2587,22 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         ) {
             return error_response(id, -32603, &format!("internal error: {error}"));
         }
+        let second_pass_tool_intent =
+            ToolIntentParser::parse_assistant_content(&second_pass.llm_response.content);
+        rejected_tool_intent_requests += second_pass_tool_intent.summary.rejected_requests;
+        if let Err(error) =
+            append_tool_intent_events(&store, &running, &policy, &second_pass.llm_response.content)
+        {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+        if let Err(error) = handle_approved_workspace_intents(
+            &store,
+            &running,
+            &policy,
+            &second_pass.llm_response.content,
+        ) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
     }
 
     let completion_gate_events = match store.tasks().read_ledger_events(&running.run_id) {
@@ -2615,9 +2632,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             agent_loop_final_response_content.clear();
         }
     }
-    if task_goal_requires_tool_intent(&running.goal)
-        && first_pass_tool_intent.summary.rejected_requests > 0
-    {
+    if task_goal_requires_tool_intent(&running.goal) && rejected_tool_intent_requests > 0 {
         agent_loop_final_state = AgentLoopState::Failed;
         agent_loop_completion_summary =
             "LLM tool intent contained rejected requests for a side-effect task".to_string();
@@ -2638,6 +2653,17 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         } else {
             "LLM tool intent did not produce Runtime side-effect evidence".to_string()
         };
+        agent_loop_final_response_content.clear();
+    }
+    if task_goal_requires_workspace_write_proposal(&running.goal)
+        && !completion_gate_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+    {
+        agent_loop_final_state = AgentLoopState::Failed;
+        agent_loop_completion_summary =
+            "LLM tool intent did not produce a workspace.write proposal for a workspace edit task"
+                .to_string();
         agent_loop_final_response_content.clear();
     }
 
@@ -2805,6 +2831,56 @@ fn task_goal_requires_tool_intent(goal: &str) -> bool {
     ]
     .iter()
     .any(|needle| goal.contains(needle))
+}
+
+fn task_goal_requires_workspace_write_proposal(goal: &str) -> bool {
+    let goal = goal.to_lowercase();
+    [
+        "write",
+        "edit",
+        "modify",
+        "implement",
+        "create",
+        "delete",
+        "replace",
+        "overwrite",
+        "rewrite",
+        "patch",
+        "increment",
+        "修正",
+        "編集",
+        "実装",
+        "書き込",
+        "作成",
+        "削除",
+        "置換",
+        "上書き",
+        "書き換",
+        "変更",
+        "加算",
+        "増や",
+    ]
+    .iter()
+    .any(|needle| goal.contains(needle))
+}
+
+#[cfg(test)]
+mod workspace_edit_completion_gate_tests {
+    use super::*;
+
+    #[test]
+    fn overwrite_increment_goal_requires_workspace_write_proposal() {
+        assert!(task_goal_requires_workspace_write_proposal(
+            "timestamp.txt の数字に1を加算して上書きしてください"
+        ));
+    }
+
+    #[test]
+    fn append_line_goal_does_not_require_workspace_write_proposal() {
+        assert!(!task_goal_requires_workspace_write_proposal(
+            "timestamp.txt に現在時刻の行を追記してください"
+        ));
+    }
 }
 
 fn handle_verification_recovery_retry_task_run(
@@ -11373,6 +11449,14 @@ fn handle_task_run_completion_acceptance(
             "invalid params: completion acceptance expected fingerprint mismatch".to_string(),
         );
     }
+    if latest_valid_workspace_patch_proposal_exists(&events)
+        && !latest_valid_workspace_patch_proposal_was_applied(&events)
+    {
+        return Err(
+            "invalid params: completion acceptance requires the latest valid workspace.write proposal to be applied"
+                .to_string(),
+        );
+    }
 
     let runtime_requirement = runtime_verification_requirement_for_record(&record);
     let verification_completion_gate = verification_completion_gate_for_run_with_requirement(
@@ -11455,6 +11539,60 @@ fn handle_task_run_completion_acceptance(
         recovery_cycle_budget_outcome: None,
         child_orchestration_outcome: None,
         parent_join_readiness_outcome: None,
+    })
+}
+
+fn latest_valid_workspace_patch_proposal_was_applied(events: &[LedgerEvent]) -> bool {
+    let Some(proposal_id) = events.iter().rev().find_map(|event| {
+        if event.kind != LedgerEventKind::WorkspacePatchProposed {
+            return None;
+        }
+        let payload = sanitize_ledger_payload(event.payload.clone())?;
+        if payload.get("validation_status").and_then(Value::as_str) != Some("Valid") {
+            return None;
+        }
+        let proposal_id = payload.get("proposal_id").and_then(Value::as_str)?;
+        if proposal_id.trim().is_empty() {
+            return None;
+        }
+        Some(proposal_id.to_string())
+    }) else {
+        return false;
+    };
+
+    events.iter().any(|event| {
+        if event.kind != LedgerEventKind::WorkspacePatchApplyResultRecorded {
+            return false;
+        }
+        let Some(payload) = sanitize_ledger_payload(event.payload.clone()) else {
+            return false;
+        };
+        payload.get("proposal_id").and_then(Value::as_str) == Some(proposal_id.as_str())
+            && payload
+                .get("authorization_consumed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            && payload
+                .get("applied")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+    })
+}
+
+fn latest_valid_workspace_patch_proposal_exists(events: &[LedgerEvent]) -> bool {
+    events.iter().rev().any(|event| {
+        if event.kind != LedgerEventKind::WorkspacePatchProposed {
+            return false;
+        }
+        let Some(payload) = sanitize_ledger_payload(event.payload.clone()) else {
+            return false;
+        };
+        payload.get("validation_status").and_then(Value::as_str) == Some("Valid")
+            && payload
+                .get("proposal_id")
+                .and_then(Value::as_str)
+                .map(|proposal_id| !proposal_id.trim().is_empty())
+                .unwrap_or(false)
     })
 }
 
@@ -26606,7 +26744,7 @@ modes:
             WorkspacePatchOperation::ReplaceFile.as_str(),
             "updated README B",
         );
-        let ambiguous = headless_objective_proposal_candidate_outcome(
+        let latest_candidate = headless_objective_proposal_candidate_outcome(
             &store,
             &checkpoint,
             "m56.denial",
@@ -26615,10 +26753,16 @@ modes:
         )
         .expect("candidate outcome")
         .expect("candidate metadata");
-        assert_eq!(ambiguous.status, "blocked_ambiguous_candidates");
-        assert_eq!(ambiguous.candidate_count, 2);
-        assert!(ambiguous.proposal_id.is_none());
-        assert_eq!(ambiguous.next_action, "inspect_progress_overview");
+        assert_eq!(latest_candidate.status, "ready_for_review");
+        assert_eq!(latest_candidate.candidate_count, 2);
+        assert_eq!(
+            latest_candidate.proposal_id.as_deref(),
+            Some("proposal_m56_denial_b")
+        );
+        assert_eq!(
+            latest_candidate.next_action,
+            "review_and_authorize_objective_proposal"
+        );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         clear_llm_env_for_test();

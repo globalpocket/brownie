@@ -3386,7 +3386,7 @@ impl ToolIntentParser {
                 ));
                 continue;
             }
-            let input = match obj.get("input") {
+            let mut input = match obj.get("input") {
                 Some(value) if value.is_object() => value.clone(),
                 Some(_) => {
                     rejected.push(rejection(
@@ -3434,6 +3434,7 @@ impl ToolIntentParser {
                 }
             }
             if tool_id_value == RUNTIME_SLEEP_TOOL_ID {
+                normalize_runtime_sleep_input_aliases(&mut input);
                 if let Err(reason) = preflight_runtime_sleep_input(&input) {
                     rejected.push(rejection(Some(tool_id_value), reason, "invalid_input"));
                     continue;
@@ -3494,6 +3495,18 @@ impl ToolIntentParser {
             rejected,
             summary,
         }
+    }
+}
+
+fn normalize_runtime_sleep_input_aliases(input: &mut Value) {
+    let Some(object) = input.as_object_mut() else {
+        return;
+    };
+    if object.contains_key("duration_seconds") || !object.contains_key("seconds") {
+        return;
+    }
+    if let Some(seconds) = object.remove("seconds") {
+        object.insert("duration_seconds".to_string(), seconds);
     }
 }
 
@@ -4233,25 +4246,46 @@ impl ToolPlanner {
                 "edit",
                 "modify",
                 "implement",
-                "append",
                 "create",
                 "update",
                 "save",
+                "replace",
+                "overwrite",
+                "rewrite",
+                "patch",
+                "increment",
                 "修正",
                 "編集",
                 "実装",
-                "追記",
                 "書き込",
                 "作成",
                 "更新",
                 "保存",
-                "追加",
+                "置換",
+                "上書き",
+                "書き換",
+                "変更",
+                "加算",
+                "増や",
             ],
         ) {
             items.push(plan_item(
                 "workspace.write",
                 "Goal suggests implementation or editing work.",
             ));
+        }
+        if contains_any(
+            &goal,
+            &[
+                "append",
+                "append line",
+                "add line",
+                "log line",
+                "追記",
+                "行を追加",
+                "行追加",
+            ],
+        ) {
             items.push(plan_item(
                 WORKSPACE_APPEND_LINE_TOOL_ID,
                 "Goal suggests appending bounded lines to workspace files.",
@@ -4390,7 +4424,7 @@ mod tests {
     }
 
     #[test]
-    fn planner_includes_workspace_write_for_japanese_append_goals() {
+    fn planner_routes_japanese_append_goals_to_append_line() {
         let plan = ToolPlanner::plan(ToolPlanningInput {
             task_id: "task_1".to_string(),
             goal: "現在時刻を取得し、timestamp.txt に行を追記して、1分待機してください".to_string(),
@@ -4402,10 +4436,27 @@ mod tests {
             .map(|item| item.tool_id.as_str())
             .collect::<Vec<_>>();
         assert!(ids.contains(&WORKSPACE_READ_TOOL_ID));
-        assert!(ids.contains(&WORKSPACE_WRITE_TOOL_ID));
+        assert!(!ids.contains(&WORKSPACE_WRITE_TOOL_ID));
         assert!(ids.contains(&WORKSPACE_APPEND_LINE_TOOL_ID));
         assert!(ids.contains(&TIME_NOW_TOOL_ID));
         assert!(ids.contains(&RUNTIME_SLEEP_TOOL_ID));
+    }
+
+    #[test]
+    fn planner_routes_japanese_overwrite_increment_goals_to_workspace_write_only() {
+        let plan = ToolPlanner::plan(ToolPlanningInput {
+            task_id: "task_1".to_string(),
+            goal: "timestamp.txt の数字に1を加算して上書きしてください".to_string(),
+            mode_id: "implementer".to_string(),
+        });
+        let ids = plan
+            .items
+            .iter()
+            .map(|item| item.tool_id.as_str())
+            .collect::<Vec<_>>();
+        assert!(ids.contains(&WORKSPACE_READ_TOOL_ID));
+        assert!(ids.contains(&WORKSPACE_WRITE_TOOL_ID));
+        assert!(!ids.contains(&WORKSPACE_APPEND_LINE_TOOL_ID));
     }
 
     #[test]
@@ -4415,6 +4466,20 @@ mod tests {
         );
         assert_eq!(parsed.summary.accepted_requests, 1);
         assert_eq!(parsed.summary.rejected_requests, 0);
+    }
+
+    #[test]
+    fn parser_normalizes_runtime_sleep_seconds_alias() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"runtime.sleep\",\"reason\":\"Wait one minute.\",\"input\":{\"seconds\":60}}]}\n```",
+        );
+        assert_eq!(parsed.summary.accepted_requests, 1);
+        assert_eq!(parsed.summary.rejected_requests, 0);
+        assert_eq!(
+            parsed.requests[0].input.get("duration_seconds"),
+            Some(&serde_json::json!(60))
+        );
+        assert!(parsed.requests[0].input.get("seconds").is_none());
     }
 
     #[test]

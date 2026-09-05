@@ -1263,6 +1263,50 @@ fn run_invokes_fixed_headless_drive_and_prints_bounded_human_output() {
 }
 
 #[test]
+fn run_file_loads_utf8_objective_before_runtime_admission() {
+    let runtime = fake_runtime(
+        "run-file-headless-drive",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","session_id":"cli.run.test","drive_id":"cli.run.test.drive","start_session_sequence":0,"end_session_sequence":1,"replayed":false,"max_advances":1,"max_steps_per_advance":1,"advance_count":1,"executed_count":1,"replayed_count":0,"stop_reason":"budget_exhausted","drive_fingerprint":"sha256:1111111111111111111111111111111111111111111111111111111111111111","completion_closure":{"status":"budget_exhausted","stop_reason":"bounded","terminal_task_count":0,"accepted_completion_count":0,"last_terminal_task_id":null,"closure_fingerprint":"sha256:2222222222222222222222222222222222222222222222222222222222222222"},"start_progress":{"progress_fingerprint":"sha256:3333333333333333333333333333333333333333333333333333333333333333","aggregate_sequence":0},"next_action":"inspect_progress_overview","journey":{"journey_id":"cli.run.test.journey","session_id":"cli.run.test","drive_id":"cli.run.test.drive","task_id":"task-1","run_id":"run-1","post_aggregate_sequence":1,"closure_status":"budget_exhausted","next_action":"inspect_progress_overview","replayed":false,"journey_fingerprint":"sha256:4444444444444444444444444444444444444444444444444444444444444444"},"terminal_completion_evidence":{"final_state":"Completed","task_status":"Completed","completion_result_fingerprint":"sha256:5555555555555555555555555555555555555555555555555555555555555555","completion_summary_preview":"objective completed","completion_summary_redacted":false,"completion_summary_truncated":false}}}"#,
+    );
+    let dir = unique_test_dir("run-file-objective");
+    fs::create_dir_all(&dir).unwrap();
+    let objective_file = dir.join("sample.md");
+    fs::write(&objective_file, "timestamp.txt を更新してください").unwrap();
+    let capture = runtime.with_file_name("request.json");
+
+    let output = Command::new(brownie())
+        .args(["run", "--file", objective_file.to_str().unwrap()])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let request = fs::read_to_string(capture).unwrap();
+    let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+    assert_eq!(
+        request["params"]["journey_admission"]["task_start"]["goal"],
+        "timestamp.txt を更新してください"
+    );
+}
+
+#[test]
+fn run_file_reports_read_failure_without_runtime_startup() {
+    let missing_file = unique_test_dir("run-file-missing").join("missing.md");
+
+    let output = Command::new(brownie())
+        .args(["run", "--file", missing_file.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(64));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("failed to read objective file"));
+}
+
+#[test]
 fn run_uses_configured_cli_mode_id_for_provider_runner_smoke() {
     let runtime = fake_runtime(
         "run-provider-runner-mode",

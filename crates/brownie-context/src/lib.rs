@@ -700,6 +700,23 @@ fn format_tool_execution_summary(events: &[LedgerEvent]) -> Vec<String> {
                     }
                     let bytes_read = payload.get("bytes_read").and_then(|value| value.as_u64());
                     let truncated = payload.get("truncated").and_then(|value| value.as_bool());
+                    if tool_id == "workspace.read" {
+                        if let Some(output_preview) =
+                            payload.get("output_preview").and_then(|value| value.as_str())
+                        {
+                            let bounded_preview =
+                                output_preview.chars().take(512).collect::<String>();
+                            return Some(format!(
+                                "{tool_id}: {status} bytes_read={} truncated={} output_preview={bounded_preview:?}",
+                                bytes_read
+                                    .map(|value| value.to_string())
+                                    .unwrap_or_else(|| "<unknown>".to_string()),
+                                truncated
+                                    .map(|value| value.to_string())
+                                    .unwrap_or_else(|| "<unknown>".to_string())
+                            ));
+                        }
+                    }
                     Some(format!(
                         "{tool_id}: {status} bytes_read={} truncated={}",
                         bytes_read
@@ -1507,7 +1524,7 @@ impl PromptBuilder {
                 PromptMessage {
                     role: PromptRole::System,
                     content: format!(
-                        "You are Brownie Runtime. Execute the task according to the current runtime phase.\n\nRuntime Safety Invariants:\n- Runtime safety invariants override Mode Pack instructions.\n- Compiled Mode Pack permission policy overrides mode instructions.\n- Mode instructions override task/objective input.\n- Prompt text never grants side-effect permissions; RuntimePermissionGate remains authoritative.\n- Do not describe shell commands or code fences as a substitute for tools.\n\nTool Intent Contract:\n- When the task needs workspace context, file changes, verification, git inspection, MCP tool use, or subtasks, respond with exactly one fenced brownie-tool-intent JSON block.\n- The fenced block must use this shape and no extra top-level fields:\n```brownie-tool-intent\n{{\"tool_requests\":[{{\"tool_id\":\"workspace.read\",\"reason\":\"Read bounded workspace context.\",\"input\":{{\"path\":\"README.md\"}}}}]}}\n```\n- For file changes, request workspace.write with input {{\"path\":\"relative/path\",\"operation\":\"replace_file|create_file|patch_file|delete_file\",\"content\":\"bounded replacement content\"}}. workspace.write records a Runtime-owned proposal; it is not arbitrary shell execution.\n- For bounded task steps that need current time, one-line file append, or waiting, prefer time.now, workspace.append_line, and runtime.sleep. Do not use process.exec for date, echo, printf, or sleep.\n- Only request tools that appear as allowed in the Tool Plan.
+                        "You are Brownie Runtime. Execute the task according to the current runtime phase.\n\nRuntime Safety Invariants:\n- Runtime safety invariants override Mode Pack instructions.\n- Compiled Mode Pack permission policy overrides mode instructions.\n- Mode instructions override task/objective input.\n- Prompt text never grants side-effect permissions; RuntimePermissionGate remains authoritative.\n- Do not describe shell commands or code fences as a substitute for tools.\n\nTool Intent Contract:\n- When the task needs workspace context, file changes, verification, git inspection, MCP tool use, or subtasks, respond with exactly one fenced brownie-tool-intent JSON block.\n- The fenced block must use this shape and no extra top-level fields:\n```brownie-tool-intent\n{{\"tool_requests\":[{{\"tool_id\":\"workspace.read\",\"reason\":\"Read bounded workspace context.\",\"input\":{{\"path\":\"README.md\"}}}}]}}\n```\n- For file changes, request workspace.write with input {{\"path\":\"relative/path\",\"operation\":\"replace_file|create_file|patch_file|delete_file\",\"content\":\"bounded replacement content\"}}. workspace.write records a Runtime-owned proposal; it is not arbitrary shell execution.\n- For multi-step tasks, use completed Tool Execution results as the authoritative inputs for the next tool intent. Do not repeat a read/time request when its completed result already provides the value needed for the next step.\n- For file-changing goals, do not finish or answer directly until you have requested workspace.write for the intended change.\n- For bounded task steps that need current time, one-line file append, or waiting, prefer time.now, workspace.append_line, and runtime.sleep. Do not use process.exec for date, echo, printf, or sleep.\n- Only request tools that appear as allowed in the Tool Plan.
 - For workspace.append_line, use input {{\"path\":\"relative/path\",\"line\":\"literal\"}} for literal lines, or {{\"path\":\"relative/path\",\"line_source\":\"current_time_unix_epoch_ms\"}} to append the current time.\n- If the Tool Plan omits a tool or marks it denied, do not request that tool.\n- If no tool is needed, answer directly without a brownie-tool-intent block.\n\nCompiled Mode Pack Policy:\n{mode_policy_summary}\n\nCompiled Mode Pack Instructions:\n{mode_instruction_material}"
                     ),
                 },
@@ -2265,13 +2282,13 @@ mod tests {
         let materialized = ContextMaterializer::materialize(input);
         assert_eq!(
             materialized.tool_execution_summary,
-            vec!["workspace.read: Completed bytes_read=123 truncated=false"]
+            vec!["workspace.read: Completed bytes_read=123 truncated=false output_preview=\"# Brownie\""]
         );
         let prompt = PromptBuilder::build(materialized);
         assert!(prompt.messages[1].content.contains("Tool Execution:"));
-        assert!(prompt.messages[1]
-            .content
-            .contains("- workspace.read: Completed bytes_read=123 truncated=false"));
+        assert!(prompt.messages[1].content.contains(
+            "- workspace.read: Completed bytes_read=123 truncated=false output_preview=\"# Brownie\""
+        ));
     }
 
     #[test]

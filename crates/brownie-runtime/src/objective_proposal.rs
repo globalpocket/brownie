@@ -34,7 +34,6 @@ fn objective_proposal_candidate_fingerprint(
         "drive_id": candidate.drive_id,
         "objective_context_fingerprint": candidate.objective_context_fingerprint,
         "selected_context_fingerprint": candidate.selected_context_fingerprint,
-        "candidate_count": candidate.candidate_count,
         "proposal_id": candidate.proposal_id,
         "source_event_id": candidate.source_event_id,
         "source_event_kind": candidate.source_event_kind,
@@ -212,17 +211,7 @@ pub(super) fn headless_objective_proposal_candidate_outcome(
             replayed,
         )));
     }
-    if candidates.len() > 1 {
-        return Ok(Some(denied_objective_proposal_candidate(
-            checkpoint,
-            session_id,
-            drive_id,
-            "blocked_ambiguous_candidates",
-            candidates.len(),
-            "more than one valid pending workspace proposal belongs to the objective-context run",
-            replayed,
-        )));
-    }
+    let candidate_count = candidates.len();
     let (event, payload) = candidates.pop().expect("one candidate");
     let proposal_id = payload
         .get("proposal_id")
@@ -250,7 +239,7 @@ pub(super) fn headless_objective_proposal_candidate_outcome(
             drive_id: drive_id.to_string(),
             objective_context_fingerprint,
             selected_context_fingerprint,
-            candidate_count: 1,
+            candidate_count: candidate_count.min(16),
             proposal_id: Some(proposal_id.to_string()),
             source_event_id: Some(event.event_id),
             source_event_kind: Some("WorkspacePatchProposed".to_string()),
@@ -557,9 +546,9 @@ fn validate_current_objective_proposal_candidate_source(
         );
     }
     let proposal = inspect_proposal(store, &target.expected_run_id, &target.expected_proposal_id)?;
-    if proposal.approval_status == "Pending" && matching_candidate_count != 1 {
+    if proposal.approval_status == "Pending" && matching_candidate_count == 0 {
         return Err(
-            "objective proposal authorization preflight failed: objective proposal candidate set is ambiguous or missing"
+            "objective proposal authorization preflight failed: objective proposal candidate set is missing"
                 .to_string(),
         );
     }
