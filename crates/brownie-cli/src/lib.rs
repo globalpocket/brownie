@@ -3,6 +3,7 @@ pub mod runtime_client;
 
 use cli::{Cli, CliCommand, CliError, InspectTarget, ListTarget, ModeTarget};
 use runtime_client::{RunRecoveryIdentity, RuntimeClient, RuntimeClientError};
+use std::fs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExitCode {
@@ -60,6 +61,28 @@ fn execute(cli: Cli) -> CliOutput {
             exit_code: ExitCode::Success,
             stdout: format!("brownie {}\n", env!("CARGO_PKG_VERSION")),
             stderr: String::new(),
+        },
+        CliCommand::RunFile { path } => match fs::read_to_string(&path) {
+            Ok(objective) => {
+                let client = RuntimeClient::default();
+                let command = CliCommand::Run { objective };
+                match client.invoke(&command, cli.json) {
+                    Ok(message) => CliOutput {
+                        exit_code: ExitCode::Success,
+                        stdout: message,
+                        stderr: String::new(),
+                    },
+                    Err(error) => runtime_error_output(error, cli.json, "run"),
+                }
+            }
+            Err(error) => error_output(
+                ExitCode::InvalidInvocation,
+                "invalid_invocation",
+                &format!("failed to read objective file: {error}"),
+                cli.json,
+                "run",
+                None,
+            ),
         },
         command => {
             let client = RuntimeClient::default();
@@ -254,6 +277,7 @@ fn error_output(
 fn command_name(command: &CliCommand) -> &'static str {
     match command {
         CliCommand::Run { .. } => "run",
+        CliCommand::RunFile { .. } => "run",
         CliCommand::Resume { .. } => "resume",
         CliCommand::Status => "status",
         CliCommand::Inspect {
@@ -291,6 +315,7 @@ mod tests {
     fn help_names_run_and_not_develop() {
         let help = Cli::help();
         assert!(help.contains("run <objective>"));
+        assert!(help.contains("run --file <path>"));
         assert!(help.contains("help <topic>"));
         assert!(help.contains("resume"));
         assert!(help.contains("status"));
@@ -314,6 +339,28 @@ mod tests {
                 objective: "--help".into()
             }
         );
+    }
+
+    #[test]
+    fn parses_run_file_as_explicit_file_mode() {
+        let run_file = Cli::parse(["brownie", "run", "--file", "sample.md"]).unwrap();
+        assert_eq!(
+            run_file.command,
+            CliCommand::RunFile {
+                path: "sample.md".into()
+            }
+        );
+
+        let short_run_file = Cli::parse(["brownie", "run", "-f", "sample.md"]).unwrap();
+        assert_eq!(
+            short_run_file.command,
+            CliCommand::RunFile {
+                path: "sample.md".into()
+            }
+        );
+
+        let error = Cli::parse(["brownie", "run", "--file"]).unwrap_err();
+        assert_eq!(error, CliError::MissingValue("file"));
     }
 
     #[test]

@@ -10,6 +10,12 @@ extensions/*/*.vsix
 # Brownie runtime state
 .brownie/
 
+# Local Brownie test/runtime scratch state
+.test/
+!.test/
+!.test/*.example
+.test/brownie-loop.env
+
 # OS / editor
 .DS_Store
 .vscode/
