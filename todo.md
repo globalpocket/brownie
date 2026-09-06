@@ -22,6 +22,9 @@ Current synchronization note:
   claims the only empty-queue in-progress liveness signal.
 - PR #401 added structured CLI JSON validation, deterministic progress
   fingerprints, persisted stagnation counts, and no-progress classification.
+- PR #403 hardened effective prompt artifacts, added truncation metadata, and
+  retries with a fresh claim when TODO changes are detected before Runtime
+  start.
 - Runtime Product Ready is not reached.
 
 ## Queue protocol
@@ -36,6 +39,10 @@ Current synchronization note:
 - The supervisor must drive Brownie with validated structured JSON output and
   persist deterministic progress fingerprints. Repeated identical non-progress
   fingerprints must be classified as `no_progress` instead of healthy success.
+- The supervisor must harden generated effective prompts with `0600`, bounded
+  size, retention, prompt/queue fingerprints, and truncation metadata. It must
+  fail closed when the selected TODO cannot be embedded completely and must
+  retry with a fresh claim when the TODO queue changes before Runtime start.
 - Brownie must keep exactly one active bounded slice per invocation. If work is
   incomplete, it must leave a concrete follow-up TODO naming the remaining
   blocker or next implementation step.
@@ -50,13 +57,6 @@ Current synchronization note:
 
 ### P0: Phase Loop / BDK Supervisor
 
-- [ ] B-08: Harden generated effective prompts from PR #394: avoid durable raw
-  prompt storage where possible, or enforce `0600`, size limits, retention,
-  redaction, and prompt/queue fingerprints instead of keeping sensitive content.
-- [ ] B-09: Detect truncation when embedding TODO and base prompt snapshots;
-  record bounded metadata and fail closed when the selected TODO is incomplete.
-- [ ] B-10: Detect TODO changes between queue read and Runtime start using queue
-  fingerprint/generation and retry with a fresh claim when stale.
 - [ ] B-11: Add child-inclusive stop behavior for supervisor-managed Runtime
   processes, including graceful termination, bounded force timeout, process
   group handling, and orphan child recovery.

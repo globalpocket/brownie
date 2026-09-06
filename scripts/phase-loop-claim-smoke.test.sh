@@ -167,8 +167,9 @@ claim_file="$state_with_claim/todo-claims/current.json"
 queue_state_file="$state_with_claim/todo-claims/todo-queue-state.json"
 progress_state_file="$state_with_claim/progress-state.json"
 prompt_file="$(find "$state_with_claim/runs" -name '*.prompt.md' -print | sort | tail -n 1)"
+prompt_meta_file="${prompt_file%.prompt.md}.prompt.meta.json"
 
-python3 - "$claim_file" "$queue_state_file" "$progress_state_file" <<'PY'
+python3 - "$claim_file" "$queue_state_file" "$progress_state_file" "$prompt_file" "$prompt_meta_file" <<'PY'
 import json
 import os
 import stat
@@ -178,9 +179,12 @@ path = sys.argv[1]
 claim = json.load(open(path, encoding="utf-8"))
 queue_state = json.load(open(sys.argv[2], encoding="utf-8"))
 progress_state = json.load(open(sys.argv[3], encoding="utf-8"))
+prompt_meta = json.load(open(sys.argv[5], encoding="utf-8"))
 mode = stat.S_IMODE(os.stat(path).st_mode)
 queue_mode = stat.S_IMODE(os.stat(sys.argv[2]).st_mode)
 progress_mode = stat.S_IMODE(os.stat(sys.argv[3]).st_mode)
+prompt_mode = stat.S_IMODE(os.stat(sys.argv[4]).st_mode)
+prompt_meta_mode = stat.S_IMODE(os.stat(sys.argv[5]).st_mode)
 history = [entry["status"] for entry in claim["status_history"]]
 assert claim["status"] == "in_progress", claim
 assert history[:2] == ["claimed", "in_progress"], claim
@@ -192,9 +196,15 @@ assert progress_state["classification"] == "non_progress_success", progress_stat
 assert progress_state["meaningful_progress"] is False, progress_state
 assert progress_state["progress_projection"]["closure"] == "budget_exhausted", progress_state
 assert progress_state["progress_projection"]["next_action"] == "inspect_progress_overview", progress_state
+assert prompt_meta["selected_todo_complete"] is True, prompt_meta
+assert len(prompt_meta["prompt_sha256"]) == 64, prompt_meta
+assert len(prompt_meta["todo_sha256"]) == 64, prompt_meta
+assert len(prompt_meta["base_prompt_sha256"]) == 64, prompt_meta
 assert mode == 0o600, oct(mode)
 assert queue_mode == 0o600, oct(queue_mode)
 assert progress_mode == 0o600, oct(progress_mode)
+assert prompt_mode == 0o600, oct(prompt_mode)
+assert prompt_meta_mode == 0o600, oct(prompt_meta_mode)
 PY
 
 assert_contains "$prompt_file" '## Active TODO Claim'
@@ -286,6 +296,112 @@ progress = json.load(open(sys.argv[1], encoding="utf-8"))
 assert progress["classification"] == "progress", progress
 assert progress["meaningful_progress"] is True, progress
 assert progress["workspace_changed"] is True, progress
+PY
+
+state_truncated="$(mktemp -d)"
+prompt_truncated="$(mktemp)"
+todo_truncated="$(mktemp)"
+printf 'base line 1\nbase line 2\n' > "$prompt_truncated"
+printf -- '- [ ] B-01: truncation metadata task\n- [ ] B-02: hidden from snapshot\n' > "$todo_truncated"
+
+PHASE_LOOP_STATE_DIR="$state_truncated" \
+PHASE_LOOP_PROMPT="$prompt_truncated" \
+PHASE_LOOP_TODO="$todo_truncated" \
+BROWNIE_BIN="$fake_brownie_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+PHASE_LOOP_TODO_SNAPSHOT_LINES=1 \
+PHASE_LOOP_BASE_PROMPT_SNAPSHOT_LINES=1 \
+"$PHASE_LOOP" run-once >/dev/null
+
+truncated_prompt="$(find "$state_truncated/runs" -name '*.prompt.md' -print | sort | tail -n 1)"
+python3 - "${truncated_prompt%.prompt.md}.prompt.meta.json" <<'PY'
+import json
+import sys
+
+meta = json.load(open(sys.argv[1], encoding="utf-8"))
+assert meta["todo_snapshot_truncated"] is True, meta
+assert meta["base_prompt_snapshot_truncated"] is True, meta
+assert meta["selected_todo_complete"] is True, meta
+PY
+
+state_retention="$(mktemp -d)"
+prompt_retention="$(mktemp)"
+todo_retention="$(mktemp)"
+mkdir -p "$state_retention/runs"
+printf 'base prompt\n' > "$prompt_retention"
+printf -- '- [ ] B-01: retention task\n' > "$todo_retention"
+for old in 1 2 3; do
+  printf 'old prompt %s\n' "$old" > "$state_retention/runs/20000101T00000${old}Z.prompt.md"
+  printf '{}\n' > "$state_retention/runs/20000101T00000${old}Z.prompt.meta.json"
+done
+
+PHASE_LOOP_STATE_DIR="$state_retention" \
+PHASE_LOOP_PROMPT="$prompt_retention" \
+PHASE_LOOP_TODO="$todo_retention" \
+BROWNIE_BIN="$fake_brownie_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+PHASE_LOOP_PROMPT_RETENTION_COUNT=2 \
+"$PHASE_LOOP" run-once >/dev/null
+
+retained_prompt_count="$(find "$state_retention/runs" -name '*.prompt.md' | wc -l | tr -d ' ')"
+if [ "$retained_prompt_count" -gt 2 ]; then
+  echo "expected prompt retention to keep at most 2 prompts, found $retained_prompt_count" >&2
+  exit 1
+fi
+
+state_too_large="$(mktemp -d)"
+prompt_too_large="$(mktemp)"
+todo_too_large="$(mktemp)"
+printf 'base prompt\n' > "$prompt_too_large"
+printf -- '- [ ] B-01: selected todo too large for configured bound\n' > "$todo_too_large"
+
+if PHASE_LOOP_STATE_DIR="$state_too_large" \
+  PHASE_LOOP_PROMPT="$prompt_too_large" \
+  PHASE_LOOP_TODO="$todo_too_large" \
+  BROWNIE_BIN="$fake_brownie_json" \
+  PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+  PHASE_LOOP_SELECTED_TODO_MAX_BYTES=8 \
+  "$PHASE_LOOP" run-once >/dev/null 2>/dev/null; then
+  echo "expected oversized selected TODO to fail closed before Runtime start" >&2
+  exit 1
+fi
+
+python3 - "$state_too_large/status.json" <<'PY'
+import json
+import sys
+
+status = json.load(open(sys.argv[1], encoding="utf-8"))
+assert status["status"] == "blocked", status
+assert "effective phase-loop prompt" in status["detail"], status
+PY
+
+state_stale_claim="$(mktemp -d)"
+prompt_stale_claim="$(mktemp)"
+todo_stale_claim="$(mktemp)"
+printf 'base prompt\n' > "$prompt_stale_claim"
+printf -- '- [ ] B-new: fresh queue task\n' > "$todo_stale_claim"
+
+PHASE_LOOP_STATE_DIR="$state_stale_claim" \
+PHASE_LOOP_PROMPT="$prompt_stale_claim" \
+PHASE_LOOP_TODO="$todo_stale_claim" \
+BROWNIE_BIN="$fake_brownie_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+PHASE_LOOP_TEST_MUTATE_TODO_AFTER_PROMPT=1 \
+"$PHASE_LOOP" run-once >/dev/null
+
+python3 - "$state_stale_claim/todo-claims/current.json" "$state_stale_claim/todo-claims" "$todo_stale_claim" <<'PY'
+import json
+import pathlib
+import sys
+
+claim = json.load(open(sys.argv[1], encoding="utf-8"))
+archive_dir = pathlib.Path(sys.argv[2])
+todo_text = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
+archives = list(archive_dir.glob("stale-*.json"))
+assert archives, "missing stale claim archive"
+assert claim["claim_id"].startswith("todo-g"), claim
+assert claim["selected_todo"].startswith("- [ ] B-new: fresh queue task"), claim
+assert "PHASE_LOOP_TEST_MUTATED_TODO_AFTER_PROMPT" in todo_text, todo_text
 PY
 
 state_generation="$(mktemp -d)"

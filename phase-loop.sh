@@ -27,6 +27,11 @@ PHASE_LOOP_FAILURE_BACKOFF_SECONDS="${PHASE_LOOP_FAILURE_BACKOFF_SECONDS:-60}"
 PHASE_LOOP_MAX_FAILURE_BACKOFF_SECONDS="${PHASE_LOOP_MAX_FAILURE_BACKOFF_SECONDS:-900}"
 PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS="${PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS:-14400}"
 PHASE_LOOP_STAGNATION_THRESHOLD="${PHASE_LOOP_STAGNATION_THRESHOLD:-3}"
+PHASE_LOOP_PROMPT_MAX_BYTES="${PHASE_LOOP_PROMPT_MAX_BYTES:-65536}"
+PHASE_LOOP_SELECTED_TODO_MAX_BYTES="${PHASE_LOOP_SELECTED_TODO_MAX_BYTES:-8192}"
+PHASE_LOOP_TODO_SNAPSHOT_LINES="${PHASE_LOOP_TODO_SNAPSHOT_LINES:-240}"
+PHASE_LOOP_BASE_PROMPT_SNAPSHOT_LINES="${PHASE_LOOP_BASE_PROMPT_SNAPSHOT_LINES:-400}"
+PHASE_LOOP_PROMPT_RETENTION_COUNT="${PHASE_LOOP_PROMPT_RETENTION_COUNT:-20}"
 
 mkdir -p "$RUN_DIR" "$LOG_DIR" "$TODO_CLAIM_DIR"
 
@@ -242,6 +247,85 @@ active_claim_queue_generation() {
   fi
   queue_state="$(refresh_todo_queue_state)"
   printf '%s\n' "$queue_state" | awk '{ print $1 }'
+}
+
+active_claim_queue_fingerprint() {
+  claim_field queue_fingerprint 2>/dev/null || true
+}
+
+retire_old_prompt_artifacts() {
+  local keep_count="$PHASE_LOOP_PROMPT_RETENTION_COUNT"
+  python3 - "$RUN_DIR" "$keep_count" <<'PY'
+import pathlib
+import sys
+
+run_dir = pathlib.Path(sys.argv[1])
+keep_count = int(sys.argv[2])
+if keep_count < 1:
+    keep_count = 1
+groups = {}
+for path in run_dir.glob("*.prompt.md"):
+    stem = path.name[:-len(".prompt.md")]
+    groups[stem] = path.stat().st_mtime
+old = sorted(groups.items(), key=lambda item: item[1], reverse=True)[keep_count:]
+for stem, _ in old:
+    for suffix in (".prompt.md", ".prompt.meta.json"):
+        target = run_dir / f"{stem}{suffix}"
+        try:
+            target.unlink()
+        except FileNotFoundError:
+            pass
+PY
+}
+
+verify_todo_fresh_for_runtime_start() {
+  local expected current
+  expected="$(active_claim_queue_fingerprint)"
+  current="$(todo_queue_fingerprint)"
+  if [ -z "$expected" ] || [ "$expected" != "$current" ]; then
+    printf '%s runtime_start_stale_todo_rejected expected=%s actual=%s\n' "$(now_utc)" "$expected" "$current" >> "$SUPERVISOR_LOG"
+    return 1
+  fi
+  return 0
+}
+
+archive_stale_todo_claim() {
+  local run_stamp="$1"
+  local archive_path="$TODO_CLAIM_DIR/stale-$run_stamp.json"
+  if [ ! -f "$TODO_CLAIM_FILE" ]; then
+    return 0
+  fi
+  python3 - "$TODO_CLAIM_FILE" "$archive_path" "$run_stamp" "$(now_utc)" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+current_path = pathlib.Path(sys.argv[1])
+archive_path = pathlib.Path(sys.argv[2])
+run_stamp = sys.argv[3]
+timestamp = sys.argv[4]
+with open(current_path, encoding="utf-8") as handle:
+    claim = json.load(handle)
+claim["status"] = "stale_snapshot_rejected"
+claim["updated_at"] = timestamp
+claim.setdefault("status_history", []).append({
+    "status": "stale_snapshot_rejected",
+    "run_stamp": run_stamp,
+    "updated_at": timestamp,
+})
+tmp = archive_path.with_suffix(".tmp")
+with open(tmp, "w", encoding="utf-8") as handle:
+    json.dump(claim, handle, ensure_ascii=False, sort_keys=True, indent=2)
+    handle.write("\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(tmp, 0o600)
+os.replace(tmp, archive_path)
+os.chmod(archive_path, 0o600)
+current_path.unlink()
+PY
+  sync_parent_dir "$TODO_CLAIM_DIR"
 }
 
 git_workspace_fingerprint() {
@@ -523,6 +607,7 @@ claim_first_pending_todo() {
   local run_stamp="$1"
   local selected_todo queue_fingerprint queue_generation queue_state selected_hash claim_id reread_fingerprint attempt
   if active_todo_claim_exists; then
+    CLAIM_CREATED_THIS_RUN=0
     queue_generation="$(active_claim_queue_generation)"
     write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$queue_generation" "$run_stamp"
     return 0
@@ -545,6 +630,7 @@ claim_first_pending_todo() {
     claim_id="todo-g${queue_generation}-${selected_hash}"
     write_todo_claim "$claim_id" "claimed" "$selected_todo" "$queue_fingerprint" "$queue_generation" "$run_stamp"
     write_todo_claim "$claim_id" "in_progress" "$selected_todo" "$queue_fingerprint" "$queue_generation" "$run_stamp"
+    CLAIM_CREATED_THIS_RUN=1
     printf '%s todo_claim=%s generation=%s status=in_progress\n' "$(now_utc)" "$claim_id" "$queue_generation" >> "$SUPERVISOR_LOG"
     return 0
   done
@@ -553,38 +639,148 @@ claim_first_pending_todo() {
 
 build_effective_prompt() {
   local output_path="$1"
-  local selected_todo
+  local selected_todo meta_path
   if active_todo_claim_exists; then
     selected_todo="$(claim_field selected_todo)"
   else
     selected_todo="$(todo_first_pending_item)"
   fi
-  {
-    printf '# Brownie Phase Loop Effective Prompt\n\n'
-    printf 'This generated prompt combines the stable phase-loop contract with the current external TODO queue.\n'
-    printf 'Treat the active TODO claim below as the work item for this bounded invocation.\n\n'
-    printf '## Active TODO Claim\n\n'
-    if active_todo_claim_exists; then
-      python3 - "$TODO_CLAIM_FILE" <<'PY'
+  meta_path="${output_path%.prompt.md}.prompt.meta.json"
+  if ! python3 - "$output_path" "$meta_path" "$TODO_CLAIM_FILE" "$PHASE_LOOP_TODO" "$PHASE_LOOP_PROMPT" "$selected_todo" "$PHASE_LOOP_PROMPT_MAX_BYTES" "$PHASE_LOOP_SELECTED_TODO_MAX_BYTES" "$PHASE_LOOP_TODO_SNAPSHOT_LINES" "$PHASE_LOOP_BASE_PROMPT_SNAPSHOT_LINES" "$PHASE_LOOP_PROMPT_RETENTION_COUNT" "$(now_utc)" <<'PY'
+import hashlib
 import json
+import os
+import pathlib
+import re
 import sys
 
-with open(sys.argv[1], encoding="utf-8") as handle:
-    claim = json.load(handle)
-for key in ("claim_id", "status", "queue_generation", "queue_fingerprint", "run_stamp", "updated_at"):
-    print(f"- {key}: `{claim.get(key, '')}`")
+output_path = pathlib.Path(sys.argv[1])
+meta_path = pathlib.Path(sys.argv[2])
+claim_path = pathlib.Path(sys.argv[3])
+todo_path = pathlib.Path(sys.argv[4])
+prompt_path = pathlib.Path(sys.argv[5])
+selected_todo = sys.argv[6]
+prompt_max_bytes = int(sys.argv[7])
+selected_todo_max_bytes = int(sys.argv[8])
+todo_snapshot_lines = int(sys.argv[9])
+base_prompt_snapshot_lines = int(sys.argv[10])
+retention_count = int(sys.argv[11])
+timestamp = sys.argv[12]
+
+def read_text(path):
+    with open(path, encoding="utf-8") as handle:
+        return handle.read()
+
+def sha256_text(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+def snapshot(text, max_lines):
+    lines = text.splitlines()
+    truncated = len(lines) > max_lines
+    return "\n".join(lines[:max_lines]), truncated, len(lines)
+
+def count_sensitive(text):
+    patterns = [
+        r"(?i)api[_-]?key\\s*[:=]",
+        r"(?i)secret\\s*[:=]",
+        r"(?i)token\\s*[:=]",
+        r"sk-[A-Za-z0-9_-]{16,}",
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
+    ]
+    return sum(len(re.findall(pattern, text)) for pattern in patterns)
+
+if len(selected_todo.encode("utf-8")) > selected_todo_max_bytes:
+    raise SystemExit("selected_todo_exceeds_max_bytes")
+
+claim = {}
+if claim_path.exists():
+    with open(claim_path, encoding="utf-8") as handle:
+        claim = json.load(handle)
+
+todo_text = read_text(todo_path)
+base_prompt_text = read_text(prompt_path)
+todo_snapshot, todo_truncated, todo_line_count = snapshot(todo_text, todo_snapshot_lines)
+base_snapshot, base_truncated, base_line_count = snapshot(base_prompt_text, base_prompt_snapshot_lines)
+
+if selected_todo and selected_todo not in todo_text and claim.get("status") not in ("in_progress", "blocked"):
+    raise SystemExit("selected_todo_missing_from_queue_without_active_claim")
+
+claim_lines = []
+if claim:
+    for key in ("claim_id", "status", "queue_generation", "queue_fingerprint", "run_stamp", "updated_at"):
+        claim_lines.append(f"- {key}: `{claim.get(key, '')}`")
+else:
+    claim_lines.append("- none")
+
+prompt = "\n".join([
+    "# Brownie Phase Loop Effective Prompt",
+    "",
+    "This generated prompt combines the stable phase-loop contract with the current external TODO queue.",
+    "Treat the active TODO claim below as the work item for this bounded invocation.",
+    "",
+    "## Active TODO Claim",
+    "",
+    *claim_lines,
+    "",
+    "## Selected TODO",
+    "",
+    selected_todo,
+    "",
+    "## TODO Queue Snapshot",
+    "",
+    todo_snapshot,
+    "",
+    "## Base Phase Loop Prompt",
+    "",
+    base_snapshot,
+    "",
+])
+prompt_bytes = len(prompt.encode("utf-8"))
+if prompt_bytes > prompt_max_bytes:
+    raise SystemExit(f"effective_prompt_exceeds_max_bytes:{prompt_bytes}>{prompt_max_bytes}")
+
+with open(output_path, "w", encoding="utf-8") as handle:
+    handle.write(prompt)
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(output_path, 0o600)
+
+metadata = {
+    "schema_version": 1,
+    "created_at": timestamp,
+    "prompt_path": str(output_path),
+    "prompt_bytes": prompt_bytes,
+    "prompt_sha256": sha256_text(prompt),
+    "prompt_max_bytes": prompt_max_bytes,
+    "selected_todo_bytes": len(selected_todo.encode("utf-8")),
+    "selected_todo_sha256": sha256_text(selected_todo),
+    "selected_todo_complete": True,
+    "todo_path": str(todo_path),
+    "todo_sha256": sha256_text(todo_text),
+    "todo_line_count": todo_line_count,
+    "todo_snapshot_lines": min(todo_line_count, todo_snapshot_lines),
+    "todo_snapshot_truncated": todo_truncated,
+    "base_prompt_path": str(prompt_path),
+    "base_prompt_sha256": sha256_text(base_prompt_text),
+    "base_prompt_line_count": base_line_count,
+    "base_prompt_snapshot_lines": min(base_line_count, base_prompt_snapshot_lines),
+    "base_prompt_snapshot_truncated": base_truncated,
+    "sensitive_pattern_count": count_sensitive(prompt),
+    "retention_count": retention_count,
+}
+with open(meta_path, "w", encoding="utf-8") as handle:
+    json.dump(metadata, handle, ensure_ascii=False, sort_keys=True, indent=2)
+    handle.write("\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(meta_path, 0o600)
 PY
-    else
-      printf '%s\n' '- none'
-    fi
-    printf '\n'
-    printf '## Selected TODO\n\n'
-    printf '%s\n' "$selected_todo"
-    printf '\n## TODO Queue Snapshot\n\n'
-    sed -n '1,240p' "$PHASE_LOOP_TODO"
-    printf '\n## Base Phase Loop Prompt\n\n'
-    sed -n '1,400p' "$PHASE_LOOP_PROMPT"
-  } > "$output_path"
+  then
+    return 1
+  fi
+  chmod 600 "$output_path" "$meta_path"
+  sync_parent_dir "$RUN_DIR"
+  retire_old_prompt_artifacts
 }
 
 stop_if_todo_empty() {
@@ -667,6 +863,7 @@ run_brownie_once() {
   load_env
   local started_at run_stamp stdout_log stderr_log effective_prompt exit_code run_id detail
   local workspace_before workspace_after head_commit validation progress_summary progress_classification
+  local CLAIM_CREATED_THIS_RUN=0
   started_at="$(now_utc)"
   run_stamp="$(date -u +"%Y%m%dT%H%M%SZ")"
   stdout_log="$RUN_DIR/$run_stamp.stdout.log"
@@ -712,8 +909,41 @@ run_brownie_once() {
   if ! build_effective_prompt "$effective_prompt"; then
     detail="Failed to build effective phase-loop prompt: $effective_prompt"
     printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+    if active_todo_claim_exists; then
+      write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+    fi
     write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
     return 74
+  fi
+  if [ "$CLAIM_CREATED_THIS_RUN" -eq 1 ] && [ "${PHASE_LOOP_TEST_MUTATE_TODO_AFTER_PROMPT:-}" = "1" ]; then
+    printf '\n- [ ] PHASE_LOOP_TEST_MUTATED_TODO_AFTER_PROMPT\n' >> "$PHASE_LOOP_TODO"
+  fi
+  if [ "$CLAIM_CREATED_THIS_RUN" -eq 1 ] && ! verify_todo_fresh_for_runtime_start; then
+    archive_stale_todo_claim "$run_stamp"
+    if ! claim_first_pending_todo "$run_stamp"; then
+      detail="Failed to refresh stale TODO claim before Runtime start: $PHASE_LOOP_TODO"
+      printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+      write_status "blocked" "$detail" "$run_stamp" "75" "${CONSECUTIVE_FAILURES:-0}"
+      return 75
+    fi
+    if ! build_effective_prompt "$effective_prompt"; then
+      detail="Failed to rebuild effective prompt after stale TODO claim refresh: $effective_prompt"
+      printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+      if active_todo_claim_exists; then
+        write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      fi
+      write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+      return 74
+    fi
+    if [ "$CLAIM_CREATED_THIS_RUN" -eq 1 ] && ! verify_todo_fresh_for_runtime_start; then
+      detail="TODO queue changed again before Runtime start; refusing stale invocation."
+      printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+      if active_todo_claim_exists; then
+        write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      fi
+      write_status "blocked" "$detail" "$run_stamp" "75" "${CONSECUTIVE_FAILURES:-0}"
+      return 75
+    fi
   fi
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
