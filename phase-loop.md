@@ -197,6 +197,12 @@ unresolved Product Ready implementation slice from the order below, or classify
 the concrete blocker and record the required owner/external action before
 exiting normally.
 
+When Runtime/CLI reaches `drive_budget_exhausted` with
+`unknown_nonterminal + inspect_progress_overview` and no explicit route, return
+a bounded `product_loop_stop_recovery_target`/`next_invocation` as the finite
+next step. Do not emit another generic unscoped `resume` instruction for that
+exact state.
+
 If fully blocked by external conditions, record the blocker, required owner
 action, and resume condition, then stop normally. Never mark unfinished work as
 complete.

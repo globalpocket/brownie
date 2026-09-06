@@ -28,6 +28,10 @@ Current synchronization note:
 - PR #404 added child-inclusive stop behavior and interruptible supervisor
   waits so stop requests can terminate backoff, long Brownie runs, and
   supervisor-managed children without waiting for the next natural wakeup.
+- PR #405 repaired Runtime/CLI unknown-nonterminal continuation by returning a
+  bounded product-loop stop recovery target instead of repeatedly routing
+  `drive_budget_exhausted` + `inspect_progress_overview` back to generic
+  resume.
 - Runtime Product Ready is not reached.
 
 ## Queue protocol
@@ -86,9 +90,6 @@ Current synchronization note:
 - [ ] R-08: Prove provider egress constraints: fixed scheme/host/port, userinfo
   rejection, redirect escape prevention, DNS rebinding or resolved-address
   change handling, and no arbitrary HTTP escalation.
-- [ ] R-09: Repair Runtime/CLI continuation so repeated `unknown_nonterminal` +
-  `inspect_progress_overview` runs return structured progress, blocker, or
-  executable candidates and finite termination inside a run.
 - [ ] R-10: Invalidate safety/readiness evidence automatically when permission,
   Mode Pack, ledger, or other Runtime-safety code changes after the tested head.
 
