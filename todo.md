@@ -9,12 +9,14 @@ The external controller may add, remove, or reorder unchecked items. Brownie may
 refine the list when evidence changes, but must keep the list small, concrete,
 and ordered by priority.
 
-Current baseline:
+Current synchronization note:
 
-- Latest verified local and remote `main`: `1add305b2f6d7b64375fd3ab510e2afd4cd9c8c1`
+- The execution-time `origin/main` after `git fetch` is authoritative. Do not
+  treat a commit SHA embedded in this document as live repository authority.
 - PR #393 added this queue.
 - PR #394 embeds the first unchecked TODO and a bounded queue snapshot into each
   generated per-run prompt.
+- PR #395 expanded this queue from the external Product Ready gap analysis.
 - Runtime Product Ready is not reached.
 
 ## Queue protocol
