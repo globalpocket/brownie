@@ -149,6 +149,26 @@ cat <<'JSON'
 JSON
 SH
 chmod +x "$fake_brownie_workspace_change"
+fake_brownie_sleeping_child="$(mktemp)"
+cat > "$fake_brownie_sleeping_child" <<'SH'
+#!/usr/bin/env bash
+set -eu
+child_pid_file="${PHASE_LOOP_TEST_CHILD_PID_FILE:?missing child pid file}"
+(
+  trap '' TERM
+  sleep 120
+) &
+child_pid="$!"
+printf '%s\n' "$child_pid" > "$child_pid_file"
+wait "$child_pid"
+SH
+chmod +x "$fake_brownie_sleeping_child"
+fake_brownie_invalid_json="$(mktemp)"
+cat > "$fake_brownie_invalid_json" <<'SH'
+#!/usr/bin/env bash
+echo "not json"
+SH
+chmod +x "$fake_brownie_invalid_json"
 
 state_with_claim="$(mktemp -d)"
 prompt_with_claim="$(mktemp)"
@@ -536,12 +556,6 @@ assert status["status"] == "stopped", status
 assert "durable in-progress claim" in status["detail"], status
 PY
 
-fake_brownie_text="$(mktemp)"
-cat > "$fake_brownie_text" <<'SH'
-#!/usr/bin/env bash
-echo "not json"
-SH
-chmod +x "$fake_brownie_text"
 state_invalid_json="$(mktemp -d)"
 prompt_invalid_json="$(mktemp)"
 todo_invalid_json="$(mktemp)"
@@ -551,7 +565,7 @@ printf -- '- [ ] B-01: invalid json task\n' > "$todo_invalid_json"
 if PHASE_LOOP_STATE_DIR="$state_invalid_json" \
   PHASE_LOOP_PROMPT="$prompt_invalid_json" \
   PHASE_LOOP_TODO="$todo_invalid_json" \
-  BROWNIE_BIN="$fake_brownie_text" \
+  BROWNIE_BIN="$fake_brownie_invalid_json" \
   PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
   "$PHASE_LOOP" run-once >/dev/null; then
   echo "expected non-JSON CLI output to fail closed" >&2
@@ -568,5 +582,89 @@ assert status["status"] == "blocked", status
 assert "JSON output failed schema validation" in status["detail"], status
 assert claim["status"] == "blocked", claim
 PY
+
+state_interruptible="$(mktemp -d)"
+prompt_interruptible="$(mktemp)"
+todo_interruptible="$(mktemp)"
+printf 'base prompt\n' > "$prompt_interruptible"
+printf -- '- [ ] B-12: interruptible backoff task\n' > "$todo_interruptible"
+
+PHASE_LOOP_STATE_DIR="$state_interruptible" \
+PHASE_LOOP_PROMPT="$prompt_interruptible" \
+PHASE_LOOP_TODO="$todo_interruptible" \
+BROWNIE_BIN="$fake_brownie_invalid_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+PHASE_LOOP_FAILURE_BACKOFF_SECONDS=30 \
+PHASE_LOOP_MAX_FAILURE_BACKOFF_SECONDS=30 \
+PHASE_LOOP_SLEEP_POLL_SECONDS=1 \
+"$PHASE_LOOP" supervise >/dev/null 2>/dev/null &
+interruptible_pid="$!"
+
+for _ in 1 2 3 4 5; do
+  if [ -f "$state_interruptible/status.json" ] && rg -q '"status": "blocked"' "$state_interruptible/status.json"; then
+    break
+  fi
+  sleep 1
+done
+
+start_epoch="$(date +%s)"
+PHASE_LOOP_STATE_DIR="$state_interruptible" "$PHASE_LOOP" stop >/dev/null
+wait "$interruptible_pid" 2>/dev/null || true
+elapsed=$(( $(date +%s) - start_epoch ))
+if [ "$elapsed" -gt 5 ]; then
+  echo "expected stop to interrupt supervisor backoff promptly, elapsed=${elapsed}s" >&2
+  exit 1
+fi
+
+python3 - "$state_interruptible/status.json" <<'PY'
+import json
+import sys
+
+status = json.load(open(sys.argv[1], encoding="utf-8"))
+assert status["status"] == "stopped", status
+PY
+
+state_child_stop="$(mktemp -d)"
+prompt_child_stop="$(mktemp)"
+todo_child_stop="$(mktemp)"
+child_pid_file="$state_child_stop/child.pid"
+printf 'base prompt\n' > "$prompt_child_stop"
+printf -- '- [ ] B-11: child-inclusive stop task\n' > "$todo_child_stop"
+
+PHASE_LOOP_STATE_DIR="$state_child_stop" \
+PHASE_LOOP_PROMPT="$prompt_child_stop" \
+PHASE_LOOP_TODO="$todo_child_stop" \
+BROWNIE_BIN="$fake_brownie_sleeping_child" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+PHASE_LOOP_TEST_CHILD_PID_FILE="$child_pid_file" \
+PHASE_LOOP_STOP_GRACE_SECONDS=1 \
+PHASE_LOOP_STOP_FORCE_SECONDS=3 \
+"$PHASE_LOOP" supervise >/dev/null 2>/dev/null &
+child_supervisor_pid="$!"
+
+for _ in 1 2 3 4 5; do
+  if [ -s "$child_pid_file" ]; then
+    break
+  fi
+  sleep 1
+done
+if [ ! -s "$child_pid_file" ]; then
+  echo "expected fake Brownie child pid file" >&2
+  kill "$child_supervisor_pid" 2>/dev/null || true
+  exit 1
+fi
+child_pid="$(cat "$child_pid_file")"
+
+PHASE_LOOP_STATE_DIR="$state_child_stop" \
+PHASE_LOOP_STOP_GRACE_SECONDS=1 \
+PHASE_LOOP_STOP_FORCE_SECONDS=3 \
+"$PHASE_LOOP" stop >/dev/null
+wait "$child_supervisor_pid" 2>/dev/null || true
+sleep 1
+if kill -0 "$child_pid" 2>/dev/null; then
+  echo "expected stop to terminate supervisor-managed child pid=$child_pid" >&2
+  kill -KILL "$child_pid" 2>/dev/null || true
+  exit 1
+fi
 
 echo "phase-loop claim smoke passed"

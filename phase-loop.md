@@ -153,6 +153,13 @@ Use `todo.md` before falling back to overview-based work selection:
   stop normally. Dirty workspace state or a non-main branch alone is not
   in-progress work for supervisor liveness. Do not continue an overview-only
   loop.
+- Stop requests must be honored while the supervisor is waiting. Interval and
+  failure-backoff waits must poll for the stop file instead of sleeping through
+  the whole delay.
+- Stop requests must include supervisor-managed Runtime children. Terminate the
+  supervisor process group when it is safe to do so, otherwise terminate the
+  bounded descendant set; after the graceful timeout, force-kill remaining
+  managed descendants/process-group members and record the action.
 
 Use this order:
 
@@ -309,14 +316,15 @@ If retaining root `phase-loop.sh`, document it as a development-only wrapper not
 included in Runtime distributables.
 
 Improve phase-loop safety in bounded slices: stale lock recovery, process
-identity and start-time checks, instance ID, workspace fingerprint, process
-group management, child-inclusive stop, graceful termination, force kill after
-timeout, immediate stop handling, restart old-child checks, PID reuse
-protection, atomic status writes, state directory `0700`, credential/log files
-`0600`, log size limits, rotation, retention, secret redaction, no raw
-prompt/provider response/file content in normal logs, shellcheck, paths with
-spaces, interrupted writes, simultaneous start, crash restart, stop-during-
-restart, and orphan child recovery.
+identity and start-time checks, instance ID, workspace fingerprint, restart
+old-child checks, PID reuse protection, atomic status writes, state directory
+`0700`, credential/log files `0600`, log size limits, rotation, retention,
+secret redaction, no raw prompt/provider response/file content in normal logs,
+shellcheck, paths with spaces, interrupted writes, simultaneous start, crash
+restart, and stop-during-restart. Process group management, child-inclusive
+stop, graceful termination, force kill after timeout, immediate stop handling,
+and orphan child recovery are implemented in the development supervisor and
+should be preserved or strengthened in the eventual BDK replacement.
 
 Sourcing env files is trusted local configuration and arbitrary shell execution.
 Prefer a strict `KEY=VALUE` parser when feasible.

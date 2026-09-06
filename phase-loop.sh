@@ -32,6 +32,9 @@ PHASE_LOOP_SELECTED_TODO_MAX_BYTES="${PHASE_LOOP_SELECTED_TODO_MAX_BYTES:-8192}"
 PHASE_LOOP_TODO_SNAPSHOT_LINES="${PHASE_LOOP_TODO_SNAPSHOT_LINES:-240}"
 PHASE_LOOP_BASE_PROMPT_SNAPSHOT_LINES="${PHASE_LOOP_BASE_PROMPT_SNAPSHOT_LINES:-400}"
 PHASE_LOOP_PROMPT_RETENTION_COUNT="${PHASE_LOOP_PROMPT_RETENTION_COUNT:-20}"
+PHASE_LOOP_STOP_GRACE_SECONDS="${PHASE_LOOP_STOP_GRACE_SECONDS:-15}"
+PHASE_LOOP_STOP_FORCE_SECONDS="${PHASE_LOOP_STOP_FORCE_SECONDS:-5}"
+PHASE_LOOP_SLEEP_POLL_SECONDS="${PHASE_LOOP_SLEEP_POLL_SECONDS:-1}"
 
 mkdir -p "$RUN_DIR" "$LOG_DIR" "$TODO_CLAIM_DIR"
 
@@ -839,6 +842,230 @@ is_running() {
   kill -0 "$pid" 2>/dev/null
 }
 
+process_command() {
+  local pid="$1"
+  ps -p "$pid" -o command= 2>/dev/null || true
+}
+
+process_pgid() {
+  local pid="$1"
+  ps -p "$pid" -o pgid= 2>/dev/null | awk '{ print $1 }'
+}
+
+process_stat() {
+  local pid="$1"
+  ps -p "$pid" -o stat= 2>/dev/null | awk '{ print $1 }'
+}
+
+current_pgid() {
+  ps -p "$$" -o pgid= 2>/dev/null | awk '{ print $1 }'
+}
+
+is_supervisor_pid() {
+  local pid="$1" command
+  command="$(process_command "$pid")"
+  case "$command" in
+    *phase-loop.sh*supervise*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+supervisor_descendant_pids() {
+  local root_pid="$1"
+  python3 - "$root_pid" <<'PY'
+import subprocess
+import sys
+
+root = sys.argv[1]
+try:
+    output = subprocess.check_output(
+        ["ps", "-axo", "pid=", "-o", "ppid="],
+        text=True,
+        stderr=subprocess.DEVNULL,
+    )
+except Exception:
+    sys.exit(0)
+
+children = {}
+for line in output.splitlines():
+    parts = line.split()
+    if len(parts) != 2:
+        continue
+    pid, ppid = parts
+    children.setdefault(ppid, []).append(pid)
+
+stack = list(children.get(root, []))
+seen = []
+while stack:
+    pid = stack.pop()
+    if pid in seen:
+        continue
+    seen.append(pid)
+    stack.extend(children.get(pid, []))
+
+for pid in seen:
+    print(pid)
+PY
+}
+
+wait_for_pid_exit() {
+  local pid="$1"
+  local timeout_seconds="$2"
+  local waited=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge "$timeout_seconds" ]; then
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 0
+}
+
+pid_is_active() {
+  local pid="$1" stat
+  if ! kill -0 "$pid" 2>/dev/null; then
+    return 1
+  fi
+  stat="$(process_stat "$pid")"
+  case "$stat" in
+    Z*)
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+active_known_pids() {
+  local pid
+  for pid in "$@"; do
+    case "$pid" in
+      ''|*[!0-9]*)
+        continue
+        ;;
+    esac
+    if [ "$pid" -gt 1 ] && pid_is_active "$pid"; then
+      printf '%s\n' "$pid"
+    fi
+  done
+}
+
+wait_for_known_pids_exit() {
+  local timeout_seconds="$1"
+  shift
+  local waited=0
+  while [ -n "$(active_known_pids "$@" | tr '\n' ' ')" ]; do
+    if [ "$waited" -ge "$timeout_seconds" ]; then
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 0
+}
+
+kill_known_pids() {
+  local signal="$1"
+  shift
+  local pid
+  for pid in "$@"; do
+    case "$pid" in
+      ''|*[!0-9]*)
+        continue
+        ;;
+    esac
+    if [ "$pid" -gt 1 ]; then
+      kill "-$signal" "$pid" 2>/dev/null || true
+    fi
+  done
+}
+
+terminate_supervisor_tree() {
+  local pid="$1"
+  local pgid own_pgid descendants known_pids
+  if ! kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+  if ! is_supervisor_pid "$pid"; then
+    printf '%s refusing to terminate non-supervisor pid=%s command=%s\n' "$(now_utc)" "$pid" "$(process_command "$pid")" >> "$SUPERVISOR_LOG"
+    return 1
+  fi
+
+  pgid="$(process_pgid "$pid")"
+  own_pgid="$(current_pgid)"
+  descendants="$(supervisor_descendant_pids "$pid" | tr '\n' ' ')"
+  known_pids="$pid $descendants"
+  printf '%s stop terminating supervisor pid=%s pgid=%s descendants=%s\n' "$(now_utc)" "$pid" "${pgid:-unknown}" "${descendants:-none}" >> "$SUPERVISOR_LOG"
+
+  if [ -n "${pgid:-}" ] && [ "$pgid" -gt 1 ] && [ "${pgid:-}" != "${own_pgid:-}" ]; then
+    kill -TERM -- "-$pgid" 2>/dev/null || true
+  else
+    # When tests or a direct shell launch share the caller's process group, a
+    # negative-PGID signal would hit the caller too. Fall back to the bounded
+    # supervisor descendant set captured before termination.
+    # shellcheck disable=SC2086
+    kill_known_pids TERM $known_pids
+  fi
+
+  # Wait for the whole known managed set, not only the supervisor. A Runtime
+  # child can outlive its parent briefly after TERM; treating supervisor exit
+  # alone as success would leave orphan work behind.
+  # shellcheck disable=SC2086
+  if wait_for_known_pids_exit "$PHASE_LOOP_STOP_GRACE_SECONDS" $known_pids; then
+    rm -f "$PID_FILE"
+    return 0
+  fi
+
+  descendants="$(supervisor_descendant_pids "$pid" | tr '\n' ' ')"
+  known_pids="$pid $known_pids $descendants"
+  printf '%s stop force terminating supervisor pid=%s pgid=%s descendants=%s\n' "$(now_utc)" "$pid" "${pgid:-unknown}" "${descendants:-none}" >> "$SUPERVISOR_LOG"
+  if [ -n "${pgid:-}" ] && [ "$pgid" -gt 1 ] && [ "${pgid:-}" != "${own_pgid:-}" ]; then
+    kill -KILL -- "-$pgid" 2>/dev/null || true
+  fi
+  # shellcheck disable=SC2086
+  kill_known_pids KILL $known_pids
+  # shellcheck disable=SC2086
+  wait_for_known_pids_exit "$PHASE_LOOP_STOP_FORCE_SECONDS" $known_pids || true
+  if ! pid_is_active "$pid"; then
+    rm -f "$PID_FILE"
+  fi
+}
+
+interruptible_sleep() {
+  local total_seconds="$1"
+  local slept=0
+  local poll="$PHASE_LOOP_SLEEP_POLL_SECONDS"
+  case "$poll" in
+    ''|*[!0-9]*)
+      poll=1
+      ;;
+  esac
+  if [ "$poll" -lt 1 ]; then
+    poll=1
+  fi
+  while [ "$slept" -lt "$total_seconds" ]; do
+    if [ -f "$STOP_FILE" ]; then
+      return 1
+    fi
+    local remaining chunk
+    remaining=$((total_seconds - slept))
+    chunk="$poll"
+    if [ "$chunk" -gt "$remaining" ]; then
+      chunk="$remaining"
+    fi
+    sleep "$chunk"
+    slept=$((slept + chunk))
+  done
+  if [ -f "$STOP_FILE" ]; then
+    return 1
+  fi
+  return 0
+}
+
 acquire_lock() {
   if mkdir "$LOCK_DIR" 2>/dev/null; then
     echo "$$" > "$LOCK_DIR/pid"
@@ -1067,7 +1294,7 @@ supervise() {
 
     if run_brownie_once; then
       CONSECUTIVE_FAILURES=0
-      sleep "$PHASE_LOOP_INTERVAL_SECONDS"
+      interruptible_sleep "$PHASE_LOOP_INTERVAL_SECONDS" || true
     else
       CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
       backoff=$((PHASE_LOOP_FAILURE_BACKOFF_SECONDS * CONSECUTIVE_FAILURES))
@@ -1075,7 +1302,7 @@ supervise() {
         backoff="$PHASE_LOOP_MAX_FAILURE_BACKOFF_SECONDS"
       fi
       printf '%s failure_count=%s backoff=%s\n' "$(now_utc)" "$CONSECUTIVE_FAILURES" "$backoff" >> "$SUPERVISOR_LOG"
-      sleep "$backoff"
+      interruptible_sleep "$backoff" || true
     fi
   done
 }
@@ -1113,7 +1340,15 @@ start() {
 stop_loop() {
   touch "$STOP_FILE"
   if is_running; then
-    echo "phase-loop stop requested: pid $(cat "$PID_FILE")"
+    local pid
+    pid="$(cat "$PID_FILE")"
+    terminate_supervisor_tree "$pid" || true
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "phase-loop stop requested: pid $pid still running"
+    else
+      write_status "stopped" "Stop requested; supervisor and managed children terminated." "" "" 0
+      echo "phase-loop stopped: pid $pid"
+    fi
   else
     echo "phase-loop stop requested; no live pid found"
   fi
