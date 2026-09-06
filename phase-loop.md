@@ -24,6 +24,11 @@ Before acting, inspect these control-plane files when available:
 - `review-memory.md`
 - `stop-reason.md`
 
+Also inspect repo-root `todo.md`. `todo.md` is the shared priority queue used by
+the external controller and Brownie to communicate concrete work in priority
+order. It is phase-loop operational input, not Runtime product functionality and
+not a replacement for the external control-plane root.
+
 Do not use repo-local `.brownie-control` as live authority. Repository files are
 implementation artifacts, tests, docs, or compatibility pointers only.
 
@@ -89,13 +94,37 @@ they are strictly required to close a concrete Product Ready blocker.
 Each invocation must choose exactly one highest-priority unresolved item and
 complete one verifiable phase slice.
 
+### TODO Queue Protocol
+
+Use `todo.md` before falling back to overview-based work selection:
+
+- Treat unchecked Markdown task items (`- [ ] ...`) in `todo.md` as the pending
+  externally managed Brownie work queue.
+- The first unchecked item is the highest-priority pending TODO.
+- If at least one unchecked TODO exists, select the first unchecked TODO unless
+  it is outside the Product Boundary or forbidden by controller instructions.
+- When starting work on a TODO, remove that TODO from `todo.md` in the same
+  bounded slice, then record the active work in normal Runtime/phase evidence.
+- If the work cannot be completed in the current slice, add a concrete follow-up
+  TODO back to `todo.md` before exiting. The follow-up must name the blocker or
+  the next smallest implementation step.
+- If evidence proves a TODO is already complete, remove it from `todo.md` and
+  record the evidence instead of doing duplicate work.
+- Do not use checked TODOs as completion evidence. Completion still requires
+  implementation, tests, CI, PR/merge evidence, and audit artifacts as
+  applicable.
+- If `todo.md` has no unchecked items and there is no active in-progress work,
+  stop normally. Do not continue an overview-only loop.
+
 Use this order:
 
 1. Fetch latest `origin/main`.
-2. Inspect current phase, Product DoD, Release Contract, and audit evidence.
+2. Inspect `todo.md`, current phase, Product DoD, Release Contract, and audit
+   evidence.
 3. Verify the previous phase result against implementation and tests.
 4. Exclude work that is already genuinely complete.
-5. Select one highest-priority unresolved Runtime-owned P0/P1 gap.
+5. Select the first eligible unchecked `todo.md` item, otherwise select one
+   highest-priority unresolved Runtime-owned P0/P1 gap.
 6. Create a failing test or guard first when feasible.
 7. Implement the smallest safe fix.
 8. Run focused validation.
