@@ -82,6 +82,44 @@ todo_pending_count() {
   ' "$PHASE_LOOP_TODO"
 }
 
+todo_first_pending_item() {
+  if [ ! -f "$PHASE_LOOP_TODO" ]; then
+    return 0
+  fi
+  awk '
+    /^[[:space:]]*([-*]|[0-9]+[.)])[[:space:]]+\[[[:space:]]\][[:space:]]+/ {
+      if (found) {
+        exit
+      }
+      found = 1
+      print
+      next
+    }
+    found && /^[[:space:]]+/ {
+      print
+      next
+    }
+    found {
+      exit
+    }
+  ' "$PHASE_LOOP_TODO"
+}
+
+build_effective_prompt() {
+  local output_path="$1"
+  {
+    printf '# Brownie Phase Loop Effective Prompt\n\n'
+    printf 'This generated prompt combines the stable phase-loop contract with the current external TODO queue.\n'
+    printf 'Treat the selected TODO below as the work item for this bounded invocation.\n\n'
+    printf '## Selected TODO\n\n'
+    todo_first_pending_item
+    printf '\n## TODO Queue Snapshot\n\n'
+    sed -n '1,240p' "$PHASE_LOOP_TODO"
+    printf '\n## Base Phase Loop Prompt\n\n'
+    sed -n '1,400p' "$PHASE_LOOP_PROMPT"
+  } > "$output_path"
+}
+
 has_in_progress_work() {
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 1
@@ -176,11 +214,12 @@ acquire_lock() {
 
 run_brownie_once() {
   load_env
-  local started_at run_stamp stdout_log stderr_log exit_code run_id detail
+  local started_at run_stamp stdout_log stderr_log effective_prompt exit_code run_id detail
   started_at="$(now_utc)"
   run_stamp="$(date -u +"%Y%m%dT%H%M%SZ")"
   stdout_log="$RUN_DIR/$run_stamp.stdout.log"
   stderr_log="$RUN_DIR/$run_stamp.stderr.log"
+  effective_prompt="$RUN_DIR/$run_stamp.prompt.md"
 
   write_status "running" "Brownie run started at $started_at" "$run_stamp" "" "${CONSECUTIVE_FAILURES:-0}"
 
@@ -208,14 +247,20 @@ run_brownie_once() {
     write_status "blocked" "$detail" "$run_stamp" "66" "${CONSECUTIVE_FAILURES:-0}"
     return 66
   fi
+  if ! build_effective_prompt "$effective_prompt"; then
+    detail="Failed to build effective phase-loop prompt: $effective_prompt"
+    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+    write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+    return 74
+  fi
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
     export BROWNIE_WORKSPACE_ROOT="${BROWNIE_WORKSPACE_ROOT:-"$PHASE_LOOP_WORKSPACE_ROOT"}"
     export PHASE_LOOP_CONTROL_ROOT
     if command -v timeout >/dev/null 2>&1; then
-      timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" run --file "$PHASE_LOOP_PROMPT"
+      timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" run --file "$effective_prompt"
     else
-      "$BROWNIE_BIN" run --file "$PHASE_LOOP_PROMPT"
+      "$BROWNIE_BIN" run --file "$effective_prompt"
     fi
   ) > "$stdout_log" 2> "$stderr_log"
   exit_code=$?

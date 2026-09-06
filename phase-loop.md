@@ -29,6 +29,11 @@ the external controller and Brownie to communicate concrete work in priority
 order. It is phase-loop operational input, not Runtime product functionality and
 not a replacement for the external control-plane root.
 
+The phase-loop supervisor may generate an effective per-run prompt that embeds
+the selected `todo.md` item and a bounded queue snapshot before this base prompt.
+If such embedded TODO content is present, treat it as the live queue view for
+the current bounded invocation.
+
 Do not use repo-local `.brownie-control` as live authority. Repository files are
 implementation artifacts, tests, docs, or compatibility pointers only.
 
