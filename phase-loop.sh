@@ -263,11 +263,12 @@ import sys
 path = sys.argv[1]
 try:
     with open(path, encoding="utf-8") as handle:
-        payload = json.load(handle)
+        root = json.load(handle)
 except Exception as exc:
     print(f"invalid_json:{exc}")
     sys.exit(1)
 
+payload = root.get("run") if isinstance(root, dict) and isinstance(root.get("run"), dict) else root
 if not isinstance(payload, dict):
     print("invalid_schema:root_not_object")
     sys.exit(1)
@@ -333,7 +334,8 @@ threshold = int(sys.argv[11])
 payload = None
 if stdout_log.exists() and stdout_log.stat().st_size > 0:
     with open(stdout_log, encoding="utf-8") as handle:
-        payload = json.load(handle)
+        root = json.load(handle)
+        payload = root.get("run") if isinstance(root, dict) and isinstance(root.get("run"), dict) else root
 if not isinstance(payload, dict):
     payload = {}
 
@@ -731,7 +733,8 @@ run_brownie_once() {
 import json
 import sys
 try:
-    payload = json.load(open(sys.argv[1], encoding="utf-8"))
+    root = json.load(open(sys.argv[1], encoding="utf-8"))
+    payload = root.get("run") if isinstance(root, dict) and isinstance(root.get("run"), dict) else root
     print(payload.get("run_id") or payload.get("automation", {}).get("run_id") or "")
 except Exception:
     print("")
@@ -760,14 +763,16 @@ PY
 
     if python3 - "$stdout_log" <<'PY'
 import json, sys
-payload = json.load(open(sys.argv[1], encoding="utf-8"))
+root = json.load(open(sys.argv[1], encoding="utf-8"))
+payload = root.get("run") if isinstance(root, dict) and isinstance(root.get("run"), dict) else root
 sys.exit(0 if payload.get("completed") is True else 1)
 PY
     then
       write_todo_claim "$(claim_field claim_id)" "completed" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
     elif python3 - "$stdout_log" <<'PY'
 import json, sys
-payload = json.load(open(sys.argv[1], encoding="utf-8"))
+root = json.load(open(sys.argv[1], encoding="utf-8"))
+payload = root.get("run") if isinstance(root, dict) and isinstance(root.get("run"), dict) else root
 sys.exit(0 if payload.get("blocked") is True else 1)
 PY
     then

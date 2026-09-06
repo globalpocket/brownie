@@ -26,6 +26,52 @@ if [ "${1:-}" != "--json" ] || [ "${2:-}" != "run" ] || [ "${3:-}" != "--file" ]
 fi
 cat <<'JSON'
 {
+  "command": "run",
+  "ok": true,
+  "run": {
+    "automation": {
+      "schema_version": 1,
+      "status": "continuation_required",
+      "controller_action": "resume",
+      "stop_class": "continuation_required",
+      "stop_reason": "bounded_progress",
+      "completed": false,
+      "blocked": false,
+      "retryable": true,
+      "terminal_failure": false,
+      "task_id": "task-smoke",
+      "run_id": "run-smoke",
+      "journey_id": "journey-smoke",
+      "next_action": "inspect_progress_overview",
+      "next_invocation": {"command": "resume", "arguments": []}
+    },
+    "status": "task_executed",
+    "session_id": "session-smoke",
+    "drive_id": "drive-smoke",
+    "task_id": "task-smoke",
+    "run_id": "run-smoke",
+    "journey_id": "journey-smoke",
+    "completion_closure_status": "budget_exhausted",
+    "next_action": "inspect_progress_overview",
+    "completed": false,
+    "blocked": false,
+    "retryable": true,
+    "terminal_failure": false,
+    "controller_action": "resume",
+    "stop_class": "continuation_required",
+    "stop_reason": "bounded_progress",
+    "next_invocation": {"command": "resume", "arguments": []}
+  }
+}
+JSON
+SH
+chmod +x "$fake_brownie_json"
+fake_brownie_legacy_json="$(mktemp)"
+cat > "$fake_brownie_legacy_json" <<'SH'
+#!/usr/bin/env bash
+set -eu
+cat <<'JSON'
+{
   "automation": {
     "schema_version": 1,
     "status": "continuation_required",
@@ -61,7 +107,7 @@ cat <<'JSON'
 }
 JSON
 SH
-chmod +x "$fake_brownie_json"
+chmod +x "$fake_brownie_legacy_json"
 fake_brownie_workspace_change="$(mktemp)"
 cat > "$fake_brownie_workspace_change" <<'SH'
 #!/usr/bin/env bash
