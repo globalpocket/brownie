@@ -106,10 +106,13 @@ Use `todo.md` before falling back to overview-based work selection:
 - Treat unchecked Markdown task items (`- [ ] ...`) in `todo.md` as the pending
   externally managed Brownie work queue.
 - The first unchecked item is the highest-priority pending TODO.
+- The supervisor must claim the selected TODO durably before invoking Runtime.
+  The current bootstrap implementation records the active claim under the
+  phase-loop state directory as `todo-claims/current.json`.
 - If at least one unchecked TODO exists, select the first unchecked TODO unless
   it is outside the Product Boundary or forbidden by controller instructions.
-- When starting work on a TODO, remove that TODO from `todo.md` in the same
-  bounded slice, then record the active work in normal Runtime/phase evidence.
+- Do not remove a TODO from `todo.md` until there is durable completion or a
+  concrete replacement/follow-up TODO. A claim is the record that work started.
 - If the work cannot be completed in the current slice, add a concrete follow-up
   TODO back to `todo.md` before exiting. The follow-up must name the blocker or
   the next smallest implementation step.

@@ -40,9 +40,6 @@ Current synchronization note:
 
 ### P0: Phase Loop / BDK Supervisor
 
-- [ ] B-01: Replace remove-on-start TODO consumption with a durable atomic claim
-  protocol: `pending`, `claimed`, `in_progress`, `blocked`, `completed`, stable
-  claim IDs, fsync/sync evidence, and restart-safe recovery.
 - [ ] B-02: Add TODO queue compare-and-swap protection with queue generation,
   content fingerprint, stale snapshot rejection, and safe handling of external
   reordering/additions.
