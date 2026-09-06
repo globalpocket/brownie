@@ -10,6 +10,8 @@ LOCK_DIR="$STATE_DIR/phase-loop.lock"
 STOP_FILE="$STATE_DIR/stop"
 STATUS_FILE="$STATE_DIR/status.json"
 SUPERVISOR_LOG="$LOG_DIR/supervisor.log"
+TODO_CLAIM_DIR="$STATE_DIR/todo-claims"
+TODO_CLAIM_FILE="$TODO_CLAIM_DIR/current.json"
 LAUNCHD_LABEL="${PHASE_LOOP_LAUNCHD_LABEL:-globalpocket.brownie.phase-loop}"
 SCREEN_NAME="${PHASE_LOOP_SCREEN_NAME:-brownie-phase-loop}"
 
@@ -23,7 +25,7 @@ PHASE_LOOP_FAILURE_BACKOFF_SECONDS="${PHASE_LOOP_FAILURE_BACKOFF_SECONDS:-60}"
 PHASE_LOOP_MAX_FAILURE_BACKOFF_SECONDS="${PHASE_LOOP_MAX_FAILURE_BACKOFF_SECONDS:-900}"
 PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS="${PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS:-14400}"
 
-mkdir -p "$RUN_DIR" "$LOG_DIR"
+mkdir -p "$RUN_DIR" "$LOG_DIR" "$TODO_CLAIM_DIR"
 
 json_escape() {
   python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1])'
@@ -51,6 +53,8 @@ write_status() {
   escaped_control_root="$(printf '%s' "$PHASE_LOOP_CONTROL_ROOT" | json_escape)"
   local escaped_todo
   escaped_todo="$(printf '%s' "$PHASE_LOOP_TODO" | json_escape)"
+  local escaped_claim_file
+  escaped_claim_file="$(printf '%s' "$TODO_CLAIM_FILE" | json_escape)"
   tmp_status="$STATUS_FILE.$$.$RANDOM.tmp"
   cat > "$tmp_status" <<EOF
 {
@@ -64,11 +68,29 @@ write_status() {
   "stop_file": "$STOP_FILE",
   "prompt": "$escaped_prompt",
   "todo": "$escaped_todo",
+  "todo_claim": "$escaped_claim_file",
   "workspace_root": "$escaped_workspace",
   "control_root": "$escaped_control_root"
 }
 EOF
   mv "$tmp_status" "$STATUS_FILE"
+}
+
+sync_parent_dir() {
+  local target_path="$1"
+  python3 - "$target_path" <<'PY'
+import os
+import pathlib
+import sys
+
+target = pathlib.Path(sys.argv[1])
+directory = target if target.is_dir() else target.parent
+fd = os.open(directory, os.O_RDONLY)
+try:
+    os.fsync(fd)
+finally:
+    os.close(fd)
+PY
 }
 
 todo_pending_count() {
@@ -105,14 +127,169 @@ todo_first_pending_item() {
   ' "$PHASE_LOOP_TODO"
 }
 
+todo_queue_fingerprint() {
+  if [ ! -f "$PHASE_LOOP_TODO" ]; then
+    return 1
+  fi
+  shasum -a 256 "$PHASE_LOOP_TODO" | awk '{ print $1 }'
+}
+
+claim_status() {
+  if [ ! -f "$TODO_CLAIM_FILE" ]; then
+    return 1
+  fi
+  python3 - "$TODO_CLAIM_FILE" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        print(json.load(handle).get("status", ""))
+except Exception:
+    sys.exit(1)
+PY
+}
+
+active_todo_claim_exists() {
+  local status
+  status="$(claim_status 2>/dev/null || true)"
+  case "$status" in
+    claimed|in_progress|blocked)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+claim_field() {
+  local field="$1"
+  if [ ! -f "$TODO_CLAIM_FILE" ]; then
+    return 1
+  fi
+  python3 - "$TODO_CLAIM_FILE" "$field" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        value = json.load(handle).get(sys.argv[2], "")
+except Exception:
+    sys.exit(1)
+if isinstance(value, str):
+    print(value)
+else:
+    print(json.dumps(value, ensure_ascii=False, sort_keys=True))
+PY
+}
+
+write_todo_claim() {
+  local claim_id="$1"
+  local status="$2"
+  local selected_todo="$3"
+  local queue_fingerprint="$4"
+  local run_stamp="${5:-}"
+  local timestamp tmp_claim
+  timestamp="$(now_utc)"
+  tmp_claim="$TODO_CLAIM_FILE.$$.$RANDOM.tmp"
+  python3 - "$tmp_claim" "$claim_id" "$status" "$selected_todo" "$queue_fingerprint" "$PHASE_LOOP_TODO" "$run_stamp" "$timestamp" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+claim_id = sys.argv[2]
+status = sys.argv[3]
+timestamp = sys.argv[8]
+current_path = path.with_name("current.json")
+claim = {}
+if current_path.exists():
+    try:
+        with open(current_path, encoding="utf-8") as handle:
+            current = json.load(handle)
+        if current.get("claim_id") == claim_id:
+            claim = current
+    except Exception:
+        claim = {}
+if not claim:
+    claim = {
+        "schema_version": 1,
+        "claim_id": claim_id,
+        "selected_todo": sys.argv[4],
+        "queue_fingerprint": sys.argv[5],
+        "todo_path": sys.argv[6],
+        "created_at": timestamp,
+        "status_history": [],
+    }
+claim["status"] = status
+claim["run_stamp"] = sys.argv[7]
+claim["updated_at"] = timestamp
+claim.setdefault("status_history", []).append(
+    {"status": status, "run_stamp": sys.argv[7], "updated_at": timestamp}
+)
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(claim, handle, ensure_ascii=False, sort_keys=True, indent=2)
+    handle.write("\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(path, 0o600)
+PY
+  mv "$tmp_claim" "$TODO_CLAIM_FILE"
+  chmod 600 "$TODO_CLAIM_FILE"
+  sync_parent_dir "$TODO_CLAIM_DIR"
+}
+
+claim_first_pending_todo() {
+  local run_stamp="$1"
+  local selected_todo queue_fingerprint selected_hash claim_id
+  if active_todo_claim_exists; then
+    write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$run_stamp"
+    return 0
+  fi
+
+  selected_todo="$(todo_first_pending_item)"
+  if [ -z "$selected_todo" ]; then
+    return 1
+  fi
+  queue_fingerprint="$(todo_queue_fingerprint)"
+  selected_hash="$(printf '%s' "$selected_todo" | shasum -a 256 | awk '{ print substr($1, 1, 12) }')"
+  claim_id="todo-${run_stamp}-${selected_hash}"
+  write_todo_claim "$claim_id" "claimed" "$selected_todo" "$queue_fingerprint" "$run_stamp"
+  write_todo_claim "$claim_id" "in_progress" "$selected_todo" "$queue_fingerprint" "$run_stamp"
+  printf '%s todo_claim=%s status=in_progress\n' "$(now_utc)" "$claim_id" >> "$SUPERVISOR_LOG"
+}
+
 build_effective_prompt() {
   local output_path="$1"
+  local selected_todo
+  if active_todo_claim_exists; then
+    selected_todo="$(claim_field selected_todo)"
+  else
+    selected_todo="$(todo_first_pending_item)"
+  fi
   {
     printf '# Brownie Phase Loop Effective Prompt\n\n'
     printf 'This generated prompt combines the stable phase-loop contract with the current external TODO queue.\n'
-    printf 'Treat the selected TODO below as the work item for this bounded invocation.\n\n'
+    printf 'Treat the active TODO claim below as the work item for this bounded invocation.\n\n'
+    printf '## Active TODO Claim\n\n'
+    if active_todo_claim_exists; then
+      python3 - "$TODO_CLAIM_FILE" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    claim = json.load(handle)
+for key in ("claim_id", "status", "queue_fingerprint", "run_stamp", "updated_at"):
+    print(f"- {key}: `{claim.get(key, '')}`")
+PY
+    else
+      printf '%s\n' '- none'
+    fi
+    printf '\n'
     printf '## Selected TODO\n\n'
-    todo_first_pending_item
+    printf '%s\n' "$selected_todo"
     printf '\n## TODO Queue Snapshot\n\n'
     sed -n '1,240p' "$PHASE_LOOP_TODO"
     printf '\n## Base Phase Loop Prompt\n\n'
@@ -148,6 +325,9 @@ stop_if_todo_empty() {
 
   pending_count="$(todo_pending_count)"
   if [ "$pending_count" -eq 0 ]; then
+    if active_todo_claim_exists; then
+      return 0
+    fi
     if has_in_progress_work; then
       return 0
     fi
@@ -247,6 +427,12 @@ run_brownie_once() {
     write_status "blocked" "$detail" "$run_stamp" "66" "${CONSECUTIVE_FAILURES:-0}"
     return 66
   fi
+  if ! claim_first_pending_todo "$run_stamp"; then
+    detail="Failed to claim first pending TODO from queue: $PHASE_LOOP_TODO"
+    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+    write_status "blocked" "$detail" "$run_stamp" "75" "${CONSECUTIVE_FAILURES:-0}"
+    return 75
+  fi
   if ! build_effective_prompt "$effective_prompt"; then
     detail="Failed to build effective phase-loop prompt: $effective_prompt"
     printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
@@ -274,6 +460,9 @@ run_brownie_once() {
     detail="Brownie run exited successfully; stdout=$stdout_log stderr=$stderr_log"
     write_status "last_run_succeeded" "$detail" "$run_id" "$exit_code" 0
   else
+    if active_todo_claim_exists; then
+      write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$run_stamp"
+    fi
     detail="Brownie run failed; stdout=$stdout_log stderr=$stderr_log"
     write_status "last_run_failed" "$detail" "$run_id" "$exit_code" "${CONSECUTIVE_FAILURES:-1}"
   fi
