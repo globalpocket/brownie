@@ -17,15 +17,15 @@ Current synchronization note:
 - PR #394 embeds the first unchecked TODO and a bounded queue snapshot into each
   generated per-run prompt.
 - PR #395 expanded this queue from the external Product Ready gap analysis.
+- PR #398 added durable TODO claim records for selected supervisor work.
 - Runtime Product Ready is not reached.
 
 ## Queue protocol
 
 - Pending work is represented by unchecked Markdown task items: `- [ ] ...`.
 - The first unchecked item is the highest-priority pending TODO.
-- Until durable claim-state support is implemented, do not rely on deleting a
-  TODO as the only record that work started. That legacy rule has a lost-work
-  crash window and must be fixed by the first BDK/Supervisor TODO below.
+- The supervisor must create or reuse a durable active claim before invoking
+  Brownie. The active claim, not TODO deletion, is the record that work started.
 - Brownie must keep exactly one active bounded slice per invocation. If work is
   incomplete, it must leave a concrete follow-up TODO naming the remaining
   blocker or next implementation step.
