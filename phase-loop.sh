@@ -15,6 +15,7 @@ SCREEN_NAME="${PHASE_LOOP_SCREEN_NAME:-brownie-phase-loop}"
 
 BROWNIE_BIN="${BROWNIE_BIN:-"$ROOT_DIR/target/debug/brownie"}"
 PHASE_LOOP_PROMPT="${PHASE_LOOP_PROMPT:-"$ROOT_DIR/phase-loop.md"}"
+PHASE_LOOP_TODO="${PHASE_LOOP_TODO:-"$ROOT_DIR/todo.md"}"
 PHASE_LOOP_WORKSPACE_ROOT="${PHASE_LOOP_WORKSPACE_ROOT:-"$ROOT_DIR"}"
 PHASE_LOOP_CONTROL_ROOT="${PHASE_LOOP_CONTROL_ROOT:-"/Users/satoshitanaka/.codex/automations/brownie-cli-phase-loop"}"
 PHASE_LOOP_INTERVAL_SECONDS="${PHASE_LOOP_INTERVAL_SECONDS:-5}"
@@ -48,6 +49,8 @@ write_status() {
   escaped_workspace="$(printf '%s' "$PHASE_LOOP_WORKSPACE_ROOT" | json_escape)"
   local escaped_control_root
   escaped_control_root="$(printf '%s' "$PHASE_LOOP_CONTROL_ROOT" | json_escape)"
+  local escaped_todo
+  escaped_todo="$(printf '%s' "$PHASE_LOOP_TODO" | json_escape)"
   tmp_status="$STATUS_FILE.$$.$RANDOM.tmp"
   cat > "$tmp_status" <<EOF
 {
@@ -60,11 +63,64 @@ write_status() {
   "pid_file": "$PID_FILE",
   "stop_file": "$STOP_FILE",
   "prompt": "$escaped_prompt",
+  "todo": "$escaped_todo",
   "workspace_root": "$escaped_workspace",
   "control_root": "$escaped_control_root"
 }
 EOF
   mv "$tmp_status" "$STATUS_FILE"
+}
+
+todo_pending_count() {
+  if [ ! -f "$PHASE_LOOP_TODO" ]; then
+    echo 0
+    return 0
+  fi
+  awk '
+    /^[[:space:]]*([-*]|[0-9]+[.)])[[:space:]]+\[[[:space:]]\][[:space:]]+/ { count++ }
+    END { print count + 0 }
+  ' "$PHASE_LOOP_TODO"
+}
+
+has_in_progress_work() {
+  (
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 1
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 1
+    if [ -n "$(git status --porcelain)" ]; then
+      exit 0
+    fi
+    local branch
+    branch="$(git branch --show-current 2>/dev/null || true)"
+    if [ -n "$branch" ] && [ "$branch" != "main" ] && [ "$branch" != "master" ]; then
+      exit 0
+    fi
+    exit 1
+  )
+}
+
+stop_if_todo_empty() {
+  local consecutive_failures="${1:-0}"
+  local detail pending_count
+  if [ ! -f "$PHASE_LOOP_TODO" ]; then
+    detail="Phase loop TODO queue is missing: $PHASE_LOOP_TODO"
+    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+    write_status "blocked" "$detail" "" "66" "$consecutive_failures"
+    return 66
+  fi
+
+  pending_count="$(todo_pending_count)"
+  if [ "$pending_count" -eq 0 ]; then
+    if has_in_progress_work; then
+      return 0
+    fi
+    detail="Phase loop TODO queue is empty; no pending or in-progress task remains."
+    touch "$STOP_FILE"
+    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+    write_status "stopped" "$detail" "" "" "$consecutive_failures"
+    return 75
+  fi
+
+  return 0
 }
 
 load_env() {
@@ -128,6 +184,12 @@ run_brownie_once() {
 
   write_status "running" "Brownie run started at $started_at" "$run_stamp" "" "${CONSECUTIVE_FAILURES:-0}"
 
+  local todo_status
+  stop_if_todo_empty "${CONSECUTIVE_FAILURES:-0}"
+  todo_status=$?
+  if [ "$todo_status" -ne 0 ]; then
+    return "$todo_status"
+  fi
   if [ ! -x "$BROWNIE_BIN" ]; then
     detail="Brownie binary is not executable: $BROWNIE_BIN"
     printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
@@ -185,12 +247,21 @@ supervise() {
   printf '%s supervisor pid=%s started\n' "$(now_utc)" "$$" >> "$SUPERVISOR_LOG"
 
   local CONSECUTIVE_FAILURES=0
-  local backoff
+  local backoff todo_status
   while true; do
     if [ -f "$STOP_FILE" ]; then
       write_status "stopped" "Stop file present." "" "" "$CONSECUTIVE_FAILURES"
       printf '%s stop file observed; exiting\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
       exit 0
+    fi
+
+    stop_if_todo_empty "$CONSECUTIVE_FAILURES"
+    todo_status=$?
+    if [ "$todo_status" -ne 0 ]; then
+      if [ "$todo_status" -eq 75 ]; then
+        exit 0
+      fi
+      exit "$todo_status"
     fi
 
     if run_brownie_once; then
