@@ -16,6 +16,93 @@ assert_contains() {
 test_workspace="$(mktemp -d)"
 git -C "$test_workspace" init -b main >/dev/null
 git -C "$test_workspace" -c user.name=Brownie -c user.email=brownie@example.invalid commit --allow-empty -m init >/dev/null
+fake_brownie_json="$(mktemp)"
+cat > "$fake_brownie_json" <<'SH'
+#!/usr/bin/env bash
+set -eu
+if [ "${1:-}" != "--json" ] || [ "${2:-}" != "run" ] || [ "${3:-}" != "--file" ] || [ -z "${4:-}" ]; then
+  echo "unexpected fake brownie invocation: $*" >&2
+  exit 64
+fi
+cat <<'JSON'
+{
+  "automation": {
+    "schema_version": 1,
+    "status": "continuation_required",
+    "controller_action": "resume",
+    "stop_class": "continuation_required",
+    "stop_reason": "bounded_progress",
+    "completed": false,
+    "blocked": false,
+    "retryable": true,
+    "terminal_failure": false,
+    "task_id": "task-smoke",
+    "run_id": "run-smoke",
+    "journey_id": "journey-smoke",
+    "next_action": "inspect_progress_overview",
+    "next_invocation": {"command": "resume", "arguments": []}
+  },
+  "status": "task_executed",
+  "session_id": "session-smoke",
+  "drive_id": "drive-smoke",
+  "task_id": "task-smoke",
+  "run_id": "run-smoke",
+  "journey_id": "journey-smoke",
+  "completion_closure_status": "budget_exhausted",
+  "next_action": "inspect_progress_overview",
+  "completed": false,
+  "blocked": false,
+  "retryable": true,
+  "terminal_failure": false,
+  "controller_action": "resume",
+  "stop_class": "continuation_required",
+  "stop_reason": "bounded_progress",
+  "next_invocation": {"command": "resume", "arguments": []}
+}
+JSON
+SH
+chmod +x "$fake_brownie_json"
+fake_brownie_workspace_change="$(mktemp)"
+cat > "$fake_brownie_workspace_change" <<'SH'
+#!/usr/bin/env bash
+set -eu
+printf 'changed\n' > phase-loop-smoke-progress.txt
+cat <<'JSON'
+{
+  "automation": {
+    "schema_version": 1,
+    "status": "continuation_required",
+    "controller_action": "resume",
+    "stop_class": "continuation_required",
+    "stop_reason": "bounded_progress",
+    "completed": false,
+    "blocked": false,
+    "retryable": true,
+    "terminal_failure": false,
+    "task_id": "task-change",
+    "run_id": "run-change",
+    "journey_id": "journey-change",
+    "next_action": "inspect_progress_overview",
+    "next_invocation": {"command": "resume", "arguments": []}
+  },
+  "status": "task_executed",
+  "task_id": "task-change",
+  "run_id": "run-change",
+  "journey_id": "journey-change",
+  "completion_closure_status": "budget_exhausted",
+  "next_action": "inspect_progress_overview",
+  "completed": false,
+  "blocked": false,
+  "retryable": true,
+  "terminal_failure": false,
+  "controller_action": "resume",
+  "stop_class": "continuation_required",
+  "stop_reason": "bounded_progress",
+  "next_invocation": {"command": "resume", "arguments": []}
+}
+JSON
+SH
+chmod +x "$fake_brownie_workspace_change"
 
 state_with_claim="$(mktemp -d)"
 prompt_with_claim="$(mktemp)"
@@ -26,15 +113,16 @@ printf -- '- [ ] B-01: durable claim task\n  with detail\n- [ ] B-02: next task\
 PHASE_LOOP_STATE_DIR="$state_with_claim" \
 PHASE_LOOP_PROMPT="$prompt_with_claim" \
 PHASE_LOOP_TODO="$todo_with_claim" \
-BROWNIE_BIN=/usr/bin/true \
+BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 "$PHASE_LOOP" run-once >/dev/null
 
 claim_file="$state_with_claim/todo-claims/current.json"
 queue_state_file="$state_with_claim/todo-claims/todo-queue-state.json"
+progress_state_file="$state_with_claim/progress-state.json"
 prompt_file="$(find "$state_with_claim/runs" -name '*.prompt.md' -print | sort | tail -n 1)"
 
-python3 - "$claim_file" "$queue_state_file" <<'PY'
+python3 - "$claim_file" "$queue_state_file" "$progress_state_file" <<'PY'
 import json
 import os
 import stat
@@ -43,8 +131,10 @@ import sys
 path = sys.argv[1]
 claim = json.load(open(path, encoding="utf-8"))
 queue_state = json.load(open(sys.argv[2], encoding="utf-8"))
+progress_state = json.load(open(sys.argv[3], encoding="utf-8"))
 mode = stat.S_IMODE(os.stat(path).st_mode)
 queue_mode = stat.S_IMODE(os.stat(sys.argv[2]).st_mode)
+progress_mode = stat.S_IMODE(os.stat(sys.argv[3]).st_mode)
 history = [entry["status"] for entry in claim["status_history"]]
 assert claim["status"] == "in_progress", claim
 assert history[:2] == ["claimed", "in_progress"], claim
@@ -52,8 +142,13 @@ assert claim["selected_todo"].startswith("- [ ] B-01: durable claim task"), clai
 assert claim["queue_generation"] == 1, claim
 assert claim["queue_fingerprint"] == queue_state["fingerprint"], (claim, queue_state)
 assert queue_state["generation"] == 1, queue_state
+assert progress_state["classification"] == "non_progress_success", progress_state
+assert progress_state["meaningful_progress"] is False, progress_state
+assert progress_state["progress_projection"]["closure"] == "budget_exhausted", progress_state
+assert progress_state["progress_projection"]["next_action"] == "inspect_progress_overview", progress_state
 assert mode == 0o600, oct(mode)
 assert queue_mode == 0o600, oct(queue_mode)
+assert progress_mode == 0o600, oct(progress_mode)
 PY
 
 assert_contains "$prompt_file" '## Active TODO Claim'
@@ -65,7 +160,7 @@ printf '' > "$todo_with_claim"
 PHASE_LOOP_STATE_DIR="$state_with_claim" \
 PHASE_LOOP_PROMPT="$prompt_with_claim" \
 PHASE_LOOP_TODO="$todo_with_claim" \
-BROWNIE_BIN=/usr/bin/true \
+BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 "$PHASE_LOOP" run-once >/dev/null
 
@@ -79,6 +174,74 @@ assert claim["selected_todo"].startswith("- [ ] B-01: durable claim task"), clai
 assert len(claim["status_history"]) >= 3, claim
 PY
 
+state_stagnation="$(mktemp -d)"
+prompt_stagnation="$(mktemp)"
+todo_stagnation="$(mktemp)"
+printf 'base prompt\n' > "$prompt_stagnation"
+printf -- '- [ ] B-01: stagnant task\n' > "$todo_stagnation"
+
+PHASE_LOOP_STATE_DIR="$state_stagnation" \
+PHASE_LOOP_PROMPT="$prompt_stagnation" \
+PHASE_LOOP_TODO="$todo_stagnation" \
+BROWNIE_BIN="$fake_brownie_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+
+PHASE_LOOP_STATE_DIR="$state_stagnation" \
+PHASE_LOOP_PROMPT="$prompt_stagnation" \
+PHASE_LOOP_TODO="$todo_stagnation" \
+BROWNIE_BIN="$fake_brownie_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+
+if PHASE_LOOP_STATE_DIR="$state_stagnation" \
+  PHASE_LOOP_PROMPT="$prompt_stagnation" \
+  PHASE_LOOP_TODO="$todo_stagnation" \
+  BROWNIE_BIN="$fake_brownie_json" \
+  PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+  "$PHASE_LOOP" run-once >/dev/null; then
+  echo "expected repeated identical non-progress fingerprint to fail as no_progress" >&2
+  exit 1
+fi
+
+python3 - "$state_stagnation/status.json" "$state_stagnation/progress-state.json" <<'PY'
+import json
+import sys
+
+status = json.load(open(sys.argv[1], encoding="utf-8"))
+progress = json.load(open(sys.argv[2], encoding="utf-8"))
+assert status["status"] == "no_progress", status
+assert progress["classification"] == "no_progress", progress
+assert progress["same_progress_count"] == 3, progress
+assert progress["meaningful_progress"] is False, progress
+PY
+
+state_workspace_progress="$(mktemp -d)"
+prompt_workspace_progress="$(mktemp)"
+todo_workspace_progress="$(mktemp)"
+workspace_progress="$(mktemp -d)"
+git -C "$workspace_progress" init -b main >/dev/null
+git -C "$workspace_progress" -c user.name=Brownie -c user.email=brownie@example.invalid commit --allow-empty -m init >/dev/null
+printf 'base prompt\n' > "$prompt_workspace_progress"
+printf -- '- [ ] B-01: workspace progress task\n' > "$todo_workspace_progress"
+
+PHASE_LOOP_STATE_DIR="$state_workspace_progress" \
+PHASE_LOOP_PROMPT="$prompt_workspace_progress" \
+PHASE_LOOP_TODO="$todo_workspace_progress" \
+BROWNIE_BIN="$fake_brownie_workspace_change" \
+PHASE_LOOP_WORKSPACE_ROOT="$workspace_progress" \
+"$PHASE_LOOP" run-once >/dev/null
+
+python3 - "$state_workspace_progress/progress-state.json" <<'PY'
+import json
+import sys
+
+progress = json.load(open(sys.argv[1], encoding="utf-8"))
+assert progress["classification"] == "progress", progress
+assert progress["meaningful_progress"] is True, progress
+assert progress["workspace_changed"] is True, progress
+PY
+
 state_generation="$(mktemp -d)"
 prompt_generation="$(mktemp)"
 todo_generation="$(mktemp)"
@@ -88,7 +251,7 @@ printf -- '- [ ] B-01: first generation\n' > "$todo_generation"
 PHASE_LOOP_STATE_DIR="$state_generation" \
 PHASE_LOOP_PROMPT="$prompt_generation" \
 PHASE_LOOP_TODO="$todo_generation" \
-BROWNIE_BIN=/usr/bin/true \
+BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 "$PHASE_LOOP" run-once >/dev/null
 
@@ -98,7 +261,7 @@ printf -- '- [ ] B-00: externally inserted higher priority\n- [ ] B-01: first ge
 PHASE_LOOP_STATE_DIR="$state_generation" \
 PHASE_LOOP_PROMPT="$prompt_generation" \
 PHASE_LOOP_TODO="$todo_generation" \
-BROWNIE_BIN=/usr/bin/true \
+BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 "$PHASE_LOOP" run-once >/dev/null
 
@@ -146,7 +309,7 @@ chmod 600 "$state_legacy/todo-claims/current.json"
 PHASE_LOOP_STATE_DIR="$state_legacy" \
 PHASE_LOOP_PROMPT="$prompt_legacy" \
 PHASE_LOOP_TODO="$todo_legacy" \
-BROWNIE_BIN=/usr/bin/true \
+BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 "$PHASE_LOOP" run-once >/dev/null
 
@@ -168,7 +331,7 @@ printf 'base prompt\n' > "$prompt_empty"
 if PHASE_LOOP_STATE_DIR="$state_empty" \
   PHASE_LOOP_PROMPT="$prompt_empty" \
   PHASE_LOOP_TODO="$todo_empty" \
-  BROWNIE_BIN=/usr/bin/true \
+  BROWNIE_BIN="$fake_brownie_json" \
   PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
   "$PHASE_LOOP" run-once >/dev/null; then
   echo "expected empty queue without an active claim to stop instead of run" >&2
@@ -195,7 +358,7 @@ printf 'unrelated local edit\n' > "$test_workspace/unrelated.txt"
 if PHASE_LOOP_STATE_DIR="$state_empty_dirty" \
   PHASE_LOOP_PROMPT="$prompt_empty_dirty" \
   PHASE_LOOP_TODO="$todo_empty_dirty" \
-  BROWNIE_BIN=/usr/bin/true \
+  BROWNIE_BIN="$fake_brownie_json" \
   PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
   "$PHASE_LOOP" run-once >/dev/null; then
   echo "expected empty queue without durable claim to stop even with dirty/non-main workspace" >&2
@@ -209,6 +372,39 @@ import sys
 status = json.load(open(sys.argv[1], encoding="utf-8"))
 assert status["status"] == "stopped", status
 assert "durable in-progress claim" in status["detail"], status
+PY
+
+fake_brownie_text="$(mktemp)"
+cat > "$fake_brownie_text" <<'SH'
+#!/usr/bin/env bash
+echo "not json"
+SH
+chmod +x "$fake_brownie_text"
+state_invalid_json="$(mktemp -d)"
+prompt_invalid_json="$(mktemp)"
+todo_invalid_json="$(mktemp)"
+printf 'base prompt\n' > "$prompt_invalid_json"
+printf -- '- [ ] B-01: invalid json task\n' > "$todo_invalid_json"
+
+if PHASE_LOOP_STATE_DIR="$state_invalid_json" \
+  PHASE_LOOP_PROMPT="$prompt_invalid_json" \
+  PHASE_LOOP_TODO="$todo_invalid_json" \
+  BROWNIE_BIN="$fake_brownie_text" \
+  PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+  "$PHASE_LOOP" run-once >/dev/null; then
+  echo "expected non-JSON CLI output to fail closed" >&2
+  exit 1
+fi
+
+python3 - "$state_invalid_json/status.json" "$state_invalid_json/todo-claims/current.json" <<'PY'
+import json
+import sys
+
+status = json.load(open(sys.argv[1], encoding="utf-8"))
+claim = json.load(open(sys.argv[2], encoding="utf-8"))
+assert status["status"] == "blocked", status
+assert "JSON output failed schema validation" in status["detail"], status
+assert claim["status"] == "blocked", claim
 PY
 
 echo "phase-loop claim smoke passed"

@@ -13,6 +13,7 @@ SUPERVISOR_LOG="$LOG_DIR/supervisor.log"
 TODO_CLAIM_DIR="$STATE_DIR/todo-claims"
 TODO_CLAIM_FILE="$TODO_CLAIM_DIR/current.json"
 TODO_QUEUE_STATE_FILE="$TODO_CLAIM_DIR/todo-queue-state.json"
+PROGRESS_STATE_FILE="$STATE_DIR/progress-state.json"
 LAUNCHD_LABEL="${PHASE_LOOP_LAUNCHD_LABEL:-globalpocket.brownie.phase-loop}"
 SCREEN_NAME="${PHASE_LOOP_SCREEN_NAME:-brownie-phase-loop}"
 
@@ -25,6 +26,7 @@ PHASE_LOOP_INTERVAL_SECONDS="${PHASE_LOOP_INTERVAL_SECONDS:-5}"
 PHASE_LOOP_FAILURE_BACKOFF_SECONDS="${PHASE_LOOP_FAILURE_BACKOFF_SECONDS:-60}"
 PHASE_LOOP_MAX_FAILURE_BACKOFF_SECONDS="${PHASE_LOOP_MAX_FAILURE_BACKOFF_SECONDS:-900}"
 PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS="${PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS:-14400}"
+PHASE_LOOP_STAGNATION_THRESHOLD="${PHASE_LOOP_STAGNATION_THRESHOLD:-3}"
 
 mkdir -p "$RUN_DIR" "$LOG_DIR" "$TODO_CLAIM_DIR"
 
@@ -58,6 +60,8 @@ write_status() {
   escaped_claim_file="$(printf '%s' "$TODO_CLAIM_FILE" | json_escape)"
   local escaped_queue_state_file
   escaped_queue_state_file="$(printf '%s' "$TODO_QUEUE_STATE_FILE" | json_escape)"
+  local escaped_progress_state_file
+  escaped_progress_state_file="$(printf '%s' "$PROGRESS_STATE_FILE" | json_escape)"
   tmp_status="$STATUS_FILE.$$.$RANDOM.tmp"
   cat > "$tmp_status" <<EOF
 {
@@ -73,6 +77,7 @@ write_status() {
   "todo": "$escaped_todo",
   "todo_claim": "$escaped_claim_file",
   "todo_queue_state": "$escaped_queue_state_file",
+  "progress_state": "$escaped_progress_state_file",
   "workspace_root": "$escaped_workspace",
   "control_root": "$escaped_control_root"
 }
@@ -237,6 +242,190 @@ active_claim_queue_generation() {
   fi
   queue_state="$(refresh_todo_queue_state)"
   printf '%s\n' "$queue_state" | awk '{ print $1 }'
+}
+
+git_workspace_fingerprint() {
+  (
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 1
+    {
+      git rev-parse HEAD 2>/dev/null || true
+      git status --porcelain=v1 2>/dev/null || true
+    } | shasum -a 256 | awk '{ print $1 }'
+  )
+}
+
+validate_cli_json_output() {
+  local stdout_log="$1"
+  python3 - "$stdout_log" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as handle:
+        payload = json.load(handle)
+except Exception as exc:
+    print(f"invalid_json:{exc}")
+    sys.exit(1)
+
+if not isinstance(payload, dict):
+    print("invalid_schema:root_not_object")
+    sys.exit(1)
+automation = payload.get("automation")
+if not isinstance(automation, dict):
+    print("invalid_schema:missing_automation")
+    sys.exit(1)
+required_strings = ["status", "controller_action", "stop_class", "stop_reason"]
+required_bools = ["completed", "blocked", "retryable", "terminal_failure"]
+for key in required_strings:
+    if not isinstance(payload.get(key), str):
+        print(f"invalid_schema:payload.{key}")
+        sys.exit(1)
+for key in required_bools:
+    if not isinstance(payload.get(key), bool):
+        print(f"invalid_schema:payload.{key}")
+        sys.exit(1)
+for key in ["schema_version", "status", "controller_action", "stop_class", "stop_reason"]:
+    if key == "schema_version":
+        if not isinstance(automation.get(key), int):
+            print(f"invalid_schema:automation.{key}")
+            sys.exit(1)
+    elif not isinstance(automation.get(key), str):
+        print(f"invalid_schema:automation.{key}")
+        sys.exit(1)
+for key in required_bools:
+    if not isinstance(automation.get(key), bool):
+        print(f"invalid_schema:automation.{key}")
+        sys.exit(1)
+print("ok")
+PY
+}
+
+write_progress_state() {
+  local stdout_log="$1"
+  local run_stamp="$2"
+  local exit_code="$3"
+  local workspace_before="$4"
+  local workspace_after="$5"
+  local head_commit="$6"
+  local timestamp tmp_progress
+  timestamp="$(now_utc)"
+  tmp_progress="$PROGRESS_STATE_FILE.$$.$RANDOM.tmp"
+  python3 - "$tmp_progress" "$PROGRESS_STATE_FILE" "$stdout_log" "$run_stamp" "$exit_code" "$workspace_before" "$workspace_after" "$head_commit" "$TODO_CLAIM_FILE" "$timestamp" "$PHASE_LOOP_STAGNATION_THRESHOLD" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import sys
+
+out_path = pathlib.Path(sys.argv[1])
+state_path = pathlib.Path(sys.argv[2])
+stdout_log = pathlib.Path(sys.argv[3])
+run_stamp = sys.argv[4]
+exit_code = int(sys.argv[5])
+workspace_before = sys.argv[6]
+workspace_after = sys.argv[7]
+head_commit = sys.argv[8]
+claim_path = pathlib.Path(sys.argv[9])
+timestamp = sys.argv[10]
+threshold = int(sys.argv[11])
+
+payload = None
+if stdout_log.exists() and stdout_log.stat().st_size > 0:
+    with open(stdout_log, encoding="utf-8") as handle:
+        payload = json.load(handle)
+if not isinstance(payload, dict):
+    payload = {}
+
+automation = payload.get("automation") if isinstance(payload.get("automation"), dict) else {}
+claim = {}
+if claim_path.exists():
+    try:
+        with open(claim_path, encoding="utf-8") as handle:
+            claim = json.load(handle)
+    except Exception:
+        claim = {}
+
+def text(value):
+    if value is None:
+        return ""
+    if isinstance(value, (str, int, float, bool)):
+        return str(value)
+    return json.dumps(value, sort_keys=True, ensure_ascii=False)
+
+progress_projection = {
+    "schema_version": 1,
+    "commit": head_commit,
+    "claim_id": text(claim.get("claim_id")),
+    "selected_todo": text(claim.get("selected_todo")),
+    "queue_generation": text(claim.get("queue_generation")),
+    "queue_fingerprint": text(claim.get("queue_fingerprint")),
+    "cli_status": text(payload.get("status")),
+    "controller_action": text(payload.get("controller_action")),
+    "stop_class": text(payload.get("stop_class")),
+    "stop_reason": text(payload.get("stop_reason")),
+    "route": text(payload.get("next_invocation")) or text(automation.get("next_invocation")),
+    "closure": text(payload.get("completion_closure_status")),
+    "applied": text(payload.get("objective_apply_applied")) or text(payload.get("objective_apply_apply_status")),
+    "accepted": text(payload.get("accepted_completion_status")) or text(payload.get("objective_completion_acceptance_acceptance_status")),
+    "finalization": text(payload.get("completion_finalization_status")) or text(payload.get("completion_finalization_finalization_fingerprint")),
+    "next_action": text(payload.get("next_action")),
+}
+encoded = json.dumps(progress_projection, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+fingerprint = "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+workspace_changed = workspace_before != workspace_after
+completed = bool(payload.get("completed")) or bool(automation.get("completed"))
+blocked = bool(payload.get("blocked")) or bool(automation.get("blocked"))
+accepted = bool(progress_projection["accepted"])
+finalized = bool(progress_projection["finalization"])
+applied = progress_projection["applied"].lower() not in ("", "false", "none", "not_applicable")
+meaningful_progress = exit_code == 0 and (workspace_changed or completed or blocked or accepted or finalized or applied)
+
+previous = {}
+if state_path.exists():
+    try:
+        with open(state_path, encoding="utf-8") as handle:
+            previous = json.load(handle)
+    except Exception:
+        previous = {}
+previous_fingerprint = previous.get("last_progress_fingerprint")
+previous_count = int(previous.get("same_progress_count", 0) or 0)
+same_count = previous_count + 1 if previous_fingerprint == fingerprint else 1
+no_progress = exit_code == 0 and not meaningful_progress
+stagnated = no_progress and same_count >= threshold
+
+state = {
+    "schema_version": 1,
+    "updated_at": timestamp,
+    "run_stamp": run_stamp,
+    "last_progress_fingerprint": fingerprint,
+    "same_progress_count": same_count,
+    "stagnation_threshold": threshold,
+    "classification": "no_progress" if stagnated else ("non_progress_success" if no_progress else ("progress" if meaningful_progress else "process_failure")),
+    "meaningful_progress": meaningful_progress,
+    "workspace_changed": workspace_changed,
+    "exit_code": exit_code,
+    "progress_projection": progress_projection,
+    "stdout_log": str(stdout_log),
+}
+with open(out_path, "w", encoding="utf-8") as handle:
+    json.dump(state, handle, ensure_ascii=False, sort_keys=True, indent=2)
+    handle.write("\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(out_path, 0o600)
+print(json.dumps({
+    "fingerprint": fingerprint,
+    "same_progress_count": same_count,
+    "classification": state["classification"],
+    "meaningful_progress": meaningful_progress,
+    "stagnated": stagnated,
+}, sort_keys=True))
+PY
+  mv "$tmp_progress" "$PROGRESS_STATE_FILE"
+  chmod 600 "$PROGRESS_STATE_FILE"
+  sync_parent_dir "$STATE_DIR"
 }
 
 claim_field() {
@@ -475,6 +664,7 @@ acquire_lock() {
 run_brownie_once() {
   load_env
   local started_at run_stamp stdout_log stderr_log effective_prompt exit_code run_id detail
+  local workspace_before workspace_after head_commit validation progress_summary progress_classification
   started_at="$(now_utc)"
   run_stamp="$(date -u +"%Y%m%dT%H%M%SZ")"
   stdout_log="$RUN_DIR/$run_stamp.stdout.log"
@@ -507,6 +697,10 @@ run_brownie_once() {
     write_status "blocked" "$detail" "$run_stamp" "66" "${CONSECUTIVE_FAILURES:-0}"
     return 66
   fi
+  workspace_before="$(git_workspace_fingerprint)"
+  head_commit="$(
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" && git rev-parse HEAD 2>/dev/null || true
+  )"
   if ! claim_first_pending_todo "$run_stamp"; then
     detail="Failed to claim first pending TODO from queue: $PHASE_LOOP_TODO"
     printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
@@ -524,25 +718,83 @@ run_brownie_once() {
     export BROWNIE_WORKSPACE_ROOT="${BROWNIE_WORKSPACE_ROOT:-"$PHASE_LOOP_WORKSPACE_ROOT"}"
     export PHASE_LOOP_CONTROL_ROOT
     if command -v timeout >/dev/null 2>&1; then
-      timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" run --file "$effective_prompt"
+      timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json run --file "$effective_prompt"
     else
-      "$BROWNIE_BIN" run --file "$effective_prompt"
+      "$BROWNIE_BIN" --json run --file "$effective_prompt"
     fi
   ) > "$stdout_log" 2> "$stderr_log"
   exit_code=$?
+  workspace_after="$(git_workspace_fingerprint)"
 
-  run_id="$(sed -n 's/^run //p' "$stdout_log" | tail -1)"
+  run_id="$(
+    python3 - "$stdout_log" <<'PY'
+import json
+import sys
+try:
+    payload = json.load(open(sys.argv[1], encoding="utf-8"))
+    print(payload.get("run_id") or payload.get("automation", {}).get("run_id") or "")
+except Exception:
+    print("")
+PY
+  )"
   if [ -z "$run_id" ]; then
     run_id="$run_stamp"
   fi
 
   if [ "$exit_code" -eq 0 ]; then
-    detail="Brownie run exited successfully; stdout=$stdout_log stderr=$stderr_log"
-    write_status "last_run_succeeded" "$detail" "$run_id" "$exit_code" 0
+    validation="$(validate_cli_json_output "$stdout_log" || true)"
+    if [ "$validation" != "ok" ]; then
+      if active_todo_claim_exists; then
+        write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      fi
+      detail="Brownie JSON output failed schema validation ($validation); stdout=$stdout_log stderr=$stderr_log"
+      write_status "blocked" "$detail" "$run_id" "74" "${CONSECUTIVE_FAILURES:-1}"
+      printf '%s run=%s exit=%s invalid_json=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$exit_code" "$validation" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+      return 74
+    fi
+
+    progress_summary="$(write_progress_state "$stdout_log" "$run_stamp" "$exit_code" "$workspace_before" "$workspace_after" "$head_commit")"
+    progress_classification="$(
+      printf '%s' "$progress_summary" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("classification", ""))'
+    )"
+
+    if python3 - "$stdout_log" <<'PY'
+import json, sys
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+sys.exit(0 if payload.get("completed") is True else 1)
+PY
+    then
+      write_todo_claim "$(claim_field claim_id)" "completed" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+    elif python3 - "$stdout_log" <<'PY'
+import json, sys
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+sys.exit(0 if payload.get("blocked") is True else 1)
+PY
+    then
+      write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+    fi
+
+    case "$progress_classification" in
+      no_progress)
+        detail="Brownie run exited successfully but repeated the same non-progress fingerprint; stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+        write_status "no_progress" "$detail" "$run_id" "76" "${CONSECUTIVE_FAILURES:-1}"
+        printf '%s run=%s exit=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$exit_code" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+        return 76
+        ;;
+      non_progress_success)
+        detail="Brownie run exited successfully without workspace change, accepted completion, finalization, or blocker classification; stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+        write_status "non_progress_success" "$detail" "$run_id" "$exit_code" "${CONSECUTIVE_FAILURES:-0}"
+        ;;
+      *)
+        detail="Brownie run made progress; stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+        write_status "last_run_succeeded" "$detail" "$run_id" "$exit_code" 0
+        ;;
+    esac
   else
     if active_todo_claim_exists; then
       write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
     fi
+    write_progress_state "$stdout_log" "$run_stamp" "$exit_code" "$workspace_before" "$workspace_after" "$head_commit" >/dev/null || true
     detail="Brownie run failed; stdout=$stdout_log stderr=$stderr_log"
     write_status "last_run_failed" "$detail" "$run_id" "$exit_code" "${CONSECUTIVE_FAILURES:-1}"
   fi
