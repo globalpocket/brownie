@@ -47,7 +47,6 @@ const MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 20_000;
 const CLI_RUN_MAX_ADVANCES: u8 = 3;
 const CLI_RUN_MAX_STEPS_PER_ADVANCE: u8 = 1;
 const CLI_RUN_MAX_PARENT_JOIN_ROUTES: u8 = 3;
-const CLI_RUN_MAX_OBJECTIVE_CHARS: usize = 4_096;
 const CLI_RUN_MAX_MODE_ID_CHARS: usize = 128;
 const CLI_RESUME_MAX_STEPS: u8 = 1;
 const CLI_RUN_SESSION_PREFIX: &str = "cli.run.";
@@ -3612,7 +3611,7 @@ fn accepted_completion_route_params(
 }
 
 fn validate_cli_objective(objective: &str) -> Result<(), RuntimeClientError> {
-    if objective.is_empty() || objective.chars().count() > CLI_RUN_MAX_OBJECTIVE_CHARS {
+    if objective.is_empty() {
         return Err(RuntimeClientError::InvalidResponse);
     }
     Ok(())

@@ -34,10 +34,10 @@ use brownie_indexer::{
     CodebaseIndexSnapshot,
 };
 use brownie_llm::{
-    redact_secret, scan_prompt_for_sensitive_content, validate_llm_request_budget, FakeLlmProvider,
-    LlmMessage, LlmProvider, LlmProviderKind, LlmProviderStatus, LlmRequestBudget,
-    OpenAiCompatibleConfig, OpenAiCompatibleConfigFromEnv, OpenAiCompatibleLlmProvider,
-    PromptSensitiveGuardMode, PromptSensitiveScanResult,
+    redact_secret, scan_text_for_sensitive_content as scan_non_prompt_text_for_sensitive_content,
+    validate_llm_request_budget, FakeLlmProvider, LlmProvider, LlmProviderKind, LlmProviderStatus,
+    LlmRequestBudget, OpenAiCompatibleConfig, OpenAiCompatibleConfigFromEnv,
+    OpenAiCompatibleLlmProvider, PromptSensitiveGuardMode, PromptSensitiveScanResult,
 };
 #[cfg(test)]
 use brownie_modepack::{load_modepack_from_str, load_workspace_modepack_with_options};
@@ -14028,12 +14028,9 @@ fn build_workspace_patch_proposal_from_input(
 }
 
 fn scan_text_for_sensitive_content(content: &str) -> bool {
-    !scan_prompt_for_sensitive_content(&[LlmMessage {
-        role: "user".to_string(),
-        content: content.to_string(),
-    }])
-    .findings
-    .is_empty()
+    !scan_non_prompt_text_for_sensitive_content(content)
+        .findings
+        .is_empty()
 }
 
 fn synthetic_unified_diff(path: &str, old: &str, new: &str) -> String {
@@ -61800,7 +61797,7 @@ content-length: {}
     }
 
     #[test]
-    fn sensitive_prompt_findings_suppress_prompt_previews() {
+    fn prompt_sensitive_scanner_no_longer_blocks_or_records_findings() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let _guard = EnvGuard::clear();
         let temp = tempfile::tempdir().unwrap();
@@ -61815,7 +61812,7 @@ content-length: {}
         std::env::set_var("BROWNIE_LLM_SENSITIVE_GUARD", "warn");
 
         let start = parse_line(
-            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Read README with api_key=sk-test-sensitive-preview","mode_id":"provider-runner"}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Read README with api_key=example-local-token","mode_id":"provider-runner"}}"#,
         )
         .result
         .unwrap();
@@ -61840,9 +61837,11 @@ content-length: {}
             .lines()
             .map(|line| serde_json::from_str::<brownie_store::LedgerEvent>(line).expect("event"))
             .collect::<Vec<_>>();
-        assert!(events
-            .iter()
-            .any(|event| event.kind == LedgerEventKind::PromptSensitiveScanCompleted));
+        assert!(!events.iter().any(|event| matches!(
+            event.kind,
+            LedgerEventKind::PromptSensitiveScanCompleted
+                | LedgerEventKind::PromptSensitiveScanFailed
+        )));
         for kind in [
             LedgerEventKind::PromptBuilt,
             LedgerEventKind::SecondPassPromptBuilt,
@@ -61853,11 +61852,7 @@ content-length: {}
                 .unwrap_or_else(|| panic!("missing {kind:?}"));
             let payload = event.payload.as_ref().expect("prompt payload");
             assert!(payload["message_count"].as_u64().is_some());
-            assert_eq!(payload.get("prompt_preview"), None);
-            assert_eq!(payload["prompt_preview_redacted"], true);
-            assert!(!serde_json::to_string(payload)
-                .unwrap()
-                .contains("sk-test-sensitive-preview"));
+            assert!(payload["prompt_preview"].as_str().is_some());
         }
     }
 
@@ -62297,17 +62292,21 @@ content-length: {}
     }
 
     #[test]
-    fn sensitive_prompt_guard_failure_returns_structured_provider_failure() {
+    fn sensitive_prompt_guard_fail_mode_does_not_block_provider_calls() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let _guard = EnvGuard::clear();
         let temp = tempfile::tempdir().unwrap();
-        write_mock_config(temp.path(), "http://127.0.0.1:9/v1");
+        let (base_url, handle) = spawn_mock(
+            "200 OK",
+            r#"{"choices":[{"message":{"content":"Mock LLM response despite key-like prompt text."}}]}"#,
+        );
+        write_mock_config(temp.path(), &base_url);
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
         std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
         std::env::set_var("BROWNIE_LLM_SENSITIVE_GUARD", "fail");
 
-        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Inspect README with api_key=sk-test-sensitive-denied","mode_id":"provider-runner"}}"#).result.unwrap();
+        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Inspect README with api_key=example-local-token","mode_id":"provider-runner"}}"#).result.unwrap();
         let task_id = start["task_id"].as_str().unwrap();
         let run_id = start["run_id"].as_str().unwrap();
         let run = parse_line(&format!(
@@ -62315,11 +62314,9 @@ content-length: {}
         ));
         assert!(run.error.is_none());
         let result = run.result.unwrap();
-        let failure = &result["llm_provider_failure"];
-        assert_eq!(result["status"], "Failed");
-        assert_eq!(failure["failure_class"], "sensitive_prompt_denied");
-        assert_eq!(failure["next_action"], "reduce_or_redact_prompt_context");
-        assert_eq!(failure["retryable"], false);
+        assert_eq!(result["status"], "Completed");
+        let observed = handle.join().unwrap();
+        assert_eq!(observed["model"], "mock-model");
 
         let events = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":3,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
@@ -62327,10 +62324,11 @@ content-length: {}
         .result
         .unwrap();
         let serialized = serde_json::to_string(&events).unwrap();
-        assert!(serialized.contains("PromptSensitiveScanFailed"));
-        assert!(serialized.contains("LlmRequestFailed"));
-        assert!(!serialized.contains("sk-test-sensitive-denied"));
+        assert!(!serialized.contains("PromptSensitiveScanFailed"));
+        assert!(!serialized.contains("LlmRequestFailed"));
         assert!(!serialized.contains("test-key"));
+        assert!(!serialized.contains("Authorization"));
+        assert!(!serialized.contains("Bearer"));
     }
 
     #[test]

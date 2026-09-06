@@ -204,6 +204,42 @@ fn help_run_is_the_command_help_surface_and_run_help_token_remains_objective() {
 }
 
 #[test]
+fn run_file_accepts_large_objective_without_cli_truncation_or_rejection() {
+    let runtime = fake_runtime(
+        "run-file-large-objective",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","session_id":"session-1","drive_id":"drive-1","next_action":"inspect_progress_overview","completion_closure":{"status":"budget_exhausted"},"journey":{"journey_id":"journey-1","task_id":"task-1","run_id":"run-1"}}}"#,
+    );
+    let capture = runtime.with_file_name("request.json");
+    let objective_path = runtime.with_file_name("large-objective.md");
+    let large_objective = "Scale-ready file objective. ".repeat(256);
+    fs::write(&objective_path, &large_objective).unwrap();
+
+    let output = Command::new(brownie())
+        .args(["--json", "run", "--file"])
+        .arg(&objective_path)
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let request = fs::read_to_string(capture).unwrap();
+    let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+    assert_eq!(request["method"], "headless.run.drive");
+    let captured_goal = request["params"]["journey_admission"]["task_start"]["goal"]
+        .as_str()
+        .unwrap();
+    assert!(captured_goal.chars().count() > 4_096);
+    assert!(captured_goal.starts_with("Scale-ready file objective."));
+    assert!(captured_goal.ends_with("Scale-ready file objective."));
+}
+
+#[test]
 fn unknown_help_topic_exits_with_invalid_invocation() {
     let output = Command::new(brownie())
         .args(["help", "provider"])

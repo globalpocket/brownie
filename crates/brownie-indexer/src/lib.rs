@@ -1,6 +1,6 @@
 //! Codebase indexing crate.
 
-use brownie_llm::{scan_prompt_for_sensitive_content, LlmMessage};
+use brownie_llm::scan_text_for_sensitive_content;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -326,10 +326,7 @@ pub fn build_workspace_file_inventory(
             }
 
             if let Ok(text) = std::str::from_utf8(&bytes) {
-                let sensitive_scan = scan_prompt_for_sensitive_content(&[LlmMessage {
-                    role: "user".to_string(),
-                    content: text.to_string(),
-                }]);
+                let sensitive_scan = scan_text_for_sensitive_content(text);
                 if !sensitive_scan.findings.is_empty() {
                     counts.skipped_sensitive += 1;
                     counts.sensitive_finding_count += sensitive_scan.findings.len();
