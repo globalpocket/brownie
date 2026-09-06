@@ -117,6 +117,18 @@ Use `todo.md` before falling back to overview-based work selection:
 - The supervisor must invoke `brownie --json run --file <effective-prompt>` and
   validate the bounded external-loop JSON contract before using the result for
   progress or health decisions.
+- Generated effective prompts are sensitive execution artifacts. The supervisor
+  must write prompt files and prompt metadata as `0600`, enforce bounded prompt
+  and selected-TODO byte limits, retain only a bounded number of prompt
+  artifacts, and persist prompt/TODO/base-prompt fingerprints plus truncation
+  metadata instead of treating raw prompt storage as audit evidence.
+- If the selected TODO cannot be embedded completely, fail closed before Runtime
+  start. If TODO or base prompt snapshots are truncated, record that as bounded
+  metadata.
+- Immediately before Runtime start, re-check the current TODO queue fingerprint
+  against the active claim. If it changed after claim/prompt generation, archive
+  the stale claim, select a fresh claim from the current queue, rebuild the
+  prompt, and retry the start only with fresh queue evidence.
 - The supervisor must persist deterministic progress health under
   `.brownie-phase-loop/progress-state.json`. The fingerprint must include the
   current commit, selected TODO/claim, queue generation/fingerprint, CLI route,
