@@ -14510,6 +14510,10 @@ fn headless_run_drive_execution_outcome(result: &HeadlessRunDriveResult) -> Valu
         );
     }
 
+    if headless_run_drive_is_recoverable_unknown_nonterminal_budget_stop(result) {
+        return headless_run_drive_product_loop_stop_recovery_execution_outcome(result);
+    }
+
     match result.completion_closure.status {
         HeadlessRunCompletionClosureStatus::StaleNoProgress => execution_outcome_value(
             "stale_retry",
@@ -14555,6 +14559,64 @@ fn headless_run_drive_execution_outcome(result: &HeadlessRunDriveResult) -> Valu
             &stop_reason,
         ),
     }
+}
+
+fn headless_run_drive_is_recoverable_unknown_nonterminal_budget_stop(
+    result: &HeadlessRunDriveResult,
+) -> bool {
+    result.stop_reason == "drive_budget_exhausted"
+        && result.completion_closure.status
+            == HeadlessRunCompletionClosureStatus::UnknownNonterminal
+        && result.next_action == "inspect_progress_overview"
+        && result.next_route.is_none()
+        && result.completion_finalization.is_none()
+        && result.accepted_completion.is_none()
+        && result.terminal_completion_evidence.is_none()
+}
+
+fn headless_run_drive_product_loop_stop_recovery_execution_outcome(
+    result: &HeadlessRunDriveResult,
+) -> Value {
+    let post_progress = result
+        .post_progress
+        .as_ref()
+        .unwrap_or(&result.start_progress);
+    let target = json!({
+        "authorize_product_loop_stop_recovery": true,
+        "session_id": result.session_id,
+        "drive_id": result.drive_id,
+        "expected_drive_fingerprint": result.drive_fingerprint,
+        "expected_stop_reason": result.stop_reason,
+        "expected_end_session_sequence": result.end_session_sequence,
+        "expected_post_progress_fingerprint": post_progress.progress_fingerprint,
+        "recovery_goal": "Recover the finite headless product loop stop by selecting and executing the next concrete implementation task instead of repeating inspect_progress_overview.",
+        "recovery_mode_id": "implementer"
+    });
+    json!({
+        "schema_version": 1,
+        "outcome_scope": "objective",
+        "class": "recoverable_unknown_nonterminal",
+        "status": "recoverable_unknown_nonterminal",
+        "controller_action": "resume",
+        "continuation_required": true,
+        "completed": false,
+        "blocked": true,
+        "retryable": true,
+        "terminal_failure": false,
+        "stop_reason": result.stop_reason,
+        "next_invocation": {
+            "command": "resume",
+            "arguments": [],
+            "params": {
+                "authorize": true,
+                "continuation_id": format!("{}.product_loop_stop_recovery", result.drive_id),
+                "expected_progress_fingerprint": post_progress.progress_fingerprint,
+                "expected_aggregate_sequence": post_progress.aggregate_sequence,
+                "product_loop_stop_recovery_target": target
+            }
+        },
+        "product_loop_stop_recovery_target": target
+    })
 }
 
 #[expect(
@@ -55057,6 +55119,35 @@ modes:
                 .expect("list after terminal")
                 .len(),
             terminal_task_count_before
+        );
+
+        let mut unknown_budget_checkpoint = recoverable_checkpoint.clone();
+        unknown_budget_checkpoint.session_id = "m60.product.unknown.budget".to_string();
+        unknown_budget_checkpoint.drive_id = "m60.product.unknown.budget.drive".to_string();
+        unknown_budget_checkpoint.result.status = HeadlessContinueOnceStatus::TaskExecuted;
+        unknown_budget_checkpoint.result.session_id = "m60.product.unknown.budget".to_string();
+        unknown_budget_checkpoint.result.drive_id = "m60.product.unknown.budget.drive".to_string();
+        unknown_budget_checkpoint.result.stop_reason = "drive_budget_exhausted".to_string();
+        unknown_budget_checkpoint.result.drive_fingerprint = fp('a');
+        unknown_budget_checkpoint.result.completion_closure.status =
+            HeadlessRunCompletionClosureStatus::UnknownNonterminal;
+        unknown_budget_checkpoint
+            .result
+            .completion_closure
+            .stop_reason = "drive_budget_exhausted".to_string();
+        unknown_budget_checkpoint
+            .result
+            .completion_closure
+            .route_candidate_count = 0;
+        unknown_budget_checkpoint.result.next_route = None;
+        unknown_budget_checkpoint.result.next_action = "inspect_progress_overview".to_string();
+        let outcome = headless_run_drive_execution_outcome(&unknown_budget_checkpoint.result);
+        assert_eq!(outcome["class"], "recoverable_unknown_nonterminal");
+        assert_eq!(outcome["blocked"], true);
+        assert_eq!(
+            outcome["next_invocation"]["params"]["product_loop_stop_recovery_target"]
+                ["expected_stop_reason"],
+            "drive_budget_exhausted"
         );
 
         let mut terminalized_checkpoint = recoverable_checkpoint.clone();

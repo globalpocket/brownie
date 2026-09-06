@@ -1709,6 +1709,66 @@ fn validate_next_invocation(
     if controller_action != "resume" && controller_action != "retry" {
         return Err(RuntimeClientError::InvalidResponse);
     }
+    if let Some(params) = object.get("params") {
+        validate_next_invocation_params(params)?;
+    }
+    Ok(())
+}
+
+fn validate_next_invocation_params(value: &Value) -> Result<(), RuntimeClientError> {
+    let object = value
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    required_bool(object, "authorize")?;
+    let continuation_id = required_display_string(object, "continuation_id")?;
+    if continuation_id.is_empty() || continuation_id.len() > 160 {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    validate_sha256_fingerprint(&required_display_string(
+        object,
+        "expected_progress_fingerprint",
+    )?)?;
+    required_u64(object, "expected_aggregate_sequence")?;
+    validate_product_loop_stop_recovery_target(
+        object
+            .get("product_loop_stop_recovery_target")
+            .ok_or(RuntimeClientError::InvalidResponse)?,
+    )
+}
+
+fn validate_product_loop_stop_recovery_target(value: &Value) -> Result<(), RuntimeClientError> {
+    let object = value
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    required_bool(object, "authorize_product_loop_stop_recovery")?;
+    for key in [
+        "session_id",
+        "drive_id",
+        "expected_stop_reason",
+        "recovery_goal",
+    ] {
+        let value = required_display_string(object, key)?;
+        if value.is_empty() || value.len() > 500 {
+            return Err(RuntimeClientError::InvalidResponse);
+        }
+    }
+    validate_sha256_fingerprint(&required_display_string(
+        object,
+        "expected_drive_fingerprint",
+    )?)?;
+    required_u64(object, "expected_end_session_sequence")?;
+    if let Some(value) = object.get("expected_post_progress_fingerprint") {
+        validate_sha256_fingerprint(&bounded_string(value)?)?;
+    }
+    if let Some(value) = object.get("expected_next_route_fingerprint") {
+        validate_sha256_fingerprint(&bounded_string(value)?)?;
+    }
+    if let Some(value) = object.get("recovery_mode_id") {
+        let mode_id = bounded_string(value)?;
+        if mode_id.is_empty() || mode_id.len() > 96 {
+            return Err(RuntimeClientError::InvalidResponse);
+        }
+    }
     Ok(())
 }
 
@@ -1721,6 +1781,7 @@ fn is_valid_execution_outcome_class(value: &str) -> bool {
             | "stale_retry"
             | "no_actionable_work"
             | "waiting"
+            | "recoverable_unknown_nonterminal"
             | "retryable_failure"
             | "terminal_failure"
     )
@@ -1784,14 +1845,100 @@ fn bounded_json_next_invocation(value: &Value) -> Result<Value, RuntimeClientErr
     let object = value
         .as_object()
         .ok_or(RuntimeClientError::InvalidResponse)?;
-    Ok(json!({
-        "command": bounded_json_string(
+    let mut projected = serde_json::Map::new();
+    projected.insert(
+        "command".to_string(),
+        bounded_json_string(
             object
                 .get("command")
+                .ok_or(RuntimeClientError::InvalidResponse)?,
+        )?,
+    );
+    projected.insert("arguments".to_string(), json!([]));
+    if let Some(params) = object.get("params") {
+        projected.insert(
+            "params".to_string(),
+            bounded_json_next_invocation_params(params)?,
+        );
+    }
+    Ok(Value::Object(projected))
+}
+
+fn bounded_json_next_invocation_params(value: &Value) -> Result<Value, RuntimeClientError> {
+    validate_next_invocation_params(value)?;
+    let object = value
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    Ok(json!({
+        "authorize": required_bool(object, "authorize")?,
+        "continuation_id": bounded_json_string(
+            object
+                .get("continuation_id")
                 .ok_or(RuntimeClientError::InvalidResponse)?
         )?,
-        "arguments": []
+        "expected_progress_fingerprint": bounded_json_string(
+            object
+                .get("expected_progress_fingerprint")
+                .ok_or(RuntimeClientError::InvalidResponse)?
+        )?,
+        "expected_aggregate_sequence": bounded_json_optional_u64(
+            object
+                .get("expected_aggregate_sequence")
+                .ok_or(RuntimeClientError::InvalidResponse)?
+        )?,
+        "product_loop_stop_recovery_target": bounded_json_product_loop_stop_recovery_target(
+            object
+                .get("product_loop_stop_recovery_target")
+                .ok_or(RuntimeClientError::InvalidResponse)?
+        )?
     }))
+}
+
+fn bounded_json_product_loop_stop_recovery_target(
+    value: &Value,
+) -> Result<Value, RuntimeClientError> {
+    validate_product_loop_stop_recovery_target(value)?;
+    let object = value
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let mut projected = serde_json::Map::new();
+    projected.insert(
+        "authorize_product_loop_stop_recovery".to_string(),
+        Value::Bool(required_bool(
+            object,
+            "authorize_product_loop_stop_recovery",
+        )?),
+    );
+    for key in [
+        "session_id",
+        "drive_id",
+        "expected_drive_fingerprint",
+        "expected_stop_reason",
+        "recovery_goal",
+    ] {
+        projected.insert(
+            key.to_string(),
+            bounded_json_string(object.get(key).ok_or(RuntimeClientError::InvalidResponse)?)?,
+        );
+    }
+    projected.insert(
+        "expected_end_session_sequence".to_string(),
+        bounded_json_optional_u64(
+            object
+                .get("expected_end_session_sequence")
+                .ok_or(RuntimeClientError::InvalidResponse)?,
+        )?,
+    );
+    for key in [
+        "expected_post_progress_fingerprint",
+        "expected_next_route_fingerprint",
+        "recovery_mode_id",
+    ] {
+        if let Some(value) = object.get(key) {
+            projected.insert(key.to_string(), bounded_json_string(value)?);
+        }
+    }
+    Ok(Value::Object(projected))
 }
 
 fn render_recovery_probe_result(result: &Value) -> Result<String, RuntimeClientError> {
@@ -4848,5 +4995,26 @@ mod tests {
         assert_eq!(payload["headless_session_id"], "cli.run.new");
         let rendered = json_result("resume", "resume", payload).unwrap();
         assert!(rendered.len() < MAX_RENDERED_OUTPUT_CHARS);
+    }
+
+    #[test]
+    fn cli_resume_payload_preserves_product_loop_stop_recovery_next_invocation() {
+        let result: Value = serde_json::from_str(
+            r#"{"status":"task_executed","session_id":"cli.run.unknown","drive_id":"cli.run.unknown.drive","start_session_sequence":0,"end_session_sequence":3,"replayed":false,"max_advances":3,"max_steps_per_advance":1,"advance_count":3,"executed_count":3,"replayed_count":0,"stop_reason":"drive_budget_exhausted","drive_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","completion_closure":{"status":"unknown_nonterminal","stop_reason":"drive_budget_exhausted","terminal_task_count":0,"total_task_count":1,"runnable_task_count":1,"blocked_task_count":0,"route_candidate_count":0,"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":8,"next_action":"inspect_progress_overview","closure_fingerprint":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},"start_progress":{"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":5},"post_progress":{"progress_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","aggregate_sequence":8},"next_action":"inspect_progress_overview","execution_outcome":{"schema_version":1,"outcome_scope":"objective","class":"recoverable_unknown_nonterminal","status":"recoverable_unknown_nonterminal","controller_action":"resume","continuation_required":true,"completed":false,"blocked":true,"retryable":true,"terminal_failure":false,"stop_reason":"drive_budget_exhausted","next_invocation":{"command":"resume","arguments":[],"params":{"authorize":true,"continuation_id":"cli.run.unknown.drive.product_loop_stop_recovery","expected_progress_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","expected_aggregate_sequence":8,"product_loop_stop_recovery_target":{"authorize_product_loop_stop_recovery":true,"session_id":"cli.run.unknown","drive_id":"cli.run.unknown.drive","expected_drive_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","expected_stop_reason":"drive_budget_exhausted","expected_end_session_sequence":3,"expected_post_progress_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","recovery_goal":"Recover the finite headless product loop stop by selecting and executing the next concrete implementation task instead of repeating inspect_progress_overview.","recovery_mode_id":"implementer"}}}}}"#,
+        )
+        .unwrap();
+        let payload = cli_resume_payload(&result).unwrap();
+        assert_eq!(payload["blocked"], true);
+        assert_eq!(payload["stop_class"], "recoverable_unknown_nonterminal");
+        assert_eq!(
+            payload["next_invocation"]["params"]["product_loop_stop_recovery_target"]
+                ["expected_stop_reason"],
+            "drive_budget_exhausted"
+        );
+        assert_eq!(
+            payload["automation"]["next_invocation"]["params"]["product_loop_stop_recovery_target"]
+                ["recovery_mode_id"],
+            "implementer"
+        );
     }
 }
