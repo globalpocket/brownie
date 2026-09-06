@@ -11,7 +11,7 @@ and ordered by priority.
 
 Current baseline:
 
-- Latest verified local and remote `main`: `9c93a4fa1117e5dc3b64c2b6593703e4ab8498de`
+- Latest verified local and remote `main`: `1add305b2f6d7b64375fd3ab510e2afd4cd9c8c1`
 - PR #393 added this queue.
 - PR #394 embeds the first unchecked TODO and a bounded queue snapshot into each
   generated per-run prompt.
