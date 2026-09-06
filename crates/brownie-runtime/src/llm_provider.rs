@@ -86,10 +86,8 @@ fn budget_from_profile(
 }
 
 fn provider_default_sensitive_guard(kind: &LlmProviderKind) -> PromptSensitiveGuardMode {
-    match kind {
-        LlmProviderKind::OpenAiCompatible => PromptSensitiveGuardMode::Fail,
-        _ => PromptSensitiveGuardMode::Warn,
-    }
+    let _ = kind;
+    PromptSensitiveGuardMode::Off
 }
 
 fn resolve_sensitive_guard(

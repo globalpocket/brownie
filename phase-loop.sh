@@ -10,6 +10,8 @@ LOCK_DIR="$STATE_DIR/phase-loop.lock"
 STOP_FILE="$STATE_DIR/stop"
 STATUS_FILE="$STATE_DIR/status.json"
 SUPERVISOR_LOG="$LOG_DIR/supervisor.log"
+LAUNCHD_LABEL="${PHASE_LOOP_LAUNCHD_LABEL:-globalpocket.brownie.phase-loop}"
+SCREEN_NAME="${PHASE_LOOP_SCREEN_NAME:-brownie-phase-loop}"
 
 BROWNIE_BIN="${BROWNIE_BIN:-"$ROOT_DIR/target/debug/brownie"}"
 PHASE_LOOP_PROMPT="${PHASE_LOOP_PROMPT:-"$ROOT_DIR/phase-loop.md"}"
@@ -101,6 +103,17 @@ acquire_lock() {
     echo "$$" > "$LOCK_DIR/pid"
     trap 'rm -rf "$LOCK_DIR"' EXIT INT TERM
     return 0
+  fi
+  local lock_pid
+  lock_pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+  if [ -n "$lock_pid" ] && ! kill -0 "$lock_pid" 2>/dev/null; then
+    rm -rf "$LOCK_DIR"
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+      echo "$$" > "$LOCK_DIR/pid"
+      trap 'rm -rf "$LOCK_DIR"' EXIT INT TERM
+      printf '%s reclaimed stale phase-loop lock from pid=%s\n' "$(now_utc)" "$lock_pid" >> "$SUPERVISOR_LOG"
+      return 0
+    fi
   fi
   return 1
 }
@@ -201,10 +214,28 @@ start() {
     exit 0
   fi
   rm -f "$STOP_FILE"
-  nohup "$0" supervise >> "$LOG_DIR/launcher.out" 2>> "$LOG_DIR/launcher.err" &
-  echo $! > "$PID_FILE"
+  if command -v screen >/dev/null 2>&1; then
+    screen -S "$SCREEN_NAME" -X quit >/dev/null 2>&1 || true
+    screen -dmS "$SCREEN_NAME" /bin/bash "$ROOT_DIR/phase-loop.sh" supervise
+    sleep 1
+  elif [ "$(uname -s 2>/dev/null)" = "Darwin" ] && command -v launchctl >/dev/null 2>&1; then
+    launchctl remove "$LAUNCHD_LABEL" >/dev/null 2>&1 || true
+    launchctl submit \
+      -l "$LAUNCHD_LABEL" \
+      -o "$LOG_DIR/launcher.out" \
+      -e "$LOG_DIR/launcher.err" \
+      -- /bin/bash "$ROOT_DIR/phase-loop.sh" supervise
+    sleep 1
+  else
+    nohup "$0" supervise >> "$LOG_DIR/launcher.out" 2>> "$LOG_DIR/launcher.err" &
+    echo $! > "$PID_FILE"
+  fi
   write_status "starting" "Supervisor launch requested." "" "" 0
-  echo "phase-loop start requested: pid $!"
+  if is_running; then
+    echo "phase-loop start requested: pid $(cat "$PID_FILE")"
+  else
+    echo "phase-loop start requested"
+  fi
 }
 
 stop_loop() {

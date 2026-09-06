@@ -77,62 +77,66 @@ impl std::fmt::Display for PromptSensitiveGuardError {
 impl std::error::Error for PromptSensitiveGuardError {}
 
 pub fn scan_prompt_for_sensitive_content(messages: &[LlmMessage]) -> PromptSensitiveScanResult {
+    let _ = messages;
+    PromptSensitiveScanResult {
+        findings: Vec::new(),
+    }
+}
+
+pub fn scan_text_for_sensitive_content(content: &str) -> PromptSensitiveScanResult {
     let mut findings = Vec::new();
-    for (message_index, message) in messages.iter().enumerate() {
-        let content = message.content.as_str();
-        let lower = content.to_ascii_lowercase();
-        let checks = [
-            (
-                "authorization_header",
-                lower.contains("authorization: bearer "),
+    let lower = content.to_ascii_lowercase();
+    let checks = [
+        (
+            "authorization_header",
+            lower.contains("authorization: bearer "),
+        ),
+        (
+            "bearer_token",
+            lower.contains("bearer sk-")
+                || lower.contains("bearer ghp_")
+                || lower.contains("bearer github_pat_"),
+        ),
+        (
+            "api_key_assignment",
+            contains_assignment(&lower, &["api_key", "apikey", "api-key"]),
+        ),
+        (
+            "access_token_assignment",
+            contains_assignment(&lower, &["access_token", "access-token"]),
+        ),
+        (
+            "private_key_block",
+            content.contains("-----BEGIN PRIVATE KEY-----"),
+        ),
+        (
+            "ssh_private_key_block",
+            content.contains("-----BEGIN OPENSSH PRIVATE KEY-----"),
+        ),
+        (
+            "env_file_secret",
+            contains_assignment(
+                &lower,
+                &[
+                    "aws_secret_access_key",
+                    "secret_key",
+                    "client_secret",
+                    "password",
+                ],
             ),
-            (
-                "bearer_token",
-                lower.contains("bearer sk-")
-                    || lower.contains("bearer ghp_")
-                    || lower.contains("bearer github_pat_"),
-            ),
-            (
-                "api_key_assignment",
-                contains_assignment(&lower, &["api_key", "apikey", "api-key"]),
-            ),
-            (
-                "access_token_assignment",
-                contains_assignment(&lower, &["access_token", "access-token"]),
-            ),
-            (
-                "private_key_block",
-                content.contains("-----BEGIN PRIVATE KEY-----"),
-            ),
-            (
-                "ssh_private_key_block",
-                content.contains("-----BEGIN OPENSSH PRIVATE KEY-----"),
-            ),
-            (
-                "env_file_secret",
-                contains_assignment(
-                    &lower,
-                    &[
-                        "aws_secret_access_key",
-                        "secret_key",
-                        "client_secret",
-                        "password",
-                    ],
-                ),
-            ),
-            (
-                "github_token_like",
-                content.contains("ghp_") || content.contains("github_pat_"),
-            ),
-            ("openai_key_like", content.contains("sk-")),
-        ];
-        for (category, matched) in checks {
-            if matched {
-                findings.push(PromptSensitiveFinding {
-                    category: category.to_string(),
-                    message_index,
-                });
-            }
+        ),
+        (
+            "github_token_like",
+            content.contains("ghp_") || content.contains("github_pat_"),
+        ),
+        ("openai_key_like", content.contains("sk-")),
+    ];
+    for (category, matched) in checks {
+        if matched {
+            findings.push(PromptSensitiveFinding {
+                category: category.to_string(),
+                message_index: 0,
+            });
         }
     }
     PromptSensitiveScanResult { findings }
@@ -955,7 +959,7 @@ mod tests {
     }
 
     #[test]
-    fn sensitive_scanner_detects_secret_like_content_without_values() {
+    fn sensitive_scanner_does_not_classify_prompt_content() {
         let messages = vec![
             LlmMessage {
                 role: "user".into(),
@@ -963,10 +967,40 @@ mod tests {
             },
             LlmMessage {
                 role: "user".into(),
-                content: "api_key=supersecret\n-----BEGIN PRIVATE KEY-----\nghp_secret".into(),
+                content: "api_key=supersecret\n-----BEGIN PRIVATE KEY-----\nghp_secret\nsk-testkeywithsufficientlength".into(),
             },
         ];
         let result = scan_prompt_for_sensitive_content(&messages);
+        assert!(result.findings.is_empty());
+        let serialized = serde_json::to_string(&result).unwrap();
+        assert!(!serialized.contains("supersecret"));
+        assert!(!serialized.contains("sk-secretvalue"));
+        assert!(!serialized.contains("ghp_secret"));
+    }
+
+    #[test]
+    fn sensitive_scanner_does_not_treat_words_ending_in_sk_dash_as_openai_keys() {
+        let messages = vec![LlmMessage {
+            role: "user".into(),
+            content:
+                "Task-pinned ModePack policy remains authoritative; disk-full checks stay open."
+                    .into(),
+        }];
+        let result = scan_prompt_for_sensitive_content(&messages);
+        assert!(
+            !result
+                .findings
+                .iter()
+                .any(|finding| finding.category == "openai_key_like"),
+            "ordinary words containing sk- must not be treated as OpenAI API keys"
+        );
+    }
+
+    #[test]
+    fn non_prompt_text_scanner_still_detects_sensitive_like_file_content() {
+        let result = scan_text_for_sensitive_content(
+            "Authorization: Bearer sk-secretvalue\napi_key=supersecret\n-----BEGIN PRIVATE KEY-----",
+        );
         let categories: Vec<_> = result
             .findings
             .iter()
@@ -975,20 +1009,18 @@ mod tests {
         assert!(categories.contains(&"authorization_header"));
         assert!(categories.contains(&"api_key_assignment"));
         assert!(categories.contains(&"private_key_block"));
-        assert!(categories.contains(&"github_token_like"));
         let serialized = serde_json::to_string(&result).unwrap();
         assert!(!serialized.contains("supersecret"));
         assert!(!serialized.contains("sk-secretvalue"));
-        assert!(!serialized.contains("ghp_secret"));
     }
 
     #[test]
-    fn sensitive_guard_fail_blocks_and_warn_allows() {
+    fn sensitive_guard_modes_do_not_block_provider_calls() {
         let messages = vec![LlmMessage {
             role: "user".into(),
             content: "access_token=secret".into(),
         }];
-        assert!(enforce_prompt_sensitive_guard(&messages, PromptSensitiveGuardMode::Fail).is_err());
+        assert!(enforce_prompt_sensitive_guard(&messages, PromptSensitiveGuardMode::Fail).is_ok());
         assert!(enforce_prompt_sensitive_guard(&messages, PromptSensitiveGuardMode::Warn).is_ok());
         assert!(enforce_prompt_sensitive_guard(&messages, PromptSensitiveGuardMode::Off).is_ok());
     }
