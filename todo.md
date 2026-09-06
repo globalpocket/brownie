@@ -25,6 +25,9 @@ Current synchronization note:
 - PR #403 hardened effective prompt artifacts, added truncation metadata, and
   retries with a fresh claim when TODO changes are detected before Runtime
   start.
+- PR #404 added child-inclusive stop behavior and interruptible supervisor
+  waits so stop requests can terminate backoff, long Brownie runs, and
+  supervisor-managed children without waiting for the next natural wakeup.
 - Runtime Product Ready is not reached.
 
 ## Queue protocol
@@ -43,6 +46,10 @@ Current synchronization note:
   size, retention, prompt/queue fingerprints, and truncation metadata. It must
   fail closed when the selected TODO cannot be embedded completely and must
   retry with a fresh claim when the TODO queue changes before Runtime start.
+- The supervisor must honor stop requests during interval/backoff waits and
+  must terminate supervisor-managed Runtime child processes with graceful
+  termination, bounded force timeout, process-group handling where safe, and
+  descendant/orphan-child cleanup evidence.
 - Brownie must keep exactly one active bounded slice per invocation. If work is
   incomplete, it must leave a concrete follow-up TODO naming the remaining
   blocker or next implementation step.
@@ -54,14 +61,6 @@ Current synchronization note:
   another Brownie run.
 
 ## Product Ready Blocking Queue
-
-### P0: Phase Loop / BDK Supervisor
-
-- [ ] B-11: Add child-inclusive stop behavior for supervisor-managed Runtime
-  processes, including graceful termination, bounded force timeout, process
-  group handling, and orphan child recovery.
-- [ ] B-12: Make supervisor waits interruptible so stop requests are honored
-  during backoff and long Brownie timeouts.
 
 ### P0: Brownie Runtime safety
 
