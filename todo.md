@@ -20,6 +20,8 @@ Current synchronization note:
 - PR #398 added durable TODO claim records for selected supervisor work.
 - PR #400 added TODO queue generation/fingerprint CAS state and made durable
   claims the only empty-queue in-progress liveness signal.
+- PR #401 added structured CLI JSON validation, deterministic progress
+  fingerprints, persisted stagnation counts, and no-progress classification.
 - Runtime Product Ready is not reached.
 
 ## Queue protocol
@@ -31,6 +33,9 @@ Current synchronization note:
 - The supervisor must maintain durable queue generation/fingerprint state and
   reject stale snapshots when external TODO reordering/additions are detected
   during new-claim selection.
+- The supervisor must drive Brownie with validated structured JSON output and
+  persist deterministic progress fingerprints. Repeated identical non-progress
+  fingerprints must be classified as `no_progress` instead of healthy success.
 - Brownie must keep exactly one active bounded slice per invocation. If work is
   incomplete, it must leave a concrete follow-up TODO naming the remaining
   blocker or next implementation step.
@@ -45,18 +50,6 @@ Current synchronization note:
 
 ### P0: Phase Loop / BDK Supervisor
 
-- [ ] B-04: Add deterministic progress fingerprints for each supervisor run
-  using commit, selected TODO/phase, route, closure, applied/accepted/finalized
-  state, and next action.
-- [ ] B-05: Persist stagnation counts across supervisor restarts and classify
-  repeated identical progress fingerprints as `no_progress` instead of healthy
-  success.
-- [ ] B-06: Drive Brownie with structured CLI output such as
-  `brownie --json run --file` and validate against a stable schema instead of
-  parsing human text.
-- [ ] B-07: Split successful process exit from actual product progress:
-  `exit 0` without workspace change, accepted completion, or blocker
-  classification must not reset progress health.
 - [ ] B-08: Harden generated effective prompts from PR #394: avoid durable raw
   prompt storage where possible, or enforce `0600`, size limits, retention,
   redaction, and prompt/queue fingerprints instead of keeping sensitive content.

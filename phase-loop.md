@@ -114,6 +114,17 @@ Use `todo.md` before falling back to overview-based work selection:
   queue generation and content fingerprint. If the TODO snapshot changes while
   a new claim is being selected, reject that stale snapshot and retry from the
   current queue.
+- The supervisor must invoke `brownie --json run --file <effective-prompt>` and
+  validate the bounded external-loop JSON contract before using the result for
+  progress or health decisions.
+- The supervisor must persist deterministic progress health under
+  `.brownie-phase-loop/progress-state.json`. The fingerprint must include the
+  current commit, selected TODO/claim, queue generation/fingerprint, CLI route,
+  closure, applied/accepted/finalized state, and next action.
+- A successful process exit is not enough to prove progress. `exit 0` without
+  workspace change, accepted completion, completion finalization, applied work,
+  or explicit blocker classification is `non_progress_success`; repeated
+  identical non-progress fingerprints are `no_progress`, not healthy success.
 - If at least one unchecked TODO exists, select the first unchecked TODO unless
   it is outside the Product Boundary or forbidden by controller instructions.
 - Do not remove a TODO from `todo.md` until there is durable completion or a
