@@ -114,6 +114,15 @@ classify it as one of: `implementation defect`, `test defect`, `environment
 limitation`, `permission limitation`, `external service failure`, or `owner
 action required`.
 
+If three or more recent supervisor runs report `task_executed` with
+`closure: unknown_nonterminal`, `applied: none`, `accepted: none`,
+`finalization: none`, and `next: inspect_progress_overview`, treat that as stale
+progress, not healthy completion. In that case, do not select another
+inspection-only or report-only action. Either select the highest-priority
+unresolved Product Ready implementation slice from the order below, or classify
+the concrete blocker and record the required owner/external action before
+exiting normally.
+
 If fully blocked by external conditions, record the blocker, required owner
 action, and resume condition, then stop normally. Never mark unfinished work as
 complete.
