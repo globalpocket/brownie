@@ -12,6 +12,7 @@ STATUS_FILE="$STATE_DIR/status.json"
 SUPERVISOR_LOG="$LOG_DIR/supervisor.log"
 TODO_CLAIM_DIR="$STATE_DIR/todo-claims"
 TODO_CLAIM_FILE="$TODO_CLAIM_DIR/current.json"
+TODO_QUEUE_STATE_FILE="$TODO_CLAIM_DIR/todo-queue-state.json"
 LAUNCHD_LABEL="${PHASE_LOOP_LAUNCHD_LABEL:-globalpocket.brownie.phase-loop}"
 SCREEN_NAME="${PHASE_LOOP_SCREEN_NAME:-brownie-phase-loop}"
 
@@ -55,6 +56,8 @@ write_status() {
   escaped_todo="$(printf '%s' "$PHASE_LOOP_TODO" | json_escape)"
   local escaped_claim_file
   escaped_claim_file="$(printf '%s' "$TODO_CLAIM_FILE" | json_escape)"
+  local escaped_queue_state_file
+  escaped_queue_state_file="$(printf '%s' "$TODO_QUEUE_STATE_FILE" | json_escape)"
   tmp_status="$STATUS_FILE.$$.$RANDOM.tmp"
   cat > "$tmp_status" <<EOF
 {
@@ -69,6 +72,7 @@ write_status() {
   "prompt": "$escaped_prompt",
   "todo": "$escaped_todo",
   "todo_claim": "$escaped_claim_file",
+  "todo_queue_state": "$escaped_queue_state_file",
   "workspace_root": "$escaped_workspace",
   "control_root": "$escaped_control_root"
 }
@@ -134,6 +138,67 @@ todo_queue_fingerprint() {
   shasum -a 256 "$PHASE_LOOP_TODO" | awk '{ print $1 }'
 }
 
+write_todo_queue_state() {
+  local generation="$1"
+  local fingerprint="$2"
+  local timestamp tmp_state
+  timestamp="$(now_utc)"
+  tmp_state="$TODO_QUEUE_STATE_FILE.$$.$RANDOM.tmp"
+  python3 - "$tmp_state" "$generation" "$fingerprint" "$PHASE_LOOP_TODO" "$timestamp" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+state = {
+    "schema_version": 1,
+    "generation": int(sys.argv[2]),
+    "fingerprint": sys.argv[3],
+    "todo_path": sys.argv[4],
+    "updated_at": sys.argv[5],
+}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(state, handle, ensure_ascii=False, sort_keys=True, indent=2)
+    handle.write("\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(path, 0o600)
+PY
+  mv "$tmp_state" "$TODO_QUEUE_STATE_FILE"
+  chmod 600 "$TODO_QUEUE_STATE_FILE"
+  sync_parent_dir "$TODO_CLAIM_DIR"
+}
+
+refresh_todo_queue_state() {
+  local fingerprint generation
+  fingerprint="$(todo_queue_fingerprint)"
+  generation="$(
+    python3 - "$TODO_QUEUE_STATE_FILE" "$fingerprint" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+fingerprint = sys.argv[2]
+generation = 0
+try:
+    with open(path, encoding="utf-8") as handle:
+        state = json.load(handle)
+    if state.get("fingerprint") == fingerprint:
+        generation = int(state.get("generation", 0))
+    else:
+        generation = int(state.get("generation", 0)) + 1
+except Exception:
+    generation = 1
+if generation < 1:
+    generation = 1
+print(generation)
+PY
+  )"
+  write_todo_queue_state "$generation" "$fingerprint"
+  printf '%s %s\n' "$generation" "$fingerprint"
+}
+
 claim_status() {
   if [ ! -f "$TODO_CLAIM_FILE" ]; then
     return 1
@@ -163,6 +228,17 @@ active_todo_claim_exists() {
   esac
 }
 
+active_claim_queue_generation() {
+  local queue_generation queue_state
+  queue_generation="$(claim_field queue_generation 2>/dev/null || true)"
+  if [ -n "$queue_generation" ]; then
+    printf '%s\n' "$queue_generation"
+    return 0
+  fi
+  queue_state="$(refresh_todo_queue_state)"
+  printf '%s\n' "$queue_state" | awk '{ print $1 }'
+}
+
 claim_field() {
   local field="$1"
   if [ ! -f "$TODO_CLAIM_FILE" ]; then
@@ -189,11 +265,12 @@ write_todo_claim() {
   local status="$2"
   local selected_todo="$3"
   local queue_fingerprint="$4"
-  local run_stamp="${5:-}"
+  local queue_generation="$5"
+  local run_stamp="${6:-}"
   local timestamp tmp_claim
   timestamp="$(now_utc)"
   tmp_claim="$TODO_CLAIM_FILE.$$.$RANDOM.tmp"
-  python3 - "$tmp_claim" "$claim_id" "$status" "$selected_todo" "$queue_fingerprint" "$PHASE_LOOP_TODO" "$run_stamp" "$timestamp" <<'PY'
+  python3 - "$tmp_claim" "$claim_id" "$status" "$selected_todo" "$queue_fingerprint" "$queue_generation" "$PHASE_LOOP_TODO" "$run_stamp" "$timestamp" <<'PY'
 import json
 import os
 import pathlib
@@ -202,9 +279,14 @@ import sys
 path = pathlib.Path(sys.argv[1])
 claim_id = sys.argv[2]
 status = sys.argv[3]
-timestamp = sys.argv[8]
+timestamp = sys.argv[9]
 current_path = path.with_name("current.json")
 claim = {}
+queue_generation = None
+try:
+    queue_generation = int(sys.argv[6])
+except Exception:
+    queue_generation = None
 if current_path.exists():
     try:
         with open(current_path, encoding="utf-8") as handle:
@@ -219,15 +301,20 @@ if not claim:
         "claim_id": claim_id,
         "selected_todo": sys.argv[4],
         "queue_fingerprint": sys.argv[5],
-        "todo_path": sys.argv[6],
+        "queue_generation": queue_generation or 1,
+        "todo_path": sys.argv[7],
         "created_at": timestamp,
         "status_history": [],
     }
+if queue_generation is not None:
+    claim.setdefault("queue_generation", queue_generation)
+else:
+    claim.setdefault("queue_generation", 1)
 claim["status"] = status
-claim["run_stamp"] = sys.argv[7]
+claim["run_stamp"] = sys.argv[8]
 claim["updated_at"] = timestamp
 claim.setdefault("status_history", []).append(
-    {"status": status, "run_stamp": sys.argv[7], "updated_at": timestamp}
+    {"status": status, "run_stamp": sys.argv[8], "updated_at": timestamp}
 )
 with open(path, "w", encoding="utf-8") as handle:
     json.dump(claim, handle, ensure_ascii=False, sort_keys=True, indent=2)
@@ -243,22 +330,34 @@ PY
 
 claim_first_pending_todo() {
   local run_stamp="$1"
-  local selected_todo queue_fingerprint selected_hash claim_id
+  local selected_todo queue_fingerprint queue_generation queue_state selected_hash claim_id reread_fingerprint attempt
   if active_todo_claim_exists; then
-    write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$run_stamp"
+    queue_generation="$(active_claim_queue_generation)"
+    write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$queue_generation" "$run_stamp"
     return 0
   fi
 
-  selected_todo="$(todo_first_pending_item)"
-  if [ -z "$selected_todo" ]; then
-    return 1
-  fi
-  queue_fingerprint="$(todo_queue_fingerprint)"
-  selected_hash="$(printf '%s' "$selected_todo" | shasum -a 256 | awk '{ print substr($1, 1, 12) }')"
-  claim_id="todo-${run_stamp}-${selected_hash}"
-  write_todo_claim "$claim_id" "claimed" "$selected_todo" "$queue_fingerprint" "$run_stamp"
-  write_todo_claim "$claim_id" "in_progress" "$selected_todo" "$queue_fingerprint" "$run_stamp"
-  printf '%s todo_claim=%s status=in_progress\n' "$(now_utc)" "$claim_id" >> "$SUPERVISOR_LOG"
+  for attempt in 1 2 3; do
+    queue_state="$(refresh_todo_queue_state)"
+    queue_generation="$(printf '%s' "$queue_state" | awk '{ print $1 }')"
+    queue_fingerprint="$(printf '%s' "$queue_state" | awk '{ print $2 }')"
+    selected_todo="$(todo_first_pending_item)"
+    if [ -z "$selected_todo" ]; then
+      return 1
+    fi
+    reread_fingerprint="$(todo_queue_fingerprint)"
+    if [ "$queue_fingerprint" != "$reread_fingerprint" ]; then
+      printf '%s todo_claim_stale_snapshot_rejected attempt=%s expected=%s actual=%s\n' "$(now_utc)" "$attempt" "$queue_fingerprint" "$reread_fingerprint" >> "$SUPERVISOR_LOG"
+      continue
+    fi
+    selected_hash="$(printf '%s' "$selected_todo" | shasum -a 256 | awk '{ print substr($1, 1, 12) }')"
+    claim_id="todo-g${queue_generation}-${selected_hash}"
+    write_todo_claim "$claim_id" "claimed" "$selected_todo" "$queue_fingerprint" "$queue_generation" "$run_stamp"
+    write_todo_claim "$claim_id" "in_progress" "$selected_todo" "$queue_fingerprint" "$queue_generation" "$run_stamp"
+    printf '%s todo_claim=%s generation=%s status=in_progress\n' "$(now_utc)" "$claim_id" "$queue_generation" >> "$SUPERVISOR_LOG"
+    return 0
+  done
+  return 1
 }
 
 build_effective_prompt() {
@@ -281,7 +380,7 @@ import sys
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     claim = json.load(handle)
-for key in ("claim_id", "status", "queue_fingerprint", "run_stamp", "updated_at"):
+for key in ("claim_id", "status", "queue_generation", "queue_fingerprint", "run_stamp", "updated_at"):
     print(f"- {key}: `{claim.get(key, '')}`")
 PY
     else
@@ -295,22 +394,6 @@ PY
     printf '\n## Base Phase Loop Prompt\n\n'
     sed -n '1,400p' "$PHASE_LOOP_PROMPT"
   } > "$output_path"
-}
-
-has_in_progress_work() {
-  (
-    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 1
-    git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 1
-    if [ -n "$(git status --porcelain)" ]; then
-      exit 0
-    fi
-    local branch
-    branch="$(git branch --show-current 2>/dev/null || true)"
-    if [ -n "$branch" ] && [ "$branch" != "main" ] && [ "$branch" != "master" ]; then
-      exit 0
-    fi
-    exit 1
-  )
 }
 
 stop_if_todo_empty() {
@@ -328,10 +411,7 @@ stop_if_todo_empty() {
     if active_todo_claim_exists; then
       return 0
     fi
-    if has_in_progress_work; then
-      return 0
-    fi
-    detail="Phase loop TODO queue is empty; no pending or in-progress task remains."
+    detail="Phase loop TODO queue is empty; no pending or durable in-progress claim remains."
     touch "$STOP_FILE"
     printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
     write_status "stopped" "$detail" "" "" "$consecutive_failures"
@@ -461,7 +541,7 @@ run_brownie_once() {
     write_status "last_run_succeeded" "$detail" "$run_id" "$exit_code" 0
   else
     if active_todo_claim_exists; then
-      write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$run_stamp"
+      write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
     fi
     detail="Brownie run failed; stdout=$stdout_log stderr=$stderr_log"
     write_status "last_run_failed" "$detail" "$run_id" "$exit_code" "${CONSECUTIVE_FAILURES:-1}"

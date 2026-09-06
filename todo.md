@@ -18,6 +18,8 @@ Current synchronization note:
   generated per-run prompt.
 - PR #395 expanded this queue from the external Product Ready gap analysis.
 - PR #398 added durable TODO claim records for selected supervisor work.
+- PR #400 added TODO queue generation/fingerprint CAS state and made durable
+  claims the only empty-queue in-progress liveness signal.
 - Runtime Product Ready is not reached.
 
 ## Queue protocol
@@ -26,6 +28,9 @@ Current synchronization note:
 - The first unchecked item is the highest-priority pending TODO.
 - The supervisor must create or reuse a durable active claim before invoking
   Brownie. The active claim, not TODO deletion, is the record that work started.
+- The supervisor must maintain durable queue generation/fingerprint state and
+  reject stale snapshots when external TODO reordering/additions are detected
+  during new-claim selection.
 - Brownie must keep exactly one active bounded slice per invocation. If work is
   incomplete, it must leave a concrete follow-up TODO naming the remaining
   blocker or next implementation step.
@@ -40,12 +45,6 @@ Current synchronization note:
 
 ### P0: Phase Loop / BDK Supervisor
 
-- [ ] B-02: Add TODO queue compare-and-swap protection with queue generation,
-  content fingerprint, stale snapshot rejection, and safe handling of external
-  reordering/additions.
-- [ ] B-03: Replace dirty-worktree/non-main-branch heuristics for in-progress
-  work with explicit durable claim state so unrelated changes or abandoned
-  branches do not keep an empty queue alive forever.
 - [ ] B-04: Add deterministic progress fingerprints for each supervisor run
   using commit, selected TODO/phase, route, closure, applied/accepted/finalized
   state, and next action.

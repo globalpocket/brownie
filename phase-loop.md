@@ -109,6 +109,11 @@ Use `todo.md` before falling back to overview-based work selection:
 - The supervisor must claim the selected TODO durably before invoking Runtime.
   The current bootstrap implementation records the active claim under the
   phase-loop state directory as `todo-claims/current.json`.
+- The supervisor must maintain queue compare-and-swap evidence under
+  `todo-claims/todo-queue-state.json`, including a monotonically increasing
+  queue generation and content fingerprint. If the TODO snapshot changes while
+  a new claim is being selected, reject that stale snapshot and retry from the
+  current queue.
 - If at least one unchecked TODO exists, select the first unchecked TODO unless
   it is outside the Product Boundary or forbidden by controller instructions.
 - Do not remove a TODO from `todo.md` until there is durable completion or a
@@ -121,8 +126,10 @@ Use `todo.md` before falling back to overview-based work selection:
 - Do not use checked TODOs as completion evidence. Completion still requires
   implementation, tests, CI, PR/merge evidence, and audit artifacts as
   applicable.
-- If `todo.md` has no unchecked items and there is no active in-progress work,
-  stop normally. Do not continue an overview-only loop.
+- If `todo.md` has no unchecked items and there is no active durable claim,
+  stop normally. Dirty workspace state or a non-main branch alone is not
+  in-progress work for supervisor liveness. Do not continue an overview-only
+  loop.
 
 Use this order:
 
