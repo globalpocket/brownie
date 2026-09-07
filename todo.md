@@ -36,6 +36,9 @@ Current synchronization note:
   `budget_exhausted` + `unknown_nonterminal` + `inspect_progress_overview`
   shape observed after PR #405, so both budget-stop spellings produce the same
   finite product-loop recovery target.
+- PR #407 extended the same recovery classification across non-implementation
+  overview routes, covering the internal `next_route: inspect_progress_overview`
+  case that CLI JSON otherwise projects as another generic resume.
 - Runtime Product Ready is not reached.
 
 ## Queue protocol
