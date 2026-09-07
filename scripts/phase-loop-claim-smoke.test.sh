@@ -169,6 +169,52 @@ cat > "$fake_brownie_invalid_json" <<'SH'
 echo "not json"
 SH
 chmod +x "$fake_brownie_invalid_json"
+fake_brownie_blocked_json="$(mktemp)"
+cat > "$fake_brownie_blocked_json" <<'SH'
+#!/usr/bin/env bash
+set -eu
+cat <<'JSON'
+{
+  "command": "run",
+  "ok": true,
+  "run": {
+    "automation": {
+      "schema_version": 1,
+      "status": "recoverable_unknown_nonterminal",
+      "controller_action": "resume",
+      "stop_class": "recoverable_unknown_nonterminal",
+      "stop_reason": "budget_exhausted",
+      "completed": false,
+      "blocked": true,
+      "retryable": true,
+      "terminal_failure": false,
+      "task_id": "task-blocked",
+      "run_id": "run-blocked",
+      "journey_id": "journey-blocked",
+      "next_action": "inspect_progress_overview",
+      "next_invocation": {"command": "resume", "arguments": [], "params": {"authorize": true}}
+    },
+    "status": "task_executed",
+    "session_id": "session-blocked",
+    "drive_id": "drive-blocked",
+    "task_id": "task-blocked",
+    "run_id": "run-blocked",
+    "journey_id": "journey-blocked",
+    "completion_closure_status": "unknown_nonterminal",
+    "next_action": "inspect_progress_overview",
+    "completed": false,
+    "blocked": true,
+    "retryable": true,
+    "terminal_failure": false,
+    "controller_action": "resume",
+    "stop_class": "recoverable_unknown_nonterminal",
+    "stop_reason": "budget_exhausted",
+    "next_invocation": {"command": "resume", "arguments": [], "params": {"authorize": true}}
+  }
+}
+JSON
+SH
+chmod +x "$fake_brownie_blocked_json"
 
 state_with_claim="$(mktemp -d)"
 prompt_with_claim="$(mktemp)"
@@ -225,6 +271,38 @@ assert queue_mode == 0o600, oct(queue_mode)
 assert progress_mode == 0o600, oct(progress_mode)
 assert prompt_mode == 0o600, oct(prompt_mode)
 assert prompt_meta_mode == 0o600, oct(prompt_meta_mode)
+PY
+
+state_with_blocked="$(mktemp -d)"
+prompt_with_blocked="$(mktemp)"
+todo_with_blocked="$(mktemp)"
+printf 'base prompt\n' > "$prompt_with_blocked"
+printf -- '- [ ] R-09: blocked boundary task\n' > "$todo_with_blocked"
+
+set +e
+PHASE_LOOP_STATE_DIR="$state_with_blocked" \
+PHASE_LOOP_PROMPT="$prompt_with_blocked" \
+PHASE_LOOP_TODO="$todo_with_blocked" \
+BROWNIE_BIN="$fake_brownie_blocked_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+blocked_exit=$?
+set -e
+if [ "$blocked_exit" -ne 77 ]; then
+  echo "expected blocked run-once exit 77, got $blocked_exit" >&2
+  exit 1
+fi
+test -f "$state_with_blocked/stop"
+python3 - "$state_with_blocked/status.json" "$state_with_blocked/todo-claims/current.json" <<'PY'
+import json
+import sys
+
+status = json.load(open(sys.argv[1], encoding="utf-8"))
+claim = json.load(open(sys.argv[2], encoding="utf-8"))
+assert status["status"] == "blocked", status
+assert status["exit_code"] == "77", status
+assert "blocked external-control boundary" in status["detail"], status
+assert claim["status"] == "blocked", claim
 PY
 
 assert_contains "$prompt_file" '## Active TODO Claim'

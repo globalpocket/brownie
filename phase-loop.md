@@ -204,6 +204,12 @@ bounded `product_loop_stop_recovery_target`/`next_invocation` as the finite next
 step. Do not emit another generic unscoped `resume` instruction for that exact
 state.
 
+When the external shell supervisor observes `blocked: true` or
+`recoverable_unknown_nonterminal`, it must mark the active TODO claim blocked
+and stop the supervisor instead of immediately re-running the same generated
+prompt. The finite `next_invocation` is a control boundary, not permission for
+an unscoped run loop.
+
 If fully blocked by external conditions, record the blocker, required owner
 action, and resume condition, then stop normally. Never mark unfinished work as
 complete.
