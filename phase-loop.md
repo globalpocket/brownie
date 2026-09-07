@@ -197,7 +197,7 @@ unresolved Product Ready implementation slice from the order below, or classify
 the concrete blocker and record the required owner/external action before
 exiting normally.
 
-When Runtime/CLI reaches `drive_budget_exhausted` with
+When Runtime/CLI reaches `drive_budget_exhausted` or `budget_exhausted` with
 `unknown_nonterminal + inspect_progress_overview` and no explicit route, return
 a bounded `product_loop_stop_recovery_target`/`next_invocation` as the finite
 next step. Do not emit another generic unscoped `resume` instruction for that
