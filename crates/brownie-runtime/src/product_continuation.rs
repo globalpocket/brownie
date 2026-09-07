@@ -200,9 +200,11 @@ pub(super) fn classify_product_loop_stop_recovery_result(
     if result.stop_reason == "product_continuation_checkpoint_missing" {
         return ProductLoopStopRecoveryClass::RecoverableFault;
     }
-    if result.stop_reason == "drive_budget_exhausted"
-        && result.completion_closure.status
-            == HeadlessRunCompletionClosureStatus::UnknownNonterminal
+    if matches!(
+        result.stop_reason.as_str(),
+        "drive_budget_exhausted" | "budget_exhausted"
+    ) && result.completion_closure.status
+        == HeadlessRunCompletionClosureStatus::UnknownNonterminal
         && result.next_action == "inspect_progress_overview"
         && result.next_route.is_none()
         && result.completion_finalization.is_none()

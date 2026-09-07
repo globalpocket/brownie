@@ -32,6 +32,10 @@ Current synchronization note:
   bounded product-loop stop recovery target instead of repeatedly routing
   `drive_budget_exhausted` + `inspect_progress_overview` back to generic
   resume.
+- PR #406 extended that recovery classification to the live
+  `budget_exhausted` + `unknown_nonterminal` + `inspect_progress_overview`
+  shape observed after PR #405, so both budget-stop spellings produce the same
+  finite product-loop recovery target.
 - Runtime Product Ready is not reached.
 
 ## Queue protocol

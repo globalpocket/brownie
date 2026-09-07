@@ -14564,9 +14564,10 @@ fn headless_run_drive_execution_outcome(result: &HeadlessRunDriveResult) -> Valu
 fn headless_run_drive_is_recoverable_unknown_nonterminal_budget_stop(
     result: &HeadlessRunDriveResult,
 ) -> bool {
-    result.stop_reason == "drive_budget_exhausted"
-        && result.completion_closure.status
-            == HeadlessRunCompletionClosureStatus::UnknownNonterminal
+    matches!(
+        result.stop_reason.as_str(),
+        "drive_budget_exhausted" | "budget_exhausted"
+    ) && result.completion_closure.status == HeadlessRunCompletionClosureStatus::UnknownNonterminal
         && result.next_action == "inspect_progress_overview"
         && result.next_route.is_none()
         && result.completion_finalization.is_none()
@@ -55127,14 +55128,14 @@ modes:
         unknown_budget_checkpoint.result.status = HeadlessContinueOnceStatus::TaskExecuted;
         unknown_budget_checkpoint.result.session_id = "m60.product.unknown.budget".to_string();
         unknown_budget_checkpoint.result.drive_id = "m60.product.unknown.budget.drive".to_string();
-        unknown_budget_checkpoint.result.stop_reason = "drive_budget_exhausted".to_string();
+        unknown_budget_checkpoint.result.stop_reason = "budget_exhausted".to_string();
         unknown_budget_checkpoint.result.drive_fingerprint = fp('a');
         unknown_budget_checkpoint.result.completion_closure.status =
             HeadlessRunCompletionClosureStatus::UnknownNonterminal;
         unknown_budget_checkpoint
             .result
             .completion_closure
-            .stop_reason = "drive_budget_exhausted".to_string();
+            .stop_reason = "budget_exhausted".to_string();
         unknown_budget_checkpoint
             .result
             .completion_closure
@@ -55147,7 +55148,7 @@ modes:
         assert_eq!(
             outcome["next_invocation"]["params"]["product_loop_stop_recovery_target"]
                 ["expected_stop_reason"],
-            "drive_budget_exhausted"
+            "budget_exhausted"
         );
 
         let mut terminalized_checkpoint = recoverable_checkpoint.clone();
