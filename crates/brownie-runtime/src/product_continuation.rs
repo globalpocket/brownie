@@ -193,6 +193,7 @@ pub(super) fn classify_product_loop_stop_recovery_result(
         || result.completion_finalization.is_some()
         || result.accepted_completion.is_some()
         || result.terminal_completion_evidence.is_some()
+        || product_loop_stop_recovery_has_terminal_step_evidence(result)
         || decision_is_terminal
     {
         return ProductLoopStopRecoveryClass::TerminalProductComplete;
@@ -206,7 +207,7 @@ pub(super) fn classify_product_loop_stop_recovery_result(
     ) && result.completion_closure.status
         == HeadlessRunCompletionClosureStatus::UnknownNonterminal
         && result.next_action == "inspect_progress_overview"
-        && result.next_route.is_none()
+        && product_loop_stop_recovery_has_no_explicit_implementation_route(result)
         && result.completion_finalization.is_none()
         && result.accepted_completion.is_none()
         && result.terminal_completion_evidence.is_none()
@@ -217,6 +218,29 @@ pub(super) fn classify_product_loop_stop_recovery_result(
         return ProductLoopStopRecoveryClass::BudgetExhausted;
     }
     ProductLoopStopRecoveryClass::TerminalProductComplete
+}
+
+fn product_loop_stop_recovery_has_no_explicit_implementation_route(
+    result: &HeadlessRunDriveResult,
+) -> bool {
+    result.next_route.as_ref().is_none_or(|route| {
+        matches!(
+            route.kind,
+            HeadlessContinueRouteKind::InspectProgressOverview
+                | HeadlessContinueRouteKind::RefreshProgressOverview
+                | HeadlessContinueRouteKind::NoEligibleTask
+        )
+    })
+}
+
+fn product_loop_stop_recovery_has_terminal_step_evidence(result: &HeadlessRunDriveResult) -> bool {
+    result.advances.iter().any(|advance| {
+        advance.terminal_completion_evidence.is_some()
+            || advance
+                .steps
+                .iter()
+                .any(|step| step.terminal_completion_evidence.is_some())
+    })
 }
 
 pub(super) fn product_loop_stop_recovery_source_progress_fingerprint(

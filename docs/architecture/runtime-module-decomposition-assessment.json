@@ -31,11 +31,11 @@
   "metrics": {
     "files": {
       "crates/brownie-runtime/src/lib.rs": {
-        "line_count": 66801,
+        "line_count": 66837,
         "public_items": 3,
-        "private_items": 494,
-        "production_line_count": 14673,
-        "test_line_count": 52128,
+        "private_items": 496,
+        "production_line_count": 14697,
+        "test_line_count": 52140,
         "state_mutation_mentions": 306,
         "durable_write_mentions": 226,
         "permission_decision_mentions": 184,
@@ -187,17 +187,17 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/product_continuation.rs": {
-        "line_count": 2787,
+        "line_count": 2811,
         "public_items": 50,
-        "private_items": 0,
+        "private_items": 2,
         "state_mutation_mentions": 3,
         "durable_write_mentions": 3,
         "permission_decision_mentions": 0,
-        "recovery_mentions": 257,
+        "recovery_mentions": 261,
         "rpc_dispatch_mentions": 0,
         "approval_mentions": 0,
         "mcp_mentions": 0,
-        "product_dod_mentions": 516,
+        "product_dod_mentions": 520,
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/proposal_apply.rs": {

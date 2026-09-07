@@ -14569,10 +14569,34 @@ fn headless_run_drive_is_recoverable_unknown_nonterminal_budget_stop(
         "drive_budget_exhausted" | "budget_exhausted"
     ) && result.completion_closure.status == HeadlessRunCompletionClosureStatus::UnknownNonterminal
         && result.next_action == "inspect_progress_overview"
-        && result.next_route.is_none()
+        && headless_run_drive_has_no_explicit_implementation_route(result)
         && result.completion_finalization.is_none()
         && result.accepted_completion.is_none()
         && result.terminal_completion_evidence.is_none()
+        && !headless_run_drive_has_terminal_step_evidence(result)
+}
+
+fn headless_run_drive_has_no_explicit_implementation_route(
+    result: &HeadlessRunDriveResult,
+) -> bool {
+    result.next_route.as_ref().is_none_or(|route| {
+        matches!(
+            route.kind,
+            HeadlessContinueRouteKind::InspectProgressOverview
+                | HeadlessContinueRouteKind::RefreshProgressOverview
+                | HeadlessContinueRouteKind::NoEligibleTask
+        )
+    })
+}
+
+fn headless_run_drive_has_terminal_step_evidence(result: &HeadlessRunDriveResult) -> bool {
+    result.advances.iter().any(|advance| {
+        advance.terminal_completion_evidence.is_some()
+            || advance
+                .steps
+                .iter()
+                .any(|step| step.terminal_completion_evidence.is_some())
+    })
 }
 
 fn headless_run_drive_product_loop_stop_recovery_execution_outcome(
@@ -55140,7 +55164,19 @@ modes:
             .result
             .completion_closure
             .route_candidate_count = 0;
-        unknown_budget_checkpoint.result.next_route = None;
+        unknown_budget_checkpoint.result.next_route = Some(HeadlessContinueRoute {
+            kind: HeadlessContinueRouteKind::InspectProgressOverview,
+            reason: "Only progress overview inspection remains.".to_string(),
+            task_id: None,
+            run_id: None,
+            proposal_id: None,
+            apply_id: None,
+            failure_fingerprint: None,
+            apply_fingerprint: None,
+            progress_fingerprint: Some(progress_fingerprint.clone()),
+            aggregate_sequence: Some(aggregate_sequence),
+            next_action: "inspect_progress_overview".to_string(),
+        });
         unknown_budget_checkpoint.result.next_action = "inspect_progress_overview".to_string();
         let outcome = headless_run_drive_execution_outcome(&unknown_budget_checkpoint.result);
         assert_eq!(outcome["class"], "recoverable_unknown_nonterminal");
