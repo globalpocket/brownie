@@ -30,9 +30,9 @@ const RUNTIME_OBJECTIVE_TIMEOUT_MS_ENV: &str = "BROWNIE_RUNTIME_OBJECTIVE_TIMEOU
 const CLI_RUN_MODE_ID_ENV: &str = "BROWNIE_CLI_RUN_MODE_ID";
 const DEFAULT_READ_ONLY_TIMEOUT_MS: u64 = 2_000;
 const DEFAULT_OBJECTIVE_EXECUTION_TIMEOUT_MS: u64 = 120_000;
-const MAX_RESPONSE_BYTES: usize = 16 * 1024;
+const MAX_RESPONSE_BYTES: usize = 256 * 1024;
 const MAX_STATUS_FIELD_CHARS: usize = 128;
-const MAX_RENDERED_OUTPUT_CHARS: usize = 4 * 1024;
+const MAX_RENDERED_OUTPUT_CHARS: usize = 16 * 1024;
 const MAX_TEXT_FIELD_CHARS: usize = 256;
 const MAX_TASK_LIST_ROWS: usize = 10;
 const MAX_TASK_LIST_GROUP_ROWS: usize = 5;
@@ -234,24 +234,61 @@ impl RuntimeClient {
             )
             .map_err(|error| error.with_run_admission_unknown(recovery_identity))?;
         let result = if is_headless_run_drive_result(&result) {
-            validate_headless_run_drive_result(&result)?;
-            let result = self.follow_parent_join_routes_if_available(result)?;
-            let result = self.follow_objective_proposal_preflight_route_if_available(result)?;
-            let result = self.follow_objective_proposal_apply_route_if_available(result)?;
-            let result = self.follow_objective_apply_verification_route_if_available(result)?;
-            let result = self.follow_objective_completion_acceptance_route_if_available(result)?;
-            let result = self.follow_parent_join_routes_if_available(result)?;
-            let result = self.close_and_finalize_objective_completion_if_available(result)?;
-            self.accept_and_finalize_completed_run_if_available(result)?
+            validate_headless_run_drive_result(&result)
+                .map_err(|error| debug_invalid_response("run_validate_drive", error))?;
+            let result = self
+                .follow_parent_join_routes_if_available(result)
+                .map_err(|error| debug_invalid_response("run_follow_parent_join_initial", error))?;
+            let result = self
+                .follow_objective_proposal_preflight_route_if_available(result)
+                .map_err(|error| {
+                    debug_invalid_response("run_follow_objective_proposal_preflight", error)
+                })?;
+            let result = self
+                .follow_objective_proposal_apply_route_if_available(result)
+                .map_err(|error| {
+                    debug_invalid_response("run_follow_objective_proposal_apply", error)
+                })?;
+            let result = self
+                .follow_objective_apply_verification_route_if_available(result)
+                .map_err(|error| {
+                    debug_invalid_response("run_follow_objective_apply_verification", error)
+                })?;
+            let result = self
+                .follow_objective_completion_acceptance_route_if_available(result)
+                .map_err(|error| {
+                    debug_invalid_response("run_follow_objective_completion_acceptance", error)
+                })?;
+            let result = self
+                .follow_parent_join_routes_if_available(result)
+                .map_err(|error| debug_invalid_response("run_follow_parent_join_final", error))?;
+            let result = self
+                .close_and_finalize_objective_completion_if_available(result)
+                .map_err(|error| {
+                    debug_invalid_response("run_close_and_finalize_objective_completion", error)
+                })?;
+            self.accept_and_finalize_completed_run_if_available(result)
+                .map_err(|error| {
+                    debug_invalid_response("run_accept_and_finalize_completed", error)
+                })?
         } else {
-            validate_headless_run_advance_result(&result)?;
+            validate_headless_run_advance_result(&result)
+                .map_err(|error| debug_invalid_response("run_validate_advance", error))?;
             result
         };
         if json_output {
-            return json_result("run", "run", cli_run_or_advance_payload(&result)?);
+            return json_result(
+                "run",
+                "run",
+                cli_run_or_advance_payload(&result)
+                    .map_err(|error| debug_invalid_response("run_payload", error))?,
+            );
         }
 
-        bounded_output(render_run_or_advance_result(&result)?)
+        bounded_output(
+            render_run_or_advance_result(&result)
+                .map_err(|error| debug_invalid_response("run_render", error))?,
+        )
     }
 
     fn runtime_resume(
@@ -452,6 +489,7 @@ impl RuntimeClient {
             serde_json::to_string(&request).map_err(|_| RuntimeClientError::CommunicationFailed)?;
         let response_line = self.send_one_request(&request_line, request_class)?;
         parse_runtime_value_response(&response_line, &request_id)
+            .map_err(|error| debug_invalid_response("parse_runtime_value_response", error))
     }
 
     fn send_one_request(
@@ -498,9 +536,19 @@ impl RuntimeClient {
                 }
                 let _ = child.wait();
                 if buffer.is_empty() || buffer.len() > MAX_RESPONSE_BYTES {
+                    debug_invalid_response_note(
+                        "send_one_request",
+                        "runtime response line is empty or exceeds MAX_RESPONSE_BYTES",
+                    );
                     return Err(RuntimeClientError::InvalidResponse);
                 }
-                String::from_utf8(buffer).map_err(|_| RuntimeClientError::InvalidResponse)?
+                String::from_utf8(buffer).map_err(|_| {
+                    debug_invalid_response_note(
+                        "send_one_request",
+                        "runtime response line is not valid utf-8",
+                    );
+                    RuntimeClientError::InvalidResponse
+                })?
             }
             Ok(Err(_)) => {
                 let _ = child.wait();
@@ -521,7 +569,13 @@ impl RuntimeClient {
             .lines()
             .find(|line| !line.trim().is_empty())
             .map(|line| line.trim().to_string())
-            .ok_or(RuntimeClientError::InvalidResponse)
+            .ok_or_else(|| {
+                debug_invalid_response_note(
+                    "send_one_request",
+                    "runtime response has no JSON line",
+                );
+                RuntimeClientError::InvalidResponse
+            })
     }
 
     fn resolve_runtime_path(&self) -> PathBuf {
@@ -791,11 +845,20 @@ fn parse_runtime_value_response(
     line: &str,
     expected_id: &Value,
 ) -> Result<Value, RuntimeClientError> {
-    let raw: Value = serde_json::from_str(line).map_err(|_| RuntimeClientError::InvalidResponse)?;
-    let response: JsonRpcResponse<Value> =
-        serde_json::from_value(raw).map_err(|_| RuntimeClientError::InvalidResponse)?;
+    let raw: Value = serde_json::from_str(line).map_err(|_| {
+        debug_invalid_response_note("parse_runtime_value_response", "invalid json");
+        RuntimeClientError::InvalidResponse
+    })?;
+    let response: JsonRpcResponse<Value> = serde_json::from_value(raw).map_err(|_| {
+        debug_invalid_response_note("parse_runtime_value_response", "invalid json-rpc envelope");
+        RuntimeClientError::InvalidResponse
+    })?;
 
     if response.jsonrpc != JSONRPC_VERSION || response.id != *expected_id {
+        debug_invalid_response_note(
+            "parse_runtime_value_response",
+            "json-rpc version or id mismatch",
+        );
         return Err(RuntimeClientError::InvalidResponse);
     }
 
@@ -5040,6 +5103,22 @@ mod tests {
         let rendered = json_result("run", "run", payload).unwrap();
         assert!(rendered.contains(r#""command":"run""#));
         assert!(rendered.len() < MAX_RENDERED_OUTPUT_CHARS);
+    }
+
+    #[test]
+    fn runtime_transport_response_budget_allows_large_prompt_derived_metadata() {
+        let mut response = vec![b'a'; 64 * 1024];
+        response.push(b'\n');
+        let mut cursor = std::io::Cursor::new(response);
+        let line = read_bounded_response_line(&mut cursor).unwrap();
+        assert_eq!(line.len(), (64 * 1024) + 1);
+        assert!(line.len() <= MAX_RESPONSE_BYTES);
+    }
+
+    #[test]
+    fn cli_json_output_budget_allows_structured_recovery_targets() {
+        let payload = format!("{}\n", "x".repeat(8 * 1024));
+        assert!(bounded_output(payload).is_ok());
     }
 
     #[test]
