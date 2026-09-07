@@ -1234,6 +1234,13 @@ sys.exit(0 if payload.get("blocked") is True else 1)
 PY
     then
       write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      : > "$STOP_FILE"
+      chmod 600 "$STOP_FILE"
+      sync_parent_dir "$STATE_DIR"
+      detail="Brownie run reached a blocked external-control boundary; stopping phase-loop to avoid repeating the same invocation. stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+      write_status "blocked" "$detail" "$run_id" "77" "${CONSECUTIVE_FAILURES:-0}"
+      printf '%s run=%s exit=%s blocked_boundary=true progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$exit_code" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+      return 77
     fi
 
     case "$progress_classification" in
