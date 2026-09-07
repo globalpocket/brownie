@@ -233,20 +233,25 @@ impl RuntimeClient {
                 RuntimeRequestClass::ObjectiveExecution,
             )
             .map_err(|error| error.with_run_admission_unknown(recovery_identity))?;
-        validate_headless_run_drive_result(&result)?;
-        let result = self.follow_parent_join_routes_if_available(result)?;
-        let result = self.follow_objective_proposal_preflight_route_if_available(result)?;
-        let result = self.follow_objective_proposal_apply_route_if_available(result)?;
-        let result = self.follow_objective_apply_verification_route_if_available(result)?;
-        let result = self.follow_objective_completion_acceptance_route_if_available(result)?;
-        let result = self.follow_parent_join_routes_if_available(result)?;
-        let result = self.close_and_finalize_objective_completion_if_available(result)?;
-        let result = self.accept_and_finalize_completed_run_if_available(result)?;
+        let result = if is_headless_run_drive_result(&result) {
+            validate_headless_run_drive_result(&result)?;
+            let result = self.follow_parent_join_routes_if_available(result)?;
+            let result = self.follow_objective_proposal_preflight_route_if_available(result)?;
+            let result = self.follow_objective_proposal_apply_route_if_available(result)?;
+            let result = self.follow_objective_apply_verification_route_if_available(result)?;
+            let result = self.follow_objective_completion_acceptance_route_if_available(result)?;
+            let result = self.follow_parent_join_routes_if_available(result)?;
+            let result = self.close_and_finalize_objective_completion_if_available(result)?;
+            self.accept_and_finalize_completed_run_if_available(result)?
+        } else {
+            validate_headless_run_advance_result(&result)?;
+            result
+        };
         if json_output {
-            return json_result("run", "run", cli_run_payload(&result)?);
+            return json_result("run", "run", cli_run_or_advance_payload(&result)?);
         }
 
-        bounded_output(render_run_result(&result)?)
+        bounded_output(render_run_or_advance_result(&result)?)
     }
 
     fn runtime_resume(
@@ -1416,6 +1421,13 @@ fn validate_headless_run_drive_result(result: &Value) -> Result<(), RuntimeClien
     Ok(())
 }
 
+fn is_headless_run_drive_result(result: &Value) -> bool {
+    result
+        .as_object()
+        .map(|object| object.contains_key("drive_id"))
+        .unwrap_or(false)
+}
+
 fn validate_headless_run_advance_result(result: &Value) -> Result<(), RuntimeClientError> {
     let object = result
         .as_object()
@@ -2011,6 +2023,14 @@ fn render_run_result(result: &Value) -> Result<String, RuntimeClientError> {
     ))
 }
 
+fn render_run_or_advance_result(result: &Value) -> Result<String, RuntimeClientError> {
+    if is_headless_run_drive_result(result) {
+        render_run_result(result)
+    } else {
+        render_resume_result(result)
+    }
+}
+
 fn cli_run_payload(result: &Value) -> Result<Value, RuntimeClientError> {
     let object = result
         .as_object()
@@ -2174,6 +2194,14 @@ fn cli_run_payload(result: &Value) -> Result<Value, RuntimeClientError> {
     }
     add_external_loop_contract(&mut payload)?;
     Ok(Value::Object(payload))
+}
+
+fn cli_run_or_advance_payload(result: &Value) -> Result<Value, RuntimeClientError> {
+    if is_headless_run_drive_result(result) {
+        cli_run_payload(result)
+    } else {
+        cli_resume_payload(result)
+    }
 }
 
 fn render_resume_result(result: &Value) -> Result<String, RuntimeClientError> {
@@ -4994,6 +5022,23 @@ mod tests {
         assert_eq!(payload["selected_task_id"], "task-new");
         assert_eq!(payload["headless_session_id"], "cli.run.new");
         let rendered = json_result("resume", "resume", payload).unwrap();
+        assert!(rendered.len() < MAX_RENDERED_OUTPUT_CHARS);
+    }
+
+    #[test]
+    fn cli_run_accepts_headless_run_advance_result_projection() {
+        let result: Value = serde_json::from_str(
+            r#"{"status":"task_executed","session_id":"cli.run.active","advance_id":"cli.run.active.drive.1","session_sequence":1,"replayed":false,"start_progress":{"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7},"post_progress":{"progress_fingerprint":"sha256:9999999999999999999999999999999999999999999999999999999999999999","aggregate_sequence":8},"max_steps":1,"step_count":1,"executed_count":1,"replayed_count":0,"stop_reason":"budget_exhausted","checkpoint_fingerprint":"sha256:8888888888888888888888888888888888888888888888888888888888888888","terminal_completion_evidence":null,"next_route":{"kind":"no_eligible_task","reason":"Selected task is terminal and no eligible continuation task remains.","progress_fingerprint":"sha256:9999999999999999999999999999999999999999999999999999999999999999","aggregate_sequence":8,"next_action":"inspect_progress_overview"},"steps":[{"step_index":1,"status":"task_executed","decision_id":"decision-new","continuation_id":"run.cli.run.active.1","selected_task_id":"task-new","selected_run_id":"run-new","candidate_count":1,"current_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","current_aggregate_sequence":7,"post_progress_fingerprint":"sha256:9999999999999999999999999999999999999999999999999999999999999999","post_aggregate_sequence":8,"replayed":false,"next_route":{"kind":"no_eligible_task","reason":"Selected task is terminal and no eligible continuation task remains.","progress_fingerprint":"sha256:9999999999999999999999999999999999999999999999999999999999999999","aggregate_sequence":8,"next_action":"inspect_progress_overview"},"next_action":"inspect_progress_overview"}],"next_action":"inspect_progress_overview","execution_outcome":{"schema_version":1,"outcome_scope":"objective","class":"continuation_required","status":"continuation_required","controller_action":"resume","continuation_required":true,"completed":false,"blocked":false,"retryable":true,"terminal_failure":false,"stop_reason":"budget_exhausted","next_invocation":{"command":"resume","arguments":[]}}}"#,
+        )
+        .unwrap();
+        validate_headless_run_advance_result(&result).unwrap();
+        let payload = cli_run_or_advance_payload(&result).unwrap();
+        assert_eq!(payload["selected_task_id"], "task-new");
+        assert_eq!(payload["headless_session_id"], "cli.run.active");
+        assert_eq!(payload["stop_reason"], "budget_exhausted");
+        assert_eq!(payload["next_invocation"]["command"], "resume");
+        let rendered = json_result("run", "run", payload).unwrap();
+        assert!(rendered.contains(r#""command":"run""#));
         assert!(rendered.len() < MAX_RENDERED_OUTPUT_CHARS);
     }
 
