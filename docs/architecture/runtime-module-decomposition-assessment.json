@@ -61,17 +61,17 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/controlled_tool_execution.rs": {
-        "line_count": 5267,
+        "line_count": 5348,
         "public_items": 71,
-        "private_items": 59,
+        "private_items": 60,
         "state_mutation_mentions": 38,
         "durable_write_mentions": 38,
         "permission_decision_mentions": 50,
-        "recovery_mentions": 75,
+        "recovery_mentions": 81,
         "rpc_dispatch_mentions": 0,
-        "approval_mentions": 214,
-        "mcp_mentions": 355,
-        "product_dod_mentions": 8,
+        "approval_mentions": 228,
+        "mcp_mentions": 364,
+        "product_dod_mentions": 11,
         "diagnostics_mentions": 14
       },
       "crates/brownie-runtime/src/headless_continue.rs": {

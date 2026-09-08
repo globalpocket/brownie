@@ -1240,7 +1240,6 @@ fn try_acquire_mcp_tool_approval_claim_lock(
         .read(true)
         .write(true)
         .create(true)
-        .truncate(true)
         .open(&lock_path)
     {
         Ok(mut file) => {
@@ -5265,3 +5264,85 @@ pub(super) fn append_tool_plan_events(
 }
 
 pub(super) const DEFAULT_MODE_ID_FOR_RUN: &str = "orchestrator";
+
+#[cfg(test)]
+mod mcp_approval_lock_tests {
+    use super::*;
+
+    fn test_task_record() -> TaskRecord {
+        TaskRecord {
+            task_id: "task_lock_regression".to_string(),
+            run_id: "run_lock_regression".to_string(),
+            goal: "prove mcp approval lock ownership".to_string(),
+            mode_id: Some("reviewer".to_string()),
+            status: TaskStatus::Running,
+            parent_task_id: None,
+            parent_run_id: None,
+            source_candidate_id: None,
+            source_handoff_envelope_id: None,
+            source_handoff_envelope_fingerprint: None,
+            source_intent_summary: None,
+            recovery_cycle_provenance: None,
+            verification_recovery_provenance: None,
+            patch_apply_recovery_provenance: None,
+            verification_recovery_retry_provenance: None,
+            llm_provider_failure_retry_provenance: None,
+            product_continuation_provenance: None,
+            product_objective_continuation_provenance: None,
+            product_loop_stop_recovery_provenance: None,
+            headless_run_recovery_identity: None,
+            runtime_deadline: None,
+            created_at: "2026-09-09T00:00:00Z".to_string(),
+            updated_at: "2026-09-09T00:00:00Z".to_string(),
+        }
+    }
+
+    fn approval_binding() -> Value {
+        json!({
+            "approval_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        })
+    }
+
+    #[test]
+    fn mcp_approval_lock_write_happens_only_after_lock_ownership() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let store = BrownieStore::new(temp.path());
+        let record = test_task_record();
+        let binding = approval_binding();
+        let lock_name = binding["approval_fingerprint"]
+            .as_str()
+            .expect("approval fingerprint")
+            .strip_prefix("sha256:")
+            .expect("sha prefix");
+        let lock_path =
+            mcp_tool_approval_claim_lock_path(&store.tasks().run_dir(&record.run_id), lock_name);
+        std::fs::create_dir_all(lock_path.parent().expect("lock parent")).expect("lock parent");
+        std::fs::write(&lock_path, "live-lock-owned-by-other-runtime\n").expect("seed lock");
+
+        let owned_lock =
+            acquire_mcp_tool_approval_claim_lock(&store, &record, &binding).expect("owned lock");
+        let owned_content = std::fs::read_to_string(&lock_path).expect("owned lock content");
+        assert!(owned_content.starts_with("brownie-mcp-approval-claim-lock-v2:"));
+
+        let denied = try_acquire_mcp_tool_approval_claim_lock(&store, &record, &binding)
+            .expect("competing lock attempt");
+        assert!(
+            denied.is_none(),
+            "competing acquisition must not steal lock"
+        );
+        let content_after_denied =
+            std::fs::read_to_string(&lock_path).expect("content after denied lock attempt");
+        assert_eq!(
+            content_after_denied, owned_content,
+            "failed competing acquisition must not truncate or rewrite live lock content before ownership"
+        );
+
+        drop(owned_lock);
+        let retried =
+            acquire_mcp_tool_approval_claim_lock(&store, &record, &binding).expect("retried lock");
+        let content_after_retry =
+            std::fs::read_to_string(&lock_path).expect("content after retry lock");
+        assert!(content_after_retry.starts_with("brownie-mcp-approval-claim-lock-v2:"));
+        drop(retried);
+    }
+}
