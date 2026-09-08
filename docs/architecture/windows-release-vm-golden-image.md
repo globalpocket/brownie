@@ -39,7 +39,7 @@ pnpm release:vm-image -- --action start --target windows
 ```
 
 The snapshot command writes ignored local image state under
-`.brownie/vm-images/windows/brownie-windows-arm64-golden/` by default. It refuses
+`.brownie/private/vm-images/windows/brownie-windows-arm64-golden/` by default. It refuses
 to snapshot while QEMU is still running so the `qcow2`, EDK2 variable store, and
 TPM state remain consistent.
 
@@ -101,7 +101,7 @@ pnpm release:windows-vm-create -- --iso /path/to/Win11.iso --display vnc --launc
 The default local VNC password is `brownie`; override it with
 `--vnc-password` if needed. The VNC listener is bound to `127.0.0.1` by default.
 The launcher also creates a QEMU monitor socket at
-`.brownie/vms/brownie-windows/qemu-monitor.sock`, which lets automation send
+`.brownie/private/vms/brownie-windows/qemu-monitor.sock`, which lets automation send
 bounded keys such as `sendkey ret` during installer boot.
 Use `--no-reboot` only for troubleshooting boot loops; normal installation
 should allow Windows setup to reboot the VM.
@@ -221,6 +221,6 @@ pnpm guard:supply-chain-artifact-evidence
 ```
 
 Restore itself is intentionally not automatic because it replaces VM disk state.
-Stop QEMU first, copy the selected `.brownie/vm-images/windows/<snapshot>/`
-contents back to `.brownie/vms/brownie-windows-arm64/`, start the VM, and rerun
+Stop QEMU first, copy the selected `.brownie/private/vm-images/windows/<snapshot>/`
+contents back to `.brownie/private/vms/brownie-windows-arm64/`, start the VM, and rerun
 the commands above.

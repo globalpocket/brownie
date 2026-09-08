@@ -141,6 +141,18 @@ export const requiredReleaseGateCommands = [
     args: ['--workspace-root', 'guard:owner-governance-evidence:test']
   },
   {
+    id: 'phase_loop_actor_separation_guard',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:phase-loop-actor-separation']
+  },
+  {
+    id: 'phase_loop_actor_separation_guard_test',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:phase-loop-actor-separation:test']
+  },
+  {
     id: 'runtime_release_readiness_guard',
     category: 'brownie_release_guard',
     command: 'pnpm',

@@ -349,6 +349,14 @@
         "command": "pnpm --workspace-root guard:owner-governance-evidence:test"
       },
       {
+        "id": "phase_loop_actor_separation_guard",
+        "command": "pnpm --workspace-root guard:phase-loop-actor-separation"
+      },
+      {
+        "id": "phase_loop_actor_separation_guard_test",
+        "command": "pnpm --workspace-root guard:phase-loop-actor-separation:test"
+      },
+      {
         "id": "runtime_release_readiness_guard",
         "command": "pnpm --workspace-root guard:runtime-release-readiness"
       },

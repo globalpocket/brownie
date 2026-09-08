@@ -8,7 +8,7 @@ extensions/*/*.vsix
 .pnpm-store/
 
 # Brownie runtime state
-.brownie/
+.brownie/private/
 .brownie-archive/
 .brownie-phase-loop/
 phase-loop.env
