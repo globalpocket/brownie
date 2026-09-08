@@ -48,6 +48,7 @@
     "release:supply-chain-artifact-evidence": "node scripts/release-supply-chain-artifact-evidence.mjs",
     "release:integrity-verify": "node scripts/release-integrity-verify.mjs",
     "release:owner-governance-evidence": "node scripts/release-owner-governance-evidence.mjs",
+    "release:owner-governance-evidence:test": "node --test scripts/release-owner-governance-evidence.test.mjs",
     "guard:local-release-targets": "node scripts/guard-local-release-targets.mjs",
     "guard:owner-governance-evidence": "node scripts/guard-owner-governance-evidence.mjs",
     "guard:owner-governance-evidence:test": "node --test scripts/guard-owner-governance-evidence.test.mjs",

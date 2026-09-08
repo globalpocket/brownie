@@ -22,6 +22,17 @@ const requiredSections = [
   'oss_license_publish_posture'
 ];
 
+const gitCommitPattern = /^[a-f0-9]{40}$/;
+
+const requiredReviewIds = [
+  'release_workflow',
+  'permission_model',
+  'ledger_contract',
+  'mode_pack_trust_boundary',
+  'signing_provenance',
+  'release_ready_judgment'
+];
+
 function isMainModule() {
   return process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 }
@@ -148,6 +159,61 @@ function ghApiJson(repoRoot, repository, endpoint) {
   } catch {
     return { available: true, authorized: true, status: 'github_api_malformed_json', json: null };
   }
+}
+
+function reviewMatchesStaticProvenance(entry, review) {
+  return (
+    review &&
+    (String(review.id) === String(entry.review_id) || review.node_id === entry.review_id) &&
+    review.state === 'APPROVED' &&
+    review.user?.login === 'globalpocket' &&
+    review.commit_id === entry.commit_sha &&
+    typeof review.submitted_at === 'string' &&
+    review.submitted_at === entry.submitted_at
+  );
+}
+
+function verifyGithubReviewProvenance(repoRoot, repository, entry) {
+  if (!repository) {
+    return { verified: false, status: 'repository_unknown' };
+  }
+  if (!entry || typeof entry !== 'object') {
+    return { verified: false, status: 'malformed_static_provenance' };
+  }
+  const staticFieldsValid =
+    entry.state === 'APPROVED' &&
+    entry.reviewer === 'globalpocket' &&
+    entry.pull_request_author === 'brownie-agent' &&
+    entry.reviewer !== entry.pull_request_author &&
+    Number.isInteger(entry.pull_request_number) &&
+    entry.pull_request_number > 0 &&
+    typeof entry.review_id === 'string' &&
+    entry.review_id.trim().length > 0 &&
+    gitCommitPattern.test(entry.commit_sha ?? '') &&
+    typeof entry.submitted_at === 'string' &&
+    entry.submitted_at.trim().length > 0 &&
+    requiredReviewIds.includes(entry.required_review_id);
+  if (!staticFieldsValid) {
+    return { verified: false, status: 'malformed_static_provenance' };
+  }
+
+  const pull = ghApiJson(repoRoot, repository, `repos/${repository}/pulls/${entry.pull_request_number}`);
+  if (pull.status !== 'satisfied') {
+    return { verified: false, status: pull.status };
+  }
+  if (pull.json?.user?.login !== 'brownie-agent') {
+    return { verified: false, status: 'pull_request_author_mismatch' };
+  }
+
+  const reviews = ghApiJson(repoRoot, repository, `repos/${repository}/pulls/${entry.pull_request_number}/reviews`);
+  if (reviews.status !== 'satisfied') {
+    return { verified: false, status: reviews.status };
+  }
+  const matchingReview = (Array.isArray(reviews.json) ? reviews.json : []).find((review) => reviewMatchesStaticProvenance(entry, review));
+  if (!matchingReview) {
+    return { verified: false, status: 'github_review_not_verified' };
+  }
+  return { verified: true, status: 'satisfied' };
 }
 
 function buildBranchProtectionSection(repoRoot, repository) {
@@ -326,21 +392,33 @@ function buildIntegrityAuthoritySection(repoRoot) {
   };
 }
 
-function buildIndependentReviewsSection(repoRoot) {
+export function buildIndependentReviewsSection(repoRoot, options = {}) {
   const review = readJsonIfExists(repoRoot, defaultIndependentReviewPath);
   const evidence = ownerFileEvidence(repoRoot, defaultIndependentReviewPath);
-  const requiredReviewIds = [
-    'release_workflow',
-    'permission_model',
-    'ledger_contract',
-    'mode_pack_trust_boundary',
-    'signing_provenance',
-    'release_ready_judgment'
-  ];
+  const repository = options.repository ?? parseRemoteRepository(gitValue(repoRoot, ['config', '--get', 'remote.origin.url'])) ?? 'globalpocket/brownie';
+  const verifyReviewProvenance = options.verifyReviewProvenance ?? ((entry) => verifyGithubReviewProvenance(repoRoot, repository, entry));
   const reviews = Array.isArray(review?.reviews) ? review.reviews : [];
+  const provenanceEntries = Array.isArray(review?.github_review_provenance) ? review.github_review_provenance : [];
+  const verificationResults = provenanceEntries.map((entry) => ({ entry, result: verifyReviewProvenance(entry) }));
+  const provenance = verificationResults.filter(({ result }) => result.verified === true).map(({ entry }) => entry);
+  const verificationFailures = verificationResults
+    .map(({ entry, result }) => ({
+      required_review_id: typeof entry?.required_review_id === 'string' ? entry.required_review_id : null,
+      pull_request_number: Number.isInteger(entry?.pull_request_number) ? entry.pull_request_number : null,
+      review_id: typeof entry?.review_id === 'string' ? entry.review_id : null,
+      verification_status: result.status
+    }))
+    .filter((entry) => entry.verification_status !== 'satisfied');
+  const provenanceIds = new Set(provenance.map((entry) => entry.required_review_id));
   const approvedIds = new Set(
     reviews
-      .filter((entry) => entry?.status === 'approved' && entry?.self_approval !== true && typeof entry?.reviewer === 'string' && entry.reviewer.trim())
+      .filter((entry) =>
+        entry?.status === 'approved' &&
+        entry?.self_approval !== true &&
+        typeof entry?.reviewer === 'string' &&
+        entry.reviewer.trim() &&
+        provenanceIds.has(entry.id)
+      )
       .map((entry) => entry.id)
   );
   const missing = requiredReviewIds.filter((id) => !approvedIds.has(id));
@@ -350,7 +428,9 @@ function buildIndependentReviewsSection(repoRoot) {
     owner_evidence: evidence,
     required_review_ids: requiredReviewIds,
     approved_review_count: approvedIds.size,
-    missing_review_ids: missing
+    missing_review_ids: missing,
+    github_review_provenance: provenance,
+    github_review_verification_failures: verificationFailures
   };
 }
 
@@ -387,7 +467,7 @@ export function buildOwnerGovernanceEvidence(options = {}) {
     protected_tag_policy: buildProtectedTagPolicySection(repoRoot, repository),
     remote_ci_workflow_provenance: buildRemoteCiWorkflowProvenanceSection(repoRoot, repository, options.env ?? process.env),
     signature_or_integrity_authority: buildIntegrityAuthoritySection(repoRoot),
-    independent_reviews: buildIndependentReviewsSection(repoRoot),
+    independent_reviews: buildIndependentReviewsSection(repoRoot, { repository, verifyReviewProvenance: options.verifyReviewProvenance }),
     oss_license_publish_posture: buildOssLicensePublishPostureSection(repoRoot)
   };
   const failClosedReasons = requiredSections

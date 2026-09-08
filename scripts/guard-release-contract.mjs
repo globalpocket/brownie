@@ -152,6 +152,7 @@ function validateRuntimeReleaseContract(contract, options = {}) {
   requireValue(packageJson.scripts?.['release:supply-chain-artifact-evidence'] === 'node scripts/release-supply-chain-artifact-evidence.mjs', errors, `${defaultPackagePath} must define release:supply-chain-artifact-evidence.`);
   requireValue(packageJson.scripts?.['release:integrity-verify'] === 'node scripts/release-integrity-verify.mjs', errors, `${defaultPackagePath} must define release:integrity-verify.`);
   requireValue(packageJson.scripts?.['release:owner-governance-evidence'] === 'node scripts/release-owner-governance-evidence.mjs', errors, `${defaultPackagePath} must define release:owner-governance-evidence.`);
+  requireValue(packageJson.scripts?.['release:owner-governance-evidence:test'] === 'node --test scripts/release-owner-governance-evidence.test.mjs', errors, `${defaultPackagePath} must define release:owner-governance-evidence:test.`);
   requireValue(packageJson.scripts?.['guard:local-release-targets'] === 'node scripts/guard-local-release-targets.mjs', errors, `${defaultPackagePath} must define guard:local-release-targets.`);
   requireValue(packageJson.scripts?.['guard:release-contract'] === 'node scripts/guard-release-contract.mjs', errors, `${defaultPackagePath} must define guard:release-contract.`);
   requireValue(packageJson.scripts?.['guard:release-contract:test'] === 'node --test scripts/guard-release-contract.test.mjs', errors, `${defaultPackagePath} must define guard:release-contract:test.`);
@@ -168,6 +169,7 @@ function validateRuntimeReleaseContract(contract, options = {}) {
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:supply-chain-artifact-evidence:test'), errors, `${defaultVsixPackagePath} check must invoke guard:supply-chain-artifact-evidence:test.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:owner-governance-evidence'), errors, `${defaultVsixPackagePath} check must invoke guard:owner-governance-evidence.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:owner-governance-evidence:test'), errors, `${defaultVsixPackagePath} check must invoke guard:owner-governance-evidence:test.`);
+  requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root release:owner-governance-evidence:test'), errors, `${defaultVsixPackagePath} check must invoke release:owner-governance-evidence:test.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root release:dependency-security-license-audit:test'), errors, `${defaultVsixPackagePath} check must invoke release:dependency-security-license-audit:test.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:dependency-security-license-audit'), errors, `${defaultVsixPackagePath} check must invoke guard:dependency-security-license-audit.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:dependency-security-license-audit:test'), errors, `${defaultVsixPackagePath} check must invoke guard:dependency-security-license-audit:test.`);
