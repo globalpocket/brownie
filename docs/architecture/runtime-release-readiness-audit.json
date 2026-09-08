@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
-  "phase": "RRP-8.6",
-  "phase_title": "Existing CI Release Gate Dry-Run Binding",
+  "phase": "RRP-8.7",
+  "phase_title": "Owner Governance Evidence Gate",
   "repository": "globalpocket/brownie",
   "audited_main_commit": "26de9a83f2da77377f58f031e3b3c55b598b654c",
   "runtime_release_ready": false,
@@ -12,20 +12,21 @@
   "release_engineering_contract": {
     "contract_path": "docs/architecture/runtime-release-contract.json",
     "status": "partial",
-    "phase": "RRP-8.6",
+    "phase": "RRP-8.7",
     "audited_base_commit": "26de9a83f2da77377f58f031e3b3c55b598b654c",
     "local_release_gate_script": "pnpm release:gate",
     "direct_workflow_gate_status": "blocked_external_workflow_scope_required",
     "runtime_release_ready_after_phase": false,
     "supply_chain_artifact_evidence_status": "local_baseline_available_release_blocking_gaps_preserved",
     "dependency_security_license_audit_status": "mandatory_local_gate_added_release_blocking_until_tools_execute_and_pass",
-    "existing_ci_release_gate_binding_status": "release_gate_dry_run_required_by_existing_vsix_check_path_direct_workflow_scope_blocked"
+    "existing_ci_release_gate_binding_status": "release_gate_dry_run_required_by_existing_vsix_check_path_direct_workflow_scope_blocked",
+    "owner_governance_evidence_status": "machine_checked_owner_controlled_residuals_satisfied_cross_platform_artifacts_held"
   },
   "owner_decisions": [
     {
       "id": "oss_license",
-      "status": "required",
-      "reason": "Cargo workspace remains UNLICENSED and publish=false, so OSS release basis cannot be declared by Runtime implementation alone."
+      "status": "approved",
+      "reason": "Owner selected Apache-2.0 with public publication held behind a manual release gate until artifact, smoke, integrity, and independent-review evidence are complete."
     }
   ],
   "classifications": [
@@ -139,9 +140,13 @@
         "RRP-8.4 remains fail-closed: missing cargo audit/cargo deny/pnpm audit execution, missing release artifacts, missing artifact smoke tests, missing release artifact checksums, missing workflow provenance, and missing owner-controlled signing or integrity proof keep runtime_release_ready=false.",
         "RRP-8.4 stabilizes the installed_run_timeout_retry_uses_same_admission_without_duplicate_task release-gate failure by warming read-only first-touch runtime setup before the short post-admission timeout assertion.",
         "RRP-8.6 wires pnpm --workspace-root release:gate -- --dry-run into extensions/brownie-vsix/package.json check, which is already invoked by GitHub CI, and both release-contract and runtime-release-readiness guards fail closed if that dry-run binding is removed.",
-        "RRP-8.6 is an owner-approved equivalent CI-hardening slice that avoids .github workflow edits while workflow-scope credentials are unavailable; direct workflow enforcement, release artifacts, audit execution, SBOM/artifact provenance, signing/integrity, branch protection, and independent review evidence remain release-blocking."
+        "RRP-8.6 is an owner-approved equivalent CI-hardening slice that avoids .github workflow edits while workflow-scope credentials are unavailable; direct workflow enforcement, cross-platform release artifacts, and cross-platform artifact provenance remain release-blocking.",
+        "RRP-8.7 adds release:integrity-verify, release:owner-governance-evidence, guard:owner-governance-evidence, and guard:owner-governance-evidence:test to the release gate and existing CI-invoked VSIX check path.",
+        "RRP-8.7 owner-governance evidence records branch protection, required status check, protected tag, remote CI provenance, signature/integrity authority, independent review, and OSS license/publish posture states without treating unavailable owner-controlled actions as satisfied.",
+        "RRP-8.7 now observes main branch protection, required status checks, protected release tag policy, remote CI provenance, owner-approved integrity authority, OSS license/publish posture, and owner-designated independent reviews as satisfied evidence.",
+        "RRP-8.8 adds local release CLI artifact smoke evidence and binds detected artifacts to SHA256SUMS plus the owner-approved integrity authority, while cross-platform release artifacts and per-OS smoke remain release-blocking."
       ],
-      "next_action": "Continue runtime-release-guard-ci by adding actual vulnerability/license audit execution, cross-platform release artifacts and smoke tests, direct workflow enforcement or stronger owner-approved CI enforcement, branch protection/status-check evidence, independent review evidence, and owner signing/integrity decisions before any Runtime Release Ready claim."
+      "next_action": "Continue runtime-release-guard-ci by adding cross-platform release artifacts and smoke tests, plus direct workflow enforcement or stronger owner-approved CI enforcement, before any Runtime Release Ready claim."
     },
     {
       "id": "mcp-runtime-safety-policy",
@@ -163,15 +168,17 @@
       "id": "oss-release-technical-basis",
       "title": "OSS Release technical basis",
       "priority": "P1",
-      "status": "owner_decision_waiting",
+      "status": "implemented_sufficient",
       "responsibility_domain": "owner",
-      "debt_classification": "owner_decision",
+      "debt_classification": "closed",
       "owner_decision_required": "oss_license",
       "evidence": [
-        "Workspace Cargo.toml declares license = UNLICENSED and publish = false.",
-        "Runtime can prepare technical release evidence, but license/publish posture requires owner decision before OSS Release Ready can be claimed."
+        "Workspace Cargo.toml declares license = Apache-2.0 and keeps publish = false as a manual publication gate.",
+        "Root and VSIX package metadata declare Apache-2.0 while private/manual publication gates remain enabled.",
+        "docs/architecture/owner-oss-publication-decision.json records owner approval for Apache-2.0 and manual release-gated publication.",
+        "README.md, SECURITY.md, ACCEPTABLE_USE.md, and TRADEMARK.md document license, safety, vulnerability reporting, and branding posture."
       ],
-      "next_action": "Record owner license/publish decision before declaring OSS release basis complete."
+      "next_action": "Keep publication manual until cross-platform artifacts, smoke tests, integrity evidence, and independent reviews are complete."
     },
     {
       "id": "protocol-event-canonization",
@@ -225,7 +232,7 @@
         "RRP-7.2 adds a RuntimeDeadline protocol field for task.run, persists the chosen deadline into TaskRecord during Running transition, rejects mismatched resume deadlines, and fails closed before resume mutation when the persisted wall-clock deadline has expired.",
         "RRP-7.2 adds real child-process-loss evidence for the MCP response-after-receive window by aborting after durable MCP ToolExecutionCompleted evidence and before terminal task recording, then verifying restart/recovery behavior."
       ],
-      "next_action": "Use the closed RRP-7.2 platform/deadline/durability evidence while continuing remaining release blockers: runtime-release-guard-ci and owner license/publish decisions."
+      "next_action": "Use the closed RRP-7.2 platform/deadline/durability evidence while continuing remaining release blockers: runtime-release-guard-ci cross-platform artifact and workflow enforcement evidence."
     },
     {
       "id": "hosted-scheduler-daemon-worker-fleet",
@@ -267,7 +274,9 @@
   "updated_at": "2026-09-04T13:40:00Z",
   "evidence": [
     "RRP-8.5 adds pnpm --workspace-root release:dependency-security-license-audit to pnpm release:gate, plus contract guards and CI-invoked tests. Missing cargo audit, cargo deny, pnpm audit execution, missing lockfiles, missing deny.toml, or failed audit results are release-blocking and cannot be counted as Release Ready.",
-    "RRP-8.6 binds pnpm --workspace-root release:gate -- --dry-run into the existing GitHub-CI-invoked brownie-vsix check path and guards that binding without editing .github/workflows/ci.yml."
+    "RRP-8.6 binds pnpm --workspace-root release:gate -- --dry-run into the existing GitHub-CI-invoked brownie-vsix check path and guards that binding without editing .github/workflows/ci.yml.",
+    "RRP-8.7 adds machine-checked owner-governance evidence so owner-controlled residuals become precise fail-closed release blockers instead of prose-only blockers.",
+    "The repository main branch now has branch protection enabled with required GitHub Actions checks check and index-platform, required pull request review, stale-review dismissal, last-push approval, enforced admins, force-push denial, deletion denial, and required conversation resolution. Owner-governance evidence now records branch_protection, required_status_checks, and remote_ci_workflow_provenance as satisfied."
   ],
   "blockers": [
     "runtime-release-guard-ci"

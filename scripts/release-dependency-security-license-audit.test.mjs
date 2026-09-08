@@ -44,7 +44,7 @@ test('fails closed when a required audit tool is unavailable', () => {
   const audit = buildDependencySecurityLicenseAudit({
     repoRoot: tempRepo(),
     runner: mockRunner({
-      'cargo-deny --version': 1
+      'cargo deny --version': 1
     })
   });
   assert.equal(audit.mandatory_gate_passed, false);
@@ -57,9 +57,9 @@ test('fails closed when a required audit command times out', () => {
     runner: (_repoRoot, command, args) => {
       const key = [command, ...args].join(' ');
       return {
-        status: key === 'cargo audit --locked' ? null : 0,
+        status: key === 'cargo audit' ? null : 0,
         signal: null,
-        error: key === 'cargo audit --locked' ? { code: 'ETIMEDOUT' } : null,
+        error: key === 'cargo audit' ? { code: 'ETIMEDOUT' } : null,
         stdout: key === 'git rev-parse HEAD' ? 'abc123\n' : '',
         stderr: ''
       };

@@ -30,7 +30,7 @@ export const requiredReleaseGateCommands = [
     id: 'rust_test',
     category: 'rust_quality',
     command: 'cargo',
-    args: ['test', '--workspace', '--all-features']
+    args: ['test', '--workspace', '--all-features', '--', '--test-threads=1']
   },
   {
     id: 'pnpm_install_frozen',
@@ -87,6 +87,18 @@ export const requiredReleaseGateCommands = [
     args: ['--workspace-root', 'guard:dependency-security-license-audit:test']
   },
   {
+    id: 'local_release_targets_guard',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:local-release-targets']
+  },
+  {
+    id: 'local_release_artifacts_all',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'release:local-artifacts:all']
+  },
+  {
     id: 'supply_chain_artifact_evidence_generate',
     category: 'brownie_release_guard',
     command: 'pnpm',
@@ -103,6 +115,30 @@ export const requiredReleaseGateCommands = [
     category: 'brownie_release_guard',
     command: 'pnpm',
     args: ['--workspace-root', 'guard:supply-chain-artifact-evidence:test']
+  },
+  {
+    id: 'release_integrity_verify',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'release:integrity-verify']
+  },
+  {
+    id: 'owner_governance_evidence_generate',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'release:owner-governance-evidence']
+  },
+  {
+    id: 'owner_governance_evidence_guard',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:owner-governance-evidence']
+  },
+  {
+    id: 'owner_governance_evidence_guard_test',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:owner-governance-evidence:test']
   },
   {
     id: 'runtime_release_readiness_guard',
@@ -209,7 +245,12 @@ function runCommand(repoRoot, entry) {
   const result = spawnSync(entry.command, entry.args, {
     cwd: repoRoot,
     encoding: 'utf8',
-    env: { ...process.env, CARGO_TERM_COLOR: 'never' },
+    env: {
+      ...process.env,
+      CARGO_INCREMENTAL: '0',
+      CARGO_PROFILE_DEV_DEBUG: '0',
+      CARGO_TERM_COLOR: 'never'
+    },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   return {

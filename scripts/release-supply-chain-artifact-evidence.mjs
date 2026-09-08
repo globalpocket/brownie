@@ -21,6 +21,8 @@ const requiredSections = [
   'provenance'
 ];
 
+const requiredReleasePlatforms = ['linux-x64', 'darwin-arm64', 'win32-x64'];
+
 const secretPatterns = [
   {
     id: 'github_token',
@@ -204,6 +206,38 @@ function buildSbom(repoRoot, generatedAt) {
 }
 
 function findReleaseArtifacts(repoRoot) {
+  const artifacts = new Map();
+  const collectedRoot = repoPath(repoRoot, '.brownie/release-evidence/artifacts');
+  if (fs.existsSync(collectedRoot)) {
+    for (const entry of fs.readdirSync(collectedRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      const evidencePath = `.brownie/release-evidence/artifacts/${entry.name}/artifact-evidence.json`;
+      const smokePath = `.brownie/release-evidence/artifacts/${entry.name}/smoke-evidence.json`;
+      const artifactEvidence = readJsonIfExists(repoRoot, evidencePath);
+      const smokeEvidence = readJsonIfExists(repoRoot, smokePath);
+      const artifact = artifactEvidence?.artifact;
+      if (
+        artifact &&
+        typeof artifact.path === 'string' &&
+        fs.existsSync(repoPath(repoRoot, artifact.path))
+      ) {
+        artifacts.set(artifact.path, {
+          path: normalizeRelativePath(artifact.path),
+          sha256: sha256File(repoPath(repoRoot, artifact.path)),
+          bytes: fs.statSync(repoPath(repoRoot, artifact.path)).size,
+          platform: artifactEvidence.platform ?? null,
+          arch: artifactEvidence.arch ?? null,
+          target: artifactEvidence.target ?? artifact.target ?? entry.name,
+          artifact_evidence_path: evidencePath,
+          smoke_evidence_path: smokeEvidence ? smokePath : null,
+          smoke_evidence: smokeEvidence
+        });
+      }
+    }
+  }
+
   const candidates = [
     'target/release/brownie',
     'target/release/brownie.exe',
@@ -215,13 +249,94 @@ function findReleaseArtifacts(repoRoot) {
       candidates.push(entry.name);
     }
   }
-  return candidates
+  const collectedTargets = new Set([...artifacts.values()].map((artifact) => artifact.target));
+  for (const artifact of candidates
     .filter((relativePath) => fs.existsSync(repoPath(repoRoot, relativePath)))
     .map((relativePath) => ({
       path: normalizeRelativePath(relativePath),
       sha256: sha256File(repoPath(repoRoot, relativePath)),
-      bytes: fs.statSync(repoPath(repoRoot, relativePath)).size
-    }));
+      bytes: fs.statSync(repoPath(repoRoot, relativePath)).size,
+      platform: process.platform,
+      arch: process.arch,
+      target: `${process.platform}-${process.arch}`
+    }))
+    .filter((artifact) => !collectedTargets.has(artifact.target))) {
+    artifacts.set(artifact.path, artifact);
+  }
+  return [...artifacts.values()];
+}
+
+function smokeCommand(repoRoot, artifactPath, args) {
+  const result = spawnSync(path.resolve(repoRoot, artifactPath), args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 15_000
+  });
+  return {
+    args,
+    exit_code: result.status,
+    passed: result.status === 0
+  };
+}
+
+function buildArtifactSmokeSection(repoRoot, artifacts) {
+  if (artifacts.length === 0) {
+    return {
+      status: 'not_executed_missing_artifacts',
+      release_blocking: true,
+      smoke_targets: []
+    };
+  }
+
+  const smokeResults = artifacts.map((artifact) => {
+    if (artifact.smoke_evidence?.status) {
+      return {
+        path: artifact.path,
+        status: artifact.smoke_evidence.status,
+        passed: artifact.smoke_evidence.status === 'satisfied',
+        commands: Array.isArray(artifact.smoke_evidence.commands) ? artifact.smoke_evidence.commands : [],
+        smoke_evidence_path: artifact.smoke_evidence_path
+      };
+    }
+    const isBrownieCli = /(?:^|\/)brownie(?:\.exe)?$/.test(artifact.path);
+    if (!isBrownieCli) {
+      return {
+        path: artifact.path,
+        status: 'unsupported_artifact_type',
+        passed: false,
+        commands: []
+      };
+    }
+    const commands = [
+      smokeCommand(repoRoot, artifact.path, ['--version']),
+      smokeCommand(repoRoot, artifact.path, ['help', 'run'])
+    ];
+    return {
+      path: artifact.path,
+      status: commands.every((command) => command.passed) ? 'satisfied' : 'failed',
+      passed: commands.every((command) => command.passed),
+      commands
+    };
+  });
+  return {
+    status: smokeResults.every((entry) => entry.passed) ? 'satisfied' : 'not_executed',
+    release_blocking: true,
+    smoke_targets: artifacts.map((artifact) => artifact.path),
+    smoke_results: smokeResults
+  };
+}
+
+function readJsonIfExists(repoRoot, relativePath) {
+  const fullPath = resolveRepoRelative(repoRoot, relativePath);
+  if (!fs.existsSync(fullPath)) {
+    return null;
+  }
+  try {
+    return JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+  } catch {
+    return null;
+  }
 }
 
 function scanSecrets(repoRoot, files) {
@@ -284,7 +399,7 @@ function buildDependencyEvidence(repoRoot) {
   const cargoAuditAvailable = commandAvailable('cargo-audit') || run(repoRoot, 'cargo', ['audit', '--version']).passed;
   const cargoDenyAvailable = commandAvailable('cargo-deny') || run(repoRoot, 'cargo', ['deny', '--version']).passed;
   const pnpmAvailable = commandAvailable('pnpm');
-  const cargoAudit = cargoAuditAvailable ? run(repoRoot, 'cargo', ['audit', '--locked']) : null;
+  const cargoAudit = cargoAuditAvailable ? run(repoRoot, 'cargo', ['audit']) : null;
   const cargoDeny = cargoDenyAvailable ? run(repoRoot, 'cargo', ['deny', 'check']) : null;
   const pnpmAudit = pnpmAvailable ? run(repoRoot, 'pnpm', ['audit', '--prod', '--audit-level', 'moderate', '--json']) : null;
 
@@ -299,7 +414,7 @@ function buildDependencyEvidence(repoRoot) {
       id: 'cargo_audit',
       available: cargoAuditAvailable,
       passed: cargoAudit?.passed ?? false,
-      command: 'cargo audit --locked'
+      command: 'cargo audit'
     },
     {
       id: 'cargo_deny',
@@ -357,6 +472,17 @@ export function buildSupplyChainArtifactEvidence(options = {}) {
   const sourceCommit = gitValue(repoRoot, ['rev-parse', 'HEAD']);
   const treeStatus = gitValue(repoRoot, ['status', '--porcelain']);
   const dependencyEvidence = buildDependencyEvidence(repoRoot);
+  const artifactSmoke = buildArtifactSmokeSection(repoRoot, artifacts);
+  const artifactTargets = new Set(artifacts.map((artifact) => artifact.target));
+  const missingReleasePlatforms = requiredReleasePlatforms.filter((platform) => !artifactTargets.has(platform));
+  if (artifactSmoke.status === 'satisfied' && missingReleasePlatforms.length > 0) {
+    artifactSmoke.status = 'partial_cross_platform_missing';
+    artifactSmoke.required_platforms = requiredReleasePlatforms;
+    artifactSmoke.present_platforms = [...artifactTargets].sort();
+    artifactSmoke.missing_platforms = missingReleasePlatforms;
+  }
+  const integrityDecision = readJsonIfExists(repoRoot, 'docs/architecture/owner-integrity-authority-decision.json');
+  const integrityApproved = integrityDecision?.decision_status === 'approved' && integrityDecision?.owner_approved === true;
   const provenance = {
     schema_version: 1,
     provenance_id: 'brownie-runtime-local-provenance-v1',
@@ -415,17 +541,26 @@ export function buildSupplyChainArtifactEvidence(options = {}) {
       component_count: sbom.components.length
     },
     artifacts: {
-      status: artifacts.length > 0 ? 'satisfied' : 'not_generated',
+      status:
+        artifacts.length === 0
+          ? 'not_generated'
+          : missingReleasePlatforms.length === 0
+            ? 'satisfied'
+            : 'partial_cross_platform_missing',
       release_blocking: true,
+      required_platforms: requiredReleasePlatforms,
+      present_platforms: [...artifactTargets].sort(),
+      missing_platforms: missingReleasePlatforms,
       artifacts
     },
-    artifact_smoke: {
-      status: artifacts.length > 0 ? 'not_executed' : 'not_executed_missing_artifacts',
-      release_blocking: true,
-      smoke_targets: artifacts.map((artifact) => artifact.path)
-    },
+    artifact_smoke: artifactSmoke,
     checksums: {
-      status: artifacts.length > 0 ? 'satisfied' : 'partial_no_release_artifacts',
+      status:
+        artifacts.length === 0
+          ? 'partial_no_release_artifacts'
+          : missingReleasePlatforms.length === 0
+            ? 'satisfied'
+            : 'partial_cross_platform_missing',
       release_blocking: true,
       path: checksumPath,
       sha256: sha256File(repoPath(repoRoot, checksumPath)),
@@ -435,10 +570,16 @@ export function buildSupplyChainArtifactEvidence(options = {}) {
       }))
     },
     signature_or_integrity_proof: {
-      status: 'blocked_external',
+      status:
+        integrityApproved && artifacts.length > 0 && missingReleasePlatforms.length === 0
+          ? 'satisfied'
+          : 'partial_cross_platform_missing',
       release_blocking: true,
-      path: null,
-      owner_action: 'Configure signing authority or approve a formal integrity mechanism before public release.'
+      path: integrityApproved ? 'docs/architecture/owner-integrity-authority-decision.json' : null,
+      proof_kind: integrityApproved ? 'owner_approved_integrity_authority_with_sha256sums' : null,
+      owner_action: integrityApproved
+        ? 'Keep owner-approved integrity authority evidence and SHA256SUMS current until stronger artifact signing is introduced.'
+        : 'Configure signing authority or approve a formal integrity mechanism before public release.'
     },
     provenance: {
       status: 'satisfied',

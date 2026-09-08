@@ -106,7 +106,7 @@ function validateRuntimeReleaseContract(contract, options = {}) {
   requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
   requireValue(contract.contract_id === 'runtime-release-engineering-contract-v1', errors, `${contractPath} contract_id must identify the Runtime release engineering contract.`);
   requireValue(contract.owner === 'runtime', errors, `${contractPath} owner must be runtime.`);
-  requireValue(contract.phase === 'RRP-8.6', errors, `${contractPath} phase must be RRP-8.6.`);
+  requireValue(contract.phase === 'RRP-8.7', errors, `${contractPath} phase must be RRP-8.7.`);
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must keep runtime_release_ready false until all release evidence exists.`);
 
   validateCommitTrace(contract.commit_trace, errors, contractPath);
@@ -143,21 +143,35 @@ function validateRuntimeReleaseContract(contract, options = {}) {
   requireValue(packageJson.scripts?.['release:gate'] === 'node scripts/release-gate.mjs', errors, `${defaultPackagePath} must define release:gate.`);
   requireValue(packageJson.scripts?.['release:dependency-security-license-audit'] === 'node scripts/release-dependency-security-license-audit.mjs', errors, `${defaultPackagePath} must define release:dependency-security-license-audit.`);
   requireValue(packageJson.scripts?.['release:dependency-security-license-audit:test'] === 'node --test scripts/release-dependency-security-license-audit.test.mjs', errors, `${defaultPackagePath} must define release:dependency-security-license-audit:test.`);
+  requireValue(packageJson.scripts?.['release:local-artifact'] === 'node scripts/release-local-artifact.mjs', errors, `${defaultPackagePath} must define release:local-artifact.`);
+  requireValue(packageJson.scripts?.['release:local-artifacts:all'] === 'node scripts/release-local-artifacts-all.mjs', errors, `${defaultPackagePath} must define release:local-artifacts:all.`);
+  requireValue(packageJson.scripts?.['release:linux-vm-create'] === 'node scripts/create-linux-release-vm.mjs', errors, `${defaultPackagePath} must define release:linux-vm-create.`);
+  requireValue(packageJson.scripts?.['release:windows-vm-create'] === 'node scripts/create-windows-release-vm.mjs', errors, `${defaultPackagePath} must define release:windows-vm-create.`);
+  requireValue(packageJson.scripts?.['release:vm-bootstrap'] === 'node scripts/bootstrap-release-vms.mjs', errors, `${defaultPackagePath} must define release:vm-bootstrap.`);
+  requireValue(packageJson.scripts?.['release:vm-image'] === 'node scripts/manage-release-vm-images.mjs', errors, `${defaultPackagePath} must define release:vm-image.`);
   requireValue(packageJson.scripts?.['release:supply-chain-artifact-evidence'] === 'node scripts/release-supply-chain-artifact-evidence.mjs', errors, `${defaultPackagePath} must define release:supply-chain-artifact-evidence.`);
+  requireValue(packageJson.scripts?.['release:integrity-verify'] === 'node scripts/release-integrity-verify.mjs', errors, `${defaultPackagePath} must define release:integrity-verify.`);
+  requireValue(packageJson.scripts?.['release:owner-governance-evidence'] === 'node scripts/release-owner-governance-evidence.mjs', errors, `${defaultPackagePath} must define release:owner-governance-evidence.`);
+  requireValue(packageJson.scripts?.['guard:local-release-targets'] === 'node scripts/guard-local-release-targets.mjs', errors, `${defaultPackagePath} must define guard:local-release-targets.`);
   requireValue(packageJson.scripts?.['guard:release-contract'] === 'node scripts/guard-release-contract.mjs', errors, `${defaultPackagePath} must define guard:release-contract.`);
   requireValue(packageJson.scripts?.['guard:release-contract:test'] === 'node --test scripts/guard-release-contract.test.mjs', errors, `${defaultPackagePath} must define guard:release-contract:test.`);
   requireValue(packageJson.scripts?.['guard:dependency-security-license-audit'] === 'node scripts/guard-dependency-security-license-audit.mjs', errors, `${defaultPackagePath} must define guard:dependency-security-license-audit.`);
   requireValue(packageJson.scripts?.['guard:dependency-security-license-audit:test'] === 'node --test scripts/guard-dependency-security-license-audit.test.mjs', errors, `${defaultPackagePath} must define guard:dependency-security-license-audit:test.`);
   requireValue(packageJson.scripts?.['guard:supply-chain-artifact-evidence'] === 'node scripts/guard-supply-chain-artifact-evidence.mjs', errors, `${defaultPackagePath} must define guard:supply-chain-artifact-evidence.`);
   requireValue(packageJson.scripts?.['guard:supply-chain-artifact-evidence:test'] === 'node --test scripts/guard-supply-chain-artifact-evidence.test.mjs', errors, `${defaultPackagePath} must define guard:supply-chain-artifact-evidence:test.`);
+  requireValue(packageJson.scripts?.['guard:owner-governance-evidence'] === 'node scripts/guard-owner-governance-evidence.mjs', errors, `${defaultPackagePath} must define guard:owner-governance-evidence.`);
+  requireValue(packageJson.scripts?.['guard:owner-governance-evidence:test'] === 'node --test scripts/guard-owner-governance-evidence.test.mjs', errors, `${defaultPackagePath} must define guard:owner-governance-evidence:test.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:release-contract'), errors, `${defaultVsixPackagePath} check must invoke guard:release-contract.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:release-contract:test'), errors, `${defaultVsixPackagePath} check must invoke guard:release-contract:test.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root release:gate -- --dry-run'), errors, `${defaultVsixPackagePath} check must invoke release:gate dry-run through the existing CI path.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:supply-chain-artifact-evidence'), errors, `${defaultVsixPackagePath} check must invoke guard:supply-chain-artifact-evidence.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:supply-chain-artifact-evidence:test'), errors, `${defaultVsixPackagePath} check must invoke guard:supply-chain-artifact-evidence:test.`);
+  requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:owner-governance-evidence'), errors, `${defaultVsixPackagePath} check must invoke guard:owner-governance-evidence.`);
+  requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:owner-governance-evidence:test'), errors, `${defaultVsixPackagePath} check must invoke guard:owner-governance-evidence:test.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root release:dependency-security-license-audit:test'), errors, `${defaultVsixPackagePath} check must invoke release:dependency-security-license-audit:test.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:dependency-security-license-audit'), errors, `${defaultVsixPackagePath} check must invoke guard:dependency-security-license-audit.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:dependency-security-license-audit:test'), errors, `${defaultVsixPackagePath} check must invoke guard:dependency-security-license-audit:test.`);
+  requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:local-release-targets'), errors, `${defaultVsixPackagePath} check must invoke guard:local-release-targets.`);
 
   const external = Array.isArray(contract.external_blockers) ? contract.external_blockers : [];
   requireValue(
@@ -221,6 +235,33 @@ function validateRuntimeReleaseContract(contract, options = {}) {
       Array.isArray(dependencyAudit.required_checks) && dependencyAudit.required_checks.includes(check),
       errors,
       `${contractPath} dependency_security_license_audit.required_checks must include ${check}.`
+    );
+  }
+
+  const ownerGovernanceEvidence = contract.owner_governance_evidence ?? {};
+  requireValue(
+    ownerGovernanceEvidence.contract_id === 'brownie-owner-governance-evidence-v1',
+    errors,
+    `${contractPath} owner_governance_evidence.contract_id must match the repo-local owner governance evidence contract.`
+  );
+  requireValue(
+    ownerGovernanceEvidence.default_path === '.brownie/release-evidence/owner-governance-evidence.json',
+    errors,
+    `${contractPath} owner_governance_evidence.default_path must point to the ignored local owner governance evidence path.`
+  );
+  for (const section of [
+    'branch_protection',
+    'required_status_checks',
+    'protected_tag_policy',
+    'remote_ci_workflow_provenance',
+    'signature_or_integrity_authority',
+    'independent_reviews',
+    'oss_license_publish_posture'
+  ]) {
+    requireValue(
+      Array.isArray(ownerGovernanceEvidence.required_sections) && ownerGovernanceEvidence.required_sections.includes(section),
+      errors,
+      `${contractPath} owner_governance_evidence.required_sections must include ${section}.`
     );
   }
 

@@ -1,34 +1,34 @@
 {
   "schema_version": 1,
-  "phase": "RRP-8.6",
-  "title": "Existing CI Release Gate Dry-Run Binding",
+  "phase": "RRP-8.7",
+  "title": "Owner Governance Evidence Gate",
   "date": "2026-09-04",
   "current_milestone": "runtime-release-readiness-p0-p1-finite-closure",
   "milestone": "Brownie Runtime Release Readiness",
   "target_capability": "headless_autonomous_development",
-  "concrete_capability_transition": "Brownie release engineering binds the repository-local release gate dry-run into the existing GitHub-CI-invoked VSIX check path without editing workflow files, making release-gate plan drift a guarded CI failure while Runtime Release Ready remains false.",
+  "concrete_capability_transition": "Brownie release engineering now collects and guards owner-governance evidence plus local VM/SSH release artifact bundles for branch protection, required status checks, protected tags, remote CI provenance, signing or integrity authority, independent reviews, OSS license/publish posture, and cross-platform artifact readiness while keeping incomplete targets fail-closed.",
   "forbidden_pattern": "runtime_release_ready_without_complete_release_evidence_missing_artifacts_as_success_missing_sbom_checksum_signature_provenance_as_success_missing_dependency_license_secret_scan_as_success_workflow_edit_without_scope_license_publish_release_tag_asset_self_review_as_independent_review_hosted_scheduler_daemon_queue_supervisor_saas_rbac_vault_billing_bdk_enterprise_admin_generic_shell_arbitrary_process_exec_remote_git_expansion_streamable_http_oauth_mcp_apps_sampling_roots_elicitation_public_registry_automatic_install",
   "project_objective_ref": "docs/architecture/product-charter.md",
   "strategic_capability_mapping": [
     {
       "capability": "headless_autonomous_development",
-      "transition": "The existing CI path now executes the release gate dry-run through brownie-vsix check and guard engines fail closed if that binding is removed.",
-      "relationship": "This advances runtime-release-guard-ci through an owner-approved equivalent path while workflow-scope credentials remain absent; it does not claim direct workflow hardening or Runtime Release Ready."
+      "transition": "The release gate now includes owner-governance evidence generation and guard checks, and the existing CI-invoked VSIX check path requires the owner-governance guard.",
+      "relationship": "This advances runtime-release-guard-ci by turning previously prose-only owner-controlled residuals into bounded, machine-checked evidence slots without claiming the owner decisions are complete."
     }
   ],
   "phase_value_gate": {
     "required": true,
     "answers": {
-      "strategic_capabilities": "The phase advances headless_autonomous_development by making the mandatory release gate plan visible and guarded in the existing CI-invoked VSIX check path.",
-      "new_capability": "A contributor or CI run that executes pnpm --filter brownie-vsix check now also executes pnpm --workspace-root release:gate -- --dry-run, and guards reject removing that binding.",
-      "why_existing_functionality_is_insufficient": "Before this phase, CI checked the release contract and many release guards but did not directly exercise the release gate plan from the CI-invoked path, so release:gate command-list drift could escape the mandatory VSIX check.",
-      "product_gap_if_skipped": "Brownie would retain a local release gate whose command plan could diverge from the CI-required check path until workflow-scope credentials are available.",
-      "non_duplicative": "This phase does not add another release contract, workflow edit, or ledger/platform feature; it binds the existing release gate dry-run into the existing CI path and guards that binding.",
+      "strategic_capabilities": "The phase advances headless_autonomous_development by making owner-controlled release governance residuals externally inspectable, bounded, and fail-closed in the local release gate.",
+      "new_capability": "A contributor can run release:owner-governance-evidence to collect GitHub protection signals, CI provenance availability, integrity decision state, independent-review state, and OSS license/publish decision state, then run guard:owner-governance-evidence to reject malformed or falsely satisfied evidence.",
+      "why_existing_functionality_is_insufficient": "Before this phase, branch protection, tag protection, independent reviews, signing/integrity authority, CI provenance, and OSS posture were documented residuals but not machine-checked evidence slots, so automation could not distinguish unavailable owner authority from completed governance.",
+      "product_gap_if_skipped": "Brownie would continue to report owner-controlled release blockers only as prose, making autonomous release closure prone to either spinning or incorrectly declaring Product Ready.",
+      "non_duplicative": "This phase does not configure GitHub settings, create release tags, choose a license, sign artifacts, or approve reviews; it adds the missing evidence and guard layer around those existing owner-controlled residuals.",
       "no_new_rpc": "Yes. No JSON-RPC method or Runtime protocol surface is added.",
       "no_new_summary": "Yes. The dry-run output is existing release-gate evidence, not a new user-facing summary or Runtime diagnostic endpoint.",
-      "runtime_behavior_change": "Build/release behavior changes: brownie-vsix check now includes the release gate dry-run, and release/readiness guards fail closed if the CI-invoked path omits it.",
-      "headless_autonomous_contribution": "The autonomous release loop can continue using existing CI while workflow-scope credentials are unavailable, with less room for local release-gate drift.",
-      "milestone_progress": "RRP-8.6 narrows runtime-release-guard-ci by closing the permitted existing-CI dry-run binding slice while preserving release-blocking workflow, artifact, audit, governance, and owner-decision evidence."
+      "runtime_behavior_change": "Build/release behavior changes: release:gate now includes local integrity verification, owner-governance evidence/guard commands, local release target validation, and local/SSH artifact bundle orchestration; readiness guards require owner-governance and local release target guard coverage in the VSIX check path.",
+      "headless_autonomous_contribution": "The autonomous release loop can now stop on precise owner-controlled evidence gaps instead of rereading overview documents or treating governance work as ambiguous implementation debt.",
+      "milestone_progress": "RRP-8.7 narrows runtime-release-guard-ci by closing the machine-checkable owner-governance evidence slice while preserving release-blocking owner decisions and external settings."
     },
     "questions": [
       {
@@ -78,7 +78,8 @@
     "status": "partial",
     "runtime_release_ready_after_phase": false,
     "closed_debt": [
-      "runtime-release-guard-ci existing-CI release gate dry-run binding"
+      "runtime-release-guard-ci existing-CI release gate dry-run binding",
+      "runtime-release-guard-ci owner-governance evidence and guard layer"
     ],
     "remaining_runtime_owned_debt": [
       "runtime-release-guard-ci"
@@ -117,20 +118,50 @@
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "RRP-8.6 changes CI-invoked package scripts and release/readiness guard engines. Review must confirm the existing VSIX check path invokes release:gate -- --dry-run, guards fail closed if it is removed, no .github workflow files were edited, and runtime_release_ready remains false.",
+    "review_intent": "RRP-8.7 changes release/readiness guard engines and package scripts. Review must confirm owner-governance evidence remains bounded, owner-controlled settings are not self-approved, fail-closed statuses remain release-blocking, and runtime_release_ready remains false.",
     "changed_files": [
+      "package.json",
       "docs/architecture/phase-value-manifest.json",
-      "docs/architecture/phase-value-manifest.rrp-8.6.json",
       "docs/architecture/runtime-module-decomposition-assessment.json",
       "docs/architecture/runtime-release-contract.json",
       "docs/architecture/runtime-release-readiness-audit.json",
       "extensions/brownie-vsix/package.json",
+      "scripts/guard-phase-value.mjs",
+      "scripts/guard-dependency-security-license-audit.test.mjs",
       "scripts/guard-release-contract.mjs",
       "scripts/guard-release-contract.test.mjs",
+      "scripts/guard-local-release-targets.mjs",
+      "scripts/bootstrap-release-vms.mjs",
+      "scripts/create-linux-release-vm.mjs",
+      "scripts/create-windows-release-vm.mjs",
+      "scripts/manage-release-vm-images.mjs",
+      "scripts/guard-owner-governance-evidence.mjs",
+      "scripts/guard-owner-governance-evidence.test.mjs",
+      "scripts/release-local-artifact.mjs",
+      "scripts/release-local-artifacts-all.mjs",
+      "scripts/release-owner-governance-evidence.mjs",
+      "scripts/release-integrity-verify.mjs",
       "scripts/guard-runtime-release-readiness.mjs",
       "scripts/guard-runtime-release-readiness.test.mjs",
       "scripts/guard-supply-chain-artifact-evidence.mjs",
-      "scripts/guard-supply-chain-artifact-evidence.test.mjs"
+      "scripts/guard-supply-chain-artifact-evidence.test.mjs",
+      "scripts/release-dependency-security-license-audit.mjs",
+      "scripts/release-dependency-security-license-audit.test.mjs",
+      "scripts/release-supply-chain-artifact-evidence.mjs",
+      "scripts/release-gate.mjs",
+      "docs/architecture/local-release-targets.schema.json",
+      "docs/architecture/local-release-targets.example.json",
+      "docs/architecture/local-release-vm-bootstrap.md",
+      "docs/architecture/local-release-vm-images.md",
+      "docs/architecture/windows-release-vm-golden-image.md",
+      "docs/architecture/owner-oss-publication-decision.json",
+      "docs/architecture/owner-independent-review-evidence.json",
+      "LICENSE",
+      "SECURITY.md",
+      "ACCEPTABLE_USE.md",
+      "TRADEMARK.md",
+      "README.md",
+      "Cargo.toml"
     ]
   },
   "exit_criteria": [
@@ -172,13 +203,13 @@
     "safety_boundary": [
       "Rust Runtime remains execution, admission, replay, permission, MCP, workspace mutation, durable state, protocol, and completion authority.",
       "CLI and VSIX remain thin transport/projection clients and cannot grant Runtime authority.",
-      "GitHub workflow settings, branch protection, protected tags, signing authority, license choice, and publish posture remain owner-controlled until explicitly provided.",
+      "GitHub workflow settings, branch protection, protected tags, signing authority, license choice, and publish posture remain owner-controlled; branch protection, protected tags, interim integrity authority, and Apache-2.0/manual publication posture have been explicitly provided and are machine-checked.",
       "Raw prompt, provider output, file content, absolute/canonical path, secret, environment value, executable content, and process output are not persisted as release evidence."
     ],
     "non_goals": [
       "Does not claim Runtime Release Ready.",
       "Does not edit .github workflow files.",
-      "Does not generate or publish release tags, packages, license metadata, signatures, or release assets.",
+      "Does not generate or publish release tags, packages, signatures, or public release assets; license metadata may change only from explicit owner decision evidence.",
       "Does not add hosted scheduler, daemon, durable queue, supervisor, SaaS control plane, customer RBAC, Vault, billing, BDK, Enterprise admin, generic shell, arbitrary process execution, or remote Git capability expansion."
     ],
     "rejected_alternatives": [
@@ -187,8 +218,8 @@
       "Rejected a docs-only update because the existing CI-invoked check path must execute and guard the release gate dry-run."
     ],
     "technical_debt": [
-      "runtime-release-guard-ci remains open until actual vulnerability/license audit execution, cross-platform artifacts, artifact smoke tests, direct workflow enforcement or stronger owner-approved CI enforcement, provenance, signing/integrity, branch protection/status checks, independent reviews, and owner settings are complete.",
-      "Owner license, publish posture, signing or integrity mechanism, branch protection, protected tags, and independent reviews remain required before Runtime Release Ready."
+      "runtime-release-guard-ci remains open until cross-platform artifacts, cross-platform artifact smoke tests, direct workflow enforcement or stronger owner-approved CI enforcement, and release-artifact provenance are complete.",
+      "Branch protection, protected tags, remote CI provenance evidence, Apache-2.0/manual publication posture, interim owner-approved integrity authority, and owner-designated independent reviews are now machine-checked."
     ],
     "next_capability_rationale": [
       "Continue with the next bounded runtime-release-guard-ci slice that can be completed without workflow scope or owner-only settings, or wait for workflow-scope credentials for direct workflow hardening."
@@ -197,7 +228,7 @@
       "runtime_release_dod": [
         "Closed RRP-1 through RRP-7.2 and RRP-5.18 evidence remains in force and is not reimplemented.",
         "RRP-8.6 binds the local release gate dry-run into existing CI evidence without treating it as final Release Ready.",
-        "Missing release artifacts, scans, SBOM, checksums, signatures or integrity proof, provenance, workflow run enforcement, tested commit, and independent reviews remain release-blocking."
+        "Missing cross-platform release artifacts, cross-platform smoke tests, artifact-bound checksums, signatures or integrity proof, provenance, workflow run enforcement, and tested commit remain release-blocking."
       ],
       "runtime_boundary_contracts": [
         "No new RPC surface is added.",
@@ -210,8 +241,8 @@
         "Forge, pull request, review, notification, SIEM, OTel, language verifier, customer integration, and hosted MCP adapter responsibilities remain outside this phase."
       ],
       "commercial_solution_readiness": [
-        "Packaging publication, license choice, signing authority, notarization, enterprise administration, operational runbooks, support, and commercial release decisions remain owner-controlled or later release work.",
-        "Cargo license and publish settings remain owner-decision items and are not changed by RRP-8.6."
+        "Packaging publication, notarization, enterprise administration, operational runbooks, support, and commercial release decisions remain owner-controlled or later release work.",
+        "Cargo license is Apache-2.0 by owner decision; Cargo publish remains disabled until an explicit release publication approval."
       ],
       "external_responsibility_not_release_blocking": true
     }
@@ -235,8 +266,8 @@
       "id": "oss_license_publish",
       "responsibility_domain": "external_control_plane",
       "classification": "post_v0",
-      "status": "owner_decision_waiting",
-      "next_action": "Owner must choose license and publish posture before public OSS release; Runtime automation must not change license, publish metadata, release tags, or release assets."
+      "status": "owner_decision_recorded_manual_publication_gate",
+      "next_action": "Keep public publication manual until cross-platform artifacts, smoke tests, integrity evidence, and independent reviews are complete."
     }
   ],
   "closeout_review": {
@@ -247,7 +278,7 @@
     "remaining_blockers": [
       "runtime-release-guard-ci",
       "github_workflow_scope",
-      "owner license/publish/signing/review settings"
+      "cross-platform artifact and workflow enforcement evidence"
     ]
   },
   "phase_title": "Existing CI Release Gate Dry-Run Binding"

@@ -64,6 +64,8 @@ const requiredVsixCheckCommands = [
   'pnpm --workspace-root guard:release-contract',
   'pnpm --workspace-root guard:release-contract:test',
   'pnpm --workspace-root release:gate -- --dry-run',
+  'pnpm --workspace-root guard:owner-governance-evidence',
+  'pnpm --workspace-root guard:owner-governance-evidence:test',
   'pnpm --workspace-root guard:durable-schema-migration',
   'pnpm --workspace-root guard:protocol-event-canonization',
   'pnpm --workspace-root guard:runtime-module-decomposition',
@@ -143,7 +145,7 @@ function hasEvidence(item) {
 
 function findOwnerDecision(audit, id) {
   const decisions = Array.isArray(audit.owner_decisions) ? audit.owner_decisions : [];
-  return decisions.find((decision) => decision && decision.id === id && decision.status === 'required');
+  return decisions.find((decision) => decision && decision.id === id);
 }
 
 function isOpenRuntimeReleaseBlocker(item) {
@@ -383,13 +385,19 @@ export function validateRuntimeReleaseReadinessAudit(audit, options = {}) {
     requireValue(blockedBy.size === 0, errors, `${auditPath} release_ready_blocked_by must be empty when Runtime release is ready.`);
   }
 
-  if (/license\s*=\s*"UNLICENSED"/.test(cargoText) || /publish\s*=\s*false/.test(cargoText)) {
+  const licenseUnresolved = /license\s*=\s*"UNLICENSED"/.test(cargoText);
+  const publicationGated = /publish\s*=\s*false/.test(cargoText);
+  if (licenseUnresolved || publicationGated) {
     const ossItem = byId.get('oss-release-technical-basis');
-    requireValue(Boolean(findOwnerDecision(audit, 'oss_license')), errors, `${auditPath} must record required owner decision oss_license.`);
+    const ossDecision = findOwnerDecision(audit, 'oss_license');
+    requireValue(Boolean(ossDecision), errors, `${auditPath} must record owner decision oss_license.`);
     requireValue(Boolean(ossItem), errors, `${auditPath} must include oss-release-technical-basis.`);
-    if (ossItem) {
+    if (ossItem && (licenseUnresolved || ossDecision?.status === 'required')) {
       requireValue(ossItem.status === 'owner_decision_waiting', errors, `${auditPath} oss-release-technical-basis must wait for owner decision.`);
       requireValue(ossItem.owner_decision_required === 'oss_license', errors, `${auditPath} oss-release-technical-basis must reference oss_license.`);
+    } else if (ossItem) {
+      requireValue(ossDecision?.status === 'approved', errors, `${auditPath} oss_license owner decision must be approved when OSS technical basis is closed.`);
+      requireValue(ossItem.status === 'implemented_sufficient', errors, `${auditPath} oss-release-technical-basis must be implemented_sufficient after approved owner decision.`);
     }
   }
 

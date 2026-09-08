@@ -18,6 +18,8 @@ const vsixPackageText = [
   'pnpm --workspace-root guard:release-contract',
   'pnpm --workspace-root guard:release-contract:test',
   'pnpm --workspace-root release:gate -- --dry-run',
+  'pnpm --workspace-root guard:owner-governance-evidence',
+  'pnpm --workspace-root guard:owner-governance-evidence:test',
   'pnpm --workspace-root guard:durable-schema-migration',
   'pnpm --workspace-root guard:protocol-event-canonization',
   'pnpm --workspace-root guard:runtime-module-decomposition',
@@ -311,6 +313,30 @@ test('rejects missing owner license decision while workspace remains unpublished
   const audit = validAudit({ owner_decisions: [] });
   const errors = validate(audit);
   assert(errors.some((error) => error.includes('oss_license')));
+});
+
+test('accepts approved owner license decision with manual publication gate', () => {
+  const audit = validAudit({
+    owner_decisions: [
+      {
+        id: 'oss_license',
+        status: 'approved',
+        reason: 'Owner selected Apache-2.0 with manual publication gate.'
+      }
+    ],
+    classifications: validAudit().classifications.map((entry) =>
+      entry.id === 'oss-release-technical-basis'
+        ? {
+            ...entry,
+            status: 'implemented_sufficient',
+            responsibility_domain: 'owner',
+            debt_classification: 'closed'
+          }
+        : entry
+    )
+  });
+  const errors = validate(audit, { cargoText: 'license = "Apache-2.0"\npublish = false\n' });
+  assert.deepEqual(errors, []);
 });
 
 test('rejects audit without release engineering contract reference', () => {

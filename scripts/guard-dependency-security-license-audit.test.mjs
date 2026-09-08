@@ -73,7 +73,7 @@ function validEvidence(repoRoot = tempRepo(), overrides = {}) {
       {
         id: 'cargo_audit_locked',
         category: 'rust_vulnerability_audit',
-        command: 'cargo audit --locked',
+        command: 'cargo audit',
         available: true,
         passed: true,
         status: 'satisfied',

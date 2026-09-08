@@ -25,6 +25,24 @@ adapter responsibilities, not Runtime release blockers. See
 
 See `docs/specifications/brownie-scope-v0.md` for the current specification baseline.
 
+## License
+
+Brownie is licensed under the Apache License 2.0. See `LICENSE`.
+
+The repository may keep package publication gates disabled while release
+readiness work is still in progress. License availability and publication
+readiness are tracked separately.
+
+## Disclaimer and acceptable use
+
+Brownie is provided for lawful, defensive, research, and productivity purposes.
+You are solely responsible for how you use, deploy, modify, or redistribute it.
+The maintainers do not authorize use of Brownie for unauthorized access,
+credential theft, malware, spam, phishing, evasion, or other harmful activity.
+
+See `SECURITY.md`, `ACCEPTABLE_USE.md`, and `TRADEMARK.md` for vulnerability
+reporting, acceptable-use, and branding guidance.
+
 ## Brownie CLI
 
 The CLI entrypoint is `brownie run "<objective>"`. The command is intentionally

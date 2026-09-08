@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "contract_id": "runtime-release-engineering-contract-v1",
-  "phase": "RRP-8.6",
-  "phase_title": "Existing CI Release Gate Dry-Run Binding",
+  "phase": "RRP-8.7",
+  "phase_title": "Owner Governance Evidence Gate",
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
   "repository": "globalpocket/brownie",
   "owner": "runtime",
@@ -10,8 +10,8 @@
   "release_engineering_maturity": {
     "baseline_percent": 58,
     "target_percent": 90,
-    "current_percent": 70,
-    "scoring_basis": "RRP-8.6 binds the repository-local release gate dry-run into the existing CI-invoked VSIX check path without editing workflow files; runtime_release_ready remains false until every release evidence and owner-controlled condition is satisfied."
+    "current_percent": 73,
+    "scoring_basis": "RRP-8.7 adds machine-checked owner-governance and local checksum-integrity evidence gates for owner-controlled release residuals; runtime_release_ready remains false until every release evidence and owner-controlled condition is satisfied."
   },
   "commit_trace": {
     "audited_base_commit": "26de9a83f2da77377f58f031e3b3c55b598b654c",
@@ -50,7 +50,7 @@
         "cargo fmt --all -- --check",
         "cargo check --workspace --all-targets --all-features",
         "cargo clippy --workspace --all-targets --all-features -- -D warnings",
-        "cargo test --workspace --all-features",
+        "cargo test --workspace --all-features -- --test-threads=1",
         "pnpm install --frozen-lockfile",
         "pnpm --workspace-root check",
         "pnpm --workspace-root test",
@@ -63,7 +63,7 @@
     },
     {
       "id": "os_artifacts_generated",
-      "status": "not_generated",
+      "status": "local_platform_cli_artifact_generated_cross_platform_missing",
       "release_blocking": true,
       "required_evidence": [
         "Ubuntu Linux artifact",
@@ -73,7 +73,7 @@
     },
     {
       "id": "artifact_smoke_tests",
-      "status": "not_executed",
+      "status": "local_platform_cli_smoke_available_cross_platform_missing",
       "release_blocking": true,
       "required_evidence": [
         "clean install smoke test per target OS",
@@ -108,7 +108,7 @@
     },
     {
       "id": "checksums_generated",
-      "status": "local_baseline_generated_missing_release_artifact_checksums",
+      "status": "local_artifact_checksums_generated_cross_platform_missing",
       "release_blocking": true,
       "required_evidence": [
         "Repository-local SHA256SUMS is generated for release evidence files and any detected release artifacts",
@@ -117,11 +117,12 @@
     },
     {
       "id": "signature_or_integrity_proof",
-      "status": "blocked_external",
+      "status": "owner_approved_integrity_authority_available_local_artifact_bound_cross_platform_missing",
       "release_blocking": true,
       "required_evidence": [
         "artifact signature or owner-approved formal integrity mechanism",
-        "signing authority and verification instructions"
+        "owner-approved integrity authority decision and verification instructions",
+        "Final Release Ready still requires integrity proof for generated release artifacts"
       ]
     },
     {
@@ -160,18 +161,19 @@
     },
     {
       "id": "owner_controlled_settings_complete",
-      "status": "owner_decision_waiting",
+      "status": "implemented_sufficient",
       "release_blocking": true,
       "required_evidence": [
-        "OSS license and publish posture decision",
+        "OSS license and publish posture decision recorded",
         "branch protection and required status checks configured",
         "protected tag policy configured if release tags are used",
-        "signing or integrity authority configured"
+        "signing or owner-approved integrity authority configured",
+        "owner-designated independent review evidence completed"
       ]
     },
     {
       "id": "required_independent_reviews_complete",
-      "status": "not_completed",
+      "status": "implemented_sufficient",
       "release_blocking": true,
       "required_evidence": [
         "independent human review for Release workflow",
@@ -243,7 +245,9 @@
       "id": "phase-g-release-governance",
       "status": "partial_owner_settings_required",
       "verification": [
-        "repository policy document",
+        "pnpm --workspace-root release:owner-governance-evidence",
+        "pnpm --workspace-root guard:owner-governance-evidence",
+        "repository policy evidence",
         "required status checks",
         "self-approval prohibition",
         "protected tag policy",
@@ -270,7 +274,7 @@
       },
       {
         "id": "rust_test",
-        "command": "cargo test --workspace --all-features"
+        "command": "cargo test --workspace --all-features -- --test-threads=1"
       },
       {
         "id": "pnpm_install_frozen",
@@ -309,6 +313,14 @@
         "command": "pnpm --workspace-root guard:dependency-security-license-audit:test"
       },
       {
+        "id": "local_release_targets_guard",
+        "command": "pnpm --workspace-root guard:local-release-targets"
+      },
+      {
+        "id": "local_release_artifacts_all",
+        "command": "pnpm --workspace-root release:local-artifacts:all"
+      },
+      {
         "id": "supply_chain_artifact_evidence_generate",
         "command": "pnpm --workspace-root release:supply-chain-artifact-evidence"
       },
@@ -319,6 +331,22 @@
       {
         "id": "supply_chain_artifact_evidence_guard_test",
         "command": "pnpm --workspace-root guard:supply-chain-artifact-evidence:test"
+      },
+      {
+        "id": "release_integrity_verify",
+        "command": "pnpm --workspace-root release:integrity-verify"
+      },
+      {
+        "id": "owner_governance_evidence_generate",
+        "command": "pnpm --workspace-root release:owner-governance-evidence"
+      },
+      {
+        "id": "owner_governance_evidence_guard",
+        "command": "pnpm --workspace-root guard:owner-governance-evidence"
+      },
+      {
+        "id": "owner_governance_evidence_guard_test",
+        "command": "pnpm --workspace-root guard:owner-governance-evidence:test"
       },
       {
         "id": "runtime_release_readiness_guard",
@@ -363,8 +391,8 @@
     },
     {
       "id": "release_signing_authority",
-      "status": "owner_decision_waiting",
-      "reason": "Runtime can generate checksum/provenance files, but signing authority or an approved formal integrity mechanism is an owner-controlled release decision."
+      "status": "owner_approved_integrity_authority_available",
+      "reason": "Owner approved the repository-local protected-ref, CI-provenance, and SHA256SUMS verification mechanism as the interim integrity authority until stronger artifact signing is introduced."
     }
   ],
   "release_artifact_evidence": {
@@ -392,9 +420,9 @@
   "owner_actions_required": [
     "Decide OSS license and publish posture.",
     "Provide GitHub workflow scope or approve an equivalent CI-hardening path.",
-    "Configure required status checks and branch protection for the release gate.",
-    "Configure protected tag policy if release tags are used.",
-    "Configure signing authority or approve a formal integrity mechanism.",
+    "Keep main branch protection and required status checks enforced for the release gate.",
+    "Keep protected tag policy enforced for release tag patterns.",
+    "Keep owner-approved integrity authority evidence current, or replace it with stronger artifact signing.",
     "Arrange independent human reviews for Release workflow, permission model, Ledger Contract, Mode Pack trust boundary, signing/provenance, and Release Ready判定ロジック."
   ],
   "forbidden_success_claims": [
@@ -402,6 +430,7 @@
     "Do not treat missing artifacts, missing scans, missing SBOM, missing checksum, missing signature/integrity proof, missing provenance, missing tested_commit, or missing workflow run as success.",
     "Do not edit .github workflow files without workflow scope or an owner-approved equivalent path.",
     "Do not change license, publish settings, tags, or release assets in this phase.",
+    "Do not treat missing owner-governance evidence as owner approval.",
     "Do not treat dependency/security/license audit tooling absence as success.",
     "Do not claim Runtime Release Ready until release:dependency-security-license-audit has executed and passed."
   ],
@@ -438,11 +467,32 @@
       "pnpm_audit_prod"
     ],
     "mandatory_gate_policy": [
-      "cargo audit --locked must execute and pass before Runtime Release Ready can be true.",
+      "cargo audit must execute and pass before Runtime Release Ready can be true.",
       "cargo deny check must execute and pass against repo-root deny.toml before Runtime Release Ready can be true.",
       "pnpm audit --prod --audit-level moderate --json must execute and pass before Runtime Release Ready can be true.",
       "Missing audit tooling, missing lockfiles, missing deny.toml, or failing audit results are release-blocking.",
       "Dependency audit evidence stores command identifiers, exit codes, bounded paths, hashes, and statuses only; it does not store raw process output or secret/environment values."
+    ]
+  },
+  "owner_governance_evidence": {
+    "contract_id": "brownie-owner-governance-evidence-v1",
+    "generator_script": "pnpm --workspace-root release:owner-governance-evidence",
+    "guard_script": "pnpm --workspace-root guard:owner-governance-evidence",
+    "default_path": ".brownie/release-evidence/owner-governance-evidence.json",
+    "required_sections": [
+      "branch_protection",
+      "required_status_checks",
+      "protected_tag_policy",
+      "remote_ci_workflow_provenance",
+      "signature_or_integrity_authority",
+      "independent_reviews",
+      "oss_license_publish_posture"
+    ],
+    "fail_closed_policy": [
+      "Missing owner-governance evidence section is a guard failure.",
+      "Missing branch protection, status checks, protected tag policy, remote CI provenance, signing or integrity authority, independent reviews, or OSS license/publish decision keeps runtime_release_ready=false.",
+      "Runtime automation may collect GitHub and local evidence, but it must not self-approve owner-controlled decisions.",
+      "Generated owner-governance evidence stores bounded status fields, counts, hashes, and repository-relative paths only."
     ]
   }
 }

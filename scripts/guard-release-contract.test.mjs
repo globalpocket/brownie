@@ -35,7 +35,7 @@ function validContract(overrides = {}) {
   return {
     schema_version: 1,
     contract_id: 'runtime-release-engineering-contract-v1',
-    phase: 'RRP-8.6',
+    phase: 'RRP-8.7',
     owner: 'runtime',
     runtime_release_ready: false,
     release_engineering_maturity: {
@@ -107,6 +107,19 @@ function validContract(overrides = {}) {
       default_path: '.brownie/release-evidence/dependency-security-license-audit.json',
       required_checks: ['cargo_audit_locked', 'cargo_deny_policy', 'pnpm_audit_prod']
     },
+    owner_governance_evidence: {
+      contract_id: 'brownie-owner-governance-evidence-v1',
+      default_path: '.brownie/release-evidence/owner-governance-evidence.json',
+      required_sections: [
+        'branch_protection',
+        'required_status_checks',
+        'protected_tag_policy',
+        'remote_ci_workflow_provenance',
+        'signature_or_integrity_authority',
+        'independent_reviews',
+        'oss_license_publish_posture'
+      ]
+    },
     ...overrides
   };
 }
@@ -128,20 +141,31 @@ const validPackageJson = {
     'release:dependency-security-license-audit': 'node scripts/release-dependency-security-license-audit.mjs',
     'release:dependency-security-license-audit:test':
       'node --test scripts/release-dependency-security-license-audit.test.mjs',
+    'release:local-artifact': 'node scripts/release-local-artifact.mjs',
+    'release:local-artifacts:all': 'node scripts/release-local-artifacts-all.mjs',
+    'release:linux-vm-create': 'node scripts/create-linux-release-vm.mjs',
+    'release:windows-vm-create': 'node scripts/create-windows-release-vm.mjs',
+    'release:vm-bootstrap': 'node scripts/bootstrap-release-vms.mjs',
+    'release:vm-image': 'node scripts/manage-release-vm-images.mjs',
     'release:supply-chain-artifact-evidence': 'node scripts/release-supply-chain-artifact-evidence.mjs',
+    'release:integrity-verify': 'node scripts/release-integrity-verify.mjs',
+    'release:owner-governance-evidence': 'node scripts/release-owner-governance-evidence.mjs',
+    'guard:local-release-targets': 'node scripts/guard-local-release-targets.mjs',
     'guard:release-contract': 'node scripts/guard-release-contract.mjs',
     'guard:release-contract:test': 'node --test scripts/guard-release-contract.test.mjs',
     'guard:dependency-security-license-audit': 'node scripts/guard-dependency-security-license-audit.mjs',
     'guard:dependency-security-license-audit:test':
       'node --test scripts/guard-dependency-security-license-audit.test.mjs',
     'guard:supply-chain-artifact-evidence': 'node scripts/guard-supply-chain-artifact-evidence.mjs',
-    'guard:supply-chain-artifact-evidence:test': 'node --test scripts/guard-supply-chain-artifact-evidence.test.mjs'
+    'guard:supply-chain-artifact-evidence:test': 'node --test scripts/guard-supply-chain-artifact-evidence.test.mjs',
+    'guard:owner-governance-evidence': 'node scripts/guard-owner-governance-evidence.mjs',
+    'guard:owner-governance-evidence:test': 'node --test scripts/guard-owner-governance-evidence.test.mjs'
   }
 };
 
 const validVsixPackageJson = {
   scripts: {
-    check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root release:gate -- --dry-run && pnpm --workspace-root release:dependency-security-license-audit:test && pnpm --workspace-root guard:dependency-security-license-audit && pnpm --workspace-root guard:dependency-security-license-audit:test && pnpm --workspace-root guard:supply-chain-artifact-evidence && pnpm --workspace-root guard:supply-chain-artifact-evidence:test'
+    check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root release:gate -- --dry-run && pnpm --workspace-root release:dependency-security-license-audit:test && pnpm --workspace-root guard:dependency-security-license-audit && pnpm --workspace-root guard:dependency-security-license-audit:test && pnpm --workspace-root guard:local-release-targets && pnpm --workspace-root guard:supply-chain-artifact-evidence && pnpm --workspace-root guard:supply-chain-artifact-evidence:test && pnpm --workspace-root guard:owner-governance-evidence && pnpm --workspace-root guard:owner-governance-evidence:test'
   }
 };
 
@@ -190,7 +214,14 @@ test('rejects missing release gate package scripts', () => {
   assert(errors.some((error) => error.includes('release:gate')));
   assert(errors.some((error) => error.includes('release:dependency-security-license-audit')));
   assert(errors.some((error) => error.includes('release:dependency-security-license-audit:test')));
+  assert(errors.some((error) => error.includes('release:local-artifact')));
+  assert(errors.some((error) => error.includes('release:local-artifacts:all')));
+  assert(errors.some((error) => error.includes('release:linux-vm-create')));
+  assert(errors.some((error) => error.includes('release:windows-vm-create')));
+  assert(errors.some((error) => error.includes('release:vm-bootstrap')));
+  assert(errors.some((error) => error.includes('release:vm-image')));
   assert(errors.some((error) => error.includes('release:supply-chain-artifact-evidence')));
+  assert(errors.some((error) => error.includes('guard:local-release-targets')));
   assert(errors.some((error) => error.includes('guard:release-contract')));
   assert(errors.some((error) => error.includes('guard:release-contract:test')));
   assert(errors.some((error) => error.includes('guard:dependency-security-license-audit')));

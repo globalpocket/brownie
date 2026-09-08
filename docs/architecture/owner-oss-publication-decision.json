@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "decision_id": "brownie-owner-oss-publication-decision-v1",
+  "decision_status": "approved",
+  "owner_approved": true,
+  "license": "Apache-2.0",
+  "publish_posture": "manual_release_gate_until_release_ready",
+  "source_license_policy": {
+    "license_file": "LICENSE",
+    "package_json_license": "Apache-2.0",
+    "cargo_workspace_license": "Apache-2.0"
+  },
+  "publication_policy": {
+    "npm_package_private": true,
+    "vsix_package_private": true,
+    "cargo_publish": false,
+    "release_tags": "protected",
+    "automated_publication": false,
+    "manual_publication_allowed_after": [
+      "release artifacts are generated for target platforms",
+      "artifact smoke tests pass",
+      "release artifact checksums, SBOM, provenance, and integrity verification pass",
+      "independent review evidence is complete",
+      "owner explicitly approves a concrete public release"
+    ]
+  },
+  "safety_policy_documents": [
+    "README.md",
+    "SECURITY.md",
+    "ACCEPTABLE_USE.md",
+    "TRADEMARK.md"
+  ],
+  "approved_by": "globalpocket",
+  "approved_at": "2026-09-08T13:45:00+09:00",
+  "notes": [
+    "Apache-2.0 is selected for permissive commercial use, patent grant clarity, and warranty disclaimer.",
+    "Acceptable-use, security, and trademark documents clarify maintainer intent without adding non-OSS license restrictions.",
+    "This is not legal advice; final public release or commercial rollout may still require legal review."
+  ]
+}
