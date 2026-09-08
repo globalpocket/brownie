@@ -27,6 +27,11 @@
       "id": "oss_license",
       "status": "approved",
       "reason": "Owner selected Apache-2.0 with public publication held behind a manual release gate until artifact, smoke, integrity, and independent-review evidence are complete."
+    },
+    {
+      "id": "github_actor_separation",
+      "status": "approved",
+      "reason": "Future Brownie Phase Loop implementation PRs use brownie-agent as the pusher/author actor, while Codex uses globalpocket as the reviewer and merger so required review and last-pusher approval can be satisfied without temporary branch-protection relaxation."
     }
   ],
   "classifications": [
@@ -276,7 +281,8 @@
     "RRP-8.5 adds pnpm --workspace-root release:dependency-security-license-audit to pnpm release:gate, plus contract guards and CI-invoked tests. Missing cargo audit, cargo deny, pnpm audit execution, missing lockfiles, missing deny.toml, or failed audit results are release-blocking and cannot be counted as Release Ready.",
     "RRP-8.6 binds pnpm --workspace-root release:gate -- --dry-run into the existing GitHub-CI-invoked brownie-vsix check path and guards that binding without editing .github/workflows/ci.yml.",
     "RRP-8.7 adds machine-checked owner-governance evidence so owner-controlled residuals become precise fail-closed release blockers instead of prose-only blockers.",
-    "The repository main branch now has branch protection enabled with required GitHub Actions checks check and index-platform, required pull request review, stale-review dismissal, last-push approval, enforced admins, force-push denial, deletion denial, and required conversation resolution. Owner-governance evidence now records branch_protection, required_status_checks, and remote_ci_workflow_provenance as satisfied."
+    "The repository main branch now has branch protection enabled with required GitHub Actions checks check and index-platform, required pull request review, stale-review dismissal, last-push approval, enforced admins, force-push denial, deletion denial, and required conversation resolution. Owner-governance evidence now records branch_protection, required_status_checks, and remote_ci_workflow_provenance as satisfied.",
+    "Future GitHub actor separation is recorded as: brownie-agent authors and pushes Brownie Phase Loop implementation PRs; globalpocket reviews and merges them through the protected-branch PR flow after required checks pass."
   ],
   "blockers": [
     "runtime-release-guard-ci"

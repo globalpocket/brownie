@@ -2,7 +2,15 @@
   "schema_version": 1,
   "evidence_id": "brownie-owner-independent-review-evidence-v1",
   "review_authority": "globalpocket",
-  "review_policy": "Owner-designated independent review authority for Brownie Runtime Release Readiness governance.",
+  "review_policy": "Owner-designated review and merge authority for Brownie Runtime Release Readiness governance.",
+  "github_actor_separation_policy": {
+    "implementation_actor": "brownie-agent",
+    "review_actor": "globalpocket",
+    "merge_actor": "globalpocket",
+    "policy": "Brownie Phase Loop implementation PRs are authored and pushed by brownie-agent. Codex uses the owner account globalpocket to review and merge those PRs after required status checks pass.",
+    "branch_protection_expectation": "main keeps required pull request reviews, last-pusher approval, required status checks, enforced admins, force-push denial, deletion denial, and required conversation resolution enabled.",
+    "temporary_exception_policy": "If the implementation and review actors collapse to the same GitHub account, any branch-protection relaxation must be explicit, temporary, recorded, and restored immediately after the bounded operation."
+  },
   "reviews": [
     {
       "id": "release_workflow",
