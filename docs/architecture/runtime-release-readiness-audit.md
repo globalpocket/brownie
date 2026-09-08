@@ -53,6 +53,15 @@ runs `pnpm --workspace-root test:rrp3-process-loss`. Direct `.github` workflow
 wiring remains blocked by missing OAuth `workflow` scope and is left to the
 dedicated CI hardening phase.
 
+RRP-3.2 fixes MCP approval lock acquisition so the residual lock file is not
+truncated or rewritten until after the OS-owned advisory lock has been acquired.
+The lock file remains non-authoritative; durable ledger approval state still
+controls approval ownership, replay rejection, terminalization, and recovery.
+`mcp_approval_lock_write_happens_only_after_lock_ownership` covers competing
+acquisition, retry after release, and preservation of live lock content while
+existing process-loss, stale-lock, outcome-unknown, and double-consumption tests
+continue to cover the durable state machine.
+
 RRP-4.1 corrects the durable schema migration closure: Runtime/store now
 advances the local durable store schema from v1 to v2 through an explicit
 migration registry, persists a bounded `migration_in_progress` marker before

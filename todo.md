@@ -75,9 +75,6 @@ Current synchronization note:
 
 ### P0: Brownie Runtime safety
 
-- [ ] R-01: Fix MCP approval lock acquisition so live lock content is never
-  truncated before ownership; add competing-acquisition, process-loss,
-  stale-lock, retry, and double-consumption tests.
 - [ ] R-02: Remove direct `workspace.append_line` or route it through the
   authorized `workspace.write` proposal/apply path with hash, permission,
   fingerprint, idempotency, durable evidence, and replay rejection.
