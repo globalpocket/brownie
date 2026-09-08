@@ -212,9 +212,9 @@ function linuxSnapshot(repoRoot, instance, snapshotName) {
   };
 }
 
-function windowsPaths(repoRoot, vmDir) {
+function windowsPaths(repoRoot, vmDir, vmArch) {
   const fullDir = resolveRepoRelative(repoRoot, vmDir);
-  const disk = path.join(fullDir, 'brownie-windows-arm64.qcow2');
+  const disk = path.join(fullDir, `brownie-windows-${vmArch}.qcow2`);
   return {
     fullDir,
     disk,
@@ -224,8 +224,8 @@ function windowsPaths(repoRoot, vmDir) {
   };
 }
 
-function windowsProcessStatus(repoRoot, vmDir) {
-  const paths = windowsPaths(repoRoot, vmDir);
+function windowsProcessStatus(repoRoot, vmDir, vmArch) {
+  const paths = windowsPaths(repoRoot, vmDir, vmArch);
   const pgrep = run('pgrep', ['-fl', paths.disk], { cwd: repoRoot });
   return {
     vm_dir: normalizeRelativePath(path.relative(repoRoot, paths.fullDir)),
@@ -255,20 +255,20 @@ function windowsSshReachable(repoRoot, host) {
   };
 }
 
-function waitUntilWindowsStopped(repoRoot, vmDir, timeoutMs = 180_000) {
+function waitUntilWindowsStopped(repoRoot, vmDir, vmArch, timeoutMs = 180_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const status = windowsProcessStatus(repoRoot, vmDir);
+    const status = windowsProcessStatus(repoRoot, vmDir, vmArch);
     if (!status.running) {
       return { stopped: true, status };
     }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);
   }
-  return { stopped: false, status: windowsProcessStatus(repoRoot, vmDir) };
+  return { stopped: false, status: windowsProcessStatus(repoRoot, vmDir, vmArch) };
 }
 
-function windowsStop(repoRoot, host, vmDir) {
-  const before = windowsProcessStatus(repoRoot, vmDir);
+function windowsStop(repoRoot, host, vmDir, vmArch) {
+  const before = windowsProcessStatus(repoRoot, vmDir, vmArch);
   if (!before.running) {
     return { target: 'windows', before, changed: false, passed: true };
   }
@@ -281,7 +281,7 @@ function windowsStop(repoRoot, host, vmDir) {
     '-Command',
     'Stop-Computer -Force'
   ], { cwd: repoRoot, timeoutMs: 30_000 });
-  const wait = waitUntilWindowsStopped(repoRoot, vmDir);
+  const wait = waitUntilWindowsStopped(repoRoot, vmDir, vmArch);
   return {
     target: 'windows',
     before,
@@ -310,7 +310,7 @@ function copyIfExists(source, destination) {
 }
 
 function windowsSnapshot(repoRoot, options) {
-  const status = windowsProcessStatus(repoRoot, options.windowsVmDir);
+  const status = windowsProcessStatus(repoRoot, options.windowsVmDir, options.windowsVmArch);
   if (status.running) {
     return {
       target: 'windows',
@@ -319,7 +319,7 @@ function windowsSnapshot(repoRoot, options) {
       status
     };
   }
-  const paths = windowsPaths(repoRoot, options.windowsVmDir);
+  const paths = windowsPaths(repoRoot, options.windowsVmDir, options.windowsVmArch);
   if (!fs.existsSync(paths.disk)) {
     return { target: 'windows', passed: false, error: `Windows disk not found: ${status.disk}`, status };
   }
@@ -363,7 +363,7 @@ function windowsSnapshot(repoRoot, options) {
           path: normalizeRelativePath(path.relative(repoRoot, tpm.path))
         }
       : null,
-    restore_note: 'Restore by copying this directory contents back to .brownie/vms/brownie-windows-arm64 while the VM is stopped.'
+    restore_note: `Restore by copying this directory contents back to ${status.vm_dir} while the VM is stopped.`
   };
   const manifestPath = path.join(snapshotDir, 'image-manifest.json');
   writeJson(manifestPath, manifest);
@@ -377,12 +377,14 @@ function windowsSnapshot(repoRoot, options) {
 }
 
 function windowsStart(repoRoot, options) {
-  const status = windowsProcessStatus(repoRoot, options.windowsVmDir);
+  const status = windowsProcessStatus(repoRoot, options.windowsVmDir, options.windowsVmArch);
   if (status.running) {
     return { target: 'windows', changed: false, passed: true, status };
   }
   const args = [
     'scripts/create-windows-release-vm.mjs',
+    '--vm-dir',
+    options.windowsVmDir,
     '--vm-arch',
     options.windowsVmArch,
     '--display',
@@ -431,9 +433,9 @@ export function manageReleaseVmImages(options = {}) {
       }
     } else if (target === 'windows') {
       if (options.action === 'status') {
-        results.push({ target, ...windowsProcessStatus(repoRoot, options.windowsVmDir), ssh: windowsSshReachable(repoRoot, options.windowsHost) });
+        results.push({ target, ...windowsProcessStatus(repoRoot, options.windowsVmDir, options.windowsVmArch), ssh: windowsSshReachable(repoRoot, options.windowsHost) });
       } else if (options.action === 'shutdown') {
-        results.push(windowsStop(repoRoot, options.windowsHost, options.windowsVmDir));
+        results.push(windowsStop(repoRoot, options.windowsHost, options.windowsVmDir, options.windowsVmArch));
       } else if (options.action === 'snapshot') {
         results.push(windowsSnapshot(repoRoot, options));
       } else if (options.action === 'start') {
