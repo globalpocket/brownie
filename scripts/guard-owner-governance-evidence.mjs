@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -17,6 +18,15 @@ const requiredSections = [
   'signature_or_integrity_authority',
   'independent_reviews',
   'oss_license_publish_posture'
+];
+
+const canonicalRequiredReviewIds = [
+  'release_workflow',
+  'permission_model',
+  'ledger_contract',
+  'mode_pack_trust_boundary',
+  'signing_provenance',
+  'release_ready_judgment'
 ];
 
 const allowedIncompleteStatuses = new Set([
@@ -36,6 +46,7 @@ const allowedIncompleteStatuses = new Set([
 ]);
 
 const hashPattern = /^sha256:[a-f0-9]{64}$/;
+const gitCommitPattern = /^[a-f0-9]{40}$/;
 
 function isMainModule() {
   return process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
@@ -60,6 +71,16 @@ function isSafeRelativePath(value) {
 
 function sha256File(filePath) {
   return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')}`;
+}
+
+function currentGitHead(repoRoot) {
+  const result = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+    timeout: 30_000
+  });
+  return result.status === 0 ? result.stdout.trim() : null;
 }
 
 function requireValue(condition, errors, message) {
@@ -94,12 +115,33 @@ function validateOwnerFile(repoRoot, fileEvidence, errors, owner) {
   }
 }
 
+function validateGithubReviewProvenance(entry, errors, owner) {
+  requireValue(entry && typeof entry === 'object' && !Array.isArray(entry), errors, `${owner} must be an object.`);
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return;
+  }
+  requireValue(isNonEmptyString(entry.required_review_id), errors, `${owner}.required_review_id must be non-empty.`);
+  requireValue(Number.isInteger(entry.pull_request_number) && entry.pull_request_number > 0, errors, `${owner}.pull_request_number must be a positive integer.`);
+  requireValue(isNonEmptyString(entry.review_id), errors, `${owner}.review_id must be non-empty.`);
+  requireValue(entry.state === 'APPROVED', errors, `${owner}.state must be APPROVED.`);
+  requireValue(entry.reviewer === 'globalpocket', errors, `${owner}.reviewer must be globalpocket.`);
+  requireValue(entry.pull_request_author === 'brownie-agent', errors, `${owner}.pull_request_author must be brownie-agent.`);
+  requireValue(entry.reviewer !== entry.pull_request_author, errors, `${owner}.reviewer must differ from pull_request_author.`);
+  requireValue(gitCommitPattern.test(entry.commit_sha), errors, `${owner}.commit_sha must be a 40-character lowercase git commit SHA.`);
+  requireValue(isNonEmptyString(entry.submitted_at), errors, `${owner}.submitted_at must be non-empty.`);
+}
+
 function validateEvidence(evidence, options = {}) {
   const repoRoot = options.repoRoot ?? defaultRepoRoot;
+  const expectedSourceCommit = options.expectedSourceCommit;
   const errors = [];
   requireValue(evidence.schema_version === 1, errors, 'owner governance evidence schema_version must be 1.');
   requireValue(evidence.evidence_id === 'brownie-owner-governance-evidence-v1', errors, 'owner governance evidence_id must match.');
   requireValue(evidence.repository === 'globalpocket/brownie', errors, 'owner governance evidence repository must be globalpocket/brownie.');
+  requireValue(gitCommitPattern.test(evidence.source_commit), errors, 'owner governance evidence source_commit must be a 40-character lowercase git commit SHA.');
+  if (expectedSourceCommit) {
+    requireValue(evidence.source_commit === expectedSourceCommit, errors, `owner governance evidence source_commit must match current HEAD ${expectedSourceCommit}.`);
+  }
   requireValue(evidence.release_ready === false, errors, 'owner governance evidence must not declare release_ready true.');
   requireValue(evidence.runtime_release_ready === false, errors, 'owner governance evidence must not declare runtime_release_ready true.');
   requireValue(Array.isArray(evidence.fail_closed_reasons), errors, 'owner governance evidence must include fail_closed_reasons.');
@@ -164,9 +206,31 @@ function validateEvidence(evidence, options = {}) {
   if (reviews) {
     validateOwnerFile(repoRoot, reviews.owner_evidence, errors, 'sections.independent_reviews.owner_evidence');
     requireValue(Array.isArray(reviews.required_review_ids) && reviews.required_review_ids.length > 0, errors, 'independent_reviews.required_review_ids must be non-empty.');
+    requireValue(
+      JSON.stringify(reviews.required_review_ids) === JSON.stringify(canonicalRequiredReviewIds),
+      errors,
+      `independent_reviews.required_review_ids must exactly match the canonical owner review IDs: ${canonicalRequiredReviewIds.join(', ')}.`
+    );
     requireValue(Array.isArray(reviews.missing_review_ids), errors, 'independent_reviews.missing_review_ids must be an array.');
+    requireValue(Array.isArray(reviews.github_review_provenance), errors, 'independent_reviews.github_review_provenance must be an array.');
+    const provenanceIds = new Set();
+    for (const [index, entry] of (Array.isArray(reviews.github_review_provenance) ? reviews.github_review_provenance : []).entries()) {
+      validateGithubReviewProvenance(entry, errors, `independent_reviews.github_review_provenance[${index}]`);
+      requireValue(
+        canonicalRequiredReviewIds.includes(entry?.required_review_id),
+        errors,
+        `independent_reviews.github_review_provenance[${index}].required_review_id must be one of the canonical owner review IDs.`
+      );
+      if (isNonEmptyString(entry?.required_review_id)) {
+        provenanceIds.add(entry.required_review_id);
+      }
+    }
     if (reviews.status === 'satisfied') {
       requireValue(reviews.missing_review_ids.length === 0, errors, 'satisfied independent_reviews must have no missing_review_ids.');
+      for (const reviewId of reviews.required_review_ids) {
+        requireValue(provenanceIds.has(reviewId), errors, `satisfied independent_reviews must include GitHub review provenance for ${reviewId}.`);
+      }
+      requireValue(reviews.approved_review_count === reviews.required_review_ids.length, errors, 'satisfied independent_reviews approved_review_count must equal required_review_ids length.');
     }
   }
 
@@ -226,7 +290,8 @@ export function runOwnerGovernanceEvidenceGuard(options = {}) {
     options.evidence !== undefined || process.env.BROWNIE_OWNER_GOVERNANCE_EVIDENCE || fs.existsSync(path.join(repoRoot, resolvedEvidencePath));
   if (shouldValidateEvidence) {
     const evidence = options.evidence ?? readJson(repoRoot, resolvedEvidencePath, errors);
-    errors.push(...validateEvidence(evidence, { repoRoot }));
+    const expectedSourceCommit = options.expectedSourceCommit ?? (options.evidence === undefined ? currentGitHead(repoRoot) : undefined);
+    errors.push(...validateEvidence(evidence, { repoRoot, expectedSourceCommit }));
   }
   return { errors, contractPath, evidencePath: resolvedEvidencePath, validatedEvidence: shouldValidateEvidence };
 }

@@ -8,8 +8,10 @@ pnpm --workspace-root release:owner-governance-evidence
 pnpm --workspace-root guard:owner-governance-evidence
 ```
 
-The generated evidence is written to ignored local release evidence under
-`.brownie/release-evidence/owner-governance-evidence.json`.
+The generated evidence is written under shared release evidence at
+`.brownie/release-evidence/owner-governance-evidence.json`. Machine-local
+credentials, VM disks, VM images, and scratch state must stay under
+`.brownie/private/`.
 
 ## Owner decision files
 
@@ -91,9 +93,30 @@ approval.
       "self_approval": false,
       "reviewed_at": "YYYY-MM-DDTHH:mm:ssZ"
     }
+  ],
+  "github_review_provenance": [
+    {
+      "required_review_id": "release_workflow",
+      "pull_request_number": 413,
+      "pull_request_author": "brownie-agent",
+      "review_id": "PRR_kwDOTGOop88AAAABMqjWww",
+      "reviewer": "globalpocket",
+      "state": "APPROVED",
+      "commit_sha": "1bd07b11671592e984cd821e060a2dd5b1921cb7",
+      "submitted_at": "2026-09-08T17:19:58Z"
+    }
   ]
 }
 ```
+
+Static review entries document the review scope, but they are not sufficient
+release evidence by themselves. The collector verifies each
+`github_review_provenance` entry against the GitHub pull-request and review APIs
+before counting it. A satisfied independent-review section must include verified
+GitHub review provenance for every required review id, including the pull
+request number, review id, reviewer, implementation PR author, reviewed commit
+SHA, and submission timestamp. The reviewer must be `globalpocket`, the
+implementation PR author must be `brownie-agent`, and those actors must differ.
 
 ### `docs/architecture/owner-oss-publication-decision.json`
 

@@ -18,6 +18,16 @@ const requiredSections = [
   'oss_license_publish_posture'
 ];
 
+const commitSha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const requiredReviewIds = [
+  'release_workflow',
+  'permission_model',
+  'ledger_contract',
+  'mode_pack_trust_boundary',
+  'signing_provenance',
+  'release_ready_judgment'
+];
+
 function section(status = 'owner_decision_waiting', extra = {}) {
   return {
     status,
@@ -74,22 +84,13 @@ function validEvidence(overrides = {}) {
         sha256: null
       },
       required_review_ids: [
-        'release_workflow',
-        'permission_model',
-        'ledger_contract',
-        'mode_pack_trust_boundary',
-        'signing_provenance',
-        'release_ready_judgment'
+        ...requiredReviewIds
       ],
       approved_review_count: 0,
       missing_review_ids: [
-        'release_workflow',
-        'permission_model',
-        'ledger_contract',
-        'mode_pack_trust_boundary',
-        'signing_provenance',
-        'release_ready_judgment'
-      ]
+        ...requiredReviewIds
+      ],
+      github_review_provenance: []
     }),
     oss_license_publish_posture: section('owner_decision_waiting', {
       owner_decision: {
@@ -104,6 +105,7 @@ function validEvidence(overrides = {}) {
     schema_version: 1,
     evidence_id: 'brownie-owner-governance-evidence-v1',
     repository: 'globalpocket/brownie',
+    source_commit: commitSha,
     release_ready: false,
     runtime_release_ready: false,
     required_sections: requiredSections,
@@ -114,6 +116,20 @@ function validEvidence(overrides = {}) {
       'independent_reviews:not_completed',
       'oss_license_publish_posture:owner_decision_waiting'
     ],
+    ...overrides
+  };
+}
+
+function githubReviewProvenance(requiredReviewId, overrides = {}) {
+  return {
+    required_review_id: requiredReviewId,
+    pull_request_number: 413,
+    pull_request_author: 'brownie-agent',
+    review_id: `PRR_${requiredReviewId}`,
+    reviewer: 'globalpocket',
+    state: 'APPROVED',
+    commit_sha: commitSha,
+    submitted_at: '2026-09-08T17:19:58Z',
     ...overrides
   };
 }
@@ -155,12 +171,128 @@ test('rejects satisfied independent review evidence with missing review ids', ()
         },
         required_review_ids: ['release_workflow'],
         approved_review_count: 0,
-        missing_review_ids: ['release_workflow']
+        missing_review_ids: ['release_workflow'],
+        github_review_provenance: []
       })
     }
   });
   const errors = validate(evidence);
   assert(errors.some((error) => error.includes('satisfied independent_reviews must have no missing_review_ids')));
+});
+
+test('rejects satisfied independent review evidence without GitHub review provenance', () => {
+  const evidence = validEvidence({
+    sections: {
+      ...validEvidence().sections,
+      independent_reviews: section('satisfied', {
+        owner_evidence: {
+          path: 'docs/architecture/owner-independent-review-evidence.json',
+          exists: false,
+          sha256: null
+        },
+        required_review_ids: ['release_workflow'],
+        approved_review_count: 1,
+        missing_review_ids: [],
+        github_review_provenance: []
+      })
+    }
+  });
+  const errors = validate(evidence);
+  assert(errors.some((error) => error.includes('GitHub review provenance for release_workflow')));
+});
+
+test('accepts satisfied independent review evidence with concrete GitHub review provenance', () => {
+  const provenance = requiredReviewIds.map((reviewId) => githubReviewProvenance(reviewId));
+  const evidence = validEvidence({
+    sections: {
+      ...validEvidence().sections,
+      independent_reviews: section('satisfied', {
+        owner_evidence: {
+          path: 'docs/architecture/owner-independent-review-evidence.json',
+          exists: false,
+          sha256: null
+        },
+        required_review_ids: [...requiredReviewIds],
+        approved_review_count: requiredReviewIds.length,
+        missing_review_ids: [],
+        github_review_provenance: provenance
+      })
+    },
+    fail_closed_reasons: [
+      'remote_ci_workflow_provenance:local_missing_remote_ci_provenance',
+      'signature_or_integrity_authority:owner_decision_waiting',
+      'oss_license_publish_posture:owner_decision_waiting'
+    ]
+  });
+  assert.deepEqual(validate(evidence), []);
+});
+
+test('rejects satisfied independent review evidence that narrows canonical review scopes', () => {
+  const evidence = validEvidence({
+    sections: {
+      ...validEvidence().sections,
+      independent_reviews: section('satisfied', {
+        owner_evidence: {
+          path: 'docs/architecture/owner-independent-review-evidence.json',
+          exists: false,
+          sha256: null
+        },
+        required_review_ids: ['release_workflow'],
+        approved_review_count: 1,
+        missing_review_ids: [],
+        github_review_provenance: [githubReviewProvenance('release_workflow')]
+      })
+    },
+    fail_closed_reasons: [
+      'remote_ci_workflow_provenance:local_missing_remote_ci_provenance',
+      'signature_or_integrity_authority:owner_decision_waiting',
+      'oss_license_publish_posture:owner_decision_waiting'
+    ]
+  });
+  const errors = validate(evidence);
+  assert(errors.some((error) => error.includes('must exactly match the canonical owner review IDs')));
+});
+
+test('rejects GitHub review provenance from the implementation actor', () => {
+  const evidence = validEvidence({
+    sections: {
+      ...validEvidence().sections,
+      independent_reviews: section('satisfied', {
+        owner_evidence: {
+          path: 'docs/architecture/owner-independent-review-evidence.json',
+          exists: false,
+          sha256: null
+        },
+        required_review_ids: ['release_workflow'],
+        approved_review_count: 1,
+        missing_review_ids: [],
+        github_review_provenance: [
+          githubReviewProvenance('release_workflow', {
+            reviewer: 'brownie-agent',
+            pull_request_author: 'brownie-agent'
+          })
+        ]
+      })
+    },
+    fail_closed_reasons: [
+      'remote_ci_workflow_provenance:local_missing_remote_ci_provenance',
+      'signature_or_integrity_authority:owner_decision_waiting',
+      'oss_license_publish_posture:owner_decision_waiting'
+    ]
+  });
+  const errors = validate(evidence);
+  assert(errors.some((error) => error.includes('reviewer must be globalpocket')));
+  assert(errors.some((error) => error.includes('reviewer must differ from pull_request_author')));
+});
+
+test('rejects stale owner governance evidence source commit when validating a file', () => {
+  const errors = runOwnerGovernanceEvidenceGuard({
+    repoRoot: fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-owner-governance-')),
+    contract: validContract(),
+    evidence: validEvidence(),
+    expectedSourceCommit: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  }).errors;
+  assert(errors.some((error) => error.includes('source_commit must match current HEAD')));
 });
 
 test('rejects satisfied protected tag evidence without a ruleset count', () => {

@@ -150,6 +150,7 @@ const validPackageJson = {
     'release:supply-chain-artifact-evidence': 'node scripts/release-supply-chain-artifact-evidence.mjs',
     'release:integrity-verify': 'node scripts/release-integrity-verify.mjs',
     'release:owner-governance-evidence': 'node scripts/release-owner-governance-evidence.mjs',
+    'release:owner-governance-evidence:test': 'node --test scripts/release-owner-governance-evidence.test.mjs',
     'guard:local-release-targets': 'node scripts/guard-local-release-targets.mjs',
     'guard:release-contract': 'node scripts/guard-release-contract.mjs',
     'guard:release-contract:test': 'node --test scripts/guard-release-contract.test.mjs',
@@ -165,7 +166,7 @@ const validPackageJson = {
 
 const validVsixPackageJson = {
   scripts: {
-    check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root release:gate -- --dry-run && pnpm --workspace-root release:dependency-security-license-audit:test && pnpm --workspace-root guard:dependency-security-license-audit && pnpm --workspace-root guard:dependency-security-license-audit:test && pnpm --workspace-root guard:local-release-targets && pnpm --workspace-root guard:supply-chain-artifact-evidence && pnpm --workspace-root guard:supply-chain-artifact-evidence:test && pnpm --workspace-root guard:owner-governance-evidence && pnpm --workspace-root guard:owner-governance-evidence:test'
+    check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root release:gate -- --dry-run && pnpm --workspace-root release:dependency-security-license-audit:test && pnpm --workspace-root guard:dependency-security-license-audit && pnpm --workspace-root guard:dependency-security-license-audit:test && pnpm --workspace-root guard:local-release-targets && pnpm --workspace-root guard:supply-chain-artifact-evidence && pnpm --workspace-root guard:supply-chain-artifact-evidence:test && pnpm --workspace-root guard:owner-governance-evidence && pnpm --workspace-root guard:owner-governance-evidence:test && pnpm --workspace-root release:owner-governance-evidence:test'
   }
 };
 
