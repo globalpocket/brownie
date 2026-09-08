@@ -14,15 +14,15 @@ const requiredChecks = [
   {
     id: 'cargo_audit_locked',
     command: 'cargo',
-    args: ['audit', '--locked'],
-    probe: ['cargo-audit', ['--version']],
+    args: ['audit'],
+    probe: ['cargo', ['audit', '--version']],
     category: 'rust_vulnerability_audit'
   },
   {
     id: 'cargo_deny_policy',
     command: 'cargo',
     args: ['deny', 'check'],
-    probe: ['cargo-deny', ['--version']],
+    probe: ['cargo', ['deny', '--version']],
     category: 'rust_license_advisory_policy'
   },
   {

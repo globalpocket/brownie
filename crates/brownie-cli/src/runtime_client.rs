@@ -3193,12 +3193,11 @@ fn objective_proposal_apply_params(
         return Err(RuntimeClientError::InvalidResponse);
     }
     let replacement_content = required_workspace_write_content(proposal, "content_preview")
-        .map_err(|error| {
+        .inspect_err(|_| {
             debug_invalid_response_note(
                 "objective_proposal_apply_params",
                 "proposal content_preview invalid",
             );
-            error
         })?;
     if display_usize(proposal, "content_chars")? != replacement_content.chars().count() {
         debug_invalid_response_note("objective_proposal_apply_params", "content length mismatch");
@@ -3214,12 +3213,11 @@ fn objective_proposal_apply_params(
         }
     };
     let expected_target_sha256 =
-        required_display_string(snapshot, "file_sha256").map_err(|error| {
+        required_display_string(snapshot, "file_sha256").inspect_err(|_| {
             debug_invalid_response_note(
                 "objective_proposal_apply_params",
                 "snapshot file_sha256 missing",
             );
-            error
         })?;
     validate_sha256_fingerprint(&expected_target_sha256)?;
     let apply_plan = match optional_object_field(proposal, "latest_apply_plan")
@@ -3236,12 +3234,11 @@ fn objective_proposal_apply_params(
         return Err(RuntimeClientError::InvalidResponse);
     }
 
-    let run_id = required_display_string(authorization, "run_id").map_err(|error| {
+    let run_id = required_display_string(authorization, "run_id").inspect_err(|_| {
         debug_invalid_response_note(
             "objective_proposal_apply_params",
             "authorization run_id missing",
         );
-        error
     })?;
     Ok(Some(json!({
         "run_id": run_id,

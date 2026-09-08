@@ -5,20 +5,21 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
-brownie-agentmodes = { path = "../brownie-agentmodes" }
-brownie-agent-loop = { path = "../brownie-agent-loop" }
-brownie-context = { path = "../brownie-context" }
-brownie-config = { path = "../brownie-config" }
-brownie-indexer = { path = "../brownie-indexer" }
-brownie-llm = { path = "../brownie-llm" }
-brownie-modepack = { path = "../brownie-modepack" }
-brownie-protocol = { path = "../brownie-protocol" }
-brownie-store = { path = "../brownie-store" }
-brownie-tools = { path = "../brownie-tools" }
+brownie-agentmodes = { path = "../brownie-agentmodes", version = "0.1.0" }
+brownie-agent-loop = { path = "../brownie-agent-loop", version = "0.1.0" }
+brownie-context = { path = "../brownie-context", version = "0.1.0" }
+brownie-config = { path = "../brownie-config", version = "0.1.0" }
+brownie-indexer = { path = "../brownie-indexer", version = "0.1.0" }
+brownie-llm = { path = "../brownie-llm", version = "0.1.0" }
+brownie-modepack = { path = "../brownie-modepack", version = "0.1.0" }
+brownie-protocol = { path = "../brownie-protocol", version = "0.1.0" }
+brownie-store = { path = "../brownie-store", version = "0.1.0" }
+brownie-tools = { path = "../brownie-tools", version = "0.1.0" }
 ed25519-dalek.workspace = true
 libc.workspace = true
 serde.workspace = true

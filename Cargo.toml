@@ -21,7 +21,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
-license = "UNLICENSED"
+license = "Apache-2.0"
 publish = false
 repository = "https://github.com/globalpocket/brownie"
 rust-version = "1.78"

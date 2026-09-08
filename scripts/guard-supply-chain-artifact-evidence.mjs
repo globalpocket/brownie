@@ -28,6 +28,7 @@ const allowedIncompleteStatuses = new Set([
   'missing_lockfile',
   'not_executed',
   'not_executed_missing_artifacts',
+  'partial_cross_platform_missing',
   'not_generated',
   'partial_no_release_artifacts',
   'partial_tooling_missing'
@@ -86,6 +87,16 @@ function validateReferencedFile(repoRoot, entry, errors, owner) {
   }
 }
 
+function validateOptionalPath(repoRoot, value, errors, owner) {
+  if (value === null || value === undefined) {
+    return;
+  }
+  requireValue(isSafeRelativePath(value), errors, `${owner} must be repository-relative and bounded.`);
+  if (isSafeRelativePath(value)) {
+    requireValue(fs.existsSync(path.join(repoRoot, value)), errors, `${owner} must exist: ${value}.`);
+  }
+}
+
 function validateEvidence(evidence, options = {}) {
   const repoRoot = options.repoRoot ?? defaultRepoRoot;
   const errors = [];
@@ -141,6 +152,25 @@ function validateEvidence(evidence, options = {}) {
     requireValue(Array.isArray(artifacts.artifacts) && artifacts.artifacts.length > 0, errors, 'satisfied artifacts section must include artifacts.');
     for (const [index, artifact] of artifacts.artifacts.entries()) {
       validateReferencedFile(repoRoot, artifact, errors, `sections.artifacts.artifacts[${index}]`);
+      validateOptionalPath(repoRoot, artifact.artifact_evidence_path, errors, `sections.artifacts.artifacts[${index}].artifact_evidence_path`);
+      validateOptionalPath(repoRoot, artifact.smoke_evidence_path, errors, `sections.artifacts.artifacts[${index}].smoke_evidence_path`);
+    }
+  }
+
+  const artifactSmoke = evidence.sections?.artifact_smoke;
+  if (artifactSmoke?.status === 'satisfied') {
+    requireValue(
+      Array.isArray(artifactSmoke.smoke_results) && artifactSmoke.smoke_results.length > 0,
+      errors,
+      'satisfied artifact_smoke must include smoke_results.'
+    );
+    for (const [index, smokeResult] of (Array.isArray(artifactSmoke.smoke_results) ? artifactSmoke.smoke_results : []).entries()) {
+      requireValue(smokeResult?.passed === true, errors, `sections.artifact_smoke.smoke_results[${index}] must pass.`);
+      requireValue(Array.isArray(smokeResult?.commands) && smokeResult.commands.length > 0, errors, `sections.artifact_smoke.smoke_results[${index}] must include commands.`);
+      for (const [commandIndex, command] of (Array.isArray(smokeResult?.commands) ? smokeResult.commands : []).entries()) {
+        requireValue(command?.passed === true, errors, `sections.artifact_smoke.smoke_results[${index}].commands[${commandIndex}] must pass.`);
+        requireValue(Number.isInteger(command?.exit_code), errors, `sections.artifact_smoke.smoke_results[${index}].commands[${commandIndex}].exit_code must be an integer.`);
+      }
     }
   }
 
@@ -160,7 +190,7 @@ export function validateSupplyChainArtifactContract(contract, options = {}) {
   const errors = [];
 
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must keep runtime_release_ready false.`);
-  requireValue(contract.phase === 'RRP-8.6', errors, `${contractPath} phase must be RRP-8.6.`);
+  requireValue(contract.phase === 'RRP-8.7', errors, `${contractPath} phase must be RRP-8.7.`);
   requireValue(contract.release_engineering_maturity?.current_percent < contract.release_engineering_maturity?.target_percent, errors, `${contractPath} must not claim target release maturity before full evidence exists.`);
 
   const localGateCommands = new Set(

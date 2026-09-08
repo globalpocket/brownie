@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "decision_id": "brownie-owner-integrity-authority-decision-v1",
+  "decision_status": "approved",
+  "owner_approved": true,
+  "approved_mechanism": "protected-git-ref-ci-provenance-sha256sums-integrity-verification",
+  "verification_instructions": [
+    "Build or release evidence must be produced from a protected main branch commit or a protected release tag.",
+    "Remote CI provenance must identify a successful GitHub Actions CI run for the tested commit.",
+    "release:supply-chain-artifact-evidence must generate SHA256SUMS for generated release evidence and detected release artifacts.",
+    "release:integrity-verify must verify every SHA256SUMS entry against the repository-local files before release evidence is accepted.",
+    "owner-governance evidence must record branch_protection, required_status_checks, protected_tag_policy, remote_ci_workflow_provenance, and signature_or_integrity_authority as satisfied before this mechanism can support a Release Ready claim."
+  ],
+  "approved_by": "globalpocket",
+  "approved_at": "2026-09-08T13:28:00+09:00",
+  "scope": "Brownie repository-local release integrity authority until a stronger artifact signing mechanism is introduced.",
+  "non_goals": [
+    "This decision is not an OSS license or publish posture decision.",
+    "This decision does not replace independent human reviews.",
+    "This decision does not claim Release Ready while cross-platform artifacts, smoke tests, or other release blockers remain open."
+  ]
+}

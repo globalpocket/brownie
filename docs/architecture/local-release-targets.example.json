@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "targets": [
+    {
+      "id": "darwin-arm64",
+      "kind": "local",
+      "required": true
+    },
+    {
+      "id": "linux-arm64",
+      "kind": "ssh",
+      "host": "brownie-linux",
+      "workspace": "/home/brownie/brownie",
+      "shell": "posix",
+      "required": true
+    },
+    {
+      "id": "linux-x64",
+      "kind": "ssh",
+      "host": "brownie-linux",
+      "workspace": "/home/brownie/brownie",
+      "shell": "posix",
+      "container_platform": "linux/amd64",
+      "required": true
+    },
+    {
+      "id": "win32-x64",
+      "kind": "ssh",
+      "host": "brownie-windows",
+      "workspace": "C:/Users/brownie/brownie",
+      "shell": "powershell",
+      "runner_arch": "arm64",
+      "required": true
+    }
+  ]
+}

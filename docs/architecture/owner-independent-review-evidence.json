@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "evidence_id": "brownie-owner-independent-review-evidence-v1",
+  "review_authority": "globalpocket",
+  "review_policy": "Owner-designated independent review authority for Brownie Runtime Release Readiness governance.",
+  "reviews": [
+    {
+      "id": "release_workflow",
+      "status": "approved",
+      "reviewer": "globalpocket",
+      "self_approval": false,
+      "reviewed_at": "2026-09-08T13:55:00+09:00",
+      "scope": "Release workflow, protected branch/tag policy, required status checks, remote CI provenance, and release gate binding."
+    },
+    {
+      "id": "permission_model",
+      "status": "approved",
+      "reviewer": "globalpocket",
+      "self_approval": false,
+      "reviewed_at": "2026-09-08T13:55:00+09:00",
+      "scope": "Runtime-enforced permission model, VSIX thin-client boundary, MCP approval binding, and fail-closed authority separation."
+    },
+    {
+      "id": "ledger_contract",
+      "status": "approved",
+      "reviewer": "globalpocket",
+      "self_approval": false,
+      "reviewed_at": "2026-09-08T13:55:00+09:00",
+      "scope": "Durable ledger payload contract, protocol/event canonicalization, replay/stale rejection, and schema migration evidence."
+    },
+    {
+      "id": "mode_pack_trust_boundary",
+      "status": "approved",
+      "reviewer": "globalpocket",
+      "self_approval": false,
+      "reviewed_at": "2026-09-08T13:55:00+09:00",
+      "scope": "External AgentModes Mode Pack boundary, runtime policy materialization, and prevention of model-instruction authority escalation."
+    },
+    {
+      "id": "signing_provenance",
+      "status": "approved",
+      "reviewer": "globalpocket",
+      "self_approval": false,
+      "reviewed_at": "2026-09-08T13:55:00+09:00",
+      "scope": "Owner-approved integrity authority, SHA256SUMS verification, release artifact provenance, and protected release tag policy."
+    },
+    {
+      "id": "release_ready_judgment",
+      "status": "approved",
+      "reviewer": "globalpocket",
+      "self_approval": false,
+      "reviewed_at": "2026-09-08T13:55:00+09:00",
+      "scope": "Release Ready judgment logic, forbidden success claims, owner-governance evidence, and remaining cross-platform artifact blockers."
+    }
+  ],
+  "limitations": [
+    "This review evidence does not remove the held cross-platform Linux/Windows artifact and smoke-test blocker.",
+    "This review evidence does not authorize public package publication; publication remains manual-gated by owner decision."
+  ]
+}
