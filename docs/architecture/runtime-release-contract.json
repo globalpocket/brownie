@@ -421,6 +421,7 @@
     "Decide OSS license and publish posture.",
     "Provide GitHub workflow scope or approve an equivalent CI-hardening path.",
     "Keep main branch protection and required status checks enforced for the release gate.",
+    "Use brownie-agent as the Brownie Phase Loop implementation actor and globalpocket as the Codex review/merge actor so last-pusher approval remains satisfiable without weakening branch protection.",
     "Keep protected tag policy enforced for release tag patterns.",
     "Keep owner-approved integrity authority evidence current, or replace it with stronger artifact signing.",
     "Arrange independent human reviews for Release workflow, permission model, Ledger Contract, Mode Pack trust boundary, signing/provenance, and Release Ready判定ロジック."
@@ -492,6 +493,7 @@
       "Missing owner-governance evidence section is a guard failure.",
       "Missing branch protection, status checks, protected tag policy, remote CI provenance, signing or integrity authority, independent reviews, or OSS license/publish decision keeps runtime_release_ready=false.",
       "Runtime automation may collect GitHub and local evidence, but it must not self-approve owner-controlled decisions.",
+      "Normal Brownie Phase Loop PR flow requires brownie-agent to author/push implementation changes and globalpocket to review and merge after required checks pass; same-account exceptions must be explicit, temporary, recorded, and reverted.",
       "Generated owner-governance evidence stores bounded status fields, counts, hashes, and repository-relative paths only."
     ]
   }
