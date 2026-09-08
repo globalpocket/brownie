@@ -7,11 +7,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const defaultRepoRoot = path.resolve(__dirname, '..');
-const defaultImageRoot = '.brownie/vm-images';
+const defaultImageRoot = '.brownie/private/vm-images';
 const defaultLinuxInstance = 'brownie-linux';
 const defaultLinuxSnapshot = 'brownie-golden';
 const defaultWindowsHost = 'brownie-windows';
-const defaultWindowsVmDir = '.brownie/vms/brownie-windows-arm64';
+const defaultWindowsVmDir = '.brownie/private/vms/brownie-windows-arm64';
 const defaultWindowsSnapshot = 'brownie-windows-arm64-golden';
 
 function isMainModule() {

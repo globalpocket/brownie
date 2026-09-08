@@ -284,7 +284,7 @@ function createLocalCopyArchive(repoRoot) {
     '--exclude', './target',
     '--exclude', './node_modules',
     '--exclude', './.brownie/release-evidence',
-    '--exclude', './.brownie/vms',
+    '--exclude', './.brownie/private',
     '-czf',
     archive,
     '-C',
@@ -313,7 +313,7 @@ function syncPosixLocalCopy(repoRoot, target) {
     '--exclude', 'target/',
     '--exclude', 'node_modules/',
     '--exclude', '.brownie/release-evidence/',
-    '--exclude', '.brownie/vms/',
+    '--exclude', '.brownie/private/',
     `${repoRootString.replace(/\/$/, '')}/`,
     `${target.host}:${targetWorkspace.replace(/\/$/, '')}/`
   ], {

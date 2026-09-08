@@ -115,3 +115,28 @@ approval.
 The owner-governance guard may pass while Release Ready remains false. Passing
 means the evidence is well-formed and fail-closed, not that owner-controlled
 actions have been completed.
+
+## Phase Loop actor preflight
+
+Brownie Phase Loop replacement work must run implementation push and pull-request
+creation under `brownie-agent`, while Codex/globalpocket remains the review and
+merge authority. Run the implementation preflight immediately before pushing or
+opening an implementation pull request:
+
+```sh
+pnpm --workspace-root phase-loop:implementation-preflight
+```
+
+The command fails closed when the authenticated GitHub actor is `globalpocket`,
+missing, or any actor other than `brownie-agent`. Review and merge automation
+should run:
+
+```sh
+pnpm --workspace-root phase-loop:review-preflight
+```
+
+Static policy drift is guarded by:
+
+```sh
+pnpm --workspace-root guard:phase-loop-actor-separation
+```

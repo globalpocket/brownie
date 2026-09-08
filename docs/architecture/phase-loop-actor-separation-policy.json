@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "policy_id": "brownie-phase-loop-actor-separation-v1",
+  "repository": "globalpocket/brownie",
+  "implementation_actor": "brownie-agent",
+  "review_actor": "globalpocket",
+  "merge_actor": "globalpocket",
+  "implementation_branch_prefixes": [
+    "brownie-agent/",
+    "phase-loop/"
+  ],
+  "review_branch_prefixes": [
+    "codex/"
+  ],
+  "requirements": [
+    "Brownie Phase Loop replacement implementation work must push and create pull requests as brownie-agent, not globalpocket.",
+    "Codex/globalpocket may review and merge Brownie Phase Loop implementation pull requests after required checks pass.",
+    "Implementation preflight must fail closed when the authenticated GitHub actor is missing, unknown, globalpocket, or any actor other than brownie-agent.",
+    "Review preflight must fail closed when the authenticated GitHub actor is missing, unknown, brownie-agent, or any actor other than globalpocket.",
+    "Private local state, VM disks, VM images, credentials, screenshots, and machine-local scratch files must live under .brownie/private/ so shared Brownie evidence under .brownie/release-evidence/ remains trackable."
+  ],
+  "forbidden_success_claims": [
+    "Do not count a globalpocket-authored implementation pull request as an independently reviewed brownie-agent implementation PR.",
+    "Do not relax branch protection to compensate for actor collapse except as an explicit temporary owner emergency action.",
+    "Do not treat static review JSON as GitHub review provenance for a concrete implementation pull request."
+  ]
+}

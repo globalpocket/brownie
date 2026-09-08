@@ -48,9 +48,9 @@ The snapshot action is intentionally conservative:
   Multipass only snapshots stopped instances.
 - Windows refuses to copy the `qcow2` while QEMU is still running. Shut the VM
   down first, then snapshot the disk, EDK2 variable store, and TPM state into
-  ignored local state under `.brownie/vm-images/windows/<snapshot>/`.
+  ignored local state under `.brownie/private/vm-images/windows/<snapshot>/`.
 - Restore remains an owner-controlled operation because it replaces VM disk
-  state. Copy the selected snapshot directory back into `.brownie/vms/...`
+  state. Copy the selected snapshot directory back into `.brownie/private/vms/...`
   only while the VM is stopped, then rerun bootstrap and release evidence
   checks.
 
