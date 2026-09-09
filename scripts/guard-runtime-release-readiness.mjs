@@ -1,5 +1,7 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -111,8 +113,91 @@ const requiredBoundaryAnchorPaths = [
   'crates/brownie-cli/src/runtime_client.rs'
 ];
 
+const safetyReadinessEvidenceId = 'runtime-safety-readiness-evidence-invalidation-v1';
+
+const safetyCriticalPathPatterns = [
+  'crates/brownie-agent-loop/src/',
+  'crates/brownie-agentmodes/src/',
+  'crates/brownie-config/src/',
+  'crates/brownie-llm/src/',
+  'crates/brownie-modepack/src/',
+  'crates/brownie-protocol/src/',
+  'crates/brownie-runtime/src/',
+  'crates/brownie-store/src/',
+  'crates/brownie-tools/src/',
+  'docs/specifications/cli-external-loop-spec-v0.md',
+  'docs/specifications/llm-provider-spec-v0.md',
+  'docs/specifications/modepack-spec-v0.md',
+  'docs/specifications/permission-gate-spec-v0.md',
+  'docs/specifications/prompt-builder-spec-v0.md',
+  'docs/specifications/prompt-sensitive-guard-spec-v0.md',
+  'docs/specifications/runtime-boundary-and-release-dod-spec-v0.md',
+  'docs/specifications/runtime-protocol-spec-v0.md',
+  'docs/specifications/task-runtime-spec-v0.md',
+  'docs/specifications/tool-execution-spec-v0.md',
+  'docs/specifications/tool-feedback-loop-spec-v0.md',
+  'docs/architecture/runtime-boundary-canonical-contract.json',
+  'docs/architecture/runtime-protocol-event-canonical-map.json',
+  'docs/architecture/runtime-semantic-protocol-contract.json',
+  'scripts/guard-durable-schema-migration.mjs',
+  'scripts/guard-platform-deadline-durability.mjs',
+  'scripts/guard-protocol-event-canonization.mjs',
+  'scripts/guard-runtime-module-decomposition.mjs',
+  'scripts/guard-runtime-release-readiness.mjs',
+  'scripts/rrp3-process-loss-recovery-e2e.mjs'
+];
+
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function normalizeRelativePath(relativePath) {
+  return relativePath.split(path.sep).join('/').replace(/^\.\//, '');
+}
+
+function sha256Bytes(bytes) {
+  return `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
+}
+
+function pathMatchesPattern(relativePath, pattern) {
+  return pattern.endsWith('/') ? relativePath.startsWith(pattern) : relativePath === pattern;
+}
+
+function trackedRepositoryFiles(repoRoot) {
+  const result = spawnSync('git', ['ls-files'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+    timeout: 30_000
+  });
+  if (result.status !== 0) {
+    return [];
+  }
+  return result.stdout
+    .split('\n')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map(normalizeRelativePath);
+}
+
+export function buildSafetyReadinessEvidenceSnapshot(repoRoot = defaultRepoRoot) {
+  const paths = trackedRepositoryFiles(repoRoot)
+    .filter((relativePath) =>
+      safetyCriticalPathPatterns.some((pattern) => pathMatchesPattern(relativePath, pattern))
+    )
+    .sort();
+  const entries = paths.map((relativePath) => ({
+    path: relativePath,
+    sha256: sha256Bytes(fs.readFileSync(path.join(repoRoot, relativePath)))
+  }));
+  return {
+    evidence_id: safetyReadinessEvidenceId,
+    algorithm: 'sha256(sorted path + sha256 file tuples)',
+    tracked_path_patterns: safetyCriticalPathPatterns,
+    tracked_file_count: entries.length,
+    tracked_paths: paths,
+    tracked_fingerprint: sha256Bytes(JSON.stringify(entries))
+  };
 }
 
 function readJson(repoRoot, relativePath, errors) {
@@ -137,6 +222,56 @@ function requireValue(condition, errors, message) {
   if (!condition) {
     errors.push(message);
   }
+}
+
+function validateSafetyReadinessEvidence(audit, options, errors) {
+  const auditPath = options.auditPath ?? defaultAuditPath;
+  const repoRoot = options.repoRoot ?? defaultRepoRoot;
+  const expected = options.safetyReadinessSnapshot ?? buildSafetyReadinessEvidenceSnapshot(repoRoot);
+  const actual = audit.safety_readiness_evidence_invalidation;
+  requireValue(
+    actual && typeof actual === 'object',
+    errors,
+    `${auditPath} must include safety_readiness_evidence_invalidation.`
+  );
+  if (!actual || typeof actual !== 'object') {
+    return;
+  }
+  requireValue(
+    actual.evidence_id === safetyReadinessEvidenceId,
+    errors,
+    `${auditPath} safety_readiness_evidence_invalidation.evidence_id must match ${safetyReadinessEvidenceId}.`
+  );
+  requireValue(
+    actual.status === 'implemented_sufficient',
+    errors,
+    `${auditPath} safety_readiness_evidence_invalidation.status must be implemented_sufficient.`
+  );
+  requireValue(
+    actual.algorithm === expected.algorithm,
+    errors,
+    `${auditPath} safety_readiness_evidence_invalidation.algorithm must match the canonical algorithm.`
+  );
+  requireValue(
+    JSON.stringify(actual.tracked_path_patterns) === JSON.stringify(expected.tracked_path_patterns),
+    errors,
+    `${auditPath} safety_readiness_evidence_invalidation.tracked_path_patterns must match the canonical safety-critical path set.`
+  );
+  requireValue(
+    actual.tracked_file_count === expected.tracked_file_count,
+    errors,
+    `${auditPath} safety_readiness_evidence_invalidation.tracked_file_count must match live safety-critical tracked files.`
+  );
+  requireValue(
+    JSON.stringify(actual.tracked_paths) === JSON.stringify(expected.tracked_paths),
+    errors,
+    `${auditPath} safety_readiness_evidence_invalidation.tracked_paths must match live safety-critical tracked files.`
+  );
+  requireValue(
+    actual.tracked_fingerprint === expected.tracked_fingerprint,
+    errors,
+    `${auditPath} safety_readiness_evidence_invalidation.tracked_fingerprint must match live safety-critical content.`
+  );
 }
 
 function hasEvidence(item) {
@@ -252,6 +387,7 @@ export function validateRuntimeBoundaryContract(contract, options = {}) {
 
 export function validateRuntimeReleaseReadinessAudit(audit, options = {}) {
   const auditPath = options.auditPath ?? defaultAuditPath;
+  const repoRoot = options.repoRoot ?? defaultRepoRoot;
   const ciText = options.ciText ?? '';
   const cargoText = options.cargoText ?? '';
   const vsixPackageText = options.vsixPackageText ?? '';
@@ -407,6 +543,7 @@ export function validateRuntimeReleaseReadinessAudit(audit, options = {}) {
   for (const command of requiredVsixCheckCommands) {
     requireValue(vsixPackageText.includes(command), errors, `${defaultVsixPackagePath} check script must run ${command}.`);
   }
+  validateSafetyReadinessEvidence(audit, { ...options, auditPath, repoRoot }, errors);
 
   return errors;
 }
@@ -423,7 +560,7 @@ export function runRuntimeReleaseReadinessGuard(options = {}) {
   const vsixPackageText = options.vsixPackageText ?? readText(repoRoot, defaultVsixPackagePath, readErrors);
   const errors = [
     ...readErrors,
-    ...validateRuntimeReleaseReadinessAudit(audit, { auditPath, ciText, cargoText, vsixPackageText }),
+    ...validateRuntimeReleaseReadinessAudit(audit, { auditPath, repoRoot, ciText, cargoText, vsixPackageText }),
     ...validateRuntimeBoundaryContract(boundaryContract, { contractPath: boundaryContractPath })
   ];
   return { errors, auditPath };

@@ -73,11 +73,6 @@ Current synchronization note:
 
 ## Product Ready Blocking Queue
 
-### P0: Brownie Runtime safety
-
-- [ ] R-10: Invalidate safety/readiness evidence automatically when permission,
-  Mode Pack, ledger, or other Runtime-safety code changes after the tested head.
-
 ### P1: Runtime / CLI boundary
 
 - [ ] R-11: Bound `brownie run --file` by configurable maximum byte size aligned
