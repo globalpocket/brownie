@@ -53,6 +53,7 @@ function validContract(overrides = {}) {
       workflow_run_id: null,
       artifact_sha256: null,
       contract_registry_fingerprint: 'sha256:contract',
+      readiness_audit_content_sha256: validAuditContentSha256,
       mode_pack_fingerprint: null,
       product_dod_fingerprint: null
     },
