@@ -148,7 +148,8 @@
       "status": "missing_tested_commit",
       "release_blocking": true,
       "required_evidence": [
-        "release readiness audit, semantic contract, product DoD, and release contract are generated or checked from the tested commit"
+        "release readiness audit, semantic contract, product DoD, and release contract are generated or checked from the tested commit",
+        "commit_trace.readiness_audit_content_sha256 must match the current runtime-release-readiness audit file content before release evidence can pass"
       ]
     },
     {
