@@ -37,7 +37,10 @@ uses for content read, and Unix opens must avoid blocking on FIFO/device races
 before type validation. Objective files must be valid UTF-8. Invalid UTF-8 is a
 bounded invalid invocation with a stable machine reason of `invalid_utf8` and a
 fixed human message; the CLI must not surface decoder internals for that path.
-Later hardening phases own complete error-redaction coverage.
+All `run --file` pre-runtime failures must use bounded CLI-owned errors that do
+not include absolute paths, path basenames, raw objective content, or OS error
+details. Because rejected file objectives do not start Runtime, they must not
+create ledger entries or runtime logs containing rejected path/content material.
 
 For a `run` invocation, the CLI generates bounded invocation identities,
 including an `admission_id`, and passes them to the runtime's

@@ -106,22 +106,46 @@ fn execute(cli: Cli) -> CliOutput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RunFileObjectiveError {
+    InvalidMaxBytes,
     InvalidUtf8,
-    Message(String),
+    MetadataUnavailable,
+    NotRegularFile,
+    OpenFailed,
+    ReadFailed,
+    TooLarge { bytes: u64, max_bytes: u64 },
 }
 
 impl RunFileObjectiveError {
-    fn message(&self) -> &str {
+    fn message(&self) -> String {
         match self {
-            RunFileObjectiveError::InvalidUtf8 => "objective file must be valid UTF-8",
-            RunFileObjectiveError::Message(message) => message.as_str(),
+            RunFileObjectiveError::InvalidMaxBytes => {
+                format!("{RUN_FILE_MAX_BYTES_ENV} must be a positive integer byte limit")
+            }
+            RunFileObjectiveError::InvalidUtf8 => "objective file must be valid UTF-8".to_string(),
+            RunFileObjectiveError::MetadataUnavailable => {
+                "objective file metadata unavailable".to_string()
+            }
+            RunFileObjectiveError::NotRegularFile => {
+                "objective path must refer to a regular file".to_string()
+            }
+            RunFileObjectiveError::OpenFailed => "objective file could not be opened".to_string(),
+            RunFileObjectiveError::ReadFailed => "objective file could not be read".to_string(),
+            RunFileObjectiveError::TooLarge { bytes, max_bytes } => format!(
+                "objective file exceeds configured maximum byte size: bytes={} max_bytes={} env={}",
+                bytes, max_bytes, RUN_FILE_MAX_BYTES_ENV
+            ),
         }
     }
 
     fn reason(&self) -> &str {
         match self {
+            RunFileObjectiveError::InvalidMaxBytes => "invalid_max_bytes",
             RunFileObjectiveError::InvalidUtf8 => "invalid_utf8",
-            RunFileObjectiveError::Message(_) => "read_failed",
+            RunFileObjectiveError::MetadataUnavailable => "metadata_unavailable",
+            RunFileObjectiveError::NotRegularFile => "not_regular_file",
+            RunFileObjectiveError::OpenFailed => "open_failed",
+            RunFileObjectiveError::ReadFailed => "read_failed",
+            RunFileObjectiveError::TooLarge { .. } => "file_too_large",
         }
     }
 }
@@ -131,34 +155,30 @@ fn read_run_file_objective(path: &str) -> Result<String, RunFileObjectiveError> 
     let mut file = open_run_file(path)?;
     let metadata = file
         .metadata()
-        .map_err(|error| RunFileObjectiveError::Message(error.to_string()))?;
+        .map_err(|_| RunFileObjectiveError::MetadataUnavailable)?;
     if !metadata.file_type().is_file() {
-        return Err(RunFileObjectiveError::Message(
-            "objective path must refer to a regular file".to_string(),
-        ));
+        return Err(RunFileObjectiveError::NotRegularFile);
     }
     if metadata.len() > max_bytes {
-        return Err(RunFileObjectiveError::Message(format!(
-            "objective file exceeds configured maximum byte size: bytes={} max_bytes={} env={}",
-            metadata.len(),
+        return Err(RunFileObjectiveError::TooLarge {
+            bytes: metadata.len(),
             max_bytes,
-            RUN_FILE_MAX_BYTES_ENV
-        )));
+        });
     }
     let mut objective = String::new();
     file.read_to_string(&mut objective).map_err(|error| {
         if error.kind() == ErrorKind::InvalidData {
             RunFileObjectiveError::InvalidUtf8
         } else {
-            RunFileObjectiveError::Message(error.to_string())
+            RunFileObjectiveError::ReadFailed
         }
     })?;
     let bytes_read = objective.len() as u64;
     if bytes_read > max_bytes {
-        return Err(RunFileObjectiveError::Message(format!(
-            "objective file exceeds configured maximum byte size: bytes={} max_bytes={} env={}",
-            bytes_read, max_bytes, RUN_FILE_MAX_BYTES_ENV
-        )));
+        return Err(RunFileObjectiveError::TooLarge {
+            bytes: bytes_read,
+            max_bytes,
+        });
     }
     Ok(objective)
 }
@@ -171,33 +191,27 @@ fn open_run_file(path: &str) -> Result<fs::File, RunFileObjectiveError> {
         .read(true)
         .custom_flags(libc::O_NONBLOCK)
         .open(path)
-        .map_err(|error| RunFileObjectiveError::Message(error.to_string()))
+        .map_err(|_| RunFileObjectiveError::OpenFailed)
 }
 
 #[cfg(not(unix))]
 fn open_run_file(path: &str) -> Result<fs::File, RunFileObjectiveError> {
-    fs::File::open(path).map_err(|error| RunFileObjectiveError::Message(error.to_string()))
+    fs::File::open(path).map_err(|_| RunFileObjectiveError::OpenFailed)
 }
 
 fn run_file_max_bytes() -> Result<u64, RunFileObjectiveError> {
     match std::env::var(RUN_FILE_MAX_BYTES_ENV) {
         Ok(value) => {
-            let parsed = value.parse::<u64>().map_err(|_| {
-                RunFileObjectiveError::Message(format!(
-                    "{RUN_FILE_MAX_BYTES_ENV} must be a positive integer byte limit"
-                ))
-            })?;
+            let parsed = value
+                .parse::<u64>()
+                .map_err(|_| RunFileObjectiveError::InvalidMaxBytes)?;
             if parsed == 0 {
-                return Err(RunFileObjectiveError::Message(format!(
-                    "{RUN_FILE_MAX_BYTES_ENV} must be greater than zero"
-                )));
+                return Err(RunFileObjectiveError::InvalidMaxBytes);
             }
             Ok(parsed)
         }
         Err(std::env::VarError::NotPresent) => Ok(DEFAULT_RUN_FILE_MAX_BYTES),
-        Err(std::env::VarError::NotUnicode(_)) => Err(RunFileObjectiveError::Message(format!(
-            "{RUN_FILE_MAX_BYTES_ENV} must be valid UTF-8"
-        ))),
+        Err(std::env::VarError::NotUnicode(_)) => Err(RunFileObjectiveError::InvalidMaxBytes),
     }
 }
 
