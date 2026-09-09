@@ -2983,7 +2983,10 @@ impl ToolIntentParser {
         config: &ToolIntentParserConfig,
     ) -> ParsedToolIntent {
         let mut summary = ToolIntentParserSummary::new(config);
-        let blocks = extract_fenced_blocks(content);
+        let mut blocks = extract_fenced_blocks(content);
+        if blocks.is_empty() {
+            blocks = extract_json_tool_request_blocks(content);
+        }
         summary.found_blocks = blocks.len();
         let mut rejected = Vec::new();
         if blocks.is_empty() {
@@ -3912,6 +3915,33 @@ fn extract_fenced_blocks(content: &str) -> Vec<&str> {
     blocks
 }
 
+fn extract_json_tool_request_blocks(content: &str) -> Vec<&str> {
+    let marker = "```json";
+    let mut blocks = Vec::new();
+    let mut rest = content;
+    while let Some(pos) = rest.find(marker) {
+        let after = &rest[pos + marker.len()..];
+        let after = after
+            .strip_prefix('\r')
+            .unwrap_or(after)
+            .strip_prefix('\n')
+            .unwrap_or(after);
+        let Some(end) = after.find("```") else {
+            break;
+        };
+        let block = &after[..end];
+        if serde_json::from_str::<Value>(block.trim())
+            .ok()
+            .and_then(|value| value.as_object().map(|object| object.contains_key("tool_requests")))
+            .unwrap_or(false)
+        {
+            blocks.push(block);
+        }
+        rest = &after[end + 3..];
+    }
+    blocks
+}
+
 fn empty_input_object() -> serde_json::Value {
     serde_json::json!({})
 }
@@ -4530,6 +4560,14 @@ mod tests {
         assert_eq!(parsed.requests.len(), 1);
         assert!(parsed.rejected.is_empty());
     }
+
+    #[test]
+    fn parser_accepts_json_fenced_tool_requests_as_fallback() {
+        let parsed = ToolIntentParser::parse_assistant_content("x\n```json\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\",\"input\":{\"path\":\"README.md\"}}]}\n```");
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+    }
+
     #[test]
     fn parser_returns_empty_without_fence() {
         let parsed = ToolIntentParser::parse_assistant_content("none");

@@ -87,18 +87,6 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-02a: Add canonical content SHA-256 evidence to
-  `docs/architecture/runtime-release-contract.json` for the current
-  `docs/architecture/runtime-release-readiness-audit.json` safety-readiness
-  evidence snapshot, and make `scripts/guard-release-contract.mjs` reject
-  missing or stale canonical evidence.
-- [ ] E-02b: Extend `scripts/guard-release-contract.test.mjs` with focused
-  tests proving stale canonical readiness evidence fails when the referenced
-  readiness snapshot content changes.
-- [ ] E-02c: Ensure the release gate and readiness audit docs describe the
-  canonical SHA-256 invalidation rule without claiming Runtime Release Ready.
-- [ ] E-02d: After E-02a through E-02c pass, remove this decomposed E-02 group
-  from `todo.md` only with supporting implementation, test, and PR evidence.
 - [ ] E-03: Populate release evidence fields with current values:
   implementation commit, tested commit, workflow run ID, artifact SHA-256, and
   audited base commit.

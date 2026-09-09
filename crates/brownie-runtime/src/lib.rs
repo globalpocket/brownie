@@ -2621,7 +2621,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         let latest_tool_execution_index = followup_events.iter().rposition(|event| {
             matches!(
                 event.kind,
-                LedgerEventKind::ToolExecutionCompleted | LedgerEventKind::ToolExecutionFailed
+                LedgerEventKind::ToolExecutionCompleted
+                    | LedgerEventKind::ToolExecutionDenied
+                    | LedgerEventKind::ToolExecutionFailed
             )
         });
         let followup_read_result_available =
@@ -14476,7 +14478,7 @@ fn preview_with_limit(content: &str, max_chars: usize) -> String {
 }
 
 fn preview_tool_output(content: &str) -> String {
-    const MAX_TOOL_OUTPUT_PREVIEW_CHARS: usize = 2048;
+    const MAX_TOOL_OUTPUT_PREVIEW_CHARS: usize = 8 * 1024;
     content
         .chars()
         .take(MAX_TOOL_OUTPUT_PREVIEW_CHARS)

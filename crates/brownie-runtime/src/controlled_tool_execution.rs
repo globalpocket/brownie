@@ -2616,6 +2616,25 @@ pub(super) fn handle_approved_workspace_intents(
             )?;
             continue;
         }
+        if decision.tool_id == WORKSPACE_READ_TOOL_ID
+            && task_goal_requires_workspace_write_proposal(&record.goal)
+            && run_has_workspace_read_for_same_path_without_write_proposal(
+                store,
+                record,
+                &decision.input,
+            )?
+        {
+            store.tasks().append_task_event_with_payload(
+                record,
+                LedgerEventKind::ToolExecutionDenied,
+                Some(json!({
+                    "tool_id": decision.tool_id,
+                    "status": "Denied",
+                    "reason": "Duplicate workspace.read for this path is not progress after completed read evidence; use the existing Tool Execution output_preview/content_sha256 and request workspace.write or record a concrete blocker.",
+                })),
+            )?;
+            continue;
+        }
         let execution_input = if decision.tool_id == GIT_COMMIT_TOOL_ID {
             match runtime_git_commit_execution_input(
                 store,
@@ -2666,6 +2685,35 @@ pub(super) fn handle_approved_workspace_intents(
         )?;
     }
     Ok(())
+}
+
+fn run_has_workspace_read_for_same_path_without_write_proposal(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+    input: &Value,
+) -> anyhow::Result<bool> {
+    let Some(path) = input.get("path").and_then(Value::as_str) else {
+        return Ok(false);
+    };
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    if events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+    {
+        return Ok(false);
+    }
+    Ok(events.iter().any(|event| {
+        event.kind == LedgerEventKind::ToolExecutionCompleted
+            && event.payload.as_ref().is_some_and(|payload| {
+                payload.get("tool_id").and_then(Value::as_str) == Some(WORKSPACE_READ_TOOL_ID)
+                    && payload
+                        .get("output_preview")
+                        .and_then(Value::as_str)
+                        .is_some_and(|preview| {
+                            preview.starts_with(&format!("[workspace.read path={path} "))
+                        })
+            })
+    }))
 }
 
 fn append_approved_mcp_tool_execution(

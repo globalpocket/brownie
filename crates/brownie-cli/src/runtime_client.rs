@@ -2455,16 +2455,16 @@ fn add_external_loop_contract(
         .as_deref()
         == Some("Failed")
         || payload_string(payload, "terminal_completion_task_status").as_deref() == Some("Failed");
-    let unknown_nonterminal_after_terminal_task =
-        payload_string(payload, "completion_closure_status").as_deref()
-            == Some("unknown_nonterminal")
-            && payload
-                .get("completion_closure_terminal_task_count")
-                .and_then(Value::as_u64)
-                .unwrap_or(0)
-                > 0
-            && !outcome.completed;
-    if failed_terminal_completion || unknown_nonterminal_after_terminal_task {
+    let terminal_task_closure_without_completion = matches!(
+        payload_string(payload, "completion_closure_status").as_deref(),
+        Some("unknown_nonterminal" | "no_eligible_task")
+    ) && payload
+        .get("completion_closure_terminal_task_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        > 0
+        && !outcome.completed;
+    if failed_terminal_completion || terminal_task_closure_without_completion {
         outcome.status = "terminal_failure".to_string();
         outcome.class_name = "terminal_failure".to_string();
         outcome.controller_action = "stop".to_string();
@@ -5596,6 +5596,28 @@ mod tests {
         assert_eq!(
             payload["automation"]["outcome_source"],
             "runtime_terminal_completion_closure"
+        );
+    }
+
+    #[test]
+    fn cli_run_fail_closes_no_eligible_closure_with_terminal_task_count() {
+        let result: Value = serde_json::from_str(
+            r#"{"status":"no_eligible_task","session_id":"cli.run.failed","drive_id":"cli.run.failed.drive","start_session_sequence":0,"end_session_sequence":2,"replayed":false,"max_advances":3,"max_steps_per_advance":1,"advance_count":1,"executed_count":1,"replayed_count":0,"stop_reason":"no_eligible_task","drive_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","completion_closure":{"status":"no_eligible_task","stop_reason":"no_eligible_task","terminal_task_count":1,"total_task_count":1,"runnable_task_count":0,"blocked_task_count":0,"route_candidate_count":0,"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":8,"next_action":"inspect_progress_overview","closure_fingerprint":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},"start_progress":{"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":5},"post_progress":{"progress_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","aggregate_sequence":8},"next_action":"inspect_progress_overview"}"#,
+        )
+        .unwrap();
+        let payload = cli_run_payload(&result).unwrap();
+        assert_eq!(payload["completion_closure_status"], "no_eligible_task");
+        assert_eq!(payload["completion_closure_terminal_task_count"], 1);
+        assert_eq!(payload["blocked"], true);
+        assert_eq!(payload["terminal_failure"], true);
+        assert_eq!(payload["continuation_required"], false);
+        assert_eq!(payload["controller_action"], "stop");
+        assert_eq!(payload["stop_class"], "terminal_failure");
+        assert_eq!(payload["stop_reason"], "terminal_task_failed");
+        assert!(payload.get("next_invocation").is_none());
+        assert_eq!(
+            payload["automation"]["outcome_source"],
+            "legacy_cli_projection_terminal_completion_closure"
         );
     }
 
