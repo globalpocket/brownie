@@ -75,15 +75,9 @@ Current synchronization note:
 
 ### P0: Brownie Runtime safety
 
-- [ ] R-02: Remove direct `workspace.append_line` or route it through the
-  authorized `workspace.write` proposal/apply path with hash, permission,
-  fingerprint, idempotency, durable evidence, and replay rejection.
 - [ ] R-03: Remove unbounded Runtime-thread `runtime.sleep`; if any short
   protocol wait remains, prove cancel, deadline, restart, replay, permission,
   and boundedness behavior.
-- [ ] R-04: Reclassify `time.now` as read-only Runtime clock observation rather
-  than `ExecuteProcess`, with bounded ledger evidence and rollback/duration
-  handling where applicable.
 - [ ] R-05: Repair sensitive prompt detection so it no longer always returns an
   empty result; support low-false-positive detection or an explicit documented
   override.

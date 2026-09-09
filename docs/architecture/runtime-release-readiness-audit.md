@@ -204,6 +204,18 @@ existing CI-invoked VSIX check path. This does not claim macOS/Windows CI,
 direct workflow hardening, hosted process management, protocol-event closure, or
 Runtime Release Ready.
 
+R-02 removes the direct `workspace.append_line` mutation authority from the
+builtin tool registry, controlled executor, parser, tool list, and prompt
+contract. Append-like goals now require `workspace.write` proposal authority;
+timestamp append flows must request `workspace.read` and `time.now` together in
+the same first tool intent, then request `workspace.write`, preserving
+proposal/apply hash, permission, fingerprint, idempotency, durable evidence, and
+replay rejection behavior in the existing workspace patch path. R-04
+reclassifies `time.now` as read-only Runtime clock observation rather than
+process execution; the controlled executor still rejects caller-supplied shell,
+command, environment, network, and file input before returning bounded timestamp
+evidence.
+
 | ID | Priority | Classification | Status | Responsibility | Release classification | Evidence summary | Next action |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `runtime-release-debt-reaudit` | P0 | Runtime Release debt reaudit | implemented sufficient | Runtime | closed | Required specs, manifests, guards, crates, CLI, VSIX, and CI were reaudited and are now backed by a machine guard. | Use this artifact as the source for the remaining bounded closure phases. |
