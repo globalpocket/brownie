@@ -93,6 +93,7 @@ function validateCommitTrace(trace, errors, contractPath) {
     requireValue(Object.prototype.hasOwnProperty.call(trace, field), errors, `${contractPath} commit_trace must include ${field}.`);
   }
   requireValue(isNonEmptyString(trace.audited_base_commit), errors, `${contractPath} commit_trace.audited_base_commit must be the latest audited base commit.`);
+  requireValue(isNonEmptyString(trace.readiness_audit_content_sha256), errors, `${contractPath} commit_trace.readiness_audit_content_sha256 must be a non-empty string.`);
   for (const field of ['implementation_commit', 'tested_commit', 'release_tag', 'workflow_run_id', 'artifact_sha256']) {
     requireValue(trace[field] === null || isNonEmptyString(trace[field]), errors, `${contractPath} commit_trace.${field} must be null or a non-empty string.`);
   }
