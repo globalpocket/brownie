@@ -2136,6 +2136,20 @@ fn cli_run_payload(result: &Value) -> Result<Value, RuntimeClientError> {
                     .ok_or(RuntimeClientError::InvalidResponse)?,
             )?,
         );
+        for key in [
+            "terminal_task_count",
+            "total_task_count",
+            "runnable_task_count",
+            "blocked_task_count",
+            "route_candidate_count",
+        ] {
+            if let Some(value) = closure.get(key) {
+                payload.insert(
+                    format!("completion_closure_{key}"),
+                    bounded_json_optional_u64(value)?,
+                );
+            }
+        }
     }
     if let Some(journey) = journey {
         for key in ["journey_id", "task_id", "run_id"] {
@@ -2432,11 +2446,42 @@ fn add_external_loop_contract(
     ensure_payload_key(payload, "run_id");
     ensure_payload_key(payload, "journey_id");
 
-    let outcome = if let Some(outcome) = payload.get("execution_outcome") {
+    let mut outcome = if let Some(outcome) = payload.get("execution_outcome") {
         automation_outcome_from_execution_outcome(outcome)?
     } else {
         automation_outcome_from_legacy_payload(payload)?
     };
+    let failed_terminal_completion = payload_string(payload, "terminal_completion_final_state")
+        .as_deref()
+        == Some("Failed")
+        || payload_string(payload, "terminal_completion_task_status").as_deref() == Some("Failed");
+    let unknown_nonterminal_after_terminal_task =
+        payload_string(payload, "completion_closure_status").as_deref()
+            == Some("unknown_nonterminal")
+            && payload
+                .get("completion_closure_terminal_task_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                > 0
+            && !outcome.completed;
+    if failed_terminal_completion || unknown_nonterminal_after_terminal_task {
+        outcome.status = "terminal_failure".to_string();
+        outcome.class_name = "terminal_failure".to_string();
+        outcome.controller_action = "stop".to_string();
+        outcome.continuation_required = false;
+        outcome.completed = false;
+        outcome.blocked = true;
+        outcome.retryable = false;
+        outcome.terminal_failure = true;
+        outcome.stop_reason = "terminal_task_failed".to_string();
+        outcome.next_invocation = None;
+        let suffix = if failed_terminal_completion {
+            "terminal_completion_evidence"
+        } else {
+            "terminal_completion_closure"
+        };
+        outcome.outcome_source = format!("{}_{}", outcome.outcome_source, suffix);
+    }
     payload.insert(
         "continuation_required".to_string(),
         Value::Bool(outcome.continuation_required),
@@ -5510,6 +5555,48 @@ mod tests {
         let rendered = json_result("run", "run", payload).unwrap();
         assert!(rendered.contains(r#""command":"run""#));
         assert!(rendered.len() < MAX_RENDERED_OUTPUT_CHARS);
+    }
+
+    #[test]
+    fn cli_run_fail_closes_when_terminal_completion_evidence_failed() {
+        let result: Value = serde_json::from_str(
+            r#"{"status":"task_executed","session_id":"cli.run.failed","drive_id":"cli.run.failed.drive","start_session_sequence":0,"end_session_sequence":1,"replayed":false,"max_advances":3,"max_steps_per_advance":1,"advance_count":1,"executed_count":1,"replayed_count":0,"stop_reason":"budget_exhausted","drive_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","completion_closure":{"status":"unknown_nonterminal","stop_reason":"budget_exhausted","terminal_task_count":1,"total_task_count":1,"runnable_task_count":0,"blocked_task_count":0,"route_candidate_count":0,"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":8,"next_action":"inspect_progress_overview","closure_fingerprint":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},"start_progress":{"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":5},"post_progress":{"progress_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","aggregate_sequence":8},"next_action":"inspect_progress_overview","terminal_completion_evidence":{"completion_result_fingerprint":"sha256:7777777777777777777777777777777777777777777777777777777777777777","completion_summary_chars":84,"completion_summary_preview":"LLM tool intent did not produce a workspace.write proposal for a workspace edit task","completion_summary_truncated":false,"final_response_chars":0,"final_response_present":false,"final_state":"Failed","replayed":false,"task_status":"Failed"},"execution_outcome":{"schema_version":1,"outcome_scope":"objective","class":"continuation_required","status":"continuation_required","controller_action":"resume","continuation_required":true,"completed":false,"blocked":false,"retryable":true,"terminal_failure":false,"stop_reason":"budget_exhausted","next_invocation":{"command":"resume","arguments":[]}}}"#,
+        )
+        .unwrap();
+        let payload = cli_run_payload(&result).unwrap();
+        assert_eq!(payload["terminal_completion_final_state"], "Failed");
+        assert_eq!(payload["terminal_completion_task_status"], "Failed");
+        assert_eq!(payload["completion_closure_terminal_task_count"], 1);
+        assert_eq!(payload["blocked"], true);
+        assert_eq!(payload["terminal_failure"], true);
+        assert_eq!(payload["continuation_required"], false);
+        assert_eq!(payload["controller_action"], "stop");
+        assert_eq!(payload["stop_class"], "terminal_failure");
+        assert_eq!(payload["stop_reason"], "terminal_task_failed");
+        assert!(payload.get("next_invocation").is_none());
+        assert_eq!(
+            payload["automation"]["outcome_source"],
+            "runtime_terminal_completion_evidence"
+        );
+    }
+
+    #[test]
+    fn cli_run_fail_closes_unknown_nonterminal_with_terminal_task_count() {
+        let result: Value = serde_json::from_str(
+            r#"{"status":"task_executed","session_id":"cli.run.failed","drive_id":"cli.run.failed.drive","start_session_sequence":0,"end_session_sequence":1,"replayed":false,"max_advances":3,"max_steps_per_advance":1,"advance_count":1,"executed_count":1,"replayed_count":0,"stop_reason":"budget_exhausted","drive_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","completion_closure":{"status":"unknown_nonterminal","stop_reason":"budget_exhausted","terminal_task_count":1,"total_task_count":1,"runnable_task_count":0,"blocked_task_count":0,"route_candidate_count":0,"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":8,"next_action":"inspect_progress_overview","closure_fingerprint":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},"start_progress":{"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":5},"post_progress":{"progress_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","aggregate_sequence":8},"next_action":"inspect_progress_overview","execution_outcome":{"schema_version":1,"outcome_scope":"objective","class":"continuation_required","status":"continuation_required","controller_action":"resume","continuation_required":true,"completed":false,"blocked":false,"retryable":true,"terminal_failure":false,"stop_reason":"budget_exhausted","next_invocation":{"command":"resume","arguments":[]}}}"#,
+        )
+        .unwrap();
+        let payload = cli_run_payload(&result).unwrap();
+        assert_eq!(payload["completion_closure_terminal_task_count"], 1);
+        assert_eq!(payload["blocked"], true);
+        assert_eq!(payload["terminal_failure"], true);
+        assert_eq!(payload["continuation_required"], false);
+        assert_eq!(payload["controller_action"], "stop");
+        assert_eq!(payload["stop_class"], "terminal_failure");
+        assert_eq!(
+            payload["automation"]["outcome_source"],
+            "runtime_terminal_completion_closure"
+        );
     }
 
     #[test]
