@@ -20,6 +20,7 @@ const TASK_LIST_METHOD: &str = "task.list";
 const MODE_LIST_METHOD: &str = "mode.list";
 const PROPOSAL_INSPECT_METHOD: &str = "proposal.inspect";
 const PROPOSAL_APPLY_METHOD: &str = "proposal.apply";
+const RUN_EVENTS_METHOD: &str = "run.events";
 const HEADLESS_CONTINUE_ONCE_METHOD: &str = "headless.continue_once";
 const HEADLESS_RUN_ADVANCE_METHOD: &str = "headless.run.advance";
 const HEADLESS_RUN_DRIVE_METHOD: &str = "headless.run.drive";
@@ -704,8 +705,22 @@ impl RuntimeClient {
             Some(inspect_params),
             RuntimeRequestClass::ObjectiveExecution,
         )?;
-        let Some(params) = objective_proposal_apply_params(&result, &proposal)
-            .map_err(|error| debug_invalid_response("objective_proposal_apply_params", error))?
+        let patch_material = if inspected_proposal_operation(&proposal)? == "patch_file" {
+            let run_id = objective_proposal_apply_run_id(&result)?;
+            Some(self.call_runtime_value(
+                RUN_EVENTS_METHOD,
+                Some(json!({ "run_id": run_id })),
+                RuntimeRequestClass::ObjectiveExecution,
+            )?)
+        } else {
+            None
+        };
+        let Some(params) = objective_proposal_apply_params_with_patch_material(
+            &result,
+            &proposal,
+            patch_material.as_ref(),
+        )
+        .map_err(|error| debug_invalid_response("objective_proposal_apply_params", error))?
         else {
             return Ok(result);
         };
@@ -3046,7 +3061,10 @@ fn objective_proposal_authorization_preflight_params(
 
     let candidate = object_field(result, "objective_proposal_candidate")?;
     if display_string(candidate, "status")? != "ready_for_review"
-        || display_string(candidate, "operation")? != "replace_file"
+        || !matches!(
+            display_string(candidate, "operation")?.as_str(),
+            "replace_file" | "patch_file"
+        )
         || display_string(candidate, "validation_status")? != "Valid"
         || display_string(candidate, "approval_status")? != "Pending"
         || display_string(candidate, "next_action")? != "review_and_authorize_objective_proposal"
@@ -3135,9 +3153,20 @@ fn objective_proposal_inspect_params(result: &Value) -> Result<Option<Value>, Ru
     })))
 }
 
-fn objective_proposal_apply_params(
+fn objective_proposal_apply_run_id(result: &Value) -> Result<String, RuntimeClientError> {
+    let authorization = object_field(result, "objective_proposal_authorization_preflight_result")?;
+    required_display_string(authorization, "run_id")
+}
+
+fn inspected_proposal_operation(proposal_inspect: &Value) -> Result<String, RuntimeClientError> {
+    let proposal = object_field(proposal_inspect, "proposal")?;
+    required_display_string(proposal, "operation")
+}
+
+fn objective_proposal_apply_params_with_patch_material(
     result: &Value,
     proposal_inspect: &Value,
+    patch_material_events: Option<&Value>,
 ) -> Result<Option<Value>, RuntimeClientError> {
     let authorization = match result.get("objective_proposal_authorization_preflight_result") {
         Some(value) if !value.is_null() => {
@@ -3152,10 +3181,11 @@ fn objective_proposal_apply_params(
         debug_invalid_response_note("objective_proposal_apply_params", "proposal_id mismatch");
         return Err(RuntimeClientError::InvalidResponse);
     }
-    if display_string(proposal, "operation")? != "replace_file" {
+    let operation = display_string(proposal, "operation")?;
+    if !matches!(operation.as_str(), "replace_file" | "patch_file") {
         debug_invalid_response_note(
             "objective_proposal_apply_params",
-            "operation is not replace_file",
+            "operation is not replace_file or patch_file",
         );
         return Err(RuntimeClientError::InvalidResponse);
     }
@@ -3192,17 +3222,37 @@ fn objective_proposal_apply_params(
         );
         return Err(RuntimeClientError::InvalidResponse);
     }
-    let replacement_content = required_workspace_write_content(proposal, "content_preview")
-        .inspect_err(|_| {
+    let apply_material = if operation == "replace_file" {
+        let replacement_content = required_workspace_write_content(proposal, "content_preview")
+            .inspect_err(|_| {
+                debug_invalid_response_note(
+                    "objective_proposal_apply_params",
+                    "proposal content_preview invalid",
+                );
+            })?;
+        if display_usize(proposal, "content_chars")? != replacement_content.chars().count() {
             debug_invalid_response_note(
                 "objective_proposal_apply_params",
-                "proposal content_preview invalid",
+                "content length mismatch",
             );
-        })?;
-    if display_usize(proposal, "content_chars")? != replacement_content.chars().count() {
-        debug_invalid_response_note("objective_proposal_apply_params", "content length mismatch");
-        return Err(RuntimeClientError::InvalidResponse);
-    }
+            return Err(RuntimeClientError::InvalidResponse);
+        }
+        json!({ "replacement_content": replacement_content })
+    } else {
+        let Some(events) = patch_material_events else {
+            debug_invalid_response_note(
+                "objective_proposal_apply_params",
+                "patch material events are missing",
+            );
+            return Err(RuntimeClientError::InvalidResponse);
+        };
+        extract_patch_file_apply_material(events, proposal).inspect_err(|_| {
+            debug_invalid_response_note(
+                "objective_proposal_apply_params",
+                "patch material invalid or missing",
+            );
+        })?
+    };
     let snapshot = match optional_object_field(proposal, "latest_snapshot")
         .or_else(|| optional_object_field(authorization, "preflight_snapshot"))
     {
@@ -3240,13 +3290,236 @@ fn objective_proposal_apply_params(
             "authorization run_id missing",
         );
     })?;
-    Ok(Some(json!({
+    let mut params = json!({
         "run_id": run_id,
         "proposal_id": proposal_id,
         "expected_target_sha256": expected_target_sha256,
-        "replacement_content": replacement_content,
         "authorize": true,
+    })
+    .as_object()
+    .cloned()
+    .expect("objective proposal apply params object");
+    let material = apply_material
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    for (key, value) in material {
+        params.insert(key.clone(), value.clone());
+    }
+    Ok(Some(Value::Object(params)))
+}
+
+fn extract_patch_file_apply_material(
+    run_events: &Value,
+    proposal: &serde_json::Map<String, Value>,
+) -> Result<Value, RuntimeClientError> {
+    let expected_path = required_display_string(proposal, "path")?;
+    let expected_content_chars = display_usize(proposal, "content_chars")?;
+    let expected_hunk_count = display_usize(proposal, "hunk_count")?;
+    let expected_hunk_fingerprint = required_display_string(proposal, "hunk_fingerprint")?;
+    validate_sha256_fingerprint(&expected_hunk_fingerprint)?;
+
+    let object = run_events
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let events = object
+        .get("events")
+        .and_then(Value::as_array)
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    for event in events.iter().rev() {
+        let Some(event_object) = event.as_object() else {
+            return Err(RuntimeClientError::InvalidResponse);
+        };
+        let kind = required_display_string(event_object, "kind")?;
+        if kind != "LlmResponseReceived" && kind != "SecondPassLlmResponseReceived" {
+            continue;
+        }
+        let Some(payload) = event_object.get("payload").and_then(Value::as_object) else {
+            continue;
+        };
+        let Some(content_preview) = payload.get("content_preview").and_then(Value::as_str) else {
+            continue;
+        };
+        for block in brownie_tool_intent_blocks(content_preview) {
+            let Ok(intent) = serde_json::from_str::<Value>(&block) else {
+                continue;
+            };
+            let Some(requests) = intent.get("tool_requests").and_then(Value::as_array) else {
+                continue;
+            };
+            for request in requests {
+                let Some(request) = request.as_object() else {
+                    continue;
+                };
+                if request.get("tool_id").and_then(Value::as_str) != Some("workspace.write") {
+                    continue;
+                }
+                let Some(input) = request.get("input").and_then(Value::as_object) else {
+                    continue;
+                };
+                if input.get("path").and_then(Value::as_str) != Some(expected_path.as_str())
+                    || input.get("operation").and_then(Value::as_str) != Some("patch_file")
+                {
+                    continue;
+                }
+                if let Some(material) = patch_file_apply_material_from_input(
+                    input,
+                    expected_hunk_count,
+                    expected_content_chars,
+                    &expected_hunk_fingerprint,
+                )? {
+                    return Ok(material);
+                }
+            }
+        }
+    }
+    Err(RuntimeClientError::InvalidResponse)
+}
+
+fn brownie_tool_intent_blocks(content: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut rest = content;
+    const START: &str = "```brownie-tool-intent";
+    const END: &str = "```";
+    while let Some(start) = rest.find(START) {
+        let after_start = &rest[start + START.len()..];
+        let after_newline = match after_start.find('\n') {
+            Some(index) => &after_start[index + 1..],
+            None => break,
+        };
+        let Some(end) = after_newline.find(END) else {
+            break;
+        };
+        blocks.push(after_newline[..end].trim().to_string());
+        rest = &after_newline[end + END.len()..];
+    }
+    blocks
+}
+
+fn patch_file_apply_material_from_input(
+    input: &serde_json::Map<String, Value>,
+    expected_hunk_count: usize,
+    expected_content_chars: usize,
+    expected_hunk_fingerprint: &str,
+) -> Result<Option<Value>, RuntimeClientError> {
+    if let Some(hunks_value) = input.get("hunks") {
+        if input.get("old_text").is_some() || input.get("new_text").is_some() {
+            return Ok(None);
+        }
+        let Some(hunks) = hunks_value.as_array() else {
+            return Ok(None);
+        };
+        if !(2..=5).contains(&hunks.len()) || hunks.len() != expected_hunk_count {
+            return Ok(None);
+        }
+        let mut checked_hunks = Vec::with_capacity(hunks.len());
+        for hunk in hunks {
+            let Some(hunk) = hunk.as_object() else {
+                return Ok(None);
+            };
+            let Some(old_text) = hunk.get("old_text").and_then(Value::as_str) else {
+                return Ok(None);
+            };
+            let Some(new_text) = hunk.get("new_text").and_then(Value::as_str) else {
+                return Ok(None);
+            };
+            if !is_safe_workspace_write_material(old_text)
+                || !is_safe_workspace_write_material(new_text)
+                || old_text.is_empty()
+            {
+                return Ok(None);
+            }
+            checked_hunks.push((old_text.to_string(), new_text.to_string()));
+        }
+        if patch_material_content_chars(&checked_hunks) != expected_content_chars
+            || patch_hunks_fingerprint_cli(&checked_hunks) != expected_hunk_fingerprint
+        {
+            return Ok(None);
+        }
+        return Ok(Some(json!({
+            "patch_hunks": checked_hunks
+                .into_iter()
+                .map(|(old_text, new_text)| json!({
+                    "old_text": old_text,
+                    "new_text": new_text,
+                }))
+                .collect::<Vec<_>>()
+        })));
+    }
+
+    let Some(old_text) = input.get("old_text").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let Some(new_text) = input.get("new_text").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    if expected_hunk_count != 1
+        || old_text.is_empty()
+        || !is_safe_workspace_write_material(old_text)
+        || !is_safe_workspace_write_material(new_text)
+    {
+        return Ok(None);
+    }
+    let hunks = vec![(old_text.to_string(), new_text.to_string())];
+    if patch_material_content_chars(&hunks) != expected_content_chars
+        || patch_hunks_fingerprint_cli(&hunks) != expected_hunk_fingerprint
+    {
+        return Ok(None);
+    }
+    Ok(Some(json!({
+        "patch_old_text": old_text,
+        "patch_new_text": new_text,
     })))
+}
+
+fn is_safe_workspace_write_material(value: &str) -> bool {
+    value.chars().count() <= MAX_WORKSPACE_WRITE_CONTENT_CHARS && !value.contains('\0')
+}
+
+fn patch_material_content_chars(hunks: &[(String, String)]) -> usize {
+    hunks
+        .iter()
+        .map(|(old_text, new_text)| old_text.chars().count() + new_text.chars().count())
+        .sum()
+}
+
+fn patch_hunks_fingerprint_cli(hunks: &[(String, String)]) -> String {
+    if hunks.len() == 1 {
+        return patch_hunk_fingerprint_cli(&hunks[0].0, &hunks[0].1);
+    }
+    let canonical_hunks = hunks
+        .iter()
+        .map(|(old_text, new_text)| {
+            json!({
+                "old_text_chars": old_text.chars().count(),
+                "old_text_sha256": sha256_fingerprint(old_text.as_bytes()),
+                "new_text_chars": new_text.chars().count(),
+                "new_text_sha256": sha256_fingerprint(new_text.as_bytes()),
+            })
+        })
+        .collect::<Vec<_>>();
+    let canonical = json!({
+        "version": "patch_file_multi_hunk_v1",
+        "hunks": canonical_hunks,
+    });
+    sha256_fingerprint(canonical.to_string().as_bytes())
+}
+
+fn patch_hunk_fingerprint_cli(old_text: &str, new_text: &str) -> String {
+    let canonical = json!({
+        "version": "patch_file_hunk_v1",
+        "old_text_chars": old_text.chars().count(),
+        "old_text_sha256": sha256_fingerprint(old_text.as_bytes()),
+        "new_text_chars": new_text.chars().count(),
+        "new_text_sha256": sha256_fingerprint(new_text.as_bytes()),
+    });
+    sha256_fingerprint(canonical.to_string().as_bytes())
+}
+
+fn sha256_fingerprint(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    format!("sha256:{}", hex_prefix(&digest, 32))
 }
 
 fn validate_direct_proposal_apply_result(result: &Value) -> Result<(), RuntimeClientError> {
@@ -3254,8 +3527,10 @@ fn validate_direct_proposal_apply_result(result: &Value) -> Result<(), RuntimeCl
         .as_object()
         .ok_or(RuntimeClientError::InvalidResponse)?;
     let apply = object_field_from_value(object, "apply_result")?;
-    if display_string(apply, "operation")? != "replace_file"
-        || display_string(apply, "apply_status")? != "Applied"
+    if !matches!(
+        display_string(apply, "operation")?.as_str(),
+        "replace_file" | "patch_file"
+    ) || display_string(apply, "apply_status")? != "Applied"
         || !display_bool(apply, "applied")?
         || !display_bool(apply, "authorization_consumed")?
     {
@@ -4740,12 +5015,14 @@ mod tests {
         assert_eq!(inspect_params["run_id"], "run_1");
         assert_eq!(inspect_params["proposal_id"], "proposal_1");
 
-        let params = objective_proposal_apply_params(&authorized, &proposal)
-            .unwrap()
-            .expect("apply params");
-        let second = objective_proposal_apply_params(&authorized, &proposal)
-            .unwrap()
-            .expect("stable apply params");
+        let params =
+            objective_proposal_apply_params_with_patch_material(&authorized, &proposal, None)
+                .unwrap()
+                .expect("apply params");
+        let second =
+            objective_proposal_apply_params_with_patch_material(&authorized, &proposal, None)
+                .unwrap()
+                .expect("stable apply params");
         assert_eq!(params, second);
         assert_eq!(params["authorize"], true);
         assert!(params.get("mode_id").is_none());
@@ -4757,6 +5034,122 @@ mod tests {
             "sha256:3333333333333333333333333333333333333333333333333333333333333333"
         );
         assert_eq!(params["replacement_content"], "new README content\n");
+    }
+
+    #[test]
+    fn cli_run_objective_proposal_apply_params_restore_patch_file_material_from_run_events() {
+        let patch_old_text = "# PHASE_LOOP_PR_DRAFT=0";
+        let patch_new_text =
+            "# PHASE_LOOP_PR_DRAFT=0\n# PHASE_LOOP_OPERATIONAL_PR_TEST=verified-by-brownie";
+        let hunk_fingerprint = patch_hunk_fingerprint_cli(patch_old_text, patch_new_text);
+        let content_chars = patch_old_text.chars().count() + patch_new_text.chars().count();
+        let authorized: Value = serde_json::from_str(
+            r#"{
+                "status":"task_executed",
+                "session_id":"cli.run.patch",
+                "drive_id":"cli.run.patch.drive",
+                "next_action":"apply_authorized_objective_proposal",
+                "stop_reason":"objective_proposal_authorization_preflight_ready",
+                "end_session_sequence":1,
+                "objective_continue_decision_id":"headless_decision_1",
+                "objective_continue_continuation_id":"cli.obj.auth",
+                "objective_continue_post_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "objective_continue_post_aggregate_sequence":8,
+                "journey":{"journey_id":"cli.run.patch.journey","task_id":"task_1","run_id":"run_1","journey_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+                "next_route":{"kind":"apply_authorized_objective_proposal_explicitly","task_id":"task_1","run_id":"run_1","proposal_id":"proposal_1","progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":8,"next_action":"apply_authorized_objective_proposal","reason":"ready"},
+                "objective_proposal_authorization_preflight_result":{
+                    "status":"authorized_preflight_ready",
+                    "journey_id":"cli.run.patch.journey",
+                    "task_id":"task_1",
+                    "run_id":"run_1",
+                    "session_id":"cli.run.patch",
+                    "source_drive_id":"cli.run.patch.drive",
+                    "proposal_id":"proposal_1",
+                    "source_event_id":"event_1",
+                    "source_event_kind":"WorkspacePatchProposed",
+                    "operation":"patch_file",
+                    "path_fingerprint":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "objective_context_fingerprint":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                    "selected_context_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                    "candidate_fingerprint":"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                    "authorization_token_fingerprint":"sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                    "validation_status":"Valid",
+                    "approval_status":"Approved",
+                    "preflight_snapshot":{"proposal_id":"proposal_1","snapshot_id":"snapshot_1","path":"phase-loop.env.example","canonical_path_hash":"sha256:2222222222222222222222222222222222222222222222222222222222222222","file_exists":true,"file_kind":"regular_file","file_size_bytes":15,"file_modified_unix_ms":1,"file_sha256":"sha256:3333333333333333333333333333333333333333333333333333333333333333","captured_at":"2026-08-27T00:00:00Z","stale":false,"stale_reason":null},
+                    "apply_plan":{"proposal_id":"proposal_1","plan_id":"plan_1","status":"Ready","checklist":[]},
+                    "authorization_preflight_fingerprint":"sha256:4444444444444444444444444444444444444444444444444444444444444444",
+                    "replayed":false,
+                    "next_action":"apply_authorized_objective_proposal"
+                }
+            }"#,
+        )
+        .unwrap();
+        let proposal = json!({
+            "proposal": {
+                "proposal_id": "proposal_1",
+                "path": "phase-loop.env.example",
+                "operation": "patch_file",
+                "content_preview": "[patch_file single_hunk old_chars=23 new_chars=76]",
+                "content_chars": content_chars,
+                "truncated": false,
+                "validation_status": "Valid",
+                "validation_reason": null,
+                "diff_preview": "--- a/phase-loop.env.example\n+++ b/phase-loop.env.example\n@@ patch_file single_hunk old_chars=23 new_chars=76 @@\n[patch hunk elided]\n",
+                "diff_truncated": false,
+                "diff_redacted": false,
+                "hunk_count": 1,
+                "hunk_fingerprint": hunk_fingerprint,
+                "approval_status": "Approved",
+                "approval_reason": null,
+                "approval_reason_redacted": false,
+                "approved_at": "2026-08-27T00:00:00Z",
+                "rejected_at": null,
+                "latest_apply_plan": null,
+                "latest_snapshot": null
+            }
+        });
+        let run_events = json!({
+            "run_id": "run_1",
+            "events": [{
+                "event_id": "event_llm",
+                "task_id": "task_1",
+                "run_id": "run_1",
+                "kind": "LlmResponseReceived",
+                "timestamp": "2026-08-27T00:00:00Z",
+                "payload": {
+                    "provider": "OpenAiCompatible",
+                    "response_preview_chars": 2000,
+                    "content_preview": format!(
+                        "```brownie-tool-intent\n{{\"tool_requests\":[{{\"tool_id\":\"workspace.write\",\"reason\":\"Patch target.\",\"input\":{{\"path\":\"phase-loop.env.example\",\"operation\":\"patch_file\",\"old_text\":{},\"new_text\":{}}}}}]}}\n```",
+                        serde_json::to_string(patch_old_text).unwrap(),
+                        serde_json::to_string(patch_new_text).unwrap()
+                    )
+                }
+            }]
+        });
+
+        let params = objective_proposal_apply_params_with_patch_material(
+            &authorized,
+            &proposal,
+            Some(&run_events),
+        )
+        .unwrap()
+        .expect("apply params");
+        assert_eq!(params["authorize"], true);
+        assert_eq!(params["run_id"], "run_1");
+        assert_eq!(params["proposal_id"], "proposal_1");
+        assert_eq!(params["patch_old_text"], patch_old_text);
+        assert_eq!(params["patch_new_text"], patch_new_text);
+        assert!(params.get("replacement_content").is_none());
+
+        let mut mismatched = proposal.clone();
+        mismatched["proposal"]["hunk_fingerprint"] = json!(format!("sha256:{}", "9".repeat(64)));
+        assert!(objective_proposal_apply_params_with_patch_material(
+            &authorized,
+            &mismatched,
+            Some(&run_events),
+        )
+        .is_err());
     }
 
     #[test]
