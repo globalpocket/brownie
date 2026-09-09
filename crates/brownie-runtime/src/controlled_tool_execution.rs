@@ -4959,19 +4959,34 @@ pub(super) fn tool_execution_ledger_payload(result: &brownie_tools::ToolExecutio
         }),
     );
     if let Some(content) = result.output.get("content").and_then(Value::as_str) {
-        payload.insert(
-            "output_preview".to_string(),
-            json!(preview_tool_output(content)),
-        );
+        let preview = if result.tool_id == WORKSPACE_READ_TOOL_ID {
+            let path = result
+                .output
+                .get("path")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            let bytes_total = result
+                .output
+                .get("bytes_total")
+                .and_then(Value::as_u64)
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "<unknown>".to_string());
+            let content_sha256 = result
+                .output
+                .get("content_sha256")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            format!(
+                "[workspace.read path={path} bytes_total={bytes_total} content_sha256={content_sha256}]\n{}",
+                preview_tool_output(content)
+            )
+        } else {
+            preview_tool_output(content)
+        };
+        payload.insert("output_preview".to_string(), json!(preview));
     }
     if let Some(bytes_read) = result.output.get("bytes_read") {
         payload.insert("bytes_read".to_string(), bytes_read.clone());
-    }
-    if let Some(bytes_total) = result.output.get("bytes_total") {
-        payload.insert("bytes_total".to_string(), bytes_total.clone());
-    }
-    if let Some(content_sha256) = result.output.get("content_sha256") {
-        payload.insert("content_sha256".to_string(), content_sha256.clone());
     }
     if let Some(truncated) = result.output.get("truncated") {
         payload.insert("truncated".to_string(), truncated.clone());
