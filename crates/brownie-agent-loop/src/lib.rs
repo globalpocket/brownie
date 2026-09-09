@@ -195,7 +195,35 @@ fn prompt_role_to_llm_role(role: &PromptRole) -> &'static str {
 mod tests {
     use super::*;
     use brownie_context::{ContextBudgetSummary, ContextWindowSummary, MAX_LEDGER_CONTEXT_EVENTS};
-    use brownie_llm::FAKE_LLM_MODEL;
+    use brownie_llm::{LlmProviderKind, LlmProviderStatus, FAKE_LLM_MODEL};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingProvider {
+        calls: AtomicUsize,
+    }
+
+    impl LlmProvider for CountingProvider {
+        fn status(&self) -> LlmProviderStatus {
+            LlmProviderStatus {
+                provider: LlmProviderKind::Fake,
+                enabled: true,
+                model: "counting-provider".into(),
+                base_url: None,
+                reason: None,
+            }
+        }
+
+        fn complete(
+            &self,
+            _request: &LlmRequest,
+            _budget: &LlmRequestBudget,
+        ) -> anyhow::Result<LlmResponse> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(LlmResponse {
+                content: "should not be called".into(),
+            })
+        }
+    }
 
     #[test]
     fn run_noop_completes() {
@@ -284,5 +312,53 @@ mod tests {
             .content
             .contains("Fake LLM final response after reading workspace context."));
         assert!(!result.llm_response.content.contains("brownie-tool-intent"));
+    }
+
+    #[test]
+    fn fail_sensitive_guard_stops_before_provider_complete() {
+        let context_window = ContextWindowSummary {
+            total_events: 0,
+            included_events: 0,
+            omitted_events: 0,
+            max_events: MAX_LEDGER_CONTEXT_EVENTS,
+            first_included_event: None,
+            last_included_event: None,
+        };
+        let provider = CountingProvider {
+            calls: AtomicUsize::new(0),
+        };
+        let result = AgentLoop::run_with_llm(
+            PromptBuildInput {
+                task_id: "task_1".into(),
+                run_id: "run_1".into(),
+                goal: "inspect api_key=example-local-token".into(),
+                mode_id: None,
+                mode_policy_summary: Some("Mode Policy:\n<unresolved>".into()),
+                mode_instruction_material: Some("Mode Instructions:\n<unresolved>".into()),
+                permission_summary: vec![],
+                tool_plan_summary: vec![],
+                tool_intent_summary: vec![],
+                tool_execution_summary: vec![],
+                subtask_orchestration_summary: vec![],
+                verification_recovery_diagnostics_summary: vec![],
+                selected_index_context: None,
+                verification_recovery_context: None,
+                context_budget: ContextBudgetSummary::unrequested(
+                    &context_window,
+                    None,
+                    usize::MAX,
+                ),
+                context_window,
+                ledger_summary: vec![],
+            },
+            &provider,
+            &LlmRequestBudget::default(),
+            PromptSensitiveGuardMode::Fail,
+        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Prompt sensitive-content guard failed"));
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
     }
 }

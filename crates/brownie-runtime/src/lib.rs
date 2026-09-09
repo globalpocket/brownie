@@ -50824,7 +50824,7 @@ modes:
         std::fs::create_dir(temp.path().join("docs")).expect("mkdir");
         std::fs::write(
             temp.path().join("secret.txt"),
-            "api_key=sk-existing
+            "api_key=sk-existing-token-with-enough-length
 ",
         )
         .expect("secret");
@@ -51017,7 +51017,7 @@ modes:
             &store,
             "README.md",
             WorkspacePatchOperation::ReplaceFile.as_str(),
-            "sk-proposed
+            "sk-proposed-token-with-enough-length
 ",
         );
         assert_eq!(proposed_secret.validation_status, "Blocked");
@@ -61769,6 +61769,7 @@ mod phase_2_3_tests {
                 "BROWNIE_LLM_API_KEY_ENV",
                 "BROWNIE_LLM_API_KEY",
                 "BROWNIE_LLM_STRICT",
+                "BROWNIE_LLM_SENSITIVE_GUARD",
                 "BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK",
                 "BROWNIE_TEST_LLM_API_KEY",
                 "BROWNIE_TEST_CRASH_AFTER_MCP_TOOL_EXECUTION_BEFORE_SECOND_PASS",
@@ -61793,6 +61794,7 @@ mod phase_2_3_tests {
                 "BROWNIE_LLM_API_KEY_ENV",
                 "BROWNIE_LLM_API_KEY",
                 "BROWNIE_LLM_STRICT",
+                "BROWNIE_LLM_SENSITIVE_GUARD",
                 "BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK",
                 "BROWNIE_TEST_LLM_API_KEY",
                 "BROWNIE_TEST_CRASH_AFTER_MCP_TOOL_EXECUTION_BEFORE_SECOND_PASS",
@@ -61924,7 +61926,7 @@ content-length: {}
     }
 
     #[test]
-    fn prompt_sensitive_scanner_no_longer_blocks_or_records_findings() {
+    fn prompt_sensitive_scanner_warn_records_findings_without_values_or_blocking() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let _guard = EnvGuard::clear();
         let temp = tempfile::tempdir().unwrap();
@@ -61964,11 +61966,22 @@ content-length: {}
             .lines()
             .map(|line| serde_json::from_str::<brownie_store::LedgerEvent>(line).expect("event"))
             .collect::<Vec<_>>();
-        assert!(!events.iter().any(|event| matches!(
-            event.kind,
-            LedgerEventKind::PromptSensitiveScanCompleted
-                | LedgerEventKind::PromptSensitiveScanFailed
-        )));
+        let scan_event = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::PromptSensitiveScanCompleted)
+            .expect("prompt sensitive scan completed event");
+        let scan_payload = scan_event.payload.as_ref().expect("scan payload");
+        assert_eq!(scan_payload["sensitive_guard"], "warn");
+        assert!(scan_payload["finding_count"].as_u64().unwrap() > 0);
+        let categories = scan_payload["categories"].as_array().unwrap();
+        assert!(categories
+            .iter()
+            .any(|category| category == "api_key_assignment"));
+        let serialized_scan_payload = serde_json::to_string(scan_payload).unwrap();
+        assert!(!serialized_scan_payload.contains("example-local-token"));
+        assert!(!events
+            .iter()
+            .any(|event| { event.kind == LedgerEventKind::PromptSensitiveScanFailed }));
         for kind in [
             LedgerEventKind::PromptBuilt,
             LedgerEventKind::SecondPassPromptBuilt,
@@ -61979,7 +61992,8 @@ content-length: {}
                 .unwrap_or_else(|| panic!("missing {kind:?}"));
             let payload = event.payload.as_ref().expect("prompt payload");
             assert!(payload["message_count"].as_u64().is_some());
-            assert!(payload["prompt_preview"].as_str().is_some());
+            assert_eq!(payload["prompt_preview_redacted"], true);
+            assert!(payload["prompt_preview"].as_str().is_none());
         }
     }
 
@@ -62416,46 +62430,6 @@ content-length: {}
         assert_eq!(failure["failure_class"], "configuration_missing");
         assert_eq!(failure["next_action"], "fix_provider_configuration");
         assert_eq!(failure["retryable"], false);
-    }
-
-    #[test]
-    fn sensitive_prompt_guard_fail_mode_does_not_block_provider_calls() {
-        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
-        let _guard = EnvGuard::clear();
-        let temp = tempfile::tempdir().unwrap();
-        let (base_url, handle) = spawn_mock(
-            "200 OK",
-            r#"{"choices":[{"message":{"content":"Mock LLM response despite key-like prompt text."}}]}"#,
-        );
-        write_mock_config(temp.path(), &base_url);
-        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
-        std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
-        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
-        std::env::set_var("BROWNIE_LLM_SENSITIVE_GUARD", "fail");
-
-        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Inspect README with api_key=example-local-token","mode_id":"provider-runner"}}"#).result.unwrap();
-        let task_id = start["task_id"].as_str().unwrap();
-        let run_id = start["run_id"].as_str().unwrap();
-        let run = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
-        ));
-        assert!(run.error.is_none());
-        let result = run.result.unwrap();
-        assert_eq!(result["status"], "Completed");
-        let observed = handle.join().unwrap();
-        assert_eq!(observed["model"], "mock-model");
-
-        let events = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":3,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
-        ))
-        .result
-        .unwrap();
-        let serialized = serde_json::to_string(&events).unwrap();
-        assert!(!serialized.contains("PromptSensitiveScanFailed"));
-        assert!(!serialized.contains("LlmRequestFailed"));
-        assert!(!serialized.contains("test-key"));
-        assert!(!serialized.contains("Authorization"));
-        assert!(!serialized.contains("Bearer"));
     }
 
     #[test]

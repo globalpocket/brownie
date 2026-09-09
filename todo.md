@@ -75,13 +75,6 @@ Current synchronization note:
 
 ### P0: Brownie Runtime safety
 
-- [ ] R-05: Repair sensitive prompt detection so it no longer always returns an
-  empty result; support low-false-positive detection or an explicit documented
-  override.
-- [ ] R-06: Enforce `sensitive_guard=fail` before provider transmission; setting
-  and behavior must agree and fail closed.
-- [ ] R-07: Stop persisting `prompt_preview` when key-like or sensitive input is
-  detected; record only classification, counts, and bounded evidence.
 - [ ] R-08: Prove provider egress constraints: fixed scheme/host/port, userinfo
   rejection, redirect escape prevention, DNS rebinding or resolved-address
   change handling, and no arbitrary HTTP escalation.

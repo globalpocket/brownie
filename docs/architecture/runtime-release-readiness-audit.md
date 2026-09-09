@@ -223,6 +223,13 @@ that can block the Runtime thread; explicit waiting must be handled outside the
 Runtime tool surface until a future bounded, cancellable, deadline-aware,
 restart-safe protocol wait is implemented with durable replay evidence.
 
+R-05/R-06/R-07 restore low-false-positive prompt sensitive-content detection and
+make `sensitive_guard=fail` stop before provider transmission. Prompt scan
+evidence records only categories, counts, and message indexes; matched values
+are not serialized. `warn` continues provider execution while redacting prompt
+previews when findings are present, and `fail` records bounded failure evidence
+without creating an LLM request.
+
 | ID | Priority | Classification | Status | Responsibility | Release classification | Evidence summary | Next action |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `runtime-release-debt-reaudit` | P0 | Runtime Release debt reaudit | implemented sufficient | Runtime | closed | Required specs, manifests, guards, crates, CLI, VSIX, and CI were reaudited and are now backed by a machine guard. | Use this artifact as the source for the remaining bounded closure phases. |
