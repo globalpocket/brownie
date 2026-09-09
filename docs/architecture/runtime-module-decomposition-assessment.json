@@ -25,17 +25,17 @@
     "crates/brownie-runtime/src/verification_recovery.rs"
   ],
   "thresholds": {
-    "lib_rs_production_line_ceiling": 14700,
-    "lib_rs_test_line_ceiling": 52150
+    "lib_rs_production_line_ceiling": 14701,
+    "lib_rs_test_line_ceiling": 52189
   },
   "metrics": {
     "files": {
       "crates/brownie-runtime/src/lib.rs": {
-        "line_count": 66808,
+        "line_count": 66890,
         "public_items": 3,
         "private_items": 496,
-        "production_line_count": 14698,
-        "test_line_count": 52110,
+        "production_line_count": 14701,
+        "test_line_count": 52189,
         "state_mutation_mentions": 306,
         "durable_write_mentions": 226,
         "permission_decision_mentions": 184,
@@ -103,9 +103,9 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/llm_provider.rs": {
-        "line_count": 987,
+        "line_count": 1055,
         "public_items": 13,
-        "private_items": 12,
+        "private_items": 19,
         "state_mutation_mentions": 0,
         "durable_write_mentions": 0,
         "permission_decision_mentions": 0,
@@ -114,7 +114,7 @@
         "approval_mentions": 0,
         "mcp_mentions": 0,
         "product_dod_mentions": 0,
-        "diagnostics_mentions": 96
+        "diagnostics_mentions": 99
       },
       "crates/brownie-runtime/src/mcp_client.rs": {
         "line_count": 1896,
@@ -378,7 +378,7 @@
       "The lib.rs behavior-test corpus remains large and should be split opportunistically with future behavior changes, but it is not treated as a Runtime-owned release blocker after this guarded assessment.",
       "The generated proposal review diagnostics compatibility chain remains in lib.rs because moving it would be a high-churn compatibility refactor without reducing Runtime authority risk in this release phase."
     ],
-    "summary": "RRP-6 remains closed after RRP-7.2 source growth; metrics were refreshed to include RuntimeDeadline persistence/resume checks, Windows durability and stale-lock evidence, and the MCP terminal-record process-loss test without moving Runtime authority out of Rust Runtime."
+    "summary": "RRP-6 remains closed after R-16 provider-access guard migration; metrics were refreshed to include the bounded provider guard compatibility/fail-closed logic and regression coverage without moving Runtime authority out of Rust Runtime."
   },
   "non_authority_rules": [
     "CLI and VSIX are transport/projection only",
@@ -386,9 +386,10 @@
     "runtime_release_ready remains false until remaining blockers and owner decisions close",
     "raw prompt/provider response/file content/absolute path/canonical path/secret/environment values/process output are not decomposition evidence"
   ],
-  "updated_at": "2026-09-04T07:22:30Z",
+  "updated_at": "2026-09-09T00:00:00Z",
   "notes": [
     "RRP-8.3 updated module metrics after mandatory clippy gate cleanup; runtime-module-decomposition closure status remains unchanged.",
-    "RRP-8.3 updated module metrics after release gate evidence semantics and clippy cleanup; module-decomposition closure status remains unchanged."
+    "RRP-8.3 updated module metrics after release gate evidence semantics and clippy cleanup; module-decomposition closure status remains unchanged.",
+    "R-16 updated module metrics after migrating strict provider network opt-in to BROWNIE_LLM_ALLOW_PROVIDER_ACCESS with legacy fallback and conflict fail-closed coverage; module-decomposition closure status remains unchanged."
   ]
 }

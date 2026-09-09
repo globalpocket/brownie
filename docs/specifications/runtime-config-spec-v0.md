@@ -72,7 +72,7 @@ Phase 2.5 adds the explicit `llm.health` JSON-RPC method, specified in `docs/spe
 
 ## Phase 2.6 real-provider task.run guard
 
-`BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true` is required before strict enabled OpenAI-compatible `task.run` may make network LLM calls. The default is false. `llm.status` and `runtime.config.get` expose `task_run_network_allowed`; `runtime.diagnostics.get` reports `TASK_RUN_NETWORK_ALLOWED` or `TASK_RUN_NETWORK_NOT_ALLOWED` for strict enabled OpenAI-compatible profiles. Missing guard is a warning in diagnostics and a pre-network `task.run` error. Non-strict OpenAI-compatible `task.run` falls back to Fake. See `docs/specifications/real-provider-task-run-smoke-spec-v0.md`.
+`BROWNIE_LLM_ALLOW_PROVIDER_ACCESS=true` is the preferred guard required before strict enabled OpenAI-compatible `task.run` may make network LLM calls. The legacy `BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true` guard is accepted only when the preferred guard is unset. If both guards are set and disagree, Runtime fails closed before any provider request and diagnostics report `TASK_RUN_NETWORK_GUARD_CONFLICT`. The default is false. `llm.status` and `runtime.config.get` continue to expose the compatibility field `task_run_network_allowed`; `runtime.diagnostics.get` reports `TASK_RUN_NETWORK_ALLOWED`, `TASK_RUN_NETWORK_NOT_ALLOWED`, or `TASK_RUN_NETWORK_GUARD_CONFLICT` for strict enabled OpenAI-compatible profiles. Missing guard is a warning in diagnostics and a pre-network `task.run` error. Non-strict OpenAI-compatible `task.run` falls back to Fake. See `docs/specifications/real-provider-task-run-smoke-spec-v0.md`.
 
 ## Phase 2.7 LLM request budget note
 
