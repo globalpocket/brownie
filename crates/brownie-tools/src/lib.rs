@@ -3932,7 +3932,11 @@ fn extract_json_tool_request_blocks(content: &str) -> Vec<&str> {
         let block = &after[..end];
         if serde_json::from_str::<Value>(block.trim())
             .ok()
-            .and_then(|value| value.as_object().map(|object| object.contains_key("tool_requests")))
+            .and_then(|value| {
+                value
+                    .as_object()
+                    .map(|object| object.contains_key("tool_requests"))
+            })
             .unwrap_or(false)
         {
             blocks.push(block);
@@ -4111,6 +4115,13 @@ impl ToolPlanner {
                 "working tree",
                 "worktree status",
                 "status result",
+                "release evidence",
+                "implementation commit",
+                "tested commit",
+                "audited base commit",
+                "workflow run id",
+                "artifact sha",
+                "artifact sha-256",
             ],
         ) {
             items.push(plan_item(
@@ -4118,7 +4129,21 @@ impl ToolPlanner {
                 "Goal asks for bounded Git status context.",
             ));
         }
-        if contains_any(&goal, &["git diff", "diff result", "diff context"]) {
+        if contains_any(
+            &goal,
+            &[
+                "git diff",
+                "diff result",
+                "diff context",
+                "release evidence",
+                "implementation commit",
+                "tested commit",
+                "audited base commit",
+                "workflow run id",
+                "artifact sha",
+                "artifact sha-256",
+            ],
+        ) {
             items.push(plan_item(
                 GIT_DIFF_TOOL_ID,
                 "Goal asks for bounded Git diff context.",
@@ -4371,6 +4396,25 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(commit_ids.contains(&WORKSPACE_READ_TOOL_ID));
         assert!(commit_ids.contains(&GIT_COMMIT_TOOL_ID));
+    }
+
+    #[test]
+    fn planner_routes_release_evidence_goals_to_dedicated_git_inspection_tools() {
+        let plan = ToolPlanner::plan(ToolPlanningInput {
+            task_id: "task_3".to_string(),
+            goal: "Populate release evidence fields with current values: implementation commit, tested commit, workflow run ID, artifact SHA-256, and audited base commit.".to_string(),
+            mode_id: "implementer".to_string(),
+        });
+        let ids = plan
+            .items
+            .iter()
+            .map(|item| item.tool_id.as_str())
+            .collect::<Vec<_>>();
+        assert!(ids.contains(&WORKSPACE_READ_TOOL_ID));
+        assert!(ids.contains(&WORKSPACE_WRITE_TOOL_ID));
+        assert!(ids.contains(&GIT_STATUS_TOOL_ID));
+        assert!(ids.contains(&GIT_DIFF_TOOL_ID));
+        assert!(!ids.contains(&PROCESS_EXEC_TOOL_ID));
     }
 
     #[test]
