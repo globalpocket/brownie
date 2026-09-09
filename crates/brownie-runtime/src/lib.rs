@@ -311,8 +311,7 @@ use brownie_tools::{
     MAX_GIT_SUMMARY_LINE_CHARS, MAX_SUBTASK_SPAWN_GOAL_CHARS, MAX_WORKSPACE_READ_BYTES,
     PROCESS_EXEC_TOOL_ID, RUNTIME_SLEEP_TOOL_ID, SUBTASK_SPAWN_TOOL_ID, TIME_NOW_TOOL_ID,
     VERIFICATION_CARGO_CHECK_TOOL_ID, VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
-    VERIFICATION_CARGO_TEST_TOOL_ID, WORKSPACE_APPEND_LINE_TOOL_ID, WORKSPACE_READ_TOOL_ID,
-    WORKSPACE_WRITE_TOOL_ID,
+    VERIFICATION_CARGO_TEST_TOOL_ID, WORKSPACE_READ_TOOL_ID, WORKSPACE_WRITE_TOOL_ID,
 };
 use codebase_index::*;
 use controlled_tool_execution::*;
@@ -2849,6 +2848,7 @@ fn task_goal_requires_workspace_write_proposal(goal: &str) -> bool {
         "edit",
         "modify",
         "implement",
+        "append",
         "create",
         "delete",
         "replace",
@@ -2859,6 +2859,7 @@ fn task_goal_requires_workspace_write_proposal(goal: &str) -> bool {
         "修正",
         "編集",
         "実装",
+        "追記",
         "書き込",
         "作成",
         "削除",
@@ -2885,8 +2886,8 @@ mod workspace_edit_completion_gate_tests {
     }
 
     #[test]
-    fn append_line_goal_does_not_require_workspace_write_proposal() {
-        assert!(!task_goal_requires_workspace_write_proposal(
+    fn append_line_goal_requires_workspace_write_proposal() {
+        assert!(task_goal_requires_workspace_write_proposal(
             "timestamp.txt に現在時刻の行を追記してください"
         ));
     }
@@ -60968,11 +60969,11 @@ modes:
             .as_array()
             .expect("tools")
             .clone();
-        assert_eq!(tools.len(), 18);
+        assert_eq!(tools.len(), 17);
         assert!(tools.iter().any(|tool| tool["tool_id"] == "workspace.read"));
-        assert!(tools
+        assert!(!tools
             .iter()
-            .any(|tool| tool["tool_id"] == WORKSPACE_APPEND_LINE_TOOL_ID));
+            .any(|tool| tool["tool_id"] == "workspace.append_line"));
         assert!(tools.iter().any(|tool| tool["tool_id"] == TIME_NOW_TOOL_ID));
         assert!(tools
             .iter()
@@ -62170,7 +62171,7 @@ content-length: {}
         assert!(completion["payload"]["completion_summary"]
             .as_str()
             .expect("summary")
-            .contains("did not produce Runtime side-effect evidence"));
+            .contains("did not produce a workspace.write proposal"));
     }
 
     #[test]
