@@ -43,6 +43,9 @@ Current synchronization note:
   payload schema classification, schema fingerprint, Runtime validator dispatch,
   generated payload fixtures, release-gate wiring, and CI-reachable VSIX check
   wiring cannot drift independently.
+- R-20 adds repo-fixed historical ledger fixtures for schema-v1 load/resume
+  compatibility and fail-closed replay/read rejection, with release-gate and
+  CI-reachable guard coverage.
 - Runtime Product Ready is not reached.
 
 ## Queue protocol
@@ -76,11 +79,6 @@ Current synchronization note:
   another Brownie run.
 
 ## Product Ready Blocking Queue
-
-### P1: Runtime / CLI boundary
-
-- [ ] R-20: Prove old-ledger compatibility with real historical fixtures for
-  load, resume, and replay rejection.
 
 ### P0/P1: Release engineering and evidence
 

@@ -11621,6 +11621,39 @@ mod tests {
     }
 
     #[test]
+    fn durable_schema_v1_historical_fixture_preserves_task_run_ledger_checkpoint_and_resume_identity(
+    ) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        copy_historical_ledger_fixture("v1-running-task", temp.path());
+        let fixture = v1_historical_fixture_evidence(temp.path());
+        let store = TaskStore::new(temp.path());
+
+        let manifest = store.ensure_durable_schema().expect("migrate fixture");
+
+        assert_eq!(
+            manifest,
+            durable_schema_migration_completed_manifest(DURABLE_SCHEMA_MIGRATIONS[0])
+        );
+        assert_v1_fixture_preserved_and_resumable(temp.path(), &fixture);
+    }
+
+    #[test]
+    fn ledger_read_rejects_historical_mismatched_payload_envelope_fixture() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        copy_historical_ledger_fixture("mismatched-payload-envelope", temp.path());
+
+        let error = RunLedger::new(
+            temp.path()
+                .join("runs")
+                .join("run_historical_mismatched_envelope"),
+        )
+        .read_events()
+        .expect_err("historical mismatched payload envelope fixture must fail closed");
+
+        assert!(format!("{error:#}").contains("instance_shape_fingerprint mismatch"));
+    }
+
+    #[test]
     fn durable_write_failure_injection_disk_full_fails_closed_before_task_state() {
         let temp = tempfile::tempdir().expect("tempdir");
         let store = TaskStore::new(temp.path());
@@ -14514,6 +14547,29 @@ mod tests {
         .expect("write layout");
     }
 
+    fn copy_historical_ledger_fixture(name: &str, destination: &Path) {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("historical-ledger")
+            .join(name);
+        copy_dir_recursively(&source, destination);
+    }
+
+    fn copy_dir_recursively(source: &Path, destination: &Path) {
+        fs::create_dir_all(destination).expect("create fixture destination");
+        for entry in fs::read_dir(source).expect("read fixture source") {
+            let entry = entry.expect("fixture entry");
+            let source_path = entry.path();
+            let destination_path = destination.join(entry.file_name());
+            if entry.file_type().expect("fixture entry type").is_dir() {
+                copy_dir_recursively(&source_path, &destination_path);
+            } else {
+                fs::copy(&source_path, &destination_path).expect("copy fixture file");
+            }
+        }
+    }
+
     #[derive(Debug)]
     struct V1DurableFixtureEvidence {
         task_id: String,
@@ -14523,6 +14579,41 @@ mod tests {
         checkpoint_bytes: Vec<u8>,
         ledger_kinds: Vec<LedgerEventKind>,
         checkpoint_fingerprint: String,
+    }
+
+    fn v1_historical_fixture_evidence(root: &Path) -> V1DurableFixtureEvidence {
+        let run_id = "run_historical_v1_running_task";
+        let run_dir = root.join(WORKSPACE_STATE_DIR).join(RUNS_DIR).join(run_id);
+        let state_path = run_dir.join("state.json");
+        let ledger_path = run_dir.join("ledger.jsonl");
+        let checkpoint_path = root
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_OBJECTIVE_ADMISSIONS_DIR)
+            .join("rrp-4-1-v1-fixture-admission.json");
+        let record: TaskRecord = serde_json::from_slice(
+            &fs::read(&state_path).expect("read historical fixture state for identity"),
+        )
+        .expect("parse historical fixture task state");
+        let checkpoint: HeadlessObjectiveAdmissionCheckpoint = serde_json::from_slice(
+            &fs::read(&checkpoint_path).expect("read historical fixture checkpoint for identity"),
+        )
+        .expect("parse historical fixture checkpoint");
+        let ledger_kinds = RunLedger::new(&run_dir)
+            .read_events()
+            .expect("read historical fixture ledger events")
+            .into_iter()
+            .map(|event| event.kind)
+            .collect::<Vec<_>>();
+        V1DurableFixtureEvidence {
+            task_id: record.task_id,
+            run_id: record.run_id,
+            state_bytes: fs::read(&state_path).expect("read historical fixture state"),
+            ledger_bytes: fs::read(&ledger_path).expect("read historical fixture ledger bytes"),
+            checkpoint_bytes: fs::read(&checkpoint_path)
+                .expect("read historical fixture checkpoint bytes"),
+            ledger_kinds,
+            checkpoint_fingerprint: checkpoint.material_fingerprint,
+        }
     }
 
     fn seed_v1_store_with_task_run_ledger_and_checkpoint(root: &Path) -> V1DurableFixtureEvidence {

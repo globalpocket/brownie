@@ -163,6 +163,8 @@ const validPackageJson = {
     'guard:modepack-distribution-trust:test': 'node --test scripts/guard-modepack-distribution-trust.test.mjs',
     'guard:ledger-contract-single-source': 'node scripts/guard-ledger-contract-single-source.mjs',
     'guard:ledger-contract-single-source:test': 'node --test scripts/guard-ledger-contract-single-source.test.mjs',
+    'guard:historical-ledger-fixtures': 'node scripts/guard-historical-ledger-fixtures.mjs',
+    'guard:historical-ledger-fixtures:test': 'node --test scripts/guard-historical-ledger-fixtures.test.mjs',
     'guard:owner-governance-evidence': 'node scripts/guard-owner-governance-evidence.mjs',
     'guard:owner-governance-evidence:test': 'node --test scripts/guard-owner-governance-evidence.test.mjs'
   }
@@ -170,7 +172,7 @@ const validPackageJson = {
 
 const validVsixPackageJson = {
   scripts: {
-    check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root release:gate -- --dry-run && pnpm --workspace-root release:dependency-security-license-audit:test && pnpm --workspace-root guard:dependency-security-license-audit && pnpm --workspace-root guard:dependency-security-license-audit:test && pnpm --workspace-root guard:local-release-targets && pnpm --workspace-root guard:supply-chain-artifact-evidence && pnpm --workspace-root guard:supply-chain-artifact-evidence:test && pnpm --workspace-root guard:modepack-distribution-trust && pnpm --workspace-root guard:modepack-distribution-trust:test && pnpm --workspace-root guard:ledger-contract-single-source && pnpm --workspace-root guard:ledger-contract-single-source:test && pnpm --workspace-root guard:owner-governance-evidence && pnpm --workspace-root guard:owner-governance-evidence:test && pnpm --workspace-root release:owner-governance-evidence:test'
+    check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root release:gate -- --dry-run && pnpm --workspace-root release:dependency-security-license-audit:test && pnpm --workspace-root guard:dependency-security-license-audit && pnpm --workspace-root guard:dependency-security-license-audit:test && pnpm --workspace-root guard:local-release-targets && pnpm --workspace-root guard:supply-chain-artifact-evidence && pnpm --workspace-root guard:supply-chain-artifact-evidence:test && pnpm --workspace-root guard:modepack-distribution-trust && pnpm --workspace-root guard:modepack-distribution-trust:test && pnpm --workspace-root guard:ledger-contract-single-source && pnpm --workspace-root guard:ledger-contract-single-source:test && pnpm --workspace-root guard:historical-ledger-fixtures && pnpm --workspace-root guard:historical-ledger-fixtures:test && pnpm --workspace-root guard:owner-governance-evidence && pnpm --workspace-root guard:owner-governance-evidence:test && pnpm --workspace-root release:owner-governance-evidence:test'
   }
 };
 

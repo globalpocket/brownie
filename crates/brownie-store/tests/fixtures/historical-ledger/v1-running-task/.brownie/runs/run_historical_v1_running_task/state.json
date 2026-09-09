@@ -1,0 +1,23 @@
+{
+  "task_id": "task_historical_v1_running_task",
+  "run_id": "run_historical_v1_running_task",
+  "goal": "preserve durable v1 fixture",
+  "mode_id": "orchestrator",
+  "status": "Running",
+  "parent_task_id": null,
+  "parent_run_id": null,
+  "source_candidate_id": null,
+  "source_handoff_envelope_id": null,
+  "source_handoff_envelope_fingerprint": null,
+  "source_intent_summary": null,
+  "recovery_cycle_provenance": null,
+  "verification_recovery_provenance": null,
+  "patch_apply_recovery_provenance": null,
+  "verification_recovery_retry_provenance": null,
+  "llm_provider_failure_retry_provenance": null,
+  "product_continuation_provenance": null,
+  "product_objective_continuation_provenance": null,
+  "product_loop_stop_recovery_provenance": null,
+  "created_at": "2026-09-01T00:00:00Z",
+  "updated_at": "2026-09-01T00:01:00Z"
+}
