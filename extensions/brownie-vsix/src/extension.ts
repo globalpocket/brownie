@@ -30,7 +30,8 @@ export function activate(context: vscode.ExtensionContext): void {
       output.appendLine(`base_url: ${status.base_url ?? 'null'}`);
       output.appendLine(`strict: ${String(status.strict)}`);
       output.appendLine(`will_fallback_to_fake: ${String(status.will_fallback_to_fake)}`);
-      output.appendLine(`task_run_network_allowed: ${String(status.task_run_network_allowed)}`);
+      output.appendLine(`llm_provider_access_allowed: ${String(status.llm_provider_access_allowed)}`);
+      output.appendLine(`task_run_network_allowed: ${String(status.task_run_network_allowed)} (compat)`);
       output.appendLine(`sensitive_guard: ${status.sensitive_guard}`);
       output.appendLine(`budget.max_prompt_chars: ${String(status.budget.max_prompt_chars)}`);
       output.appendLine(`budget.max_messages: ${String(status.budget.max_messages)}`);

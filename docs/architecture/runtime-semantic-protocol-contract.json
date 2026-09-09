@@ -3544,10 +3544,10 @@
       "request_schema_ref": null,
       "request_semantics": "LLM provider status projection",
       "required_fields": [],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:e82ae28240cb0f44",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:b919ff996d47169e",
       "result_schema": {
         "deny_unknown_fields": false,
-        "field_shape_fingerprint": "shape-fnv1a64:500674e6375d996c",
+        "field_shape_fingerprint": "shape-fnv1a64:597f3c54081fa892",
         "fields": [
           {
             "name": "provider",
@@ -3599,6 +3599,14 @@
           },
           {
             "name": "will_fallback_to_fake",
+            "nullable": false,
+            "repeated": false,
+            "required": true,
+            "rust_type": "bool",
+            "semantic_type": "boolean"
+          },
+          {
+            "name": "llm_provider_access_allowed",
             "nullable": false,
             "repeated": false,
             "required": true,
@@ -3662,6 +3670,7 @@
           "model",
           "strict",
           "will_fallback_to_fake",
+          "llm_provider_access_allowed",
           "task_run_network_allowed",
           "config_source",
           "budget",
@@ -3672,7 +3681,7 @@
       "result_schema_ref": "#/type_schemas/LlmStatusResult",
       "result_semantics": "LlmStatusResult",
       "result_type": "LlmStatusResult",
-      "schema_fingerprint": "shape-fnv1a64:81788b82c6e13b2f",
+      "schema_fingerprint": "shape-fnv1a64:b43cd9f528a8370e",
       "unknown_field_policy": "no_params",
       "wire_transform": "no_params"
     },
@@ -3888,7 +3897,7 @@
       "request_schema_ref": null,
       "request_semantics": "Runtime config projection",
       "required_fields": [],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:8eca2de1ba91b499",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:cc7c4e83abce31bf",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:5d5c4731d8da8dc0",
@@ -3943,7 +3952,7 @@
       "result_schema_ref": "#/type_schemas/RuntimeConfigGetResult",
       "result_semantics": "RuntimeConfigGetResult",
       "result_type": "RuntimeConfigGetResult",
-      "schema_fingerprint": "shape-fnv1a64:512260c91cfda5d7",
+      "schema_fingerprint": "shape-fnv1a64:2d70c0d7a52805f2",
       "unknown_field_policy": "no_params",
       "wire_transform": "no_params"
     },
@@ -3967,7 +3976,7 @@
       "request_schema_ref": null,
       "request_semantics": "Runtime diagnostics projection",
       "required_fields": [],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:8afa35e9a3ee5754",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:0fddfe4932e8b85a",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:13c0455c9f741973",
@@ -4030,7 +4039,7 @@
       "result_schema_ref": "#/type_schemas/RuntimeDiagnosticsResult",
       "result_semantics": "RuntimeDiagnosticsResult",
       "result_type": "RuntimeDiagnosticsResult",
-      "schema_fingerprint": "shape-fnv1a64:5f23fc3ee622abb6",
+      "schema_fingerprint": "shape-fnv1a64:caa5abdf88e7fc8d",
       "unknown_field_policy": "no_params",
       "wire_transform": "no_params"
     },
@@ -22248,6 +22257,9 @@
         "enabled": {
           "type": "boolean"
         },
+        "llm_provider_access_allowed": {
+          "type": "boolean"
+        },
         "model": {
           "type": "string"
         },
@@ -22267,6 +22279,7 @@
           "type": "boolean"
         },
         "task_run_network_allowed": {
+          "description": "Compatibility alias for pre-R-17 clients. New clients should read `llm_provider_access_allowed`.",
           "type": "boolean"
         },
         "will_fallback_to_fake": {
@@ -22277,6 +22290,7 @@
         "budget",
         "config_source",
         "enabled",
+        "llm_provider_access_allowed",
         "model",
         "provider",
         "sensitive_guard",
@@ -30975,6 +30989,9 @@
             "enabled": {
               "type": "boolean"
             },
+            "llm_provider_access_allowed": {
+              "type": "boolean"
+            },
             "model": {
               "type": "string"
             },
@@ -30994,6 +31011,7 @@
               "type": "boolean"
             },
             "task_run_network_allowed": {
+              "description": "Compatibility alias for pre-R-17 clients. New clients should read `llm_provider_access_allowed`.",
               "type": "boolean"
             },
             "will_fallback_to_fake": {
@@ -31004,6 +31022,7 @@
             "budget",
             "config_source",
             "enabled",
+            "llm_provider_access_allowed",
             "model",
             "provider",
             "sensitive_guard",
@@ -31106,6 +31125,9 @@
             "enabled": {
               "type": "boolean"
             },
+            "llm_provider_access_allowed": {
+              "type": "boolean"
+            },
             "model": {
               "type": "string"
             },
@@ -31125,6 +31147,7 @@
               "type": "boolean"
             },
             "task_run_network_allowed": {
+              "description": "Compatibility alias for pre-R-17 clients. New clients should read `llm_provider_access_allowed`.",
               "type": "boolean"
             },
             "will_fallback_to_fake": {
@@ -31135,6 +31158,7 @@
             "budget",
             "config_source",
             "enabled",
+            "llm_provider_access_allowed",
             "model",
             "provider",
             "sensitive_guard",

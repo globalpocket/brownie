@@ -116,6 +116,7 @@ pub(super) fn llm_status_result(selection: RuntimeLlmProviderStatus) -> LlmStatu
         reason: selection.status.reason,
         strict: selection.strict,
         will_fallback_to_fake: selection.will_fallback_to_fake,
+        llm_provider_access_allowed: selection.task_run_network_allowed,
         config_source: selection.config_source.as_str().to_string(),
         active_profile: selection.active_profile,
         task_run_network_allowed: selection.task_run_network_allowed,
