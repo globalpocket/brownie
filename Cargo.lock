@@ -82,6 +82,7 @@ dependencies = [
  "brownie-protocol",
  "brownie-store",
  "ed25519-dalek",
+ "libc",
  "serde",
  "serde_json",
  "sha2",

@@ -75,8 +75,6 @@ Current synchronization note:
 
 ### P1: Runtime / CLI boundary
 
-- [ ] R-13: Reject directories, FIFOs, devices, sockets, and other non-regular
-  files for `run --file`.
 - [ ] R-14: Return bounded structured UTF-8 errors for invalid `run --file`
   input.
 - [ ] R-15: Prevent file path and content leakage from `run --file` errors,

@@ -4,6 +4,7 @@ pub mod runtime_client;
 use cli::{Cli, CliCommand, CliError, InspectTarget, ListTarget, ModeTarget};
 use runtime_client::{RunRecoveryIdentity, RuntimeClient, RuntimeClientError};
 use std::fs;
+use std::io::Read;
 
 const DEFAULT_RUN_FILE_MAX_BYTES: u64 = 65_536;
 const RUN_FILE_MAX_BYTES_ENV: &str = "BROWNIE_CLI_RUN_FILE_MAX_BYTES";
@@ -104,7 +105,11 @@ fn execute(cli: Cli) -> CliOutput {
 
 fn read_run_file_objective(path: &str) -> Result<String, String> {
     let max_bytes = run_file_max_bytes()?;
-    let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
+    let mut file = open_run_file(path)?;
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    if !metadata.file_type().is_file() {
+        return Err("objective path must refer to a regular file".to_string());
+    }
     if metadata.len() > max_bytes {
         return Err(format!(
             "objective file exceeds configured maximum byte size: bytes={} max_bytes={} env={}",
@@ -113,7 +118,9 @@ fn read_run_file_objective(path: &str) -> Result<String, String> {
             RUN_FILE_MAX_BYTES_ENV
         ));
     }
-    let objective = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let mut objective = String::new();
+    file.read_to_string(&mut objective)
+        .map_err(|error| error.to_string())?;
     let bytes_read = objective.len() as u64;
     if bytes_read > max_bytes {
         return Err(format!(
@@ -122,6 +129,22 @@ fn read_run_file_objective(path: &str) -> Result<String, String> {
         ));
     }
     Ok(objective)
+}
+
+#[cfg(unix)]
+fn open_run_file(path: &str) -> Result<fs::File, String> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(not(unix))]
+fn open_run_file(path: &str) -> Result<fs::File, String> {
+    fs::File::open(path).map_err(|error| error.to_string())
 }
 
 fn run_file_max_bytes() -> Result<u64, String> {
