@@ -26,16 +26,16 @@
   ],
   "thresholds": {
     "lib_rs_production_line_ceiling": 14701,
-    "lib_rs_test_line_ceiling": 52189
+    "lib_rs_test_line_ceiling": 52193
   },
   "metrics": {
     "files": {
       "crates/brownie-runtime/src/lib.rs": {
-        "line_count": 66890,
+        "line_count": 66894,
         "public_items": 3,
         "private_items": 496,
         "production_line_count": 14701,
-        "test_line_count": 52189,
+        "test_line_count": 52193,
         "state_mutation_mentions": 306,
         "durable_write_mentions": 226,
         "permission_decision_mentions": 184,
@@ -103,7 +103,7 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/llm_provider.rs": {
-        "line_count": 1055,
+        "line_count": 1056,
         "public_items": 13,
         "private_items": 19,
         "state_mutation_mentions": 0,
@@ -378,7 +378,7 @@
       "The lib.rs behavior-test corpus remains large and should be split opportunistically with future behavior changes, but it is not treated as a Runtime-owned release blocker after this guarded assessment.",
       "The generated proposal review diagnostics compatibility chain remains in lib.rs because moving it would be a high-churn compatibility refactor without reducing Runtime authority risk in this release phase."
     ],
-    "summary": "RRP-6 remains closed after R-16 provider-access guard migration; metrics were refreshed to include the bounded provider guard compatibility/fail-closed logic and regression coverage without moving Runtime authority out of Rust Runtime."
+    "summary": "RRP-6 remains closed after R-17 provider-access public protocol migration; metrics were refreshed to include the llm_provider_access_allowed compatibility-alias evidence without moving Runtime authority out of Rust Runtime."
   },
   "non_authority_rules": [
     "CLI and VSIX are transport/projection only",
@@ -390,6 +390,7 @@
   "notes": [
     "RRP-8.3 updated module metrics after mandatory clippy gate cleanup; runtime-module-decomposition closure status remains unchanged.",
     "RRP-8.3 updated module metrics after release gate evidence semantics and clippy cleanup; module-decomposition closure status remains unchanged.",
-    "R-16 updated module metrics after migrating strict provider network opt-in to BROWNIE_LLM_ALLOW_PROVIDER_ACCESS with legacy fallback and conflict fail-closed coverage; module-decomposition closure status remains unchanged."
+    "R-16 updated module metrics after migrating strict provider network opt-in to BROWNIE_LLM_ALLOW_PROVIDER_ACCESS with legacy fallback and conflict fail-closed coverage; module-decomposition closure status remains unchanged.",
+    "R-17 updated module metrics after adding llm_provider_access_allowed public status evidence while retaining task_run_network_allowed as a compatibility alias; module-decomposition closure status remains unchanged."
   ]
 }

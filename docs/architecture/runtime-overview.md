@@ -74,7 +74,7 @@ The outcome includes provider kind, model, request phase, deterministic failure
 class, retryability, next action, failure fingerprint, and a bounded redacted
 reason preview.
 
-This boundary covers configuration, task-run network authorization, sensitive
+This boundary covers configuration, task-run provider-access authorization, sensitive
 prompt denial, non-2xx HTTP status, transport/timeout, invalid provider JSON,
 and missing provider content classes. Replaying `task.run` for the same failed
 task returns the same structured failure outcome without appending duplicate
@@ -103,7 +103,7 @@ It returns `llm_provider_failure_retry_admission` with source IDs, retry IDs,
 failure class, fingerprint, `retry_running_enabled=false`, replay state, and
 `next_action=run_llm_provider_retry_task_explicitly`. Admission itself does not
 call a provider, append `TaskRunning`, automatically execute the retry task,
-bypass provider network or sensitive prompt guards, or expose raw prompts,
+bypass provider-access or sensitive prompt guards, or expose raw prompts,
 provider responses, request bodies, file content, command output, environment
 values, secrets, absolute paths, or canonical paths.
 
@@ -113,7 +113,7 @@ revalidates that stored provenance against the current source task and source
 run ledger before appending `TaskRunning` or making any provider request. Stale,
 missing, malformed, or currently non-retryable source failure evidence is denied
 before provider execution. Valid retry tasks proceed through the existing task-run
-provider path, so task-run network authorization, sensitive prompt scanning,
+provider path, so provider-access authorization, sensitive prompt scanning,
 request budgets, strict/fallback behavior, and provider selection remain
 unchanged. Replaying a terminal retry task reuses the existing terminal replay
 path without duplicate `TaskRunning` or provider failure events.
@@ -121,8 +121,8 @@ path without duplicate `TaskRunning` or provider failure events.
 Strict OpenAI-compatible `task.run` real-provider execution has a dedicated
 runtime permission check. The Rust runtime revalidates the running task's
 resolved mode policy for `AccessLlmProvider`, while generic `AccessNetwork`
-remains reserved for non-provider network tools. The process-level task-run
-network guard, provider configuration, request budget, and sensitive prompt
+remains reserved for non-provider network tools. The process-level
+provider-access guard, provider configuration, request budget, and sensitive prompt
 guard still apply; the provider permission binds the configured external LLM
 side effect to runtime mode permission at the point of use. Modes that lack
 `AccessLlmProvider`, or missing/malformed mode evidence, fail closed with

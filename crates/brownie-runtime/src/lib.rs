@@ -33130,6 +33130,7 @@ modes:
         assert!(response.contains(r#""model":"brownie-fake-llm""#));
         assert!(response.contains(r#""strict":false"#));
         assert!(response.contains(r#""will_fallback_to_fake":false"#));
+        assert!(response.contains(r#""llm_provider_access_allowed":false"#));
         assert!(response.contains(r#""task_run_network_allowed":false"#));
     }
 
@@ -33140,6 +33141,7 @@ modes:
         std::env::set_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true");
         let response =
             handle_jsonrpc_input_line(r#"{"jsonrpc":"2.0","id":1,"method":"llm.status"}"#).unwrap();
+        assert!(response.contains(r#""llm_provider_access_allowed":true"#));
         assert!(response.contains(r#""task_run_network_allowed":true"#));
         std::env::remove_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS");
     }
@@ -33152,6 +33154,7 @@ modes:
         std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
         let response =
             handle_jsonrpc_input_line(r#"{"jsonrpc":"2.0","id":1,"method":"llm.status"}"#).unwrap();
+        assert!(response.contains(r#""llm_provider_access_allowed":true"#));
         assert!(response.contains(r#""task_run_network_allowed":true"#));
         std::env::remove_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK");
     }
@@ -33164,6 +33167,7 @@ modes:
         std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "false");
         let response =
             handle_jsonrpc_input_line(r#"{"jsonrpc":"2.0","id":1,"method":"llm.status"}"#).unwrap();
+        assert!(response.contains(r#""llm_provider_access_allowed":false"#));
         assert!(response.contains(r#""task_run_network_allowed":false"#));
         std::env::remove_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS");
         std::env::remove_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK");

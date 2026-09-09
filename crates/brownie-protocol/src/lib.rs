@@ -49,6 +49,9 @@ pub struct LlmStatusResult {
     pub reason: Option<String>,
     pub strict: bool,
     pub will_fallback_to_fake: bool,
+    pub llm_provider_access_allowed: bool,
+    /// Compatibility alias for pre-R-17 clients. New clients should read
+    /// `llm_provider_access_allowed`.
     pub task_run_network_allowed: bool,
     pub config_source: String,
     pub active_profile: Option<String>,

@@ -35,7 +35,12 @@ Phase 2.1 keeps Fake as the default provider. The runtime does not make an exter
 
 `BROWNIE_LLM_STRICT` defaults to `false`. When OpenAI-compatible is requested with incomplete configuration, `strict=false` makes `task.run` fall back to Fake and `llm.status` reports `will_fallback_to_fake=true`; `strict=true` makes `task.run` fail without an external call. Runtime permissions continue to override LLM instructions.
 
-`llm.status` includes `strict` and `will_fallback_to_fake`. Status, ledger, inspection, and error messages must not expose API keys, Authorization headers, Bearer tokens, or query-string secrets. Redaction covers Authorization, Bearer tokens, `api_key`, API key text, `access_token`, `token=`, and `key=` patterns.
+`llm.status` includes `strict`, `will_fallback_to_fake`,
+`llm_provider_access_allowed`, and the compatibility alias
+`task_run_network_allowed`. Status, ledger, inspection, and error messages must
+not expose API keys, Authorization headers, Bearer tokens, or query-string
+secrets. Redaction covers Authorization, Bearer tokens, `api_key`, API key text,
+`access_token`, `token=`, and `key=` patterns.
 
 OpenAI-compatible failures report only provider type, redacted base URL, model, and high-level failure reason for timeout/connection failure, non-2xx status, invalid JSON, missing choices, or missing message content.
 
@@ -70,7 +75,7 @@ Phase 2.5 adds the explicit `llm.health` JSON-RPC method, specified in `docs/spe
 
 ## Phase 2.6 real-provider task.run guard
 
-`BROWNIE_LLM_ALLOW_PROVIDER_ACCESS=true` is the preferred guard required before strict enabled OpenAI-compatible `task.run` may make network LLM calls. The legacy `BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true` guard is accepted only when the preferred guard is unset. If both guards are set and disagree, Runtime fails closed before any provider request and diagnostics report `TASK_RUN_NETWORK_GUARD_CONFLICT`. The default is false. `llm.status` and `runtime.config.get` continue to expose the compatibility field `task_run_network_allowed`; `runtime.diagnostics.get` reports `TASK_RUN_NETWORK_ALLOWED`, `TASK_RUN_NETWORK_NOT_ALLOWED`, or `TASK_RUN_NETWORK_GUARD_CONFLICT` for strict enabled OpenAI-compatible profiles. Missing guard is a warning in diagnostics and a pre-network `task.run` error. Non-strict OpenAI-compatible `task.run` falls back to Fake. See `docs/specifications/real-provider-task-run-smoke-spec-v0.md`.
+`BROWNIE_LLM_ALLOW_PROVIDER_ACCESS=true` is the preferred guard required before strict enabled OpenAI-compatible `task.run` may make provider LLM calls. The legacy `BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true` guard is accepted only when the preferred guard is unset. If both guards are set and disagree, Runtime fails closed before any provider request and diagnostics report `TASK_RUN_NETWORK_GUARD_CONFLICT`. The default is false. `llm.status` and `runtime.config.get` expose `llm_provider_access_allowed`; they also keep `task_run_network_allowed` as a compatibility alias with the same value during migration. `runtime.diagnostics.get` reports `TASK_RUN_NETWORK_ALLOWED`, `TASK_RUN_NETWORK_NOT_ALLOWED`, or `TASK_RUN_NETWORK_GUARD_CONFLICT` for strict enabled OpenAI-compatible profiles. Missing guard is a warning in diagnostics and a pre-network `task.run` error. Non-strict OpenAI-compatible `task.run` falls back to Fake. See `docs/specifications/real-provider-task-run-smoke-spec-v0.md`.
 
 Strict enabled OpenAI-compatible `task.run` real-provider execution requires
 the task's resolved runtime mode to allow `AccessLlmProvider`. This is separate

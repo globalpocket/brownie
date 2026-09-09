@@ -112,7 +112,7 @@
       "scripts/guard-runtime-release-readiness.mjs",
       "scripts/rrp3-process-loss-recovery-e2e.mjs"
     ],
-    "tracked_fingerprint": "sha256:777166fdf48d8de24116d6240edfe8a420dc1c6a53ebd6db9eb6092edcca6c88"
+    "tracked_fingerprint": "sha256:26067631dfbcfcd53c47f39826e1cda59a76f5572e4f88f4c104dcc56a979479"
   },
   "owner_decisions": [
     {
@@ -255,7 +255,8 @@
         "R-13 rejects non-regular brownie run --file objective paths before objective content read or Runtime startup. The CLI validates metadata from the same opened file handle it reads from, uses nonblocking opens on Unix to avoid FIFO/device race hangs before validation, covers directory rejection on all platforms and FIFO rejection on Unix, and includes crates/brownie-cli/src/ in the safety/readiness fingerprint.",
         "R-14 returns bounded structured invalid UTF-8 errors for brownie run --file inputs. UTF-8 decode failures are invalid invocation with error.reason=invalid_utf8 in JSON output, a fixed human message instead of decoder internals, and no Runtime startup.",
         "R-15 prevents pre-runtime brownie run --file path/content leakage by using stable bounded CLI-owned reasons/messages instead of raw OS error strings. Missing or unreadable paths do not leak absolute paths, basenames, raw file content, or platform error detail in JSON or stderr output, and rejected file objectives fail before Runtime ledger/log creation.",
-        "R-16 migrates strict OpenAI-compatible task.run provider network opt-in to BROWNIE_LLM_ALLOW_PROVIDER_ACCESS=true while keeping BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true as a compatibility fallback only when the preferred guard is unset. Conflicting guard values fail closed before provider access and diagnostics report TASK_RUN_NETWORK_GUARD_CONFLICT."
+        "R-16 migrates strict OpenAI-compatible task.run provider network opt-in to BROWNIE_LLM_ALLOW_PROVIDER_ACCESS=true while keeping BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true as a compatibility fallback only when the preferred guard is unset. Conflicting guard values fail closed before provider access and diagnostics report TASK_RUN_NETWORK_GUARD_CONFLICT.",
+        "R-17 adds llm_provider_access_allowed to llm.status and runtime.config.get while retaining task_run_network_allowed as an equal-value compatibility alias. Runtime permission, Mode Pack, VSIX protocol, semantic contract, docs, and ledger-facing failure evidence now identify AccessLlmProvider/llm_provider_access as separate from generic AccessNetwork/network_access."
       ],
       "next_action": "Continue runtime-release-guard-ci by adding cross-platform release artifacts and smoke tests, plus direct workflow enforcement or stronger owner-approved CI enforcement, before any Runtime Release Ready claim."
     },
