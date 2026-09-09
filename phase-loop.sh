@@ -35,6 +35,11 @@ PHASE_LOOP_PROMPT_RETENTION_COUNT="${PHASE_LOOP_PROMPT_RETENTION_COUNT:-20}"
 PHASE_LOOP_STOP_GRACE_SECONDS="${PHASE_LOOP_STOP_GRACE_SECONDS:-15}"
 PHASE_LOOP_STOP_FORCE_SECONDS="${PHASE_LOOP_STOP_FORCE_SECONDS:-5}"
 PHASE_LOOP_SLEEP_POLL_SECONDS="${PHASE_LOOP_SLEEP_POLL_SECONDS:-1}"
+PHASE_LOOP_CREATE_PR_AFTER_PROGRESS="${PHASE_LOOP_CREATE_PR_AFTER_PROGRESS:-0}"
+PHASE_LOOP_PR_REMOTE="${PHASE_LOOP_PR_REMOTE:-origin}"
+PHASE_LOOP_PR_BASE="${PHASE_LOOP_PR_BASE:-main}"
+PHASE_LOOP_PR_TITLE_PREFIX="${PHASE_LOOP_PR_TITLE_PREFIX:-Brownie phase-loop}"
+PHASE_LOOP_PR_DRAFT="${PHASE_LOOP_PR_DRAFT:-0}"
 
 mkdir -p "$RUN_DIR" "$LOG_DIR" "$TODO_CLAIM_DIR"
 
@@ -228,6 +233,27 @@ except Exception:
 PY
 }
 
+status_field() {
+  local field="$1"
+  if [ ! -f "$STATUS_FILE" ]; then
+    return 1
+  fi
+  python3 - "$STATUS_FILE" "$field" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        value = json.load(handle).get(sys.argv[2], "")
+except Exception:
+    sys.exit(1)
+if isinstance(value, str):
+    print(value)
+else:
+    print(json.dumps(value, ensure_ascii=False, sort_keys=True))
+PY
+}
+
 active_todo_claim_exists() {
   local status
   status="$(claim_status 2>/dev/null || true)"
@@ -389,6 +415,39 @@ print("ok")
 PY
 }
 
+phase_loop_should_resume_active_claim() {
+  if [ ! -f "$PROGRESS_STATE_FILE" ]; then
+    return 1
+  fi
+  if ! active_todo_claim_exists; then
+    return 1
+  fi
+  python3 - "$PROGRESS_STATE_FILE" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        state = json.load(handle)
+except Exception:
+    sys.exit(1)
+
+projection = state.get("progress_projection")
+if not isinstance(projection, dict):
+    sys.exit(1)
+route = projection.get("route")
+if not isinstance(route, str) or not route.strip():
+    sys.exit(1)
+try:
+    invocation = json.loads(route)
+except Exception:
+    sys.exit(1)
+if isinstance(invocation, dict) and invocation.get("command") == "resume":
+    sys.exit(0)
+sys.exit(1)
+PY
+}
+
 write_progress_state() {
   local stdout_log="$1"
   local run_stamp="$2"
@@ -460,6 +519,7 @@ progress_projection = {
     "finalization": text(payload.get("completion_finalization_status")) or text(payload.get("completion_finalization_finalization_fingerprint")),
     "next_action": text(payload.get("next_action")),
 }
+
 encoded = json.dumps(progress_projection, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 fingerprint = "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -536,6 +596,116 @@ if isinstance(value, str):
 else:
     print(json.dumps(value, ensure_ascii=False, sort_keys=True))
 PY
+}
+
+tracked_workspace_diff_exists() {
+  (
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 1
+    ! git diff --quiet --exit-code
+  )
+}
+
+phase_loop_safe_pr_title() {
+  python3 - "$PHASE_LOOP_PR_TITLE_PREFIX" "$(claim_field selected_todo 2>/dev/null || true)" <<'PY'
+import re
+import sys
+
+prefix = sys.argv[1].strip() or "Brownie phase-loop"
+todo = sys.argv[2].strip()
+todo = re.sub(r"^\s*[-*]\s+\[\s*\]\s*", "", todo)
+todo = re.sub(r"\s+", " ", todo).strip()
+title = f"{prefix}: {todo}" if todo else prefix
+print(title[:180])
+PY
+}
+
+phase_loop_create_pr_for_progress() {
+  local run_stamp="$1"
+  local stdout_log="$2"
+  local stderr_log="$3"
+  local title body pr_url branch push_rc
+  if [ "$PHASE_LOOP_CREATE_PR_AFTER_PROGRESS" != "1" ]; then
+    return 0
+  fi
+  if ! tracked_workspace_diff_exists; then
+    return 0
+  fi
+  (
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    pnpm --workspace-root phase-loop:implementation-preflight >/dev/null
+  ) || {
+    printf '%s pr_create_skipped reason=implementation_preflight_failed\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
+    return 1
+  }
+
+  title="$(phase_loop_safe_pr_title)"
+  body="Automated Brownie phase-loop output for active TODO claim.
+
+- Claim: $(claim_field claim_id 2>/dev/null || true)
+- Run: $run_stamp
+- Brownie stdout: $stdout_log
+- Brownie stderr: $stderr_log
+
+This PR was created by the external phase-loop controller after Brownie produced tracked workspace changes."
+
+  (
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    git add -u
+    GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-Brownie}" \
+      GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-brownie-agent@users.noreply.github.com}" \
+      GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-Brownie}" \
+      GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-brownie-agent@users.noreply.github.com}" \
+      git commit -m "$title" >/dev/null
+  ) || {
+    printf '%s pr_create_skipped reason=commit_failed\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
+    return 1
+  }
+
+  branch="$(
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    git branch --show-current
+  )"
+  (
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    set +x
+    if command -v gh >/dev/null 2>&1; then
+      BROWNIE_AGENT_TOKEN="$(gh auth token)"
+      BROWNIE_AGENT_AUTH="$(printf 'x-access-token:%s' "$BROWNIE_AGENT_TOKEN" | base64 | tr -d '\n')"
+      git -c credential.helper= -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $BROWNIE_AGENT_AUTH" push -u "$PHASE_LOOP_PR_REMOTE" "$branch"
+      push_rc=$?
+      unset BROWNIE_AGENT_TOKEN BROWNIE_AGENT_AUTH
+      exit "$push_rc"
+    fi
+    git push -u "$PHASE_LOOP_PR_REMOTE" "$branch"
+  ) || {
+    printf '%s pr_create_skipped reason=push_failed branch=%s\n' "$(now_utc)" "$branch" >> "$SUPERVISOR_LOG"
+    return 1
+  }
+
+  if (
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    gh pr view "$branch" --json url --jq .url >/dev/null 2>&1
+  ); then
+    pr_url="$(
+      cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+      gh pr view "$branch" --json url --jq .url
+    )"
+  else
+    if [ "$PHASE_LOOP_PR_DRAFT" = "1" ]; then
+      pr_url="$(
+        cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+        gh pr create --base "$PHASE_LOOP_PR_BASE" --head "$branch" --title "$title" --body "$body" --draft
+      )"
+    else
+      pr_url="$(
+        cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+        gh pr create --base "$PHASE_LOOP_PR_BASE" --head "$branch" --title "$title" --body "$body"
+      )"
+    fi
+  fi
+  printf '%s pr_created branch=%s url=%s\n' "$(now_utc)" "$branch" "$pr_url" >> "$SUPERVISOR_LOG"
+  write_status "pr_created" "Brownie changes were committed, pushed, and opened as PR: $pr_url" "$run_stamp" "0" 0
+  return 0
 }
 
 write_todo_claim() {
@@ -1090,6 +1260,7 @@ run_brownie_once() {
   load_env
   local started_at run_stamp stdout_log stderr_log effective_prompt exit_code run_id detail
   local workspace_before workspace_after head_commit validation progress_summary progress_classification
+  local use_resume=0
   local CLAIM_CREATED_THIS_RUN=0
   started_at="$(now_utc)"
   run_stamp="$(date -u +"%Y%m%dT%H%M%SZ")"
@@ -1127,20 +1298,25 @@ run_brownie_once() {
   head_commit="$(
     cd "$PHASE_LOOP_WORKSPACE_ROOT" && git rev-parse HEAD 2>/dev/null || true
   )"
+  if phase_loop_should_resume_active_claim; then
+    use_resume=1
+  fi
   if ! claim_first_pending_todo "$run_stamp"; then
     detail="Failed to claim first pending TODO from queue: $PHASE_LOOP_TODO"
     printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
     write_status "blocked" "$detail" "$run_stamp" "75" "${CONSECUTIVE_FAILURES:-0}"
     return 75
   fi
-  if ! build_effective_prompt "$effective_prompt"; then
-    detail="Failed to build effective phase-loop prompt: $effective_prompt"
-    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
-    if active_todo_claim_exists; then
-      write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+  if [ "$use_resume" -ne 1 ]; then
+    if ! build_effective_prompt "$effective_prompt"; then
+      detail="Failed to build effective phase-loop prompt: $effective_prompt"
+      printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+      if active_todo_claim_exists; then
+        write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      fi
+      write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+      return 74
     fi
-    write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
-    return 74
   fi
   if [ "$CLAIM_CREATED_THIS_RUN" -eq 1 ] && [ "${PHASE_LOOP_TEST_MUTATE_TODO_AFTER_PROMPT:-}" = "1" ]; then
     printf '\n- [ ] PHASE_LOOP_TEST_MUTATED_TODO_AFTER_PROMPT\n' >> "$PHASE_LOOP_TODO"
@@ -1177,9 +1353,17 @@ run_brownie_once() {
     export BROWNIE_WORKSPACE_ROOT="${BROWNIE_WORKSPACE_ROOT:-"$PHASE_LOOP_WORKSPACE_ROOT"}"
     export PHASE_LOOP_CONTROL_ROOT
     if command -v timeout >/dev/null 2>&1; then
-      timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json run --file "$effective_prompt"
+      if [ "$use_resume" -eq 1 ]; then
+        timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json resume
+      else
+        timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json run --file "$effective_prompt"
+      fi
     else
-      "$BROWNIE_BIN" --json run --file "$effective_prompt"
+      if [ "$use_resume" -eq 1 ]; then
+        "$BROWNIE_BIN" --json resume
+      else
+        "$BROWNIE_BIN" --json run --file "$effective_prompt"
+      fi
     fi
   ) > "$stdout_log" 2> "$stderr_log"
   exit_code=$?
@@ -1255,8 +1439,17 @@ PY
         write_status "non_progress_success" "$detail" "$run_id" "$exit_code" "${CONSECUTIVE_FAILURES:-0}"
         ;;
       *)
+        if phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log"; then
+          :
+        else
+          detail="Brownie run made progress but PR creation failed; stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+          write_status "blocked" "$detail" "$run_id" "78" "${CONSECUTIVE_FAILURES:-1}"
+          return 78
+        fi
         detail="Brownie run made progress; stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
-        write_status "last_run_succeeded" "$detail" "$run_id" "$exit_code" 0
+        if [ "$(status_field status 2>/dev/null || true)" != "pr_created" ]; then
+          write_status "last_run_succeeded" "$detail" "$run_id" "$exit_code" 0
+        fi
         ;;
     esac
   else

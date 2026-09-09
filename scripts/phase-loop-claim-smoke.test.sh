@@ -20,10 +20,24 @@ fake_brownie_json="$(mktemp)"
 cat > "$fake_brownie_json" <<'SH'
 #!/usr/bin/env bash
 set -eu
-if [ "${1:-}" != "--json" ] || [ "${2:-}" != "run" ] || [ "${3:-}" != "--file" ] || [ -z "${4:-}" ]; then
+if [ "${1:-}" != "--json" ]; then
   echo "unexpected fake brownie invocation: $*" >&2
   exit 64
 fi
+case "${2:-}" in
+  run)
+    if [ "${3:-}" != "--file" ] || [ -z "${4:-}" ]; then
+      echo "unexpected fake brownie run invocation: $*" >&2
+      exit 64
+    fi
+    ;;
+  resume)
+    ;;
+  *)
+    echo "unexpected fake brownie command: $*" >&2
+    exit 64
+    ;;
+esac
 cat <<'JSON'
 {
   "command": "run",
@@ -149,6 +163,49 @@ cat <<'JSON'
 JSON
 SH
 chmod +x "$fake_brownie_workspace_change"
+fake_brownie_tracked_workspace_change="$(mktemp)"
+cat > "$fake_brownie_tracked_workspace_change" <<'SH'
+#!/usr/bin/env bash
+set -eu
+if [ "${2:-}" = "run" ]; then
+  printf 'changed by brownie phase-loop\n' > README.md
+fi
+cat <<'JSON'
+{
+  "automation": {
+    "schema_version": 1,
+    "status": "continuation_required",
+    "controller_action": "resume",
+    "stop_class": "continuation_required",
+    "stop_reason": "bounded_progress",
+    "completed": false,
+    "blocked": false,
+    "retryable": true,
+    "terminal_failure": false,
+    "task_id": "task-tracked-change",
+    "run_id": "run-tracked-change",
+    "journey_id": "journey-tracked-change",
+    "next_action": "inspect_progress_overview",
+    "next_invocation": {"command": "resume", "arguments": []}
+  },
+  "status": "task_executed",
+  "task_id": "task-tracked-change",
+  "run_id": "run-tracked-change",
+  "journey_id": "journey-tracked-change",
+  "completion_closure_status": "budget_exhausted",
+  "next_action": "inspect_progress_overview",
+  "completed": false,
+  "blocked": false,
+  "retryable": true,
+  "terminal_failure": false,
+  "controller_action": "resume",
+  "stop_class": "continuation_required",
+  "stop_reason": "bounded_progress",
+  "next_invocation": {"command": "resume", "arguments": []}
+}
+JSON
+SH
+chmod +x "$fake_brownie_tracked_workspace_change"
 fake_brownie_sleeping_child="$(mktemp)"
 cat > "$fake_brownie_sleeping_child" <<'SH'
 #!/usr/bin/env bash
@@ -394,6 +451,72 @@ progress = json.load(open(sys.argv[1], encoding="utf-8"))
 assert progress["classification"] == "progress", progress
 assert progress["meaningful_progress"] is True, progress
 assert progress["workspace_changed"] is True, progress
+PY
+
+state_pr_progress="$(mktemp -d)"
+prompt_pr_progress="$(mktemp)"
+todo_pr_progress="$(mktemp)"
+workspace_pr_progress="$(mktemp -d)"
+remote_pr_progress="$(mktemp -d)"
+fake_bin_dir="$(mktemp -d)"
+git -C "$workspace_pr_progress" init -b main >/dev/null
+printf 'base\n' > "$workspace_pr_progress/README.md"
+git -C "$workspace_pr_progress" add README.md
+git -C "$workspace_pr_progress" -c user.name=Brownie -c user.email=brownie@example.invalid commit -m init >/dev/null
+git -C "$remote_pr_progress" init --bare >/dev/null
+git -C "$workspace_pr_progress" remote add origin "$remote_pr_progress"
+git -C "$workspace_pr_progress" push -u origin main >/dev/null
+git -C "$workspace_pr_progress" switch -c brownie-agent/smoke-pr >/dev/null
+printf 'base prompt\n' > "$prompt_pr_progress"
+printf -- '- [ ] B-01: create PR from tracked Brownie progress\n' > "$todo_pr_progress"
+cat > "$fake_bin_dir/pnpm" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod +x "$fake_bin_dir/pnpm"
+cat > "$fake_bin_dir/gh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+case "${1:-} ${2:-}" in
+  "auth token")
+    printf 'fake-token\n'
+    ;;
+  "pr view")
+    exit 1
+    ;;
+  "pr create")
+    printf 'https://github.com/globalpocket/brownie/pull/9999\n'
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+SH
+chmod +x "$fake_bin_dir/gh"
+
+PATH="$fake_bin_dir:$PATH" \
+PHASE_LOOP_STATE_DIR="$state_pr_progress" \
+PHASE_LOOP_PROMPT="$prompt_pr_progress" \
+PHASE_LOOP_TODO="$todo_pr_progress" \
+BROWNIE_BIN="$fake_brownie_tracked_workspace_change" \
+PHASE_LOOP_WORKSPACE_ROOT="$workspace_pr_progress" \
+PHASE_LOOP_CREATE_PR_AFTER_PROGRESS=1 \
+"$PHASE_LOOP" run-once >/dev/null
+
+python3 - "$state_pr_progress/status.json" "$workspace_pr_progress" <<'PY'
+import json
+import subprocess
+import sys
+
+status = json.load(open(sys.argv[1], encoding="utf-8"))
+workspace = sys.argv[2]
+assert status["status"] == "pr_created", status
+assert "pull/9999" in status["detail"], status
+head = subprocess.check_output(["git", "-C", workspace, "rev-parse", "HEAD"], text=True).strip()
+remote = subprocess.check_output(["git", "-C", workspace, "rev-parse", "origin/brownie-agent/smoke-pr"], text=True).strip()
+assert head == remote, (head, remote)
+message = subprocess.check_output(["git", "-C", workspace, "log", "-1", "--format=%s"], text=True).strip()
+assert "create PR from tracked Brownie progress" in message, message
 PY
 
 state_truncated="$(mktemp -d)"
