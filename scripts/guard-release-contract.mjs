@@ -104,6 +104,7 @@ function validateRuntimeReleaseContract(contract, options = {}) {
   const packageJson = options.packageJson ?? {};
   const vsixPackageJson = options.vsixPackageJson ?? {};
   const audit = options.audit ?? {};
+  const readinessAuditContentSha256 = options.readinessAuditContentSha256 ?? null;
   const errors = [];
 
   requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
