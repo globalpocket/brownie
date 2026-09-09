@@ -17,6 +17,15 @@ the existing CI-invoked VSIX check path without editing `.github/workflows/ci.ym
 Direct workflow hardening remains blocked until workflow-scope credentials or an
 owner-approved equivalent path exists.
 
+E-02 records the canonical SHA-256 of this readiness audit snapshot in
+`docs/architecture/runtime-release-contract.json` as
+`commit_trace.readiness_audit_content_sha256`. The release contract guard
+recomputes that hash from the current audit file content and fails closed when
+it is missing or stale, so editing this audit invalidates the release evidence
+until the contract is intentionally refreshed. This does not claim Runtime
+Release Ready; it only prevents stale readiness evidence from passing the local
+release gate.
+
 RRP-1 adds the guarded canonical Runtime boundary contract at
 `docs/architecture/runtime-boundary-canonical-contract.json`. The Runtime
 release-readiness guard validates that contract for required boundary surfaces,
