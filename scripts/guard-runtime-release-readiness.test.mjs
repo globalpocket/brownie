@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildSafetyReadinessEvidenceSnapshot,
   validateRuntimeBoundaryContract,
   validateRuntimeReleaseReadinessAudit
 } from './guard-runtime-release-readiness.mjs';
@@ -25,6 +26,15 @@ const vsixPackageText = [
   'pnpm --workspace-root guard:runtime-module-decomposition',
   'pnpm --workspace-root guard:platform-deadline-durability'
 ].join('\n');
+
+const safetyReadinessSnapshot = {
+  evidence_id: 'runtime-safety-readiness-evidence-invalidation-v1',
+  algorithm: 'sha256(sorted path + sha256 file tuples)',
+  tracked_path_patterns: ['crates/brownie-runtime/src/'],
+  tracked_file_count: 1,
+  tracked_paths: ['crates/brownie-runtime/src/lib.rs'],
+  tracked_fingerprint: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+};
 
 function item(overrides) {
   return {
@@ -67,6 +77,10 @@ function validAudit(overrides = {}) {
         reason: 'Owner must choose license.'
       }
     ],
+    safety_readiness_evidence_invalidation: {
+      status: 'implemented_sufficient',
+      ...safetyReadinessSnapshot
+    },
     classifications: [
       item({
         id: 'runtime-release-debt-reaudit',
@@ -159,6 +173,7 @@ function validate(audit, options = {}) {
     ciText,
     cargoText,
     vsixPackageText,
+    safetyReadinessSnapshot,
     ...options
   });
 }
@@ -392,6 +407,32 @@ test('rejects CI or VSIX check path that omits release readiness guard coverage'
     ].join('\n')
   });
   assert(platformGuardErrors.some((error) => error.includes('guard:platform-deadline-durability')));
+});
+
+test('rejects stale safety readiness evidence fingerprint after safety-critical source changes', () => {
+  const audit = validAudit({
+    safety_readiness_evidence_invalidation: {
+      status: 'implemented_sufficient',
+      ...safetyReadinessSnapshot,
+      tracked_fingerprint: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    }
+  });
+  const errors = validate(audit);
+  assert(errors.some((error) => error.includes('tracked_fingerprint must match live safety-critical content')));
+});
+
+test('rejects missing safety readiness evidence invalidation block', () => {
+  const audit = validAudit();
+  delete audit.safety_readiness_evidence_invalidation;
+  const errors = validate(audit);
+  assert(errors.some((error) => error.includes('safety_readiness_evidence_invalidation')));
+});
+
+test('builds live safety readiness evidence snapshot from tracked repository paths', () => {
+  const snapshot = buildSafetyReadinessEvidenceSnapshot();
+  assert.equal(snapshot.evidence_id, 'runtime-safety-readiness-evidence-invalidation-v1');
+  assert(snapshot.tracked_paths.includes('crates/brownie-runtime/src/lib.rs'));
+  assert.match(snapshot.tracked_fingerprint, /^sha256:[a-f0-9]{64}$/);
 });
 
 test('accepts canonical Runtime boundary contract', () => {
