@@ -3314,7 +3314,10 @@ fn llm_provider_failure_outcome(
 
 fn llm_provider_failure_class(reason: &str) -> &'static str {
     let lower = reason.to_ascii_lowercase();
-    if lower.contains("real-provider task.run requires brownie_llm_allow_task_run_network=true") {
+    if lower.contains("real-provider task.run requires brownie_llm_allow_provider_access=true")
+        || lower.contains("real-provider task.run requires brownie_llm_allow_task_run_network=true")
+        || lower.contains("conflicting provider access guards")
+    {
         return "network_not_authorized";
     }
     if lower.contains("real-provider task.run requires accessnetwork runtime permission") {
@@ -33118,6 +33121,7 @@ modes:
         std::env::remove_var("BROWNIE_LLM_API_KEY_ENV");
         std::env::remove_var("BROWNIE_LLM_API_KEY");
         std::env::remove_var("BROWNIE_LLM_STRICT");
+        std::env::remove_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS");
         std::env::remove_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK");
         let response =
             handle_jsonrpc_input_line(r#"{"jsonrpc":"2.0","id":1,"method":"llm.status"}"#).unwrap();
@@ -33133,10 +33137,35 @@ modes:
     fn llm_status_reports_task_run_network_allowed_when_guard_true() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         std::env::remove_var("BROWNIE_LLM_PROVIDER");
+        std::env::set_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true");
+        let response =
+            handle_jsonrpc_input_line(r#"{"jsonrpc":"2.0","id":1,"method":"llm.status"}"#).unwrap();
+        assert!(response.contains(r#""task_run_network_allowed":true"#));
+        std::env::remove_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS");
+    }
+
+    #[test]
+    fn llm_status_accepts_legacy_task_run_network_guard_when_new_guard_unset() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::remove_var("BROWNIE_LLM_PROVIDER");
+        std::env::remove_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS");
         std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
         let response =
             handle_jsonrpc_input_line(r#"{"jsonrpc":"2.0","id":1,"method":"llm.status"}"#).unwrap();
         assert!(response.contains(r#""task_run_network_allowed":true"#));
+        std::env::remove_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK");
+    }
+
+    #[test]
+    fn llm_status_fails_closed_when_provider_access_guards_conflict() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::remove_var("BROWNIE_LLM_PROVIDER");
+        std::env::set_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true");
+        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "false");
+        let response =
+            handle_jsonrpc_input_line(r#"{"jsonrpc":"2.0","id":1,"method":"llm.status"}"#).unwrap();
+        assert!(response.contains(r#""task_run_network_allowed":false"#));
+        std::env::remove_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS");
         std::env::remove_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK");
     }
 
@@ -37942,6 +37971,7 @@ modes:
             "BROWNIE_LLM_API_KEY_ENV",
             "BROWNIE_LLM_API_KEY",
             "BROWNIE_LLM_STRICT",
+            "BROWNIE_LLM_ALLOW_PROVIDER_ACCESS",
             "BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK",
             "BROWNIE_LLM_MAX_PROMPT_CHARS",
             "BROWNIE_LLM_MAX_MESSAGES",
@@ -61411,6 +61441,7 @@ mod phase_2_2_tests {
                 "BROWNIE_LLM_API_KEY_ENV",
                 "BROWNIE_LLM_API_KEY",
                 "BROWNIE_LLM_STRICT",
+                "BROWNIE_LLM_ALLOW_PROVIDER_ACCESS",
                 "BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK",
             ] {
                 std::env::remove_var(key);
@@ -61600,6 +61631,7 @@ mod phase_2_5_tests {
                 "BROWNIE_LLM_API_KEY_ENV",
                 "BROWNIE_LLM_API_KEY",
                 "BROWNIE_LLM_STRICT",
+                "BROWNIE_LLM_ALLOW_PROVIDER_ACCESS",
                 "BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK",
             ] {
                 std::env::remove_var(key);
@@ -61768,6 +61800,7 @@ mod phase_2_3_tests {
                 "BROWNIE_LLM_API_KEY",
                 "BROWNIE_LLM_STRICT",
                 "BROWNIE_LLM_SENSITIVE_GUARD",
+                "BROWNIE_LLM_ALLOW_PROVIDER_ACCESS",
                 "BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK",
                 "BROWNIE_TEST_LLM_API_KEY",
                 "BROWNIE_TEST_CRASH_AFTER_MCP_TOOL_EXECUTION_BEFORE_SECOND_PASS",
@@ -61793,6 +61826,7 @@ mod phase_2_3_tests {
                 "BROWNIE_LLM_API_KEY",
                 "BROWNIE_LLM_STRICT",
                 "BROWNIE_LLM_SENSITIVE_GUARD",
+                "BROWNIE_LLM_ALLOW_PROVIDER_ACCESS",
                 "BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK",
                 "BROWNIE_TEST_LLM_API_KEY",
                 "BROWNIE_TEST_CRASH_AFTER_MCP_TOOL_EXECUTION_BEFORE_SECOND_PASS",
@@ -61935,7 +61969,7 @@ content-length: {}
         write_mock_config(temp.path(), &base_url);
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
-        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
+        std::env::set_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true");
         std::env::set_var("BROWNIE_LLM_SENSITIVE_GUARD", "warn");
 
         let start = parse_line(
@@ -62007,7 +62041,7 @@ content-length: {}
         write_mock_config(temp.path(), &base_url);
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
-        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
+        std::env::set_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true");
 
         let status = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"llm.status"}"#)
             .result
@@ -62082,7 +62116,7 @@ content-length: {}
         write_mock_config(temp.path(), &base_url);
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
-        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
+        std::env::set_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true");
 
         let start = parse_line(
             r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"Append a timestamp line to timestamp.txt","mode_id":"implementer"}}"#,
@@ -62139,7 +62173,7 @@ content-length: {}
         write_mock_config(temp.path(), &base_url);
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
-        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
+        std::env::set_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true");
 
         let start = parse_line(
             r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"Append a timestamp line to timestamp.txt","mode_id":"implementer"}}"#,
@@ -62195,7 +62229,7 @@ content-length: {}
         write_mock_config(temp.path(), &base_url);
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
-        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
+        std::env::set_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true");
 
         let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Deny provider request","mode_id":"orchestrator"}}"#).result.unwrap();
         let task_id = start["task_id"].as_str().unwrap();
@@ -62278,7 +62312,7 @@ content-length: {}
         write_mock_config(temp.path(), &base_url);
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
-        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
+        std::env::set_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true");
         let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Fail strictly","mode_id":"provider-runner"}}"#).result.unwrap();
         let task_id = start["task_id"].as_str().unwrap();
         let run_id = start["run_id"].as_str().unwrap();
@@ -62354,6 +62388,54 @@ content-length: {}
         assert!(serialized.contains("LlmRequestFailed"));
         assert!(serialized.contains("TaskFailed"));
         assert!(serialized.contains(task_run_network_guard_reason()));
+        assert!(!serialized.contains("test-key"));
+    }
+
+    #[test]
+    fn strict_openai_task_run_with_conflicting_provider_access_guards_fails_before_network() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        write_mock_config(
+            temp.path(),
+            &format!("http://{}/v1", listener.local_addr().unwrap()),
+        );
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
+        std::env::set_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true");
+        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "false");
+        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Guard conflict failure","mode_id":"provider-runner"}}"#).result.unwrap();
+        let task_id = start["task_id"].as_str().unwrap();
+        let run_id = start["run_id"].as_str().unwrap();
+        let result = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        let failure = &result["llm_provider_failure"];
+        assert_eq!(result["status"], "Failed");
+        assert_eq!(failure["failure_class"], "network_not_authorized");
+        assert!(failure["reason"]
+            .as_str()
+            .unwrap()
+            .contains("conflicting provider access guards"));
+        match listener.accept() {
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Ok(_) => panic!("provider request reached mock listener despite conflicting guards"),
+            Err(error) => panic!("unexpected listener error: {error}"),
+        }
+        let serialized = serde_json::to_string(
+            &parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+            ))
+            .result
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(serialized.contains("LlmRequestFailed"));
+        assert!(serialized.contains("conflicting provider access guards"));
         assert!(!serialized.contains("test-key"));
     }
 
@@ -62439,7 +62521,7 @@ content-length: {}
         write_mock_config(temp.path(), &base_url);
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
-        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
+        std::env::set_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true");
 
         let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Replay provider failure","mode_id":"provider-runner"}}"#).result.unwrap();
         let task_id = start["task_id"].as_str().unwrap();
@@ -62482,7 +62564,7 @@ content-length: {}
         write_mock_config(temp.path(), &base_url);
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
-        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
+        std::env::set_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true");
 
         let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Source provider failure","mode_id":"provider-runner"}}"#).result.unwrap();
         let source_task_id = start["task_id"].as_str().unwrap().to_string();
@@ -62512,7 +62594,7 @@ content-length: {}
         write_mock_config(temp.path(), "http://127.0.0.1:9/v1");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
-        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
+        std::env::set_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true");
 
         let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Source provider transport failure","mode_id":"provider-runner"}}"#).result.unwrap();
         let source_task_id = start["task_id"].as_str().unwrap().to_string();

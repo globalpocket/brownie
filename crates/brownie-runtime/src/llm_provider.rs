@@ -36,17 +36,75 @@ pub struct RuntimeLlmProviderError {
     pub(super) message: String,
 }
 
+const LLM_PROVIDER_ACCESS_ENV: &str = "BROWNIE_LLM_ALLOW_PROVIDER_ACCESS";
+const LEGACY_TASK_RUN_NETWORK_ENV: &str = "BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TaskRunNetworkGuard {
+    allowed: bool,
+    conflict: bool,
+    source: Option<&'static str>,
+}
+
 fn task_run_network_allowed() -> bool {
-    matches!(
-        std::env::var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK")
-            .ok()
-            .as_deref(),
-        Some("true")
-    )
+    task_run_network_guard().allowed
+}
+
+fn task_run_network_guard_message() -> &'static str {
+    let guard = task_run_network_guard();
+    if guard.conflict {
+        task_run_network_guard_conflict_reason()
+    } else {
+        task_run_network_guard_reason()
+    }
+}
+
+fn task_run_network_guard() -> TaskRunNetworkGuard {
+    let provider_access = env_bool_flag(LLM_PROVIDER_ACCESS_ENV);
+    let legacy_network = env_bool_flag(LEGACY_TASK_RUN_NETWORK_ENV);
+    match (provider_access, legacy_network) {
+        (Some(provider_access), Some(legacy_network)) if provider_access != legacy_network => {
+            TaskRunNetworkGuard {
+                allowed: false,
+                conflict: true,
+                source: None,
+            }
+        }
+        (Some(true), _) => TaskRunNetworkGuard {
+            allowed: true,
+            conflict: false,
+            source: Some(LLM_PROVIDER_ACCESS_ENV),
+        },
+        (Some(false), _) => TaskRunNetworkGuard {
+            allowed: false,
+            conflict: false,
+            source: Some(LLM_PROVIDER_ACCESS_ENV),
+        },
+        (None, Some(true)) => TaskRunNetworkGuard {
+            allowed: true,
+            conflict: false,
+            source: Some(LEGACY_TASK_RUN_NETWORK_ENV),
+        },
+        (None, Some(false)) | (None, None) => TaskRunNetworkGuard {
+            allowed: false,
+            conflict: false,
+            source: legacy_network.map(|_| LEGACY_TASK_RUN_NETWORK_ENV),
+        },
+    }
+}
+
+fn env_bool_flag(name: &'static str) -> Option<bool> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().eq_ignore_ascii_case("true"))
 }
 
 pub(super) fn task_run_network_guard_reason() -> &'static str {
-    "real-provider task.run requires BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true"
+    "real-provider task.run requires BROWNIE_LLM_ALLOW_PROVIDER_ACCESS=true"
+}
+
+fn task_run_network_guard_conflict_reason() -> &'static str {
+    "conflicting provider access guards: BROWNIE_LLM_ALLOW_PROVIDER_ACCESS and BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK must not disagree"
 }
 
 pub(super) fn llm_status_result(selection: RuntimeLlmProviderStatus) -> LlmStatusResult {
@@ -433,7 +491,7 @@ pub fn llm_provider_from_workspace_for_task_run(
     }
     if !selection.task_run_network_allowed {
         return Err(RuntimeLlmProviderError {
-            message: task_run_network_guard_reason().to_string(),
+            message: task_run_network_guard_message().to_string(),
             status: selection,
         });
     }
@@ -484,7 +542,7 @@ pub fn llm_provider_from_env_for_task_run() -> Result<Box<dyn LlmProvider>, Runt
                 }
                 if !selection.task_run_network_allowed {
                     return Err(RuntimeLlmProviderError {
-                        message: task_run_network_guard_reason().to_string(),
+                        message: task_run_network_guard_message().to_string(),
                         status: selection,
                     });
                 }
@@ -789,19 +847,29 @@ pub fn runtime_diagnostics_from_workspace(
         && status.status.enabled
         && status.strict
     {
-        if status.task_run_network_allowed {
+        let provider_access_guard = task_run_network_guard();
+        if provider_access_guard.conflict {
+            diagnostics.push(diagnostic(
+                DiagnosticSeverity::Error,
+                "TASK_RUN_NETWORK_GUARD_CONFLICT",
+                task_run_network_guard_conflict_reason(),
+                Some(LLM_PROVIDER_ACCESS_ENV),
+            ));
+        } else if status.task_run_network_allowed {
             diagnostics.push(diagnostic(
                 DiagnosticSeverity::Info,
                 "TASK_RUN_NETWORK_ALLOWED",
                 "OpenAI-compatible task.run network calls are explicitly allowed.",
-                Some("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK"),
+                provider_access_guard
+                    .source
+                    .or(Some(LLM_PROVIDER_ACCESS_ENV)),
             ));
         } else {
             diagnostics.push(diagnostic(
                 DiagnosticSeverity::Warning,
                 "TASK_RUN_NETWORK_NOT_ALLOWED",
                 task_run_network_guard_reason(),
-                Some("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK"),
+                Some(LLM_PROVIDER_ACCESS_ENV),
             ));
         }
     }

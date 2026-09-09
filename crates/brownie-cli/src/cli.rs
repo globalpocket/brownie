@@ -175,7 +175,7 @@ impl Cli {
                 "With --file, the CLI reads a bounded UTF-8 file and sends its contents as the objective.",
                 "Set BROWNIE_CLI_RUN_FILE_MAX_BYTES to override the default 65536-byte run-file objective limit.",
                 "Set BROWNIE_CLI_RUN_MODE_ID to request a specific runtime mode for the admitted task.",
-                "For strict OpenAI-compatible provider runs, use BROWNIE_CLI_RUN_MODE_ID=provider-runner together with BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true.",
+                "For strict OpenAI-compatible provider runs, use BROWNIE_CLI_RUN_MODE_ID=provider-runner together with BROWNIE_LLM_ALLOW_PROVIDER_ACCESS=true.",
                 "One invocation performs bounded progress, persists through the runtime, and exits.",
                 "JSON output includes an automation object and controller_action for external loops.",
                 "",
