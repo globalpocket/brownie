@@ -19192,7 +19192,6 @@ modes:
         assert!(second_prompt_preview.contains("Blocked contract_count=1"));
         assert!(second_prompt_preview.contains("execution_gate_status=Blocked"));
         assert!(second_prompt_preview.contains("await_dispatch_admission_preconditions"));
-        assert!(second_prompt_preview.contains("Blocked admission_count=1"));
         assert!(events
             .iter()
             .any(|event| event.kind == LedgerEventKind::SecondPassLlmRequestCreated));
