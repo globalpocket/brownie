@@ -1474,6 +1474,36 @@
         "payload_schema_id": "ledger_payload.ToolPermissionChecked.v5"
       },
       {
+        "ledger_event_kind": "ToolPlanApproved",
+        "payload": {
+          "allowed": true,
+          "reason": "allowed by policy",
+          "required_action": "ReadWorkspace",
+          "tool_id": "workspace.read"
+        },
+        "payload_instance_shape_descriptor": "object{allowed:boolean,reason:string,required_action:string,tool_id:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:ffab4e329e8deb5c",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:1d62886cc4f4bacd",
+        "payload_schema_id": "ledger_payload.ToolPlanApproved.v5"
+      },
+      {
+        "ledger_event_kind": "ToolPlanDenied",
+        "payload": {
+          "allowed": true,
+          "reason": "allowed by policy",
+          "required_action": "ReadWorkspace",
+          "tool_id": "workspace.read"
+        },
+        "payload_instance_shape_descriptor": "object{allowed:boolean,reason:string,required_action:string,tool_id:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:119584dd436efcb0",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:bd771203f474a661",
+        "payload_schema_id": "ledger_payload.ToolPlanDenied.v5"
+      },
+      {
         "ledger_event_kind": "ToolIntentParsed",
         "payload": {
           "parser": {
@@ -1540,6 +1570,62 @@
         "payload_schema_contract_status": "closed",
         "payload_schema_fingerprint": "shape-fnv1a64:a38dffbf1913d3a1",
         "payload_schema_id": "ledger_payload.ToolIntentPermissionChecked.v5"
+      },
+      {
+        "ledger_event_kind": "ToolIntentApproved",
+        "payload": {
+          "allowed": true,
+          "input_summary": {
+            "array_field_count": 0,
+            "bool_field_count": 0,
+            "field_count": 1,
+            "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "null_field_count": 0,
+            "numeric_field_count": 0,
+            "object_field_count": 0,
+            "other_field_count": 0,
+            "string_field_count": 1,
+            "summary_schema": "tool_intent_input_v1"
+          },
+          "reason": "allowed by policy",
+          "request_reason": "Need context.",
+          "required_action": "ReadWorkspace",
+          "tool_id": "workspace.read"
+        },
+        "payload_instance_shape_descriptor": "object{allowed:boolean,input_summary:object{array_field_count:integer,bool_field_count:integer,field_count:integer,fingerprint:string,null_field_count:integer,numeric_field_count:integer,object_field_count:integer,other_field_count:integer,string_field_count:integer,summary_schema:string},reason:string,request_reason:string,required_action:string,tool_id:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:18a6996eda48bfe8",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:38766d7472c76a2a",
+        "payload_schema_id": "ledger_payload.ToolIntentApproved.v5"
+      },
+      {
+        "ledger_event_kind": "ToolIntentDenied",
+        "payload": {
+          "allowed": true,
+          "input_summary": {
+            "array_field_count": 0,
+            "bool_field_count": 0,
+            "field_count": 1,
+            "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "null_field_count": 0,
+            "numeric_field_count": 0,
+            "object_field_count": 0,
+            "other_field_count": 0,
+            "string_field_count": 1,
+            "summary_schema": "tool_intent_input_v1"
+          },
+          "reason": "allowed by policy",
+          "request_reason": "Need context.",
+          "required_action": "ReadWorkspace",
+          "tool_id": "workspace.read"
+        },
+        "payload_instance_shape_descriptor": "object{allowed:boolean,input_summary:object{array_field_count:integer,bool_field_count:integer,field_count:integer,fingerprint:string,null_field_count:integer,numeric_field_count:integer,object_field_count:integer,other_field_count:integer,string_field_count:integer,summary_schema:string},reason:string,request_reason:string,required_action:string,tool_id:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:6c032297e8d1062c",
+        "payload_schema_classification": "strict_typed",
+        "payload_schema_contract_status": "closed",
+        "payload_schema_fingerprint": "shape-fnv1a64:9e00ab658b128cee",
+        "payload_schema_id": "ledger_payload.ToolIntentDenied.v5"
       },
       {
         "ledger_event_kind": "ToolExecutionRequested",

@@ -71,6 +71,8 @@ const requiredVsixCheckCommands = [
   'pnpm --workspace-root guard:owner-governance-evidence',
   'pnpm --workspace-root guard:owner-governance-evidence:test',
   'pnpm --workspace-root guard:durable-schema-migration',
+  'pnpm --workspace-root guard:ledger-contract-single-source',
+  'pnpm --workspace-root guard:ledger-contract-single-source:test',
   'pnpm --workspace-root guard:protocol-event-canonization',
   'pnpm --workspace-root guard:runtime-module-decomposition',
   'pnpm --workspace-root guard:platform-deadline-durability'
@@ -144,6 +146,8 @@ const safetyCriticalPathPatterns = [
   'docs/architecture/runtime-protocol-event-canonical-map.json',
   'docs/architecture/runtime-semantic-protocol-contract.json',
   'scripts/guard-durable-schema-migration.mjs',
+  'scripts/guard-ledger-contract-single-source.mjs',
+  'scripts/guard-ledger-contract-single-source.test.mjs',
   'scripts/guard-modepack-distribution-trust.mjs',
   'scripts/guard-platform-deadline-durability.mjs',
   'scripts/guard-protocol-event-canonization.mjs',

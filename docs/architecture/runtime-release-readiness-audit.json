@@ -53,6 +53,8 @@
       "docs/architecture/runtime-protocol-event-canonical-map.json",
       "docs/architecture/runtime-semantic-protocol-contract.json",
       "scripts/guard-durable-schema-migration.mjs",
+      "scripts/guard-ledger-contract-single-source.mjs",
+      "scripts/guard-ledger-contract-single-source.test.mjs",
       "scripts/guard-modepack-distribution-trust.mjs",
       "scripts/guard-platform-deadline-durability.mjs",
       "scripts/guard-protocol-event-canonization.mjs",
@@ -60,7 +62,7 @@
       "scripts/guard-runtime-release-readiness.mjs",
       "scripts/rrp3-process-loss-recovery-e2e.mjs"
     ],
-    "tracked_file_count": 53,
+    "tracked_file_count": 55,
     "tracked_paths": [
       "crates/brownie-agent-loop/src/lib.rs",
       "crates/brownie-agentmodes/src/lib.rs",
@@ -109,6 +111,8 @@
       "docs/specifications/tool-execution-spec-v0.md",
       "docs/specifications/tool-feedback-loop-spec-v0.md",
       "scripts/guard-durable-schema-migration.mjs",
+      "scripts/guard-ledger-contract-single-source.mjs",
+      "scripts/guard-ledger-contract-single-source.test.mjs",
       "scripts/guard-modepack-distribution-trust.mjs",
       "scripts/guard-platform-deadline-durability.mjs",
       "scripts/guard-protocol-event-canonization.mjs",
@@ -116,7 +120,7 @@
       "scripts/guard-runtime-release-readiness.mjs",
       "scripts/rrp3-process-loss-recovery-e2e.mjs"
     ],
-    "tracked_fingerprint": "sha256:57af6bd3ad69918879c5abea0a8e0f989cd76699a5cba6b914837ed67ff8369f"
+    "tracked_fingerprint": "sha256:0f47825e4620845eebf520d05dbb917f34917417ed081811b978c80fded8dc4c"
   },
   "owner_decisions": [
     {

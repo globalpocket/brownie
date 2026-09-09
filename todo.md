@@ -39,6 +39,10 @@ Current synchronization note:
 - PR #407 extended the same recovery classification across non-implementation
   overview routes, covering the internal `next_route: inspect_progress_overview`
   case that CLI JSON otherwise projects as another generic resume.
+- R-19 adds a dedicated Ledger Contract single-source guard so LedgerEventKind,
+  payload schema classification, schema fingerprint, Runtime validator dispatch,
+  generated payload fixtures, release-gate wiring, and CI-reachable VSIX check
+  wiring cannot drift independently.
 - Runtime Product Ready is not reached.
 
 ## Queue protocol
@@ -75,9 +79,6 @@ Current synchronization note:
 
 ### P1: Runtime / CLI boundary
 
-- [ ] R-19: Enforce Ledger Contract single-source correctness: event kind,
-  schema, validator, fingerprint, and fixture additions must be CI-gated
-  together.
 - [ ] R-20: Prove old-ledger compatibility with real historical fixtures for
   load, resume, and replay rejection.
 
