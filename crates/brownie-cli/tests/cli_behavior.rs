@@ -1507,6 +1507,51 @@ fn run_file_reports_read_failure_without_runtime_startup() {
 }
 
 #[test]
+fn run_file_read_failures_do_not_leak_paths_or_file_content() {
+    let runtime = fake_runtime(
+        "run-file-redacted-read-failure",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","session_id":"session-1","drive_id":"drive-1","next_action":"inspect_progress_overview","completion_closure":{"status":"budget_exhausted"},"journey":{"journey_id":"journey-1","task_id":"task-1","run_id":"run-1"}}}"#,
+    );
+    let capture = runtime.with_file_name("request.json");
+    let missing_dir = unique_test_dir("run-file-redacted-missing");
+    let missing_file = missing_dir.join("secret-objective-do-not-leak.md");
+    let missing_file_text = missing_file.to_string_lossy();
+
+    let json_output = Command::new(brownie())
+        .args(["--json", "run", "--file"])
+        .arg(&missing_file)
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
+        .output()
+        .unwrap();
+
+    assert!(!json_output.status.success());
+    assert_eq!(json_output.status.code(), Some(64));
+    assert!(!capture.exists());
+    let stdout = String::from_utf8(json_output.stdout).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["error"]["reason"], "open_failed");
+    assert!(!stdout.contains(missing_file_text.as_ref()));
+    assert!(!stdout.contains("secret-objective-do-not-leak"));
+    assert!(!stdout.contains("No such file or directory"));
+
+    let plain_output = Command::new(brownie())
+        .args(["run", "--file"])
+        .arg(&missing_file)
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .output()
+        .unwrap();
+
+    assert!(!plain_output.status.success());
+    assert_eq!(plain_output.status.code(), Some(64));
+    let stderr = String::from_utf8(plain_output.stderr).unwrap();
+    assert!(stderr.contains("failed to read objective file"));
+    assert!(!stderr.contains(missing_file_text.as_ref()));
+    assert!(!stderr.contains("secret-objective-do-not-leak"));
+    assert!(!stderr.contains("No such file or directory"));
+}
+
+#[test]
 fn run_uses_configured_cli_mode_id_for_provider_runner_smoke() {
     let runtime = fake_runtime(
         "run-provider-runner-mode",

@@ -75,8 +75,6 @@ Current synchronization note:
 
 ### P1: Runtime / CLI boundary
 
-- [ ] R-15: Prevent file path and content leakage from `run --file` errors,
-  ledger, and logs; avoid absolute paths and raw input bodies.
 - [ ] R-16: Migrate `BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK` toward
   `BROWNIE_LLM_ALLOW_PROVIDER_ACCESS`; conflicting settings must fail closed.
 - [ ] R-17: Complete `llm_provider_access` separation from generic
