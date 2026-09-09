@@ -170,6 +170,14 @@ progress by patching `todo.md` to replace the broad TODO with the next concrete
 bounded sub-TODOs, each naming exact files or scripts to inspect next. Do not
 end a workspace-edit TODO with read-only discovery only.
 
+When the prompt context already contains `Tool Execution` results for the same
+exact files needed by the selected TODO, the next tool intent must not repeat
+the same `workspace.read` requests. In that read-followup turn, either emit one
+bounded `workspace.write` proposal for the smallest safe patch or patch
+`todo.md` with a narrower blocker/follow-up TODO that names the exact missing
+file, value, or validation command. Repeating read-only tool intent after the
+same files were already read is no progress and should stop rather than loop.
+
 In `implementer` mode, do not request `subtask.spawn` or any tool that the Tool
 Plan marks as denied. Broad TODO decomposition is not a subtask spawn; express
 it as one bounded `workspace.write` patch to `todo.md`.

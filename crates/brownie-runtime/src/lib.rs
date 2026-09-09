@@ -2611,6 +2611,167 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         ) {
             return error_response(id, -32603, &format!("internal error: {error}"));
         }
+        let followup_events = match store.tasks().read_ledger_events(&running.run_id) {
+            Ok(events) => events,
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        };
+        let second_pass_response_index = followup_events
+            .iter()
+            .rposition(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived);
+        let latest_tool_execution_index = followup_events.iter().rposition(|event| {
+            matches!(
+                event.kind,
+                LedgerEventKind::ToolExecutionCompleted | LedgerEventKind::ToolExecutionFailed
+            )
+        });
+        let followup_read_result_available =
+            match (second_pass_response_index, latest_tool_execution_index) {
+                (Some(response_index), Some(tool_index)) => tool_index > response_index,
+                _ => false,
+            };
+        let followup_write_missing = task_goal_requires_workspace_write_proposal(&running.goal)
+            && !followup_events
+                .iter()
+                .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed);
+        if followup_read_result_available && followup_write_missing {
+            let followup_prompt_input =
+                ContextMaterializer::materialize(ContextMaterializerInput {
+                    task: running.clone(),
+                    ledger_events: followup_events,
+                    child_completion_summaries: child_completion_summaries.clone(),
+                    selected_index_context: selected_index_context
+                        .as_ref()
+                        .map(|context| context.prompt_context.clone()),
+                    verification_recovery_context: verification_recovery_context_read
+                        .as_ref()
+                        .map(|context| context.prompt_context.clone()),
+                    context_budget,
+                });
+            let followup_context_window = followup_prompt_input.context_window.clone();
+            let followup_context_budget = followup_prompt_input.context_budget.clone();
+            if !followup_context_budget.prompt_within_budget {
+                return fail_llm_request(
+                    &store,
+                    &running,
+                    id,
+                    RuntimeLlmProviderStatus {
+                        status: provider_status.clone(),
+                        strict: provider_strict,
+                        will_fallback_to_fake: false,
+                        config_source: provider_selection.config_source.clone(),
+                        active_profile: provider_selection.active_profile.clone(),
+                        task_run_network_allowed: provider_selection.task_run_network_allowed,
+                        budget: provider_selection.budget.clone(),
+                        sensitive_guard_mode: provider_selection.sensitive_guard_mode.clone(),
+                        sensitive_guard_invalid: provider_selection.sensitive_guard_invalid.clone(),
+                    },
+                    "context_budget max_prompt_chars exceeded during read-followup prompt materialization",
+                    LedgerEventKind::SecondPassLlmRequestFailed,
+                );
+            }
+            let followup_pass = match AgentLoop::run_second_pass_with_llm(
+                followup_prompt_input,
+                provider.as_ref(),
+                &provider_selection.budget,
+                provider_selection.sensitive_guard_mode.clone(),
+            ) {
+                Ok(result) => result,
+                Err(error) => {
+                    return fail_llm_request(
+                        &store,
+                        &running,
+                        id,
+                        RuntimeLlmProviderStatus {
+                            status: provider_status.clone(),
+                            strict: provider_strict,
+                            will_fallback_to_fake: false,
+                            config_source: provider_selection.config_source.clone(),
+                            active_profile: provider_selection.active_profile.clone(),
+                            task_run_network_allowed: provider_selection.task_run_network_allowed,
+                            budget: provider_selection.budget.clone(),
+                            sensitive_guard_mode: provider_selection.sensitive_guard_mode.clone(),
+                            sensitive_guard_invalid: provider_selection
+                                .sensitive_guard_invalid
+                                .clone(),
+                        },
+                        &error.to_string(),
+                        LedgerEventKind::SecondPassLlmRequestFailed,
+                    );
+                }
+            };
+            agent_loop_final_state = followup_pass.final_state;
+            agent_loop_completion_summary = followup_pass.completion_summary.clone();
+            agent_loop_final_response_content = followup_pass.llm_response.content.clone();
+            if let Err(error) = append_sensitive_scan_event(
+                &store,
+                &running,
+                &followup_pass.sensitive_scan,
+                &provider_selection.sensitive_guard_mode,
+                false,
+            ) {
+                return error_response(id, -32603, &format!("internal error: {error}"));
+            }
+            if let Err(error) = store.tasks().append_task_event_with_payload(
+                &running,
+                LedgerEventKind::SecondPassPromptBuilt,
+                Some(prompt_built_payload(
+                    followup_pass.prompt.messages.len(),
+                    &followup_pass.prompt,
+                    provider_selection.budget.response_preview_chars,
+                    provider_selection.budget.max_prompt_chars,
+                    &followup_pass.sensitive_scan,
+                    &followup_context_window,
+                    &followup_context_budget,
+                    privileged_prompt_context_present,
+                )),
+            ) {
+                return error_response(id, -32603, &format!("internal error: {error}"));
+            }
+            if let Err(error) = store.tasks().append_task_event_with_payload(
+                &running,
+                LedgerEventKind::SecondPassLlmRequestCreated,
+                Some(json!({
+                    "provider": provider_kind_name(&provider_status.provider),
+                    "model": followup_pass.llm_request.model.clone(),
+                    "message_count": followup_pass.llm_request.messages.len(),
+                    "base_url": provider_status.base_url.as_deref().map(redact_secret),
+                    "strict": provider_strict,
+                })),
+            ) {
+                return error_response(id, -32603, &format!("internal error: {error}"));
+            }
+            if let Err(error) = store.tasks().append_task_event_with_payload(
+                &running,
+                LedgerEventKind::SecondPassLlmResponseReceived,
+                Some(llm_response_received_payload(
+                    &provider_status,
+                    &followup_pass.llm_response.content,
+                    provider_selection.budget.response_preview_chars,
+                    privileged_prompt_context_present,
+                )),
+            ) {
+                return error_response(id, -32603, &format!("internal error: {error}"));
+            }
+            let followup_tool_intent =
+                ToolIntentParser::parse_assistant_content(&followup_pass.llm_response.content);
+            rejected_tool_intent_requests += followup_tool_intent.summary.rejected_requests;
+            if let Err(error) = append_tool_intent_events(
+                &store,
+                &running,
+                &policy,
+                &followup_pass.llm_response.content,
+            ) {
+                return error_response(id, -32603, &format!("internal error: {error}"));
+            }
+            if let Err(error) = handle_approved_workspace_intents(
+                &store,
+                &running,
+                &policy,
+                &followup_pass.llm_response.content,
+            ) {
+                return error_response(id, -32603, &format!("internal error: {error}"));
+            }
+        }
     }
 
     let completion_gate_events = match store.tasks().read_ledger_events(&running.run_id) {
