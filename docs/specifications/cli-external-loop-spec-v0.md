@@ -23,6 +23,13 @@ and completion/finalization. Repeated intentional `run` invocations may create
 independent objectives; external loops that intend to continue an active
 objective should call `brownie resume` after the initial admission.
 
+`brownie run --file <path>` is a bounded objective-loading convenience, not a
+separate authority source. Before invoking the runtime, the CLI rejects files
+larger than `BROWNIE_CLI_RUN_FILE_MAX_BYTES`; when unset, the default is 65536
+bytes, aligned with Brownie's bounded file/context handling. Rejection happens
+as an invalid invocation and does not start the runtime. Later hardening phases
+own non-regular-file rejection and complete error redaction.
+
 For a `run` invocation, the CLI generates bounded invocation identities,
 including an `admission_id`, and passes them to the runtime's
 `headless.run.drive` journey admission. The CLI does not use that id as an
