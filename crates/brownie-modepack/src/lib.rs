@@ -453,8 +453,9 @@ fn effective_permissions(
     let git_commit =
         declared.git_commit && trusted_side_effect_source && options.capability_ceiling.git_commit;
     let network_access = false;
-    let llm_provider_access =
-        declared.llm_provider_access && options.capability_ceiling.llm_provider_access;
+    let llm_provider_access = declared.llm_provider_access
+        && trusted_side_effect_source
+        && options.capability_ceiling.llm_provider_access;
     let service_control = false;
     let destructive = false;
     let can_spawn_subtasks = declared.can_spawn_subtasks
@@ -2099,7 +2100,7 @@ customModes:
     }
 
     #[test]
-    fn untrusted_workspace_modepack_narrows_network_permission() {
+    fn untrusted_workspace_modepack_narrows_network_and_provider_permissions() {
         let temp = tempfile::tempdir().expect("tempdir");
         let brownie_dir = temp.path().join(".brownie");
         fs::create_dir_all(&brownie_dir).expect("brownie dir");
@@ -2140,9 +2141,9 @@ customModes:
         );
         assert!(networker.permissions.read_only);
         assert!(!networker.permissions.network_access);
-        assert!(networker.permissions.llm_provider_access);
+        assert!(!networker.permissions.llm_provider_access);
         assert!(!RuntimePermissionGate::check(networker, RuntimeAction::AccessNetwork).allowed);
-        assert!(RuntimePermissionGate::check(networker, RuntimeAction::AccessLlmProvider).allowed);
+        assert!(!RuntimePermissionGate::check(networker, RuntimeAction::AccessLlmProvider).allowed);
     }
 
     #[test]

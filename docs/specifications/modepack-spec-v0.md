@@ -257,6 +257,27 @@ temporary checkout, then run the real compile, validation, activation, prompt,
 and authority tests with the compatibility source marked required so missing
 source cannot silently skip coverage.
 
+MP-3.2H distribution-time trust validation defines the only path from external
+repository content to `TrustedSignedActiveModePack`. A distributed Mode Pack is
+trusted only when Runtime-owned validation binds the selected snapshot to a
+pinned commit, the compiled Mode Pack fingerprint, artifact SHA-256, a verified
+signature or owner-approved integrity proof, an owner-approved trust root, and
+fresh revocation evidence proving the signer, trust root, commit/tag, artifact,
+and Mode Pack fingerprint are not revoked. Missing, stale, mismatched,
+unsigned, unpinned, untrusted, or revoked evidence fails closed before
+activation. The guarded contract is
+`docs/architecture/modepack-distribution-trust-contract.json`.
+
+Repository-local `.brownie/modepack.json` and `.brownie/AgentModes/workflow.yaml`
+remain `UntrustedRepositoryLocal` by default. They cannot self-authorize
+`workspace_write`, `process_exec`, Git authority, subtask spawning, MCP tool
+execution, generic `network_access`, or provider LLM calls through
+`llm_provider_access` merely by declaring those fields. Trusted local developer
+and trusted signed active Mode Pack sources may preserve declared
+`llm_provider_access` only after the runtime capability ceiling also allows it;
+generic `network_access`, `service_control`, and `destructive` stay reserved v0
+fields and narrow to `false`.
+
 When no explicit compiler default entrypoint is supplied, the generated legacy
 v1 Mode Pack selects `orchestrator` only if that slug exists. The current
 AgentModes v2 Core compiler selects `core.orchestrator`. Explicit compiler

@@ -220,6 +220,8 @@ pub struct ModePackReplaceActiveParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_approved_candidate_pinned_address_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_approved_candidate_pinned_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_approved_candidate_approval_event_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update_admission: Option<ModePackUpdateAdmissionParams>,
@@ -299,6 +301,7 @@ pub struct ModePackSelectedCandidateFetchTarget {
     pub expected_candidate_url_fingerprint: String,
     pub expected_candidate_content_sha256: String,
     pub expected_candidate_compiled_policy_fingerprint: String,
+    pub expected_candidate_pinned_commit: String,
     pub expected_provenance_statement_url_fingerprint: String,
     pub expected_provenance_statement_sha256: String,
     pub expected_signer_fingerprint: String,
@@ -316,6 +319,7 @@ pub struct ModePackSelectedCandidateProvenanceVerificationTarget {
     pub expected_candidate_url_fingerprint: String,
     pub expected_candidate_content_sha256: String,
     pub expected_candidate_compiled_policy_fingerprint: String,
+    pub expected_candidate_pinned_commit: String,
     pub expected_provenance_statement_url_fingerprint: String,
     pub expected_provenance_statement_sha256: String,
     pub expected_signer_fingerprint: String,
@@ -338,6 +342,7 @@ pub struct ModePackSelectedCandidateApprovalTarget {
     pub expected_candidate_url_fingerprint: String,
     pub expected_candidate_content_sha256: String,
     pub expected_candidate_compiled_policy_fingerprint: String,
+    pub expected_candidate_pinned_commit: String,
     pub expected_provenance_id: String,
     pub expected_provenance_event_id: String,
     pub expected_provenance_statement_url_fingerprint: String,
@@ -362,6 +367,7 @@ pub struct ModePackSelectedApprovedCandidateReplacementTarget {
     pub expected_candidate_content_sha256: String,
     pub expected_candidate_compiled_policy_fingerprint: String,
     pub expected_candidate_activation_fingerprint: String,
+    pub expected_candidate_pinned_commit: String,
     pub expected_provenance_id: String,
     pub expected_provenance_event_id: String,
     pub expected_provenance_statement_url_fingerprint: String,
@@ -392,6 +398,7 @@ pub struct ModePackApproveCandidateParams {
     pub expected_provenance_event_id: String,
     pub expected_signer_fingerprint: String,
     pub expected_statement_sha256: String,
+    pub expected_pinned_commit: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -417,6 +424,7 @@ pub struct ModePackVerifyCandidateProvenanceParams {
     pub expected_content_sha256: String,
     pub expected_compiled_policy_fingerprint: String,
     pub expected_signer_fingerprint: String,
+    pub expected_pinned_commit: String,
     pub provenance_statement_json: String,
     pub provenance_signature_base64: String,
     pub provenance_public_key_base64: String,
@@ -511,6 +519,8 @@ pub struct ModePackApprovedCandidateSummary {
     pub mode_count: usize,
     pub mode_ids: Vec<String>,
     pub compiled_policy_fingerprint: String,
+    #[serde(default)]
+    pub pinned_commit: String,
     pub provenance_id: String,
     pub provenance_event_id: String,
     #[serde(default)]
@@ -558,6 +568,8 @@ pub struct ModePackUpdateAdmissionSummary {
     pub dns_binding: ModePackDnsBindingSummary,
     pub content_sha256: String,
     pub compiled_policy_fingerprint: String,
+    #[serde(default)]
+    pub pinned_commit: String,
     pub provenance_id: String,
     pub provenance_event_id: String,
     pub trusted_signer_trust_id: String,
@@ -583,6 +595,8 @@ pub struct ModePackCandidateProvenanceSummary {
     pub mode_count: usize,
     pub mode_ids: Vec<String>,
     pub compiled_policy_fingerprint: String,
+    #[serde(default)]
+    pub pinned_commit: String,
     pub signer_fingerprint: String,
     pub statement_sha256: String,
     pub signature_sha256: String,
@@ -617,6 +631,7 @@ pub struct ModePackRegistryUpdateSelectionSummary {
     pub candidate_url_fingerprint: String,
     pub candidate_content_sha256: String,
     pub candidate_compiled_policy_fingerprint: String,
+    pub candidate_pinned_commit: String,
     pub provenance_statement_url: String,
     pub provenance_statement_url_host: String,
     pub provenance_statement_url_fingerprint: String,

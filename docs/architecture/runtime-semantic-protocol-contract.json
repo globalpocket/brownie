@@ -5200,7 +5200,7 @@
         "modepack_selected_active_rollback_target"
       ],
       "param_type": "HeadlessContinueOnceParams",
-      "request_recursive_schema_fingerprint": "shape-fnv1a64:13618f64e63fb184",
+      "request_recursive_schema_fingerprint": "shape-fnv1a64:a70a9a807075c204",
       "request_schema": {
         "deny_unknown_fields": true,
         "field_shape_fingerprint": "shape-fnv1a64:14025868fd97ef92",
@@ -5628,7 +5628,7 @@
         "expected_progress_fingerprint",
         "expected_aggregate_sequence"
       ],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:823c96ec43b58969",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:49da605dc3a5472a",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:fc0d8a63ef335119",
@@ -5985,7 +5985,7 @@
       "result_schema_ref": "#/type_schemas/HeadlessContinueOnceResult",
       "result_semantics": "HeadlessContinueOnceResult",
       "result_type": "HeadlessContinueOnceResult",
-      "schema_fingerprint": "shape-fnv1a64:ad7568440312cbc9",
+      "schema_fingerprint": "shape-fnv1a64:a980ce17089acc2c",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -6015,7 +6015,7 @@
         "modepack_selected_approved_candidate_replacement_target"
       ],
       "param_type": "HeadlessRunAdvanceParams",
-      "request_recursive_schema_fingerprint": "shape-fnv1a64:2000b23378c2cd64",
+      "request_recursive_schema_fingerprint": "shape-fnv1a64:9aa879627e517394",
       "request_schema": {
         "deny_unknown_fields": true,
         "field_shape_fingerprint": "shape-fnv1a64:2d2a59ca4fa75f1a",
@@ -6396,7 +6396,7 @@
       "result_schema_ref": "#/type_schemas/HeadlessRunAdvanceResult",
       "result_semantics": "HeadlessRunAdvanceResult",
       "result_type": "HeadlessRunAdvanceResult",
-      "schema_fingerprint": "shape-fnv1a64:06132cb77724d83a",
+      "schema_fingerprint": "shape-fnv1a64:92cfbe0115ebe7f9",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -6432,7 +6432,7 @@
         "journey_execution"
       ],
       "param_type": "HeadlessRunDriveParams",
-      "request_recursive_schema_fingerprint": "shape-fnv1a64:0e34cd4b2e6d91ae",
+      "request_recursive_schema_fingerprint": "shape-fnv1a64:fc7deef592bf049e",
       "request_schema": {
         "deny_unknown_fields": true,
         "field_shape_fingerprint": "shape-fnv1a64:8e23cae0f3b72981",
@@ -7000,7 +7000,7 @@
       "result_schema_ref": "#/type_schemas/HeadlessRunDriveResult",
       "result_semantics": "HeadlessRunDriveResult",
       "result_type": "HeadlessRunDriveResult",
-      "schema_fingerprint": "shape-fnv1a64:c45c728066599240",
+      "schema_fingerprint": "shape-fnv1a64:e4b8496f88d22870",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -7673,7 +7673,7 @@
         "registry_provenance_signature_base64",
         "registry_provenance_public_key_base64"
       ],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:0d8ca610b910d3b3",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:cab1dd96121ec0f0",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:ce3a5041dca769eb",
@@ -7724,7 +7724,7 @@
       "result_schema_ref": "#/type_schemas/ModePackSelectRegistryUpdateResult",
       "result_semantics": "ModePackSelectRegistryUpdateResult",
       "result_type": "ModePackSelectRegistryUpdateResult",
-      "schema_fingerprint": "shape-fnv1a64:05d8e024c180e34b",
+      "schema_fingerprint": "shape-fnv1a64:ae0325f3dc24c030",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -7737,10 +7737,10 @@
       "method": "modepack.approveCandidate",
       "optional_fields": [],
       "param_type": "ModePackApproveCandidateParams",
-      "request_recursive_schema_fingerprint": "shape-fnv1a64:df3d85a7c6aa9c51",
+      "request_recursive_schema_fingerprint": "shape-fnv1a64:d683c80a0f311448",
       "request_schema": {
         "deny_unknown_fields": true,
-        "field_shape_fingerprint": "shape-fnv1a64:1cfefeb20d7b187f",
+        "field_shape_fingerprint": "shape-fnv1a64:b7b45d48eb83bc7e",
         "fields": [
           {
             "name": "authorize_trust",
@@ -7797,6 +7797,14 @@
             "required": true,
             "rust_type": "String",
             "semantic_type": "string"
+          },
+          {
+            "name": "expected_pinned_commit",
+            "nullable": false,
+            "repeated": false,
+            "required": true,
+            "rust_type": "String",
+            "semantic_type": "string"
           }
         ],
         "nullable_fields": [],
@@ -7808,7 +7816,8 @@
           "expected_provenance_id",
           "expected_provenance_event_id",
           "expected_signer_fingerprint",
-          "expected_statement_sha256"
+          "expected_statement_sha256",
+          "expected_pinned_commit"
         ],
         "type": "ModePackApproveCandidateParams"
       },
@@ -7821,9 +7830,10 @@
         "expected_provenance_id",
         "expected_provenance_event_id",
         "expected_signer_fingerprint",
-        "expected_statement_sha256"
+        "expected_statement_sha256",
+        "expected_pinned_commit"
       ],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:a29e30a7dccec06d",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:ff47246dcec80445",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:84b44f89072703b8",
@@ -7874,7 +7884,7 @@
       "result_schema_ref": "#/type_schemas/ModePackApproveCandidateResult",
       "result_semantics": "ModePackApproveCandidateResult",
       "result_type": "ModePackApproveCandidateResult",
-      "schema_fingerprint": "shape-fnv1a64:a84fd14c12e841b5",
+      "schema_fingerprint": "shape-fnv1a64:398fe76c8a6d78f7",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -8101,10 +8111,10 @@
       "method": "modepack.verifyCandidateProvenance",
       "optional_fields": [],
       "param_type": "ModePackVerifyCandidateProvenanceParams",
-      "request_recursive_schema_fingerprint": "shape-fnv1a64:ff83e6d2437f1dac",
+      "request_recursive_schema_fingerprint": "shape-fnv1a64:58642191a02ec8b7",
       "request_schema": {
         "deny_unknown_fields": true,
-        "field_shape_fingerprint": "shape-fnv1a64:b7f7619187d9b646",
+        "field_shape_fingerprint": "shape-fnv1a64:bfb61c31ded6bfd5",
         "fields": [
           {
             "name": "authorize_provenance_verification",
@@ -8132,6 +8142,14 @@
           },
           {
             "name": "expected_signer_fingerprint",
+            "nullable": false,
+            "repeated": false,
+            "required": true,
+            "rust_type": "String",
+            "semantic_type": "string"
+          },
+          {
+            "name": "expected_pinned_commit",
             "nullable": false,
             "repeated": false,
             "required": true,
@@ -8170,6 +8188,7 @@
           "expected_content_sha256",
           "expected_compiled_policy_fingerprint",
           "expected_signer_fingerprint",
+          "expected_pinned_commit",
           "provenance_statement_json",
           "provenance_signature_base64",
           "provenance_public_key_base64"
@@ -8183,11 +8202,12 @@
         "expected_content_sha256",
         "expected_compiled_policy_fingerprint",
         "expected_signer_fingerprint",
+        "expected_pinned_commit",
         "provenance_statement_json",
         "provenance_signature_base64",
         "provenance_public_key_base64"
       ],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:6e302fe3fb4b015b",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:2836126330d31935",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:1647ce683fd670b9",
@@ -8238,7 +8258,7 @@
       "result_schema_ref": "#/type_schemas/ModePackVerifyCandidateProvenanceResult",
       "result_semantics": "ModePackVerifyCandidateProvenanceResult",
       "result_type": "ModePackVerifyCandidateProvenanceResult",
-      "schema_fingerprint": "shape-fnv1a64:3772d7692e5b2734",
+      "schema_fingerprint": "shape-fnv1a64:c341243aa6da2c38",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -8258,14 +8278,15 @@
         "expected_approved_candidate_source_url_fingerprint",
         "expected_approved_candidate_dns_resolution_fingerprint",
         "expected_approved_candidate_pinned_address_fingerprint",
+        "expected_approved_candidate_pinned_commit",
         "expected_approved_candidate_approval_event_id",
         "update_admission"
       ],
       "param_type": "ModePackReplaceActiveParams",
-      "request_recursive_schema_fingerprint": "shape-fnv1a64:8932aa1631dceb89",
+      "request_recursive_schema_fingerprint": "shape-fnv1a64:2400842627bfd51c",
       "request_schema": {
         "deny_unknown_fields": true,
-        "field_shape_fingerprint": "shape-fnv1a64:b068c23a3f13537b",
+        "field_shape_fingerprint": "shape-fnv1a64:5074db64a2dc1051",
         "fields": [
           {
             "name": "authorize_replacement",
@@ -8356,6 +8377,14 @@
             "semantic_type": "string"
           },
           {
+            "name": "expected_approved_candidate_pinned_commit",
+            "nullable": true,
+            "repeated": false,
+            "required": false,
+            "rust_type": "Option<String>",
+            "semantic_type": "string"
+          },
+          {
             "name": "expected_approved_candidate_approval_event_id",
             "nullable": true,
             "repeated": false,
@@ -8381,6 +8410,7 @@
           "expected_approved_candidate_source_url_fingerprint",
           "expected_approved_candidate_dns_resolution_fingerprint",
           "expected_approved_candidate_pinned_address_fingerprint",
+          "expected_approved_candidate_pinned_commit",
           "expected_approved_candidate_approval_event_id",
           "update_admission"
         ],
@@ -8393,6 +8423,7 @@
           "expected_approved_candidate_source_url_fingerprint",
           "expected_approved_candidate_dns_resolution_fingerprint",
           "expected_approved_candidate_pinned_address_fingerprint",
+          "expected_approved_candidate_pinned_commit",
           "expected_approved_candidate_approval_event_id",
           "update_admission"
         ],
@@ -8410,7 +8441,7 @@
         "expected_current_activation_fingerprint",
         "expected_candidate_activation_fingerprint"
       ],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:cc9db2664be12133",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:f521a49958c606df",
       "result_schema": {
         "deny_unknown_fields": false,
         "field_shape_fingerprint": "shape-fnv1a64:c90f4f328922cbab",
@@ -8502,7 +8533,7 @@
       "result_schema_ref": "#/type_schemas/ModePackReplaceActiveResult",
       "result_semantics": "ModePackReplaceActiveResult",
       "result_type": "ModePackReplaceActiveResult",
-      "schema_fingerprint": "shape-fnv1a64:5e8312d847ce8a76",
+      "schema_fingerprint": "shape-fnv1a64:60b57f22e17a35a1",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -11839,6 +11870,9 @@
             "expected_candidate_content_sha256": {
               "type": "string"
             },
+            "expected_candidate_pinned_commit": {
+              "type": "string"
+            },
             "expected_candidate_url_fingerprint": {
               "type": "string"
             },
@@ -11889,6 +11923,7 @@
             "expected_candidate_activation_fingerprint",
             "expected_candidate_compiled_policy_fingerprint",
             "expected_candidate_content_sha256",
+            "expected_candidate_pinned_commit",
             "expected_candidate_url_fingerprint",
             "expected_current_activation_fingerprint",
             "expected_fetch_decision_id",
@@ -11915,6 +11950,9 @@
               "type": "string"
             },
             "expected_candidate_content_sha256": {
+              "type": "string"
+            },
+            "expected_candidate_pinned_commit": {
               "type": "string"
             },
             "expected_candidate_url_fingerprint": {
@@ -11961,6 +11999,7 @@
             "authorize_selected_candidate_approval",
             "expected_candidate_compiled_policy_fingerprint",
             "expected_candidate_content_sha256",
+            "expected_candidate_pinned_commit",
             "expected_candidate_url_fingerprint",
             "expected_current_activation_fingerprint",
             "expected_fetch_decision_id",
@@ -11987,6 +12026,9 @@
               "type": "string"
             },
             "expected_candidate_content_sha256": {
+              "type": "string"
+            },
+            "expected_candidate_pinned_commit": {
               "type": "string"
             },
             "expected_candidate_url_fingerprint": {
@@ -12018,6 +12060,7 @@
             "authorize_selected_candidate_fetch",
             "expected_candidate_compiled_policy_fingerprint",
             "expected_candidate_content_sha256",
+            "expected_candidate_pinned_commit",
             "expected_candidate_url_fingerprint",
             "expected_current_activation_fingerprint",
             "expected_provenance_statement_sha256",
@@ -12039,6 +12082,9 @@
               "type": "string"
             },
             "expected_candidate_content_sha256": {
+              "type": "string"
+            },
+            "expected_candidate_pinned_commit": {
               "type": "string"
             },
             "expected_candidate_url_fingerprint": {
@@ -12082,6 +12128,7 @@
             "authorize_selected_candidate_provenance_verification",
             "expected_candidate_compiled_policy_fingerprint",
             "expected_candidate_content_sha256",
+            "expected_candidate_pinned_commit",
             "expected_candidate_url_fingerprint",
             "expected_current_activation_fingerprint",
             "expected_fetch_decision_id",
@@ -14278,6 +14325,10 @@
             "modepack_name": {
               "type": "string"
             },
+            "pinned_commit": {
+              "default": "",
+              "type": "string"
+            },
             "provenance_event_id": {
               "type": "string"
             },
@@ -14369,6 +14420,10 @@
               "type": "array"
             },
             "modepack_name": {
+              "type": "string"
+            },
+            "pinned_commit": {
+              "default": "",
               "type": "string"
             },
             "provenance_event_id": {
@@ -14558,6 +14613,9 @@
             "candidate_content_sha256": {
               "type": "string"
             },
+            "candidate_pinned_commit": {
+              "type": "string"
+            },
             "candidate_url": {
               "type": "string"
             },
@@ -14628,6 +14686,7 @@
           "required": [
             "candidate_compiled_policy_fingerprint",
             "candidate_content_sha256",
+            "candidate_pinned_commit",
             "candidate_url",
             "candidate_url_fingerprint",
             "candidate_url_host",
@@ -14783,6 +14842,10 @@
               "$ref": "#/$defs/ModePackDnsBindingSummary"
             },
             "modepack_name": {
+              "type": "string"
+            },
+            "pinned_commit": {
+              "default": "",
               "type": "string"
             },
             "provenance_event_id": {
@@ -17022,6 +17085,9 @@
             "expected_candidate_content_sha256": {
               "type": "string"
             },
+            "expected_candidate_pinned_commit": {
+              "type": "string"
+            },
             "expected_candidate_url_fingerprint": {
               "type": "string"
             },
@@ -17072,6 +17138,7 @@
             "expected_candidate_activation_fingerprint",
             "expected_candidate_compiled_policy_fingerprint",
             "expected_candidate_content_sha256",
+            "expected_candidate_pinned_commit",
             "expected_candidate_url_fingerprint",
             "expected_current_activation_fingerprint",
             "expected_fetch_decision_id",
@@ -17098,6 +17165,9 @@
               "type": "string"
             },
             "expected_candidate_content_sha256": {
+              "type": "string"
+            },
+            "expected_candidate_pinned_commit": {
               "type": "string"
             },
             "expected_candidate_url_fingerprint": {
@@ -17144,6 +17214,7 @@
             "authorize_selected_candidate_approval",
             "expected_candidate_compiled_policy_fingerprint",
             "expected_candidate_content_sha256",
+            "expected_candidate_pinned_commit",
             "expected_candidate_url_fingerprint",
             "expected_current_activation_fingerprint",
             "expected_fetch_decision_id",
@@ -17170,6 +17241,9 @@
               "type": "string"
             },
             "expected_candidate_content_sha256": {
+              "type": "string"
+            },
+            "expected_candidate_pinned_commit": {
               "type": "string"
             },
             "expected_candidate_url_fingerprint": {
@@ -17201,6 +17275,7 @@
             "authorize_selected_candidate_fetch",
             "expected_candidate_compiled_policy_fingerprint",
             "expected_candidate_content_sha256",
+            "expected_candidate_pinned_commit",
             "expected_candidate_url_fingerprint",
             "expected_current_activation_fingerprint",
             "expected_provenance_statement_sha256",
@@ -17222,6 +17297,9 @@
               "type": "string"
             },
             "expected_candidate_content_sha256": {
+              "type": "string"
+            },
+            "expected_candidate_pinned_commit": {
               "type": "string"
             },
             "expected_candidate_url_fingerprint": {
@@ -17265,6 +17343,7 @@
             "authorize_selected_candidate_provenance_verification",
             "expected_candidate_compiled_policy_fingerprint",
             "expected_candidate_content_sha256",
+            "expected_candidate_pinned_commit",
             "expected_candidate_url_fingerprint",
             "expected_current_activation_fingerprint",
             "expected_fetch_decision_id",
@@ -18881,6 +18960,9 @@
             "expected_candidate_content_sha256": {
               "type": "string"
             },
+            "expected_candidate_pinned_commit": {
+              "type": "string"
+            },
             "expected_candidate_url_fingerprint": {
               "type": "string"
             },
@@ -18931,6 +19013,7 @@
             "expected_candidate_activation_fingerprint",
             "expected_candidate_compiled_policy_fingerprint",
             "expected_candidate_content_sha256",
+            "expected_candidate_pinned_commit",
             "expected_candidate_url_fingerprint",
             "expected_current_activation_fingerprint",
             "expected_fetch_decision_id",
@@ -18957,6 +19040,9 @@
               "type": "string"
             },
             "expected_candidate_content_sha256": {
+              "type": "string"
+            },
+            "expected_candidate_pinned_commit": {
               "type": "string"
             },
             "expected_candidate_url_fingerprint": {
@@ -19003,6 +19089,7 @@
             "authorize_selected_candidate_approval",
             "expected_candidate_compiled_policy_fingerprint",
             "expected_candidate_content_sha256",
+            "expected_candidate_pinned_commit",
             "expected_candidate_url_fingerprint",
             "expected_current_activation_fingerprint",
             "expected_fetch_decision_id",
@@ -19029,6 +19116,9 @@
               "type": "string"
             },
             "expected_candidate_content_sha256": {
+              "type": "string"
+            },
+            "expected_candidate_pinned_commit": {
               "type": "string"
             },
             "expected_candidate_url_fingerprint": {
@@ -19060,6 +19150,7 @@
             "authorize_selected_candidate_fetch",
             "expected_candidate_compiled_policy_fingerprint",
             "expected_candidate_content_sha256",
+            "expected_candidate_pinned_commit",
             "expected_candidate_url_fingerprint",
             "expected_current_activation_fingerprint",
             "expected_provenance_statement_sha256",
@@ -19081,6 +19172,9 @@
               "type": "string"
             },
             "expected_candidate_content_sha256": {
+              "type": "string"
+            },
+            "expected_candidate_pinned_commit": {
               "type": "string"
             },
             "expected_candidate_url_fingerprint": {
@@ -19124,6 +19218,7 @@
             "authorize_selected_candidate_provenance_verification",
             "expected_candidate_compiled_policy_fingerprint",
             "expected_candidate_content_sha256",
+            "expected_candidate_pinned_commit",
             "expected_candidate_url_fingerprint",
             "expected_current_activation_fingerprint",
             "expected_fetch_decision_id",
@@ -22576,6 +22671,9 @@
         "expected_content_sha256": {
           "type": "string"
         },
+        "expected_pinned_commit": {
+          "type": "string"
+        },
         "expected_provenance_event_id": {
           "type": "string"
         },
@@ -22593,6 +22691,7 @@
         "authorize_trust",
         "expected_compiled_policy_fingerprint",
         "expected_content_sha256",
+        "expected_pinned_commit",
         "expected_provenance_event_id",
         "expected_provenance_id",
         "expected_signer_fingerprint",
@@ -22649,6 +22748,10 @@
               "type": "array"
             },
             "modepack_name": {
+              "type": "string"
+            },
+            "pinned_commit": {
+              "default": "",
               "type": "string"
             },
             "provenance_event_id": {
@@ -23007,6 +23110,12 @@
             "null"
           ]
         },
+        "expected_approved_candidate_pinned_commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "expected_approved_candidate_source_url_fingerprint": {
           "type": [
             "string",
@@ -23158,6 +23267,10 @@
             "modepack_name": {
               "type": "string"
             },
+            "pinned_commit": {
+              "default": "",
+              "type": "string"
+            },
             "provenance_event_id": {
               "type": "string"
             },
@@ -23267,6 +23380,10 @@
               "$ref": "#/$defs/ModePackDnsBindingSummary"
             },
             "modepack_name": {
+              "type": "string"
+            },
+            "pinned_commit": {
+              "default": "",
               "type": "string"
             },
             "provenance_event_id": {
@@ -23668,6 +23785,9 @@
             "candidate_content_sha256": {
               "type": "string"
             },
+            "candidate_pinned_commit": {
+              "type": "string"
+            },
             "candidate_url": {
               "type": "string"
             },
@@ -23738,6 +23858,7 @@
           "required": [
             "candidate_compiled_policy_fingerprint",
             "candidate_content_sha256",
+            "candidate_pinned_commit",
             "candidate_url",
             "candidate_url_fingerprint",
             "candidate_url_host",
@@ -23882,6 +24003,9 @@
         "expected_content_sha256": {
           "type": "string"
         },
+        "expected_pinned_commit": {
+          "type": "string"
+        },
         "expected_signer_fingerprint": {
           "type": "string"
         },
@@ -23899,6 +24023,7 @@
         "authorize_provenance_verification",
         "expected_compiled_policy_fingerprint",
         "expected_content_sha256",
+        "expected_pinned_commit",
         "expected_signer_fingerprint",
         "provenance_public_key_base64",
         "provenance_signature_base64",
@@ -23943,6 +24068,10 @@
               "type": "array"
             },
             "modepack_name": {
+              "type": "string"
+            },
+            "pinned_commit": {
+              "default": "",
               "type": "string"
             },
             "provenance_event_id": {
@@ -38397,7 +38526,7 @@
       },
       {
         "deny_unknown_fields": true,
-        "field_count": 7,
+        "field_count": 8,
         "optional_fields": [],
         "required_fields": [
           "authorize_trust",
@@ -38406,7 +38535,8 @@
           "expected_provenance_id",
           "expected_provenance_event_id",
           "expected_signer_fingerprint",
-          "expected_statement_sha256"
+          "expected_statement_sha256",
+          "expected_pinned_commit"
         ],
         "type": "ModePackApproveCandidateParams"
       },
@@ -38424,7 +38554,7 @@
       },
       {
         "deny_unknown_fields": true,
-        "field_count": 13,
+        "field_count": 14,
         "optional_fields": [
           "approved_candidate_approval_id",
           "expected_approved_candidate_content_sha256",
@@ -38434,6 +38564,7 @@
           "expected_approved_candidate_source_url_fingerprint",
           "expected_approved_candidate_dns_resolution_fingerprint",
           "expected_approved_candidate_pinned_address_fingerprint",
+          "expected_approved_candidate_pinned_commit",
           "expected_approved_candidate_approval_event_id",
           "update_admission"
         ],
@@ -38516,13 +38647,14 @@
       },
       {
         "deny_unknown_fields": true,
-        "field_count": 7,
+        "field_count": 8,
         "optional_fields": [],
         "required_fields": [
           "authorize_provenance_verification",
           "expected_content_sha256",
           "expected_compiled_policy_fingerprint",
           "expected_signer_fingerprint",
+          "expected_pinned_commit",
           "provenance_statement_json",
           "provenance_signature_base64",
           "provenance_public_key_base64"

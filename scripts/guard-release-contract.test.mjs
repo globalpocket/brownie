@@ -159,6 +159,8 @@ const validPackageJson = {
       'node --test scripts/guard-dependency-security-license-audit.test.mjs',
     'guard:supply-chain-artifact-evidence': 'node scripts/guard-supply-chain-artifact-evidence.mjs',
     'guard:supply-chain-artifact-evidence:test': 'node --test scripts/guard-supply-chain-artifact-evidence.test.mjs',
+    'guard:modepack-distribution-trust': 'node scripts/guard-modepack-distribution-trust.mjs',
+    'guard:modepack-distribution-trust:test': 'node --test scripts/guard-modepack-distribution-trust.test.mjs',
     'guard:owner-governance-evidence': 'node scripts/guard-owner-governance-evidence.mjs',
     'guard:owner-governance-evidence:test': 'node --test scripts/guard-owner-governance-evidence.test.mjs'
   }
@@ -166,7 +168,7 @@ const validPackageJson = {
 
 const validVsixPackageJson = {
   scripts: {
-    check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root release:gate -- --dry-run && pnpm --workspace-root release:dependency-security-license-audit:test && pnpm --workspace-root guard:dependency-security-license-audit && pnpm --workspace-root guard:dependency-security-license-audit:test && pnpm --workspace-root guard:local-release-targets && pnpm --workspace-root guard:supply-chain-artifact-evidence && pnpm --workspace-root guard:supply-chain-artifact-evidence:test && pnpm --workspace-root guard:owner-governance-evidence && pnpm --workspace-root guard:owner-governance-evidence:test && pnpm --workspace-root release:owner-governance-evidence:test'
+    check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root release:gate -- --dry-run && pnpm --workspace-root release:dependency-security-license-audit:test && pnpm --workspace-root guard:dependency-security-license-audit && pnpm --workspace-root guard:dependency-security-license-audit:test && pnpm --workspace-root guard:local-release-targets && pnpm --workspace-root guard:supply-chain-artifact-evidence && pnpm --workspace-root guard:supply-chain-artifact-evidence:test && pnpm --workspace-root guard:modepack-distribution-trust && pnpm --workspace-root guard:modepack-distribution-trust:test && pnpm --workspace-root guard:owner-governance-evidence && pnpm --workspace-root guard:owner-governance-evidence:test && pnpm --workspace-root release:owner-governance-evidence:test'
   }
 };
 
@@ -229,6 +231,8 @@ test('rejects missing release gate package scripts', () => {
   assert(errors.some((error) => error.includes('guard:dependency-security-license-audit:test')));
   assert(errors.some((error) => error.includes('guard:supply-chain-artifact-evidence')));
   assert(errors.some((error) => error.includes('guard:supply-chain-artifact-evidence:test')));
+  assert(errors.some((error) => error.includes('guard:modepack-distribution-trust')));
+  assert(errors.some((error) => error.includes('guard:modepack-distribution-trust:test')));
 });
 
 test('rejects VSIX check path that omits release contract guard', () => {
@@ -261,6 +265,17 @@ test('rejects VSIX check path that omits supply-chain evidence guard', () => {
     vsixPackageJson: { scripts: { check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test' } }
   });
   assert(errors.some((error) => error.includes('guard:supply-chain-artifact-evidence')));
+});
+
+test('rejects VSIX check path that omits Mode Pack distribution trust guard', () => {
+  const errors = validate(validContract(), {
+    vsixPackageJson: {
+      scripts: {
+        check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root guard:supply-chain-artifact-evidence && pnpm --workspace-root guard:supply-chain-artifact-evidence:test'
+      }
+    }
+  });
+  assert(errors.some((error) => error.includes('guard:modepack-distribution-trust')));
 });
 
 test('rejects missing supply-chain evidence contract section', () => {

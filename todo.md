@@ -75,8 +75,6 @@ Current synchronization note:
 
 ### P1: Runtime / CLI boundary
 
-- [ ] R-18: Define Runtime distribution-time Mode Pack trust validation for
-  pinned commits, signatures, trust roots, and revocation evidence.
 - [ ] R-19: Enforce Ledger Contract single-source correctness: event kind,
   schema, validator, fingerprint, and fixture additions must be CI-gated
   together.

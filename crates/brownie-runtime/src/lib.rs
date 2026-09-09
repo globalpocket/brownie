@@ -13407,6 +13407,7 @@ struct ModePackRegistryManifestEntry {
     candidate_url: String,
     candidate_content_sha256: String,
     candidate_compiled_policy_fingerprint: String,
+    pinned_commit: String,
     provenance_statement_url: String,
     provenance_statement_sha256: String,
     signer_fingerprint: String,
@@ -14706,6 +14707,7 @@ mod tests {
     use std::sync::Mutex;
 
     pub(super) static ENV_LOCK: Mutex<()> = Mutex::new(());
+    const TEST_MODEPACK_PINNED_COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 
     pub(super) fn parse_line(line: &str) -> JsonRpcResponse<Value> {
         serde_json::from_str(&handle_jsonrpc_input_line(line).expect("response line"))
@@ -28926,6 +28928,7 @@ modes:
             "schema_version": candidate_snapshot.schema_version,
             "signer_fingerprint": signer_fingerprint.clone(),
             "signer_identity": "registry.example.com",
+            "pinned_commit": TEST_MODEPACK_PINNED_COMMIT,
             "mode_ids": ["remote-selected-reviewer"]
         })
         .to_string();
@@ -28956,6 +28959,7 @@ modes:
             candidate_url_fingerprint: candidate_url_fingerprint.clone(),
             candidate_content_sha256: candidate_content_sha256.clone(),
             candidate_compiled_policy_fingerprint: candidate_policy_fingerprint.clone(),
+            candidate_pinned_commit: TEST_MODEPACK_PINNED_COMMIT.to_string(),
             provenance_statement_url: "https://example.com/provenance.json".to_string(),
             provenance_statement_url_host: "example.com".to_string(),
             provenance_statement_url_fingerprint: provenance_statement_url_fingerprint.clone(),
@@ -30013,6 +30017,7 @@ modes:
             expected_candidate_url_fingerprint: format!("sha256:{}", "2".repeat(64)),
             expected_candidate_content_sha256: format!("sha256:{}", "3".repeat(64)),
             expected_candidate_compiled_policy_fingerprint: format!("sha256:{}", "4".repeat(64)),
+            expected_candidate_pinned_commit: TEST_MODEPACK_PINNED_COMMIT.to_string(),
             expected_provenance_statement_url_fingerprint: format!("sha256:{}", "5".repeat(64)),
             expected_provenance_statement_sha256: format!("sha256:{}", "6".repeat(64)),
             expected_signer_fingerprint: format!("sha256:{}", "7".repeat(64)),
@@ -30089,6 +30094,9 @@ modes:
                         target.expected_provenance_statement_sha256.clone(),
                     ),
                     expected_signer_fingerprint: Some(target.expected_signer_fingerprint.clone()),
+                    expected_candidate_pinned_commit: Some(
+                        target.expected_candidate_pinned_commit.clone(),
+                    ),
                     expected_current_activation_fingerprint: Some(
                         target.expected_current_activation_fingerprint.clone(),
                     ),
@@ -56141,7 +56149,7 @@ modes:
         assert_eq!(mode["permissions"]["workspace_write"], false);
         assert_eq!(mode["permissions"]["process_exec"], false);
         assert_eq!(mode["permissions"]["network_access"], false);
-        assert_eq!(mode["permissions"]["llm_provider_access"], true);
+        assert_eq!(mode["permissions"]["llm_provider_access"], false);
         assert_eq!(mode["permissions"]["service_control"], false);
         assert_eq!(mode["permissions"]["destructive"], false);
         assert_eq!(mode["permissions"]["can_spawn_subtasks"], false);
@@ -56181,8 +56189,8 @@ modes:
         );
         assert_eq!(
             llm_permission.result.expect("llm permission result")["allowed"],
-            true,
-            "AccessLlmProvider is intentionally separate from generic network access"
+            false,
+            "UntrustedRepositoryLocal cannot self-authorize provider access"
         );
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
@@ -56615,6 +56623,7 @@ modes:
                   "candidate_url": "https://example.com/modepack.json",
                   "candidate_content_sha256": "{candidate_content_sha256}",
                   "candidate_compiled_policy_fingerprint": "{active_policy_fingerprint}",
+                  "pinned_commit": "{TEST_MODEPACK_PINNED_COMMIT}",
                   "provenance_statement_url": "https://example.com/provenance.json",
                   "provenance_statement_sha256": "{provenance_statement_sha256}",
                   "signer_fingerprint": "{signer_fingerprint}"
@@ -56652,6 +56661,7 @@ modes:
             "candidate_url_fingerprint": candidate_url_fingerprint,
             "candidate_content_sha256": candidate_content_sha256,
             "candidate_compiled_policy_fingerprint": active_policy_fingerprint,
+            "candidate_pinned_commit": TEST_MODEPACK_PINNED_COMMIT,
             "provenance_statement_url_fingerprint": provenance_statement_url_fingerprint,
             "provenance_statement_sha256": provenance_statement_sha256,
             "signer_fingerprint": signer_fingerprint,
@@ -56762,6 +56772,7 @@ modes:
                   "candidate_url": "https://example.com/modepack.json",
                   "candidate_content_sha256": "{candidate_content_sha256}",
                   "candidate_compiled_policy_fingerprint": "{candidate_policy_fingerprint}",
+                  "pinned_commit": "{TEST_MODEPACK_PINNED_COMMIT}",
                   "provenance_statement_url": "https://example.com/provenance.json",
                   "provenance_statement_sha256": "{provenance_statement_sha256}",
                   "signer_fingerprint": "{signer_fingerprint}"
@@ -56799,6 +56810,7 @@ modes:
             "candidate_url_fingerprint": candidate_url_fingerprint,
             "candidate_content_sha256": candidate_content_sha256,
             "candidate_compiled_policy_fingerprint": candidate_policy_fingerprint,
+            "candidate_pinned_commit": TEST_MODEPACK_PINNED_COMMIT,
             "provenance_statement_url_fingerprint": provenance_statement_url_fingerprint,
             "provenance_statement_sha256": provenance_statement_sha256,
             "signer_fingerprint": signer_fingerprint,
@@ -57023,6 +57035,7 @@ modes:
             "schema_version": candidate_snapshot.schema_version,
             "signer_fingerprint": signer_fingerprint.clone(),
             "signer_identity": "registry.example.com",
+            "pinned_commit": TEST_MODEPACK_PINNED_COMMIT,
             "mode_ids": ["remote-selected-reviewer"]
         })
         .to_string();
@@ -57069,6 +57082,7 @@ modes:
                   "candidate_url": "https://example.com/modepack.json",
                   "candidate_content_sha256": "{candidate_content_sha256}",
                   "candidate_compiled_policy_fingerprint": "{candidate_policy_fingerprint}",
+                  "pinned_commit": "{TEST_MODEPACK_PINNED_COMMIT}",
                   "provenance_statement_url": "https://example.com/provenance.json",
                   "provenance_statement_sha256": "{provenance_statement_sha256}",
                   "signer_fingerprint": "{signer_fingerprint}"
@@ -57095,6 +57109,7 @@ modes:
             "candidate_url_fingerprint": candidate_url_fingerprint,
             "candidate_content_sha256": candidate_content_sha256,
             "candidate_compiled_policy_fingerprint": candidate_policy_fingerprint,
+            "candidate_pinned_commit": TEST_MODEPACK_PINNED_COMMIT,
             "provenance_statement_url_fingerprint": provenance_statement_url_fingerprint,
             "provenance_statement_sha256": provenance_statement_sha256,
             "signer_fingerprint": signer_fingerprint,
@@ -57300,6 +57315,7 @@ modes:
                 expected_candidate_content_sha256: candidate_content_sha256.clone(),
                 expected_candidate_compiled_policy_fingerprint: candidate_policy_fingerprint
                     .clone(),
+                expected_candidate_pinned_commit: TEST_MODEPACK_PINNED_COMMIT.to_string(),
                 expected_provenance_statement_url_fingerprint: selection
                     .selection
                     .provenance_statement_url_fingerprint
@@ -57434,6 +57450,7 @@ modes:
                     .clone(),
                 expected_candidate_content_sha256: candidate_content_sha256.clone(),
                 expected_candidate_compiled_policy_fingerprint: candidate_policy_fingerprint,
+                expected_candidate_pinned_commit: TEST_MODEPACK_PINNED_COMMIT.to_string(),
                 expected_provenance_statement_url_fingerprint: selection
                     .selection
                     .provenance_statement_url_fingerprint
@@ -57556,6 +57573,7 @@ modes:
                     .candidate
                     .compiled_policy_fingerprint
                     .clone(),
+                expected_candidate_pinned_commit: TEST_MODEPACK_PINNED_COMMIT.to_string(),
                 expected_provenance_id: verified_provenance.provenance.provenance_id.clone(),
                 expected_provenance_event_id: verified_provenance
                     .provenance
@@ -57685,6 +57703,9 @@ modes:
                             .pinned_address_fingerprint
                             .clone(),
                     ),
+                    expected_approved_candidate_pinned_commit: Some(
+                        approval_result.approval.pinned_commit.clone(),
+                    ),
                     expected_approved_candidate_approval_event_id: Some(
                         approval_result.approval.approval_event_id.clone(),
                     ),
@@ -57746,6 +57767,7 @@ modes:
                     .candidate
                     .compiled_policy_fingerprint
                     .clone(),
+                expected_candidate_pinned_commit: TEST_MODEPACK_PINNED_COMMIT.to_string(),
                 expected_candidate_activation_fingerprint: candidate_active_snapshot
                     .summary
                     .activation_fingerprint
@@ -58110,6 +58132,7 @@ modes:
             "schema_version": candidate_snapshot.schema_version,
             "signer_fingerprint": signer_fingerprint,
             "signer_identity": "registry.example.com",
+            "pinned_commit": TEST_MODEPACK_PINNED_COMMIT,
             "mode_ids": ["remote-selected-reviewer"]
         })
         .to_string();
@@ -58156,6 +58179,7 @@ modes:
                   "candidate_url": "https://example.com/modepack.json",
                   "candidate_content_sha256": "{candidate_content_sha256}",
                   "candidate_compiled_policy_fingerprint": "{candidate_policy_fingerprint}",
+                  "pinned_commit": "{TEST_MODEPACK_PINNED_COMMIT}",
                   "provenance_statement_url": "https://example.com/provenance.json",
                   "provenance_statement_sha256": "{provenance_statement_sha256}",
                   "signer_fingerprint": "{signer_fingerprint}"
@@ -58182,6 +58206,7 @@ modes:
             "candidate_url_fingerprint": candidate_url_fingerprint,
             "candidate_content_sha256": candidate_content_sha256,
             "candidate_compiled_policy_fingerprint": candidate_policy_fingerprint,
+            "candidate_pinned_commit": TEST_MODEPACK_PINNED_COMMIT,
             "provenance_statement_url_fingerprint": provenance_statement_url_fingerprint,
             "provenance_statement_sha256": provenance_statement_sha256,
             "signer_fingerprint": signer_fingerprint,
@@ -58262,6 +58287,7 @@ modes:
             expected_candidate_url_fingerprint: selected.candidate_url_fingerprint.clone(),
             expected_candidate_content_sha256: candidate_content_sha256.clone(),
             expected_candidate_compiled_policy_fingerprint: candidate_policy_fingerprint.clone(),
+            expected_candidate_pinned_commit: TEST_MODEPACK_PINNED_COMMIT.to_string(),
             expected_provenance_statement_url_fingerprint: selected
                 .provenance_statement_url_fingerprint
                 .clone(),
@@ -58330,6 +58356,7 @@ modes:
             expected_candidate_url_fingerprint: selected.candidate_url_fingerprint.clone(),
             expected_candidate_content_sha256: candidate_content_sha256.clone(),
             expected_candidate_compiled_policy_fingerprint: candidate_policy_fingerprint.clone(),
+            expected_candidate_pinned_commit: TEST_MODEPACK_PINNED_COMMIT.to_string(),
             expected_provenance_statement_url_fingerprint: selected
                 .provenance_statement_url_fingerprint
                 .clone(),
@@ -58442,6 +58469,7 @@ modes:
             expected_candidate_url_fingerprint: selected.candidate_url_fingerprint.clone(),
             expected_candidate_content_sha256: candidate_content_sha256.clone(),
             expected_candidate_compiled_policy_fingerprint: candidate_policy_fingerprint.clone(),
+            expected_candidate_pinned_commit: TEST_MODEPACK_PINNED_COMMIT.to_string(),
             expected_provenance_id: verified_provenance.provenance_id.clone(),
             expected_provenance_event_id: verified_provenance.provenance_event_id.clone(),
             expected_provenance_statement_url_fingerprint: selected
@@ -58568,6 +58596,9 @@ modes:
                             .pinned_address_fingerprint
                             .clone(),
                     ),
+                    expected_approved_candidate_pinned_commit: Some(
+                        approved_candidate.pinned_commit.clone(),
+                    ),
                     expected_approved_candidate_approval_event_id: Some(
                         approved_candidate.approval_event_id.clone(),
                     ),
@@ -58595,6 +58626,7 @@ modes:
                 .summary
                 .activation_fingerprint
                 .clone(),
+            expected_candidate_pinned_commit: TEST_MODEPACK_PINNED_COMMIT.to_string(),
             expected_provenance_id: verified_provenance.provenance_id,
             expected_provenance_event_id: verified_provenance.provenance_event_id,
             expected_provenance_statement_url_fingerprint: selected
@@ -58764,6 +58796,7 @@ modes:
             "schema_version": fetched.candidate.schema_version,
             "signer_fingerprint": signer_fingerprint,
             "signer_identity": "example-publisher",
+            "pinned_commit": TEST_MODEPACK_PINNED_COMMIT,
         })
         .to_string();
         let signature = signing_key.sign(statement.as_bytes());
@@ -58777,6 +58810,7 @@ modes:
                     .compiled_policy_fingerprint
                     .clone(),
                 expected_signer_fingerprint: signer_fingerprint.clone(),
+                expected_pinned_commit: TEST_MODEPACK_PINNED_COMMIT.to_string(),
                 provenance_statement_json: statement,
                 provenance_signature_base64: general_purpose::STANDARD.encode(signature.to_bytes()),
                 provenance_public_key_base64: general_purpose::STANDARD.encode(public_key_bytes),
@@ -58784,13 +58818,14 @@ modes:
         )
         .expect("candidate provenance");
         let untrusted = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":19,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"{}","expected_statement_sha256":"{}"}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":19,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"{}","expected_statement_sha256":"{}","expected_pinned_commit":"{}"}}}}"#,
             fetched.candidate.content_sha256,
             fetched.candidate.compiled_policy_fingerprint,
             provenance.provenance.provenance_id,
             provenance.provenance.provenance_event_id,
             provenance.provenance.signer_fingerprint,
-            provenance.provenance.statement_sha256
+            provenance.provenance.statement_sha256,
+            TEST_MODEPACK_PINNED_COMMIT
         ));
         assert!(untrusted
             .error
@@ -58812,13 +58847,14 @@ modes:
             .unwrap()
             .starts_with("event_"));
         let bad_signer = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":20,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"sha256:{}","expected_statement_sha256":"{}"}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":20,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"sha256:{}","expected_statement_sha256":"{}","expected_pinned_commit":"{}"}}}}"#,
             fetched.candidate.content_sha256,
             fetched.candidate.compiled_policy_fingerprint,
             provenance.provenance.provenance_id,
             provenance.provenance.provenance_event_id,
             "4".repeat(64),
-            provenance.provenance.statement_sha256
+            provenance.provenance.statement_sha256,
+            TEST_MODEPACK_PINNED_COMMIT
         ));
         assert!(bad_signer
             .error
@@ -58826,13 +58862,14 @@ modes:
             .message
             .contains("signer fingerprint mismatch"));
         let request = format!(
-            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"{}","expected_statement_sha256":"{}"}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"{}","expected_statement_sha256":"{}","expected_pinned_commit":"{}"}}}}"#,
             fetched.candidate.content_sha256,
             fetched.candidate.compiled_policy_fingerprint,
             provenance.provenance.provenance_id,
             provenance.provenance.provenance_event_id,
             provenance.provenance.signer_fingerprint,
-            provenance.provenance.statement_sha256
+            provenance.provenance.statement_sha256,
+            TEST_MODEPACK_PINNED_COMMIT
         );
 
         let approved = parse_line(&request);
@@ -59085,6 +59122,7 @@ modes:
             "schema_version": fetched.candidate.schema_version,
             "signer_fingerprint": signer_fingerprint,
             "signer_identity": "example-publisher",
+            "pinned_commit": TEST_MODEPACK_PINNED_COMMIT,
         })
         .to_string();
         let signature = signing_key.sign(statement.as_bytes());
@@ -59098,6 +59136,7 @@ modes:
                     .compiled_policy_fingerprint
                     .clone(),
                 expected_signer_fingerprint: signer_fingerprint.clone(),
+                expected_pinned_commit: TEST_MODEPACK_PINNED_COMMIT.to_string(),
                 provenance_statement_json: statement,
                 provenance_signature_base64: general_purpose::STANDARD.encode(signature.to_bytes()),
                 provenance_public_key_base64: general_purpose::STANDARD.encode(public_key_bytes),
@@ -59147,6 +59186,7 @@ modes:
                 expected_provenance_event_id: provenance.provenance.provenance_event_id,
                 expected_signer_fingerprint: provenance.provenance.signer_fingerprint,
                 expected_statement_sha256: provenance.provenance.statement_sha256,
+                expected_pinned_commit: TEST_MODEPACK_PINNED_COMMIT.to_string(),
             },
         );
         assert!(approval
@@ -59295,14 +59335,16 @@ modes:
             "schema_version": fetched.candidate.schema_version,
             "signer_fingerprint": signer_fingerprint,
             "signer_identity": "example-publisher",
+            "pinned_commit": TEST_MODEPACK_PINNED_COMMIT,
         })
         .to_string();
         let signature = signing_key.sign(statement.as_bytes());
         let request = format!(
-            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.verifyCandidateProvenance","params":{{"authorize_provenance_verification":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_signer_fingerprint":"{}","provenance_statement_json":{},"provenance_signature_base64":"{}","provenance_public_key_base64":"{}"}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.verifyCandidateProvenance","params":{{"authorize_provenance_verification":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_signer_fingerprint":"{}","expected_pinned_commit":"{}","provenance_statement_json":{},"provenance_signature_base64":"{}","provenance_public_key_base64":"{}"}}}}"#,
             fetched.candidate.content_sha256,
             fetched.candidate.compiled_policy_fingerprint,
             signer_fingerprint,
+            TEST_MODEPACK_PINNED_COMMIT,
             serde_json::to_string(&statement).expect("statement string"),
             general_purpose::STANDARD.encode(signature.to_bytes()),
             general_purpose::STANDARD.encode(public_key_bytes),
@@ -59416,14 +59458,16 @@ modes:
             "schema_version": fetched.candidate.schema_version,
             "signer_fingerprint": signer_fingerprint,
             "signer_identity": "example-publisher",
+            "pinned_commit": TEST_MODEPACK_PINNED_COMMIT,
         })
         .to_string();
         let signature = signing_key.sign(statement.as_bytes());
         let bad_request = format!(
-            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.verifyCandidateProvenance","params":{{"authorize_provenance_verification":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_signer_fingerprint":"{}","provenance_statement_json":{},"provenance_signature_base64":"{}","provenance_public_key_base64":"{}"}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.verifyCandidateProvenance","params":{{"authorize_provenance_verification":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_signer_fingerprint":"{}","expected_pinned_commit":"{}","provenance_statement_json":{},"provenance_signature_base64":"{}","provenance_public_key_base64":"{}"}}}}"#,
             fetched.candidate.content_sha256,
             fetched.candidate.compiled_policy_fingerprint,
             signer_fingerprint,
+            TEST_MODEPACK_PINNED_COMMIT,
             serde_json::to_string(&statement).expect("statement string"),
             general_purpose::STANDARD.encode(signature.to_bytes()),
             general_purpose::STANDARD.encode(public_key_bytes),
@@ -59445,14 +59489,16 @@ modes:
             "schema_version": fetched.candidate.schema_version,
             "signer_fingerprint": signer_fingerprint,
             "signer_identity": "example-publisher",
+            "pinned_commit": TEST_MODEPACK_PINNED_COMMIT,
         })
         .to_string();
         let mismatch_signature = signing_key.sign(statement_mismatch.as_bytes());
         let mismatch_request = format!(
-            r#"{{"jsonrpc":"2.0","id":3,"method":"modepack.verifyCandidateProvenance","params":{{"authorize_provenance_verification":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_signer_fingerprint":"{}","provenance_statement_json":{},"provenance_signature_base64":"{}","provenance_public_key_base64":"{}"}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":3,"method":"modepack.verifyCandidateProvenance","params":{{"authorize_provenance_verification":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_signer_fingerprint":"{}","expected_pinned_commit":"{}","provenance_statement_json":{},"provenance_signature_base64":"{}","provenance_public_key_base64":"{}"}}}}"#,
             fetched.candidate.content_sha256,
             fetched.candidate.compiled_policy_fingerprint,
             signer_fingerprint,
+            TEST_MODEPACK_PINNED_COMMIT,
             serde_json::to_string(&statement_mismatch).expect("statement mismatch string"),
             general_purpose::STANDARD.encode(mismatch_signature.to_bytes()),
             general_purpose::STANDARD.encode(public_key_bytes),
@@ -59526,13 +59572,14 @@ modes:
         let expected_statement_sha256 =
             "sha256:3333333333333333333333333333333333333333333333333333333333333333";
         let denied = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.approveCandidate","params":{{"authorize_trust":false,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"{}","expected_statement_sha256":"{}"}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.approveCandidate","params":{{"authorize_trust":false,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"{}","expected_statement_sha256":"{}","expected_pinned_commit":"{}"}}}}"#,
             fetched.candidate.content_sha256,
             fetched.candidate.compiled_policy_fingerprint,
             expected_provenance_id,
             expected_provenance_event_id,
             expected_signer_fingerprint,
-            expected_statement_sha256
+            expected_statement_sha256,
+            TEST_MODEPACK_PINNED_COMMIT
         ));
         assert!(denied
             .error
@@ -59541,13 +59588,14 @@ modes:
             .contains("trust authorization required"));
 
         let unknown = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":3,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"sha256:{}","expected_compiled_policy_fingerprint":"{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"{}","expected_statement_sha256":"{}"}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":3,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"sha256:{}","expected_compiled_policy_fingerprint":"{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"{}","expected_statement_sha256":"{}","expected_pinned_commit":"{}"}}}}"#,
             "0".repeat(64),
             fetched.candidate.compiled_policy_fingerprint,
             expected_provenance_id,
             expected_provenance_event_id,
             expected_signer_fingerprint,
-            expected_statement_sha256
+            expected_statement_sha256,
+            TEST_MODEPACK_PINNED_COMMIT
         ));
         assert!(unknown
             .error
@@ -59556,13 +59604,14 @@ modes:
             .contains("cached candidate not found"));
 
         let missing_provenance = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":4,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"{}","expected_statement_sha256":"{}"}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":4,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"{}","expected_statement_sha256":"{}","expected_pinned_commit":"{}"}}}}"#,
             fetched.candidate.content_sha256,
             fetched.candidate.compiled_policy_fingerprint,
             expected_provenance_id,
             expected_provenance_event_id,
             expected_signer_fingerprint,
-            expected_statement_sha256
+            expected_statement_sha256,
+            TEST_MODEPACK_PINNED_COMMIT
         ));
         assert!(missing_provenance
             .error
@@ -59571,13 +59620,14 @@ modes:
             .contains("verified provenance not found"));
 
         let mismatch = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":5,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"sha256:{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"{}","expected_statement_sha256":"{}"}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":5,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"sha256:{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"{}","expected_statement_sha256":"{}","expected_pinned_commit":"{}"}}}}"#,
             fetched.candidate.content_sha256,
             "1".repeat(64),
             expected_provenance_id,
             expected_provenance_event_id,
             expected_signer_fingerprint,
-            expected_statement_sha256
+            expected_statement_sha256,
+            TEST_MODEPACK_PINNED_COMMIT
         ));
         assert!(mismatch
             .error
@@ -59658,6 +59708,7 @@ modes:
             "schema_version": fetched.candidate.schema_version,
             "signer_fingerprint": signer_fingerprint,
             "signer_identity": "example-publisher",
+            "pinned_commit": TEST_MODEPACK_PINNED_COMMIT,
         })
         .to_string();
         let signature = signing_key.sign(statement.as_bytes());
@@ -59671,6 +59722,7 @@ modes:
                     .compiled_policy_fingerprint
                     .clone(),
                 expected_signer_fingerprint: signer_fingerprint,
+                expected_pinned_commit: TEST_MODEPACK_PINNED_COMMIT.to_string(),
                 provenance_statement_json: statement,
                 provenance_signature_base64: general_purpose::STANDARD.encode(signature.to_bytes()),
                 provenance_public_key_base64: general_purpose::STANDARD.encode(public_key_bytes),
@@ -59699,6 +59751,7 @@ modes:
                 expected_provenance_event_id: provenance.provenance.provenance_event_id.clone(),
                 expected_signer_fingerprint: provenance.provenance.signer_fingerprint.clone(),
                 expected_statement_sha256: provenance.provenance.statement_sha256.clone(),
+                expected_pinned_commit: TEST_MODEPACK_PINNED_COMMIT.to_string(),
             },
         )
         .expect("candidate approval");
@@ -59732,6 +59785,9 @@ modes:
                         .pinned_address_fingerprint
                         .clone(),
                 ),
+                expected_approved_candidate_pinned_commit: Some(
+                    approved.approval.pinned_commit.clone(),
+                ),
                 expected_approved_candidate_approval_event_id: Some(
                     approved.approval.approval_event_id.clone(),
                 ),
@@ -59744,7 +59800,7 @@ modes:
         .expect("candidate active snapshot");
         let candidate_fingerprint = candidate_snapshot.summary.activation_fingerprint.clone();
         let bad_identity_request = format!(
-            r#"{{"jsonrpc":"2.0","id":22,"method":"modepack.replaceActive","params":{{"authorize_replacement":true,"expected_current_activation_fingerprint":"{current_fingerprint}","expected_candidate_activation_fingerprint":"{candidate_fingerprint}","approved_candidate_approval_id":"{}","expected_approved_candidate_content_sha256":"{}","expected_approved_candidate_compiled_policy_fingerprint":"{}","expected_approved_candidate_id":"modepack_candidate_other","expected_approved_candidate_source_url_host":"{}","expected_approved_candidate_source_url_fingerprint":"{}","expected_approved_candidate_dns_resolution_fingerprint":"{}","expected_approved_candidate_pinned_address_fingerprint":"{}","expected_approved_candidate_approval_event_id":"{}"}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":22,"method":"modepack.replaceActive","params":{{"authorize_replacement":true,"expected_current_activation_fingerprint":"{current_fingerprint}","expected_candidate_activation_fingerprint":"{candidate_fingerprint}","approved_candidate_approval_id":"{}","expected_approved_candidate_content_sha256":"{}","expected_approved_candidate_compiled_policy_fingerprint":"{}","expected_approved_candidate_id":"modepack_candidate_other","expected_approved_candidate_source_url_host":"{}","expected_approved_candidate_source_url_fingerprint":"{}","expected_approved_candidate_dns_resolution_fingerprint":"{}","expected_approved_candidate_pinned_address_fingerprint":"{}","expected_approved_candidate_pinned_commit":"{}","expected_approved_candidate_approval_event_id":"{}"}}}}"#,
             approved.approval.approval_id,
             approved.approval.content_sha256,
             approved.approval.compiled_policy_fingerprint,
@@ -59752,6 +59808,7 @@ modes:
             approved.approval.source_url_fingerprint,
             fetched.candidate.dns_binding.resolution_fingerprint,
             fetched.candidate.dns_binding.pinned_address_fingerprint,
+            approved.approval.pinned_commit,
             approved.approval.approval_event_id
         );
         let bad_identity = parse_line(&bad_identity_request);
@@ -59765,7 +59822,7 @@ modes:
                 .consumed
         );
         let replace_request = format!(
-            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.replaceActive","params":{{"authorize_replacement":true,"expected_current_activation_fingerprint":"{current_fingerprint}","expected_candidate_activation_fingerprint":"{candidate_fingerprint}","approved_candidate_approval_id":"{}","expected_approved_candidate_content_sha256":"{}","expected_approved_candidate_compiled_policy_fingerprint":"{}","expected_approved_candidate_id":"{}","expected_approved_candidate_source_url_host":"{}","expected_approved_candidate_source_url_fingerprint":"{}","expected_approved_candidate_dns_resolution_fingerprint":"{}","expected_approved_candidate_pinned_address_fingerprint":"{}","expected_approved_candidate_approval_event_id":"{}"}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.replaceActive","params":{{"authorize_replacement":true,"expected_current_activation_fingerprint":"{current_fingerprint}","expected_candidate_activation_fingerprint":"{candidate_fingerprint}","approved_candidate_approval_id":"{}","expected_approved_candidate_content_sha256":"{}","expected_approved_candidate_compiled_policy_fingerprint":"{}","expected_approved_candidate_id":"{}","expected_approved_candidate_source_url_host":"{}","expected_approved_candidate_source_url_fingerprint":"{}","expected_approved_candidate_dns_resolution_fingerprint":"{}","expected_approved_candidate_pinned_address_fingerprint":"{}","expected_approved_candidate_pinned_commit":"{}","expected_approved_candidate_approval_event_id":"{}"}}}}"#,
             approved.approval.approval_id,
             approved.approval.content_sha256,
             approved.approval.compiled_policy_fingerprint,
@@ -59774,6 +59831,7 @@ modes:
             approved.approval.source_url_fingerprint,
             fetched.candidate.dns_binding.resolution_fingerprint,
             fetched.candidate.dns_binding.pinned_address_fingerprint,
+            approved.approval.pinned_commit,
             approved.approval.approval_event_id
         );
 
@@ -59930,6 +59988,7 @@ modes:
             "schema_version": update_fetched.candidate.schema_version,
             "signer_fingerprint": provenance.provenance.signer_fingerprint,
             "signer_identity": "example-publisher",
+            "pinned_commit": TEST_MODEPACK_PINNED_COMMIT,
         })
         .to_string();
         let update_signature = signing_key.sign(update_statement.as_bytes());
@@ -59943,6 +60002,7 @@ modes:
                     .compiled_policy_fingerprint
                     .clone(),
                 expected_signer_fingerprint: provenance.provenance.signer_fingerprint.clone(),
+                expected_pinned_commit: TEST_MODEPACK_PINNED_COMMIT.to_string(),
                 provenance_statement_json: update_statement,
                 provenance_signature_base64: general_purpose::STANDARD
                     .encode(update_signature.to_bytes()),
@@ -59969,6 +60029,7 @@ modes:
                     .signer_fingerprint
                     .clone(),
                 expected_statement_sha256: update_provenance.provenance.statement_sha256.clone(),
+                expected_pinned_commit: TEST_MODEPACK_PINNED_COMMIT.to_string(),
             },
         )
         .expect("update candidate approval");
@@ -60006,6 +60067,9 @@ modes:
                         .pinned_address_fingerprint
                         .clone(),
                 ),
+                expected_approved_candidate_pinned_commit: Some(
+                    update_approved.approval.pinned_commit.clone(),
+                ),
                 expected_approved_candidate_approval_event_id: Some(
                     update_approved.approval.approval_event_id.clone(),
                 ),
@@ -60018,7 +60082,7 @@ modes:
         .expect("update active snapshot");
         let update_fingerprint = update_snapshot.summary.activation_fingerprint.clone();
         let update_request = format!(
-            r#"{{"jsonrpc":"2.0","id":5,"method":"modepack.replaceActive","params":{{"authorize_replacement":true,"expected_current_activation_fingerprint":"{candidate_fingerprint}","expected_candidate_activation_fingerprint":"{update_fingerprint}","approved_candidate_approval_id":"{}","expected_approved_candidate_content_sha256":"{}","expected_approved_candidate_compiled_policy_fingerprint":"{}","expected_approved_candidate_id":"{}","expected_approved_candidate_source_url_host":"{}","expected_approved_candidate_source_url_fingerprint":"{}","expected_approved_candidate_dns_resolution_fingerprint":"{}","expected_approved_candidate_pinned_address_fingerprint":"{}","expected_approved_candidate_approval_event_id":"{}","update_admission":{{"authorize_update":true,"expected_current_modepack_name":"remote-agentmodes","expected_current_source_kind":"remote_https_candidate","expected_approved_candidate_provenance_id":"{}","expected_approved_candidate_provenance_event_id":"{}","expected_approved_candidate_signer_fingerprint":"{}","expected_approved_candidate_statement_sha256":"{}","expected_trusted_signer_trust_id":"{}","expected_trusted_signer_event_id":"{}"}}}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":5,"method":"modepack.replaceActive","params":{{"authorize_replacement":true,"expected_current_activation_fingerprint":"{candidate_fingerprint}","expected_candidate_activation_fingerprint":"{update_fingerprint}","approved_candidate_approval_id":"{}","expected_approved_candidate_content_sha256":"{}","expected_approved_candidate_compiled_policy_fingerprint":"{}","expected_approved_candidate_id":"{}","expected_approved_candidate_source_url_host":"{}","expected_approved_candidate_source_url_fingerprint":"{}","expected_approved_candidate_dns_resolution_fingerprint":"{}","expected_approved_candidate_pinned_address_fingerprint":"{}","expected_approved_candidate_pinned_commit":"{}","expected_approved_candidate_approval_event_id":"{}","update_admission":{{"authorize_update":true,"expected_current_modepack_name":"remote-agentmodes","expected_current_source_kind":"remote_https_candidate","expected_approved_candidate_provenance_id":"{}","expected_approved_candidate_provenance_event_id":"{}","expected_approved_candidate_signer_fingerprint":"{}","expected_approved_candidate_statement_sha256":"{}","expected_trusted_signer_trust_id":"{}","expected_trusted_signer_event_id":"{}"}}}}}}"#,
             update_approved.approval.approval_id,
             update_approved.approval.content_sha256,
             update_approved.approval.compiled_policy_fingerprint,
@@ -60030,6 +60094,7 @@ modes:
                 .candidate
                 .dns_binding
                 .pinned_address_fingerprint,
+            update_approved.approval.pinned_commit,
             update_approved.approval.approval_event_id,
             update_approved.approval.provenance_id,
             update_approved.approval.provenance_event_id,

@@ -328,13 +328,21 @@
         "id": "supply_chain_artifact_evidence_guard",
         "command": "pnpm --workspace-root guard:supply-chain-artifact-evidence"
       },
-      {
-        "id": "supply_chain_artifact_evidence_guard_test",
-        "command": "pnpm --workspace-root guard:supply-chain-artifact-evidence:test"
-      },
-      {
-        "id": "release_integrity_verify",
-        "command": "pnpm --workspace-root release:integrity-verify"
+    {
+      "id": "supply_chain_artifact_evidence_guard_test",
+      "command": "pnpm --workspace-root guard:supply-chain-artifact-evidence:test"
+    },
+    {
+      "id": "modepack_distribution_trust_guard",
+      "command": "pnpm --workspace-root guard:modepack-distribution-trust"
+    },
+    {
+      "id": "modepack_distribution_trust_guard_test",
+      "command": "pnpm --workspace-root guard:modepack-distribution-trust:test"
+    },
+    {
+      "id": "release_integrity_verify",
+      "command": "pnpm --workspace-root release:integrity-verify"
       },
       {
         "id": "owner_governance_evidence_generate",
