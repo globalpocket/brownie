@@ -55,16 +55,21 @@ fn validate_objective_apply_verification_target(
                 .to_string(),
         );
     }
-    if target.expected_operation != WorkspacePatchOperation::ReplaceFile.as_str()
+    if !is_objective_workspace_operation(&target.expected_operation)
         || target.expected_apply_status != "Applied"
         || !target.expected_authorization_consumed
     {
         return Err(
-            "objective apply verification failed: expected labels must describe a successful authorized replace_file apply"
+            "objective apply verification failed: expected labels must describe a successful authorized workspace apply"
                 .to_string(),
         );
     }
     Ok(())
+}
+
+fn is_objective_workspace_operation(operation: &str) -> bool {
+    operation == WorkspacePatchOperation::ReplaceFile.as_str()
+        || operation == WorkspacePatchOperation::PatchFile.as_str()
 }
 
 fn objective_apply_verification_request_fingerprint(
@@ -533,7 +538,7 @@ fn validate_objective_completion_acceptance_target(
                 .to_string(),
         );
     }
-    if target.expected_operation != WorkspacePatchOperation::ReplaceFile.as_str()
+    if !is_objective_workspace_operation(&target.expected_operation)
         || target.expected_apply_status != "Applied"
         || !target.expected_authorization_consumed
         || target.expected_verification_status != "verified"
@@ -541,7 +546,7 @@ fn validate_objective_completion_acceptance_target(
             != HeadlessContinueRouteKind::AcceptObjectiveCompletionExplicitly
     {
         return Err(
-            "objective completion acceptance failed: expected labels must describe a verified objective replace_file apply"
+            "objective completion acceptance failed: expected labels must describe a verified objective workspace apply"
                 .to_string(),
         );
     }
