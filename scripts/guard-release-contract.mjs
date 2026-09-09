@@ -86,6 +86,7 @@ function validateCommitTrace(trace, errors, contractPath) {
     'workflow_run_id',
     'artifact_sha256',
     'contract_registry_fingerprint',
+    'readiness_audit_content_sha256',
     'mode_pack_fingerprint',
     'product_dod_fingerprint'
   ]) {
