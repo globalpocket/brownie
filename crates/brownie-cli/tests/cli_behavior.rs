@@ -306,6 +306,40 @@ fn run_file_rejects_oversized_invalid_utf8_by_metadata_before_content_read() {
 }
 
 #[test]
+fn run_file_rejects_invalid_utf8_with_bounded_structured_error() {
+    let runtime = fake_runtime(
+        "run-file-invalid-utf8",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","session_id":"session-1","drive_id":"drive-1","next_action":"inspect_progress_overview","completion_closure":{"status":"budget_exhausted"},"journey":{"journey_id":"journey-1","task_id":"task-1","run_id":"run-1"}}}"#,
+    );
+    let capture = runtime.with_file_name("request.json");
+    let objective_path = runtime.with_file_name("invalid-utf8-objective.md");
+    fs::write(&objective_path, [0xff, 0xfe, 0xfd, b'a']).unwrap();
+
+    let output = Command::new(brownie())
+        .args(["--json", "run", "--file"])
+        .arg(&objective_path)
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(64));
+    assert!(!capture.exists());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["status"], "invalid_invocation");
+    assert_eq!(payload["error"]["reason"], "invalid_utf8");
+    let message = payload["error"]["message"].as_str().unwrap();
+    assert_eq!(
+        message,
+        "failed to read objective file: objective file must be valid UTF-8"
+    );
+    assert!(!message.contains("stream did not contain valid UTF-8"));
+    assert!(!message.contains(objective_path.to_str().unwrap()));
+}
+
+#[test]
 fn run_file_rejects_directory_without_runtime_startup() {
     let runtime = fake_runtime(
         "run-file-directory",
