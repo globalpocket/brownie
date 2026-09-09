@@ -4967,6 +4967,12 @@ pub(super) fn tool_execution_ledger_payload(result: &brownie_tools::ToolExecutio
     if let Some(bytes_read) = result.output.get("bytes_read") {
         payload.insert("bytes_read".to_string(), bytes_read.clone());
     }
+    if let Some(bytes_total) = result.output.get("bytes_total") {
+        payload.insert("bytes_total".to_string(), bytes_total.clone());
+    }
+    if let Some(content_sha256) = result.output.get("content_sha256") {
+        payload.insert("content_sha256".to_string(), content_sha256.clone());
+    }
     if let Some(truncated) = result.output.get("truncated") {
         payload.insert("truncated".to_string(), truncated.clone());
     }

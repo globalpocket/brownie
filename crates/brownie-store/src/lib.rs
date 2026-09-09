@@ -8049,6 +8049,8 @@ fn validate_tool_execution_terminal_payload_schema(
     }
     validate_optional_payload_string_field(object, "output_preview")?;
     validate_optional_payload_u64_field(object, "bytes_read")?;
+    validate_optional_payload_u64_field(object, "bytes_total")?;
+    validate_optional_payload_string_field(object, "content_sha256")?;
     validate_optional_payload_bool_field(object, "truncated")?;
     validate_optional_payload_string_field(object, "check_id")?;
     validate_optional_payload_string_field(object, "verification_status")?;
@@ -10206,6 +10208,7 @@ const TOOL_EXECUTION_TERMINAL_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "authorized_path_count",
     "bounded_cargo_diagnostics",
     "bytes_read",
+    "bytes_total",
     "captured_bytes",
     "cargo_dependency_fetch_offline",
     "catalog_provenance",
@@ -10214,6 +10217,7 @@ const TOOL_EXECUTION_TERMINAL_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "commit_id",
     "committed_tree_fingerprint",
     "compile_time_code_sandboxed",
+    "content_sha256",
     "duration_ms",
     "exit_code",
     "expected_parent_head",
@@ -12359,6 +12363,8 @@ mod tests {
                         "status": "Completed",
                         "output_preview": "bounded output",
                         "bytes_read": 14,
+                        "bytes_total": 14,
+                        "content_sha256": format!("sha256:{}", "6".repeat(64)),
                         "truncated": false
                     })),
                 )],

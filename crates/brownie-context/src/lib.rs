@@ -699,6 +699,11 @@ fn format_tool_execution_summary(events: &[LedgerEvent]) -> Vec<String> {
                         return format_mcp_tool_execution_summary(tool_id, status, mcp);
                     }
                     let bytes_read = payload.get("bytes_read").and_then(|value| value.as_u64());
+                    let bytes_total = payload.get("bytes_total").and_then(|value| value.as_u64());
+                    let content_sha256 = payload
+                        .get("content_sha256")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
                     let truncated = payload.get("truncated").and_then(|value| value.as_bool());
                     if tool_id == "workspace.read" {
                         if let Some(output_preview) =
@@ -707,10 +712,14 @@ fn format_tool_execution_summary(events: &[LedgerEvent]) -> Vec<String> {
                             let bounded_preview =
                                 output_preview.chars().take(2048).collect::<String>();
                             return Some(format!(
-                                "{tool_id}: {status} bytes_read={} truncated={} output_preview={bounded_preview:?}",
+                                "{tool_id}: {status} bytes_read={} bytes_total={} content_sha256={} truncated={} output_preview={bounded_preview:?}",
                                 bytes_read
                                     .map(|value| value.to_string())
                                     .unwrap_or_else(|| "<unknown>".to_string()),
+                                bytes_total
+                                    .map(|value| value.to_string())
+                                    .unwrap_or_else(|| "<unknown>".to_string()),
+                                content_sha256,
                                 truncated
                                     .map(|value| value.to_string())
                                     .unwrap_or_else(|| "<unknown>".to_string())
@@ -718,10 +727,14 @@ fn format_tool_execution_summary(events: &[LedgerEvent]) -> Vec<String> {
                         }
                     }
                     Some(format!(
-                        "{tool_id}: {status} bytes_read={} truncated={}",
+                        "{tool_id}: {status} bytes_read={} bytes_total={} content_sha256={} truncated={}",
                         bytes_read
                             .map(|value| value.to_string())
                             .unwrap_or_else(|| "<unknown>".to_string()),
+                        bytes_total
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "<unknown>".to_string()),
+                        content_sha256,
                         truncated
                             .map(|value| value.to_string())
                             .unwrap_or_else(|| "<unknown>".to_string())
@@ -2270,6 +2283,8 @@ mod tests {
                     "tool_id": "workspace.read",
                     "status": "Completed",
                     "bytes_read": 123,
+                    "bytes_total": 123,
+                    "content_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "truncated": false,
                     "output_preview": "# Brownie"
                 })),
@@ -2284,13 +2299,11 @@ mod tests {
         let materialized = ContextMaterializer::materialize(input);
         assert_eq!(
             materialized.tool_execution_summary,
-            vec!["workspace.read: Completed bytes_read=123 truncated=false output_preview=\"# Brownie\""]
+            vec!["workspace.read: Completed bytes_read=123 bytes_total=123 content_sha256=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa truncated=false output_preview=\"# Brownie\""]
         );
         let prompt = PromptBuilder::build(materialized);
         assert!(prompt.messages[1].content.contains("Tool Execution:"));
-        assert!(prompt.messages[1].content.contains(
-            "- workspace.read: Completed bytes_read=123 truncated=false output_preview=\"# Brownie\""
-        ));
+        assert!(prompt.messages[1].content.contains("content_sha256=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
     }
 
     #[test]

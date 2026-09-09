@@ -239,8 +239,10 @@ impl WorkspaceReadExecutor {
             output: json!({
                 "path": relative_path,
                 "content": content,
+                "content_sha256": sha256_fingerprint(&bytes),
                 "truncated": truncated,
                 "bytes_read": read_len,
+                "bytes_total": bytes.len(),
             }),
         })
     }
@@ -4897,7 +4899,12 @@ mod tests {
 
         assert_eq!(result.status, ToolExecutionStatus::Completed);
         assert_eq!(result.output["content"], "hello brownie");
+        assert_eq!(
+            result.output["content_sha256"],
+            sha256_fingerprint("hello brownie".as_bytes())
+        );
         assert_eq!(result.output["truncated"], false);
+        assert_eq!(result.output["bytes_total"], "hello brownie".len());
     }
 
     #[test]
@@ -4943,6 +4950,11 @@ mod tests {
         assert_eq!(result.output["content"], "abc");
         assert_eq!(result.output["truncated"], true);
         assert_eq!(result.output["bytes_read"], 3);
+        assert_eq!(result.output["bytes_total"], 6);
+        assert_eq!(
+            result.output["content_sha256"],
+            sha256_fingerprint("abcdef".as_bytes())
+        );
     }
 
     #[test]
