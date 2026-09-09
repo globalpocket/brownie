@@ -75,9 +75,6 @@ Current synchronization note:
 
 ### P0: Brownie Runtime safety
 
-- [ ] R-03: Remove unbounded Runtime-thread `runtime.sleep`; if any short
-  protocol wait remains, prove cancel, deadline, restart, replay, permission,
-  and boundedness behavior.
 - [ ] R-05: Repair sensitive prompt detection so it no longer always returns an
   empty result; support low-false-positive detection or an explicit documented
   override.

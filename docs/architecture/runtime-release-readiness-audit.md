@@ -216,6 +216,13 @@ process execution; the controlled executor still rejects caller-supplied shell,
 command, environment, network, and file input before returning bounded timestamp
 evidence.
 
+R-03 removes the direct `runtime.sleep` tool from the builtin tool registry,
+controlled executor, parser alias/preflight path, tool planner, tool list, and
+prompt contract. Runtime no longer exposes a task-controlled sleep operation
+that can block the Runtime thread; explicit waiting must be handled outside the
+Runtime tool surface until a future bounded, cancellable, deadline-aware,
+restart-safe protocol wait is implemented with durable replay evidence.
+
 | ID | Priority | Classification | Status | Responsibility | Release classification | Evidence summary | Next action |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `runtime-release-debt-reaudit` | P0 | Runtime Release debt reaudit | implemented sufficient | Runtime | closed | Required specs, manifests, guards, crates, CLI, VSIX, and CI were reaudited and are now backed by a machine guard. | Use this artifact as the source for the remaining bounded closure phases. |

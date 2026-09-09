@@ -2531,22 +2531,6 @@ pub(super) fn handle_approved_workspace_intents(
         &dynamic_tools,
     );
     let planned_allowed_tool_ids = allowed_planned_tool_ids(record, policy);
-    let edit_task_requires_workspace_write =
-        super::task_goal_requires_workspace_write_proposal(&record.goal);
-    let existing_events = store.tasks().read_ledger_events(&record.run_id)?;
-    let mut workspace_write_proposal_seen = existing_events
-        .iter()
-        .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed);
-    let runtime_sleep_completed = existing_events.iter().any(|event| {
-        if event.kind != LedgerEventKind::ToolExecutionCompleted {
-            return false;
-        }
-        let Some(payload) = sanitize_ledger_payload(event.payload.clone()) else {
-            return false;
-        };
-        payload.get("tool_id").and_then(Value::as_str) == Some(RUNTIME_SLEEP_TOOL_ID)
-            && payload.get("status").and_then(Value::as_str) == Some("Completed")
-    });
     let is_verification_recovery_task = record.verification_recovery_provenance.is_some();
     let mut verification_recovery_proposal_seen =
         match record.verification_recovery_provenance.as_ref() {
@@ -2567,7 +2551,6 @@ pub(super) fn handle_approved_workspace_intents(
                 | GIT_DIFF_TOOL_ID
                 | GIT_COMMIT_TOOL_ID
                 | TIME_NOW_TOOL_ID
-                | RUNTIME_SLEEP_TOOL_ID
                 | PROCESS_EXEC_TOOL_ID
         );
         let mcp_execution_tool = mcp_client::split_normalized_tool_id(&decision.tool_id).is_some();
@@ -2585,7 +2568,6 @@ pub(super) fn handle_approved_workspace_intents(
                 continue;
             }
             append_workspace_patch_proposal(store, record, policy, &decision)?;
-            workspace_write_proposal_seen = true;
             if is_verification_recovery_task {
                 verification_recovery_proposal_seen = true;
             }
@@ -2605,15 +2587,6 @@ pub(super) fn handle_approved_workspace_intents(
             continue;
         }
         if !builtin_controlled_execution_tool {
-            continue;
-        }
-        if edit_task_requires_workspace_write
-            && decision.tool_id == RUNTIME_SLEEP_TOOL_ID
-            && !workspace_write_proposal_seen
-        {
-            continue;
-        }
-        if decision.tool_id == RUNTIME_SLEEP_TOOL_ID && runtime_sleep_completed {
             continue;
         }
         store.tasks().append_task_event_with_payload(

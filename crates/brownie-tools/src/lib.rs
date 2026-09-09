@@ -34,7 +34,6 @@ pub const GIT_DIFF_TOOL_ID: &str = "git.diff";
 pub const GIT_COMMIT_TOOL_ID: &str = "git.commit";
 pub const PROCESS_EXEC_TOOL_ID: &str = "process.exec";
 pub const TIME_NOW_TOOL_ID: &str = "time.now";
-pub const RUNTIME_SLEEP_TOOL_ID: &str = "runtime.sleep";
 pub const MAX_WORKSPACE_READ_BYTES: usize = 65_536;
 pub const DEFAULT_VERIFICATION_TIMEOUT_MS: u64 = 30_000;
 pub const MAX_VERIFICATION_CAPTURE_BYTES: usize = 65_536;
@@ -64,7 +63,6 @@ pub const MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 200_000;
 pub const DEFAULT_PROPOSAL_PREVIEW_CHARS: usize = 2_000;
 pub const MAX_SUBTASK_SPAWN_GOAL_CHARS: usize = 1_000;
 pub const MAX_SUBTASK_SPAWN_MODE_ID_CHARS: usize = 128;
-pub const MAX_RUNTIME_SLEEP_MS: u64 = 120_000;
 const AGENTMODES_NEW_TASK_ALIAS_TOOL_ID: &str = "new_task";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,7 +123,6 @@ impl BuiltinToolRegistry {
             git_diff_tool(),
             git_commit_tool(),
             time_now_tool(),
-            runtime_sleep_tool(),
             tool(PROCESS_EXEC_TOOL_ID, "Process Exec", "Dry-run definition for process execution requests; no commands are executed in Phase 1.6.", RuntimeAction::ExecuteProcess),
             subtask_spawn_tool(),
             tool("network.access", "Network Access", "Dry-run definition for network access requests.", RuntimeAction::AccessNetwork),
@@ -298,7 +295,6 @@ impl ToolExecutor {
             GIT_DIFF_TOOL_ID => GitCommandExecutor::diff_summary(workspace_root, &request.input),
             GIT_COMMIT_TOOL_ID => GitCommandExecutor::commit(workspace_root, &request.input),
             TIME_NOW_TOOL_ID => BoundedRuntimeToolExecutor::time_now(&request.input),
-            RUNTIME_SLEEP_TOOL_ID => BoundedRuntimeToolExecutor::sleep(&request.input),
             _ => Ok(ToolExecutionResult {
                 tool_id: request.tool_id,
                 status: ToolExecutionStatus::Denied,
@@ -360,27 +356,6 @@ impl BoundedRuntimeToolExecutor {
             status: ToolExecutionStatus::Completed,
             output: json!({
                 "unix_epoch_ms": now_ms,
-            }),
-        })
-    }
-
-    fn sleep(input: &Value) -> anyhow::Result<ToolExecutionResult> {
-        let duration_ms = match preflight_runtime_sleep_input(input) {
-            Ok(duration_ms) => duration_ms,
-            Err(reason) => {
-                return Ok(ToolExecutionResult {
-                    tool_id: RUNTIME_SLEEP_TOOL_ID.to_string(),
-                    status: ToolExecutionStatus::Failed,
-                    output: json!({ "reason": reason }),
-                })
-            }
-        };
-        thread::sleep(Duration::from_millis(duration_ms));
-        Ok(ToolExecutionResult {
-            tool_id: RUNTIME_SLEEP_TOOL_ID.to_string(),
-            status: ToolExecutionStatus::Completed,
-            output: json!({
-                "slept_ms": duration_ms,
             }),
         })
     }
@@ -2676,29 +2651,6 @@ fn time_now_tool() -> ToolDefinition {
     }
 }
 
-fn runtime_sleep_tool() -> ToolDefinition {
-    ToolDefinition {
-        tool_id: RUNTIME_SLEEP_TOOL_ID.to_string(),
-        display_name: "Runtime Sleep".to_string(),
-        description: "Controlled bounded wait. Sleeps for duration_ms up to the Runtime maximum; callers cannot supply shell, command, environment, network, or file input.".to_string(),
-        required_action: RuntimeAction::ExecuteProcess,
-        input_schema: ToolInputSchema {
-            fields: vec![
-                ToolInputField {
-                    name: "duration_ms".to_string(),
-                    required: false,
-                    description: "Bounded sleep duration in milliseconds. Use exactly one of duration_ms or duration_seconds.".to_string(),
-                },
-                ToolInputField {
-                    name: "duration_seconds".to_string(),
-                    required: false,
-                    description: "Bounded sleep duration in seconds. Use exactly one of duration_ms or duration_seconds.".to_string(),
-                },
-            ],
-        },
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ToolIntentParserConfig {
     pub max_blocks: usize,
@@ -2972,33 +2924,6 @@ fn preflight_time_now_input(input: &Value) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn preflight_runtime_sleep_input(input: &Value) -> Result<u64, &'static str> {
-    let Some(object) = input.as_object() else {
-        return Err("runtime.sleep input must be an object.");
-    };
-    for key in object.keys() {
-        if key != "duration_ms" && key != "duration_seconds" {
-            return Err("runtime.sleep input contains unsupported field.");
-        }
-    }
-    let duration_ms = object.get("duration_ms").and_then(Value::as_u64);
-    let duration_seconds = object.get("duration_seconds").and_then(Value::as_u64);
-    if duration_ms.is_some() == duration_seconds.is_some() {
-        return Err("runtime.sleep requires exactly one of duration_ms or duration_seconds.");
-    };
-    let duration_ms = if let Some(duration_ms) = duration_ms {
-        duration_ms
-    } else {
-        duration_seconds
-            .and_then(|seconds| seconds.checked_mul(1_000))
-            .ok_or("runtime.sleep input.duration_seconds exceeds the maximum duration.")?
-    };
-    if duration_ms > MAX_RUNTIME_SLEEP_MS {
-        return Err("runtime.sleep input.duration_ms exceeds the maximum duration.");
-    }
-    Ok(duration_ms)
-}
-
 pub fn preflight_subtask_spawn_input(input: &Value) -> Result<(), &'static str> {
     let Some(object) = input.as_object() else {
         return Err("subtask.spawn input must be an object.");
@@ -3246,7 +3171,7 @@ impl ToolIntentParser {
                 ));
                 continue;
             }
-            let mut input = match obj.get("input") {
+            let input = match obj.get("input") {
                 Some(value) if value.is_object() => value.clone(),
                 Some(_) => {
                     rejected.push(rejection(
@@ -3283,13 +3208,6 @@ impl ToolIntentParser {
             }
             if tool_id_value == TIME_NOW_TOOL_ID {
                 if let Err(reason) = preflight_time_now_input(&input) {
-                    rejected.push(rejection(Some(tool_id_value), reason, "invalid_input"));
-                    continue;
-                }
-            }
-            if tool_id_value == RUNTIME_SLEEP_TOOL_ID {
-                normalize_runtime_sleep_input_aliases(&mut input);
-                if let Err(reason) = preflight_runtime_sleep_input(&input) {
                     rejected.push(rejection(Some(tool_id_value), reason, "invalid_input"));
                     continue;
                 }
@@ -3349,18 +3267,6 @@ impl ToolIntentParser {
             rejected,
             summary,
         }
-    }
-}
-
-fn normalize_runtime_sleep_input_aliases(input: &mut Value) {
-    let Some(object) = input.as_object_mut() else {
-        return;
-    };
-    if object.contains_key("duration_seconds") || !object.contains_key("seconds") {
-        return;
-    }
-    if let Some(seconds) = object.remove("seconds") {
-        object.insert("duration_seconds".to_string(), seconds);
     }
 }
 
@@ -4164,12 +4070,6 @@ impl ToolPlanner {
                 "Goal asks for current time evidence.",
             ));
         }
-        if contains_any(&goal, &["wait", "sleep", "待つ", "待機"]) {
-            items.push(plan_item(
-                RUNTIME_SLEEP_TOOL_ID,
-                "Goal asks for a bounded Runtime wait.",
-            ));
-        }
         if contains_any(
             &goal,
             &[
@@ -4347,7 +4247,6 @@ mod tests {
                 "git.diff",
                 "git.commit",
                 "time.now",
-                "runtime.sleep",
                 "process.exec",
                 "subtask.spawn",
                 "network.access",
@@ -4380,7 +4279,7 @@ mod tests {
         assert!(ids.contains(&WORKSPACE_WRITE_TOOL_ID));
         assert!(!ids.contains(&"workspace.append_line"));
         assert!(ids.contains(&TIME_NOW_TOOL_ID));
-        assert!(ids.contains(&RUNTIME_SLEEP_TOOL_ID));
+        assert!(!ids.contains(&"runtime.sleep"));
     }
 
     #[test]
@@ -4443,26 +4342,23 @@ mod tests {
     }
 
     #[test]
-    fn parser_accepts_bounded_runtime_sleep_seconds() {
+    fn parser_rejects_runtime_sleep_as_removed_builtin_tool() {
         let parsed = ToolIntentParser::parse_assistant_content(
             "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"runtime.sleep\",\"reason\":\"Wait one minute.\",\"input\":{\"duration_seconds\":60}}]}\n```",
         );
-        assert_eq!(parsed.summary.accepted_requests, 1);
-        assert_eq!(parsed.summary.rejected_requests, 0);
+        assert_eq!(parsed.summary.accepted_requests, 0);
+        assert_eq!(parsed.summary.rejected_requests, 1);
+        assert_eq!(parsed.rejected[0].code.as_str(), "unknown_tool");
     }
 
     #[test]
-    fn parser_normalizes_runtime_sleep_seconds_alias() {
+    fn parser_rejects_runtime_sleep_seconds_alias_as_removed_builtin_tool() {
         let parsed = ToolIntentParser::parse_assistant_content(
             "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"runtime.sleep\",\"reason\":\"Wait one minute.\",\"input\":{\"seconds\":60}}]}\n```",
         );
-        assert_eq!(parsed.summary.accepted_requests, 1);
-        assert_eq!(parsed.summary.rejected_requests, 0);
-        assert_eq!(
-            parsed.requests[0].input.get("duration_seconds"),
-            Some(&serde_json::json!(60))
-        );
-        assert!(parsed.requests[0].input.get("seconds").is_none());
+        assert_eq!(parsed.summary.accepted_requests, 0);
+        assert_eq!(parsed.summary.rejected_requests, 1);
+        assert_eq!(parsed.rejected[0].code.as_str(), "unknown_tool");
     }
 
     #[test]
