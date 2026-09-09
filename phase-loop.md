@@ -170,6 +170,10 @@ progress by patching `todo.md` to replace the broad TODO with the next concrete
 bounded sub-TODOs, each naming exact files or scripts to inspect next. Do not
 end a workspace-edit TODO with read-only discovery only.
 
+In `implementer` mode, do not request `subtask.spawn` or any tool that the Tool
+Plan marks as denied. Broad TODO decomposition is not a subtask spawn; express
+it as one bounded `workspace.write` patch to `todo.md`.
+
 When implementation requires editing an existing file, prefer a small
 `workspace.write` `patch_file` proposal over replacing the whole file. The tool
 intent must use the Runtime schema exactly:
