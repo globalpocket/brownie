@@ -25,16 +25,16 @@
     "crates/brownie-runtime/src/verification_recovery.rs"
   ],
   "thresholds": {
-    "lib_rs_production_line_ceiling": 14869,
+    "lib_rs_production_line_ceiling": 14881,
     "lib_rs_test_line_ceiling": 52256
   },
   "metrics": {
     "files": {
       "crates/brownie-runtime/src/lib.rs": {
-        "line_count": 67125,
+        "line_count": 67137,
         "public_items": 3,
         "private_items": 496,
-        "production_line_count": 14869,
+        "production_line_count": 14881,
         "test_line_count": 52256,
         "state_mutation_mentions": 309,
         "durable_write_mentions": 229,

@@ -2611,31 +2611,37 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         ) {
             return error_response(id, -32603, &format!("internal error: {error}"));
         }
-        let followup_events = match store.tasks().read_ledger_events(&running.run_id) {
+        let mut followup_events = match store.tasks().read_ledger_events(&running.run_id) {
             Ok(events) => events,
             Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
         };
-        let second_pass_response_index = followup_events
-            .iter()
-            .rposition(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived);
-        let latest_tool_execution_index = followup_events.iter().rposition(|event| {
-            matches!(
-                event.kind,
-                LedgerEventKind::ToolExecutionCompleted
-                    | LedgerEventKind::ToolExecutionDenied
-                    | LedgerEventKind::ToolExecutionFailed
-            )
-        });
-        let followup_read_result_available =
-            match (second_pass_response_index, latest_tool_execution_index) {
-                (Some(response_index), Some(tool_index)) => tool_index > response_index,
-                _ => false,
-            };
-        let followup_write_missing = task_goal_requires_workspace_write_proposal(&running.goal)
-            && !followup_events
+        let mut followup_attempts = 0;
+        loop {
+            let second_pass_response_index = followup_events
                 .iter()
-                .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed);
-        if followup_read_result_available && followup_write_missing {
+                .rposition(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived);
+            let latest_tool_execution_index = followup_events.iter().rposition(|event| {
+                matches!(
+                    event.kind,
+                    LedgerEventKind::ToolExecutionCompleted
+                        | LedgerEventKind::ToolExecutionDenied
+                        | LedgerEventKind::ToolExecutionFailed
+                )
+            });
+            let followup_read_result_available =
+                match (second_pass_response_index, latest_tool_execution_index) {
+                    (Some(response_index), Some(tool_index)) => tool_index > response_index,
+                    _ => false,
+                };
+            let followup_write_missing = task_goal_requires_workspace_write_proposal(&running.goal)
+                && !followup_events
+                    .iter()
+                    .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed);
+            if !followup_read_result_available || !followup_write_missing || followup_attempts >= 2
+            {
+                break;
+            }
+            followup_attempts += 1;
             let followup_prompt_input =
                 ContextMaterializer::materialize(ContextMaterializerInput {
                     task: running.clone(),
@@ -2773,6 +2779,12 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             ) {
                 return error_response(id, -32603, &format!("internal error: {error}"));
             }
+            followup_events = match store.tasks().read_ledger_events(&running.run_id) {
+                Ok(events) => events,
+                Err(error) => {
+                    return error_response(id, -32603, &format!("internal error: {error}"))
+                }
+            };
         }
     }
 
