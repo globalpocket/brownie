@@ -24,6 +24,8 @@
     "guard:supply-chain-artifact-evidence:test": "node --test scripts/guard-supply-chain-artifact-evidence.test.mjs",
     "guard:modepack-distribution-trust": "node scripts/guard-modepack-distribution-trust.mjs",
     "guard:modepack-distribution-trust:test": "node --test scripts/guard-modepack-distribution-trust.test.mjs",
+    "guard:ledger-contract-single-source": "node scripts/guard-ledger-contract-single-source.mjs",
+    "guard:ledger-contract-single-source:test": "node --test scripts/guard-ledger-contract-single-source.test.mjs",
     "guard:protocol-event-canonization": "node scripts/guard-protocol-event-canonization.mjs",
     "guard:protocol-event-canonization:test": "node --test scripts/guard-protocol-event-canonization.test.mjs",
     "guard:platform-deadline-durability": "node scripts/guard-platform-deadline-durability.mjs",

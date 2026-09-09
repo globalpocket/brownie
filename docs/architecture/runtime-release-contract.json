@@ -209,6 +209,8 @@
       "id": "phase-c-ledger-contract-release-integrity",
       "status": "implemented_sufficient_current_contract",
       "verification": [
+        "guard:ledger-contract-single-source",
+        "guard:ledger-contract-single-source:test",
         "guard:protocol-event-canonization",
         "brownie-protocol generated semantic contract",
         "brownie-store ledger payload validation tests"
@@ -383,6 +385,14 @@
       {
         "id": "protocol_event_canonization_guard",
         "command": "pnpm --workspace-root guard:protocol-event-canonization"
+      },
+      {
+        "id": "ledger_contract_single_source_guard",
+        "command": "pnpm --workspace-root guard:ledger-contract-single-source"
+      },
+      {
+        "id": "ledger_contract_single_source_guard_test",
+        "command": "pnpm --workspace-root guard:ledger-contract-single-source:test"
       },
       {
         "id": "runtime_module_decomposition_guard",

@@ -22,6 +22,10 @@ const vsixPackageText = [
   'pnpm --workspace-root guard:owner-governance-evidence',
   'pnpm --workspace-root guard:owner-governance-evidence:test',
   'pnpm --workspace-root guard:durable-schema-migration',
+  'pnpm --workspace-root guard:modepack-distribution-trust',
+  'pnpm --workspace-root guard:modepack-distribution-trust:test',
+  'pnpm --workspace-root guard:ledger-contract-single-source',
+  'pnpm --workspace-root guard:ledger-contract-single-source:test',
   'pnpm --workspace-root guard:protocol-event-canonization',
   'pnpm --workspace-root guard:runtime-module-decomposition',
   'pnpm --workspace-root guard:platform-deadline-durability'
@@ -378,10 +382,23 @@ test('rejects CI or VSIX check path that omits release readiness guard coverage'
       'pnpm --workspace-root guard:release-contract',
       'pnpm --workspace-root guard:release-contract:test',
       'pnpm --workspace-root release:gate -- --dry-run',
-      'pnpm --workspace-root guard:durable-schema-migration'
+      'pnpm --workspace-root guard:durable-schema-migration',
+      'pnpm --workspace-root guard:ledger-contract-single-source',
+      'pnpm --workspace-root guard:ledger-contract-single-source:test'
     ].join('\n')
   });
   assert(semanticProtocolGuardErrors.some((error) => error.includes('guard:protocol-event-canonization')));
+
+  const ledgerGuardErrors = validate(validAudit(), {
+    vsixPackageText: [
+      'pnpm --workspace-root guard:runtime-release-readiness',
+      'pnpm --workspace-root guard:release-contract',
+      'pnpm --workspace-root guard:release-contract:test',
+      'pnpm --workspace-root release:gate -- --dry-run',
+      'pnpm --workspace-root guard:durable-schema-migration'
+    ].join('\n')
+  });
+  assert(ledgerGuardErrors.some((error) => error.includes('guard:ledger-contract-single-source')));
 
   const moduleGuardErrors = validate(validAudit(), {
     vsixPackageText: [
@@ -390,6 +407,8 @@ test('rejects CI or VSIX check path that omits release readiness guard coverage'
       'pnpm --workspace-root guard:release-contract:test',
       'pnpm --workspace-root release:gate -- --dry-run',
       'pnpm --workspace-root guard:durable-schema-migration',
+      'pnpm --workspace-root guard:ledger-contract-single-source',
+      'pnpm --workspace-root guard:ledger-contract-single-source:test',
       'pnpm --workspace-root guard:protocol-event-canonization'
     ].join('\n')
   });
@@ -402,6 +421,8 @@ test('rejects CI or VSIX check path that omits release readiness guard coverage'
       'pnpm --workspace-root guard:release-contract:test',
       'pnpm --workspace-root release:gate -- --dry-run',
       'pnpm --workspace-root guard:durable-schema-migration',
+      'pnpm --workspace-root guard:ledger-contract-single-source',
+      'pnpm --workspace-root guard:ledger-contract-single-source:test',
       'pnpm --workspace-root guard:protocol-event-canonization',
       'pnpm --workspace-root guard:runtime-module-decomposition'
     ].join('\n')

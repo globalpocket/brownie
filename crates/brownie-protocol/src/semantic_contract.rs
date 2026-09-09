@@ -1753,6 +1753,8 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&tool_plan_payload),
             "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("ToolPermissionChecked", &tool_plan_payload)
         }),
+        payload_schema_fixture("ToolPlanApproved", &tool_plan_payload),
+        payload_schema_fixture("ToolPlanDenied", &tool_plan_payload),
         payload_schema_fixture("ToolIntentParsed", &tool_intent_parsed_payload),
         payload_schema_fixture("ToolIntentRejected", &tool_intent_rejected_payload),
         json!({
@@ -1765,6 +1767,8 @@ pub fn runtime_semantic_protocol_contract() -> Value {
             "payload_instance_shape_descriptor": ledger_payload_shape_descriptor(&tool_intent_payload),
             "payload_instance_shape_fingerprint": ledger_payload_instance_shape_fingerprint_for_value("ToolIntentPermissionChecked", &tool_intent_payload)
         }),
+        payload_schema_fixture("ToolIntentApproved", &tool_intent_payload),
+        payload_schema_fixture("ToolIntentDenied", &tool_intent_payload),
         json!({
             "ledger_event_kind": "ToolExecutionRequested",
             "payload": tool_execution_requested_payload,

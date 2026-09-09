@@ -195,6 +195,18 @@ export const requiredReleaseGateCommands = [
     args: ['--workspace-root', 'guard:protocol-event-canonization']
   },
   {
+    id: 'ledger_contract_single_source_guard',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:ledger-contract-single-source']
+  },
+  {
+    id: 'ledger_contract_single_source_guard_test',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:ledger-contract-single-source:test']
+  },
+  {
     id: 'runtime_module_decomposition_guard',
     category: 'brownie_release_guard',
     command: 'pnpm',
