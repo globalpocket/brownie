@@ -29,8 +29,13 @@ larger than `BROWNIE_CLI_RUN_FILE_MAX_BYTES`; when unset, the default is 65536
 bytes, aligned with Brownie's bounded file/context handling. Rejection happens
 as an invalid invocation and does not start the runtime. The byte-limit gate is
 metadata-first: oversized files must be rejected before reading their content,
-including when the file body is not valid UTF-8. Later hardening phases own
-non-regular-file rejection and complete error redaction.
+including when the file body is not valid UTF-8. The path must resolve to a
+regular file before the CLI reads objective content; directories, FIFOs, device
+nodes, sockets, and other non-regular file types are invalid invocation inputs.
+The CLI must validate file type metadata from the same opened file handle it
+uses for content read, and Unix opens must avoid blocking on FIFO/device races
+before type validation. Later hardening phases own complete UTF-8 and
+error-redaction coverage.
 
 For a `run` invocation, the CLI generates bounded invocation identities,
 including an `admission_id`, and passes them to the runtime's

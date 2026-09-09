@@ -29,6 +29,7 @@
     "tracked_path_patterns": [
       "crates/brownie-agent-loop/src/",
       "crates/brownie-agentmodes/src/",
+      "crates/brownie-cli/src/",
       "crates/brownie-config/src/",
       "crates/brownie-llm/src/",
       "crates/brownie-modepack/src/",
@@ -57,10 +58,14 @@
       "scripts/guard-runtime-release-readiness.mjs",
       "scripts/rrp3-process-loss-recovery-e2e.mjs"
     ],
-    "tracked_file_count": 47,
+    "tracked_file_count": 51,
     "tracked_paths": [
       "crates/brownie-agent-loop/src/lib.rs",
       "crates/brownie-agentmodes/src/lib.rs",
+      "crates/brownie-cli/src/cli.rs",
+      "crates/brownie-cli/src/lib.rs",
+      "crates/brownie-cli/src/main.rs",
+      "crates/brownie-cli/src/runtime_client.rs",
       "crates/brownie-config/src/lib.rs",
       "crates/brownie-llm/src/lib.rs",
       "crates/brownie-modepack/src/lib.rs",
@@ -107,7 +112,7 @@
       "scripts/guard-runtime-release-readiness.mjs",
       "scripts/rrp3-process-loss-recovery-e2e.mjs"
     ],
-    "tracked_fingerprint": "sha256:9367acad1f541fe7b947aa8eb3374b1f7c9e500d171c6f6f0f489f03a4df9afd"
+    "tracked_fingerprint": "sha256:0d392e9934a3a51bcb8782c965e64c0e80292483a1003fc875ba4e236fe69e3d"
   },
   "owner_decisions": [
     {
@@ -246,7 +251,8 @@
         "R-08 constrains OpenAI-compatible provider egress to the configured origin: unsupported schemes, missing hosts, userinfo, query, and fragment components are rejected; only /models and /chat/completions are derived under the configured base path; derived endpoints must preserve scheme, host, and port; redirects and proxy use are disabled; and request clients pin the pre-request DNS address set.",
         "R-10 adds runtime-safety-readiness-evidence-invalidation-v1 to this audit and makes guard-runtime-release-readiness recompute the tracked safety-critical file set and content fingerprint for permission, Mode Pack, ledger, provider, Runtime safety, protocol contract, and release guard anchors. If any tracked file is added, removed, or changed after this tested evidence, the guard fails until the readiness evidence is refreshed and revalidated.",
         "R-11 bounds brownie run --file objective loading with BROWNIE_CLI_RUN_FILE_MAX_BYTES, defaulting to 65536 bytes. Oversized file objectives are rejected as invalid invocation before Runtime startup, while objectives within the byte limit continue to pass through without CLI truncation.",
-        "R-12 proves the brownie run --file byte-limit gate is metadata-first: oversized invalid-UTF-8 objective files are rejected by size before content read or decoding, Runtime is not started, and UTF-8 decoder details are not surfaced for that path."
+        "R-12 proves the brownie run --file byte-limit gate is metadata-first: oversized invalid-UTF-8 objective files are rejected by size before content read or decoding, Runtime is not started, and UTF-8 decoder details are not surfaced for that path.",
+        "R-13 rejects non-regular brownie run --file objective paths before objective content read or Runtime startup. The CLI validates metadata from the same opened file handle it reads from, uses nonblocking opens on Unix to avoid FIFO/device race hangs before validation, covers directory rejection on all platforms and FIFO rejection on Unix, and includes crates/brownie-cli/src/ in the safety/readiness fingerprint."
       ],
       "next_action": "Continue runtime-release-guard-ci by adding cross-platform release artifacts and smoke tests, plus direct workflow enforcement or stronger owner-approved CI enforcement, before any Runtime Release Ready claim."
     },

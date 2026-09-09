@@ -118,6 +118,7 @@ const safetyReadinessEvidenceId = 'runtime-safety-readiness-evidence-invalidatio
 const safetyCriticalPathPatterns = [
   'crates/brownie-agent-loop/src/',
   'crates/brownie-agentmodes/src/',
+  'crates/brownie-cli/src/',
   'crates/brownie-config/src/',
   'crates/brownie-llm/src/',
   'crates/brownie-modepack/src/',
