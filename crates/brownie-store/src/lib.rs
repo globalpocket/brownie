@@ -2296,6 +2296,8 @@ pub struct HeadlessModePackSelectedCandidateFetchCheckpoint {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_signer_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_candidate_pinned_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_current_activation_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance_statement_json: Option<String>,

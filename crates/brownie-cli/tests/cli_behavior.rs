@@ -3971,6 +3971,7 @@ fn activate_trusted_current_agentmodes_via_signed_candidate_for_cli(
         hex_lower(&Sha256::digest(&pinned_addr_fingerprint))
     );
     let content_sha256 = format!("sha256:{}", hex_lower(&Sha256::digest(&modepack_json)));
+    let pinned_commit = "0123456789abcdef0123456789abcdef01234567";
     let candidate = store
         .commit_modepack_candidate_snapshot(&brownie_store::ModePackCandidateSnapshot {
             summary: brownie_protocol::ModePackCandidateSummary {
@@ -4005,6 +4006,7 @@ fn activate_trusted_current_agentmodes_via_signed_candidate_for_cli(
     let statement = serde_json::json!({
         "content_sha256": candidate.snapshot.summary.content_sha256,
         "compiled_policy_fingerprint": candidate.snapshot.summary.compiled_policy_fingerprint,
+        "pinned_commit": pinned_commit,
         "source_url_fingerprint": candidate.snapshot.summary.source_url_fingerprint,
         "mode_ids": candidate.snapshot.summary.mode_ids,
         "schema_version": candidate.snapshot.summary.schema_version,
@@ -4024,6 +4026,7 @@ fn activate_trusted_current_agentmodes_via_signed_candidate_for_cli(
                 "authorize_provenance_verification": true,
                 "expected_content_sha256": candidate.snapshot.summary.content_sha256,
                 "expected_compiled_policy_fingerprint": candidate.snapshot.summary.compiled_policy_fingerprint,
+                "expected_pinned_commit": pinned_commit,
                 "expected_signer_fingerprint": signer_fingerprint,
                 "provenance_statement_json": statement,
                 "provenance_signature_base64": general_purpose::STANDARD.encode(signature.to_bytes()),
@@ -4067,6 +4070,7 @@ fn activate_trusted_current_agentmodes_via_signed_candidate_for_cli(
                 "authorize_trust": true,
                 "expected_content_sha256": candidate.snapshot.summary.content_sha256,
                 "expected_compiled_policy_fingerprint": candidate.snapshot.summary.compiled_policy_fingerprint,
+                "expected_pinned_commit": pinned_commit,
                 "expected_provenance_id": provenance["result"]["provenance"]["provenance_id"],
                 "expected_provenance_event_id": provenance["result"]["provenance"]["provenance_event_id"],
                 "expected_signer_fingerprint": provenance["result"]["provenance"]["signer_fingerprint"],
@@ -4099,6 +4103,7 @@ fn activate_trusted_current_agentmodes_via_signed_candidate_for_cli(
                 "expected_approved_candidate_source_url_fingerprint": approval["result"]["approval"]["source_url_fingerprint"],
                 "expected_approved_candidate_dns_resolution_fingerprint": candidate.snapshot.summary.dns_binding.resolution_fingerprint,
                 "expected_approved_candidate_pinned_address_fingerprint": candidate.snapshot.summary.dns_binding.pinned_address_fingerprint,
+                "expected_approved_candidate_pinned_commit": pinned_commit,
                 "expected_approved_candidate_approval_event_id": approval["result"]["approval"]["approval_event_id"],
             }
         }),

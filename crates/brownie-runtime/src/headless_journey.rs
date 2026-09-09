@@ -1240,6 +1240,7 @@ pub(super) fn modepack_selected_candidate_fetch_target_from_selection_checkpoint
         expected_candidate_compiled_policy_fingerprint: selected
             .candidate_compiled_policy_fingerprint
             .clone(),
+        expected_candidate_pinned_commit: selected.candidate_pinned_commit.clone(),
         expected_provenance_statement_url_fingerprint: selected
             .provenance_statement_url_fingerprint
             .clone(),
@@ -1270,6 +1271,7 @@ pub(super) fn headless_registry_update_selection_checkpoint_fingerprint(
         "candidate_url_fingerprint": selected.candidate_url_fingerprint,
         "candidate_content_sha256": selected.candidate_content_sha256,
         "candidate_compiled_policy_fingerprint": selected.candidate_compiled_policy_fingerprint,
+        "candidate_pinned_commit": selected.candidate_pinned_commit,
         "provenance_statement_url_fingerprint": selected.provenance_statement_url_fingerprint,
         "provenance_statement_sha256": selected.provenance_statement_sha256,
         "signer_fingerprint": selected.signer_fingerprint,
@@ -1291,6 +1293,13 @@ fn modepack_selected_candidate_provenance_target_from_fetch_checkpoint(
         expected_candidate_url_fingerprint: candidate.source_url_fingerprint.clone(),
         expected_candidate_content_sha256: candidate.content_sha256.clone(),
         expected_candidate_compiled_policy_fingerprint: candidate.compiled_policy_fingerprint.clone(),
+        expected_candidate_pinned_commit: checkpoint
+            .expected_candidate_pinned_commit
+            .clone()
+            .ok_or_else(|| {
+                "invalid params: journey route resume selected-candidate fetch checkpoint is missing pinned commit"
+                    .to_string()
+            })?,
         expected_provenance_statement_url_fingerprint: checkpoint
             .expected_provenance_statement_url_fingerprint
             .clone()
@@ -1361,6 +1370,7 @@ pub(super) fn headless_selected_candidate_fetch_checkpoint_fingerprint(
         "expected_provenance_statement_url_fingerprint": checkpoint.expected_provenance_statement_url_fingerprint,
         "expected_provenance_statement_sha256": checkpoint.expected_provenance_statement_sha256,
         "expected_signer_fingerprint": checkpoint.expected_signer_fingerprint,
+        "expected_candidate_pinned_commit": checkpoint.expected_candidate_pinned_commit,
         "expected_current_activation_fingerprint": checkpoint.expected_current_activation_fingerprint,
         "provenance_statement_json_sha256": checkpoint.provenance_statement_json.as_ref().map(|value| format!("sha256:{}", hex_sha256(value.as_bytes()))),
         "provenance_signature_base64_sha256": checkpoint.provenance_signature_base64.as_ref().map(|value| format!("sha256:{}", hex_sha256(value.as_bytes()))),
@@ -1425,6 +1435,19 @@ fn modepack_selected_candidate_approval_target_from_provenance_checkpoint(
                 .to_string(),
         );
     }
+    let expected_candidate_pinned_commit = fetch_checkpoint
+        .expected_candidate_pinned_commit
+        .clone()
+        .ok_or_else(|| {
+            "invalid params: journey route resume selected-candidate fetch checkpoint is missing pinned commit"
+                .to_string()
+        })?;
+    if expected_candidate_pinned_commit != provenance.pinned_commit {
+        return Err(
+            "invalid params: journey route resume provenance pinned commit conflicts with fetch checkpoint"
+                .to_string(),
+        );
+    }
     Ok(ModePackSelectedCandidateApprovalTarget {
         authorize_selected_candidate_approval: true,
         fetch_continuation_id: fetch_checkpoint.continuation_id.clone(),
@@ -1438,6 +1461,7 @@ fn modepack_selected_candidate_approval_target_from_provenance_checkpoint(
         expected_candidate_compiled_policy_fingerprint: provenance
             .compiled_policy_fingerprint
             .clone(),
+        expected_candidate_pinned_commit,
         expected_provenance_id: provenance.provenance_id.clone(),
         expected_provenance_event_id: provenance.provenance_event_id.clone(),
         expected_provenance_statement_url_fingerprint: fetch_checkpoint
@@ -1612,6 +1636,7 @@ fn modepack_selected_approved_candidate_replacement_target_from_approval_checkpo
         || candidate.content_sha256 != approval.content_sha256
         || candidate.compiled_policy_fingerprint != provenance.compiled_policy_fingerprint
         || candidate.compiled_policy_fingerprint != approval.compiled_policy_fingerprint
+        || provenance.pinned_commit != approval.pinned_commit
         || provenance.provenance_id != approval.provenance_id
         || provenance.provenance_event_id != approval.provenance_event_id
         || provenance.statement_sha256 != approval.statement_sha256
@@ -1661,6 +1686,21 @@ fn modepack_selected_approved_candidate_replacement_target_from_approval_checkpo
                 .to_string(),
         );
     }
+    let expected_candidate_pinned_commit = fetch_checkpoint
+        .expected_candidate_pinned_commit
+        .clone()
+        .ok_or_else(|| {
+            "invalid params: journey route resume selected-candidate fetch checkpoint is missing pinned commit"
+                .to_string()
+        })?;
+    if expected_candidate_pinned_commit != provenance.pinned_commit
+        || expected_candidate_pinned_commit != approval.pinned_commit
+    {
+        return Err(
+            "invalid params: journey route resume approval pinned commit conflicts with fetch checkpoint"
+                .to_string(),
+        );
+    }
     let expected_candidate_activation_fingerprint =
         modepack_candidate_activation_fingerprint_from_approved_candidate(
             store,
@@ -1683,6 +1723,7 @@ fn modepack_selected_approved_candidate_replacement_target_from_approval_checkpo
             .compiled_policy_fingerprint
             .clone(),
         expected_candidate_activation_fingerprint,
+        expected_candidate_pinned_commit,
         expected_provenance_id: provenance.provenance_id.clone(),
         expected_provenance_event_id: provenance.provenance_event_id.clone(),
         expected_provenance_statement_url_fingerprint,

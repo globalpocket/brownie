@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "contract_id": "brownie-modepack-distribution-trust-contract-v1",
+  "owner": "runtime",
+  "phase": "R-18",
+  "trusted_signed_active_modepack_requires": [
+    "pinned_commit",
+    "mode_pack_fingerprint",
+    "artifact_sha256",
+    "verified_signature",
+    "trusted_trust_root",
+    "revocation_evidence"
+  ],
+  "fail_closed_rules": [
+    {
+      "id": "untrusted_repository_local_is_default",
+      "applies_to": "workspace_repository_modepack",
+      "rule": "Repository-local .brownie/modepack.json and .brownie/AgentModes/workflow.yaml inputs are UntrustedRepositoryLocal unless distribution evidence validates."
+    },
+    {
+      "id": "trusted_signed_requires_complete_distribution_evidence",
+      "applies_to": "TrustedSignedActiveModePack",
+      "rule": "Runtime must not select TrustedSignedActiveModePack when pinned commit, artifact hash, signature, trust root, or revocation evidence is missing, stale, mismatched, or revoked."
+    },
+    {
+      "id": "untrusted_sources_cannot_self_authorize_external_provider_calls",
+      "applies_to": "effective_permissions",
+      "rule": "UntrustedRepositoryLocal Mode Packs cannot grant llm_provider_access, network_access, workspace_write, process_exec, git_inspect, git_commit, subtask spawning, or MCP execution by declaring those fields."
+    },
+    {
+      "id": "generic_network_remains_reserved",
+      "applies_to": "effective_permissions",
+      "rule": "network_access remains false for external Mode Packs in v0 even when source trust and ceiling are otherwise satisfied."
+    },
+    {
+      "id": "revoked_evidence_is_never_trusted",
+      "applies_to": "revocation_evidence",
+      "rule": "A revoked signer, trust root, commit, tag, artifact, or Mode Pack fingerprint fails validation before activation."
+    }
+  ],
+  "distribution_evidence_schema": {
+    "pinned_commit": {
+      "type": "string",
+      "required": true,
+      "description": "Immutable Git commit id used to fetch and compile the distributed Mode Pack."
+    },
+    "mode_pack_fingerprint": {
+      "type": "string",
+      "required": true,
+      "prefix": "sha256:",
+      "description": "Fingerprint of the compiled Mode Pack snapshot selected for activation."
+    },
+    "artifact_sha256": {
+      "type": "string",
+      "required": true,
+      "prefix": "sha256:",
+      "description": "Hash of the fetched Mode Pack artifact or archive."
+    },
+    "signature": {
+      "type": "object",
+      "required": true,
+      "required_fields": [
+        "algorithm",
+        "signer_identity",
+        "signature_fingerprint",
+        "verified"
+      ],
+      "description": "Detached signature or equivalent owner-approved integrity proof."
+    },
+    "trust_root": {
+      "type": "object",
+      "required": true,
+      "required_fields": [
+        "root_id",
+        "root_fingerprint",
+        "trusted_by_owner"
+      ],
+      "description": "Owner-approved trust root used to verify the signature or integrity proof."
+    },
+    "revocation_evidence": {
+      "type": "object",
+      "required": true,
+      "required_fields": [
+        "checked_at",
+        "status",
+        "source_fingerprint"
+      ],
+      "allowed_statuses": [
+        "not_revoked"
+      ],
+      "description": "Bounded revocation check result for signer, trust root, commit/tag, artifact, and Mode Pack fingerprint."
+    }
+  },
+  "runtime_permission_expectations": {
+    "UntrustedRepositoryLocal": {
+      "workspace_write": false,
+      "process_exec": false,
+      "git_inspect": false,
+      "git_commit": false,
+      "network_access": false,
+      "llm_provider_access": false,
+      "service_control": false,
+      "destructive": false,
+      "can_spawn_subtasks": false,
+      "mcp_tool_access": false
+    },
+    "TrustedSignedActiveModePack": {
+      "bounded_by_declared_policy_and_capability_ceiling": true,
+      "network_access": false,
+      "service_control": false,
+      "destructive": false
+    }
+  }
+}

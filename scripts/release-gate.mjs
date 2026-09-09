@@ -135,6 +135,18 @@ export const requiredReleaseGateCommands = [
     args: ['--workspace-root', 'guard:owner-governance-evidence']
   },
   {
+    id: 'modepack_distribution_trust_guard',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:modepack-distribution-trust']
+  },
+  {
+    id: 'modepack_distribution_trust_guard_test',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:modepack-distribution-trust:test']
+  },
+  {
     id: 'owner_governance_evidence_guard_test',
     category: 'brownie_release_guard',
     command: 'pnpm',

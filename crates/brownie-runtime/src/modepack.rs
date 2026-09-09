@@ -464,6 +464,7 @@ pub(super) fn headless_modepack_selected_candidate_fetch_request_fingerprint(
         "expected_candidate_url_fingerprint": target.expected_candidate_url_fingerprint,
         "expected_candidate_content_sha256": target.expected_candidate_content_sha256,
         "expected_candidate_compiled_policy_fingerprint": target.expected_candidate_compiled_policy_fingerprint,
+        "expected_candidate_pinned_commit": target.expected_candidate_pinned_commit,
         "expected_provenance_statement_url_fingerprint": target.expected_provenance_statement_url_fingerprint,
         "expected_provenance_statement_sha256": target.expected_provenance_statement_sha256,
         "expected_signer_fingerprint": target.expected_signer_fingerprint,
@@ -588,6 +589,12 @@ where
                 .to_string(),
         );
     }
+    if !is_git_commit_id(&target.expected_candidate_pinned_commit) {
+        return Err(
+            "modepack selected candidate fetch failed: expected_candidate_pinned_commit must be a 40-character Git commit id"
+                .to_string(),
+        );
+    }
     let request_fingerprint =
         headless_modepack_selected_candidate_fetch_request_fingerprint(params)?;
 
@@ -609,6 +616,7 @@ where
         || summary.candidate_content_sha256 != target.expected_candidate_content_sha256
         || summary.candidate_compiled_policy_fingerprint
             != target.expected_candidate_compiled_policy_fingerprint
+        || summary.candidate_pinned_commit != target.expected_candidate_pinned_commit
         || summary.provenance_statement_url_fingerprint
             != target.expected_provenance_statement_url_fingerprint
         || summary.provenance_statement_sha256 != target.expected_provenance_statement_sha256
@@ -693,6 +701,7 @@ where
                     summary.provenance_statement_sha256.clone(),
                 ),
                 expected_signer_fingerprint: Some(summary.signer_fingerprint.clone()),
+                expected_candidate_pinned_commit: Some(summary.candidate_pinned_commit.clone()),
                 expected_current_activation_fingerprint: Some(
                     summary.current_activation_fingerprint.clone(),
                 ),
@@ -874,6 +883,7 @@ pub(super) fn headless_modepack_selected_candidate_provenance_verification_reque
         "expected_candidate_url_fingerprint": target.expected_candidate_url_fingerprint,
         "expected_candidate_content_sha256": target.expected_candidate_content_sha256,
         "expected_candidate_compiled_policy_fingerprint": target.expected_candidate_compiled_policy_fingerprint,
+        "expected_candidate_pinned_commit": target.expected_candidate_pinned_commit,
         "expected_provenance_statement_url_fingerprint": target.expected_provenance_statement_url_fingerprint,
         "expected_provenance_statement_sha256": target.expected_provenance_statement_sha256,
         "expected_signer_fingerprint": target.expected_signer_fingerprint,
@@ -986,6 +996,12 @@ pub(super) fn headless_continue_modepack_selected_candidate_provenance_verificat
                 .to_string(),
         );
     }
+    if !is_git_commit_id(&target.expected_candidate_pinned_commit) {
+        return Err(
+            "modepack selected candidate provenance verification failed: expected_candidate_pinned_commit must be a 40-character Git commit id"
+                .to_string(),
+        );
+    }
     let request_fingerprint =
         headless_modepack_selected_candidate_provenance_verification_request_fingerprint(params)?;
     let actual_statement_sha256 = format!(
@@ -1044,6 +1060,7 @@ pub(super) fn headless_continue_modepack_selected_candidate_provenance_verificat
         || summary.candidate_content_sha256 != target.expected_candidate_content_sha256
         || summary.candidate_compiled_policy_fingerprint
             != target.expected_candidate_compiled_policy_fingerprint
+        || summary.candidate_pinned_commit != target.expected_candidate_pinned_commit
         || summary.provenance_statement_url_fingerprint
             != target.expected_provenance_statement_url_fingerprint
         || summary.provenance_statement_sha256 != target.expected_provenance_statement_sha256
@@ -1081,6 +1098,7 @@ pub(super) fn headless_continue_modepack_selected_candidate_provenance_verificat
                 .expected_candidate_compiled_policy_fingerprint
                 .clone(),
             expected_signer_fingerprint: target.expected_signer_fingerprint.clone(),
+            expected_pinned_commit: target.expected_candidate_pinned_commit.clone(),
             provenance_statement_json: target.provenance_statement_json.clone(),
             provenance_signature_base64: target.provenance_signature_base64.clone(),
             provenance_public_key_base64: target.provenance_public_key_base64.clone(),
@@ -1093,6 +1111,7 @@ pub(super) fn headless_continue_modepack_selected_candidate_provenance_verificat
             != target.expected_candidate_url_fingerprint
         || provenance_result.provenance.statement_sha256
             != target.expected_provenance_statement_sha256
+        || provenance_result.provenance.pinned_commit != target.expected_candidate_pinned_commit
         || provenance_result.provenance.signer_fingerprint != target.expected_signer_fingerprint
     {
         return Err(
@@ -1294,6 +1313,7 @@ pub(super) fn headless_modepack_selected_candidate_approval_request_fingerprint(
         "expected_candidate_url_fingerprint": target.expected_candidate_url_fingerprint,
         "expected_candidate_content_sha256": target.expected_candidate_content_sha256,
         "expected_candidate_compiled_policy_fingerprint": target.expected_candidate_compiled_policy_fingerprint,
+        "expected_candidate_pinned_commit": target.expected_candidate_pinned_commit,
         "expected_provenance_id": target.expected_provenance_id,
         "expected_provenance_event_id": target.expected_provenance_event_id,
         "expected_provenance_statement_url_fingerprint": target.expected_provenance_statement_url_fingerprint,
@@ -1400,6 +1420,12 @@ pub(super) fn validate_selected_candidate_approval_target(
                 .to_string(),
         );
     }
+    if !is_git_commit_id(&target.expected_candidate_pinned_commit) {
+        return Err(
+            "modepack selected candidate approval failed: expected_candidate_pinned_commit must be a 40-character Git commit id"
+                .to_string(),
+        );
+    }
     Ok(())
 }
 
@@ -1462,6 +1488,7 @@ pub(super) fn headless_continue_modepack_selected_candidate_approval(
         || verified_provenance.provenance_id != target.expected_provenance_id
         || verified_provenance.provenance_event_id != target.expected_provenance_event_id
         || verified_provenance.statement_sha256 != target.expected_provenance_statement_sha256
+        || verified_provenance.pinned_commit != target.expected_candidate_pinned_commit
         || verified_provenance.signer_fingerprint != target.expected_signer_fingerprint
     {
         return Err(
@@ -1486,6 +1513,7 @@ pub(super) fn headless_continue_modepack_selected_candidate_approval(
         || summary.candidate_content_sha256 != target.expected_candidate_content_sha256
         || summary.candidate_compiled_policy_fingerprint
             != target.expected_candidate_compiled_policy_fingerprint
+        || summary.candidate_pinned_commit != target.expected_candidate_pinned_commit
         || summary.provenance_statement_url_fingerprint
             != target.expected_provenance_statement_url_fingerprint
         || summary.provenance_statement_sha256 != target.expected_provenance_statement_sha256
@@ -1526,6 +1554,7 @@ pub(super) fn headless_continue_modepack_selected_candidate_approval(
             expected_provenance_event_id: target.expected_provenance_event_id.clone(),
             expected_signer_fingerprint: target.expected_signer_fingerprint.clone(),
             expected_statement_sha256: target.expected_provenance_statement_sha256.clone(),
+            expected_pinned_commit: target.expected_candidate_pinned_commit.clone(),
         },
     )?;
     approval_result.next_action =
@@ -1734,6 +1763,7 @@ pub(super) fn headless_modepack_selected_candidate_replacement_request_fingerpri
         "expected_candidate_content_sha256": target.expected_candidate_content_sha256,
         "expected_candidate_compiled_policy_fingerprint": target.expected_candidate_compiled_policy_fingerprint,
         "expected_candidate_activation_fingerprint": target.expected_candidate_activation_fingerprint,
+        "expected_candidate_pinned_commit": target.expected_candidate_pinned_commit,
         "expected_provenance_id": target.expected_provenance_id,
         "expected_provenance_event_id": target.expected_provenance_event_id,
         "expected_provenance_statement_url_fingerprint": target.expected_provenance_statement_url_fingerprint,
@@ -1855,6 +1885,12 @@ pub(super) fn validate_selected_approved_candidate_replacement_target(
             ));
         }
     }
+    if !is_git_commit_id(&target.expected_candidate_pinned_commit) {
+        return Err(
+            "modepack selected approved candidate replacement failed: expected_candidate_pinned_commit must be a 40-character Git commit id"
+                .to_string(),
+        );
+    }
     Ok(())
 }
 
@@ -1939,6 +1975,7 @@ pub(super) fn headless_continue_modepack_selected_candidate_replacement(
         || verified_provenance.provenance_id != target.expected_provenance_id
         || verified_provenance.provenance_event_id != target.expected_provenance_event_id
         || verified_provenance.statement_sha256 != target.expected_provenance_statement_sha256
+        || verified_provenance.pinned_commit != target.expected_candidate_pinned_commit
         || verified_provenance.signer_fingerprint != target.expected_signer_fingerprint
         || approved_candidate.approval_id != target.expected_approved_candidate_approval_id
         || approved_candidate.approval_event_id
@@ -1947,6 +1984,7 @@ pub(super) fn headless_continue_modepack_selected_candidate_replacement(
         || approved_candidate.content_sha256 != target.expected_candidate_content_sha256
         || approved_candidate.compiled_policy_fingerprint
             != target.expected_candidate_compiled_policy_fingerprint
+        || approved_candidate.pinned_commit != target.expected_candidate_pinned_commit
         || approved_candidate.source_url_fingerprint != target.expected_candidate_url_fingerprint
         || approved_candidate.provenance_id != target.expected_provenance_id
         || approved_candidate.provenance_event_id != target.expected_provenance_event_id
@@ -1975,6 +2013,7 @@ pub(super) fn headless_continue_modepack_selected_candidate_replacement(
         || summary.candidate_content_sha256 != target.expected_candidate_content_sha256
         || summary.candidate_compiled_policy_fingerprint
             != target.expected_candidate_compiled_policy_fingerprint
+        || summary.candidate_pinned_commit != target.expected_candidate_pinned_commit
         || summary.provenance_statement_url_fingerprint
             != target.expected_provenance_statement_url_fingerprint
         || summary.provenance_statement_sha256 != target.expected_provenance_statement_sha256
@@ -2046,6 +2085,9 @@ pub(super) fn headless_continue_modepack_selected_candidate_replacement(
                     .dns_binding
                     .pinned_address_fingerprint
                     .clone(),
+            ),
+            expected_approved_candidate_pinned_commit: Some(
+                target.expected_candidate_pinned_commit.clone(),
             ),
             expected_approved_candidate_approval_event_id: Some(
                 target.expected_approved_candidate_approval_event_id.clone(),
@@ -2641,6 +2683,13 @@ pub(super) fn handle_modepack_approve_candidate(
             "invalid params: expected_statement_sha256 must be a sha256 fingerprint",
         );
     }
+    if !is_git_commit_id(&params.expected_pinned_commit) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_pinned_commit must be a 40-character Git commit id",
+        );
+    }
     let store = match BrownieStore::from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
@@ -2767,6 +2816,13 @@ pub(super) fn handle_modepack_verify_candidate_provenance(
             "invalid params: expected_signer_fingerprint must be a sha256 fingerprint",
         );
     }
+    if !is_git_commit_id(&params.expected_pinned_commit) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_pinned_commit must be a 40-character Git commit id",
+        );
+    }
     let store = match BrownieStore::from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
@@ -2861,6 +2917,15 @@ pub(super) fn handle_modepack_replace_active(
                 id,
                 -32602,
                 "invalid params: expected_approved_candidate_pinned_address_fingerprint must be a sha256 fingerprint",
+            );
+        }
+    }
+    if let Some(expected) = params.expected_approved_candidate_pinned_commit.as_deref() {
+        if !is_git_commit_id(expected) {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: expected_approved_candidate_pinned_commit must be a 40-character Git commit id",
             );
         }
     }
@@ -3345,6 +3410,7 @@ where
         candidate_url_fingerprint,
         candidate_content_sha256: entry.candidate_content_sha256,
         candidate_compiled_policy_fingerprint: entry.candidate_compiled_policy_fingerprint,
+        candidate_pinned_commit: entry.pinned_commit,
         provenance_statement_url: provenance_statement_url.as_str().to_string(),
         provenance_statement_url_host: provenance_statement_url
             .host_str()
@@ -3392,6 +3458,12 @@ pub(super) fn validate_modepack_registry_manifest_entry(
                 .to_string(),
         );
     }
+    if !is_git_commit_id(&entry.pinned_commit) {
+        return Err(
+            "modepack registry update selection failed: entry pinned_commit must be a 40-character Git commit id"
+                .to_string(),
+        );
+    }
     for (field_name, value) in [
         ("candidate_content_sha256", &entry.candidate_content_sha256),
         (
@@ -3411,6 +3483,10 @@ pub(super) fn validate_modepack_registry_manifest_entry(
         }
     }
     Ok(())
+}
+
+fn is_git_commit_id(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 struct ModePackRegistryManifestTrustEvidence {
@@ -3590,6 +3666,7 @@ pub(super) fn validate_modepack_registry_manifest_trust_statement(
             "candidate_compiled_policy_fingerprint",
             entry.candidate_compiled_policy_fingerprint.as_str(),
         ),
+        ("candidate_pinned_commit", entry.pinned_commit.as_str()),
         (
             "provenance_statement_url_fingerprint",
             provenance_statement_url_fingerprint,
@@ -3730,6 +3807,12 @@ pub(super) fn approve_remote_modepack_candidate(
             params.expected_statement_sha256, provenance_summary.statement_sha256
         ));
     }
+    if provenance_summary.pinned_commit != params.expected_pinned_commit {
+        return Err(format!(
+            "modepack candidate approval failed: pinned commit mismatch: expected {} but found {}",
+            params.expected_pinned_commit, provenance_summary.pinned_commit
+        ));
+    }
     if provenance_summary.candidate_id != cached.summary.candidate_id
         || provenance_summary.source_kind != cached.summary.source_kind
         || provenance_summary.source_url_host != cached.summary.source_url_host
@@ -3780,6 +3863,7 @@ pub(super) fn approve_remote_modepack_candidate(
         mode_count: mode_ids.len(),
         mode_ids,
         compiled_policy_fingerprint,
+        pinned_commit: provenance_summary.pinned_commit,
         provenance_id: provenance_summary.provenance_id,
         provenance_event_id: provenance_summary.provenance_event_id,
         trusted_signer_trust_id: trusted_signer.summary.trust_id,
@@ -4053,6 +4137,7 @@ pub(super) fn verify_modepack_candidate_provenance(
         recompiled.schema_version,
         &params.expected_content_sha256,
         &params.expected_compiled_policy_fingerprint,
+        &params.expected_pinned_commit,
         &signer_fingerprint,
     )?;
 
@@ -4072,6 +4157,7 @@ pub(super) fn verify_modepack_candidate_provenance(
         mode_count: mode_ids.len(),
         mode_ids,
         compiled_policy_fingerprint,
+        pinned_commit: params.expected_pinned_commit.clone(),
         signer_fingerprint,
         statement_sha256: format!(
             "sha256:{}",
@@ -4101,6 +4187,7 @@ pub(super) fn validate_modepack_provenance_statement(
     schema_version: u64,
     expected_content_sha256: &str,
     expected_compiled_policy_fingerprint: &str,
+    expected_pinned_commit: &str,
     signer_fingerprint: &str,
 ) -> Result<(), String> {
     if statement.get("content_sha256").and_then(Value::as_str) != Some(expected_content_sha256) {
@@ -4116,6 +4203,12 @@ pub(super) fn validate_modepack_provenance_statement(
     {
         return Err(
             "modepack candidate provenance verification failed: statement policy fingerprint mismatch"
+                .to_string(),
+        );
+    }
+    if statement.get("pinned_commit").and_then(Value::as_str) != Some(expected_pinned_commit) {
+        return Err(
+            "modepack candidate provenance verification failed: statement pinned commit mismatch"
                 .to_string(),
         );
     }
@@ -4597,6 +4690,7 @@ pub(super) fn validate_modepack_update_admission(
         || provenance.summary.modepack_name != approved.modepack_name
         || provenance.summary.mode_ids != approved.mode_ids
         || provenance.summary.compiled_policy_fingerprint != approved.compiled_policy_fingerprint
+        || provenance.summary.pinned_commit != approved.pinned_commit
         || provenance.summary.signer_fingerprint != approved.signer_fingerprint
         || provenance.summary.statement_sha256 != approved.statement_sha256
     {
@@ -4646,6 +4740,7 @@ pub(super) fn validate_modepack_update_admission(
         dns_binding: cached.summary.dns_binding.clone(),
         content_sha256: approved.content_sha256.clone(),
         compiled_policy_fingerprint: approved.compiled_policy_fingerprint.clone(),
+        pinned_commit: approved.pinned_commit.clone(),
         provenance_id: approved.provenance_id.clone(),
         provenance_event_id: approved.provenance_event_id.clone(),
         trusted_signer_trust_id: approved.trusted_signer_trust_id.clone(),
@@ -4695,6 +4790,10 @@ pub(super) fn validate_approved_modepack_candidate_identity_binding(
             "approved candidate identity binding requires pinned address fingerprint".to_string(),
         );
     };
+    let Some(expected_pinned_commit) = params.expected_approved_candidate_pinned_commit.as_deref()
+    else {
+        return Err("approved candidate identity binding requires pinned commit".to_string());
+    };
     let Some(expected_approval_event_id) = params
         .expected_approved_candidate_approval_event_id
         .as_deref()
@@ -4710,6 +4809,7 @@ pub(super) fn validate_approved_modepack_candidate_identity_binding(
         || cached.source_url_fingerprint != expected_source_url_fingerprint
         || cached.dns_binding.resolution_fingerprint != expected_dns_resolution_fingerprint
         || cached.dns_binding.pinned_address_fingerprint != expected_pinned_address_fingerprint
+        || approved.pinned_commit != expected_pinned_commit
         || approved.approval_event_id != expected_approval_event_id
     {
         return Err("approved candidate identity evidence mismatch".to_string());
