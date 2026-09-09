@@ -527,6 +527,8 @@ progress_projection = {
     "applied": text(payload.get("objective_apply_applied")) or text(payload.get("objective_apply_apply_status")),
     "accepted": text(payload.get("accepted_completion_status")) or text(payload.get("objective_completion_acceptance_acceptance_status")),
     "finalization": text(payload.get("completion_finalization_status")) or text(payload.get("completion_finalization_finalization_fingerprint")),
+    "terminal_final_state": text(payload.get("terminal_completion_final_state")),
+    "terminal_task_status": text(payload.get("terminal_completion_task_status")),
     "next_action": text(payload.get("next_action")),
 }
 
@@ -542,7 +544,8 @@ if not isinstance(previous_projection, dict):
     previous_projection = {}
 
 workspace_changed = workspace_before != workspace_after
-blocked = bool(payload.get("blocked")) or bool(automation.get("blocked"))
+terminal_failed = progress_projection["terminal_final_state"] == "Failed" or progress_projection["terminal_task_status"] == "Failed"
+blocked = bool(payload.get("blocked")) or bool(automation.get("blocked")) or terminal_failed
 accepted = bool(progress_projection["accepted"])
 finalized = bool(progress_projection["finalization"])
 applied = progress_projection["applied"].lower() not in ("", "false", "none", "not_applicable")
@@ -559,6 +562,7 @@ if no_actionable_after_apply and not applied:
     progress_projection["applied"] = text(previous_projection.get("applied"))
     applied = True
 progress_projection["completed_by_no_actionable_after_apply"] = no_actionable_after_apply
+progress_projection["blocked_by_terminal_task_failure"] = terminal_failed
 completed = bool(payload.get("completed")) or bool(automation.get("completed")) or no_actionable_after_apply
 meaningful_progress = exit_code == 0 and (workspace_changed or completed or blocked or accepted or finalized or applied)
 

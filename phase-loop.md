@@ -163,6 +163,13 @@ Use `todo.md` before falling back to overview-based work selection:
 
 ### Tool Intent Schema Guidance
 
+`workspace.read` accepts regular repository files only. Never call
+`workspace.read` with `.`, a directory path, glob pattern, or an instruction to
+search the repository. If discovery is needed and no exact file is known, make
+progress by patching `todo.md` to replace the broad TODO with the next concrete
+bounded sub-TODOs, each naming exact files or scripts to inspect next. Do not
+end a workspace-edit TODO with read-only discovery only.
+
 When implementation requires editing an existing file, prefer a small
 `workspace.write` `patch_file` proposal over replacing the whole file. The tool
 intent must use the Runtime schema exactly:

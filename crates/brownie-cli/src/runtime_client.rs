@@ -2160,6 +2160,19 @@ fn cli_run_payload(result: &Value) -> Result<Value, RuntimeClientError> {
                 bounded_json_string(value)?,
             );
         }
+        for key in [
+            "completion_summary_preview",
+            "completion_result_fingerprint",
+            "final_state",
+            "task_status",
+        ] {
+            if let Some(value) = evidence.get(key) {
+                payload.insert(
+                    format!("terminal_completion_{key}"),
+                    bounded_json_string(value)?,
+                );
+            }
+        }
     }
     if let Some(preflight) = object
         .get("objective_proposal_authorization_preflight_result")
