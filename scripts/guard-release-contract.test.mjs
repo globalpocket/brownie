@@ -196,6 +196,11 @@ test('accepts fail-closed Runtime release contract', () => {
   assert.deepEqual(validate(validContract()), []);
 });
 
+test('rejects stale readiness audit content hash when audit text changes', () => {
+  const errors = validate(validContract(), { auditText: validAuditText + '\nchanged' });
+  assert(errors.some((error) => error.includes('commit_trace.readiness_audit_content_sha256 must match')));
+});
+
 test('rejects missing release-ready condition', () => {
   const contract = validContract({
     release_ready_conditions: validContract().release_ready_conditions.filter(
