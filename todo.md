@@ -46,6 +46,11 @@ Current synchronization note:
 - R-20 adds repo-fixed historical ledger fixtures for schema-v1 load/resume
   compatibility and fail-closed replay/read rejection, with release-gate and
   CI-reachable guard coverage.
+- E-01 resynchronizes the current phase manifest, Runtime Release Contract,
+  release-readiness audit, and semantic contract authority to the latest
+  execution-time `origin/main` after R-20, replacing stale current
+  RRP-8.4/RRP-8.6 fingerprint authority while keeping historical evidence
+  entries intact.
 - Runtime Product Ready is not reached.
 
 ## Queue protocol
@@ -82,9 +87,6 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-01: Resynchronize phase manifests, Product DoD, Runtime Release
-  Contract, release audit, and semantic contract so they point to the same
-  current commit and do not retain stale RRP-8.4/RRP-8.6 fingerprints.
 - [ ] E-02: Replace fixed readiness fingerprint strings with canonical content
   SHA-256 evidence and invalidate evidence whenever latest head changes.
 - [ ] E-03: Populate release evidence fields with current values:

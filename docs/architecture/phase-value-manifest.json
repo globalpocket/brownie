@@ -2,7 +2,7 @@
   "schema_version": 1,
   "phase": "RRP-8.7",
   "title": "Owner Governance Evidence Gate",
-  "date": "2026-09-04",
+  "date": "2026-09-09",
   "current_milestone": "runtime-release-readiness-p0-p1-finite-closure",
   "milestone": "Brownie Runtime Release Readiness",
   "target_capability": "headless_autonomous_development",
@@ -227,7 +227,7 @@
     "release_readiness_scope": {
       "runtime_release_dod": [
         "Closed RRP-1 through RRP-7.2 and RRP-5.18 evidence remains in force and is not reimplemented.",
-        "RRP-8.6 binds the local release gate dry-run into existing CI evidence without treating it as final Release Ready.",
+        "RRP-8.7 and R-20 are now reflected in current release metadata: owner-governance evidence remains fail-closed, and repo-fixed historical ledger fixtures are wired into CI-reachable release checks without claiming Runtime Release Ready.",
         "Missing cross-platform release artifacts, cross-platform smoke tests, artifact-bound checksums, signatures or integrity proof, provenance, workflow run enforcement, and tested commit remain release-blocking."
       ],
       "runtime_boundary_contracts": [
@@ -271,15 +271,15 @@
     }
   ],
   "closeout_review": {
-    "status": "partial_required_before_release_corrective",
+    "status": "partial_required_before_release_current_metadata_resynchronized",
     "runtime_release_ready": false,
-    "release_engineering_maturity_percent": 70,
-    "evidence": "RRP-8.6 binds release:gate dry-run into the existing CI-invoked VSIX check path and guards that binding, while workflow enforcement and release evidence remain incomplete.",
+    "release_engineering_maturity_percent": 73,
+    "evidence": "E-01 resynchronizes current phase/release authority metadata to origin/main 4376c0a7412a40f328fb3ba64bca487bba35a80e after R-20, keeping Runtime Release Ready false while release evidence and owner-controlled residuals remain incomplete.",
     "remaining_blockers": [
       "runtime-release-guard-ci",
-      "github_workflow_scope",
-      "cross-platform artifact and workflow enforcement evidence"
+      "cross-platform artifact and workflow enforcement evidence",
+      "supply-chain and release artifact evidence completion"
     ]
   },
-  "phase_title": "Existing CI Release Gate Dry-Run Binding"
+  "phase_title": "Owner Governance Evidence Gate"
 }
