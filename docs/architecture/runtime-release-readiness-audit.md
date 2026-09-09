@@ -230,6 +230,13 @@ are not serialized. `warn` continues provider execution while redacting prompt
 previews when findings are present, and `fail` records bounded failure evidence
 without creating an LLM request.
 
+R-08 constrains OpenAI-compatible provider egress to the configured origin. The
+LLM provider rejects base URLs with unsupported schemes, missing hosts, userinfo,
+query, or fragment components; derives only `/models` and `/chat/completions`
+under the configured base path; verifies the derived endpoint keeps the same
+scheme, host, and port; disables redirect following; disables proxy use; and
+pins the client to the DNS address set resolved before the request is sent.
+
 | ID | Priority | Classification | Status | Responsibility | Release classification | Evidence summary | Next action |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `runtime-release-debt-reaudit` | P0 | Runtime Release debt reaudit | implemented sufficient | Runtime | closed | Required specs, manifests, guards, crates, CLI, VSIX, and CI were reaudited and are now backed by a machine guard. | Use this artifact as the source for the remaining bounded closure phases. |

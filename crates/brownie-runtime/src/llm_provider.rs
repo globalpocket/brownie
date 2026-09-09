@@ -343,6 +343,10 @@ fn status_from_config(config: &BrownieConfig) -> Result<RuntimeLlmProviderStatus
                 .clone()
                 .unwrap_or_else(|| "BROWNIE_LLM_API_KEY".to_string());
             let strict = strict.unwrap_or(false);
+            let checked_base_url = brownie_llm::validate_openai_compatible_base_url(base_url)
+                .map_err(|reason| {
+                    format!("invalid OpenAI-compatible workspace config: {reason}")
+                })?;
             let api_key_present = std::env::var(&api_key_env)
                 .ok()
                 .filter(|v| !v.trim().is_empty())
@@ -353,7 +357,7 @@ fn status_from_config(config: &BrownieConfig) -> Result<RuntimeLlmProviderStatus
                     provider: LlmProviderKind::OpenAiCompatible,
                     enabled,
                     model: model.clone(),
-                    base_url: Some(redact_secret(base_url)),
+                    base_url: Some(redact_secret(&checked_base_url)),
                     reason: if enabled {
                         None
                     } else {
