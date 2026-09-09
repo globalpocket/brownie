@@ -75,8 +75,6 @@ Current synchronization note:
 
 ### P1: Runtime / CLI boundary
 
-- [ ] R-12: Add metadata checks before reading `run --file` input and reject
-  oversized files before content read.
 - [ ] R-13: Reject directories, FIFOs, devices, sockets, and other non-regular
   files for `run --file`.
 - [ ] R-14: Return bounded structured UTF-8 errors for invalid `run --file`

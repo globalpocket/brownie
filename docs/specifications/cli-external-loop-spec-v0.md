@@ -27,8 +27,10 @@ objective should call `brownie resume` after the initial admission.
 separate authority source. Before invoking the runtime, the CLI rejects files
 larger than `BROWNIE_CLI_RUN_FILE_MAX_BYTES`; when unset, the default is 65536
 bytes, aligned with Brownie's bounded file/context handling. Rejection happens
-as an invalid invocation and does not start the runtime. Later hardening phases
-own non-regular-file rejection and complete error redaction.
+as an invalid invocation and does not start the runtime. The byte-limit gate is
+metadata-first: oversized files must be rejected before reading their content,
+including when the file body is not valid UTF-8. Later hardening phases own
+non-regular-file rejection and complete error redaction.
 
 For a `run` invocation, the CLI generates bounded invocation identities,
 including an `admission_id`, and passes them to the runtime's
