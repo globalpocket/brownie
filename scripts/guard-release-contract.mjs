@@ -316,7 +316,8 @@ export function runReleaseContractGuard(options = {}) {
     contractPath,
     packageJson,
     vsixPackageJson,
-    audit
+    audit,
+    readinessAuditContentSha256
   }));
   return { errors, contractPath };
 }
