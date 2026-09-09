@@ -5,6 +5,9 @@ use cli::{Cli, CliCommand, CliError, InspectTarget, ListTarget, ModeTarget};
 use runtime_client::{RunRecoveryIdentity, RuntimeClient, RuntimeClientError};
 use std::fs;
 
+const DEFAULT_RUN_FILE_MAX_BYTES: u64 = 65_536;
+const RUN_FILE_MAX_BYTES_ENV: &str = "BROWNIE_CLI_RUN_FILE_MAX_BYTES";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExitCode {
     Success = 0,
@@ -62,7 +65,7 @@ fn execute(cli: Cli) -> CliOutput {
             stdout: format!("brownie {}\n", env!("CARGO_PKG_VERSION")),
             stderr: String::new(),
         },
-        CliCommand::RunFile { path } => match fs::read_to_string(&path) {
+        CliCommand::RunFile { path } => match read_run_file_objective(&path) {
             Ok(objective) => {
                 let client = RuntimeClient::default();
                 let command = CliCommand::Run { objective };
@@ -95,6 +98,48 @@ fn execute(cli: Cli) -> CliOutput {
                 },
                 Err(error) => runtime_error_output(error, cli.json, command_name),
             }
+        }
+    }
+}
+
+fn read_run_file_objective(path: &str) -> Result<String, String> {
+    let max_bytes = run_file_max_bytes()?;
+    let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
+    if metadata.len() > max_bytes {
+        return Err(format!(
+            "objective file exceeds configured maximum byte size: bytes={} max_bytes={} env={}",
+            metadata.len(),
+            max_bytes,
+            RUN_FILE_MAX_BYTES_ENV
+        ));
+    }
+    let objective = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let bytes_read = objective.len() as u64;
+    if bytes_read > max_bytes {
+        return Err(format!(
+            "objective file exceeds configured maximum byte size: bytes={} max_bytes={} env={}",
+            bytes_read, max_bytes, RUN_FILE_MAX_BYTES_ENV
+        ));
+    }
+    Ok(objective)
+}
+
+fn run_file_max_bytes() -> Result<u64, String> {
+    match std::env::var(RUN_FILE_MAX_BYTES_ENV) {
+        Ok(value) => {
+            let parsed = value.parse::<u64>().map_err(|_| {
+                format!("{RUN_FILE_MAX_BYTES_ENV} must be a positive integer byte limit")
+            })?;
+            if parsed == 0 {
+                return Err(format!(
+                    "{RUN_FILE_MAX_BYTES_ENV} must be greater than zero"
+                ));
+            }
+            Ok(parsed)
+        }
+        Err(std::env::VarError::NotPresent) => Ok(DEFAULT_RUN_FILE_MAX_BYTES),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err(format!("{RUN_FILE_MAX_BYTES_ENV} must be valid UTF-8"))
         }
     }
 }

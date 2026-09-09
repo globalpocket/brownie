@@ -75,8 +75,6 @@ Current synchronization note:
 
 ### P1: Runtime / CLI boundary
 
-- [ ] R-11: Bound `brownie run --file` by configurable maximum byte size aligned
-  with context budget.
 - [ ] R-12: Add metadata checks before reading `run --file` input and reject
   oversized files before content read.
 - [ ] R-13: Reject directories, FIFOs, devices, sockets, and other non-regular
