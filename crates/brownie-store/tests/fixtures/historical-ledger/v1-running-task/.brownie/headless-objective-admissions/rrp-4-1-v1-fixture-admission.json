@@ -1,0 +1,10 @@
+{
+  "admission_id": "rrp-4-1-v1-fixture-admission",
+  "material_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "journey_id": "rrp-4-1-v1-fixture-journey",
+  "session_id": "rrp-4-1-v1-fixture-session",
+  "drive_id": "rrp-4-1-v1-fixture-drive",
+  "task_id": "task_historical_v1_running_task",
+  "run_id": "run_historical_v1_running_task",
+  "journey_fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}

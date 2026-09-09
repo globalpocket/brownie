@@ -207,6 +207,18 @@ export const requiredReleaseGateCommands = [
     args: ['--workspace-root', 'guard:ledger-contract-single-source:test']
   },
   {
+    id: 'historical_ledger_fixtures_guard',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:historical-ledger-fixtures']
+  },
+  {
+    id: 'historical_ledger_fixtures_guard_test',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:historical-ledger-fixtures:test']
+  },
+  {
     id: 'runtime_module_decomposition_guard',
     category: 'brownie_release_guard',
     command: 'pnpm',

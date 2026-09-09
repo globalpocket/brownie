@@ -211,9 +211,12 @@
       "verification": [
         "guard:ledger-contract-single-source",
         "guard:ledger-contract-single-source:test",
+        "guard:historical-ledger-fixtures",
+        "guard:historical-ledger-fixtures:test",
         "guard:protocol-event-canonization",
         "brownie-protocol generated semantic contract",
-        "brownie-store ledger payload validation tests"
+        "brownie-store ledger payload validation tests",
+        "brownie-store historical ledger load/resume/replay rejection fixtures"
       ]
     },
     {
@@ -393,6 +396,14 @@
       {
         "id": "ledger_contract_single_source_guard_test",
         "command": "pnpm --workspace-root guard:ledger-contract-single-source:test"
+      },
+      {
+        "id": "historical_ledger_fixtures_guard",
+        "command": "pnpm --workspace-root guard:historical-ledger-fixtures"
+      },
+      {
+        "id": "historical_ledger_fixtures_guard_test",
+        "command": "pnpm --workspace-root guard:historical-ledger-fixtures:test"
       },
       {
         "id": "runtime_module_decomposition_guard",
