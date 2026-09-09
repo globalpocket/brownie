@@ -185,6 +185,7 @@ function validate(contract, overrides = {}) {
   return runReleaseContractGuard({
     contract,
     audit: overrides.audit ?? validAudit(),
+    auditText: overrides.auditText ?? validAuditText,
     packageJson: overrides.packageJson ?? validPackageJson,
     vsixPackageJson: overrides.vsixPackageJson ?? validVsixPackageJson,
     releaseGateText: overrides.releaseGateText ?? 'cargo pnpm'
