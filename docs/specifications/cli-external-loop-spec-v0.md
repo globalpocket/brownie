@@ -34,8 +34,10 @@ regular file before the CLI reads objective content; directories, FIFOs, device
 nodes, sockets, and other non-regular file types are invalid invocation inputs.
 The CLI must validate file type metadata from the same opened file handle it
 uses for content read, and Unix opens must avoid blocking on FIFO/device races
-before type validation. Later hardening phases own complete UTF-8 and
-error-redaction coverage.
+before type validation. Objective files must be valid UTF-8. Invalid UTF-8 is a
+bounded invalid invocation with a stable machine reason of `invalid_utf8` and a
+fixed human message; the CLI must not surface decoder internals for that path.
+Later hardening phases own complete error-redaction coverage.
 
 For a `run` invocation, the CLI generates bounded invocation identities,
 including an `admission_id`, and passes them to the runtime's

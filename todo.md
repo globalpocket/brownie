@@ -75,8 +75,6 @@ Current synchronization note:
 
 ### P1: Runtime / CLI boundary
 
-- [ ] R-14: Return bounded structured UTF-8 errors for invalid `run --file`
-  input.
 - [ ] R-15: Prevent file path and content leakage from `run --file` errors,
   ledger, and logs; avoid absolute paths and raw input bodies.
 - [ ] R-16: Migrate `BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK` toward

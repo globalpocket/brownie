@@ -4,7 +4,7 @@ pub mod runtime_client;
 use cli::{Cli, CliCommand, CliError, InspectTarget, ListTarget, ModeTarget};
 use runtime_client::{RunRecoveryIdentity, RuntimeClient, RuntimeClientError};
 use std::fs;
-use std::io::Read;
+use std::io::{ErrorKind, Read};
 
 const DEFAULT_RUN_FILE_MAX_BYTES: u64 = 65_536;
 const RUN_FILE_MAX_BYTES_ENV: &str = "BROWNIE_CLI_RUN_FILE_MAX_BYTES";
@@ -79,13 +79,14 @@ fn execute(cli: Cli) -> CliOutput {
                     Err(error) => runtime_error_output(error, cli.json, "run"),
                 }
             }
-            Err(error) => error_output(
+            Err(error) => error_output_with_reason(
                 ExitCode::InvalidInvocation,
                 "invalid_invocation",
-                &format!("failed to read objective file: {error}"),
+                &format!("failed to read objective file: {}", error.message()),
                 cli.json,
                 "run",
                 None,
+                Some(error.reason()),
             ),
         },
         command => {
@@ -103,67 +104,100 @@ fn execute(cli: Cli) -> CliOutput {
     }
 }
 
-fn read_run_file_objective(path: &str) -> Result<String, String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RunFileObjectiveError {
+    InvalidUtf8,
+    Message(String),
+}
+
+impl RunFileObjectiveError {
+    fn message(&self) -> &str {
+        match self {
+            RunFileObjectiveError::InvalidUtf8 => "objective file must be valid UTF-8",
+            RunFileObjectiveError::Message(message) => message.as_str(),
+        }
+    }
+
+    fn reason(&self) -> &str {
+        match self {
+            RunFileObjectiveError::InvalidUtf8 => "invalid_utf8",
+            RunFileObjectiveError::Message(_) => "read_failed",
+        }
+    }
+}
+
+fn read_run_file_objective(path: &str) -> Result<String, RunFileObjectiveError> {
     let max_bytes = run_file_max_bytes()?;
     let mut file = open_run_file(path)?;
-    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| RunFileObjectiveError::Message(error.to_string()))?;
     if !metadata.file_type().is_file() {
-        return Err("objective path must refer to a regular file".to_string());
+        return Err(RunFileObjectiveError::Message(
+            "objective path must refer to a regular file".to_string(),
+        ));
     }
     if metadata.len() > max_bytes {
-        return Err(format!(
+        return Err(RunFileObjectiveError::Message(format!(
             "objective file exceeds configured maximum byte size: bytes={} max_bytes={} env={}",
             metadata.len(),
             max_bytes,
             RUN_FILE_MAX_BYTES_ENV
-        ));
+        )));
     }
     let mut objective = String::new();
-    file.read_to_string(&mut objective)
-        .map_err(|error| error.to_string())?;
+    file.read_to_string(&mut objective).map_err(|error| {
+        if error.kind() == ErrorKind::InvalidData {
+            RunFileObjectiveError::InvalidUtf8
+        } else {
+            RunFileObjectiveError::Message(error.to_string())
+        }
+    })?;
     let bytes_read = objective.len() as u64;
     if bytes_read > max_bytes {
-        return Err(format!(
+        return Err(RunFileObjectiveError::Message(format!(
             "objective file exceeds configured maximum byte size: bytes={} max_bytes={} env={}",
             bytes_read, max_bytes, RUN_FILE_MAX_BYTES_ENV
-        ));
+        )));
     }
     Ok(objective)
 }
 
 #[cfg(unix)]
-fn open_run_file(path: &str) -> Result<fs::File, String> {
+fn open_run_file(path: &str) -> Result<fs::File, RunFileObjectiveError> {
     use std::os::unix::fs::OpenOptionsExt;
 
     fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NONBLOCK)
         .open(path)
-        .map_err(|error| error.to_string())
+        .map_err(|error| RunFileObjectiveError::Message(error.to_string()))
 }
 
 #[cfg(not(unix))]
-fn open_run_file(path: &str) -> Result<fs::File, String> {
-    fs::File::open(path).map_err(|error| error.to_string())
+fn open_run_file(path: &str) -> Result<fs::File, RunFileObjectiveError> {
+    fs::File::open(path).map_err(|error| RunFileObjectiveError::Message(error.to_string()))
 }
 
-fn run_file_max_bytes() -> Result<u64, String> {
+fn run_file_max_bytes() -> Result<u64, RunFileObjectiveError> {
     match std::env::var(RUN_FILE_MAX_BYTES_ENV) {
         Ok(value) => {
             let parsed = value.parse::<u64>().map_err(|_| {
-                format!("{RUN_FILE_MAX_BYTES_ENV} must be a positive integer byte limit")
+                RunFileObjectiveError::Message(format!(
+                    "{RUN_FILE_MAX_BYTES_ENV} must be a positive integer byte limit"
+                ))
             })?;
             if parsed == 0 {
-                return Err(format!(
+                return Err(RunFileObjectiveError::Message(format!(
                     "{RUN_FILE_MAX_BYTES_ENV} must be greater than zero"
-                ));
+                )));
             }
             Ok(parsed)
         }
         Err(std::env::VarError::NotPresent) => Ok(DEFAULT_RUN_FILE_MAX_BYTES),
-        Err(std::env::VarError::NotUnicode(_)) => {
-            Err(format!("{RUN_FILE_MAX_BYTES_ENV} must be valid UTF-8"))
-        }
+        Err(std::env::VarError::NotUnicode(_)) => Err(RunFileObjectiveError::Message(format!(
+            "{RUN_FILE_MAX_BYTES_ENV} must be valid UTF-8"
+        ))),
     }
 }
 
@@ -235,6 +269,26 @@ fn error_output(
     json: bool,
     command: &'static str,
     recovery_identity: Option<RunRecoveryIdentity>,
+) -> CliOutput {
+    error_output_with_reason(
+        exit_code,
+        code,
+        message,
+        json,
+        command,
+        recovery_identity,
+        None,
+    )
+}
+
+fn error_output_with_reason(
+    exit_code: ExitCode,
+    code: &str,
+    message: &str,
+    json: bool,
+    command: &'static str,
+    recovery_identity: Option<RunRecoveryIdentity>,
+    error_reason: Option<&str>,
 ) -> CliOutput {
     if json {
         let retryable = matches!(code, "runtime_communication_failed" | "runtime_timeout");
@@ -324,7 +378,8 @@ fn error_output(
             },
             "error": {
                 "code": code,
-                "message": message
+                "message": message,
+                "reason": error_reason
             },
             "exit_code": exit_code.as_i32()
         });
