@@ -632,6 +632,38 @@ tracked_workspace_diff_exists() {
   )
 }
 
+stage_runtime_applied_paths() {
+  local stdout_log="$1"
+  (
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    python3 - "$stdout_log" <<'PY' | while IFS= read -r path; do
+import json
+import sys
+
+root = json.load(open(sys.argv[1], encoding="utf-8"))
+if isinstance(root, dict) and isinstance(root.get("run"), dict):
+    payload = root.get("run")
+elif isinstance(root, dict) and isinstance(root.get("resume"), dict):
+    payload = root.get("resume")
+else:
+    payload = root
+path = payload.get("objective_apply_path") if isinstance(payload, dict) else None
+if isinstance(path, str) and path.strip():
+    print(path)
+PY
+      case "$path" in
+        /*|*..*|"" )
+          exit 66
+          ;;
+      esac
+      if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+        exit 66
+      fi
+      git add -- "$path"
+    done
+  )
+}
+
 phase_loop_safe_pr_title() {
   python3 - "$PHASE_LOOP_PR_TITLE_PREFIX" "$(claim_field selected_todo 2>/dev/null || true)" <<'PY'
 import re
@@ -683,7 +715,10 @@ This PR was created by the external phase-loop controller after Brownie produced
 
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-    git add -u
+    stage_runtime_applied_paths "$stdout_log"
+    if git diff --cached --quiet --exit-code; then
+      exit 1
+    fi
     GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-Brownie}" \
       GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-brownie-agent@users.noreply.github.com}" \
       GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-Brownie}" \

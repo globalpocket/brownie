@@ -2180,7 +2180,7 @@ fn cli_run_payload(result: &Value) -> Result<Value, RuntimeClientError> {
         .and_then(|result| result.get("apply_result"))
         .and_then(Value::as_object)
     {
-        for key in ["operation", "apply_status", "next_action"] {
+        for key in ["operation", "path", "apply_status", "next_action"] {
             if let Some(value) = apply.get(key) {
                 payload.insert(
                     format!("objective_apply_{key}"),
