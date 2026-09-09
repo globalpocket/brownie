@@ -80,4 +80,4 @@ See [LLM Request Budget Spec v0](llm-request-budget-spec-v0.md). Runtime provide
 
 ## Phase 2.8 prompt sensitive guard
 
-Runtime LLM configuration keeps the legacy `sensitive_guard` knob (`off`, `warn`, `fail`) with `BROWNIE_LLM_SENSITIVE_GUARD` as the highest-priority override, but prompt text is no longer classified for serial-key/API-key-looking content and no guard mode blocks provider calls. Secret and key hygiene belongs to the caller's environment/configuration layer outside Brownie's prompt admission path. Runtime status, diagnostics, ledger, and inspection APIs still must not expose API key values, Authorization/Bearer header values, or full provider responses.
+Runtime LLM configuration keeps the `sensitive_guard` knob (`off`, `warn`, `fail`) with `BROWNIE_LLM_SENSITIVE_GUARD` as the highest-priority override. Prompt text is scanned with low-false-positive sensitive-content detection before provider calls, and scan evidence records only categories and message indexes. Runtime status, diagnostics, ledger, and inspection APIs still must not expose API key values, Authorization/Bearer header values, matched secret values, or full provider responses.

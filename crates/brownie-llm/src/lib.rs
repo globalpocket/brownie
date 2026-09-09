@@ -2,10 +2,12 @@
 
 use std::{
     env,
+    sync::OnceLock,
     time::{Duration, Instant},
 };
 
 use anyhow::anyhow;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 pub const OPENAI_COMPATIBLE_API_VERSION: &str = "v1";
@@ -77,33 +79,39 @@ impl std::fmt::Display for PromptSensitiveGuardError {
 impl std::error::Error for PromptSensitiveGuardError {}
 
 pub fn scan_prompt_for_sensitive_content(messages: &[LlmMessage]) -> PromptSensitiveScanResult {
-    let _ = messages;
-    PromptSensitiveScanResult {
-        findings: Vec::new(),
+    let mut findings = Vec::new();
+    for (message_index, message) in messages.iter().enumerate() {
+        append_sensitive_findings(&message.content, message_index, &mut findings);
     }
+    PromptSensitiveScanResult { findings }
 }
 
 pub fn scan_text_for_sensitive_content(content: &str) -> PromptSensitiveScanResult {
     let mut findings = Vec::new();
-    let lower = content.to_ascii_lowercase();
+    append_sensitive_findings(content, 0, &mut findings);
+    PromptSensitiveScanResult { findings }
+}
+
+fn append_sensitive_findings(
+    content: &str,
+    message_index: usize,
+    findings: &mut Vec<PromptSensitiveFinding>,
+) {
     let checks = [
         (
             "authorization_header",
-            lower.contains("authorization: bearer "),
+            authorization_header_re().is_match(content),
         ),
-        (
-            "bearer_token",
-            lower.contains("bearer sk-")
-                || lower.contains("bearer ghp_")
-                || lower.contains("bearer github_pat_"),
-        ),
+        ("bearer_token", bearer_token_re().is_match(content)),
         (
             "api_key_assignment",
-            contains_assignment(&lower, &["api_key", "apikey", "api-key"]),
+            assignment_re().is_match(content)
+                && assignment_name_re(&["api_key", "apikey", "api-key"]).is_match(content),
         ),
         (
             "access_token_assignment",
-            contains_assignment(&lower, &["access_token", "access-token"]),
+            assignment_re().is_match(content)
+                && assignment_name_re(&["access_token", "access-token"]).is_match(content),
         ),
         (
             "private_key_block",
@@ -115,31 +123,26 @@ pub fn scan_text_for_sensitive_content(content: &str) -> PromptSensitiveScanResu
         ),
         (
             "env_file_secret",
-            contains_assignment(
-                &lower,
-                &[
+            assignment_re().is_match(content)
+                && assignment_name_re(&[
                     "aws_secret_access_key",
                     "secret_key",
                     "client_secret",
                     "password",
-                ],
-            ),
+                ])
+                .is_match(content),
         ),
-        (
-            "github_token_like",
-            content.contains("ghp_") || content.contains("github_pat_"),
-        ),
-        ("openai_key_like", content.contains("sk-")),
+        ("github_token_like", github_token_re().is_match(content)),
+        ("openai_key_like", openai_key_re().is_match(content)),
     ];
     for (category, matched) in checks {
         if matched {
             findings.push(PromptSensitiveFinding {
                 category: category.to_string(),
-                message_index: 0,
+                message_index,
             });
         }
     }
-    PromptSensitiveScanResult { findings }
 }
 
 pub fn enforce_prompt_sensitive_guard(
@@ -171,13 +174,43 @@ pub fn enforce_prompt_sensitive_guard(
     Ok(result)
 }
 
-fn contains_assignment(lower: &str, names: &[&str]) -> bool {
-    names.iter().any(|name| {
-        lower.contains(&format!("{name}="))
-            || lower.contains(&format!("{name}:"))
-            || lower.contains(&format!("{name} ="))
-            || lower.contains(&format!("{name}: "))
+fn authorization_header_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)(^|\n)\s*authorization\s*:\s*bearer\s+\S+").unwrap())
+}
+
+fn bearer_token_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)\bbearer\s+(sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})")
+            .unwrap()
     })
+}
+
+fn github_token_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"\b(ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})").unwrap()
+    })
+}
+
+fn openai_key_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\bsk-[A-Za-z0-9_-]{16,}").unwrap())
+}
+
+fn assignment_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"(?i)\b[A-Za-z0-9_-]{3,}\s*[:=]\s*["']?[^"'\s]{6,}"#).unwrap())
+}
+
+fn assignment_name_re(names: &[&str]) -> Regex {
+    let alternates = names
+        .iter()
+        .map(|name| regex::escape(name))
+        .collect::<Vec<_>>()
+        .join("|");
+    Regex::new(&format!(r"(?i)\b({alternates})\s*[:=]")).unwrap()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -959,7 +992,8 @@ mod tests {
     }
 
     #[test]
-    fn sensitive_scanner_does_not_classify_prompt_content() {
+    fn sensitive_scanner_classifies_prompt_content_without_serializing_values() {
+        let github_token_like = format!("ghp_{}", "123456789012345678901234567890123456");
         let messages = vec![
             LlmMessage {
                 role: "user".into(),
@@ -967,15 +1001,26 @@ mod tests {
             },
             LlmMessage {
                 role: "user".into(),
-                content: "api_key=supersecret\n-----BEGIN PRIVATE KEY-----\nghp_secret\nsk-testkeywithsufficientlength".into(),
+                content: format!(
+                    "api_key=supersecret\n-----BEGIN PRIVATE KEY-----\n{github_token_like}\nsk-testkeywithsufficientlength"
+                ),
             },
         ];
         let result = scan_prompt_for_sensitive_content(&messages);
-        assert!(result.findings.is_empty());
+        let categories: Vec<_> = result
+            .findings
+            .iter()
+            .map(|f| (f.category.as_str(), f.message_index))
+            .collect();
+        assert!(categories.contains(&("authorization_header", 0)));
+        assert!(categories.contains(&("api_key_assignment", 1)));
+        assert!(categories.contains(&("private_key_block", 1)));
+        assert!(categories.contains(&("github_token_like", 1)));
+        assert!(categories.contains(&("openai_key_like", 1)));
         let serialized = serde_json::to_string(&result).unwrap();
         assert!(!serialized.contains("supersecret"));
         assert!(!serialized.contains("sk-secretvalue"));
-        assert!(!serialized.contains("ghp_secret"));
+        assert!(!serialized.contains(&github_token_like));
     }
 
     #[test]
@@ -1015,12 +1060,12 @@ mod tests {
     }
 
     #[test]
-    fn sensitive_guard_modes_do_not_block_provider_calls() {
+    fn sensitive_guard_fail_blocks_prompt_findings_before_provider_calls() {
         let messages = vec![LlmMessage {
             role: "user".into(),
             content: "access_token=secret".into(),
         }];
-        assert!(enforce_prompt_sensitive_guard(&messages, PromptSensitiveGuardMode::Fail).is_ok());
+        assert!(enforce_prompt_sensitive_guard(&messages, PromptSensitiveGuardMode::Fail).is_err());
         assert!(enforce_prompt_sensitive_guard(&messages, PromptSensitiveGuardMode::Warn).is_ok());
         assert!(enforce_prompt_sensitive_guard(&messages, PromptSensitiveGuardMode::Off).is_ok());
     }
