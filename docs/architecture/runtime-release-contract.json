@@ -11,16 +11,16 @@
     "baseline_percent": 58,
     "target_percent": 90,
     "current_percent": 73,
-    "scoring_basis": "RRP-8.7 adds machine-checked owner-governance and local checksum-integrity evidence gates for owner-controlled release residuals; runtime_release_ready remains false until every release evidence and owner-controlled condition is satisfied."
+    "scoring_basis": "E-01 resynchronizes current release authority metadata after R-20 so the release contract, readiness audit, current phase manifest, and semantic contract checks refer to the same authoritative origin/main baseline; runtime_release_ready remains false until executable release evidence and owner-controlled residuals are complete."
   },
   "commit_trace": {
-    "audited_base_commit": "26de9a83f2da77377f58f031e3b3c55b598b654c",
+    "audited_base_commit": "4376c0a7412a40f328fb3ba64bca487bba35a80e",
     "implementation_commit": null,
     "tested_commit": null,
     "release_tag": null,
     "workflow_run_id": null,
     "artifact_sha256": null,
-    "contract_registry_fingerprint": "sha256:runtime-release-engineering-contract-v1-rrp-8-4-supply-chain-artifact-evidence",
+    "contract_registry_fingerprint": "sha256:4250fb47242f2bdc4ac26ce1d0cf8ecedbd27627eb9e3117acc82e3719eb934d",
     "mode_pack_fingerprint": null,
     "product_dod_fingerprint": null
   },
@@ -333,21 +333,21 @@
         "id": "supply_chain_artifact_evidence_guard",
         "command": "pnpm --workspace-root guard:supply-chain-artifact-evidence"
       },
-    {
-      "id": "supply_chain_artifact_evidence_guard_test",
-      "command": "pnpm --workspace-root guard:supply-chain-artifact-evidence:test"
-    },
-    {
-      "id": "modepack_distribution_trust_guard",
-      "command": "pnpm --workspace-root guard:modepack-distribution-trust"
-    },
-    {
-      "id": "modepack_distribution_trust_guard_test",
-      "command": "pnpm --workspace-root guard:modepack-distribution-trust:test"
-    },
-    {
-      "id": "release_integrity_verify",
-      "command": "pnpm --workspace-root release:integrity-verify"
+      {
+        "id": "supply_chain_artifact_evidence_guard_test",
+        "command": "pnpm --workspace-root guard:supply-chain-artifact-evidence:test"
+      },
+      {
+        "id": "modepack_distribution_trust_guard",
+        "command": "pnpm --workspace-root guard:modepack-distribution-trust"
+      },
+      {
+        "id": "modepack_distribution_trust_guard_test",
+        "command": "pnpm --workspace-root guard:modepack-distribution-trust:test"
+      },
+      {
+        "id": "release_integrity_verify",
+        "command": "pnpm --workspace-root release:integrity-verify"
       },
       {
         "id": "owner_governance_evidence_generate",

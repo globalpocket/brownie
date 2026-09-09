@@ -4,7 +4,7 @@
   "phase": "RRP-8.7",
   "phase_title": "Owner Governance Evidence Gate",
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "26de9a83f2da77377f58f031e3b3c55b598b654c",
+  "audited_main_commit": "4376c0a7412a40f328fb3ba64bca487bba35a80e",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
     "runtime-release-guard-ci"
@@ -13,14 +13,15 @@
     "contract_path": "docs/architecture/runtime-release-contract.json",
     "status": "partial",
     "phase": "RRP-8.7",
-    "audited_base_commit": "26de9a83f2da77377f58f031e3b3c55b598b654c",
+    "audited_base_commit": "4376c0a7412a40f328fb3ba64bca487bba35a80e",
     "local_release_gate_script": "pnpm release:gate",
     "direct_workflow_gate_status": "blocked_external_workflow_scope_required",
     "runtime_release_ready_after_phase": false,
     "supply_chain_artifact_evidence_status": "local_baseline_available_release_blocking_gaps_preserved",
     "dependency_security_license_audit_status": "mandatory_local_gate_added_release_blocking_until_tools_execute_and_pass",
     "existing_ci_release_gate_binding_status": "release_gate_dry_run_required_by_existing_vsix_check_path_direct_workflow_scope_blocked",
-    "owner_governance_evidence_status": "machine_checked_owner_controlled_residuals_satisfied_cross_platform_artifacts_held"
+    "owner_governance_evidence_status": "machine_checked_owner_controlled_residuals_satisfied_cross_platform_artifacts_held",
+    "metadata_resynchronization_status": "current_authority_resynchronized_to_origin_main_after_r20"
   },
   "safety_readiness_evidence_invalidation": {
     "evidence_id": "runtime-safety-readiness-evidence-invalidation-v1",
@@ -402,7 +403,8 @@
     "RRP-8.6 binds pnpm --workspace-root release:gate -- --dry-run into the existing GitHub-CI-invoked brownie-vsix check path and guards that binding without editing .github/workflows/ci.yml.",
     "RRP-8.7 adds machine-checked owner-governance evidence so owner-controlled residuals become precise fail-closed release blockers instead of prose-only blockers.",
     "The repository main branch now has branch protection enabled with required GitHub Actions checks check and index-platform, required pull request review, stale-review dismissal, last-push approval, enforced admins, force-push denial, deletion denial, and required conversation resolution. Owner-governance evidence now records branch_protection, required_status_checks, and remote_ci_workflow_provenance as satisfied.",
-    "Future GitHub actor separation is recorded as: brownie-agent authors and pushes Brownie Phase Loop implementation PRs; globalpocket reviews and merges them through the protected-branch PR flow after required checks pass."
+    "Future GitHub actor separation is recorded as: brownie-agent authors and pushes Brownie Phase Loop implementation PRs; globalpocket reviews and merges them through the protected-branch PR flow after required checks pass.",
+    "E-01 resynchronizes current phase-value, Runtime Release Contract, release-readiness audit, and semantic contract guard authority to origin/main 4376c0a7412a40f328fb3ba64bca487bba35a80e after R-20; stale RRP-8.4/RRP-8.6 fingerprint authority is no longer used as the current release contract fingerprint."
   ],
   "blockers": [
     "runtime-release-guard-ci"
