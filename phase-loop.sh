@@ -486,7 +486,12 @@ payload = None
 if stdout_log.exists() and stdout_log.stat().st_size > 0:
     with open(stdout_log, encoding="utf-8") as handle:
         root = json.load(handle)
-        payload = root.get("run") if isinstance(root, dict) and isinstance(root.get("run"), dict) else root
+        if isinstance(root, dict) and isinstance(root.get("run"), dict):
+            payload = root.get("run")
+        elif isinstance(root, dict) and isinstance(root.get("resume"), dict):
+            payload = root.get("resume")
+        else:
+            payload = root
 if not isinstance(payload, dict):
     payload = {}
 
@@ -525,17 +530,6 @@ progress_projection = {
     "next_action": text(payload.get("next_action")),
 }
 
-encoded = json.dumps(progress_projection, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
-fingerprint = "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-
-workspace_changed = workspace_before != workspace_after
-completed = bool(payload.get("completed")) or bool(automation.get("completed"))
-blocked = bool(payload.get("blocked")) or bool(automation.get("blocked"))
-accepted = bool(progress_projection["accepted"])
-finalized = bool(progress_projection["finalization"])
-applied = progress_projection["applied"].lower() not in ("", "false", "none", "not_applicable")
-meaningful_progress = exit_code == 0 and (workspace_changed or completed or blocked or accepted or finalized or applied)
-
 previous = {}
 if state_path.exists():
     try:
@@ -543,6 +537,34 @@ if state_path.exists():
             previous = json.load(handle)
     except Exception:
         previous = {}
+previous_projection = previous.get("progress_projection")
+if not isinstance(previous_projection, dict):
+    previous_projection = {}
+
+workspace_changed = workspace_before != workspace_after
+blocked = bool(payload.get("blocked")) or bool(automation.get("blocked"))
+accepted = bool(progress_projection["accepted"])
+finalized = bool(progress_projection["finalization"])
+applied = progress_projection["applied"].lower() not in ("", "false", "none", "not_applicable")
+previous_applied = text(previous_projection.get("applied")).lower() not in ("", "false", "none", "not_applicable")
+same_claim_as_previous = bool(progress_projection["claim_id"]) and progress_projection["claim_id"] == text(previous_projection.get("claim_id"))
+no_actionable_after_apply = (
+    exit_code == 0
+    and same_claim_as_previous
+    and previous_applied
+    and progress_projection["cli_status"] in ("no_eligible_task", "no_actionable_work")
+    and progress_projection["stop_class"] == "no_actionable_work"
+)
+if no_actionable_after_apply and not applied:
+    progress_projection["applied"] = text(previous_projection.get("applied"))
+    applied = True
+progress_projection["completed_by_no_actionable_after_apply"] = no_actionable_after_apply
+completed = bool(payload.get("completed")) or bool(automation.get("completed")) or no_actionable_after_apply
+meaningful_progress = exit_code == 0 and (workspace_changed or completed or blocked or accepted or finalized or applied)
+
+encoded = json.dumps(progress_projection, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+fingerprint = "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
 previous_fingerprint = previous.get("last_progress_fingerprint")
 previous_count = int(previous.get("same_progress_count", 0) or 0)
 same_count = previous_count + 1 if previous_fingerprint == fingerprint else 1
@@ -1386,7 +1408,12 @@ import json
 import sys
 try:
     root = json.load(open(sys.argv[1], encoding="utf-8"))
-    payload = root.get("run") if isinstance(root, dict) and isinstance(root.get("run"), dict) else root
+    if isinstance(root, dict) and isinstance(root.get("run"), dict):
+        payload = root.get("run")
+    elif isinstance(root, dict) and isinstance(root.get("resume"), dict):
+        payload = root.get("resume")
+    else:
+        payload = root
     print(payload.get("run_id") or payload.get("automation", {}).get("run_id") or "")
 except Exception:
     print("")
@@ -1413,18 +1440,35 @@ PY
       printf '%s' "$progress_summary" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("classification", ""))'
     )"
 
-    if python3 - "$stdout_log" <<'PY'
+    if python3 - "$stdout_log" "$PROGRESS_STATE_FILE" <<'PY'
 import json, sys
 root = json.load(open(sys.argv[1], encoding="utf-8"))
-payload = root.get("run") if isinstance(root, dict) and isinstance(root.get("run"), dict) else root
-sys.exit(0 if payload.get("completed") is True else 1)
+if isinstance(root, dict) and isinstance(root.get("run"), dict):
+    payload = root.get("run")
+elif isinstance(root, dict) and isinstance(root.get("resume"), dict):
+    payload = root.get("resume")
+else:
+    payload = root
+completed_by_no_actionable_after_apply = False
+try:
+    state = json.load(open(sys.argv[2], encoding="utf-8"))
+    projection = state.get("progress_projection", {})
+    completed_by_no_actionable_after_apply = projection.get("completed_by_no_actionable_after_apply") is True
+except Exception:
+    pass
+sys.exit(0 if payload.get("completed") is True or completed_by_no_actionable_after_apply else 1)
 PY
     then
       write_todo_claim "$(claim_field claim_id)" "completed" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
     elif python3 - "$stdout_log" <<'PY'
 import json, sys
 root = json.load(open(sys.argv[1], encoding="utf-8"))
-payload = root.get("run") if isinstance(root, dict) and isinstance(root.get("run"), dict) else root
+if isinstance(root, dict) and isinstance(root.get("run"), dict):
+    payload = root.get("run")
+elif isinstance(root, dict) and isinstance(root.get("resume"), dict):
+    payload = root.get("resume")
+else:
+    payload = root
 sys.exit(0 if payload.get("blocked") is True else 1)
 PY
     then
