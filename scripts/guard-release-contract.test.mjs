@@ -137,6 +137,9 @@ function validAudit(overrides = {}) {
   };
 }
 
+const validAuditText = JSON.stringify(validAudit(), null, 2);
+const validAuditContentSha256 = 'sha256:' + crypto.createHash('sha256').update(validAuditText).digest('hex');
+
 const validPackageJson = {
   scripts: {
     'release:gate': 'node scripts/release-gate.mjs',
