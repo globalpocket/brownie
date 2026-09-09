@@ -3645,7 +3645,7 @@ fn objective_apply_verification_params(
 fn validate_objective_apply_verification_result(result: &Value) -> Result<(), RuntimeClientError> {
     let verification = object_field(result, "objective_apply_verification_result")?;
     if display_string(verification, "verification_status")? != "verified"
-        || display_string(verification, "operation")? != "replace_file"
+        || !is_objective_workspace_operation(&display_string(verification, "operation")?)
         || display_string(verification, "route_kind")? != "accept_objective_completion_explicitly"
         || display_string(verification, "next_action")? != "accept_objective_completion"
     {
@@ -3672,6 +3672,10 @@ fn validate_objective_apply_verification_result(result: &Value) -> Result<(), Ru
         return Err(RuntimeClientError::InvalidResponse);
     }
     Ok(())
+}
+
+fn is_objective_workspace_operation(operation: &str) -> bool {
+    matches!(operation, "replace_file" | "patch_file")
 }
 
 fn objective_completion_acceptance_params(
@@ -3749,7 +3753,7 @@ fn validate_objective_completion_acceptance_result(
 ) -> Result<(), RuntimeClientError> {
     let completion = object_field(result, "objective_completion_acceptance_result")?;
     if display_string(completion, "acceptance_status")? != "accepted"
-        || display_string(completion, "operation")? != "replace_file"
+        || !is_objective_workspace_operation(&display_string(completion, "operation")?)
         || display_string(completion, "verification_status")? != "verified"
         || display_string(completion, "next_action")? != "close_headless_run"
     {

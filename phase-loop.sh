@@ -381,7 +381,12 @@ except Exception as exc:
     print(f"invalid_json:{exc}")
     sys.exit(1)
 
-payload = root.get("run") if isinstance(root, dict) and isinstance(root.get("run"), dict) else root
+payload = root
+if isinstance(root, dict):
+    if isinstance(root.get("run"), dict):
+        payload = root.get("run")
+    elif isinstance(root.get("resume"), dict):
+        payload = root.get("resume")
 if not isinstance(payload, dict):
     print("invalid_schema:root_not_object")
     sys.exit(1)
