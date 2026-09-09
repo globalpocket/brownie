@@ -114,6 +114,11 @@ function validateRuntimeReleaseContract(contract, options = {}) {
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must keep runtime_release_ready false until all release evidence exists.`);
 
   validateCommitTrace(contract.commit_trace, errors, contractPath);
+  requireValue(
+    contract.commit_trace?.readiness_audit_content_sha256 === readinessAuditContentSha256,
+    errors,
+    `${contractPath} commit_trace.readiness_audit_content_sha256 must match the current readiness audit content SHA-256.`
+  );
 
   const conditions = Array.isArray(contract.release_ready_conditions) ? contract.release_ready_conditions : [];
   const conditionById = new Map(conditions.map((condition) => [condition?.id, condition]));
