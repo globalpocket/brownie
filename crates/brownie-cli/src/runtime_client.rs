@@ -3506,7 +3506,7 @@ fn patch_hunks_fingerprint_cli(hunks: &[(String, String)]) -> String {
 
 fn patch_hunk_fingerprint_cli(old_text: &str, new_text: &str) -> String {
     let canonical = json!({
-        "version": "patch_file_hunk_v1",
+        "version": "patch_file_single_hunk_v1",
         "old_text_chars": old_text.chars().count(),
         "old_text_sha256": sha256_fingerprint(old_text.as_bytes()),
         "new_text_chars": new_text.chars().count(),

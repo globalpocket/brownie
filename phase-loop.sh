@@ -623,8 +623,14 @@ phase_loop_create_pr_for_progress() {
   local run_stamp="$1"
   local stdout_log="$2"
   local stderr_log="$3"
+  local workspace_before="$4"
+  local workspace_after="$5"
   local title body pr_url branch push_rc
   if [ "$PHASE_LOOP_CREATE_PR_AFTER_PROGRESS" != "1" ]; then
+    return 0
+  fi
+  if [ "$workspace_before" = "$workspace_after" ]; then
+    printf '%s pr_create_skipped reason=no_runtime_workspace_change\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
     return 0
   fi
   if ! tracked_workspace_diff_exists; then
@@ -1439,7 +1445,7 @@ PY
         write_status "non_progress_success" "$detail" "$run_id" "$exit_code" "${CONSECUTIVE_FAILURES:-0}"
         ;;
       *)
-        if phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log"; then
+        if phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after"; then
           :
         else
           detail="Brownie run made progress but PR creation failed; stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
