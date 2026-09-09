@@ -271,6 +271,8 @@ See [LLM Request Budget Spec v0](llm-request-budget-spec-v0.md). Runtime provide
 
 Runtime LLM configuration keeps the `sensitive_guard` knob (`off`, `warn`, `fail`) with `BROWNIE_LLM_SENSITIVE_GUARD` as the highest-priority override. Prompt text is scanned with low-false-positive sensitive-content detection before provider calls, and scan evidence records only categories and message indexes. Runtime status, diagnostics, ledger, and inspection APIs still must not expose API key values, Authorization/Bearer header values, matched secret values, or full provider responses.
 
+OpenAI-compatible provider requests are origin-constrained: invalid base URL components are rejected before provider use, `/chat/completions` and `/models` are the only derived provider endpoints, redirects are not followed, and DNS resolution is pinned for the constructed request client.
+
 ## Phase 3.0 patch proposal dry-run path
 
 During `task.run`, approved `workspace.read` intents continue to use read-only execution. Approved `workspace.write` intents are not executed; before any `WorkspacePatchProposed` event is created, the runtime checks the concrete requested path against the compiled `WriteWorkspace` permission and any active `workspace_write_scopes`. Out-of-scope write intents append bounded permission-denial evidence and create no proposal.

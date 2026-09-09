@@ -1168,6 +1168,8 @@ See [LLM Request Budget Spec v0](llm-request-budget-spec-v0.md). Runtime provide
 
 Runtime LLM configuration keeps the `sensitive_guard` knob (`off`, `warn`, `fail`) with `BROWNIE_LLM_SENSITIVE_GUARD` as the highest-priority override. Prompt text is scanned with low-false-positive sensitive-content detection before provider calls, and scan evidence records only categories and message indexes. Runtime status, diagnostics, ledger, and inspection APIs still must not expose API key values, Authorization/Bearer header values, matched secret values, or full provider responses.
 
+OpenAI-compatible provider egress is constrained to the configured origin. Runtime rejects base URLs with userinfo, query, or fragment components, derives only the fixed provider endpoints, disables redirect following, and pins resolved DNS addresses before sending provider requests.
+
 ## `tool.intent.parse` trust boundary
 
 Provider responses are untrusted input. The `tool.intent.parse` method parses fenced `brownie-tool-intent` blocks, validates parser limits and schemas, runs `workspace.read` path preflight, and returns only parser metadata plus summaries.

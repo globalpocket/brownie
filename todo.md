@@ -75,9 +75,6 @@ Current synchronization note:
 
 ### P0: Brownie Runtime safety
 
-- [ ] R-08: Prove provider egress constraints: fixed scheme/host/port, userinfo
-  rejection, redirect escape prevention, DNS rebinding or resolved-address
-  change handling, and no arbitrary HTTP escalation.
 - [ ] R-10: Invalidate safety/readiness evidence automatically when permission,
   Mode Pack, ledger, or other Runtime-safety code changes after the tested head.
 

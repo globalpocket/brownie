@@ -2,6 +2,7 @@
 
 use std::{
     env,
+    net::{SocketAddr, ToSocketAddrs},
     sync::OnceLock,
     time::{Duration, Instant},
 };
@@ -9,6 +10,7 @@ use std::{
 use anyhow::anyhow;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 pub const OPENAI_COMPATIBLE_API_VERSION: &str = "v1";
 pub const FAKE_LLM_MODEL: &str = "brownie-fake-llm";
@@ -752,8 +754,21 @@ impl OpenAiCompatibleLlmProvider {
                 reason: Some(format!("missing config: {}", missing.join(", "))),
             });
         }
+        let checked_base_url =
+            match validate_openai_compatible_base_url(base_url.as_deref().expect("checked")) {
+                Ok(url) => url,
+                Err(reason) => {
+                    return OpenAiCompatibleConfigFromEnv::Disabled(LlmProviderStatus {
+                        provider: LlmProviderKind::OpenAiCompatible,
+                        enabled: false,
+                        model: model.unwrap_or_default(),
+                        base_url: base_url.map(|v| redact_secret(&v)),
+                        reason: Some(reason),
+                    });
+                }
+            };
         OpenAiCompatibleConfigFromEnv::Enabled(OpenAiCompatibleConfig {
-            base_url: base_url.expect("checked"),
+            base_url: checked_base_url,
             model: model.expect("checked"),
             api_key_env,
             max_tokens,
@@ -762,12 +777,19 @@ impl OpenAiCompatibleLlmProvider {
 
     pub fn probe_models(&self, timeout: Duration) -> LlmHealthProbeResult {
         let started = Instant::now();
-        let url = format!("{}/models", self.config.base_url.trim_end_matches('/'));
-        let client = match reqwest::blocking::Client::builder()
-            .no_proxy()
-            .timeout(timeout)
-            .build()
-        {
+        let endpoint = match openai_compatible_endpoint(&self.config.base_url, "models") {
+            Ok(endpoint) => endpoint,
+            Err(error) => {
+                return LlmHealthProbeResult {
+                    attempted: false,
+                    healthy: false,
+                    latency_ms: None,
+                    status_code: None,
+                    reason: Some(redact_secret(&error.to_string())),
+                };
+            }
+        };
+        let client = match openai_compatible_client_for_endpoint(&endpoint, timeout) {
             Ok(client) => client,
             Err(error) => {
                 return LlmHealthProbeResult {
@@ -779,7 +801,7 @@ impl OpenAiCompatibleLlmProvider {
                 };
             }
         };
-        match client.get(url).bearer_auth(&self.api_key).send() {
+        match client.get(endpoint).bearer_auth(&self.api_key).send() {
             Ok(response) => {
                 let status = response.status();
                 LlmHealthProbeResult {
@@ -829,20 +851,26 @@ impl LlmProvider for OpenAiCompatibleLlmProvider {
             )
         };
         let url = format!(
-            "{}/chat/completions",
-            self.config.base_url.trim_end_matches('/')
-        );
-        let client = reqwest::blocking::Client::builder()
-            .no_proxy()
-            .timeout(Duration::from_millis(budget.request_timeout_ms))
-            .build()
-            .map_err(|e| {
+            "{}",
+            openai_compatible_endpoint(&self.config.base_url, "chat/completions").map_err(|e| {
                 anyhow!(
                     "{} reason={}",
                     failure_prefix(),
                     redact_secret(&e.to_string())
                 )
-            })?;
+            })?
+        );
+        let client = openai_compatible_client_for_endpoint(
+            &url,
+            Duration::from_millis(budget.request_timeout_ms),
+        )
+        .map_err(|e| {
+            anyhow!(
+                "{} reason={}",
+                failure_prefix(),
+                redact_secret(&e.to_string())
+            )
+        })?;
         let response = client
             .post(url)
             .bearer_auth(&self.api_key)
@@ -888,6 +916,72 @@ impl LlmProvider for OpenAiCompatibleLlmProvider {
             .ok_or_else(|| anyhow!("{} reason=missing message content", failure_prefix()))?;
         Ok(LlmResponse { content })
     }
+}
+
+pub fn validate_openai_compatible_base_url(raw: &str) -> Result<String, String> {
+    let mut url = Url::parse(raw).map_err(|_| "invalid OpenAI-compatible base_url".to_string())?;
+    match url.scheme() {
+        "http" | "https" => {}
+        _ => return Err("invalid OpenAI-compatible base_url: scheme must be http or https".into()),
+    }
+    if url.host_str().is_none() {
+        return Err("invalid OpenAI-compatible base_url: host is required".into());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("invalid OpenAI-compatible base_url: userinfo is not allowed".into());
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(
+            "invalid OpenAI-compatible base_url: query and fragment are not allowed".into(),
+        );
+    }
+    if !url.path().ends_with('/') {
+        url.set_path(&format!("{}/", url.path()));
+    }
+    Ok(url.to_string().trim_end_matches('/').to_string())
+}
+
+fn openai_compatible_endpoint(base_url: &str, suffix: &str) -> anyhow::Result<String> {
+    let checked = validate_openai_compatible_base_url(base_url).map_err(anyhow::Error::msg)?;
+    let base = Url::parse(&format!("{}/", checked.trim_end_matches('/')))?;
+    let endpoint = base.join(suffix)?;
+    if endpoint.scheme() != base.scheme()
+        || endpoint.host_str() != base.host_str()
+        || endpoint.port_or_known_default() != base.port_or_known_default()
+    {
+        anyhow::bail!("OpenAI-compatible endpoint escaped configured origin");
+    }
+    Ok(endpoint.to_string())
+}
+
+fn openai_compatible_client_for_endpoint(
+    endpoint: &str,
+    timeout: Duration,
+) -> anyhow::Result<reqwest::blocking::Client> {
+    let url = Url::parse(endpoint)?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow!("OpenAI-compatible endpoint host is required"))?;
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| anyhow!("OpenAI-compatible endpoint port is required"))?;
+    let addrs = resolve_openai_compatible_host(host, port)?;
+    let mut builder = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(timeout);
+    builder = builder.resolve_to_addrs(host, &addrs);
+    builder.build().map_err(anyhow::Error::from)
+}
+
+fn resolve_openai_compatible_host(host: &str, port: u16) -> anyhow::Result<Vec<SocketAddr>> {
+    let mut addrs = (host, port).to_socket_addrs()?.collect::<Vec<_>>();
+    addrs.sort();
+    addrs.dedup();
+    if addrs.is_empty() {
+        anyhow::bail!("OpenAI-compatible endpoint DNS resolution returned no addresses");
+    }
+    Ok(addrs)
 }
 
 #[derive(Debug, Deserialize)]
@@ -1227,6 +1321,81 @@ mod tests {
             OpenAiCompatibleConfigFromEnv::Enabled(_) => panic!("expected disabled config"),
         }
         clear_env();
+    }
+
+    #[test]
+    fn openai_config_rejects_unsafe_base_url_components() {
+        let _env = env_lock();
+        for base_url in [
+            "ftp://127.0.0.1:1/v1",
+            "http://user:pass@127.0.0.1:1/v1",
+            "http://127.0.0.1:1/v1?api_key=secret",
+            "http://127.0.0.1:1/v1#fragment",
+        ] {
+            clear_env();
+            env::set_var("BROWNIE_LLM_PROVIDER", "openai-compatible");
+            env::set_var("BROWNIE_LLM_BASE_URL", base_url);
+            env::set_var("BROWNIE_LLM_MODEL", "qwen35-MTP");
+            env::set_var("BROWNIE_LLM_API_KEY", "local");
+            assert!(matches!(
+                OpenAiCompatibleLlmProvider::from_env(),
+                OpenAiCompatibleConfigFromEnv::Disabled(_)
+            ));
+        }
+        clear_env();
+    }
+
+    #[test]
+    fn openai_endpoint_preserves_configured_origin() {
+        let endpoint =
+            openai_compatible_endpoint("http://127.0.0.1:4141/base/v1", "chat/completions")
+                .unwrap();
+        assert_eq!(endpoint, "http://127.0.0.1:4141/base/v1/chat/completions");
+        assert!(
+            openai_compatible_endpoint("http://user@127.0.0.1:4141/v1", "chat/completions")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn openai_request_does_not_follow_redirects() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0_u8; 1024];
+            let _ = stream.read(&mut buf).unwrap();
+            stream
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nlocation: http://example.invalid/v1/chat/completions\r\ncontent-length: 0\r\n\r\n",
+                )
+                .unwrap();
+        });
+        let provider = OpenAiCompatibleLlmProvider::new(
+            OpenAiCompatibleConfig {
+                base_url: format!("http://{addr}/v1"),
+                model: "qwen35-MTP".into(),
+                api_key_env: "BROWNIE_LLM_API_KEY".into(),
+                max_tokens: 512,
+            },
+            "local".into(),
+        );
+        let request = LlmRequest {
+            model: "qwen35-MTP".into(),
+            messages: vec![LlmMessage {
+                role: "user".into(),
+                content: "Hello".into(),
+            }],
+        };
+        let error = provider
+            .complete(&request, &LlmRequestBudget::default())
+            .expect_err("redirect must not be followed as a successful provider response");
+        assert!(error.to_string().contains("non-2xx HTTP status 302"));
+        server.join().unwrap();
     }
 
     #[test]

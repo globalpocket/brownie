@@ -61727,7 +61727,7 @@ mod phase_2_5_tests {
     }
 
     #[test]
-    fn llm_health_redacts_connection_failure_and_query_secret() {
+    fn llm_health_rejects_query_secret_base_url_without_leaking_value() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let _guard = EnvGuard::clear();
         let dir = tempfile::tempdir().unwrap();
@@ -61736,15 +61736,13 @@ mod phase_2_5_tests {
             r#"{"version":1,"active_profile":"local","llm":{"profiles":{"local":{"provider":"openai-compatible","base_url":"http://127.0.0.1:9/v1?api_key=secret-query","model":"qwen35","api_key_env":"BROWNIE_LLM_API_KEY","strict":true}}}}"#,
         );
         std::env::set_var("BROWNIE_LLM_API_KEY", "local-secret");
-        let result =
+        let error =
             llm_health_from_workspace(dir.path(), true, std::time::Duration::from_millis(1000))
-                .unwrap();
-        assert!(result.attempted);
-        assert!(!result.healthy);
-        let serialized = serde_json::to_string(&result).unwrap();
-        assert!(serialized.contains("?[REDACTED]"));
-        assert!(!serialized.contains("secret-query"));
-        assert!(!serialized.contains("local-secret"));
+                .expect_err("query-bearing base_url must be rejected before health probe");
+        let message = error.to_string();
+        assert!(message.contains("query and fragment are not allowed"));
+        assert!(!message.contains("secret-query"));
+        assert!(!message.contains("local-secret"));
     }
 }
 

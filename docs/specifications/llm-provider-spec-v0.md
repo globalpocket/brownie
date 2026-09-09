@@ -102,3 +102,5 @@ See [LLM Request Budget Spec v0](llm-request-budget-spec-v0.md). Runtime provide
 ## Phase 2.8 prompt sensitive guard
 
 Runtime LLM configuration keeps the `sensitive_guard` knob (`off`, `warn`, `fail`) with `BROWNIE_LLM_SENSITIVE_GUARD` as the highest-priority override. Prompt text is scanned with low-false-positive sensitive-content detection before provider calls, and scan evidence records only categories and message indexes. Runtime status, diagnostics, ledger, and inspection APIs still must not expose API key values, Authorization/Bearer header values, matched secret values, or full provider responses.
+
+OpenAI-compatible provider egress is constrained to the configured origin. Runtime accepts only `http` or `https` base URLs with a host and without userinfo, query, or fragment components. Request endpoints are derived only by appending the fixed `/models` or `/chat/completions` suffix under the configured base path, and the resulting scheme, host, and port must match the configured base URL. Provider clients disable ambient proxy use and redirect following, and pin DNS resolution to the address set resolved before the request is sent.
