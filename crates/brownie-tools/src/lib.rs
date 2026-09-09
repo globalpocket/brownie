@@ -551,7 +551,34 @@ fn execute_bounded_git(
     if let Some(reason) = failed_closed_reason {
         result.output["reason"] = json!(reason);
     }
+    if operation == "status" && result.status == ToolExecutionStatus::Completed {
+        if let Some(current_head) = inspect_bounded_git_head_for_status(&root)? {
+            result.output["current_head"] = json!(current_head);
+            result.output["git"]["current_head"] = json!(current_head);
+        }
+    }
     Ok(result)
+}
+
+fn inspect_bounded_git_head_for_status(root: &Path) -> anyhow::Result<Option<String>> {
+    let output = run_bounded_git_process(
+        root,
+        &[
+            "-c",
+            "core.fsmonitor=false",
+            "rev-parse",
+            "--verify",
+            "HEAD",
+        ],
+        git_timeout(),
+    )
+    .context("failed to inspect current git head for status")?;
+    if output.timed_out || output.output_oversized || output.exit_code != Some(0) {
+        return Ok(None);
+    }
+    Ok(first_non_empty_git_output_line(&output)
+        .filter(|line| is_git_object_id(line))
+        .map(str::to_string))
 }
 
 fn validate_git_repository_root(
@@ -3580,7 +3607,28 @@ fn preflight_git_status_input(input: &Value) -> Result<(), &'static str> {
 }
 
 fn preflight_git_diff_input(input: &Value) -> Result<(), &'static str> {
-    preflight_git_input(input, "git.diff")
+    let Some(object) = input.as_object() else {
+        return Err("git capability input must be an object.");
+    };
+    for (key, value) in object {
+        match key.as_str() {
+            "staged" | "unstaged" | "untracked" => {
+                if !value.is_boolean() {
+                    return Err("git.diff staged, unstaged, and untracked inputs must be booleans.");
+                }
+            }
+            "command" | "argv" | "args" | "cwd" | "env" | "stdin" | "shell" | "timeout"
+            | "timeout_ms" | "remote" | "path" | "paths" | "branch" | "ref" | "revision" => {
+                return Err("git capability does not accept command, argv, cwd, env, stdin, shell, timeout, remote, path, branch, ref, or revision input.");
+            }
+            _ => {
+                return Err(
+                    "git.diff accepts only optional staged, unstaged, and untracked boolean inputs in this phase.",
+                )
+            }
+        }
+    }
+    Ok(())
 }
 
 fn preflight_git_commit_input(input: &Value) -> Result<String, &'static str> {
@@ -5523,6 +5571,17 @@ mod tests {
         let status_json = status.output.to_string();
         assert!(status_json.contains("README.md"));
         assert!(!status_json.contains(temp.path().to_string_lossy().as_ref()));
+        let expected_head = Command::new("git")
+            .args(["rev-parse", "--verify", "HEAD"])
+            .current_dir(temp.path())
+            .output()
+            .expect("git head");
+        assert!(expected_head.status.success());
+        let expected_head = String::from_utf8_lossy(&expected_head.stdout)
+            .trim()
+            .to_string();
+        assert_eq!(status.output["current_head"], expected_head);
+        assert_eq!(status.output["git"]["current_head"], expected_head);
 
         let diff = ToolExecutor::execute_controlled(
             temp.path(),
@@ -5800,6 +5859,24 @@ mod tests {
         );
         assert!(rejected_message.requests.is_empty());
         assert_eq!(rejected_message.rejected[0].code, "invalid_input");
+    }
+
+    #[test]
+    fn git_diff_accepts_common_bounded_boolean_scope_hints() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"git.diff\",\"reason\":\"Inspect bounded unstaged diff summary.\",\"input\":{\"staged\":false,\"unstaged\":true,\"untracked\":false}}]}\n```",
+        );
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+        let policy = BuiltinModeRegistry::get("implementer").expect("policy");
+        let evaluation = ToolIntentEvaluator::evaluate(&policy, parsed);
+        assert_eq!(evaluation.items.len(), 1);
+        assert_eq!(evaluation.items[0].tool_id, GIT_DIFF_TOOL_ID);
+        assert_eq!(
+            evaluation.items[0].required_action,
+            RuntimeAction::UseGitInspectCapability
+        );
+        assert!(evaluation.items[0].allowed);
     }
 
     #[cfg(unix)]

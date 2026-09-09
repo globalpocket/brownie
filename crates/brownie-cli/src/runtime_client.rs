@@ -3370,6 +3370,7 @@ fn extract_patch_file_apply_material(
     run_events: &Value,
     proposal: &serde_json::Map<String, Value>,
 ) -> Result<Value, RuntimeClientError> {
+    let expected_proposal_id = required_display_string(proposal, "proposal_id")?;
     let expected_path = required_display_string(proposal, "path")?;
     let expected_content_chars = display_usize(proposal, "content_chars")?;
     let expected_hunk_count = display_usize(proposal, "hunk_count")?;
@@ -3388,6 +3389,40 @@ fn extract_patch_file_apply_material(
             return Err(RuntimeClientError::InvalidResponse);
         };
         let kind = required_display_string(event_object, "kind")?;
+        if kind == "WorkspacePatchProposed" {
+            let Some(payload) = event_object.get("payload").and_then(Value::as_object) else {
+                continue;
+            };
+            if payload.get("proposal_id").and_then(Value::as_str)
+                != Some(expected_proposal_id.as_str())
+                || payload.get("path").and_then(Value::as_str) != Some(expected_path.as_str())
+                || payload.get("operation").and_then(Value::as_str) != Some("patch_file")
+            {
+                continue;
+            }
+            let mut input = serde_json::Map::new();
+            input.insert(
+                "operation".to_string(),
+                Value::String("patch_file".to_string()),
+            );
+            input.insert("path".to_string(), Value::String(expected_path.clone()));
+            if let (Some(old_text), Some(new_text)) = (
+                payload.get("patch_old_text").and_then(Value::as_str),
+                payload.get("patch_new_text").and_then(Value::as_str),
+            ) {
+                input.insert("old_text".to_string(), Value::String(old_text.to_string()));
+                input.insert("new_text".to_string(), Value::String(new_text.to_string()));
+            }
+            if let Some(material) = patch_file_apply_material_from_input(
+                &input,
+                expected_hunk_count,
+                expected_content_chars,
+                &expected_hunk_fingerprint,
+            )? {
+                return Ok(material);
+            }
+            continue;
+        }
         if kind != "LlmResponseReceived" && kind != "SecondPassLlmResponseReceived" {
             continue;
         }

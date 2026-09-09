@@ -3025,18 +3025,29 @@ fn task_goal_requires_workspace_write_proposal(goal: &str) -> bool {
         "implement",
         "append",
         "create",
+        "update",
+        "populate",
         "delete",
         "replace",
         "overwrite",
         "rewrite",
         "patch",
         "increment",
+        "release evidence",
+        "implementation commit",
+        "tested commit",
+        "audited base commit",
+        "workflow run id",
+        "artifact sha",
+        "artifact sha-256",
         "修正",
         "編集",
         "実装",
         "追記",
         "書き込",
         "作成",
+        "更新",
+        "保存",
         "削除",
         "置換",
         "上書き",
@@ -12664,6 +12675,7 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "compile_time_code_sandboxed",
         "test_code_executed",
         "trusted_workspace_required",
+        "current_head",
         "process_tree_timeout_supported",
         "process_tree_kill_attempted",
         "process_tree_kill_succeeded",
@@ -12804,6 +12816,8 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "diff_redacted",
         "hunk_count",
         "hunk_fingerprint",
+        "patch_old_text",
+        "patch_new_text",
         "approval_status",
         "approval_reason",
         "approval_reason_redacted",
@@ -13668,6 +13682,18 @@ fn append_workspace_patch_proposal(
     }
     if let Some(hunk_fingerprint) = proposal.hunk_fingerprint.as_ref() {
         payload["hunk_fingerprint"] = json!(hunk_fingerprint);
+    }
+    if operation == WorkspacePatchOperation::PatchFile.as_str()
+        && proposal.validation_status == "Valid"
+        && !proposal.diff_redacted
+    {
+        if let (Some(old_text), Some(new_text)) = (
+            decision.input.get("old_text").and_then(Value::as_str),
+            decision.input.get("new_text").and_then(Value::as_str),
+        ) {
+            payload["patch_old_text"] = json!(old_text);
+            payload["patch_new_text"] = json!(new_text);
+        }
     }
     if let Some(provenance) = record.verification_recovery_provenance.as_ref() {
         payload["verification_recovery_repair"] = json!(true);
@@ -23548,7 +23574,7 @@ modes:
             .unwrap_or_else(|| panic!("seed advance failed"));
         assert_eq!(seed["session_sequence"], 1);
 
-        let drive_request = r#"{"jsonrpc":"2.0","id":3,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m17.drive","drive_id":"m17.drive.1","expected_start_session_sequence":1,"max_advances":3,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0}}}"#;
+        let drive_request = r#"{"jsonrpc":"2.0","id":3,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m17.drive","drive_id":"m17.drive.1","expected_start_session_sequence":1,"max_advances":3,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0}}}"#;
         let drive = parse_line(drive_request)
             .result
             .unwrap_or_else(|| panic!("drive failed"));
@@ -25820,7 +25846,7 @@ modes:
         let store = BrownieStore::new(temp.path());
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.journey","drive_id":"m50.journey.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"m50.journey.1","authorize_journey_start":true,"task_start":{"goal":"Run a runtime-owned journey","mode_id":"implementer"}}}}"#;
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.journey","drive_id":"m50.journey.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"m50.journey.1","authorize_journey_start":true,"task_start":{"goal":"Run a runtime-owned journey","mode_id":"implementer"}}}}"#;
         let response = parse_line(request);
         let result = response
             .result
@@ -26385,7 +26411,7 @@ modes:
         let store = BrownieStore::new(temp.path());
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.journey.default","drive_id":"m50.journey.default.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"m50.journey.default.1","authorize_journey_start":true,"task_start":{"goal":"Run a runtime-owned default-mode journey"}}}}"#;
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.journey.default","drive_id":"m50.journey.default.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"m50.journey.default.1","authorize_journey_start":true,"task_start":{"goal":"Run a runtime-owned default-mode journey"}}}}"#;
         let result = parse_line(request)
             .result
             .expect("default-mode journey result");
@@ -26446,7 +26472,7 @@ modes:
         std::fs::remove_file(temp.path().join(".brownie/modepack.json"))
             .expect("remove live modepack");
 
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp2.entrypoint","drive_id":"mp2.entrypoint.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp2.entrypoint.journey","authorize_journey_start":true,"task_start":{"goal":"Implement README update through the active Mode Pack entrypoint"}}}}"#;
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp2.entrypoint","drive_id":"mp2.entrypoint.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp2.entrypoint.journey","authorize_journey_start":true,"task_start":{"goal":"Implement README update through the active Mode Pack entrypoint"}}}}"#;
         let result = parse_line(request)
             .result
             .expect("entrypoint journey result");
@@ -26499,7 +26525,7 @@ modes:
         let store = BrownieStore::new(temp.path());
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.noentry","drive_id":"mp32e.noentry.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.noentry.journey","authorize_journey_start":true,"task_start":{"goal":"Run through configured Mode Pack without a default entrypoint"}}}}"#;
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.noentry","drive_id":"mp32e.noentry.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.noentry.journey","authorize_journey_start":true,"task_start":{"goal":"Run through configured Mode Pack without a default entrypoint"}}}}"#;
         let error = parse_line(request).error.expect("entrypoint error");
 
         assert_eq!(error.code, -32602);
@@ -26556,7 +26582,7 @@ modes:
         let store = BrownieStore::new(temp.path());
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.invalid","drive_id":"mp32e.invalid.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.invalid.journey","authorize_journey_start":true,"task_start":{"goal":"Run through invalid configured Mode Pack"}}}}"#;
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.invalid","drive_id":"mp32e.invalid.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.invalid.journey","authorize_journey_start":true,"task_start":{"goal":"Run through invalid configured Mode Pack"}}}}"#;
         let error = parse_line(request).error.expect("entrypoint error");
 
         assert_eq!(error.code, -32602);
@@ -26661,7 +26687,7 @@ modes:
             .expect("remove live modepack");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.active.noentry","drive_id":"mp32e.active.noentry.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.active.noentry.journey","authorize_journey_start":true,"task_start":{"goal":"Run through configured active Mode Pack without a default entrypoint"}}}}"#;
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.active.noentry","drive_id":"mp32e.active.noentry.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.active.noentry.journey","authorize_journey_start":true,"task_start":{"goal":"Run through configured active Mode Pack without a default entrypoint"}}}}"#;
         let error = parse_line(request).error.expect("entrypoint error");
 
         assert_eq!(error.code, -32602);
@@ -26694,7 +26720,7 @@ modes:
             .expect("remove live modepack");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.active.missing","drive_id":"mp32e.active.missing.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.active.missing.journey","authorize_journey_start":true,"task_start":{"goal":"Run through a missing configured active Mode Pack snapshot"}}}}"#;
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.active.missing","drive_id":"mp32e.active.missing.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.active.missing.journey","authorize_journey_start":true,"task_start":{"goal":"Run through a missing configured active Mode Pack snapshot"}}}}"#;
         let error = parse_line(request).error.expect("entrypoint error");
 
         assert_eq!(error.code, -32602);
@@ -26721,7 +26747,7 @@ modes:
         let store = BrownieStore::new(temp.path());
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"cli.c1.default.dev","drive_id":"cli.c1.default.dev.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"cli.c1.default.dev.journey","authorize_journey_start":true,"task_start":{"goal":"Implement README update"}}}}"#;
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"cli.c1.default.dev","drive_id":"cli.c1.default.dev.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"cli.c1.default.dev.journey","authorize_journey_start":true,"task_start":{"goal":"Implement README update"}}}}"#;
         let result = parse_line(request)
             .result
             .expect("default development result");
@@ -62170,11 +62196,17 @@ mod phase_2_3_tests {
         first_body: &'static str,
         second_body: &'static str,
     ) -> (String, thread::JoinHandle<Vec<serde_json::Value>>) {
+        spawn_mock_many(vec![first_body, second_body])
+    }
+
+    fn spawn_mock_many(
+        bodies: Vec<&'static str>,
+    ) -> (String, thread::JoinHandle<Vec<serde_json::Value>>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = thread::spawn(move || {
             let mut observed = Vec::new();
-            for body in [first_body, second_body] {
+            for body in bodies {
                 let (mut stream, _) = listener.accept().unwrap();
                 let mut buf = [0_u8; 8192];
                 let n = stream.read(&mut buf).unwrap();
@@ -62463,6 +62495,73 @@ content-length: {}
             .as_str()
             .expect("summary")
             .contains("did not produce a workspace.write proposal"));
+    }
+
+    #[test]
+    fn openai_task_run_follows_duplicate_read_denial_to_workspace_write_proposal() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("todo.md"),
+            "- [ ] E-03: Populate release evidence fields with current values.\n",
+        )
+        .expect("todo");
+        let (base_url, handle) = spawn_mock_many(vec![
+            r#"{"choices":[{"message":{"content":"Read the TODO before editing.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read todo.md before proposing the blocker refinement.\",\"input\":{\"path\":\"todo.md\"}}]}\n```"}}]}"#,
+            r#"{"choices":[{"message":{"content":"Try to read the same TODO again.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Re-read todo.md before editing.\",\"input\":{\"path\":\"todo.md\"}}]}\n```"}}]}"#,
+            r#"{"choices":[{"message":{"content":"The duplicate read denial means the existing read evidence must be used now.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Record the concrete release-evidence blocker in todo.md instead of looping on reads.\",\"input\":{\"path\":\"todo.md\",\"operation\":\"replace_file\",\"content\":\"- [ ] E-03a: Add a dedicated release evidence collector for workflow run ID and artifact SHA-256 before populating runtime-release-contract.json.\\n\"}}]}\n```"}}]}"#,
+        ]);
+        write_mock_config(temp.path(), &base_url);
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
+        std::env::set_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true");
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"Update todo.md after release evidence blocker investigation","mode_id":"implementer"}}"#,
+        )
+        .result
+        .unwrap();
+        let task_id = start["task_id"].as_str().unwrap();
+        let run_id = start["run_id"].as_str().unwrap();
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        if run.error.is_some() {
+            panic!("run error: {:?}", run.error);
+        }
+
+        let observed = handle.join().unwrap();
+        assert_eq!(observed.len(), 3);
+        let third_prompt = observed[2]["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .find(|message| message["role"] == "user")
+            .and_then(|message| message["content"].as_str())
+            .expect("third user prompt");
+        assert!(third_prompt.contains("Duplicate workspace.read"));
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        let event_list = events["events"].as_array().unwrap();
+        assert!(event_list.iter().any(|event| {
+            event["kind"] == "ToolExecutionDenied"
+                && event["payload"]["tool_id"] == WORKSPACE_READ_TOOL_ID
+                && event["payload"]["reason"]
+                    .as_str()
+                    .is_some_and(|reason| reason.contains("Duplicate workspace.read"))
+        }));
+        let proposal = event_list
+            .iter()
+            .find(|event| event["kind"] == "WorkspacePatchProposed")
+            .expect("workspace write proposal");
+        assert_eq!(proposal["payload"]["path"], "todo.md");
+        assert_eq!(proposal["payload"]["operation"], "replace_file");
+        assert_eq!(proposal["payload"]["validation_status"], "Valid");
     }
 
     #[test]

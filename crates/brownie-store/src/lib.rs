@@ -30,6 +30,7 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use uuid::Uuid;
 
 pub const WORKSPACE_STATE_DIR: &str = ".brownie";
+const STORE_ROOT_ENV: &str = "BROWNIE_STORE_ROOT";
 pub const RUNS_DIR: &str = "runs";
 pub const CODEBASE_INDEX_DIR: &str = "codebase-index";
 pub const DURABLE_STORE_SCHEMA_MANIFEST: &str = "store-schema.json";
@@ -2565,6 +2566,7 @@ struct ModePackCandidateLedgerEvent {
 #[derive(Debug, Clone)]
 pub struct TaskStore {
     workspace_root: PathBuf,
+    state_root: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -2800,9 +2802,7 @@ impl CodebaseIndexStore {
     }
 
     fn index_dir(&self) -> PathBuf {
-        self.workspace_root
-            .join(WORKSPACE_STATE_DIR)
-            .join(CODEBASE_INDEX_DIR)
+        resolve_workspace_state_dir(&self.workspace_root).join(CODEBASE_INDEX_DIR)
     }
 
     fn acquire_build_lock(&self) -> Result<CodebaseIndexBuildLock> {
@@ -3532,10 +3532,26 @@ pub struct ParentJoinContinuationRunAdmitted {
     pub admission_id: String,
 }
 
+fn resolve_workspace_state_dir(workspace_root: &Path) -> PathBuf {
+    std::env::var_os(STORE_ROOT_ENV)
+        .map(PathBuf::from)
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                workspace_root.join(path)
+            }
+        })
+        .unwrap_or_else(|| workspace_root.join(WORKSPACE_STATE_DIR))
+}
+
 impl TaskStore {
     pub fn new(workspace_root: impl Into<PathBuf>) -> Self {
+        let workspace_root = workspace_root.into();
+        let state_root = resolve_workspace_state_dir(&workspace_root);
         Self {
-            workspace_root: workspace_root.into(),
+            workspace_root,
+            state_root,
         }
     }
 
@@ -5800,7 +5816,7 @@ impl TaskStore {
     }
 
     fn workspace_state_dir(&self) -> PathBuf {
-        self.workspace_root.join(WORKSPACE_STATE_DIR)
+        self.state_root.clone()
     }
 
     fn runs_dir(&self) -> PathBuf {
@@ -5808,45 +5824,39 @@ impl TaskStore {
     }
 
     fn headless_continuation_decision_path(&self, continuation_id: &str) -> PathBuf {
-        self.workspace_root
-            .join(WORKSPACE_STATE_DIR)
+        self.workspace_state_dir()
             .join(HEADLESS_CONTINUATIONS_DIR)
             .join(format!("{continuation_id}.json"))
     }
 
     fn headless_objective_admission_path(&self, admission_id: &str) -> PathBuf {
-        self.workspace_root
-            .join(WORKSPACE_STATE_DIR)
+        self.workspace_state_dir()
             .join(HEADLESS_OBJECTIVE_ADMISSIONS_DIR)
             .join(format!("{admission_id}.json"))
     }
 
     fn headless_objective_admission_reservation_path(&self, admission_id: &str) -> PathBuf {
-        self.workspace_root
-            .join(WORKSPACE_STATE_DIR)
+        self.workspace_state_dir()
             .join(HEADLESS_OBJECTIVE_ADMISSIONS_DIR)
             .join(format!("{admission_id}.reservation.json"))
     }
 
     fn headless_run_session_current_path(&self, session_id: &str) -> PathBuf {
-        self.workspace_root
-            .join(WORKSPACE_STATE_DIR)
+        self.workspace_state_dir()
             .join(HEADLESS_RUN_SESSIONS_DIR)
             .join(session_id)
             .join("current.json")
     }
 
     fn headless_run_session_sequence_path(&self, session_id: &str, sequence: u64) -> PathBuf {
-        self.workspace_root
-            .join(WORKSPACE_STATE_DIR)
+        self.workspace_state_dir()
             .join(HEADLESS_RUN_SESSIONS_DIR)
             .join(session_id)
             .join(format!("sequence-{sequence}.json"))
     }
 
     fn headless_run_session_drive_path(&self, session_id: &str, drive_id: &str) -> PathBuf {
-        self.workspace_root
-            .join(WORKSPACE_STATE_DIR)
+        self.workspace_state_dir()
             .join(HEADLESS_RUN_SESSIONS_DIR)
             .join(session_id)
             .join("drives")
@@ -5859,14 +5869,11 @@ impl TaskStore {
     }
 
     fn headless_journeys_dir(&self) -> PathBuf {
-        self.workspace_root
-            .join(WORKSPACE_STATE_DIR)
-            .join(HEADLESS_JOURNEYS_DIR)
+        self.workspace_state_dir().join(HEADLESS_JOURNEYS_DIR)
     }
 
     fn headless_journey_execution_path(&self, journey_id: &str) -> PathBuf {
-        self.workspace_root
-            .join(WORKSPACE_STATE_DIR)
+        self.workspace_state_dir()
             .join(HEADLESS_JOURNEY_EXECUTIONS_DIR)
             .join(format!("{journey_id}.json"))
     }
@@ -5876,8 +5883,7 @@ impl TaskStore {
         session_id: &str,
         drive_id: &str,
     ) -> PathBuf {
-        self.workspace_root
-            .join(WORKSPACE_STATE_DIR)
+        self.workspace_state_dir()
             .join(HEADLESS_RUN_SESSIONS_DIR)
             .join(session_id)
             .join("completion-finalizations")
@@ -7244,6 +7250,8 @@ fn validate_workspace_patch_proposed_payload_schema(
     validate_required_payload_string_or_null_field(object, "diff_preview")?;
     for field in [
         "hunk_fingerprint",
+        "patch_new_text",
+        "patch_old_text",
         "source_task_id",
         "source_run_id",
         "recovery_task_id",
@@ -8084,6 +8092,7 @@ fn validate_tool_execution_terminal_payload_schema(
     validate_optional_payload_bool_field(object, "raw_diff_redacted")?;
     validate_optional_payload_bool_field(object, "raw_file_content_redacted")?;
     validate_optional_payload_bool_field(object, "absolute_paths_redacted")?;
+    validate_optional_payload_string_field(object, "current_head")?;
     validate_optional_payload_bool_field(object, "raw_message_redacted")?;
     validate_optional_payload_string_field(object, "message_fingerprint")?;
     validate_optional_payload_string_field(object, "expected_parent_head")?;
@@ -9295,6 +9304,8 @@ const WORKSPACE_PATCH_PROPOSED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "hunk_fingerprint",
     "operation",
     "patch_apply_recovery_repair",
+    "patch_new_text",
+    "patch_old_text",
     "path",
     "proposal_id",
     "recovery_run_id",
@@ -10214,6 +10225,7 @@ const TOOL_EXECUTION_TERMINAL_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "commit_id",
     "committed_tree_fingerprint",
     "compile_time_code_sandboxed",
+    "current_head",
     "duration_ms",
     "exit_code",
     "expected_parent_head",

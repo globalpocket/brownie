@@ -464,6 +464,32 @@ impl FakeLlm {
             && (prompt.contains("git.status: completed")
                 || prompt.contains("git.diff: completed")
                 || prompt.contains("untrusted_git_result_context"))
+            && prompt.contains("duplicate workspace.read")
+            && (request_signal.contains("release evidence") || request_signal.contains("todo.md"))
+        {
+            let intent = serde_json::json!({
+                "tool_requests": [{
+                    "tool_id": "workspace.write",
+                    "reason": "Record the concrete release-evidence blocker in todo.md instead of looping on duplicate reads.",
+                    "input": {
+                        "path": "todo.md",
+                        "operation": "replace_file",
+                        "content": "- [ ] E-03a: Add a dedicated release evidence collector for workflow run ID and artifact SHA-256 before populating runtime-release-contract.json.\n"
+                    }
+                }]
+            });
+            return LlmResponse {
+                content: format!(
+                    "Fake LLM duplicate-read blocker refinement with {} messages.\n\n```brownie-tool-intent\n{}\n```",
+                    request.messages.len(),
+                    serde_json::to_string_pretty(&intent).expect("fake intent serializes")
+                ),
+            };
+        }
+        if prompt.contains("tool execution:")
+            && (prompt.contains("git.status: completed")
+                || prompt.contains("git.diff: completed")
+                || prompt.contains("untrusted_git_result_context"))
         {
             if prompt_text.contains("MP7_RESULT_91c7.rs")
                 || contains_any(
