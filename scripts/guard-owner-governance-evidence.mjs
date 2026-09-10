@@ -20,6 +20,39 @@ const requiredSections = [
   'oss_license_publish_posture'
 ];
 
+const requiredOperationalDocuments = [
+  {
+    path: 'SECURITY.md',
+    requiredSubstrings: ['Reporting vulnerabilities', 'ACCEPTABLE_USE.md']
+  },
+  {
+    path: 'ACCEPTABLE_USE.md',
+    requiredSubstrings: ['unauthorized access', 'Apache License 2.0']
+  },
+  {
+    path: 'TRADEMARK.md',
+    requiredSubstrings: ['does not grant trademark rights', 'official Brownie project']
+  },
+  {
+    path: 'CONTRIBUTING.md',
+    requiredSubstrings: ['phase-loop:implementation-preflight', 'last-pusher approval', '.brownie/private/']
+  },
+  {
+    path: 'docs/architecture/owner-governance-operations.md',
+    requiredSubstrings: [
+      'brownie-agent',
+      'globalpocket',
+      'last-pusher approval',
+      'Protected tag policy',
+      'Independent review evidence'
+    ]
+  },
+  {
+    path: 'docs/architecture/owner-governance-evidence-template.md',
+    requiredSubstrings: ['Phase Loop actor preflight', 'github_review_provenance']
+  }
+];
+
 const canonicalRequiredReviewIds = [
   'release_workflow',
   'permission_model',
@@ -96,6 +129,26 @@ function readJson(repoRoot, relativePath, errors) {
     errors.push(`${relativePath} must be readable JSON: ${error.message}`);
     return {};
   }
+}
+
+function validateOperationalDocuments(repoRoot) {
+  const errors = [];
+  for (const document of requiredOperationalDocuments) {
+    const fullPath = path.join(repoRoot, document.path);
+    if (!fs.existsSync(fullPath)) {
+      errors.push(`owner governance operational document ${document.path} must exist.`);
+      continue;
+    }
+    const content = fs.readFileSync(fullPath, 'utf8');
+    for (const requiredSubstring of document.requiredSubstrings) {
+      requireValue(
+        content.includes(requiredSubstring),
+        errors,
+        `owner governance operational document ${document.path} must mention ${requiredSubstring}.`
+      );
+    }
+  }
+  return errors;
 }
 
 function validateOwnerFile(repoRoot, fileEvidence, errors, owner) {
@@ -284,6 +337,9 @@ export function runOwnerGovernanceEvidenceGuard(options = {}) {
   const errors = [];
   const contract = options.contract ?? readJson(repoRoot, contractPath, errors);
   errors.push(...validateOwnerGovernanceContract(contract, { contractPath }));
+  if (options.validateOperationalDocuments !== false) {
+    errors.push(...validateOperationalDocuments(repoRoot));
+  }
 
   const resolvedEvidencePath = normalizeRelativePath(evidencePath);
   const shouldValidateEvidence =

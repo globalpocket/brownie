@@ -136,11 +136,27 @@ function githubReviewProvenance(requiredReviewId, overrides = {}) {
 
 function validate(evidence = validEvidence(), contract = validContract()) {
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-owner-governance-'));
-  return runOwnerGovernanceEvidenceGuard({ repoRoot, contract, evidence }).errors;
+  return runOwnerGovernanceEvidenceGuard({
+    repoRoot,
+    contract,
+    evidence,
+    validateOperationalDocuments: false
+  }).errors;
 }
 
 test('accepts fail-closed owner governance evidence', () => {
   assert.deepEqual(validate(), []);
+});
+
+test('rejects missing owner governance operational documents', () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-owner-governance-docs-'));
+  const errors = runOwnerGovernanceEvidenceGuard({
+    repoRoot,
+    contract: validContract(),
+    evidence: validEvidence()
+  }).errors;
+  assert(errors.some((error) => error.includes('CONTRIBUTING.md must exist')));
+  assert(errors.some((error) => error.includes('owner-governance-operations.md must exist')));
 });
 
 test('rejects release ready claims from owner governance evidence', () => {

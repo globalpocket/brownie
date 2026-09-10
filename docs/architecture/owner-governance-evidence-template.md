@@ -13,6 +13,12 @@ The generated evidence is written under shared release evidence at
 credentials, VM disks, VM images, and scratch state must stay under
 `.brownie/private/`.
 
+Operational contributor and owner runbooks are part of the guarded governance
+surface:
+
+- `CONTRIBUTING.md`
+- `docs/architecture/owner-governance-operations.md`
+
 ## Owner decision files
 
 These files are intentionally absent until the repository owner decides to add
