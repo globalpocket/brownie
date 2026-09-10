@@ -87,8 +87,8 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-03a-next: Resolve release evidence collection blocker before E-03a can close:
-  Brownie confirmed the implementation/tested commit from `git.status` (`3989a0acbade50f3391403689ed30fcf5248e170`), but
+- [ ] E-03a-next-next: Resolve release evidence collection blocker before E-03a-next can close:
+  Brownie confirmed the implementation/tested commit from `git.status`, but
   workflow run ID and artifact SHA-256 are not available through the current
   Runtime tool plan. Provide a local or MCP-backed release evidence collector,
   then populate the Runtime Release Contract and readiness audit with verified
