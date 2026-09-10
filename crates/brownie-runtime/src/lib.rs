@@ -2656,7 +2656,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed);
             if !(followup_read_result_available || followup_rejected_write_available)
                 || !followup_write_missing
-                || followup_attempts >= 2
+                || followup_attempts >= 5
             {
                 break;
             }
