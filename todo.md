@@ -93,12 +93,12 @@ Current synchronization note:
   Runtime tool plan. Provide a local or MCP-backed release evidence collector,
   then populate the Runtime Release Contract and readiness audit with verified
   workflow/artifact evidence.
-- [ ] E-04: Expand CI to include `cargo fmt --all --check`,
-  `cargo check --workspace --all-targets --all-features`,
-  `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
-  `cargo test --workspace --all-features`, frozen pnpm install, root
-  check/test/build, executable release gate, Product Completion Guard, and
-  process-loss E2E.
+- [ ] E-04a: Split blocked TODO into a smaller implementable task:
+  Source TODO: E-04: Expand CI to include `cargo fmt --all --check`,
+  Brownie gathered the available context but did not produce a safe workspace.write
+  for the original scope. Replace this blocker with one concrete implementation
+  step, missing evidence/tool setup, or owner decision, then let Brownie continue.
+
 - [ ] E-07: Run and enforce supply-chain checks: `cargo audit --locked`,
   `cargo deny check`, production `pnpm audit`, high-signal secret scan, Rust and
   Node SBOM, lockfile hashes, artifact SHA-256, and build provenance.
