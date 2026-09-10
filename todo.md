@@ -100,9 +100,12 @@ Current synchronization note:
   for the original scope. Replace this blocker with one concrete implementation
   step, missing evidence/tool setup, or owner decision, then let Brownie continue.
 
-- [ ] E-07: Run and enforce supply-chain checks: `cargo audit --locked`,
-  `cargo deny check`, production `pnpm audit`, high-signal secret scan, Rust and
-  Node SBOM, lockfile hashes, artifact SHA-256, and build provenance.
+- [ ] E-07a: Split blocked TODO into a smaller implementable task:
+  Source TODO: E-07: Run and enforce supply-chain checks: `cargo audit --locked`,
+  Brownie gathered the available context but did not produce a safe workspace.write
+  for the original scope. Replace this blocker with one concrete implementation
+  step, missing evidence/tool setup, or owner decision, then let Brownie continue.
+
 - [ ] E-08: Ensure supply-chain tooling absence, scan failure, and network
   failure cannot be treated as successful release evidence.
 - [ ] E-09: Produce and verify distributable artifacts for Ubuntu Linux, macOS
