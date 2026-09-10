@@ -2788,6 +2788,31 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         }
     }
 
+    let pre_completion_events = match store.tasks().read_ledger_events(&running.run_id) {
+        Ok(events) => events,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    if task_goal_requires_workspace_write_proposal(&running.goal)
+        && !pre_completion_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+    {
+        if let Err(error) = append_todo_decomposition_blocker_after_read_only_stall(
+            &store, &running, &policy, false,
+        ) {
+            let _ = store.tasks().append_task_event_with_payload(
+                &running,
+                LedgerEventKind::ToolExecutionFailed,
+                Some(json!({
+                    "tool_id": WORKSPACE_WRITE_TOOL_ID,
+                    "status": "Failed",
+                    "reason": format!(
+                        "failed to synthesize todo.md decomposition workspace.write proposal: {error}"
+                    ),
+                })),
+            );
+        }
+    }
     let completion_gate_events = match store.tasks().read_ledger_events(&running.run_id) {
         Ok(events) => events,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
@@ -13630,11 +13655,37 @@ fn append_workspace_patch_proposal(
         .get("content")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let operation = decision
+    let requested_operation = decision
         .input
         .get("operation")
         .and_then(Value::as_str)
         .unwrap_or(WorkspacePatchOperation::ReplaceFile.as_str());
+    let mut operation = requested_operation.to_string();
+    let mut proposal_content = content.to_string();
+    let mut proposal_input = decision.input.clone();
+    if requested_operation == WorkspacePatchOperation::ReplaceFile.as_str()
+        && !content.is_empty()
+        && brownie_tools::preflight_workspace_write_path(path).is_ok()
+    {
+        let target = store.workspace_root().join(path);
+        if let Ok(metadata) = std::fs::symlink_metadata(&target) {
+            if metadata.is_file() && !metadata.file_type().is_symlink() {
+                if let Ok(existing) = std::fs::read_to_string(&target) {
+                    let total_chars = existing.chars().count() + content.chars().count();
+                    if total_chars <= DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS {
+                        operation = WorkspacePatchOperation::PatchFile.as_str().to_string();
+                        proposal_content.clear();
+                        proposal_input = json!({
+                            "path": path,
+                            "operation": WorkspacePatchOperation::PatchFile.as_str(),
+                            "old_text": existing,
+                            "new_text": content,
+                        });
+                    }
+                }
+            }
+        }
+    }
     let scope_decision = RuntimePermissionGate::check_workspace_write_path(policy, path);
     let permission_payload = json!({
         "scope": "workspace.write",
@@ -13660,8 +13711,13 @@ fn append_workspace_patch_proposal(
         )?;
         return Ok(());
     }
-    let proposal =
-        build_workspace_patch_proposal_from_input(store, path, operation, content, &decision.input);
+    let proposal = build_workspace_patch_proposal_from_input(
+        store,
+        path,
+        &operation,
+        &proposal_content,
+        &proposal_input,
+    );
     let proposal_id = format!("proposal_{}", uuid::Uuid::new_v4().simple());
     let mut payload = json!({
         "proposal_id": proposal_id,
@@ -13687,12 +13743,19 @@ fn append_workspace_patch_proposal(
         && proposal.validation_status == "Valid"
         && !proposal.diff_redacted
     {
-        if let (Some(old_text), Some(new_text)) = (
-            decision.input.get("old_text").and_then(Value::as_str),
-            decision.input.get("new_text").and_then(Value::as_str),
-        ) {
-            payload["patch_old_text"] = json!(old_text);
-            payload["patch_new_text"] = json!(new_text);
+        if let Ok(hunks) = patch_hunks_from_input(&proposal_input) {
+            if hunks.len() == 1 {
+                payload["patch_old_text"] = json!(hunks[0].old_text.as_str());
+                payload["patch_new_text"] = json!(hunks[0].new_text.as_str());
+            } else {
+                payload["patch_hunks"] = json!(hunks
+                    .iter()
+                    .map(|hunk| json!({
+                        "old_text": hunk.old_text,
+                        "new_text": hunk.new_text,
+                    }))
+                    .collect::<Vec<_>>());
+            }
         }
     }
     if let Some(provenance) = record.verification_recovery_provenance.as_ref() {
@@ -13797,6 +13860,22 @@ fn patch_hunks_fingerprint(hunks: &[PatchTextHunk]) -> String {
 }
 
 fn patch_hunks_from_input(input: &Value) -> Result<Vec<PatchTextHunk>, &'static str> {
+    if let Some(content) = input.get("content").and_then(Value::as_str) {
+        if input.get("hunks").is_some()
+            || input.get("old_text").is_some()
+            || input.get("new_text").is_some()
+        {
+            return Err("patch_file content cannot be combined with hunks, old_text, or new_text");
+        }
+        return brownie_tools::workspace_write_unified_diff_content_to_hunks(content).map(
+            |hunks| {
+                hunks
+                    .into_iter()
+                    .map(|(old_text, new_text)| PatchTextHunk { old_text, new_text })
+                    .collect()
+            },
+        );
+    }
     if let Some(hunks_value) = input.get("hunks") {
         if input.get("old_text").is_some() || input.get("new_text").is_some() {
             return Err("patch_file hunks cannot be combined with old_text or new_text");
@@ -13981,11 +14060,6 @@ fn build_workspace_patch_proposal_from_input(
         return result;
     };
     if operation == WorkspacePatchOperation::PatchFile.as_str() {
-        if !content.is_empty() {
-            result.validation_status = "Invalid";
-            result.validation_reason = Some("patch_file operation must not include content");
-            return result;
-        }
         let hunks = match patch_hunks_from_input(input) {
             Ok(hunks) => hunks,
             Err(reason) => {
@@ -45620,6 +45694,31 @@ modes:
     }
 
     #[test]
+    fn patch_file_proposal_accepts_unified_diff_content_as_bounded_hunk() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "alpha\nbeta\ngamma\n")
+            .expect("write readme");
+        let store = BrownieStore::new(temp.path());
+        let proposal = build_workspace_patch_proposal_from_input(
+            &store,
+            "README.md",
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &json!({
+                "content": "--- a/README.md\n+++ b/README.md\n@@ -1,3 +1,3 @@\n alpha\n-beta\n+delta\n gamma\n",
+            }),
+        );
+
+        assert_eq!(proposal.validation_status, "Valid");
+        assert_eq!(proposal.hunk_count, Some(1));
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "alpha\nbeta\ngamma\n"
+        );
+    }
+
+    #[test]
     fn patch_file_proposal_rejects_duplicate_context_without_writing() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -62575,13 +62674,13 @@ content-length: {}
     }
 
     #[test]
-    fn openai_task_run_synthesizes_todo_decomposition_after_duplicate_read_denial() {
+    fn openai_task_run_synthesizes_concrete_e04_decomposition_after_duplicate_read_denial() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let _guard = EnvGuard::clear();
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(
             temp.path().join("todo.md"),
-            "- [ ] B-99: Implement broad cross-platform release automation.\n  Needs decomposition before one runtime pass can safely implement it.\n",
+            "- [ ] E-04: Expand CI to include `cargo fmt --all --check`,\n  `cargo check --workspace --all-targets --all-features`,\n  `cargo clippy --workspace --all-targets --all-features -- -D warnings`,\n  `cargo test --workspace --all-features`, frozen pnpm install, root\n  check/test/build, executable release gate, Product Completion Guard, and\n  process-loss E2E.\n",
         )
         .expect("todo");
         let (base_url, handle) = spawn_mock_many(vec![
@@ -62638,10 +62737,17 @@ content-length: {}
         assert_eq!(proposal["payload"]["path"], "todo.md");
         assert_eq!(proposal["payload"]["operation"], "patch_file");
         assert_eq!(proposal["payload"]["validation_status"], "Valid");
-        assert!(proposal["payload"]["patch_new_text"]
+        let patch_new_text = proposal["payload"]["patch_new_text"]
             .as_str()
-            .expect("patch new text")
-            .contains("B-99a: Split blocked TODO into a smaller implementable task"));
+            .expect("patch new text");
+        assert!(
+            patch_new_text.contains("E-04a: Update `.github/workflows/ci.yml` Rust quality checks")
+        );
+        assert!(patch_new_text
+            .contains("E-04b: Update `.github/workflows/ci.yml` Node workspace checks"));
+        assert!(patch_new_text.contains("E-04c: Add release gate and Product Ready guard CI steps"));
+        assert!(!patch_new_text.contains("TODO-decomposition"));
+        assert!(!patch_new_text.contains("Split blocked TODO"));
     }
 
     #[test]

@@ -13,6 +13,7 @@ SUPERVISOR_LOG="$LOG_DIR/supervisor.log"
 TODO_CLAIM_DIR="$STATE_DIR/todo-claims"
 TODO_CLAIM_FILE="$TODO_CLAIM_DIR/current.json"
 TODO_QUEUE_STATE_FILE="$TODO_CLAIM_DIR/todo-queue-state.json"
+TODO_BLOCKED_FILE="$TODO_CLAIM_DIR/blocked.jsonl"
 PROGRESS_STATE_FILE="$STATE_DIR/progress-state.json"
 LAUNCHD_LABEL="${PHASE_LOOP_LAUNCHD_LABEL:-globalpocket.brownie.phase-loop}"
 SCREEN_NAME="${PHASE_LOOP_SCREEN_NAME:-brownie-phase-loop}"
@@ -74,6 +75,8 @@ write_status() {
   escaped_claim_file="$(printf '%s' "$TODO_CLAIM_FILE" | json_escape)"
   local escaped_queue_state_file
   escaped_queue_state_file="$(printf '%s' "$TODO_QUEUE_STATE_FILE" | json_escape)"
+  local escaped_blocked_file
+  escaped_blocked_file="$(printf '%s' "$TODO_BLOCKED_FILE" | json_escape)"
   local escaped_progress_state_file
   escaped_progress_state_file="$(printf '%s' "$PROGRESS_STATE_FILE" | json_escape)"
   tmp_status="$STATUS_FILE.$$.$RANDOM.tmp"
@@ -91,6 +94,7 @@ write_status() {
   "todo": "$escaped_todo",
   "todo_claim": "$escaped_claim_file",
   "todo_queue_state": "$escaped_queue_state_file",
+  "todo_blocked": "$escaped_blocked_file",
   "progress_state": "$escaped_progress_state_file",
   "workspace_root": "$escaped_workspace",
   "control_root": "$escaped_control_root"
@@ -131,23 +135,44 @@ todo_first_pending_item() {
   if [ ! -f "$PHASE_LOOP_TODO" ]; then
     return 0
   fi
-  awk '
-    /^[[:space:]]*([-*]|[0-9]+[.)])[[:space:]]+\[[[:space:]]\][[:space:]]+/ {
-      if (found) {
-        exit
-      }
-      found = 1
-      print
-      next
-    }
-    found && /^[[:space:]]+/ {
-      print
-      next
-    }
-    found {
-      exit
-    }
-  ' "$PHASE_LOOP_TODO"
+  python3 - "$PHASE_LOOP_TODO" "$TODO_BLOCKED_FILE" <<'PY'
+import hashlib
+import json
+import pathlib
+import re
+import sys
+
+todo_path = pathlib.Path(sys.argv[1])
+blocked_path = pathlib.Path(sys.argv[2])
+
+try:
+    todo = todo_path.read_text(encoding="utf-8")
+except FileNotFoundError:
+    raise SystemExit(0)
+
+queue_fingerprint = hashlib.sha256(todo.encode("utf-8")).hexdigest()
+blocked_hashes = set()
+if blocked_path.exists():
+    for line in blocked_path.read_text(encoding="utf-8").splitlines():
+        try:
+            record = json.loads(line)
+        except Exception:
+            continue
+        if record.get("queue_fingerprint") == queue_fingerprint:
+            blocked_hash = record.get("selected_todo_sha256")
+            if isinstance(blocked_hash, str):
+                blocked_hashes.add(blocked_hash)
+
+pattern = re.compile(r"^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ \t]\][ \t]+", re.M)
+matches = list(pattern.finditer(todo))
+for index, match in enumerate(matches):
+    end = matches[index + 1].start() if index + 1 < len(matches) else len(todo)
+    block = todo[match.start():end].rstrip("\n")
+    block_hash = hashlib.sha256(block.encode("utf-8")).hexdigest()
+    if block_hash not in blocked_hashes:
+        print(block)
+        raise SystemExit(0)
+PY
 }
 
 todo_queue_fingerprint() {
@@ -259,13 +284,119 @@ active_todo_claim_exists() {
   local status
   status="$(claim_status 2>/dev/null || true)"
   case "$status" in
-    claimed|in_progress|blocked)
+    claimed|in_progress)
       return 0
       ;;
     *)
       return 1
       ;;
   esac
+}
+
+record_blocked_todo_claim() {
+  local run_stamp="$1"
+  if [ ! -f "$TODO_CLAIM_FILE" ]; then
+    return 0
+  fi
+  python3 - "$TODO_CLAIM_FILE" "$TODO_BLOCKED_FILE" "$run_stamp" "$(now_utc)" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+blocked_path = pathlib.Path(sys.argv[2])
+run_stamp = sys.argv[3]
+timestamp = sys.argv[4]
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+selected = claim.get("selected_todo")
+if not isinstance(selected, str) or not selected:
+    raise SystemExit(0)
+record = {
+    "schema_version": 1,
+    "blocked_at": timestamp,
+    "run_stamp": run_stamp,
+    "claim_id": claim.get("claim_id", ""),
+    "queue_generation": claim.get("queue_generation"),
+    "queue_fingerprint": claim.get("queue_fingerprint", ""),
+    "selected_todo_sha256": hashlib.sha256(selected.encode("utf-8")).hexdigest(),
+    "selected_todo_first_line": selected.splitlines()[0] if selected.splitlines() else "",
+}
+blocked_path.parent.mkdir(parents=True, exist_ok=True)
+with open(blocked_path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True))
+    handle.write("\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(blocked_path, 0o600)
+PY
+  sync_parent_dir "$TODO_CLAIM_DIR"
+}
+
+remove_completed_todo_claim_from_queue() {
+  local run_stamp="$1"
+  if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$PHASE_LOOP_TODO" ]; then
+    return 0
+  fi
+  python3 - "$TODO_CLAIM_FILE" "$PHASE_LOOP_TODO" "$run_stamp" "$(now_utc)" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+todo_path = pathlib.Path(sys.argv[2])
+run_stamp = sys.argv[3]
+timestamp = sys.argv[4]
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+selected = claim.get("selected_todo")
+if not isinstance(selected, str) or not selected:
+    raise SystemExit(0)
+first_line = selected.splitlines()[0] if selected.splitlines() else ""
+if "[ ]" not in first_line:
+    raise SystemExit(0)
+try:
+    text = todo_path.read_text(encoding="utf-8")
+except FileNotFoundError:
+    raise SystemExit(0)
+index = text.find(selected)
+if index < 0:
+    raise SystemExit(0)
+if text.find(selected, index + len(selected)) >= 0:
+    raise SystemExit("selected TODO appears more than once; refusing automatic removal")
+end = index + len(selected)
+while end < len(text) and text[end] == "\n":
+    end += 1
+replacement = text[:index] + text[end:]
+if index > 0 and not text[:index].endswith("\n\n") and replacement[index:index + 1] not in ("", "\n"):
+    replacement = text[:index] + "\n" + text[end:]
+tmp_path = todo_path.with_name(f"{todo_path.name}.{os.getpid()}.completed-{run_stamp}.tmp")
+with open(tmp_path, "w", encoding="utf-8") as handle:
+    handle.write(replacement)
+    handle.flush()
+    os.fsync(handle.fileno())
+os.replace(tmp_path, todo_path)
+try:
+    dir_fd = os.open(str(todo_path.parent), os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+except Exception:
+    pass
+print(json.dumps({
+    "removed_at": timestamp,
+    "run_stamp": run_stamp,
+    "selected_todo_first_line": first_line,
+}, ensure_ascii=False, sort_keys=True))
+PY
 }
 
 active_claim_queue_generation() {
@@ -942,6 +1073,8 @@ claim = {}
 if claim_path.exists():
     with open(claim_path, encoding="utf-8") as handle:
         claim = json.load(handle)
+    if claim.get("status") not in ("claimed", "in_progress"):
+        claim = {}
 
 todo_text = read_text(todo_path)
 base_prompt_text = read_text(prompt_path)
@@ -1309,6 +1442,44 @@ interruptible_sleep() {
   return 0
 }
 
+run_with_portable_timeout() {
+  local timeout_seconds="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$timeout_seconds" "$@"
+    return $?
+  fi
+
+  "$@" &
+  local child_pid="$!"
+  local waited=0
+  while pid_is_active "$child_pid"; do
+    if [ "$waited" -ge "$timeout_seconds" ]; then
+      local descendants known_pids
+      descendants="$(supervisor_descendant_pids "$child_pid" | tr '\n' ' ')"
+      known_pids="$child_pid $descendants"
+      printf '%s command timeout after %ss; terminating pid=%s descendants=%s command=%s\n' "$(now_utc)" "$timeout_seconds" "$child_pid" "${descendants:-none}" "$*" >> "$SUPERVISOR_LOG"
+      # shellcheck disable=SC2086
+      kill_known_pids TERM $known_pids
+      # shellcheck disable=SC2086
+      if ! wait_for_known_pids_exit "$PHASE_LOOP_STOP_GRACE_SECONDS" $known_pids; then
+        descendants="$(supervisor_descendant_pids "$child_pid" | tr '\n' ' ')"
+        known_pids="$child_pid $known_pids $descendants"
+        printf '%s command timeout force terminating pid=%s descendants=%s\n' "$(now_utc)" "$child_pid" "${descendants:-none}" >> "$SUPERVISOR_LOG"
+        # shellcheck disable=SC2086
+        kill_known_pids KILL $known_pids
+        # shellcheck disable=SC2086
+        wait_for_known_pids_exit "$PHASE_LOOP_STOP_FORCE_SECONDS" $known_pids || true
+      fi
+      wait "$child_pid" 2>/dev/null || true
+      return 124
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$child_pid"
+}
+
 acquire_lock() {
   if mkdir "$LOCK_DIR" 2>/dev/null; then
     echo "$$" > "$LOCK_DIR/pid"
@@ -1426,18 +1597,10 @@ run_brownie_once() {
     export BROWNIE_WORKSPACE_ROOT="${BROWNIE_WORKSPACE_ROOT:-"$PHASE_LOOP_WORKSPACE_ROOT"}"
     export BROWNIE_STORE_ROOT="${BROWNIE_STORE_ROOT:-"$PHASE_LOOP_BROWNIE_STORE_ROOT"}"
     export PHASE_LOOP_CONTROL_ROOT
-    if command -v timeout >/dev/null 2>&1; then
-      if [ "$use_resume" -eq 1 ]; then
-        timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json resume
-      else
-        timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json run --file "$effective_prompt"
-      fi
+    if [ "$use_resume" -eq 1 ]; then
+      run_with_portable_timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json resume
     else
-      if [ "$use_resume" -eq 1 ]; then
-        "$BROWNIE_BIN" --json resume
-      else
-        "$BROWNIE_BIN" --json run --file "$effective_prompt"
-      fi
+      run_with_portable_timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json run --file "$effective_prompt"
     fi
   ) > "$stdout_log" 2> "$stderr_log"
   exit_code=$?
@@ -1497,10 +1660,12 @@ try:
     completed_by_no_actionable_after_apply = projection.get("completed_by_no_actionable_after_apply") is True
 except Exception:
     pass
-sys.exit(0 if payload.get("completed") is True or completed_by_no_actionable_after_apply else 1)
+objective_apply_applied = payload.get("objective_apply_applied") is True
+sys.exit(0 if payload.get("completed") is True or completed_by_no_actionable_after_apply or objective_apply_applied else 1)
 PY
     then
       write_todo_claim "$(claim_field claim_id)" "completed" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      remove_completed_todo_claim_from_queue "$run_stamp" >> "$SUPERVISOR_LOG"
     elif python3 - "$stdout_log" <<'PY'
 import json, sys
 root = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -1514,13 +1679,11 @@ sys.exit(0 if payload.get("blocked") is True else 1)
 PY
     then
       write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
-      : > "$STOP_FILE"
-      chmod 600 "$STOP_FILE"
-      sync_parent_dir "$STATE_DIR"
-      detail="Brownie run reached a blocked external-control boundary; stopping phase-loop to avoid repeating the same invocation. stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
-      write_status "blocked" "$detail" "$run_id" "77" "${CONSECUTIVE_FAILURES:-0}"
-      printf '%s run=%s exit=%s blocked_boundary=true progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$exit_code" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
-      return 77
+      record_blocked_todo_claim "$run_stamp"
+      detail="Brownie run reached a blocked boundary; recorded the blocked TODO and will continue with the next unblocked TODO. stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE blocked=$TODO_BLOCKED_FILE"
+      write_status "blocked_todo_recorded" "$detail" "$run_id" "$exit_code" "${CONSECUTIVE_FAILURES:-0}"
+      printf '%s run=%s exit=%s blocked_todo_recorded=true progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$exit_code" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+      return 0
     fi
 
     case "$progress_classification" in

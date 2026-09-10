@@ -7,6 +7,26 @@ Run exactly one bounded phase-loop iteration, then exit. The surrounding
 `phase-loop.sh` supervisor starts the next iteration. Do not perform unlimited
 multi-phase work inside one Runtime invocation.
 
+## Implementation Turn Contract
+
+For an unchecked implementation TODO, a read-only investigation is not a
+completed iteration.
+
+After the first tool round has read the exact target files needed for the
+selected TODO, the next assistant tool intent must do one of these two things:
+
+1. emit a bounded `workspace.write` proposal that implements the smallest safe
+   patch; or
+2. emit a bounded `workspace.write` proposal that rewrites the selected
+   `todo.md` item into smaller concrete follow-up TODOs naming exact files,
+   missing evidence, or owner decisions.
+
+Do not answer with only an implementation plan after target files have already
+been read. Do not request another broad discovery read such as `.`, a
+directory, or a repeated `package.json`/workflow read. If the target file was
+read and the patch is clear, write the patch. If the patch is not clear, write
+the TODO decomposition patch.
+
 ## Authority
 
 Always fetch and inspect the latest `origin/main` before selecting work. The

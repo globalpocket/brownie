@@ -2452,10 +2452,15 @@ pub(super) fn append_tool_intent_events(
         ToolIntentEvaluator::evaluate_with_dynamic_tools(policy, parsed, &dynamic_tools);
     let planned_allowed_tool_ids = allowed_planned_tool_ids(record, policy);
     for rejected in evaluation.rejected {
+        let tool_id = rejected
+            .tool_id
+            .as_deref()
+            .filter(|tool_id| !tool_id.trim().is_empty())
+            .unwrap_or("<parse-error>");
         store.tasks().append_task_event_with_payload(
             record,
             LedgerEventKind::ToolIntentRejected,
-            Some(json!({ "tool_id": rejected.tool_id, "reason": rejected.reason, "code": rejected.code })),
+            Some(json!({ "tool_id": tool_id, "reason": rejected.reason, "code": rejected.code })),
         )?;
     }
     for decision in evaluation.items {
@@ -2695,7 +2700,7 @@ pub(super) fn handle_approved_workspace_intents(
     Ok(())
 }
 
-fn append_todo_decomposition_blocker_after_read_only_stall(
+pub(super) fn append_todo_decomposition_blocker_after_read_only_stall(
     store: &BrownieStore,
     record: &brownie_protocol::TaskRecord,
     policy: &CompiledModePolicy,
@@ -2711,7 +2716,9 @@ fn append_todo_decomposition_blocker_after_read_only_stall(
     let Ok(todo) = fs::read_to_string(&todo_path) else {
         return Ok(());
     };
-    let Some(block) = first_unchecked_todo_block(&todo) else {
+    let Some(block) = selected_todo_block_from_goal(&todo, &record.goal)
+        .or_else(|| first_unchecked_todo_block(&todo))
+    else {
         return Ok(());
     };
     let current_head = latest_git_status_current_head(store, record)?;
@@ -2879,15 +2886,69 @@ fn first_unchecked_todo_block(todo: &str) -> Option<TodoBlock> {
     })
 }
 
+fn selected_todo_block_from_goal(todo: &str, goal: &str) -> Option<TodoBlock> {
+    let selected_first_line = selected_todo_first_line_from_goal(goal)?;
+    todo_block_by_first_line(todo, &selected_first_line)
+}
+
+fn selected_todo_first_line_from_goal(goal: &str) -> Option<String> {
+    let marker = "\n## Selected TODO\n";
+    let marker_index = goal.find(marker)?;
+    let after_marker = &goal[marker_index + marker.len()..];
+    after_marker
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("- [ ] ") || line.starts_with("* [ ] "))
+        .map(ToString::to_string)
+}
+
+fn todo_block_by_first_line(todo: &str, selected_first_line: &str) -> Option<TodoBlock> {
+    let mut offset = 0usize;
+    while let Some(relative_start) = todo[offset..].find("- [ ] ") {
+        let start = offset + relative_start;
+        let tail = &todo[start + 1..];
+        let next_offset = tail
+            .find("\n- [ ] ")
+            .map(|offset| offset + 1)
+            .unwrap_or_else(|| todo.len() - start);
+        let old_text = &todo[start..start + next_offset];
+        let first_line = old_text.lines().next()?.trim();
+        if first_line == selected_first_line {
+            let title = first_line.strip_prefix("- [ ] ")?.trim().to_string();
+            let id = title
+                .split_once(':')
+                .map(|(prefix, _)| prefix.trim())
+                .filter(|prefix| {
+                    !prefix.is_empty()
+                        && prefix.len() <= 24
+                        && prefix
+                            .chars()
+                            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+                })
+                .map(ToString::to_string);
+            return Some(TodoBlock {
+                id,
+                title,
+                old_text: old_text.to_string(),
+            });
+        }
+        offset = start + next_offset;
+    }
+    None
+}
+
 fn todo_decomposition_replacement(
     block: &TodoBlock,
     current_head: Option<&str>,
     release_evidence_blocked: bool,
 ) -> String {
-    let parent_id = block.id.as_deref().unwrap_or("TODO");
-    let child_id = child_todo_id(parent_id);
+    let parent_id = normalized_parent_todo_id(block).unwrap_or_else(|| "TODO".to_string());
     let title = block.title.trim();
+    if let Some(replacement) = concrete_product_ready_decomposition(&parent_id, title) {
+        return replacement;
+    }
     if release_evidence_blocked || title.to_ascii_lowercase().contains("release evidence") {
+        let child_id = child_todo_id(&parent_id);
         return format!(
             "- [ ] {child_id}: Resolve release evidence collection blocker before {parent_id} can close:\n  Brownie confirmed the implementation/tested commit from `git.status`{head_text}, but\n  workflow run ID and artifact SHA-256 are not available through the current\n  Runtime tool plan. Provide a local or MCP-backed release evidence collector,\n  then populate the Runtime Release Contract and readiness audit with verified\n  workflow/artifact evidence.\n",
             head_text = current_head
@@ -2895,16 +2956,73 @@ fn todo_decomposition_replacement(
                 .unwrap_or_default()
         );
     }
+    let child_id = child_todo_id(&parent_id);
     format!(
-        "- [ ] {child_id}: Split blocked TODO into a smaller implementable task:\n  Source TODO: {source}\n  Brownie gathered the available context but did not produce a safe workspace.write\n  for the original scope. Replace this blocker with one concrete implementation\n  step, missing evidence/tool setup, or owner decision, then let Brownie continue.\n",
+        "- [ ] {child_id}: Implement the next concrete step for {parent_id}:\n  Source TODO: {source}\n  Brownie gathered context but did not produce a safe implementation patch.\n  Replace this item with one exact file edit or verification command target;\n  do not create another generic TODO-decomposition item.\n",
         source = title
     )
 }
 
-fn child_todo_id(parent_id: &str) -> String {
-    if parent_id == "TODO" {
-        return "TODO-decomposition".to_string();
+fn normalized_parent_todo_id(block: &TodoBlock) -> Option<String> {
+    if let Some(id) = block.id.as_deref() {
+        if !id.starts_with("TODO-decomposition") {
+            return Some(strip_generated_todo_suffixes(id));
+        }
     }
+    let source = block
+        .title
+        .split("Source TODO:")
+        .nth(1)
+        .unwrap_or(&block.title);
+    extract_known_product_ready_todo_id(source).map(|id| strip_generated_todo_suffixes(&id))
+}
+
+fn extract_known_product_ready_todo_id(text: &str) -> Option<String> {
+    for id in [
+        "E-03", "E-04", "E-07", "E-08", "E-09", "E-10", "E-11", "E-12", "E-13",
+    ] {
+        if text.contains(id) {
+            return Some(id.to_string());
+        }
+    }
+    None
+}
+
+fn strip_generated_todo_suffixes(id: &str) -> String {
+    let mut normalized = id.to_string();
+    loop {
+        let stripped = normalized
+            .strip_suffix("-next")
+            .map(ToString::to_string)
+            .or_else(|| normalized.strip_suffix('a').map(ToString::to_string));
+        match stripped {
+            Some(value) if !value.is_empty() => normalized = value,
+            _ => return normalized,
+        }
+    }
+}
+
+fn concrete_product_ready_decomposition(parent_id: &str, title: &str) -> Option<String> {
+    let source = title.trim();
+    if parent_id == "E-04" || source.contains("E-04") {
+        return Some(format!(
+            "- [ ] E-04a: Update `.github/workflows/ci.yml` Rust quality checks:\n  Source TODO: {source}\n  Add explicit CI steps for `cargo fmt --all -- --check`,\n  `cargo check --workspace --all-targets --all-features`,\n  `cargo clippy --workspace --all-targets --all-features -- -D warnings`,\n  and `cargo test --workspace --all-features`.\n- [ ] E-04b: Update `.github/workflows/ci.yml` Node workspace checks:\n  Add frozen `pnpm install --frozen-lockfile` plus root `pnpm --workspace-root check`,\n  `pnpm --workspace-root test`, and `pnpm --workspace-root build` CI steps.\n- [ ] E-04c: Add release gate and Product Ready guard CI steps:\n  Wire existing package scripts for the executable release gate, Product Completion Guard,\n  and process-loss E2E into CI without inventing release evidence.\n"
+        ));
+    }
+    if parent_id == "E-07" || source.contains("E-07") {
+        return Some(format!(
+            "- [ ] E-07a: Add supply-chain command availability guard:\n  Source TODO: {source}\n  Ensure `scripts/release-gate.mjs` or a dedicated guard treats missing `cargo audit`,\n  `cargo deny`, SBOM tooling, secret scan tooling, and `pnpm audit` support as blockers.\n- [ ] E-07b: Add supply-chain failure evidence tests:\n  Add tests proving scan failures, network failures, and missing tools cannot be recorded\n  as successful release evidence.\n- [ ] E-07c: Wire supply-chain artifact/hash evidence into release audit:\n  Populate only locally verifiable lockfile/artifact hashes and leave external workflow evidence blocked.\n"
+        ));
+    }
+    if parent_id == "E-08" || source.contains("E-08") {
+        return Some(format!(
+            "- [ ] E-08a: Fail closed on missing supply-chain tooling:\n  Source TODO: {source}\n  Add guard coverage proving absent audit/SBOM/secret-scan tools produce blocked release evidence.\n- [ ] E-08b: Fail closed on supply-chain scan and network failures:\n  Add tests proving scan command failures and network errors cannot be treated as success.\n"
+        ));
+    }
+    None
+}
+
+fn child_todo_id(parent_id: &str) -> String {
     if parent_id
         .chars()
         .last()

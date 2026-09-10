@@ -3265,9 +3265,9 @@ fn objective_proposal_apply_params_with_patch_material(
     )? {
         debug_invalid_response_note(
             "objective_proposal_apply_params",
-            "proposal content is truncated",
+            "proposal content is truncated; skipping automatic apply",
         );
-        return Err(RuntimeClientError::InvalidResponse);
+        return Ok(None);
     }
     if json_bool(
         proposal

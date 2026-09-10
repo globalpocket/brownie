@@ -87,24 +87,30 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] TODO-decomposition-next: Resolve release evidence collection blocker before TODO-decomposition can close:
-  Brownie confirmed the implementation/tested commit from `git.status` (`734f9cff41f4a0f7e37f91cc5d7d6c43b893951f`), but
+- [ ] E-03a: Resolve release evidence collection blocker before E-03 can close:
+  current implementation/tested commit is available from `git.status`, but
   workflow run ID and artifact SHA-256 are not available through the current
   Runtime tool plan. Provide a local or MCP-backed release evidence collector,
   then populate the Runtime Release Contract and readiness audit with verified
   workflow/artifact evidence.
 
-- [ ] TODO-decomposition: Split blocked TODO into a smaller implementable task:
-  Source TODO: E-04a-next-next-next-next: Split blocked TODO into a smaller implementable task:
-  Brownie gathered the available context but did not produce a safe workspace.write
-  for the original scope. Replace this blocker with one concrete implementation
-  step, missing evidence/tool setup, or owner decision, then let Brownie continue.
+- [ ] E-04c: Add release gate and Product Ready guard CI steps:
+  Wire existing package scripts for the executable release gate, Product
+  Completion Guard, and process-loss E2E into CI without inventing release
+  evidence.
 
-- [ ] E-07a-next-next: Split blocked TODO into a smaller implementable task:
-  Source TODO: E-07a-next: Split blocked TODO into a smaller implementable task:
-  Brownie gathered the available context but did not produce a safe workspace.write
-  for the original scope. Replace this blocker with one concrete implementation
-  step, missing evidence/tool setup, or owner decision, then let Brownie continue.
+- [ ] E-07a: Add supply-chain command availability guard:
+  Ensure `scripts/release-gate.mjs` or a dedicated guard treats missing
+  `cargo audit`, `cargo deny`, SBOM tooling, secret scan tooling, and
+  `pnpm audit` support as blockers.
+
+- [ ] E-07b: Add supply-chain failure evidence tests:
+  Add tests proving scan failures, network failures, and missing tools cannot
+  be recorded as successful release evidence.
+
+- [ ] E-07c: Wire supply-chain artifact/hash evidence into release audit:
+  Populate only locally verifiable lockfile/artifact hashes and leave external
+  workflow evidence blocked.
 
 - [ ] E-08: Ensure supply-chain tooling absence, scan failure, and network
   failure cannot be treated as successful release evidence.
