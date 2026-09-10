@@ -40,8 +40,10 @@ You are solely responsible for how you use, deploy, modify, or redistribute it.
 The maintainers do not authorize use of Brownie for unauthorized access,
 credential theft, malware, spam, phishing, evasion, or other harmful activity.
 
-See `SECURITY.md`, `ACCEPTABLE_USE.md`, and `TRADEMARK.md` for vulnerability
-reporting, acceptable-use, and branding guidance.
+See `SECURITY.md`, `ACCEPTABLE_USE.md`, `TRADEMARK.md`, and
+`CONTRIBUTING.md` for vulnerability reporting, acceptable-use, branding, and
+contribution guidance. Owner-governance release operations are documented in
+`docs/architecture/owner-governance-operations.md`.
 
 ## Brownie CLI
 
