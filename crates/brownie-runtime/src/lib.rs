@@ -62498,19 +62498,18 @@ content-length: {}
     }
 
     #[test]
-    fn openai_task_run_follows_duplicate_read_denial_to_workspace_write_proposal() {
+    fn openai_task_run_synthesizes_todo_decomposition_after_duplicate_read_denial() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let _guard = EnvGuard::clear();
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(
             temp.path().join("todo.md"),
-            "- [ ] E-03: Populate release evidence fields with current values.\n",
+            "- [ ] B-99: Implement broad cross-platform release automation.\n  Needs decomposition before one runtime pass can safely implement it.\n",
         )
         .expect("todo");
         let (base_url, handle) = spawn_mock_many(vec![
             r#"{"choices":[{"message":{"content":"Read the TODO before editing.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read todo.md before proposing the blocker refinement.\",\"input\":{\"path\":\"todo.md\"}}]}\n```"}}]}"#,
             r#"{"choices":[{"message":{"content":"Try to read the same TODO again.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Re-read todo.md before editing.\",\"input\":{\"path\":\"todo.md\"}}]}\n```"}}]}"#,
-            r#"{"choices":[{"message":{"content":"The duplicate read denial means the existing read evidence must be used now.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Record the concrete release-evidence blocker in todo.md instead of looping on reads.\",\"input\":{\"path\":\"todo.md\",\"operation\":\"replace_file\",\"content\":\"- [ ] E-03a: Add a dedicated release evidence collector for workflow run ID and artifact SHA-256 before populating runtime-release-contract.json.\\n\"}}]}\n```"}}]}"#,
         ]);
         write_mock_config(temp.path(), &base_url);
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -62518,7 +62517,7 @@ content-length: {}
         std::env::set_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true");
 
         let start = parse_line(
-            r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"Update todo.md after release evidence blocker investigation","mode_id":"implementer"}}"#,
+            r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"Update todo.md by decomposing the selected blocker TODO","mode_id":"implementer"}}"#,
         )
         .result
         .unwrap();
@@ -62532,15 +62531,15 @@ content-length: {}
         }
 
         let observed = handle.join().unwrap();
-        assert_eq!(observed.len(), 3);
-        let third_prompt = observed[2]["messages"]
+        assert_eq!(observed.len(), 2);
+        let second_prompt = observed[1]["messages"]
             .as_array()
             .expect("messages")
             .iter()
             .find(|message| message["role"] == "user")
             .and_then(|message| message["content"].as_str())
-            .expect("third user prompt");
-        assert!(third_prompt.contains("Duplicate workspace.read"));
+            .expect("second user prompt");
+        assert!(second_prompt.contains("todo.md"));
 
         let events = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":4,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
@@ -62560,8 +62559,12 @@ content-length: {}
             .find(|event| event["kind"] == "WorkspacePatchProposed")
             .expect("workspace write proposal");
         assert_eq!(proposal["payload"]["path"], "todo.md");
-        assert_eq!(proposal["payload"]["operation"], "replace_file");
+        assert_eq!(proposal["payload"]["operation"], "patch_file");
         assert_eq!(proposal["payload"]["validation_status"], "Valid");
+        assert!(proposal["payload"]["patch_new_text"]
+            .as_str()
+            .expect("patch new text")
+            .contains("B-99a: Split blocked TODO into a smaller implementable task"));
     }
 
     #[test]

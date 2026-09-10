@@ -2686,7 +2686,7 @@ pub(super) fn handle_approved_workspace_intents(
             Some(tool_execution_ledger_payload(&result)),
         )?;
     }
-    append_release_evidence_todo_blocker_after_read_only_stall(
+    append_todo_decomposition_blocker_after_read_only_stall(
         store,
         record,
         policy,
@@ -2695,20 +2695,15 @@ pub(super) fn handle_approved_workspace_intents(
     Ok(())
 }
 
-fn append_release_evidence_todo_blocker_after_read_only_stall(
+fn append_todo_decomposition_blocker_after_read_only_stall(
     store: &BrownieStore,
     record: &brownie_protocol::TaskRecord,
     policy: &CompiledModePolicy,
     duplicate_workspace_read_denied: bool,
 ) -> anyhow::Result<()> {
     if !task_goal_requires_workspace_write_proposal(&record.goal)
-        || !record.goal.contains("E-03")
-        || !record
-            .goal
-            .to_ascii_lowercase()
-            .contains("release evidence")
         || run_has_workspace_patch_proposal(store, record)?
-        || !run_has_release_evidence_blocker_inputs(store, record)?
+        || !run_has_todo_decomposition_stall(store, record, duplicate_workspace_read_denied)?
     {
         return Ok(());
     }
@@ -2716,33 +2711,72 @@ fn append_release_evidence_todo_blocker_after_read_only_stall(
     let Ok(todo) = fs::read_to_string(&todo_path) else {
         return Ok(());
     };
-    let replacement = "- [ ] E-03a: Resolve release evidence collection blocker before E-03 can close:\n  current implementation/tested commit is available from `git.status`, but\n  workflow run ID and artifact SHA-256 are not available through the current\n  Runtime tool plan. Provide a local or MCP-backed release evidence collector,\n  then populate the Runtime Release Contract and readiness audit with verified\n  workflow/artifact evidence.\n";
-    let Some((old_text, new_text)) = e03_todo_blocker_patch(&todo, replacement) else {
+    let Some(block) = first_unchecked_todo_block(&todo) else {
         return Ok(());
     };
+    let current_head = latest_git_status_current_head(store, record)?;
+    let release_evidence_blocked = run_has_release_evidence_blocker_inputs(store, record)?;
+    let new_text =
+        todo_decomposition_replacement(&block, current_head.as_deref(), release_evidence_blocked);
+    if block.old_text == new_text {
+        return Ok(());
+    }
     let current_head = latest_git_status_current_head(store, record)?
         .unwrap_or_else(|| "<unknown-current-head>".to_string());
     let reason_prefix = if duplicate_workspace_read_denied {
-        "Duplicate workspace.read prevented progress on E-03"
+        "Duplicate workspace.read prevented progress on the selected TODO"
     } else {
-        "Release-evidence inputs were gathered without a workspace.write proposal"
+        "Read-only TODO investigation completed without a workspace.write proposal"
     };
     let decision = ToolIntentDecision {
         tool_id: WORKSPACE_WRITE_TOOL_ID.to_string(),
         required_action: RuntimeAction::WriteWorkspace,
         allowed: true,
-        reason: "Runtime synthesized a bounded release-evidence TODO blocker after read-only progress stalled.".to_string(),
+        reason: "Runtime synthesized a bounded TODO decomposition blocker after read-only progress stalled.".to_string(),
         request_reason: format!(
-            "{reason_prefix}; refine todo.md with concrete release-evidence blocker. current_head={current_head}"
+            "{reason_prefix}; refine todo.md with a smaller implementable or blocker TODO. current_head={current_head}"
         ),
         input: json!({
             "path": "todo.md",
             "operation": WorkspacePatchOperation::PatchFile.as_str(),
-            "old_text": old_text,
+            "old_text": block.old_text,
             "new_text": new_text,
         }),
     };
     append_workspace_patch_proposal(store, record, policy, &decision)
+}
+
+fn run_has_todo_decomposition_stall(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+    duplicate_workspace_read_denied: bool,
+) -> anyhow::Result<bool> {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    let read_todo = run_events_include_workspace_read_path(&events, "todo.md");
+    if !read_todo {
+        return Ok(false);
+    }
+    if duplicate_workspace_read_denied {
+        return Ok(true);
+    }
+    let second_pass_seen = events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived);
+    let read_only_completed_tools = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::ToolExecutionCompleted)
+        .filter_map(|event| event.payload.as_ref())
+        .filter_map(|payload| payload.get("tool_id").and_then(Value::as_str))
+        .filter(|tool_id| {
+            matches!(
+                *tool_id,
+                WORKSPACE_READ_TOOL_ID | GIT_STATUS_TOOL_ID | GIT_DIFF_TOOL_ID | TIME_NOW_TOOL_ID
+            )
+        })
+        .count();
+    Ok(second_pass_seen
+        && (read_only_completed_tools >= 2
+            || run_has_release_evidence_blocker_inputs_from_events(&events)))
 }
 
 fn run_has_release_evidence_blocker_inputs(
@@ -2750,6 +2784,12 @@ fn run_has_release_evidence_blocker_inputs(
     record: &brownie_protocol::TaskRecord,
 ) -> anyhow::Result<bool> {
     let events = store.tasks().read_ledger_events(&record.run_id)?;
+    Ok(run_has_release_evidence_blocker_inputs_from_events(&events))
+}
+
+fn run_has_release_evidence_blocker_inputs_from_events(
+    events: &[brownie_store::LedgerEvent],
+) -> bool {
     let mut read_todo = false;
     let mut read_contract = false;
     let mut read_audit = false;
@@ -2783,16 +2823,97 @@ fn run_has_release_evidence_blocker_inputs(
             _ => {}
         }
     }
-    Ok(read_todo && read_contract && read_audit && inspected_status)
+    read_todo && read_contract && read_audit && inspected_status
 }
 
-fn e03_todo_blocker_patch(todo: &str, replacement: &str) -> Option<(String, String)> {
-    let marker = "- [ ] E-03: Populate release evidence fields with current values:";
-    let start = todo.find(marker)?;
-    let tail = &todo[start + marker.len()..];
-    let next_item_offset = tail.find("\n- [ ] E-04:")?;
-    let old_text = &todo[start..start + marker.len() + next_item_offset + 1];
-    Some((old_text.to_string(), replacement.to_string()))
+fn run_events_include_workspace_read_path(
+    events: &[brownie_store::LedgerEvent],
+    path: &str,
+) -> bool {
+    events.iter().any(|event| {
+        event.kind == LedgerEventKind::ToolExecutionCompleted
+            && event.payload.as_ref().is_some_and(|payload| {
+                payload.get("tool_id").and_then(Value::as_str) == Some(WORKSPACE_READ_TOOL_ID)
+                    && payload
+                        .get("output_preview")
+                        .and_then(Value::as_str)
+                        .is_some_and(|preview| {
+                            preview.starts_with(&format!("[workspace.read path={path} "))
+                        })
+            })
+    })
+}
+
+#[derive(Debug, Clone)]
+struct TodoBlock {
+    id: Option<String>,
+    title: String,
+    old_text: String,
+}
+
+fn first_unchecked_todo_block(todo: &str) -> Option<TodoBlock> {
+    let start = todo.find("- [ ] ")?;
+    let tail = &todo[start + 1..];
+    let next_offset = tail
+        .find("\n- [ ] ")
+        .map(|offset| offset + 1)
+        .unwrap_or_else(|| todo.len() - start);
+    let old_text = &todo[start..start + next_offset];
+    let first_line = old_text.lines().next()?.trim();
+    let title = first_line.strip_prefix("- [ ] ")?.trim().to_string();
+    let id = title
+        .split_once(':')
+        .map(|(prefix, _)| prefix.trim())
+        .filter(|prefix| {
+            !prefix.is_empty()
+                && prefix.len() <= 24
+                && prefix
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+        })
+        .map(ToString::to_string);
+    Some(TodoBlock {
+        id,
+        title,
+        old_text: old_text.to_string(),
+    })
+}
+
+fn todo_decomposition_replacement(
+    block: &TodoBlock,
+    current_head: Option<&str>,
+    release_evidence_blocked: bool,
+) -> String {
+    let parent_id = block.id.as_deref().unwrap_or("TODO");
+    let child_id = child_todo_id(parent_id);
+    let title = block.title.trim();
+    if release_evidence_blocked || title.to_ascii_lowercase().contains("release evidence") {
+        return format!(
+            "- [ ] {child_id}: Resolve release evidence collection blocker before {parent_id} can close:\n  Brownie confirmed the implementation/tested commit from `git.status`{head_text}, but\n  workflow run ID and artifact SHA-256 are not available through the current\n  Runtime tool plan. Provide a local or MCP-backed release evidence collector,\n  then populate the Runtime Release Contract and readiness audit with verified\n  workflow/artifact evidence.\n",
+            head_text = current_head
+                .map(|head| format!(" (`{head}`)"))
+                .unwrap_or_default()
+        );
+    }
+    format!(
+        "- [ ] {child_id}: Split blocked TODO into a smaller implementable task:\n  Source TODO: {source}\n  Brownie gathered the available context but did not produce a safe workspace.write\n  for the original scope. Replace this blocker with one concrete implementation\n  step, missing evidence/tool setup, or owner decision, then let Brownie continue.\n",
+        source = title
+    )
+}
+
+fn child_todo_id(parent_id: &str) -> String {
+    if parent_id == "TODO" {
+        return "TODO-decomposition".to_string();
+    }
+    if parent_id
+        .chars()
+        .last()
+        .is_some_and(|ch| ch.is_ascii_lowercase())
+    {
+        format!("{parent_id}-next")
+    } else {
+        format!("{parent_id}a")
+    }
 }
 
 fn latest_git_status_current_head(

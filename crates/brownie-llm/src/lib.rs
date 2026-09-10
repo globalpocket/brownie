@@ -470,17 +470,17 @@ impl FakeLlm {
             let intent = serde_json::json!({
                 "tool_requests": [{
                     "tool_id": "workspace.write",
-                    "reason": "Record the concrete release-evidence blocker in todo.md instead of looping on duplicate reads.",
+                    "reason": "Decompose the blocked selected TODO in todo.md instead of looping on duplicate reads.",
                     "input": {
                         "path": "todo.md",
                         "operation": "replace_file",
-                        "content": "- [ ] E-03a: Add a dedicated release evidence collector for workflow run ID and artifact SHA-256 before populating runtime-release-contract.json.\n"
+                        "content": "- [ ] TODO-decomposition: Split the blocked selected TODO into one smaller implementable task or a concrete blocker with missing evidence/tool/owner decision.\n"
                     }
                 }]
             });
             return LlmResponse {
                 content: format!(
-                    "Fake LLM duplicate-read blocker refinement with {} messages.\n\n```brownie-tool-intent\n{}\n```",
+                    "Fake LLM duplicate-read TODO decomposition with {} messages.\n\n```brownie-tool-intent\n{}\n```",
                     request.messages.len(),
                     serde_json::to_string_pretty(&intent).expect("fake intent serializes")
                 ),
@@ -876,16 +876,15 @@ impl LlmProvider for OpenAiCompatibleLlmProvider {
                 base_url, self.config.model
             )
         };
-        let url = format!(
-            "{}",
-            openai_compatible_endpoint(&self.config.base_url, "chat/completions").map_err(|e| {
+        let url = openai_compatible_endpoint(&self.config.base_url, "chat/completions")
+            .map_err(|e| {
                 anyhow!(
                     "{} reason={}",
                     failure_prefix(),
                     redact_secret(&e.to_string())
                 )
             })?
-        );
+            .to_string();
         let client = openai_compatible_client_for_endpoint(
             &url,
             Duration::from_millis(budget.request_timeout_ms),
