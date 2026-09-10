@@ -8763,6 +8763,9 @@ fn validate_prompt_built_payload_schema(
         "context_budget_selected_index_materialized_chars",
     )?;
     validate_optional_payload_bool_field(object, "context_budget_selected_index_truncated")?;
+    validate_optional_payload_u64_field(object, "prompt_build_duration_ms")?;
+    validate_optional_payload_u64_field(object, "llm_request_duration_ms")?;
+    validate_optional_payload_u64_field(object, "llm_request_prompt_chars")?;
     validate_optional_payload_string_field(object, "prompt_preview")?;
     validate_optional_payload_bool_field(object, "prompt_preview_redacted")?;
     validate_optional_payload_string_field(object, "prompt_preview_redaction_reason")?;
@@ -8849,6 +8852,9 @@ fn validate_llm_response_received_payload_schema(
     }
     validate_required_payload_string_field(object, "provider")?;
     validate_optional_payload_u64_field(object, "response_preview_chars")?;
+    validate_optional_payload_u64_field(object, "prompt_build_duration_ms")?;
+    validate_optional_payload_u64_field(object, "llm_request_duration_ms")?;
+    validate_optional_payload_u64_field(object, "llm_request_prompt_chars")?;
     validate_optional_payload_string_field(object, "content_preview")?;
     validate_optional_payload_bool_field(object, "content_preview_redacted")?;
     validate_optional_payload_string_field(object, "content_preview_redaction_reason")?;
@@ -9140,8 +9146,11 @@ const PROMPT_BUILT_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "context_omitted_events",
     "context_total_events",
     "context_window_bounded",
+    "llm_request_duration_ms",
+    "llm_request_prompt_chars",
     "max_prompt_chars",
     "message_count",
+    "prompt_build_duration_ms",
     "prompt_preview",
     "prompt_preview_redacted",
     "prompt_preview_redaction_reason",
@@ -9175,7 +9184,10 @@ const LLM_RESPONSE_RECEIVED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "content_preview",
     "content_preview_redacted",
     "content_preview_redaction_reason",
+    "llm_request_duration_ms",
+    "llm_request_prompt_chars",
     "provider",
+    "prompt_build_duration_ms",
     "response_preview_chars",
 ];
 

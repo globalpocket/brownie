@@ -945,6 +945,9 @@ pub fn runtime_semantic_protocol_contract() -> Value {
     let prompt_built_payload = json!({
         "message_count": 2,
         "max_prompt_chars": 32000,
+        "prompt_build_duration_ms": 12,
+        "llm_request_duration_ms": 34,
+        "llm_request_prompt_chars": 1234,
         "context_total_events": 5,
         "context_included_events": 5,
         "context_omitted_events": 0,
@@ -985,6 +988,9 @@ pub fn runtime_semantic_protocol_contract() -> Value {
     let llm_response_received_payload = json!({
         "provider": "OpenAiCompatible",
         "response_preview_chars": 2000,
+        "prompt_build_duration_ms": 12,
+        "llm_request_duration_ms": 34,
+        "llm_request_prompt_chars": 1234,
         "content_preview": "bounded model response"
     });
     let task_started_payload = json!({
@@ -2842,16 +2848,16 @@ pub fn ledger_payload_schema_version(kind: &str) -> u64 {
         "AgentLoopStarted"
         | "AgentLoopCompleted"
         | "TaskCompletionAccepted"
-        | "PromptBuilt"
         | "PromptSensitiveScanCompleted"
         | "PromptSensitiveScanFailed"
         | "LlmRequestCreated"
         | "LlmRequestFailed"
+        | "SecondPassLlmRequestCreated"
+        | "SecondPassLlmRequestFailed" => 8,
+        "PromptBuilt"
         | "LlmResponseReceived"
         | "SecondPassPromptBuilt"
-        | "SecondPassLlmRequestCreated"
-        | "SecondPassLlmRequestFailed"
-        | "SecondPassLlmResponseReceived" => 8,
+        | "SecondPassLlmResponseReceived" => 9,
         "TaskStarted"
         | "TaskRunning"
         | "ModeResolved"
@@ -3242,7 +3248,7 @@ fn task_completion_accepted_payload_schema_descriptor() -> String {
 }
 
 fn prompt_built_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;known_optional_fields:context_budget_max_ledger_events:u64,context_budget_max_prompt_chars:u64,context_budget_max_selected_index_chars:u64,context_budget_prompt_chars:u64,context_budget_prompt_within_budget:boolean,context_budget_protected_context_chars:u64,context_budget_requested:boolean,context_budget_selected_index_content_chars:u64,context_budget_selected_index_context_present:boolean,context_budget_selected_index_materialized_chars:u64,context_budget_selected_index_truncated:boolean,context_first_included_event:string,context_included_events:u64,context_last_included_event:string,context_max_events:u64,context_omitted_events:u64,context_total_events:u64,context_window_bounded:boolean,max_prompt_chars:u64,message_count:u64,prompt_preview:string,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string;known_field_required:true;additional_fields:false;prompt_built_payload:true}".to_string()
+    "strict_typed{payload_optional:false;known_optional_fields:context_budget_max_ledger_events:u64,context_budget_max_prompt_chars:u64,context_budget_max_selected_index_chars:u64,context_budget_prompt_chars:u64,context_budget_prompt_within_budget:boolean,context_budget_protected_context_chars:u64,context_budget_requested:boolean,context_budget_selected_index_content_chars:u64,context_budget_selected_index_context_present:boolean,context_budget_selected_index_materialized_chars:u64,context_budget_selected_index_truncated:boolean,context_first_included_event:string,context_included_events:u64,context_last_included_event:string,context_max_events:u64,context_omitted_events:u64,context_total_events:u64,context_window_bounded:boolean,llm_request_duration_ms:u64,llm_request_prompt_chars:u64,max_prompt_chars:u64,message_count:u64,prompt_build_duration_ms:u64,prompt_preview:string,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string;known_field_required:true;additional_fields:false;prompt_built_payload:true}".to_string()
 }
 
 fn prompt_sensitive_scan_payload_schema_descriptor() -> String {
@@ -3258,7 +3264,7 @@ fn llm_request_failed_payload_schema_descriptor() -> String {
 }
 
 fn llm_response_received_payload_schema_descriptor() -> String {
-    "strict_typed{payload_optional:false;required_fields:provider:string;one_of_required:content_preview:string|content_preview_redacted:boolean;known_optional_fields:content_preview:string,content_preview_redacted:boolean,content_preview_redaction_reason:string,response_preview_chars:u64;additional_fields:false;llm_response_received_payload:true}".to_string()
+    "strict_typed{payload_optional:false;required_fields:provider:string;one_of_required:content_preview:string|content_preview_redacted:boolean;known_optional_fields:content_preview:string,content_preview_redacted:boolean,content_preview_redaction_reason:string,llm_request_duration_ms:u64,llm_request_prompt_chars:u64,prompt_build_duration_ms:u64,response_preview_chars:u64;additional_fields:false;llm_response_received_payload:true}".to_string()
 }
 
 fn task_started_payload_schema_descriptor() -> String {

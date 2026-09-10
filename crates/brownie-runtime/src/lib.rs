@@ -2291,15 +2291,20 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
         LedgerEventKind::PromptBuilt,
-        Some(prompt_built_payload(
-            result.prompt.messages.len(),
-            &result.prompt,
-            provider_selection.budget.response_preview_chars,
-            provider_selection.budget.max_prompt_chars,
-            &result.sensitive_scan,
-            &prompt_context_window,
-            &prompt_context_budget,
-            privileged_prompt_context_present,
+        Some(agent_loop_measurements_payload(
+            prompt_built_payload(
+                result.prompt.messages.len(),
+                &result.prompt,
+                provider_selection.budget.response_preview_chars,
+                provider_selection.budget.max_prompt_chars,
+                &result.sensitive_scan,
+                &prompt_context_window,
+                &prompt_context_budget,
+                privileged_prompt_context_present,
+            ),
+            result.prompt_build_duration_ms,
+            result.llm_request_duration_ms,
+            result.prompt_chars,
         )),
     ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
@@ -2460,11 +2465,16 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
         LedgerEventKind::LlmResponseReceived,
-        Some(llm_response_received_payload(
-            &provider_status,
-            &result.llm_response.content,
-            provider_selection.budget.response_preview_chars,
-            privileged_prompt_context_present,
+        Some(agent_loop_measurements_payload(
+            llm_response_received_payload(
+                &provider_status,
+                &result.llm_response.content,
+                provider_selection.budget.response_preview_chars,
+                privileged_prompt_context_present,
+            ),
+            result.prompt_build_duration_ms,
+            result.llm_request_duration_ms,
+            result.prompt_chars,
         )),
     ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
@@ -2557,15 +2567,20 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         if let Err(error) = store.tasks().append_task_event_with_payload(
             &running,
             LedgerEventKind::SecondPassPromptBuilt,
-            Some(prompt_built_payload(
-                second_pass.prompt.messages.len(),
-                &second_pass.prompt,
-                provider_selection.budget.response_preview_chars,
-                provider_selection.budget.max_prompt_chars,
-                &second_pass.sensitive_scan,
-                &second_pass_context_window,
-                &second_pass_context_budget,
-                privileged_prompt_context_present,
+            Some(agent_loop_measurements_payload(
+                prompt_built_payload(
+                    second_pass.prompt.messages.len(),
+                    &second_pass.prompt,
+                    provider_selection.budget.response_preview_chars,
+                    provider_selection.budget.max_prompt_chars,
+                    &second_pass.sensitive_scan,
+                    &second_pass_context_window,
+                    &second_pass_context_budget,
+                    privileged_prompt_context_present,
+                ),
+                second_pass.prompt_build_duration_ms,
+                second_pass.llm_request_duration_ms,
+                second_pass.prompt_chars,
             )),
         ) {
             return error_response(id, -32603, &format!("internal error: {error}"));
@@ -2586,11 +2601,16 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         if let Err(error) = store.tasks().append_task_event_with_payload(
             &running,
             LedgerEventKind::SecondPassLlmResponseReceived,
-            Some(llm_response_received_payload(
-                &provider_status,
-                &second_pass.llm_response.content,
-                provider_selection.budget.response_preview_chars,
-                privileged_prompt_context_present,
+            Some(agent_loop_measurements_payload(
+                llm_response_received_payload(
+                    &provider_status,
+                    &second_pass.llm_response.content,
+                    provider_selection.budget.response_preview_chars,
+                    privileged_prompt_context_present,
+                ),
+                second_pass.prompt_build_duration_ms,
+                second_pass.llm_request_duration_ms,
+                second_pass.prompt_chars,
             )),
         ) {
             return error_response(id, -32603, &format!("internal error: {error}"));
@@ -2617,6 +2637,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         };
         let mut followup_attempts = 0;
         loop {
+            if latest_tool_execution_is_duplicate_workspace_read_denial(&followup_events) {
+                break;
+            }
             let second_pass_response_index = followup_events
                 .iter()
                 .rposition(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived);
@@ -2741,15 +2764,20 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             if let Err(error) = store.tasks().append_task_event_with_payload(
                 &running,
                 LedgerEventKind::SecondPassPromptBuilt,
-                Some(prompt_built_payload(
-                    followup_pass.prompt.messages.len(),
-                    &followup_pass.prompt,
-                    provider_selection.budget.response_preview_chars,
-                    provider_selection.budget.max_prompt_chars,
-                    &followup_pass.sensitive_scan,
-                    &followup_context_window,
-                    &followup_context_budget,
-                    privileged_prompt_context_present,
+                Some(agent_loop_measurements_payload(
+                    prompt_built_payload(
+                        followup_pass.prompt.messages.len(),
+                        &followup_pass.prompt,
+                        provider_selection.budget.response_preview_chars,
+                        provider_selection.budget.max_prompt_chars,
+                        &followup_pass.sensitive_scan,
+                        &followup_context_window,
+                        &followup_context_budget,
+                        privileged_prompt_context_present,
+                    ),
+                    followup_pass.prompt_build_duration_ms,
+                    followup_pass.llm_request_duration_ms,
+                    followup_pass.prompt_chars,
                 )),
             ) {
                 return error_response(id, -32603, &format!("internal error: {error}"));
@@ -2770,11 +2798,16 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             if let Err(error) = store.tasks().append_task_event_with_payload(
                 &running,
                 LedgerEventKind::SecondPassLlmResponseReceived,
-                Some(llm_response_received_payload(
-                    &provider_status,
-                    &followup_pass.llm_response.content,
-                    provider_selection.budget.response_preview_chars,
-                    privileged_prompt_context_present,
+                Some(agent_loop_measurements_payload(
+                    llm_response_received_payload(
+                        &provider_status,
+                        &followup_pass.llm_response.content,
+                        provider_selection.budget.response_preview_chars,
+                        privileged_prompt_context_present,
+                    ),
+                    followup_pass.prompt_build_duration_ms,
+                    followup_pass.llm_request_duration_ms,
+                    followup_pass.prompt_chars,
                 )),
             ) {
                 return error_response(id, -32603, &format!("internal error: {error}"));
@@ -2817,7 +2850,10 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
     {
         if let Err(error) = append_todo_decomposition_blocker_after_read_only_stall(
-            &store, &running, &policy, false,
+            &store,
+            &running,
+            &policy,
+            run_has_duplicate_workspace_read_denial(&pre_completion_events),
         ) {
             let _ = store.tasks().append_task_event_with_payload(
                 &running,
@@ -3058,6 +3094,41 @@ fn task_goal_requires_tool_intent(goal: &str) -> bool {
     ]
     .iter()
     .any(|needle| goal.contains(needle))
+}
+
+fn latest_tool_execution_is_duplicate_workspace_read_denial(events: &[LedgerEvent]) -> bool {
+    events
+        .iter()
+        .rposition(|event| {
+            matches!(
+                event.kind,
+                LedgerEventKind::ToolExecutionCompleted
+                    | LedgerEventKind::ToolExecutionDenied
+                    | LedgerEventKind::ToolExecutionFailed
+            )
+        })
+        .and_then(|index| events.get(index))
+        .is_some_and(is_duplicate_workspace_read_denial)
+}
+
+fn run_has_duplicate_workspace_read_denial(events: &[LedgerEvent]) -> bool {
+    events.iter().any(is_duplicate_workspace_read_denial)
+}
+
+fn is_duplicate_workspace_read_denial(event: &LedgerEvent) -> bool {
+    event.kind == LedgerEventKind::ToolExecutionDenied
+        && event
+            .payload
+            .as_ref()
+            .and_then(|payload| payload.get("tool_id"))
+            .and_then(Value::as_str)
+            == Some(WORKSPACE_READ_TOOL_ID)
+        && event
+            .payload
+            .as_ref()
+            .and_then(|payload| payload.get("reason"))
+            .and_then(Value::as_str)
+            .is_some_and(|reason| reason.contains("Duplicate workspace.read"))
 }
 
 fn task_goal_requires_workspace_write_proposal(goal: &str) -> bool {
@@ -14596,6 +14667,30 @@ fn llm_response_received_payload(
     Value::Object(payload)
 }
 
+fn agent_loop_measurements_payload(
+    mut payload: Value,
+    prompt_build_duration_ms: u128,
+    llm_request_duration_ms: u128,
+    prompt_chars: usize,
+) -> Value {
+    if let Value::Object(map) = &mut payload {
+        map.insert(
+            "prompt_build_duration_ms".to_string(),
+            json!(bounded_duration_millis(prompt_build_duration_ms)),
+        );
+        map.insert(
+            "llm_request_duration_ms".to_string(),
+            json!(bounded_duration_millis(llm_request_duration_ms)),
+        );
+        map.insert("llm_request_prompt_chars".to_string(), json!(prompt_chars));
+    }
+    payload
+}
+
+fn bounded_duration_millis(duration_ms: u128) -> u64 {
+    duration_ms.min(u128::from(u64::MAX)) as u64
+}
+
 fn preview_prompt(prompt: &brownie_context::PromptView, max_chars: usize) -> String {
     if prompt.messages.len() > 1 {
         let system_limit = max_chars.min(160);
@@ -14633,7 +14728,7 @@ fn preview_with_limit(content: &str, max_chars: usize) -> String {
 }
 
 fn preview_tool_output(content: &str) -> String {
-    const MAX_TOOL_OUTPUT_PREVIEW_CHARS: usize = 8 * 1024;
+    const MAX_TOOL_OUTPUT_PREVIEW_CHARS: usize = 2 * 1024;
     content
         .chars()
         .take(MAX_TOOL_OUTPUT_PREVIEW_CHARS)
@@ -62560,6 +62655,12 @@ content-length: {}
             .any(|e| e["kind"] == "LlmRequestCreated"
                 && e["payload"]["provider"] == "OpenAiCompatible"
                 && e["payload"]["model"] == "mock-model"));
+        assert!(events["events"].as_array().unwrap().iter().any(|e| {
+            e["kind"] == "LlmResponseReceived"
+                && e["payload"]["prompt_build_duration_ms"].is_number()
+                && e["payload"]["llm_request_duration_ms"].is_number()
+                && e["payload"]["llm_request_prompt_chars"].is_number()
+        }));
         assert!(events["events"]
             .as_array()
             .unwrap()
@@ -62575,6 +62676,12 @@ content-length: {}
             .unwrap()
             .iter()
             .any(|e| e["kind"] == "SecondPassLlmResponseReceived"));
+        assert!(events["events"].as_array().unwrap().iter().any(|e| {
+            e["kind"] == "SecondPassLlmResponseReceived"
+                && e["payload"]["prompt_build_duration_ms"].is_number()
+                && e["payload"]["llm_request_duration_ms"].is_number()
+                && e["payload"]["llm_request_prompt_chars"].is_number()
+        }));
         assert!(serialized.contains("Mock LLM final response after tool feedback"));
     }
 

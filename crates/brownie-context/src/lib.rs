@@ -32,7 +32,7 @@ pub struct PromptView {
 
 pub const MAX_LEDGER_CONTEXT_EVENTS: usize = 12;
 pub const DEFAULT_MAX_SELECTED_INDEX_CONTEXT_CHARS: usize = usize::MAX;
-const MAX_WORKSPACE_READ_OUTPUT_PREVIEW_CHARS: usize = 8 * 1024;
+const MAX_WORKSPACE_READ_OUTPUT_PREVIEW_CHARS: usize = 2 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContextWindowSummary {
