@@ -120,6 +120,7 @@
     "no_self_approval": true,
     "review_intent": "RRP-8.7 changes release/readiness guard engines and package scripts. Review must confirm owner-governance evidence remains bounded, owner-controlled settings are not self-approved, fail-closed statuses remain release-blocking, and runtime_release_ready remains false.",
     "changed_files": [
+      ".github/workflows/ci.yml",
       "package.json",
       "docs/architecture/phase-value-manifest.json",
       "docs/architecture/runtime-module-decomposition-assessment.json",

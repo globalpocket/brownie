@@ -99,10 +99,6 @@ Current synchronization note:
   `cargo test --workspace --all-features`, frozen pnpm install, root
   check/test/build, executable release gate, Product Completion Guard, and
   process-loss E2E.
-- [ ] E-05: Add Linux, macOS, and Windows CI coverage for Runtime release
-  readiness where feasible.
-- [ ] E-06: Update CI runtime versions and pin GitHub Actions by commit SHA
-  where release-gate maturity requires it.
 - [ ] E-07: Run and enforce supply-chain checks: `cargo audit --locked`,
   `cargo deny check`, production `pnpm audit`, high-signal secret scan, Rust and
   Node SBOM, lockfile hashes, artifact SHA-256, and build provenance.

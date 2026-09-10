@@ -13924,6 +13924,12 @@ fn apply_text_hunks(
     Ok(replacement)
 }
 
+fn text_contains_trailing_whitespace(content: &str) -> bool {
+    content
+        .lines()
+        .any(|line| line.ends_with(' ') || line.ends_with('\t'))
+}
+
 fn build_workspace_patch_proposal_from_input(
     store: &BrownieStore,
     path: &str,
@@ -14023,6 +14029,14 @@ fn build_workspace_patch_proposal_from_input(
             result.diff_redacted = true;
             return result;
         }
+        if hunks
+            .iter()
+            .any(|hunk| text_contains_trailing_whitespace(&hunk.new_text))
+        {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("patch_file new_text contains trailing whitespace");
+            return result;
+        }
         let target = root.join(path);
         let Ok(symlink_metadata) = std::fs::symlink_metadata(&target) else {
             result.validation_status = "Invalid";
@@ -14087,6 +14101,11 @@ fn build_workspace_patch_proposal_from_input(
         return result;
     }
     if operation == WorkspacePatchOperation::CreateFile.as_str() {
+        if text_contains_trailing_whitespace(content) {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("proposal content contains trailing whitespace");
+            return result;
+        }
         let relative_path = Path::new(path);
         let Some(file_name) = relative_path.file_name() else {
             result.validation_status = "Invalid";
@@ -14193,6 +14212,11 @@ fn build_workspace_patch_proposal_from_input(
             &diff,
             DEFAULT_DIFF_PREVIEW_CHARS.min(MAX_DIFF_PREVIEW_CHARS),
         ));
+        return result;
+    }
+    if text_contains_trailing_whitespace(content) {
+        result.validation_status = "Invalid";
+        result.validation_reason = Some("proposal content contains trailing whitespace");
         return result;
     }
     let target = root.join(path);
@@ -45621,6 +45645,59 @@ modes:
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
             "alpha\nbeta\nbeta\ngamma\n"
+        );
+    }
+
+    #[test]
+    fn patch_file_proposal_rejects_trailing_whitespace_without_writing() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "alpha\nbeta\ngamma\n")
+            .expect("write readme");
+        let store = BrownieStore::new(temp.path());
+        let proposal = build_workspace_patch_proposal_from_input(
+            &store,
+            "README.md",
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &json!({
+                "old_text": "beta\n",
+                "new_text": "delta \n",
+            }),
+        );
+
+        assert_eq!(proposal.validation_status, "Invalid");
+        assert_eq!(
+            proposal.validation_reason,
+            Some("patch_file new_text contains trailing whitespace")
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "alpha\nbeta\ngamma\n"
+        );
+    }
+
+    #[test]
+    fn replace_file_proposal_rejects_trailing_whitespace_without_writing() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "old\n").expect("write readme");
+        let store = BrownieStore::new(temp.path());
+        let proposal = build_workspace_patch_proposal(
+            &store,
+            "README.md",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
+            "new \n",
+        );
+
+        assert_eq!(proposal.validation_status, "Invalid");
+        assert_eq!(
+            proposal.validation_reason,
+            Some("proposal content contains trailing whitespace")
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "old\n"
         );
     }
 
