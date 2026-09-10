@@ -2479,11 +2479,22 @@ pub(super) fn append_tool_intent_events(
         } else {
             None
         };
+        let workspace_write_rejection_reason = if decision.allowed
+            && runtime_plan_rejection_reason.is_none()
+            && runtime_rejection_reason.is_none()
+            && decision.tool_id == WORKSPACE_WRITE_TOOL_ID
+        {
+            leaf_todo_workspace_write_rejection_reason(record, &decision.input)
+        } else {
+            None
+        };
         let allowed = decision.allowed
             && runtime_plan_rejection_reason.is_none()
-            && runtime_rejection_reason.is_none();
+            && runtime_rejection_reason.is_none()
+            && workspace_write_rejection_reason.is_none();
         let reason = runtime_plan_rejection_reason
             .or(runtime_rejection_reason)
+            .or(workspace_write_rejection_reason)
             .unwrap_or(decision.reason.as_str());
         let mut payload = json!({
             "tool_id": decision.tool_id,
@@ -2570,6 +2581,20 @@ pub(super) fn handle_approved_workspace_intents(
             continue;
         }
         if decision.tool_id == WORKSPACE_WRITE_TOOL_ID {
+            if let Some(reason) =
+                leaf_todo_workspace_write_rejection_reason(record, &decision.input)
+            {
+                store.tasks().append_task_event_with_payload(
+                    record,
+                    LedgerEventKind::ToolIntentRejected,
+                    Some(json!({
+                        "tool_id": WORKSPACE_WRITE_TOOL_ID,
+                        "reason": reason,
+                        "code": "leaf_todo_todo_md_write_denied"
+                    })),
+                )?;
+                continue;
+            }
             if is_verification_recovery_task && verification_recovery_proposal_seen {
                 continue;
             }
@@ -2973,6 +2998,30 @@ fn is_concrete_product_ready_leaf_todo(block: &TodoBlock) -> bool {
             "E-04a" | "E-04b" | "E-04c" | "E-07a" | "E-07b" | "E-07c" | "E-08a" | "E-08b"
         )
     })
+}
+
+fn leaf_todo_workspace_write_rejection_reason(
+    record: &brownie_protocol::TaskRecord,
+    input: &Value,
+) -> Option<&'static str> {
+    let path = input.get("path").and_then(Value::as_str)?;
+    if path != "todo.md" {
+        return None;
+    }
+    let first_line = selected_todo_first_line_from_goal(&record.goal)?;
+    let title = first_line
+        .strip_prefix("- [ ] ")
+        .or_else(|| first_line.strip_prefix("* [ ] "))?
+        .trim();
+    let id = title.split_once(':')?.0.trim();
+    let block = TodoBlock {
+        id: Some(id.to_string()),
+        title: title.to_string(),
+        old_text: first_line,
+    };
+    is_concrete_product_ready_leaf_todo(&block).then_some(
+        "Leaf Product Ready TODOs must not rewrite todo.md; edit the named implementation files or fail closed.",
+    )
 }
 
 fn normalized_parent_todo_id(block: &TodoBlock) -> Option<String> {
@@ -5792,5 +5841,23 @@ mod mcp_approval_lock_tests {
             is_concrete_product_ready_leaf_todo(&block),
             "leaf Product Ready TODOs must fail closed instead of being rewritten into duplicate TODOs"
         );
+    }
+
+    #[test]
+    fn concrete_product_ready_leaf_todos_cannot_patch_todo_md() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-07a: Add supply-chain command availability guard:\n  Ensure missing tooling is blocked.\n".to_string();
+
+        let reason = leaf_todo_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": "todo.md",
+                "operation": "patch_file",
+                "old_text": "old",
+                "new_text": "new"
+            }),
+        );
+
+        assert!(reason.is_some());
     }
 }
