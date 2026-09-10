@@ -94,8 +94,8 @@ Current synchronization note:
   then populate the Runtime Release Contract and readiness audit with verified
   workflow/artifact evidence.
 
-- [ ] E-04a-next-next-next: Split blocked TODO into a smaller implementable task:
-  Source TODO: E-04a-next-next: Split blocked TODO into a smaller implementable task:
+- [ ] E-04a-next-next-next-next: Split blocked TODO into a smaller implementable task:
+  Source TODO: E-04a-next-next-next: Split blocked TODO into a smaller implementable task:
   Brownie gathered the available context but did not produce a safe workspace.write
   for the original scope. Replace this blocker with one concrete implementation
   step, missing evidence/tool setup, or owner decision, then let Brownie continue.
