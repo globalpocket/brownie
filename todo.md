@@ -109,8 +109,12 @@ Current synchronization note:
 
 - [ ] E-08: Ensure supply-chain tooling absence, scan failure, and network
   failure cannot be treated as successful release evidence.
-- [ ] E-09: Produce and verify distributable artifacts for Ubuntu Linux, macOS
-  Apple Silicon, and Windows.
+- [ ] E-09a: Implement the next concrete step for E-09:
+  Source TODO: E-09: Produce and verify distributable artifacts for Ubuntu Linux, macOS
+  Brownie gathered context but did not produce a safe implementation patch.
+  Replace this item with one exact file edit or verification command target;
+  do not create another generic TODO-decomposition item.
+
 - [ ] E-10: For each artifact, verify clean install, `brownie --version`, Base
   Mode Pack load, fake-provider task, ledger generation, forced-stop resume,
   stale/replay rejection, checksum verification, update, rollback, uninstall,
