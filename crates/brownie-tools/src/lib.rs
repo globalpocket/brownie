@@ -3247,7 +3247,21 @@ impl ToolIntentParser {
                 summary,
             };
         };
-        if items.len() > config.max_tool_requests {
+        let mut flattened_items = Vec::new();
+        for item in items {
+            if let Some(object) = item.as_object() {
+                if object.len() == 1 {
+                    if let Some(nested_items) =
+                        object.get("tool_requests").and_then(Value::as_array)
+                    {
+                        flattened_items.extend(nested_items.iter());
+                        continue;
+                    }
+                }
+            }
+            flattened_items.push(item);
+        }
+        if flattened_items.len() > config.max_tool_requests {
             rejected.push(rejection(
                 None,
                 "tool_requests exceeds parser count limit.",
@@ -3261,7 +3275,7 @@ impl ToolIntentParser {
             };
         }
         let mut requests = Vec::new();
-        for item in items {
+        for item in flattened_items {
             let Some(obj) = item.as_object() else {
                 rejected.push(rejection(
                     None,
@@ -5123,6 +5137,20 @@ mod tests {
         assert!(parsed.rejected.is_empty());
         assert_eq!(parsed.requests[0].tool_id, WORKSPACE_READ_TOOL_ID);
         assert_eq!(parsed.requests[0].input["path"], "scripts/release-gate.mjs");
+    }
+
+    #[test]
+    fn parser_flattens_single_nested_tool_requests_wrapper() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Create guard.\",\"input\":{\"path\":\"scripts/guard-supply-chain-commands.mjs\",\"operation\":\"create_file\",\"content\":\"console.log('ok');\\n\"}}]}]}\n```",
+        );
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+        assert_eq!(parsed.requests[0].tool_id, WORKSPACE_WRITE_TOOL_ID);
+        assert_eq!(
+            parsed.requests[0].input["path"],
+            "scripts/guard-supply-chain-commands.mjs"
+        );
     }
 
     #[test]

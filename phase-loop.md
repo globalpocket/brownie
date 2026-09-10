@@ -219,6 +219,10 @@ intent must use the Runtime schema exactly:
 {"tool_requests":[{"tool_id":"workspace.read","reason":"Read the target file before patching.","input":{"path":"path/to/file"}},{"tool_id":"workspace.write","reason":"Patch one bounded hunk.","input":{"path":"path/to/file","operation":"patch_file","old_text":"exact existing text","new_text":"replacement text"}}]}
 ```
 
+Do not nest `tool_requests` inside another `tool_requests` item. The top-level
+JSON object must contain exactly one `tool_requests` array whose items are
+direct tool request objects with `tool_id`, `reason`, and `input`.
+
 For multiple hunks, use `"hunks":[{"old_text":"...","new_text":"..."}]` with
 two to five non-overlapping hunks. Do not put a `content` field on
 `patch_file`; `content` is only for `replace_file` or `create_file`. Keep the
