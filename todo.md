@@ -95,14 +95,9 @@ Current synchronization note:
   workflow/artifact evidence.
 
 - [ ] E-07a: Add supply-chain command availability guard:
-  Source TODO: E-07a: Add supply-chain command availability guard:
-  Ensure `scripts/release-gate.mjs` or a dedicated guard treats missing `cargo audit`,
-  `cargo deny`, SBOM tooling, secret scan tooling, and `pnpm audit` support as blockers.
-- [ ] E-07b: Add supply-chain failure evidence tests:
-  Add tests proving scan failures, network failures, and missing tools cannot be recorded
-  as successful release evidence.
-- [ ] E-07c: Wire supply-chain artifact/hash evidence into release audit:
-  Populate only locally verifiable lockfile/artifact hashes and leave external workflow evidence blocked.
+  Ensure `scripts/release-gate.mjs` or a dedicated guard treats missing
+  `cargo audit`, `cargo deny`, SBOM tooling, secret scan tooling, and
+  `pnpm audit` support as blockers.
 
 - [ ] E-07b: Add supply-chain failure evidence tests:
   Add tests proving scan failures, network failures, and missing tools cannot
