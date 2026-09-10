@@ -107,8 +107,12 @@ Current synchronization note:
   Populate only locally verifiable lockfile/artifact hashes and leave external
   workflow evidence blocked.
 
-- [ ] E-08: Ensure supply-chain tooling absence, scan failure, and network
-  failure cannot be treated as successful release evidence.
+- [ ] E-08a: Fail closed on missing supply-chain tooling:
+  Source TODO: E-08: Ensure supply-chain tooling absence, scan failure, and network
+  Add guard coverage proving absent audit/SBOM/secret-scan tools produce blocked release evidence.
+- [ ] E-08b: Fail closed on supply-chain scan and network failures:
+  Add tests proving scan command failures and network errors cannot be treated as success.
+
 - [ ] E-09: Produce and verify distributable artifacts for Ubuntu Linux, macOS
   Apple Silicon, and Windows.
 - [ ] E-10: For each artifact, verify clean install, `brownie --version`, Base
