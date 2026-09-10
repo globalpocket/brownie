@@ -42,6 +42,10 @@ PHASE_LOOP_PR_REMOTE="${PHASE_LOOP_PR_REMOTE:-origin}"
 PHASE_LOOP_PR_BASE="${PHASE_LOOP_PR_BASE:-main}"
 PHASE_LOOP_PR_TITLE_PREFIX="${PHASE_LOOP_PR_TITLE_PREFIX:-Brownie phase-loop}"
 PHASE_LOOP_PR_DRAFT="${PHASE_LOOP_PR_DRAFT:-0}"
+PHASE_LOOP_LLM_ROUTING="${PHASE_LOOP_LLM_ROUTING:-1}"
+PHASE_LOOP_LLM_MODEL_FAST="${PHASE_LOOP_LLM_MODEL_FAST:-}"
+PHASE_LOOP_LLM_MODEL_CODE="${PHASE_LOOP_LLM_MODEL_CODE:-}"
+PHASE_LOOP_LLM_MODEL_DEEP="${PHASE_LOOP_LLM_MODEL_DEEP:-}"
 
 mkdir -p "$RUN_DIR" "$LOG_DIR" "$TODO_CLAIM_DIR"
 
@@ -772,7 +776,9 @@ stage_runtime_applied_paths() {
   local stdout_log="$1"
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-    python3 - "$stdout_log" <<'PY' | while IFS= read -r path; do
+    local paths_file
+    paths_file="$(mktemp "${TMPDIR:-/tmp}/brownie-applied-paths.XXXXXX")"
+    python3 - "$stdout_log" > "$paths_file" <<'PY'
 import json
 import sys
 
@@ -787,16 +793,36 @@ path = payload.get("objective_apply_path") if isinstance(payload, dict) else Non
 if isinstance(path, str) and path.strip():
     print(path)
 PY
-      case "$path" in
-        /*|*..*|"" )
+    if [ -s "$paths_file" ]; then
+      while IFS= read -r path; do
+        case "$path" in
+          /*|*..*|"" )
+            rm -f "$paths_file"
+            exit 66
+            ;;
+        esac
+        if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+          rm -f "$paths_file"
           exit 66
-          ;;
-      esac
-      if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
-        exit 66
-      fi
-      git add -- "$path"
-    done
+        fi
+        git add -- "$path"
+      done < "$paths_file"
+    else
+      git diff --name-only --diff-filter=ACMRTUXB | while IFS= read -r path; do
+        case "$path" in
+          /*|*..*|"" )
+            rm -f "$paths_file"
+            exit 66
+            ;;
+        esac
+        if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+          rm -f "$paths_file"
+          exit 66
+        fi
+        git add -- "$path"
+      done
+    fi
+    rm -f "$paths_file"
   )
 }
 
@@ -1066,6 +1092,61 @@ def count_sensitive(text):
     ]
     return sum(len(re.findall(pattern, text)) for pattern in patterns)
 
+def infer_bdk_state(todo):
+    lower = todo.lower()
+    if any(token in lower for token in ("decompos", "split", "細分化", "分割")):
+        return "decompose_todo"
+    if any(token in lower for token in ("test", "guard", "failure", "失敗", "検証", "evidence")):
+        return "verify_or_repair"
+    if any(token in lower for token in ("artifact", "release", "installer", "vm", "windows", "linux", "macos")):
+        return "release_engineering"
+    if any(token in lower for token in ("doc", "readme", "documentation", "ドキュメント")):
+        return "documentation"
+    return "implement"
+
+def infer_llm_route(state):
+    if state in ("documentation", "decompose_todo"):
+        return "fast"
+    if state in ("release_engineering", "verify_or_repair"):
+        return "code"
+    return "code"
+
+def infer_context_hints(todo):
+    lower = todo.lower()
+    hints = []
+    if "release" in lower or "artifact" in lower or "supply-chain" in lower:
+        hints.extend([
+            "scripts/release-gate.mjs",
+            "package.json",
+            "docs/architecture/runtime-release-readiness-audit.json",
+        ])
+    if "supply-chain" in lower or "sbom" in lower or "audit" in lower:
+        hints.extend([
+            "scripts/guard-supply-chain-artifact-evidence.mjs",
+            "scripts/guard-dependency-security-license-audit.mjs",
+            "Cargo.lock",
+            "pnpm-lock.yaml",
+        ])
+    if "protocol" in lower or "ledger" in lower:
+        hints.extend([
+            "crates/brownie-protocol/src/semantic_contract.rs",
+            "crates/brownie-store/src/lib.rs",
+            "docs/architecture/runtime-semantic-protocol-contract.json",
+        ])
+    if "prompt" in lower or "llm" in lower or "context" in lower:
+        hints.extend([
+            "crates/brownie-context/src/lib.rs",
+            "crates/brownie-agent-loop/src/lib.rs",
+            "crates/brownie-runtime/src/llm_provider.rs",
+        ])
+    seen = set()
+    deduped = []
+    for hint in hints:
+        if hint not in seen:
+            seen.add(hint)
+            deduped.append(hint)
+    return deduped[:6]
+
 if len(selected_todo.encode("utf-8")) > selected_todo_max_bytes:
     raise SystemExit("selected_todo_exceeds_max_bytes")
 
@@ -1091,11 +1172,25 @@ if claim:
 else:
     claim_lines.append("- none")
 
+bdk_state = infer_bdk_state(selected_todo)
+llm_route = infer_llm_route(bdk_state)
+context_hints = infer_context_hints(selected_todo)
+context_hint_lines = [f"- {hint}" for hint in context_hints] or ["- <none inferred; request exact bounded reads only>"]
+
 prompt = "\n".join([
     "# Brownie Phase Loop Effective Prompt",
     "",
     "This generated prompt combines the stable phase-loop contract with the current external TODO queue.",
     "Treat the active TODO claim below as the work item for this bounded invocation.",
+    "",
+    "## BDK Execution Packet",
+    "",
+    f"- state: `{bdk_state}`",
+    f"- llm_route: `{llm_route}`",
+    "- context_policy: use the smallest exact file set; do not read README or overview files unless the active TODO names them.",
+    "- progress_policy: after bounded reads, emit one workspace.write proposal, a concrete blocker TODO, or completion evidence; do not continue read-only discovery.",
+    "- inferred_context_hints:",
+    *context_hint_lines,
     "",
     "## Active TODO Claim",
     "",
@@ -1134,6 +1229,9 @@ metadata = {
     "selected_todo_bytes": len(selected_todo.encode("utf-8")),
     "selected_todo_sha256": sha256_text(selected_todo),
     "selected_todo_complete": True,
+    "bdk_state": bdk_state,
+    "llm_route": llm_route,
+    "context_hints": context_hints,
     "todo_path": str(todo_path),
     "todo_sha256": sha256_text(todo_text),
     "todo_line_count": todo_line_count,
@@ -1160,6 +1258,45 @@ PY
   chmod 600 "$output_path" "$meta_path"
   sync_parent_dir "$RUN_DIR"
   retire_old_prompt_artifacts
+}
+
+apply_phase_loop_llm_route() {
+  local prompt_path="$1"
+  local meta_path route routed_model
+  if [ "${PHASE_LOOP_LLM_ROUTING:-1}" != "1" ]; then
+    return 0
+  fi
+  meta_path="${prompt_path%.prompt.md}.prompt.meta.json"
+  route="$(
+    python3 - "$meta_path" <<'PY'
+import json
+import sys
+try:
+    print(json.load(open(sys.argv[1], encoding="utf-8")).get("llm_route", ""))
+except Exception:
+    print("")
+PY
+  )"
+  case "$route" in
+    fast)
+      routed_model="$PHASE_LOOP_LLM_MODEL_FAST"
+      ;;
+    deep)
+      routed_model="$PHASE_LOOP_LLM_MODEL_DEEP"
+      ;;
+    code)
+      routed_model="$PHASE_LOOP_LLM_MODEL_CODE"
+      ;;
+    *)
+      routed_model=""
+      ;;
+  esac
+  if [ -n "$routed_model" ]; then
+    export BROWNIE_LLM_MODEL="$routed_model"
+    printf '%s llm_route=%s model_override=%s\n' "$(now_utc)" "$route" "$routed_model" >> "$SUPERVISOR_LOG"
+  else
+    printf '%s llm_route=%s model_override=<unchanged>\n' "$(now_utc)" "${route:-none}" >> "$SUPERVISOR_LOG"
+  fi
 }
 
 stop_if_todo_empty() {
@@ -1597,6 +1734,9 @@ run_brownie_once() {
     export BROWNIE_WORKSPACE_ROOT="${BROWNIE_WORKSPACE_ROOT:-"$PHASE_LOOP_WORKSPACE_ROOT"}"
     export BROWNIE_STORE_ROOT="${BROWNIE_STORE_ROOT:-"$PHASE_LOOP_BROWNIE_STORE_ROOT"}"
     export PHASE_LOOP_CONTROL_ROOT
+    if [ "$use_resume" -ne 1 ]; then
+      apply_phase_loop_llm_route "$effective_prompt"
+    fi
     if [ "$use_resume" -eq 1 ]; then
       run_with_portable_timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json resume
     else
@@ -1666,6 +1806,39 @@ PY
     then
       write_todo_claim "$(claim_field claim_id)" "completed" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
       remove_completed_todo_claim_from_queue "$run_stamp" >> "$SUPERVISOR_LOG"
+    elif python3 - "$stdout_log" <<'PY'
+import json, sys
+root = json.load(open(sys.argv[1], encoding="utf-8"))
+if isinstance(root, dict) and isinstance(root.get("run"), dict):
+    payload = root.get("run")
+elif isinstance(root, dict) and isinstance(root.get("resume"), dict):
+    payload = root.get("resume")
+else:
+    payload = root
+if payload.get("blocked") is not True:
+    sys.exit(1)
+stop_class = str(payload.get("stop_class") or "")
+status = str(payload.get("status") or "")
+closure = str(payload.get("completion_closure_status") or "")
+next_action = str(payload.get("next_action") or "")
+controller_action = str(payload.get("controller_action") or "")
+external_control_boundary = (
+    stop_class == "recoverable_unknown_nonterminal"
+    or status == "recoverable_unknown_nonterminal"
+    or closure == "unknown_nonterminal"
+    or next_action == "inspect_progress_overview"
+    or controller_action == "stop"
+)
+sys.exit(0 if external_control_boundary else 1)
+PY
+    then
+      write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      record_blocked_todo_claim "$run_stamp"
+      touch "$STOP_FILE"
+      detail="Brownie run reached a blocked external-control boundary; recorded the blocked TODO and stopped the phase loop. stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE blocked=$TODO_BLOCKED_FILE"
+      write_status "blocked" "$detail" "$run_id" "77" "${CONSECUTIVE_FAILURES:-1}"
+      printf '%s run=%s exit=%s blocked_external_control_boundary=true progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "77" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+      return 77
     elif python3 - "$stdout_log" <<'PY'
 import json, sys
 root = json.load(open(sys.argv[1], encoding="utf-8"))

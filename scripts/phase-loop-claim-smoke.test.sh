@@ -478,6 +478,9 @@ cat > "$fake_bin_dir/gh" <<'SH'
 #!/usr/bin/env bash
 set -eu
 case "${1:-} ${2:-}" in
+  "api user")
+    printf 'brownie-agent\n'
+    ;;
   "auth token")
     printf 'fake-token\n'
     ;;

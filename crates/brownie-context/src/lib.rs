@@ -1525,6 +1525,12 @@ impl PromptBuilder {
                 .collect::<Vec<_>>()
                 .join("\n")
         };
+        let bdk_control_packet = format_bdk_control_packet(
+            &input.goal,
+            &input.tool_execution_summary,
+            &input.tool_intent_summary,
+            &input.verification_recovery_diagnostics_summary,
+        );
 
         PromptView {
             messages: vec![
@@ -1538,13 +1544,167 @@ impl PromptBuilder {
                 PromptMessage {
                     role: PromptRole::User,
                     content: format!(
-                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nAssistant Tool Intent:\n{}\n\nTool Execution:\n{}{}{}\n\nSubtask Orchestration:\n{}\n\nVerification Recovery Diagnostics:\n{}\n\nContext Window:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
-                        input.task_id, input.run_id, mode_id, permission_checks, tool_plan, tool_intent, tool_execution, selected_index_context, verification_recovery_context, subtask_orchestration, verification_recovery_diagnostics, context_window, input.goal, ledger
+                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n\nBDK Control Packet:\n{}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nAssistant Tool Intent:\n{}\n\nTool Execution:\n{}{}{}\n\nSubtask Orchestration:\n{}\n\nVerification Recovery Diagnostics:\n{}\n\nContext Window:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
+                        input.task_id, input.run_id, mode_id, bdk_control_packet, permission_checks, tool_plan, tool_intent, tool_execution, selected_index_context, verification_recovery_context, subtask_orchestration, verification_recovery_diagnostics, context_window, input.goal, ledger
                     ),
                 },
             ],
         }
     }
+}
+
+fn format_bdk_control_packet(
+    goal: &str,
+    tool_execution_summary: &[String],
+    tool_intent_summary: &[String],
+    verification_recovery_diagnostics_summary: &[String],
+) -> String {
+    let state = infer_bdk_execution_state(
+        goal,
+        tool_execution_summary,
+        tool_intent_summary,
+        verification_recovery_diagnostics_summary,
+    );
+    let completed_reads = completed_workspace_read_count(tool_execution_summary);
+    format!(
+        "- state: {}\n- completed_workspace_reads: {}\n- next_output: {}\n- efficiency_rule: {}",
+        state.name(),
+        completed_reads,
+        state.next_output_contract(),
+        state.efficiency_rule(),
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BdkExecutionState {
+    ContextPlan,
+    ImplementPatch,
+    RepairPatch,
+    DecomposeTodo,
+    BlockerOrWrite,
+    DirectAnswer,
+}
+
+impl BdkExecutionState {
+    fn name(self) -> &'static str {
+        match self {
+            Self::ContextPlan => "context_plan",
+            Self::ImplementPatch => "implement_patch",
+            Self::RepairPatch => "repair_patch",
+            Self::DecomposeTodo => "decompose_todo",
+            Self::BlockerOrWrite => "blocker_or_write",
+            Self::DirectAnswer => "direct_answer",
+        }
+    }
+
+    fn next_output_contract(self) -> &'static str {
+        match self {
+            Self::ContextPlan => {
+                "request the smallest exact workspace.read/git inspection set; avoid overview files unless named by the TODO"
+            }
+            Self::ImplementPatch => {
+                "request exactly one bounded workspace.write proposal, or a concrete blocker TODO if evidence is insufficient"
+            }
+            Self::RepairPatch => {
+                "request a bounded workspace.write repair that directly addresses the latest failure evidence"
+            }
+            Self::DecomposeTodo => {
+                "request a bounded workspace.write patch to todo.md replacing the broad item with concrete implementable leaf TODOs"
+            }
+            Self::BlockerOrWrite => {
+                "do not request more reads; request workspace.write for the smallest safe patch or a concrete blocker TODO"
+            }
+            Self::DirectAnswer => "answer directly without tool intent",
+        }
+    }
+
+    fn efficiency_rule(self) -> &'static str {
+        match self {
+            Self::ContextPlan => {
+                "read at most three exact files before moving to implement_patch or decompose_todo"
+            }
+            Self::ImplementPatch => {
+                "reuse completed read evidence; repeated read-only output is no progress"
+            }
+            Self::RepairPatch => {
+                "use the failure excerpt as the primary context; do not rediscover unrelated files"
+            }
+            Self::DecomposeTodo => "split work instead of browsing README/overview material",
+            Self::BlockerOrWrite => {
+                "duplicate reads have already been denied, so another LLM read-followup is waste"
+            }
+            Self::DirectAnswer => "keep the response concise",
+        }
+    }
+}
+
+fn infer_bdk_execution_state(
+    goal: &str,
+    tool_execution_summary: &[String],
+    tool_intent_summary: &[String],
+    verification_recovery_diagnostics_summary: &[String],
+) -> BdkExecutionState {
+    let goal_lower = goal.to_lowercase();
+    if tool_execution_summary
+        .iter()
+        .any(|entry| entry.contains("Duplicate workspace.read"))
+    {
+        return BdkExecutionState::BlockerOrWrite;
+    }
+    if !verification_recovery_diagnostics_summary.is_empty()
+        && !verification_recovery_diagnostics_summary
+            .iter()
+            .any(|entry| entry == "<none>")
+    {
+        return BdkExecutionState::RepairPatch;
+    }
+    if goal_lower.contains("decompos")
+        || goal_lower.contains("split")
+        || goal_lower.contains("細分化")
+        || goal_lower.contains("分割")
+    {
+        return BdkExecutionState::DecomposeTodo;
+    }
+    if task_goal_looks_like_workspace_edit(&goal_lower)
+        && completed_workspace_read_count(tool_execution_summary) > 0
+    {
+        return BdkExecutionState::ImplementPatch;
+    }
+    if task_goal_looks_like_workspace_edit(&goal_lower) || !tool_intent_summary.is_empty() {
+        return BdkExecutionState::ContextPlan;
+    }
+    BdkExecutionState::DirectAnswer
+}
+
+fn task_goal_looks_like_workspace_edit(goal_lower: &str) -> bool {
+    [
+        "write",
+        "edit",
+        "modify",
+        "implement",
+        "append",
+        "create",
+        "update",
+        "delete",
+        "workspace.write",
+        "修正",
+        "編集",
+        "実装",
+        "追記",
+        "作成",
+        "更新",
+        "追加",
+        "削除",
+    ]
+    .iter()
+    .any(|needle| goal_lower.contains(needle))
+}
+
+fn completed_workspace_read_count(tool_execution_summary: &[String]) -> usize {
+    tool_execution_summary
+        .iter()
+        .filter(|entry| entry.starts_with("workspace.read: Completed"))
+        .count()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1686,7 +1846,87 @@ mod tests {
         assert!(prompt.messages[1].content.contains("Task ID: task_1"));
         assert!(prompt.messages[1]
             .content
+            .contains("BDK Control Packet:\n- state: direct_answer"));
+        assert!(prompt.messages[1]
+            .content
             .contains("- TaskStarted\n- TaskRunning"));
+    }
+
+    #[test]
+    fn prompt_builder_moves_to_implement_patch_after_completed_read() {
+        let context_window = ContextWindowSummary::empty();
+        let prompt = PromptBuilder::build(PromptBuildInput {
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            goal: "Implement update to README.md".into(),
+            mode_id: Some("implementer".into()),
+            mode_policy_summary: Some("Mode Policy:\nmode_id: implementer".into()),
+            mode_instruction_material: Some("Mode Instructions:\n<none>".into()),
+            permission_summary: vec![],
+            tool_plan_summary: vec![
+                "workspace.read: allowed".into(),
+                "workspace.write: allowed".into(),
+            ],
+            tool_intent_summary: vec![],
+            tool_execution_summary: vec![
+                "workspace.read: Completed bytes_read=42 truncated=false output_preview=\"bounded\""
+                    .into(),
+            ],
+            subtask_orchestration_summary: vec![],
+            verification_recovery_diagnostics_summary: vec![],
+            selected_index_context: None,
+            verification_recovery_context: None,
+            context_window: context_window.clone(),
+            context_budget: ContextBudgetSummary::unrequested(&context_window, None, usize::MAX),
+            ledger_summary: vec![],
+        });
+
+        assert!(prompt.messages[1]
+            .content
+            .contains("BDK Control Packet:\n- state: implement_patch"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("completed_workspace_reads: 1"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("request exactly one bounded workspace.write proposal"));
+    }
+
+    #[test]
+    fn prompt_builder_stops_read_loop_after_duplicate_read_denial() {
+        let context_window = ContextWindowSummary::empty();
+        let prompt = PromptBuilder::build(PromptBuildInput {
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            goal: "Implement update to README.md".into(),
+            mode_id: Some("implementer".into()),
+            mode_policy_summary: Some("Mode Policy:\nmode_id: implementer".into()),
+            mode_instruction_material: Some("Mode Instructions:\n<none>".into()),
+            permission_summary: vec![],
+            tool_plan_summary: vec![
+                "workspace.read: allowed".into(),
+                "workspace.write: allowed".into(),
+            ],
+            tool_intent_summary: vec![],
+            tool_execution_summary: vec![
+                "workspace.read: Denied reason=\"Duplicate workspace.read prevented progress\""
+                    .into(),
+            ],
+            subtask_orchestration_summary: vec![],
+            verification_recovery_diagnostics_summary: vec![],
+            selected_index_context: None,
+            verification_recovery_context: None,
+            context_window: context_window.clone(),
+            context_budget: ContextBudgetSummary::unrequested(&context_window, None, usize::MAX),
+            ledger_summary: vec![],
+        });
+
+        assert!(prompt.messages[1]
+            .content
+            .contains("BDK Control Packet:\n- state: blocker_or_write"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("do not request more reads"));
     }
 
     #[test]
