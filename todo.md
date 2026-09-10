@@ -94,11 +94,6 @@ Current synchronization note:
   then populate the Runtime Release Contract and readiness audit with verified
   workflow/artifact evidence.
 
-- [ ] E-04c: Add release gate and Product Ready guard CI steps:
-  Wire existing package scripts for the executable release gate, Product
-  Completion Guard, and process-loss E2E into CI without inventing release
-  evidence.
-
 - [ ] E-07a: Add supply-chain command availability guard:
   Ensure `scripts/release-gate.mjs` or a dedicated guard treats missing
   `cargo audit`, `cargo deny`, SBOM tooling, secret scan tooling, and
