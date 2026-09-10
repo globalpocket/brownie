@@ -2993,6 +2993,11 @@ fn todo_decomposition_replacement(
 
 fn is_concrete_product_ready_leaf_todo(block: &TodoBlock) -> bool {
     block.id.as_deref().is_some_and(|id| {
+        if id.starts_with("E-")
+            && (id.contains("-next") || id.chars().last().is_some_and(|ch| ch.is_ascii_lowercase()))
+        {
+            return true;
+        }
         matches!(
             id,
             "E-04a" | "E-04b" | "E-04c" | "E-07a" | "E-07b" | "E-07c" | "E-08a" | "E-08b"
@@ -5831,22 +5836,42 @@ mod mcp_approval_lock_tests {
 
     #[test]
     fn concrete_product_ready_leaf_todos_are_not_auto_decomposed() {
-        let block = TodoBlock {
-            id: Some("E-07a".to_string()),
-            title: "E-07a: Add supply-chain command availability guard".to_string(),
-            old_text: "- [ ] E-07a: Add supply-chain command availability guard:\n  Ensure missing tooling is blocked.\n".to_string(),
-        };
+        for id in ["E-07a", "E-09a", "E-09-next"] {
+            let block = TodoBlock {
+                id: Some(id.to_string()),
+                title: format!("{id}: Concrete Product Ready leaf"),
+                old_text: format!("- [ ] {id}: Concrete Product Ready leaf\n"),
+            };
 
-        assert!(
-            is_concrete_product_ready_leaf_todo(&block),
-            "leaf Product Ready TODOs must fail closed instead of being rewritten into duplicate TODOs"
-        );
+            assert!(
+                is_concrete_product_ready_leaf_todo(&block),
+                "{id} must fail closed instead of being rewritten into duplicate TODOs"
+            );
+        }
     }
 
     #[test]
     fn concrete_product_ready_leaf_todos_cannot_patch_todo_md() {
         let mut record = test_task_record();
         record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-07a: Add supply-chain command availability guard:\n  Ensure missing tooling is blocked.\n".to_string();
+
+        let reason = leaf_todo_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": "todo.md",
+                "operation": "patch_file",
+                "old_text": "old",
+                "new_text": "new"
+            }),
+        );
+
+        assert!(reason.is_some());
+    }
+
+    #[test]
+    fn generated_product_ready_leaf_todos_cannot_patch_todo_md() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-09a: Implement the next concrete step for E-09:\n  Source TODO: E-09.\n".to_string();
 
         let reason = leaf_todo_workspace_write_rejection_reason(
             &record,
