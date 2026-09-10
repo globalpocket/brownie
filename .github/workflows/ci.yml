@@ -39,7 +39,16 @@ jobs:
         run: corepack enable
 
       - name: Install pnpm dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      - name: Root workspace check
+        run: pnpm --workspace-root check
+
+      - name: Root workspace test
+        run: pnpm --workspace-root test
+
+      - name: Root workspace build
+        run: pnpm --workspace-root build
 
       - name: Diagnostics guard
         run: pnpm guard:diagnostics
