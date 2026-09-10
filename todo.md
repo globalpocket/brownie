@@ -87,8 +87,8 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] TODO-decomposition: Resolve release evidence collection blocker before TODO can close:
-  Brownie confirmed the implementation/tested commit from `git.status` (`b7455cb5400bf2c7059e23ae67f39c1c63fa87d7`), but
+- [ ] TODO-decomposition-next: Resolve release evidence collection blocker before TODO-decomposition can close:
+  Brownie confirmed the implementation/tested commit from `git.status` (`a7f6a6129da07942d65e64a299b10dcc9ac5a7bc`), but
   workflow run ID and artifact SHA-256 are not available through the current
   Runtime tool plan. Provide a local or MCP-backed release evidence collector,
   then populate the Runtime Release Contract and readiness audit with verified
