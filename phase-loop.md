@@ -202,6 +202,15 @@ In `implementer` mode, do not request `subtask.spawn` or any tool that the Tool
 Plan marks as denied. Broad TODO decomposition is not a subtask spawn; express
 it as one bounded `workspace.write` patch to `todo.md`.
 
+For already bounded leaf TODOs such as `E-04a`, `E-04b`, `E-04c`, `E-07a`,
+`E-07b`, `E-07c`, `E-08a`, and `E-08b`, do not rewrite `todo.md` to restate or
+re-split the same TODO. Read the named implementation files and propose the
+smallest implementation patch instead. For `E-07a`, start with
+`scripts/release-gate.mjs`, `scripts/release-supply-chain-artifact-evidence.mjs`,
+`scripts/guard-supply-chain-artifact-evidence.mjs`, and `package.json`; the
+expected patch must make missing local supply-chain tools fail closed as
+blockers rather than successful release evidence.
+
 When implementation requires editing an existing file, prefer a small
 `workspace.write` `patch_file` proposal over replacing the whole file. The tool
 intent must use the Runtime schema exactly:

@@ -2721,6 +2721,9 @@ pub(super) fn append_todo_decomposition_blocker_after_read_only_stall(
     else {
         return Ok(());
     };
+    if is_concrete_product_ready_leaf_todo(&block) {
+        return Ok(());
+    }
     let current_head = latest_git_status_current_head(store, record)?;
     let release_evidence_blocked = run_has_release_evidence_blocker_inputs(store, record)?;
     let new_text =
@@ -2961,6 +2964,15 @@ fn todo_decomposition_replacement(
         "- [ ] {child_id}: Implement the next concrete step for {parent_id}:\n  Source TODO: {source}\n  Brownie gathered context but did not produce a safe implementation patch.\n  Replace this item with one exact file edit or verification command target;\n  do not create another generic TODO-decomposition item.\n",
         source = title
     )
+}
+
+fn is_concrete_product_ready_leaf_todo(block: &TodoBlock) -> bool {
+    block.id.as_deref().is_some_and(|id| {
+        matches!(
+            id,
+            "E-04a" | "E-04b" | "E-04c" | "E-07a" | "E-07b" | "E-07c" | "E-08a" | "E-08b"
+        )
+    })
 }
 
 fn normalized_parent_todo_id(block: &TodoBlock) -> Option<String> {
@@ -5766,5 +5778,19 @@ mod mcp_approval_lock_tests {
             std::fs::read_to_string(&lock_path).expect("content after retry lock");
         assert!(content_after_retry.starts_with("brownie-mcp-approval-claim-lock-v2:"));
         drop(retried);
+    }
+
+    #[test]
+    fn concrete_product_ready_leaf_todos_are_not_auto_decomposed() {
+        let block = TodoBlock {
+            id: Some("E-07a".to_string()),
+            title: "E-07a: Add supply-chain command availability guard".to_string(),
+            old_text: "- [ ] E-07a: Add supply-chain command availability guard:\n  Ensure missing tooling is blocked.\n".to_string(),
+        };
+
+        assert!(
+            is_concrete_product_ready_leaf_todo(&block),
+            "leaf Product Ready TODOs must fail closed instead of being rewritten into duplicate TODOs"
+        );
     }
 }
