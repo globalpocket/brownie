@@ -25,7 +25,6 @@
   },
   "safety_readiness_evidence_invalidation": {
     "evidence_id": "runtime-safety-readiness-evidence-invalidation-v1",
-    "status": "implemented_sufficient",
     "algorithm": "sha256(sorted path + sha256 file tuples)",
     "tracked_path_patterns": [
       "crates/brownie-agent-loop/src/",
@@ -125,7 +124,8 @@
       "scripts/guard-runtime-release-readiness.mjs",
       "scripts/rrp3-process-loss-recovery-e2e.mjs"
     ],
-    "tracked_fingerprint": "sha256:b764b2990cfdfd9a80337221982595aa5a288826a30568bb97964f0653719597"
+    "tracked_fingerprint": "sha256:3560bbeaee8856ee3e0086ee79c6a2ba0315f57d1073385c36908808007d9287",
+    "status": "implemented_sufficient"
   },
   "owner_decisions": [
     {

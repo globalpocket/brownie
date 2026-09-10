@@ -22,6 +22,7 @@ PHASE_LOOP_PROMPT="${PHASE_LOOP_PROMPT:-"$ROOT_DIR/phase-loop.md"}"
 PHASE_LOOP_TODO="${PHASE_LOOP_TODO:-"$ROOT_DIR/todo.md"}"
 PHASE_LOOP_WORKSPACE_ROOT="${PHASE_LOOP_WORKSPACE_ROOT:-"$ROOT_DIR"}"
 PHASE_LOOP_CONTROL_ROOT="${PHASE_LOOP_CONTROL_ROOT:-"/Users/satoshitanaka/.codex/automations/brownie-cli-phase-loop"}"
+PHASE_LOOP_BROWNIE_STORE_ROOT="${PHASE_LOOP_BROWNIE_STORE_ROOT:-"$ROOT_DIR/.brownie/private/runtime-store"}"
 PHASE_LOOP_INTERVAL_SECONDS="${PHASE_LOOP_INTERVAL_SECONDS:-5}"
 PHASE_LOOP_FAILURE_BACKOFF_SECONDS="${PHASE_LOOP_FAILURE_BACKOFF_SECONDS:-60}"
 PHASE_LOOP_MAX_FAILURE_BACKOFF_SECONDS="${PHASE_LOOP_MAX_FAILURE_BACKOFF_SECONDS:-900}"
@@ -35,6 +36,11 @@ PHASE_LOOP_PROMPT_RETENTION_COUNT="${PHASE_LOOP_PROMPT_RETENTION_COUNT:-20}"
 PHASE_LOOP_STOP_GRACE_SECONDS="${PHASE_LOOP_STOP_GRACE_SECONDS:-15}"
 PHASE_LOOP_STOP_FORCE_SECONDS="${PHASE_LOOP_STOP_FORCE_SECONDS:-5}"
 PHASE_LOOP_SLEEP_POLL_SECONDS="${PHASE_LOOP_SLEEP_POLL_SECONDS:-1}"
+PHASE_LOOP_CREATE_PR_AFTER_PROGRESS="${PHASE_LOOP_CREATE_PR_AFTER_PROGRESS:-0}"
+PHASE_LOOP_PR_REMOTE="${PHASE_LOOP_PR_REMOTE:-origin}"
+PHASE_LOOP_PR_BASE="${PHASE_LOOP_PR_BASE:-main}"
+PHASE_LOOP_PR_TITLE_PREFIX="${PHASE_LOOP_PR_TITLE_PREFIX:-Brownie phase-loop}"
+PHASE_LOOP_PR_DRAFT="${PHASE_LOOP_PR_DRAFT:-0}"
 
 mkdir -p "$RUN_DIR" "$LOG_DIR" "$TODO_CLAIM_DIR"
 
@@ -228,6 +234,27 @@ except Exception:
 PY
 }
 
+status_field() {
+  local field="$1"
+  if [ ! -f "$STATUS_FILE" ]; then
+    return 1
+  fi
+  python3 - "$STATUS_FILE" "$field" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        value = json.load(handle).get(sys.argv[2], "")
+except Exception:
+    sys.exit(1)
+if isinstance(value, str):
+    print(value)
+else:
+    print(json.dumps(value, ensure_ascii=False, sort_keys=True))
+PY
+}
+
 active_todo_claim_exists() {
   local status
   status="$(claim_status 2>/dev/null || true)"
@@ -355,7 +382,12 @@ except Exception as exc:
     print(f"invalid_json:{exc}")
     sys.exit(1)
 
-payload = root.get("run") if isinstance(root, dict) and isinstance(root.get("run"), dict) else root
+payload = root
+if isinstance(root, dict):
+    if isinstance(root.get("run"), dict):
+        payload = root.get("run")
+    elif isinstance(root.get("resume"), dict):
+        payload = root.get("resume")
 if not isinstance(payload, dict):
     print("invalid_schema:root_not_object")
     sys.exit(1)
@@ -386,6 +418,39 @@ for key in required_bools:
         print(f"invalid_schema:automation.{key}")
         sys.exit(1)
 print("ok")
+PY
+}
+
+phase_loop_should_resume_active_claim() {
+  if [ ! -f "$PROGRESS_STATE_FILE" ]; then
+    return 1
+  fi
+  if ! active_todo_claim_exists; then
+    return 1
+  fi
+  python3 - "$PROGRESS_STATE_FILE" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        state = json.load(handle)
+except Exception:
+    sys.exit(1)
+
+projection = state.get("progress_projection")
+if not isinstance(projection, dict):
+    sys.exit(1)
+route = projection.get("route")
+if not isinstance(route, str) or not route.strip():
+    sys.exit(1)
+try:
+    invocation = json.loads(route)
+except Exception:
+    sys.exit(1)
+if isinstance(invocation, dict) and invocation.get("command") == "resume":
+    sys.exit(0)
+sys.exit(1)
 PY
 }
 
@@ -422,7 +487,12 @@ payload = None
 if stdout_log.exists() and stdout_log.stat().st_size > 0:
     with open(stdout_log, encoding="utf-8") as handle:
         root = json.load(handle)
-        payload = root.get("run") if isinstance(root, dict) and isinstance(root.get("run"), dict) else root
+        if isinstance(root, dict) and isinstance(root.get("run"), dict):
+            payload = root.get("run")
+        elif isinstance(root, dict) and isinstance(root.get("resume"), dict):
+            payload = root.get("resume")
+        else:
+            payload = root
 if not isinstance(payload, dict):
     payload = {}
 
@@ -458,18 +528,10 @@ progress_projection = {
     "applied": text(payload.get("objective_apply_applied")) or text(payload.get("objective_apply_apply_status")),
     "accepted": text(payload.get("accepted_completion_status")) or text(payload.get("objective_completion_acceptance_acceptance_status")),
     "finalization": text(payload.get("completion_finalization_status")) or text(payload.get("completion_finalization_finalization_fingerprint")),
+    "terminal_final_state": text(payload.get("terminal_completion_final_state")),
+    "terminal_task_status": text(payload.get("terminal_completion_task_status")),
     "next_action": text(payload.get("next_action")),
 }
-encoded = json.dumps(progress_projection, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
-fingerprint = "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-
-workspace_changed = workspace_before != workspace_after
-completed = bool(payload.get("completed")) or bool(automation.get("completed"))
-blocked = bool(payload.get("blocked")) or bool(automation.get("blocked"))
-accepted = bool(progress_projection["accepted"])
-finalized = bool(progress_projection["finalization"])
-applied = progress_projection["applied"].lower() not in ("", "false", "none", "not_applicable")
-meaningful_progress = exit_code == 0 and (workspace_changed or completed or blocked or accepted or finalized or applied)
 
 previous = {}
 if state_path.exists():
@@ -478,6 +540,36 @@ if state_path.exists():
             previous = json.load(handle)
     except Exception:
         previous = {}
+previous_projection = previous.get("progress_projection")
+if not isinstance(previous_projection, dict):
+    previous_projection = {}
+
+workspace_changed = workspace_before != workspace_after
+terminal_failed = progress_projection["terminal_final_state"] == "Failed" or progress_projection["terminal_task_status"] == "Failed"
+blocked = bool(payload.get("blocked")) or bool(automation.get("blocked")) or terminal_failed
+accepted = bool(progress_projection["accepted"])
+finalized = bool(progress_projection["finalization"])
+applied = progress_projection["applied"].lower() not in ("", "false", "none", "not_applicable")
+previous_applied = text(previous_projection.get("applied")).lower() not in ("", "false", "none", "not_applicable")
+same_claim_as_previous = bool(progress_projection["claim_id"]) and progress_projection["claim_id"] == text(previous_projection.get("claim_id"))
+no_actionable_after_apply = (
+    exit_code == 0
+    and same_claim_as_previous
+    and previous_applied
+    and progress_projection["cli_status"] in ("no_eligible_task", "no_actionable_work")
+    and progress_projection["stop_class"] == "no_actionable_work"
+)
+if no_actionable_after_apply and not applied:
+    progress_projection["applied"] = text(previous_projection.get("applied"))
+    applied = True
+progress_projection["completed_by_no_actionable_after_apply"] = no_actionable_after_apply
+progress_projection["blocked_by_terminal_task_failure"] = terminal_failed
+completed = bool(payload.get("completed")) or bool(automation.get("completed")) or no_actionable_after_apply
+meaningful_progress = exit_code == 0 and (workspace_changed or completed or blocked or accepted or finalized or applied)
+
+encoded = json.dumps(progress_projection, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+fingerprint = "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
 previous_fingerprint = previous.get("last_progress_fingerprint")
 previous_count = int(previous.get("same_progress_count", 0) or 0)
 same_count = previous_count + 1 if previous_fingerprint == fingerprint else 1
@@ -536,6 +628,157 @@ if isinstance(value, str):
 else:
     print(json.dumps(value, ensure_ascii=False, sort_keys=True))
 PY
+}
+
+tracked_workspace_diff_exists() {
+  (
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 1
+    ! git diff --quiet --exit-code
+  )
+}
+
+stage_runtime_applied_paths() {
+  local stdout_log="$1"
+  (
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    python3 - "$stdout_log" <<'PY' | while IFS= read -r path; do
+import json
+import sys
+
+root = json.load(open(sys.argv[1], encoding="utf-8"))
+if isinstance(root, dict) and isinstance(root.get("run"), dict):
+    payload = root.get("run")
+elif isinstance(root, dict) and isinstance(root.get("resume"), dict):
+    payload = root.get("resume")
+else:
+    payload = root
+path = payload.get("objective_apply_path") if isinstance(payload, dict) else None
+if isinstance(path, str) and path.strip():
+    print(path)
+PY
+      case "$path" in
+        /*|*..*|"" )
+          exit 66
+          ;;
+      esac
+      if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+        exit 66
+      fi
+      git add -- "$path"
+    done
+  )
+}
+
+phase_loop_safe_pr_title() {
+  python3 - "$PHASE_LOOP_PR_TITLE_PREFIX" "$(claim_field selected_todo 2>/dev/null || true)" <<'PY'
+import re
+import sys
+
+prefix = sys.argv[1].strip() or "Brownie phase-loop"
+todo = sys.argv[2].strip()
+todo = re.sub(r"^\s*[-*]\s+\[\s*\]\s*", "", todo)
+todo = re.sub(r"\s+", " ", todo).strip()
+title = f"{prefix}: {todo}" if todo else prefix
+print(title[:180])
+PY
+}
+
+phase_loop_create_pr_for_progress() {
+  local run_stamp="$1"
+  local stdout_log="$2"
+  local stderr_log="$3"
+  local workspace_before="$4"
+  local workspace_after="$5"
+  local title body pr_url branch push_rc
+  if [ "$PHASE_LOOP_CREATE_PR_AFTER_PROGRESS" != "1" ]; then
+    return 0
+  fi
+  if [ "$workspace_before" = "$workspace_after" ]; then
+    printf '%s pr_create_skipped reason=no_runtime_workspace_change\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
+    return 0
+  fi
+  if ! tracked_workspace_diff_exists; then
+    return 0
+  fi
+  (
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    pnpm --workspace-root phase-loop:implementation-preflight >/dev/null
+  ) || {
+    printf '%s pr_create_skipped reason=implementation_preflight_failed\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
+    return 1
+  }
+
+  title="$(phase_loop_safe_pr_title)"
+  body="Automated Brownie phase-loop output for active TODO claim.
+
+- Claim: $(claim_field claim_id 2>/dev/null || true)
+- Run: $run_stamp
+- Brownie stdout: $stdout_log
+- Brownie stderr: $stderr_log
+
+This PR was created by the external phase-loop controller after Brownie produced tracked workspace changes."
+
+  (
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    stage_runtime_applied_paths "$stdout_log"
+    if git diff --cached --quiet --exit-code; then
+      exit 1
+    fi
+    GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-Brownie}" \
+      GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-brownie-agent@users.noreply.github.com}" \
+      GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-Brownie}" \
+      GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-brownie-agent@users.noreply.github.com}" \
+      git commit -m "$title" >/dev/null
+  ) || {
+    printf '%s pr_create_skipped reason=commit_failed\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
+    return 1
+  }
+
+  branch="$(
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    git branch --show-current
+  )"
+  (
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    set +x
+    if command -v gh >/dev/null 2>&1; then
+      BROWNIE_AGENT_TOKEN="$(gh auth token)"
+      BROWNIE_AGENT_AUTH="$(printf 'x-access-token:%s' "$BROWNIE_AGENT_TOKEN" | base64 | tr -d '\n')"
+      git -c credential.helper= -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $BROWNIE_AGENT_AUTH" push -u "$PHASE_LOOP_PR_REMOTE" "$branch"
+      push_rc=$?
+      unset BROWNIE_AGENT_TOKEN BROWNIE_AGENT_AUTH
+      exit "$push_rc"
+    fi
+    git push -u "$PHASE_LOOP_PR_REMOTE" "$branch"
+  ) || {
+    printf '%s pr_create_skipped reason=push_failed branch=%s\n' "$(now_utc)" "$branch" >> "$SUPERVISOR_LOG"
+    return 1
+  }
+
+  if (
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    gh pr view "$branch" --json url --jq .url >/dev/null 2>&1
+  ); then
+    pr_url="$(
+      cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+      gh pr view "$branch" --json url --jq .url
+    )"
+  else
+    if [ "$PHASE_LOOP_PR_DRAFT" = "1" ]; then
+      pr_url="$(
+        cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+        gh pr create --base "$PHASE_LOOP_PR_BASE" --head "$branch" --title "$title" --body "$body" --draft
+      )"
+    else
+      pr_url="$(
+        cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+        gh pr create --base "$PHASE_LOOP_PR_BASE" --head "$branch" --title "$title" --body "$body"
+      )"
+    fi
+  fi
+  printf '%s pr_created branch=%s url=%s\n' "$(now_utc)" "$branch" "$pr_url" >> "$SUPERVISOR_LOG"
+  write_status "pr_created" "Brownie changes were committed, pushed, and opened as PR: $pr_url" "$run_stamp" "0" 0
+  return 0
 }
 
 write_todo_claim() {
@@ -1090,6 +1333,7 @@ run_brownie_once() {
   load_env
   local started_at run_stamp stdout_log stderr_log effective_prompt exit_code run_id detail
   local workspace_before workspace_after head_commit validation progress_summary progress_classification
+  local use_resume=0
   local CLAIM_CREATED_THIS_RUN=0
   started_at="$(now_utc)"
   run_stamp="$(date -u +"%Y%m%dT%H%M%SZ")"
@@ -1127,20 +1371,25 @@ run_brownie_once() {
   head_commit="$(
     cd "$PHASE_LOOP_WORKSPACE_ROOT" && git rev-parse HEAD 2>/dev/null || true
   )"
+  if phase_loop_should_resume_active_claim; then
+    use_resume=1
+  fi
   if ! claim_first_pending_todo "$run_stamp"; then
     detail="Failed to claim first pending TODO from queue: $PHASE_LOOP_TODO"
     printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
     write_status "blocked" "$detail" "$run_stamp" "75" "${CONSECUTIVE_FAILURES:-0}"
     return 75
   fi
-  if ! build_effective_prompt "$effective_prompt"; then
-    detail="Failed to build effective phase-loop prompt: $effective_prompt"
-    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
-    if active_todo_claim_exists; then
-      write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+  if [ "$use_resume" -ne 1 ]; then
+    if ! build_effective_prompt "$effective_prompt"; then
+      detail="Failed to build effective phase-loop prompt: $effective_prompt"
+      printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+      if active_todo_claim_exists; then
+        write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      fi
+      write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+      return 74
     fi
-    write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
-    return 74
   fi
   if [ "$CLAIM_CREATED_THIS_RUN" -eq 1 ] && [ "${PHASE_LOOP_TEST_MUTATE_TODO_AFTER_PROMPT:-}" = "1" ]; then
     printf '\n- [ ] PHASE_LOOP_TEST_MUTATED_TODO_AFTER_PROMPT\n' >> "$PHASE_LOOP_TODO"
@@ -1175,11 +1424,20 @@ run_brownie_once() {
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
     export BROWNIE_WORKSPACE_ROOT="${BROWNIE_WORKSPACE_ROOT:-"$PHASE_LOOP_WORKSPACE_ROOT"}"
+    export BROWNIE_STORE_ROOT="${BROWNIE_STORE_ROOT:-"$PHASE_LOOP_BROWNIE_STORE_ROOT"}"
     export PHASE_LOOP_CONTROL_ROOT
     if command -v timeout >/dev/null 2>&1; then
-      timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json run --file "$effective_prompt"
+      if [ "$use_resume" -eq 1 ]; then
+        timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json resume
+      else
+        timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json run --file "$effective_prompt"
+      fi
     else
-      "$BROWNIE_BIN" --json run --file "$effective_prompt"
+      if [ "$use_resume" -eq 1 ]; then
+        "$BROWNIE_BIN" --json resume
+      else
+        "$BROWNIE_BIN" --json run --file "$effective_prompt"
+      fi
     fi
   ) > "$stdout_log" 2> "$stderr_log"
   exit_code=$?
@@ -1191,7 +1449,12 @@ import json
 import sys
 try:
     root = json.load(open(sys.argv[1], encoding="utf-8"))
-    payload = root.get("run") if isinstance(root, dict) and isinstance(root.get("run"), dict) else root
+    if isinstance(root, dict) and isinstance(root.get("run"), dict):
+        payload = root.get("run")
+    elif isinstance(root, dict) and isinstance(root.get("resume"), dict):
+        payload = root.get("resume")
+    else:
+        payload = root
     print(payload.get("run_id") or payload.get("automation", {}).get("run_id") or "")
 except Exception:
     print("")
@@ -1218,18 +1481,35 @@ PY
       printf '%s' "$progress_summary" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("classification", ""))'
     )"
 
-    if python3 - "$stdout_log" <<'PY'
+    if python3 - "$stdout_log" "$PROGRESS_STATE_FILE" <<'PY'
 import json, sys
 root = json.load(open(sys.argv[1], encoding="utf-8"))
-payload = root.get("run") if isinstance(root, dict) and isinstance(root.get("run"), dict) else root
-sys.exit(0 if payload.get("completed") is True else 1)
+if isinstance(root, dict) and isinstance(root.get("run"), dict):
+    payload = root.get("run")
+elif isinstance(root, dict) and isinstance(root.get("resume"), dict):
+    payload = root.get("resume")
+else:
+    payload = root
+completed_by_no_actionable_after_apply = False
+try:
+    state = json.load(open(sys.argv[2], encoding="utf-8"))
+    projection = state.get("progress_projection", {})
+    completed_by_no_actionable_after_apply = projection.get("completed_by_no_actionable_after_apply") is True
+except Exception:
+    pass
+sys.exit(0 if payload.get("completed") is True or completed_by_no_actionable_after_apply else 1)
 PY
     then
       write_todo_claim "$(claim_field claim_id)" "completed" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
     elif python3 - "$stdout_log" <<'PY'
 import json, sys
 root = json.load(open(sys.argv[1], encoding="utf-8"))
-payload = root.get("run") if isinstance(root, dict) and isinstance(root.get("run"), dict) else root
+if isinstance(root, dict) and isinstance(root.get("run"), dict):
+    payload = root.get("run")
+elif isinstance(root, dict) and isinstance(root.get("resume"), dict):
+    payload = root.get("resume")
+else:
+    payload = root
 sys.exit(0 if payload.get("blocked") is True else 1)
 PY
     then
@@ -1255,8 +1535,17 @@ PY
         write_status "non_progress_success" "$detail" "$run_id" "$exit_code" "${CONSECUTIVE_FAILURES:-0}"
         ;;
       *)
+        if phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after"; then
+          :
+        else
+          detail="Brownie run made progress but PR creation failed; stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+          write_status "blocked" "$detail" "$run_id" "78" "${CONSECUTIVE_FAILURES:-1}"
+          return 78
+        fi
         detail="Brownie run made progress; stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
-        write_status "last_run_succeeded" "$detail" "$run_id" "$exit_code" 0
+        if [ "$(status_field status 2>/dev/null || true)" != "pr_created" ]; then
+          write_status "last_run_succeeded" "$detail" "$run_id" "$exit_code" 0
+        fi
         ;;
     esac
   else

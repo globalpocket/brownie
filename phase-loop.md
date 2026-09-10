@@ -161,6 +161,43 @@ Use `todo.md` before falling back to overview-based work selection:
   bounded descendant set; after the graceful timeout, force-kill remaining
   managed descendants/process-group members and record the action.
 
+### Tool Intent Schema Guidance
+
+`workspace.read` accepts regular repository files only. Never call
+`workspace.read` with `.`, a directory path, glob pattern, or an instruction to
+search the repository. If discovery is needed and no exact file is known, make
+progress by patching `todo.md` to replace the broad TODO with the next concrete
+bounded sub-TODOs, each naming exact files or scripts to inspect next. Do not
+end a workspace-edit TODO with read-only discovery only.
+
+When the prompt context already contains `Tool Execution` results for the same
+exact files needed by the selected TODO, the next tool intent must not repeat
+the same `workspace.read` requests. In that read-followup turn, either emit one
+bounded `workspace.write` proposal for the smallest safe patch or patch
+`todo.md` with a narrower blocker/follow-up TODO that names the exact missing
+file, value, or validation command. Repeating read-only tool intent after the
+same files were already read is no progress and should stop rather than loop.
+
+In `implementer` mode, do not request `subtask.spawn` or any tool that the Tool
+Plan marks as denied. Broad TODO decomposition is not a subtask spawn; express
+it as one bounded `workspace.write` patch to `todo.md`.
+
+When implementation requires editing an existing file, prefer a small
+`workspace.write` `patch_file` proposal over replacing the whole file. The tool
+intent must use the Runtime schema exactly:
+
+```brownie-tool-intent
+{"tool_requests":[{"tool_id":"workspace.read","reason":"Read the target file before patching.","input":{"path":"path/to/file"}},{"tool_id":"workspace.write","reason":"Patch one bounded hunk.","input":{"path":"path/to/file","operation":"patch_file","old_text":"exact existing text","new_text":"replacement text"}}]}
+```
+
+For multiple hunks, use `"hunks":[{"old_text":"...","new_text":"..."}]` with
+two to five non-overlapping hunks. Do not put a `content` field on
+`patch_file`; `content` is only for `replace_file` or `create_file`. Keep the
+tool-intent block short enough to remain fully present in the recorded LLM
+response preview, because the CLI can auto-apply `patch_file` proposals only
+when the matching hunk material is available and its fingerprint matches the
+approved proposal metadata.
+
 Use this order:
 
 1. Fetch latest `origin/main`.

@@ -25,21 +25,21 @@
     "crates/brownie-runtime/src/verification_recovery.rs"
   ],
   "thresholds": {
-    "lib_rs_production_line_ceiling": 14702,
-    "lib_rs_test_line_ceiling": 52257
+    "lib_rs_production_line_ceiling": 14907,
+    "lib_rs_test_line_ceiling": 52332
   },
   "metrics": {
     "files": {
       "crates/brownie-runtime/src/lib.rs": {
-        "line_count": 66959,
+        "line_count": 67239,
         "public_items": 3,
         "private_items": 496,
-        "production_line_count": 14702,
-        "test_line_count": 52257,
-        "state_mutation_mentions": 306,
-        "durable_write_mentions": 226,
-        "permission_decision_mentions": 184,
-        "recovery_mentions": 2260,
+        "production_line_count": 14907,
+        "test_line_count": 52332,
+        "state_mutation_mentions": 309,
+        "durable_write_mentions": 229,
+        "permission_decision_mentions": 185,
+        "recovery_mentions": 2262,
         "rpc_dispatch_mentions": 90,
         "approval_mentions": 540,
         "mcp_mentions": 600,
@@ -61,16 +61,16 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/controlled_tool_execution.rs": {
-        "line_count": 5320,
+        "line_count": 5652,
         "public_items": 71,
-        "private_items": 60,
-        "state_mutation_mentions": 38,
-        "durable_write_mentions": 38,
-        "permission_decision_mentions": 44,
+        "private_items": 72,
+        "state_mutation_mentions": 39,
+        "durable_write_mentions": 39,
+        "permission_decision_mentions": 47,
         "recovery_mentions": 81,
         "rpc_dispatch_mentions": 0,
         "approval_mentions": 228,
-        "mcp_mentions": 364,
+        "mcp_mentions": 365,
         "product_dod_mentions": 11,
         "diagnostics_mentions": 14
       },
@@ -145,9 +145,9 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/objective_proposal.rs": {
-        "line_count": 1416,
+        "line_count": 1421,
         "public_items": 7,
-        "private_items": 21,
+        "private_items": 22,
         "state_mutation_mentions": 3,
         "durable_write_mentions": 3,
         "permission_decision_mentions": 0,
@@ -159,9 +159,9 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/objective_verification.rs": {
-        "line_count": 953,
+        "line_count": 958,
         "public_items": 4,
-        "private_items": 12,
+        "private_items": 13,
         "state_mutation_mentions": 4,
         "durable_write_mentions": 4,
         "permission_decision_mentions": 0,

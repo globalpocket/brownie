@@ -239,8 +239,10 @@ impl WorkspaceReadExecutor {
             output: json!({
                 "path": relative_path,
                 "content": content,
+                "content_sha256": sha256_fingerprint(&bytes),
                 "truncated": truncated,
                 "bytes_read": read_len,
+                "bytes_total": bytes.len(),
             }),
         })
     }
@@ -549,7 +551,34 @@ fn execute_bounded_git(
     if let Some(reason) = failed_closed_reason {
         result.output["reason"] = json!(reason);
     }
+    if operation == "status" && result.status == ToolExecutionStatus::Completed {
+        if let Some(current_head) = inspect_bounded_git_head_for_status(&root)? {
+            result.output["current_head"] = json!(current_head);
+            result.output["git"]["current_head"] = json!(current_head);
+        }
+    }
     Ok(result)
+}
+
+fn inspect_bounded_git_head_for_status(root: &Path) -> anyhow::Result<Option<String>> {
+    let output = run_bounded_git_process(
+        root,
+        &[
+            "-c",
+            "core.fsmonitor=false",
+            "rev-parse",
+            "--verify",
+            "HEAD",
+        ],
+        git_timeout(),
+    )
+    .context("failed to inspect current git head for status")?;
+    if output.timed_out || output.output_oversized || output.exit_code != Some(0) {
+        return Ok(None);
+    }
+    Ok(first_non_empty_git_output_line(&output)
+        .filter(|line| is_git_object_id(line))
+        .map(str::to_string))
 }
 
 fn validate_git_repository_root(
@@ -2981,7 +3010,10 @@ impl ToolIntentParser {
         config: &ToolIntentParserConfig,
     ) -> ParsedToolIntent {
         let mut summary = ToolIntentParserSummary::new(config);
-        let blocks = extract_fenced_blocks(content);
+        let mut blocks = extract_fenced_blocks(content);
+        if blocks.is_empty() {
+            blocks = extract_json_tool_request_blocks(content);
+        }
         summary.found_blocks = blocks.len();
         let mut rejected = Vec::new();
         if blocks.is_empty() {
@@ -3575,7 +3607,28 @@ fn preflight_git_status_input(input: &Value) -> Result<(), &'static str> {
 }
 
 fn preflight_git_diff_input(input: &Value) -> Result<(), &'static str> {
-    preflight_git_input(input, "git.diff")
+    let Some(object) = input.as_object() else {
+        return Err("git capability input must be an object.");
+    };
+    for (key, value) in object {
+        match key.as_str() {
+            "staged" | "unstaged" | "untracked" => {
+                if !value.is_boolean() {
+                    return Err("git.diff staged, unstaged, and untracked inputs must be booleans.");
+                }
+            }
+            "command" | "argv" | "args" | "cwd" | "env" | "stdin" | "shell" | "timeout"
+            | "timeout_ms" | "remote" | "path" | "paths" | "branch" | "ref" | "revision" => {
+                return Err("git capability does not accept command, argv, cwd, env, stdin, shell, timeout, remote, path, branch, ref, or revision input.");
+            }
+            _ => {
+                return Err(
+                    "git.diff accepts only optional staged, unstaged, and untracked boolean inputs in this phase.",
+                )
+            }
+        }
+    }
+    Ok(())
 }
 
 fn preflight_git_commit_input(input: &Value) -> Result<String, &'static str> {
@@ -3910,6 +3963,37 @@ fn extract_fenced_blocks(content: &str) -> Vec<&str> {
     blocks
 }
 
+fn extract_json_tool_request_blocks(content: &str) -> Vec<&str> {
+    let marker = "```json";
+    let mut blocks = Vec::new();
+    let mut rest = content;
+    while let Some(pos) = rest.find(marker) {
+        let after = &rest[pos + marker.len()..];
+        let after = after
+            .strip_prefix('\r')
+            .unwrap_or(after)
+            .strip_prefix('\n')
+            .unwrap_or(after);
+        let Some(end) = after.find("```") else {
+            break;
+        };
+        let block = &after[..end];
+        if serde_json::from_str::<Value>(block.trim())
+            .ok()
+            .and_then(|value| {
+                value
+                    .as_object()
+                    .map(|object| object.contains_key("tool_requests"))
+            })
+            .unwrap_or(false)
+        {
+            blocks.push(block);
+        }
+        rest = &after[end + 3..];
+    }
+    blocks
+}
+
 fn empty_input_object() -> serde_json::Value {
     serde_json::json!({})
 }
@@ -4079,6 +4163,13 @@ impl ToolPlanner {
                 "working tree",
                 "worktree status",
                 "status result",
+                "release evidence",
+                "implementation commit",
+                "tested commit",
+                "audited base commit",
+                "workflow run id",
+                "artifact sha",
+                "artifact sha-256",
             ],
         ) {
             items.push(plan_item(
@@ -4086,7 +4177,21 @@ impl ToolPlanner {
                 "Goal asks for bounded Git status context.",
             ));
         }
-        if contains_any(&goal, &["git diff", "diff result", "diff context"]) {
+        if contains_any(
+            &goal,
+            &[
+                "git diff",
+                "diff result",
+                "diff context",
+                "release evidence",
+                "implementation commit",
+                "tested commit",
+                "audited base commit",
+                "workflow run id",
+                "artifact sha",
+                "artifact sha-256",
+            ],
+        ) {
             items.push(plan_item(
                 GIT_DIFF_TOOL_ID,
                 "Goal asks for bounded Git diff context.",
@@ -4342,6 +4447,25 @@ mod tests {
     }
 
     #[test]
+    fn planner_routes_release_evidence_goals_to_dedicated_git_inspection_tools() {
+        let plan = ToolPlanner::plan(ToolPlanningInput {
+            task_id: "task_3".to_string(),
+            goal: "Populate release evidence fields with current values: implementation commit, tested commit, workflow run ID, artifact SHA-256, and audited base commit.".to_string(),
+            mode_id: "implementer".to_string(),
+        });
+        let ids = plan
+            .items
+            .iter()
+            .map(|item| item.tool_id.as_str())
+            .collect::<Vec<_>>();
+        assert!(ids.contains(&WORKSPACE_READ_TOOL_ID));
+        assert!(ids.contains(&WORKSPACE_WRITE_TOOL_ID));
+        assert!(ids.contains(&GIT_STATUS_TOOL_ID));
+        assert!(ids.contains(&GIT_DIFF_TOOL_ID));
+        assert!(!ids.contains(&PROCESS_EXEC_TOOL_ID));
+    }
+
+    #[test]
     fn parser_rejects_runtime_sleep_as_removed_builtin_tool() {
         let parsed = ToolIntentParser::parse_assistant_content(
             "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"runtime.sleep\",\"reason\":\"Wait one minute.\",\"input\":{\"duration_seconds\":60}}]}\n```",
@@ -4528,6 +4652,14 @@ mod tests {
         assert_eq!(parsed.requests.len(), 1);
         assert!(parsed.rejected.is_empty());
     }
+
+    #[test]
+    fn parser_accepts_json_fenced_tool_requests_as_fallback() {
+        let parsed = ToolIntentParser::parse_assistant_content("x\n```json\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\",\"input\":{\"path\":\"README.md\"}}]}\n```");
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+    }
+
     #[test]
     fn parser_returns_empty_without_fence() {
         let parsed = ToolIntentParser::parse_assistant_content("none");
@@ -4897,7 +5029,12 @@ mod tests {
 
         assert_eq!(result.status, ToolExecutionStatus::Completed);
         assert_eq!(result.output["content"], "hello brownie");
+        assert_eq!(
+            result.output["content_sha256"],
+            sha256_fingerprint("hello brownie".as_bytes())
+        );
         assert_eq!(result.output["truncated"], false);
+        assert_eq!(result.output["bytes_total"], "hello brownie".len());
     }
 
     #[test]
@@ -4943,6 +5080,11 @@ mod tests {
         assert_eq!(result.output["content"], "abc");
         assert_eq!(result.output["truncated"], true);
         assert_eq!(result.output["bytes_read"], 3);
+        assert_eq!(result.output["bytes_total"], 6);
+        assert_eq!(
+            result.output["content_sha256"],
+            sha256_fingerprint("abcdef".as_bytes())
+        );
     }
 
     #[test]
@@ -5429,6 +5571,17 @@ mod tests {
         let status_json = status.output.to_string();
         assert!(status_json.contains("README.md"));
         assert!(!status_json.contains(temp.path().to_string_lossy().as_ref()));
+        let expected_head = Command::new("git")
+            .args(["rev-parse", "--verify", "HEAD"])
+            .current_dir(temp.path())
+            .output()
+            .expect("git head");
+        assert!(expected_head.status.success());
+        let expected_head = String::from_utf8_lossy(&expected_head.stdout)
+            .trim()
+            .to_string();
+        assert_eq!(status.output["current_head"], expected_head);
+        assert_eq!(status.output["git"]["current_head"], expected_head);
 
         let diff = ToolExecutor::execute_controlled(
             temp.path(),
@@ -5706,6 +5859,24 @@ mod tests {
         );
         assert!(rejected_message.requests.is_empty());
         assert_eq!(rejected_message.rejected[0].code, "invalid_input");
+    }
+
+    #[test]
+    fn git_diff_accepts_common_bounded_boolean_scope_hints() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"git.diff\",\"reason\":\"Inspect bounded unstaged diff summary.\",\"input\":{\"staged\":false,\"unstaged\":true,\"untracked\":false}}]}\n```",
+        );
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+        let policy = BuiltinModeRegistry::get("implementer").expect("policy");
+        let evaluation = ToolIntentEvaluator::evaluate(&policy, parsed);
+        assert_eq!(evaluation.items.len(), 1);
+        assert_eq!(evaluation.items[0].tool_id, GIT_DIFF_TOOL_ID);
+        assert_eq!(
+            evaluation.items[0].required_action,
+            RuntimeAction::UseGitInspectCapability
+        );
+        assert!(evaluation.items[0].allowed);
     }
 
     #[cfg(unix)]

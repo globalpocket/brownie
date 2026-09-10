@@ -87,11 +87,12 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-02: Replace fixed readiness fingerprint strings with canonical content
-  SHA-256 evidence and invalidate evidence whenever latest head changes.
-- [ ] E-03: Populate release evidence fields with current values:
-  implementation commit, tested commit, workflow run ID, artifact SHA-256, and
-  audited base commit.
+- [ ] E-03a: Resolve release evidence collection blocker before E-03 can close:
+  current implementation/tested commit is available from `git.status`, but
+  workflow run ID and artifact SHA-256 are not available through the current
+  Runtime tool plan. Provide a local or MCP-backed release evidence collector,
+  then populate the Runtime Release Contract and readiness audit with verified
+  workflow/artifact evidence.
 - [ ] E-04: Expand CI to include `cargo fmt --all --check`,
   `cargo check --workspace --all-targets --all-features`,
   `cargo clippy --workspace --all-targets --all-features -- -D warnings`,

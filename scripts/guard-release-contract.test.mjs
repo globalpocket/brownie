@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import test from 'node:test';
 
 import { requiredReleaseGateCommands } from './release-gate.mjs';
@@ -52,6 +53,7 @@ function validContract(overrides = {}) {
       workflow_run_id: null,
       artifact_sha256: null,
       contract_registry_fingerprint: 'sha256:contract',
+      readiness_audit_content_sha256: validAuditContentSha256,
       mode_pack_fingerprint: null,
       product_dod_fingerprint: null
     },
@@ -135,6 +137,9 @@ function validAudit(overrides = {}) {
   };
 }
 
+const validAuditText = JSON.stringify(validAudit(), null, 2);
+const validAuditContentSha256 = 'sha256:' + crypto.createHash('sha256').update(validAuditText).digest('hex');
+
 const validPackageJson = {
   scripts: {
     'release:gate': 'node scripts/release-gate.mjs',
@@ -180,6 +185,7 @@ function validate(contract, overrides = {}) {
   return runReleaseContractGuard({
     contract,
     audit: overrides.audit ?? validAudit(),
+    auditText: overrides.auditText ?? validAuditText,
     packageJson: overrides.packageJson ?? validPackageJson,
     vsixPackageJson: overrides.vsixPackageJson ?? validVsixPackageJson,
     releaseGateText: overrides.releaseGateText ?? 'cargo pnpm'
@@ -188,6 +194,11 @@ function validate(contract, overrides = {}) {
 
 test('accepts fail-closed Runtime release contract', () => {
   assert.deepEqual(validate(validContract()), []);
+});
+
+test('rejects stale readiness audit content hash when audit text changes', () => {
+  const errors = validate(validContract(), { auditText: validAuditText + '\nchanged' });
+  assert(errors.some((error) => error.includes('commit_trace.readiness_audit_content_sha256 must match')));
 });
 
 test('rejects missing release-ready condition', () => {

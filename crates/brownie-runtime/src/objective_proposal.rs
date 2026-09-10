@@ -341,16 +341,21 @@ fn validate_objective_proposal_authorization_preflight_target(
         );
     }
     if target.expected_source_event_kind != "WorkspacePatchProposed"
-        || target.expected_operation != WorkspacePatchOperation::ReplaceFile.as_str()
+        || !is_objective_workspace_operation(&target.expected_operation)
         || target.expected_validation_status != "Valid"
         || target.expected_approval_status != "Pending"
     {
         return Err(
-            "objective proposal authorization preflight failed: expected route labels must describe a valid pending replace_file proposal"
+            "objective proposal authorization preflight failed: expected route labels must describe a valid pending workspace proposal"
                 .to_string(),
         );
     }
     Ok(())
+}
+
+fn is_objective_workspace_operation(operation: &str) -> bool {
+    operation == WorkspacePatchOperation::ReplaceFile.as_str()
+        || operation == WorkspacePatchOperation::PatchFile.as_str()
 }
 
 fn objective_authorization_reason(continuation_id: &str) -> String {
@@ -986,12 +991,12 @@ fn validate_objective_proposal_apply_target(
         );
     }
     if target.expected_source_event_kind != "WorkspacePatchProposed"
-        || target.expected_operation != WorkspacePatchOperation::ReplaceFile.as_str()
+        || !is_objective_workspace_operation(&target.expected_operation)
         || target.expected_validation_status != "Valid"
         || target.expected_approval_status != "Approved"
     {
         return Err(
-            "objective proposal apply failed: expected route labels must describe an approved valid replace_file proposal"
+            "objective proposal apply failed: expected route labels must describe an approved valid workspace proposal"
                 .to_string(),
         );
     }
@@ -1124,12 +1129,12 @@ fn validate_objective_proposal_apply_route(
         );
     }
     let proposal = inspect_proposal(store, &target.expected_run_id, &target.expected_proposal_id)?;
-    if proposal.operation != WorkspacePatchOperation::ReplaceFile.as_str()
+    if !is_objective_workspace_operation(&proposal.operation)
         || proposal.validation_status != "Valid"
         || proposal.approval_status != "Approved"
     {
         return Err(
-            "objective proposal apply failed: proposal is not an approved valid replace_file proposal"
+            "objective proposal apply failed: proposal is not an approved valid workspace proposal"
                 .to_string(),
         );
     }

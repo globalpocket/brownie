@@ -2540,6 +2540,7 @@ pub(super) fn handle_approved_workspace_intents(
             }
             None => false,
         };
+    let mut duplicate_workspace_read_denied = false;
     for (intent_index, decision) in evaluation.items.into_iter().enumerate() {
         let builtin_controlled_execution_tool = matches!(
             decision.tool_id.as_str(),
@@ -2616,6 +2617,26 @@ pub(super) fn handle_approved_workspace_intents(
             )?;
             continue;
         }
+        if decision.tool_id == WORKSPACE_READ_TOOL_ID
+            && task_goal_requires_workspace_write_proposal(&record.goal)
+            && run_has_workspace_read_for_same_path_without_write_proposal(
+                store,
+                record,
+                &decision.input,
+            )?
+        {
+            store.tasks().append_task_event_with_payload(
+                record,
+                LedgerEventKind::ToolExecutionDenied,
+                Some(json!({
+                    "tool_id": decision.tool_id,
+                    "status": "Denied",
+                    "reason": "Duplicate workspace.read for this path is not progress after completed read evidence; use the existing Tool Execution output_preview/content_sha256 and request workspace.write or record a concrete blocker.",
+                })),
+            )?;
+            duplicate_workspace_read_denied = true;
+            continue;
+        }
         let execution_input = if decision.tool_id == GIT_COMMIT_TOOL_ID {
             match runtime_git_commit_execution_input(
                 store,
@@ -2665,7 +2686,295 @@ pub(super) fn handle_approved_workspace_intents(
             Some(tool_execution_ledger_payload(&result)),
         )?;
     }
+    append_todo_decomposition_blocker_after_read_only_stall(
+        store,
+        record,
+        policy,
+        duplicate_workspace_read_denied,
+    )?;
     Ok(())
+}
+
+fn append_todo_decomposition_blocker_after_read_only_stall(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+    policy: &CompiledModePolicy,
+    duplicate_workspace_read_denied: bool,
+) -> anyhow::Result<()> {
+    if !task_goal_requires_workspace_write_proposal(&record.goal)
+        || run_has_workspace_patch_proposal(store, record)?
+        || !run_has_todo_decomposition_stall(store, record, duplicate_workspace_read_denied)?
+    {
+        return Ok(());
+    }
+    let todo_path = store.workspace_root().join("todo.md");
+    let Ok(todo) = fs::read_to_string(&todo_path) else {
+        return Ok(());
+    };
+    let Some(block) = first_unchecked_todo_block(&todo) else {
+        return Ok(());
+    };
+    let current_head = latest_git_status_current_head(store, record)?;
+    let release_evidence_blocked = run_has_release_evidence_blocker_inputs(store, record)?;
+    let new_text =
+        todo_decomposition_replacement(&block, current_head.as_deref(), release_evidence_blocked);
+    if block.old_text == new_text {
+        return Ok(());
+    }
+    let current_head = latest_git_status_current_head(store, record)?
+        .unwrap_or_else(|| "<unknown-current-head>".to_string());
+    let reason_prefix = if duplicate_workspace_read_denied {
+        "Duplicate workspace.read prevented progress on the selected TODO"
+    } else {
+        "Read-only TODO investigation completed without a workspace.write proposal"
+    };
+    let decision = ToolIntentDecision {
+        tool_id: WORKSPACE_WRITE_TOOL_ID.to_string(),
+        required_action: RuntimeAction::WriteWorkspace,
+        allowed: true,
+        reason: "Runtime synthesized a bounded TODO decomposition blocker after read-only progress stalled.".to_string(),
+        request_reason: format!(
+            "{reason_prefix}; refine todo.md with a smaller implementable or blocker TODO. current_head={current_head}"
+        ),
+        input: json!({
+            "path": "todo.md",
+            "operation": WorkspacePatchOperation::PatchFile.as_str(),
+            "old_text": block.old_text,
+            "new_text": new_text,
+        }),
+    };
+    append_workspace_patch_proposal(store, record, policy, &decision)
+}
+
+fn run_has_todo_decomposition_stall(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+    duplicate_workspace_read_denied: bool,
+) -> anyhow::Result<bool> {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    let read_todo = run_events_include_workspace_read_path(&events, "todo.md");
+    if !read_todo {
+        return Ok(false);
+    }
+    if duplicate_workspace_read_denied {
+        return Ok(true);
+    }
+    let second_pass_seen = events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived);
+    let read_only_completed_tools = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::ToolExecutionCompleted)
+        .filter_map(|event| event.payload.as_ref())
+        .filter_map(|payload| payload.get("tool_id").and_then(Value::as_str))
+        .filter(|tool_id| {
+            matches!(
+                *tool_id,
+                WORKSPACE_READ_TOOL_ID | GIT_STATUS_TOOL_ID | GIT_DIFF_TOOL_ID | TIME_NOW_TOOL_ID
+            )
+        })
+        .count();
+    Ok(second_pass_seen
+        && (read_only_completed_tools >= 2
+            || run_has_release_evidence_blocker_inputs_from_events(&events)))
+}
+
+fn run_has_release_evidence_blocker_inputs(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+) -> anyhow::Result<bool> {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    Ok(run_has_release_evidence_blocker_inputs_from_events(&events))
+}
+
+fn run_has_release_evidence_blocker_inputs_from_events(
+    events: &[brownie_store::LedgerEvent],
+) -> bool {
+    let mut read_todo = false;
+    let mut read_contract = false;
+    let mut read_audit = false;
+    let mut inspected_status = false;
+    for event in events {
+        if event.kind != LedgerEventKind::ToolExecutionCompleted {
+            continue;
+        }
+        let Some(payload) = event.payload.as_ref() else {
+            continue;
+        };
+        match payload.get("tool_id").and_then(Value::as_str) {
+            Some(WORKSPACE_READ_TOOL_ID) => {
+                let preview = payload
+                    .get("output_preview")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                read_todo |= preview.starts_with("[workspace.read path=todo.md ");
+                read_contract |= preview.starts_with(
+                    "[workspace.read path=docs/architecture/runtime-release-contract.json ",
+                );
+                read_audit |= preview.starts_with(
+                    "[workspace.read path=docs/architecture/runtime-release-readiness-audit.json ",
+                ) || preview.starts_with(
+                    "[workspace.read path=docs/architecture/runtime-release-readiness-audit.md ",
+                );
+            }
+            Some(GIT_STATUS_TOOL_ID) => {
+                inspected_status = true;
+            }
+            _ => {}
+        }
+    }
+    read_todo && read_contract && read_audit && inspected_status
+}
+
+fn run_events_include_workspace_read_path(
+    events: &[brownie_store::LedgerEvent],
+    path: &str,
+) -> bool {
+    events.iter().any(|event| {
+        event.kind == LedgerEventKind::ToolExecutionCompleted
+            && event.payload.as_ref().is_some_and(|payload| {
+                payload.get("tool_id").and_then(Value::as_str) == Some(WORKSPACE_READ_TOOL_ID)
+                    && payload
+                        .get("output_preview")
+                        .and_then(Value::as_str)
+                        .is_some_and(|preview| {
+                            preview.starts_with(&format!("[workspace.read path={path} "))
+                        })
+            })
+    })
+}
+
+#[derive(Debug, Clone)]
+struct TodoBlock {
+    id: Option<String>,
+    title: String,
+    old_text: String,
+}
+
+fn first_unchecked_todo_block(todo: &str) -> Option<TodoBlock> {
+    let start = todo.find("- [ ] ")?;
+    let tail = &todo[start + 1..];
+    let next_offset = tail
+        .find("\n- [ ] ")
+        .map(|offset| offset + 1)
+        .unwrap_or_else(|| todo.len() - start);
+    let old_text = &todo[start..start + next_offset];
+    let first_line = old_text.lines().next()?.trim();
+    let title = first_line.strip_prefix("- [ ] ")?.trim().to_string();
+    let id = title
+        .split_once(':')
+        .map(|(prefix, _)| prefix.trim())
+        .filter(|prefix| {
+            !prefix.is_empty()
+                && prefix.len() <= 24
+                && prefix
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+        })
+        .map(ToString::to_string);
+    Some(TodoBlock {
+        id,
+        title,
+        old_text: old_text.to_string(),
+    })
+}
+
+fn todo_decomposition_replacement(
+    block: &TodoBlock,
+    current_head: Option<&str>,
+    release_evidence_blocked: bool,
+) -> String {
+    let parent_id = block.id.as_deref().unwrap_or("TODO");
+    let child_id = child_todo_id(parent_id);
+    let title = block.title.trim();
+    if release_evidence_blocked || title.to_ascii_lowercase().contains("release evidence") {
+        return format!(
+            "- [ ] {child_id}: Resolve release evidence collection blocker before {parent_id} can close:\n  Brownie confirmed the implementation/tested commit from `git.status`{head_text}, but\n  workflow run ID and artifact SHA-256 are not available through the current\n  Runtime tool plan. Provide a local or MCP-backed release evidence collector,\n  then populate the Runtime Release Contract and readiness audit with verified\n  workflow/artifact evidence.\n",
+            head_text = current_head
+                .map(|head| format!(" (`{head}`)"))
+                .unwrap_or_default()
+        );
+    }
+    format!(
+        "- [ ] {child_id}: Split blocked TODO into a smaller implementable task:\n  Source TODO: {source}\n  Brownie gathered the available context but did not produce a safe workspace.write\n  for the original scope. Replace this blocker with one concrete implementation\n  step, missing evidence/tool setup, or owner decision, then let Brownie continue.\n",
+        source = title
+    )
+}
+
+fn child_todo_id(parent_id: &str) -> String {
+    if parent_id == "TODO" {
+        return "TODO-decomposition".to_string();
+    }
+    if parent_id
+        .chars()
+        .last()
+        .is_some_and(|ch| ch.is_ascii_lowercase())
+    {
+        format!("{parent_id}-next")
+    } else {
+        format!("{parent_id}a")
+    }
+}
+
+fn latest_git_status_current_head(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+) -> anyhow::Result<Option<String>> {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    Ok(events.iter().rev().find_map(|event| {
+        if event.kind != LedgerEventKind::ToolExecutionCompleted {
+            return None;
+        }
+        let payload = event.payload.as_ref()?;
+        if payload.get("tool_id").and_then(Value::as_str) != Some(GIT_STATUS_TOOL_ID) {
+            return None;
+        }
+        payload
+            .get("current_head")
+            .or_else(|| payload.get("git")?.get("current_head"))
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+    }))
+}
+
+fn run_has_workspace_patch_proposal(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+) -> anyhow::Result<bool> {
+    Ok(store
+        .tasks()
+        .read_ledger_events(&record.run_id)?
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed))
+}
+
+fn run_has_workspace_read_for_same_path_without_write_proposal(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+    input: &Value,
+) -> anyhow::Result<bool> {
+    let Some(path) = input.get("path").and_then(Value::as_str) else {
+        return Ok(false);
+    };
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    if events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+    {
+        return Ok(false);
+    }
+    Ok(events.iter().any(|event| {
+        event.kind == LedgerEventKind::ToolExecutionCompleted
+            && event.payload.as_ref().is_some_and(|payload| {
+                payload.get("tool_id").and_then(Value::as_str) == Some(WORKSPACE_READ_TOOL_ID)
+                    && payload
+                        .get("output_preview")
+                        .and_then(Value::as_str)
+                        .is_some_and(|preview| {
+                            preview.starts_with(&format!("[workspace.read path={path} "))
+                        })
+            })
+    }))
 }
 
 fn append_approved_mcp_tool_execution(
@@ -4959,10 +5268,31 @@ pub(super) fn tool_execution_ledger_payload(result: &brownie_tools::ToolExecutio
         }),
     );
     if let Some(content) = result.output.get("content").and_then(Value::as_str) {
-        payload.insert(
-            "output_preview".to_string(),
-            json!(preview_tool_output(content)),
-        );
+        let preview = if result.tool_id == WORKSPACE_READ_TOOL_ID {
+            let path = result
+                .output
+                .get("path")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            let bytes_total = result
+                .output
+                .get("bytes_total")
+                .and_then(Value::as_u64)
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "<unknown>".to_string());
+            let content_sha256 = result
+                .output
+                .get("content_sha256")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            format!(
+                "[workspace.read path={path} bytes_total={bytes_total} content_sha256={content_sha256}]\n{}",
+                preview_tool_output(content)
+            )
+        } else {
+            preview_tool_output(content)
+        };
+        payload.insert("output_preview".to_string(), json!(preview));
     }
     if let Some(bytes_read) = result.output.get("bytes_read") {
         payload.insert("bytes_read".to_string(), bytes_read.clone());
@@ -5005,6 +5335,7 @@ pub(super) fn tool_execution_ledger_payload(result: &brownie_tools::ToolExecutio
         "raw_diff_redacted",
         "raw_file_content_redacted",
         "absolute_paths_redacted",
+        "current_head",
         "raw_message_redacted",
         "message_fingerprint",
         "expected_parent_head",
@@ -5049,6 +5380,7 @@ pub(super) fn tool_execution_ledger_payload(result: &brownie_tools::ToolExecutio
             "raw_diff_redacted",
             "raw_file_content_redacted",
             "absolute_paths_redacted",
+            "current_head",
         ] {
             if let Some(value) = git.get(key) {
                 git_payload.insert(key.to_string(), value.clone());

@@ -464,6 +464,32 @@ impl FakeLlm {
             && (prompt.contains("git.status: completed")
                 || prompt.contains("git.diff: completed")
                 || prompt.contains("untrusted_git_result_context"))
+            && prompt.contains("duplicate workspace.read")
+            && (request_signal.contains("release evidence") || request_signal.contains("todo.md"))
+        {
+            let intent = serde_json::json!({
+                "tool_requests": [{
+                    "tool_id": "workspace.write",
+                    "reason": "Decompose the blocked selected TODO in todo.md instead of looping on duplicate reads.",
+                    "input": {
+                        "path": "todo.md",
+                        "operation": "replace_file",
+                        "content": "- [ ] TODO-decomposition: Split the blocked selected TODO into one smaller implementable task or a concrete blocker with missing evidence/tool/owner decision.\n"
+                    }
+                }]
+            });
+            return LlmResponse {
+                content: format!(
+                    "Fake LLM duplicate-read TODO decomposition with {} messages.\n\n```brownie-tool-intent\n{}\n```",
+                    request.messages.len(),
+                    serde_json::to_string_pretty(&intent).expect("fake intent serializes")
+                ),
+            };
+        }
+        if prompt.contains("tool execution:")
+            && (prompt.contains("git.status: completed")
+                || prompt.contains("git.diff: completed")
+                || prompt.contains("untrusted_git_result_context"))
         {
             if prompt_text.contains("MP7_RESULT_91c7.rs")
                 || contains_any(
@@ -850,16 +876,15 @@ impl LlmProvider for OpenAiCompatibleLlmProvider {
                 base_url, self.config.model
             )
         };
-        let url = format!(
-            "{}",
-            openai_compatible_endpoint(&self.config.base_url, "chat/completions").map_err(|e| {
+        let url = openai_compatible_endpoint(&self.config.base_url, "chat/completions")
+            .map_err(|e| {
                 anyhow!(
                     "{} reason={}",
                     failure_prefix(),
                     redact_secret(&e.to_string())
                 )
             })?
-        );
+            .to_string();
         let client = openai_compatible_client_for_endpoint(
             &url,
             Duration::from_millis(budget.request_timeout_ms),

@@ -21,6 +21,7 @@
     "workflow_run_id": null,
     "artifact_sha256": null,
     "contract_registry_fingerprint": "sha256:4250fb47242f2bdc4ac26ce1d0cf8ecedbd27627eb9e3117acc82e3719eb934d",
+    "readiness_audit_content_sha256": "sha256:9a0bdda0edadb8bbdb1613008e6ea7479e17edb56436aefebd6f7ad571eb80b5",
     "mode_pack_fingerprint": null,
     "product_dod_fingerprint": null
   },
@@ -147,7 +148,8 @@
       "status": "missing_tested_commit",
       "release_blocking": true,
       "required_evidence": [
-        "release readiness audit, semantic contract, product DoD, and release contract are generated or checked from the tested commit"
+        "release readiness audit, semantic contract, product DoD, and release contract are generated or checked from the tested commit",
+        "commit_trace.readiness_audit_content_sha256 must match the current runtime-release-readiness audit file content before release evidence can pass"
       ]
     },
     {

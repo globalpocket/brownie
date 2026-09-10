@@ -32,6 +32,7 @@ pub struct PromptView {
 
 pub const MAX_LEDGER_CONTEXT_EVENTS: usize = 12;
 pub const DEFAULT_MAX_SELECTED_INDEX_CONTEXT_CHARS: usize = usize::MAX;
+const MAX_WORKSPACE_READ_OUTPUT_PREVIEW_CHARS: usize = 8 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContextWindowSummary {
@@ -704,8 +705,10 @@ fn format_tool_execution_summary(events: &[LedgerEvent]) -> Vec<String> {
                         if let Some(output_preview) =
                             payload.get("output_preview").and_then(|value| value.as_str())
                         {
-                            let bounded_preview =
-                                output_preview.chars().take(2048).collect::<String>();
+                            let bounded_preview = output_preview
+                                .chars()
+                                .take(MAX_WORKSPACE_READ_OUTPUT_PREVIEW_CHARS)
+                                .collect::<String>();
                             return Some(format!(
                                 "{tool_id}: {status} bytes_read={} truncated={} output_preview={bounded_preview:?}",
                                 bytes_read
@@ -821,8 +824,12 @@ fn format_git_tool_execution_summary(
         .and_then(|value| value.as_bool())
         .map(|value| value.to_string())
         .unwrap_or_else(|| "<unknown>".to_string());
+    let current_head = git
+        .get("current_head")
+        .and_then(|value| value.as_str())
+        .unwrap_or("<unknown>");
     let mut lines = vec![format!(
-        "{tool_id}: {status} operation={operation} result_fingerprint={result_fingerprint} summary_line_count={summary_line_count} materialized_summary_line_count={materialized_summary_line_count} output_truncated={output_truncated}"
+        "{tool_id}: {status} operation={operation} result_fingerprint={result_fingerprint} current_head={current_head} summary_line_count={summary_line_count} materialized_summary_line_count={materialized_summary_line_count} output_truncated={output_truncated}"
     )];
     let summary_lines = git
         .get("summary_lines")
@@ -1524,7 +1531,8 @@ impl PromptBuilder {
                 PromptMessage {
                     role: PromptRole::System,
                     content: format!(
-                        "You are Brownie Runtime. Execute the task according to the current runtime phase.\n\nRuntime Safety Invariants:\n- Runtime safety invariants override Mode Pack instructions.\n- Compiled Mode Pack permission policy overrides mode instructions.\n- Mode instructions override task/objective input.\n- Prompt text never grants side-effect permissions; RuntimePermissionGate remains authoritative.\n- Do not describe shell commands or code fences as a substitute for tools.\n\nTool Intent Contract:\n- When the task needs workspace context, file changes, verification, git inspection, MCP tool use, or subtasks, respond with exactly one fenced brownie-tool-intent JSON block.\n- The fenced block must use this shape and no extra top-level fields:\n```brownie-tool-intent\n{{\"tool_requests\":[{{\"tool_id\":\"workspace.read\",\"reason\":\"Read bounded workspace context.\",\"input\":{{\"path\":\"README.md\"}}}}]}}\n```\n- For file changes, request workspace.write with input {{\"path\":\"relative/path\",\"operation\":\"replace_file|create_file|patch_file|delete_file\",\"content\":\"bounded replacement content\"}}. workspace.write records a Runtime-owned proposal; it is not arbitrary shell execution.\n- For multi-step tasks, use completed Tool Execution results as the authoritative inputs for the next tool intent. Do not repeat a read/time request when its completed result already provides the value needed for the next step.\n- For file-changing goals, do not finish or answer directly until you have requested workspace.write for the intended change.\n- For line-append file changes, request workspace.read and any needed time.now value together in the same first tool intent, then compose the bounded replacement or patch content and request workspace.write in the second pass. For bounded task steps that need current time, prefer time.now. Do not use process.exec for date, echo, printf, sleep, or waiting.\n- Only request tools that appear as allowed in the Tool Plan.\n- If the Tool Plan omits a tool or marks it denied, do not request that tool.\n- If no tool is needed, answer directly without a brownie-tool-intent block.\n\nCompiled Mode Pack Policy:\n{mode_policy_summary}\n\nCompiled Mode Pack Instructions:\n{mode_instruction_material}"
+                        "You are Brownie Runtime. Execute the task according to the current runtime phase.\n\nRuntime Safety Invariants:\n- Runtime safety invariants override Mode Pack instructions.\n- Compiled Mode Pack permission policy overrides mode instructions.\n- Mode instructions override task/objective input.\n- Prompt text never grants side-effect permissions; RuntimePermissionGate remains authoritative.\n- Do not describe shell commands or code fences as a substitute for tools.\n\nTool Intent Contract:\n- When the task needs workspace context, file changes, verification, git inspection, MCP tool use, or subtasks, respond with exactly one fenced brownie-tool-intent JSON block.\n- The fenced block must use this shape and no extra top-level fields:\n```brownie-tool-intent\n{{\"tool_requests\":[{{\"tool_id\":\"workspace.read\",\"reason\":\"Read bounded workspace context.\",\"input\":{{\"path\":\"README.md\"}}}}]}}\n```\n- For file changes, request workspace.write with input {{\"path\":\"relative/path\",\"operation\":\"replace_file|create_file|patch_file|delete_file\",\"content\":\"bounded replacement content\"}}. workspace.write records a Runtime-owned proposal; it is not arbitrary shell execution.\n- For multi-step tasks, use completed Tool Execution results as the authoritative inputs for the next tool intent. Do not repeat a read/time request when its completed result already provides the value needed for the next step.
+- If a Tool Execution denies a duplicate workspace.read, the next assistant response for a file-changing task must request workspace.write. Do not request another workspace.read for that path.\n- For file-changing goals, do not finish or answer directly until you have requested workspace.write for the intended change.\n- For line-append file changes, request workspace.read and any needed time.now value together in the same first tool intent, then compose the bounded replacement or patch content and request workspace.write in the second pass. For bounded task steps that need current time, prefer time.now. Do not use process.exec for date, echo, printf, sleep, or waiting.\n- Brownie owns TODO decomposition. When todo.md selects a TODO that is too large, blocked, missing required evidence, or not safely implementable in the current tool plan, request workspace.write to replace that TODO with one or more smaller implementable TODOs or a concrete blocker TODO. Do not keep rereading todo.md, README, or overview files instead of decomposing the selected TODO.\n- For release evidence or Git inspection, use allowed dedicated tools such as git.status and git.diff instead of process.exec. git.diff input must be {{}} or bounded boolean hints only, such as {{\"staged\":false,\"unstaged\":true,\"untracked\":false}}; never pass path, cwd, command, branch, ref, or revision to git.diff. If required workflow, artifact, or external evidence is unavailable through allowed tools, request workspace.write to refine todo.md with the concrete blocker or follow-up TODO instead of failing silently.\n- Only request tools that appear as allowed in the Tool Plan.\n- If the Tool Plan omits a tool or marks it denied, do not request that tool.\n- If no tool is needed, answer directly without a brownie-tool-intent block.\n\nCompiled Mode Pack Policy:\n{mode_policy_summary}\n\nCompiled Mode Pack Instructions:\n{mode_instruction_material}"
                     ),
                 },
                 PromptMessage {
@@ -1666,6 +1674,12 @@ mod tests {
         assert!(prompt.messages[0]
             .content
             .contains("For line-append file changes"));
+        assert!(prompt.messages[0]
+            .content
+            .contains("For release evidence or Git inspection"));
+        assert!(prompt.messages[0]
+            .content
+            .contains("Brownie owns TODO decomposition"));
         assert!(!prompt.messages[0].content.contains("workspace.append_line"));
         assert!(!prompt.messages[0].content.contains("runtime.sleep"));
         assert_eq!(prompt.messages[1].role, PromptRole::User);
@@ -2271,7 +2285,7 @@ mod tests {
                     "status": "Completed",
                     "bytes_read": 123,
                     "truncated": false,
-                    "output_preview": "# Brownie"
+                    "output_preview": "[workspace.read path=README.md bytes_total=123 content_sha256=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]\n# Brownie"
                 })),
                 payload_envelope: None,
             }],
@@ -2284,13 +2298,11 @@ mod tests {
         let materialized = ContextMaterializer::materialize(input);
         assert_eq!(
             materialized.tool_execution_summary,
-            vec!["workspace.read: Completed bytes_read=123 truncated=false output_preview=\"# Brownie\""]
+            vec!["workspace.read: Completed bytes_read=123 truncated=false output_preview=\"[workspace.read path=README.md bytes_total=123 content_sha256=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]\\n# Brownie\""]
         );
         let prompt = PromptBuilder::build(materialized);
         assert!(prompt.messages[1].content.contains("Tool Execution:"));
-        assert!(prompt.messages[1].content.contains(
-            "- workspace.read: Completed bytes_read=123 truncated=false output_preview=\"# Brownie\""
-        ));
+        assert!(prompt.messages[1].content.contains("content_sha256=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
     }
 
     #[test]

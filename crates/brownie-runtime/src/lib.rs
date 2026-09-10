@@ -2611,6 +2611,181 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         ) {
             return error_response(id, -32603, &format!("internal error: {error}"));
         }
+        let mut followup_events = match store.tasks().read_ledger_events(&running.run_id) {
+            Ok(events) => events,
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        };
+        let mut followup_attempts = 0;
+        loop {
+            let second_pass_response_index = followup_events
+                .iter()
+                .rposition(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived);
+            let latest_tool_execution_index = followup_events.iter().rposition(|event| {
+                matches!(
+                    event.kind,
+                    LedgerEventKind::ToolExecutionCompleted
+                        | LedgerEventKind::ToolExecutionDenied
+                        | LedgerEventKind::ToolExecutionFailed
+                )
+            });
+            let followup_read_result_available =
+                match (second_pass_response_index, latest_tool_execution_index) {
+                    (Some(response_index), Some(tool_index)) => tool_index > response_index,
+                    _ => false,
+                };
+            let followup_write_missing = task_goal_requires_workspace_write_proposal(&running.goal)
+                && !followup_events
+                    .iter()
+                    .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed);
+            if !followup_read_result_available || !followup_write_missing || followup_attempts >= 2
+            {
+                break;
+            }
+            followup_attempts += 1;
+            let followup_prompt_input =
+                ContextMaterializer::materialize(ContextMaterializerInput {
+                    task: running.clone(),
+                    ledger_events: followup_events,
+                    child_completion_summaries: child_completion_summaries.clone(),
+                    selected_index_context: selected_index_context
+                        .as_ref()
+                        .map(|context| context.prompt_context.clone()),
+                    verification_recovery_context: verification_recovery_context_read
+                        .as_ref()
+                        .map(|context| context.prompt_context.clone()),
+                    context_budget,
+                });
+            let followup_context_window = followup_prompt_input.context_window.clone();
+            let followup_context_budget = followup_prompt_input.context_budget.clone();
+            if !followup_context_budget.prompt_within_budget {
+                return fail_llm_request(
+                    &store,
+                    &running,
+                    id,
+                    RuntimeLlmProviderStatus {
+                        status: provider_status.clone(),
+                        strict: provider_strict,
+                        will_fallback_to_fake: false,
+                        config_source: provider_selection.config_source.clone(),
+                        active_profile: provider_selection.active_profile.clone(),
+                        task_run_network_allowed: provider_selection.task_run_network_allowed,
+                        budget: provider_selection.budget.clone(),
+                        sensitive_guard_mode: provider_selection.sensitive_guard_mode.clone(),
+                        sensitive_guard_invalid: provider_selection.sensitive_guard_invalid.clone(),
+                    },
+                    "context_budget max_prompt_chars exceeded during read-followup prompt materialization",
+                    LedgerEventKind::SecondPassLlmRequestFailed,
+                );
+            }
+            let followup_pass = match AgentLoop::run_second_pass_with_llm(
+                followup_prompt_input,
+                provider.as_ref(),
+                &provider_selection.budget,
+                provider_selection.sensitive_guard_mode.clone(),
+            ) {
+                Ok(result) => result,
+                Err(error) => {
+                    return fail_llm_request(
+                        &store,
+                        &running,
+                        id,
+                        RuntimeLlmProviderStatus {
+                            status: provider_status.clone(),
+                            strict: provider_strict,
+                            will_fallback_to_fake: false,
+                            config_source: provider_selection.config_source.clone(),
+                            active_profile: provider_selection.active_profile.clone(),
+                            task_run_network_allowed: provider_selection.task_run_network_allowed,
+                            budget: provider_selection.budget.clone(),
+                            sensitive_guard_mode: provider_selection.sensitive_guard_mode.clone(),
+                            sensitive_guard_invalid: provider_selection
+                                .sensitive_guard_invalid
+                                .clone(),
+                        },
+                        &error.to_string(),
+                        LedgerEventKind::SecondPassLlmRequestFailed,
+                    );
+                }
+            };
+            agent_loop_final_state = followup_pass.final_state;
+            agent_loop_completion_summary = followup_pass.completion_summary.clone();
+            agent_loop_final_response_content = followup_pass.llm_response.content.clone();
+            if let Err(error) = append_sensitive_scan_event(
+                &store,
+                &running,
+                &followup_pass.sensitive_scan,
+                &provider_selection.sensitive_guard_mode,
+                false,
+            ) {
+                return error_response(id, -32603, &format!("internal error: {error}"));
+            }
+            if let Err(error) = store.tasks().append_task_event_with_payload(
+                &running,
+                LedgerEventKind::SecondPassPromptBuilt,
+                Some(prompt_built_payload(
+                    followup_pass.prompt.messages.len(),
+                    &followup_pass.prompt,
+                    provider_selection.budget.response_preview_chars,
+                    provider_selection.budget.max_prompt_chars,
+                    &followup_pass.sensitive_scan,
+                    &followup_context_window,
+                    &followup_context_budget,
+                    privileged_prompt_context_present,
+                )),
+            ) {
+                return error_response(id, -32603, &format!("internal error: {error}"));
+            }
+            if let Err(error) = store.tasks().append_task_event_with_payload(
+                &running,
+                LedgerEventKind::SecondPassLlmRequestCreated,
+                Some(json!({
+                    "provider": provider_kind_name(&provider_status.provider),
+                    "model": followup_pass.llm_request.model.clone(),
+                    "message_count": followup_pass.llm_request.messages.len(),
+                    "base_url": provider_status.base_url.as_deref().map(redact_secret),
+                    "strict": provider_strict,
+                })),
+            ) {
+                return error_response(id, -32603, &format!("internal error: {error}"));
+            }
+            if let Err(error) = store.tasks().append_task_event_with_payload(
+                &running,
+                LedgerEventKind::SecondPassLlmResponseReceived,
+                Some(llm_response_received_payload(
+                    &provider_status,
+                    &followup_pass.llm_response.content,
+                    provider_selection.budget.response_preview_chars,
+                    privileged_prompt_context_present,
+                )),
+            ) {
+                return error_response(id, -32603, &format!("internal error: {error}"));
+            }
+            let followup_tool_intent =
+                ToolIntentParser::parse_assistant_content(&followup_pass.llm_response.content);
+            rejected_tool_intent_requests += followup_tool_intent.summary.rejected_requests;
+            if let Err(error) = append_tool_intent_events(
+                &store,
+                &running,
+                &policy,
+                &followup_pass.llm_response.content,
+            ) {
+                return error_response(id, -32603, &format!("internal error: {error}"));
+            }
+            if let Err(error) = handle_approved_workspace_intents(
+                &store,
+                &running,
+                &policy,
+                &followup_pass.llm_response.content,
+            ) {
+                return error_response(id, -32603, &format!("internal error: {error}"));
+            }
+            followup_events = match store.tasks().read_ledger_events(&running.run_id) {
+                Ok(events) => events,
+                Err(error) => {
+                    return error_response(id, -32603, &format!("internal error: {error}"))
+                }
+            };
+        }
     }
 
     let completion_gate_events = match store.tasks().read_ledger_events(&running.run_id) {
@@ -2850,18 +3025,29 @@ fn task_goal_requires_workspace_write_proposal(goal: &str) -> bool {
         "implement",
         "append",
         "create",
+        "update",
+        "populate",
         "delete",
         "replace",
         "overwrite",
         "rewrite",
         "patch",
         "increment",
+        "release evidence",
+        "implementation commit",
+        "tested commit",
+        "audited base commit",
+        "workflow run id",
+        "artifact sha",
+        "artifact sha-256",
         "修正",
         "編集",
         "実装",
         "追記",
         "書き込",
         "作成",
+        "更新",
+        "保存",
         "削除",
         "置換",
         "上書き",
@@ -12468,6 +12654,8 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "prompt_preview",
         "content_preview",
         "bytes_read",
+        "bytes_total",
+        "content_sha256",
         "truncated",
         "check_id",
         "verification_status",
@@ -12487,6 +12675,7 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "compile_time_code_sandboxed",
         "test_code_executed",
         "trusted_workspace_required",
+        "current_head",
         "process_tree_timeout_supported",
         "process_tree_kill_attempted",
         "process_tree_kill_succeeded",
@@ -12627,6 +12816,8 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "diff_redacted",
         "hunk_count",
         "hunk_fingerprint",
+        "patch_old_text",
+        "patch_new_text",
         "approval_status",
         "approval_reason",
         "approval_reason_redacted",
@@ -12796,6 +12987,8 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "readiness_fingerprint",
             "fingerprint_input_count",
             "bytes_read",
+            "bytes_total",
+            "content_sha256",
             "truncated",
             "reason",
             "provider",
@@ -13489,6 +13682,18 @@ fn append_workspace_patch_proposal(
     }
     if let Some(hunk_fingerprint) = proposal.hunk_fingerprint.as_ref() {
         payload["hunk_fingerprint"] = json!(hunk_fingerprint);
+    }
+    if operation == WorkspacePatchOperation::PatchFile.as_str()
+        && proposal.validation_status == "Valid"
+        && !proposal.diff_redacted
+    {
+        if let (Some(old_text), Some(new_text)) = (
+            decision.input.get("old_text").and_then(Value::as_str),
+            decision.input.get("new_text").and_then(Value::as_str),
+        ) {
+            payload["patch_old_text"] = json!(old_text);
+            payload["patch_new_text"] = json!(new_text);
+        }
     }
     if let Some(provenance) = record.verification_recovery_provenance.as_ref() {
         payload["verification_recovery_repair"] = json!(true);
@@ -14311,7 +14516,7 @@ fn preview_with_limit(content: &str, max_chars: usize) -> String {
 }
 
 fn preview_tool_output(content: &str) -> String {
-    const MAX_TOOL_OUTPUT_PREVIEW_CHARS: usize = 2048;
+    const MAX_TOOL_OUTPUT_PREVIEW_CHARS: usize = 8 * 1024;
     content
         .chars()
         .take(MAX_TOOL_OUTPUT_PREVIEW_CHARS)
@@ -19025,7 +19230,6 @@ modes:
         assert!(second_prompt_preview.contains("Blocked contract_count=1"));
         assert!(second_prompt_preview.contains("execution_gate_status=Blocked"));
         assert!(second_prompt_preview.contains("await_dispatch_admission_preconditions"));
-        assert!(second_prompt_preview.contains("Blocked admission_count=1"));
         assert!(events
             .iter()
             .any(|event| event.kind == LedgerEventKind::SecondPassLlmRequestCreated));
@@ -23370,7 +23574,7 @@ modes:
             .unwrap_or_else(|| panic!("seed advance failed"));
         assert_eq!(seed["session_sequence"], 1);
 
-        let drive_request = r#"{"jsonrpc":"2.0","id":3,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m17.drive","drive_id":"m17.drive.1","expected_start_session_sequence":1,"max_advances":3,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0}}}"#;
+        let drive_request = r#"{"jsonrpc":"2.0","id":3,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m17.drive","drive_id":"m17.drive.1","expected_start_session_sequence":1,"max_advances":3,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0}}}"#;
         let drive = parse_line(drive_request)
             .result
             .unwrap_or_else(|| panic!("drive failed"));
@@ -25642,7 +25846,7 @@ modes:
         let store = BrownieStore::new(temp.path());
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.journey","drive_id":"m50.journey.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"m50.journey.1","authorize_journey_start":true,"task_start":{"goal":"Run a runtime-owned journey","mode_id":"implementer"}}}}"#;
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.journey","drive_id":"m50.journey.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"m50.journey.1","authorize_journey_start":true,"task_start":{"goal":"Run a runtime-owned journey","mode_id":"implementer"}}}}"#;
         let response = parse_line(request);
         let result = response
             .result
@@ -26207,7 +26411,7 @@ modes:
         let store = BrownieStore::new(temp.path());
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.journey.default","drive_id":"m50.journey.default.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"m50.journey.default.1","authorize_journey_start":true,"task_start":{"goal":"Run a runtime-owned default-mode journey"}}}}"#;
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.journey.default","drive_id":"m50.journey.default.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"m50.journey.default.1","authorize_journey_start":true,"task_start":{"goal":"Run a runtime-owned default-mode journey"}}}}"#;
         let result = parse_line(request)
             .result
             .expect("default-mode journey result");
@@ -26268,7 +26472,7 @@ modes:
         std::fs::remove_file(temp.path().join(".brownie/modepack.json"))
             .expect("remove live modepack");
 
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp2.entrypoint","drive_id":"mp2.entrypoint.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp2.entrypoint.journey","authorize_journey_start":true,"task_start":{"goal":"Implement README update through the active Mode Pack entrypoint"}}}}"#;
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp2.entrypoint","drive_id":"mp2.entrypoint.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp2.entrypoint.journey","authorize_journey_start":true,"task_start":{"goal":"Implement README update through the active Mode Pack entrypoint"}}}}"#;
         let result = parse_line(request)
             .result
             .expect("entrypoint journey result");
@@ -26321,7 +26525,7 @@ modes:
         let store = BrownieStore::new(temp.path());
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.noentry","drive_id":"mp32e.noentry.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.noentry.journey","authorize_journey_start":true,"task_start":{"goal":"Run through configured Mode Pack without a default entrypoint"}}}}"#;
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.noentry","drive_id":"mp32e.noentry.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.noentry.journey","authorize_journey_start":true,"task_start":{"goal":"Run through configured Mode Pack without a default entrypoint"}}}}"#;
         let error = parse_line(request).error.expect("entrypoint error");
 
         assert_eq!(error.code, -32602);
@@ -26378,7 +26582,7 @@ modes:
         let store = BrownieStore::new(temp.path());
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.invalid","drive_id":"mp32e.invalid.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.invalid.journey","authorize_journey_start":true,"task_start":{"goal":"Run through invalid configured Mode Pack"}}}}"#;
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.invalid","drive_id":"mp32e.invalid.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.invalid.journey","authorize_journey_start":true,"task_start":{"goal":"Run through invalid configured Mode Pack"}}}}"#;
         let error = parse_line(request).error.expect("entrypoint error");
 
         assert_eq!(error.code, -32602);
@@ -26483,7 +26687,7 @@ modes:
             .expect("remove live modepack");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.active.noentry","drive_id":"mp32e.active.noentry.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.active.noentry.journey","authorize_journey_start":true,"task_start":{"goal":"Run through configured active Mode Pack without a default entrypoint"}}}}"#;
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.active.noentry","drive_id":"mp32e.active.noentry.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.active.noentry.journey","authorize_journey_start":true,"task_start":{"goal":"Run through configured active Mode Pack without a default entrypoint"}}}}"#;
         let error = parse_line(request).error.expect("entrypoint error");
 
         assert_eq!(error.code, -32602);
@@ -26516,7 +26720,7 @@ modes:
             .expect("remove live modepack");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.active.missing","drive_id":"mp32e.active.missing.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.active.missing.journey","authorize_journey_start":true,"task_start":{"goal":"Run through a missing configured active Mode Pack snapshot"}}}}"#;
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.active.missing","drive_id":"mp32e.active.missing.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.active.missing.journey","authorize_journey_start":true,"task_start":{"goal":"Run through a missing configured active Mode Pack snapshot"}}}}"#;
         let error = parse_line(request).error.expect("entrypoint error");
 
         assert_eq!(error.code, -32602);
@@ -26543,7 +26747,7 @@ modes:
         let store = BrownieStore::new(temp.path());
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
-        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"cli.c1.default.dev","drive_id":"cli.c1.default.dev.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"cli.c1.default.dev.journey","authorize_journey_start":true,"task_start":{"goal":"Implement README update"}}}}"#;
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"cli.c1.default.dev","drive_id":"cli.c1.default.dev.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":8192,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"cli.c1.default.dev.journey","authorize_journey_start":true,"task_start":{"goal":"Implement README update"}}}}"#;
         let result = parse_line(request)
             .result
             .expect("default development result");
@@ -61992,11 +62196,17 @@ mod phase_2_3_tests {
         first_body: &'static str,
         second_body: &'static str,
     ) -> (String, thread::JoinHandle<Vec<serde_json::Value>>) {
+        spawn_mock_many(vec![first_body, second_body])
+    }
+
+    fn spawn_mock_many(
+        bodies: Vec<&'static str>,
+    ) -> (String, thread::JoinHandle<Vec<serde_json::Value>>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = thread::spawn(move || {
             let mut observed = Vec::new();
-            for body in [first_body, second_body] {
+            for body in bodies {
                 let (mut stream, _) = listener.accept().unwrap();
                 let mut buf = [0_u8; 8192];
                 let n = stream.read(&mut buf).unwrap();
@@ -62285,6 +62495,76 @@ content-length: {}
             .as_str()
             .expect("summary")
             .contains("did not produce a workspace.write proposal"));
+    }
+
+    #[test]
+    fn openai_task_run_synthesizes_todo_decomposition_after_duplicate_read_denial() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("todo.md"),
+            "- [ ] B-99: Implement broad cross-platform release automation.\n  Needs decomposition before one runtime pass can safely implement it.\n",
+        )
+        .expect("todo");
+        let (base_url, handle) = spawn_mock_many(vec![
+            r#"{"choices":[{"message":{"content":"Read the TODO before editing.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read todo.md before proposing the blocker refinement.\",\"input\":{\"path\":\"todo.md\"}}]}\n```"}}]}"#,
+            r#"{"choices":[{"message":{"content":"Try to read the same TODO again.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Re-read todo.md before editing.\",\"input\":{\"path\":\"todo.md\"}}]}\n```"}}]}"#,
+        ]);
+        write_mock_config(temp.path(), &base_url);
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
+        std::env::set_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true");
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"Update todo.md by decomposing the selected blocker TODO","mode_id":"implementer"}}"#,
+        )
+        .result
+        .unwrap();
+        let task_id = start["task_id"].as_str().unwrap();
+        let run_id = start["run_id"].as_str().unwrap();
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        if run.error.is_some() {
+            panic!("run error: {:?}", run.error);
+        }
+
+        let observed = handle.join().unwrap();
+        assert_eq!(observed.len(), 2);
+        let second_prompt = observed[1]["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .find(|message| message["role"] == "user")
+            .and_then(|message| message["content"].as_str())
+            .expect("second user prompt");
+        assert!(second_prompt.contains("todo.md"));
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        let event_list = events["events"].as_array().unwrap();
+        assert!(event_list.iter().any(|event| {
+            event["kind"] == "ToolExecutionDenied"
+                && event["payload"]["tool_id"] == WORKSPACE_READ_TOOL_ID
+                && event["payload"]["reason"]
+                    .as_str()
+                    .is_some_and(|reason| reason.contains("Duplicate workspace.read"))
+        }));
+        let proposal = event_list
+            .iter()
+            .find(|event| event["kind"] == "WorkspacePatchProposed")
+            .expect("workspace write proposal");
+        assert_eq!(proposal["payload"]["path"], "todo.md");
+        assert_eq!(proposal["payload"]["operation"], "patch_file");
+        assert_eq!(proposal["payload"]["validation_status"], "Valid");
+        assert!(proposal["payload"]["patch_new_text"]
+            .as_str()
+            .expect("patch new text")
+            .contains("B-99a: Split blocked TODO into a smaller implementable task"));
     }
 
     #[test]

@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -85,12 +86,14 @@ function validateCommitTrace(trace, errors, contractPath) {
     'workflow_run_id',
     'artifact_sha256',
     'contract_registry_fingerprint',
+    'readiness_audit_content_sha256',
     'mode_pack_fingerprint',
     'product_dod_fingerprint'
   ]) {
     requireValue(Object.prototype.hasOwnProperty.call(trace, field), errors, `${contractPath} commit_trace must include ${field}.`);
   }
   requireValue(isNonEmptyString(trace.audited_base_commit), errors, `${contractPath} commit_trace.audited_base_commit must be the latest audited base commit.`);
+  requireValue(isNonEmptyString(trace.readiness_audit_content_sha256), errors, `${contractPath} commit_trace.readiness_audit_content_sha256 must be a non-empty string.`);
   for (const field of ['implementation_commit', 'tested_commit', 'release_tag', 'workflow_run_id', 'artifact_sha256']) {
     requireValue(trace[field] === null || isNonEmptyString(trace[field]), errors, `${contractPath} commit_trace.${field} must be null or a non-empty string.`);
   }
@@ -101,6 +104,7 @@ function validateRuntimeReleaseContract(contract, options = {}) {
   const packageJson = options.packageJson ?? {};
   const vsixPackageJson = options.vsixPackageJson ?? {};
   const audit = options.audit ?? {};
+  const readinessAuditContentSha256 = options.readinessAuditContentSha256 ?? null;
   const errors = [];
 
   requireValue(Number.isInteger(contract.schema_version) && contract.schema_version > 0, errors, `${contractPath} schema_version must be a positive integer.`);
@@ -110,6 +114,11 @@ function validateRuntimeReleaseContract(contract, options = {}) {
   requireValue(contract.runtime_release_ready === false, errors, `${contractPath} must keep runtime_release_ready false until all release evidence exists.`);
 
   validateCommitTrace(contract.commit_trace, errors, contractPath);
+  requireValue(
+    contract.commit_trace?.readiness_audit_content_sha256 === readinessAuditContentSha256,
+    errors,
+    `${contractPath} commit_trace.readiness_audit_content_sha256 must match the current readiness audit content SHA-256.`
+  );
 
   const conditions = Array.isArray(contract.release_ready_conditions) ? contract.release_ready_conditions : [];
   const conditionById = new Map(conditions.map((condition) => [condition?.id, condition]));
@@ -293,6 +302,8 @@ export function runReleaseContractGuard(options = {}) {
   const errors = [];
   const contract = options.contract ?? readJson(repoRoot, contractPath, errors);
   const audit = options.audit ?? readJson(repoRoot, auditPath, errors);
+  const auditText = options.auditText ?? readText(repoRoot, auditPath, errors);
+  const readinessAuditContentSha256 = 'sha256:' + crypto.createHash('sha256').update(auditText).digest('hex');
   const packageJson = options.packageJson ?? readJson(repoRoot, defaultPackagePath, errors);
   const vsixPackageJson = options.vsixPackageJson ?? readJson(repoRoot, defaultVsixPackagePath, errors);
   const releaseGateText = options.releaseGateText ?? readText(repoRoot, 'scripts/release-gate.mjs', errors);
@@ -305,7 +316,8 @@ export function runReleaseContractGuard(options = {}) {
     contractPath,
     packageJson,
     vsixPackageJson,
-    audit
+    audit,
+    readinessAuditContentSha256
   }));
   return { errors, contractPath };
 }
