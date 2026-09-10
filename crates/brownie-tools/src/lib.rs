@@ -4334,6 +4334,10 @@ impl ToolPlanner {
                 "workflow run id",
                 "artifact sha",
                 "artifact sha-256",
+                "origin/main",
+                "fetch latest",
+                "current branch",
+                "branch and status",
             ],
         ) {
             items.push(plan_item(
@@ -4354,6 +4358,9 @@ impl ToolPlanner {
                 "workflow run id",
                 "artifact sha",
                 "artifact sha-256",
+                "origin/main",
+                "uncommitted changes",
+                "working changes",
             ],
         ) {
             items.push(plan_item(
@@ -4792,6 +4799,24 @@ mod tests {
         assert!(ids.contains(&"verification.cargo_check"));
         assert!(!ids.contains(&"verification.cargo_fmt_check"));
     }
+
+    #[test]
+    fn planner_routes_origin_main_context_to_git_inspection() {
+        let plan = ToolPlanner::plan(ToolPlanningInput {
+            task_id: "task_1".into(),
+            goal: "Fetch latest origin/main and inspect current branch and uncommitted changes"
+                .into(),
+            mode_id: "implementer".into(),
+        });
+        let ids: Vec<_> = plan
+            .items
+            .iter()
+            .map(|item| item.tool_id.as_str())
+            .collect();
+        assert!(ids.contains(&"git.status"));
+        assert!(ids.contains(&"git.diff"));
+    }
+
     #[test]
     fn evaluator_allows_and_denies_with_runtime_gate() {
         let policy = BuiltinModeRegistry::get("orchestrator").expect("policy");
