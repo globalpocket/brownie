@@ -25,17 +25,17 @@
     "crates/brownie-runtime/src/verification_recovery.rs"
   ],
   "thresholds": {
-    "lib_rs_production_line_ceiling": 14907,
-    "lib_rs_test_line_ceiling": 52332
+    "lib_rs_production_line_ceiling": 14931,
+    "lib_rs_test_line_ceiling": 52385
   },
   "metrics": {
     "files": {
       "crates/brownie-runtime/src/lib.rs": {
-        "line_count": 67239,
+        "line_count": 67316,
         "public_items": 3,
-        "private_items": 496,
-        "production_line_count": 14907,
-        "test_line_count": 52332,
+        "private_items": 497,
+        "production_line_count": 14931,
+        "test_line_count": 52385,
         "state_mutation_mentions": 309,
         "durable_write_mentions": 229,
         "permission_decision_mentions": 185,
