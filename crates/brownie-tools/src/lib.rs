@@ -3476,7 +3476,11 @@ fn parse_markdown_tool_intent_read_requests(
     _config: &ToolIntentParserConfig,
 ) -> (Vec<AssistantToolRequest>, Vec<RejectedToolIntent>) {
     let lower = content.to_ascii_lowercase();
-    if !lower.contains("tool intent") || !lower.contains("read") {
+    let step_read_line = content.lines().any(|line| {
+        let line = line.trim_start().to_ascii_lowercase();
+        line.starts_with("step ") && line.contains(": read `")
+    });
+    if !(lower.contains("tool intent") || step_read_line) || !lower.contains("read") {
         return (Vec::new(), Vec::new());
     }
     let mut candidates = Vec::new();
@@ -3502,7 +3506,7 @@ fn parse_markdown_tool_intent_read_requests(
         return (
             vec![AssistantToolRequest {
                 tool_id: WORKSPACE_READ_TOOL_ID.to_string(),
-                reason: "Read bounded workspace file from markdown Tool Intent.".to_string(),
+                reason: "Read bounded workspace file from markdown read intent.".to_string(),
                 input: json!({ "path": candidate }),
             }],
             Vec::new(),
@@ -5083,6 +5087,17 @@ mod tests {
         assert!(parsed.rejected.is_empty());
         assert_eq!(parsed.requests[0].tool_id, WORKSPACE_READ_TOOL_ID);
         assert_eq!(parsed.requests[0].input["path"], ".github/workflows/ci.yml");
+    }
+
+    #[test]
+    fn parser_accepts_step_read_path_as_markdown_read_intent() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "Plan:\n1. Inspect the release gate.\n\nStep 1: Read `scripts/release-gate.mjs`",
+        );
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+        assert_eq!(parsed.requests[0].tool_id, WORKSPACE_READ_TOOL_ID);
+        assert_eq!(parsed.requests[0].input["path"], "scripts/release-gate.mjs");
     }
 
     #[test]
