@@ -100,8 +100,8 @@ Current synchronization note:
   for the original scope. Replace this blocker with one concrete implementation
   step, missing evidence/tool setup, or owner decision, then let Brownie continue.
 
-- [ ] E-07a: Split blocked TODO into a smaller implementable task:
-  Source TODO: E-07: Run and enforce supply-chain checks: `cargo audit --locked`,
+- [ ] E-07a-next: Split blocked TODO into a smaller implementable task:
+  Source TODO: E-07a: Split blocked TODO into a smaller implementable task:
   Brownie gathered the available context but did not produce a safe workspace.write
   for the original scope. Replace this blocker with one concrete implementation
   step, missing evidence/tool setup, or owner decision, then let Brownie continue.
