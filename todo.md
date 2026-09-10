@@ -93,8 +93,8 @@ Current synchronization note:
   Runtime tool plan. Provide a local or MCP-backed release evidence collector,
   then populate the Runtime Release Contract and readiness audit with verified
   workflow/artifact evidence.
-- [ ] E-04a: Split blocked TODO into a smaller implementable task:
-  Source TODO: E-04: Expand CI to include `cargo fmt --all --check`,
+- [ ] E-04a-next: Split blocked TODO into a smaller implementable task:
+  Source TODO: E-04a: Split blocked TODO into a smaller implementable task:
   Brownie gathered the available context but did not produce a safe workspace.write
   for the original scope. Replace this blocker with one concrete implementation
   step, missing evidence/tool setup, or owner decision, then let Brownie continue.
