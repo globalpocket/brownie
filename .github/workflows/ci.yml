@@ -50,6 +50,12 @@ jobs:
       - name: Root workspace build
         run: pnpm --workspace-root build
 
+      - name: Release gate
+        run: pnpm guard:release-gate
+
+      - name: Process-loss E2E test
+        run: pnpm test:rrp3-process-loss
+
       - name: Diagnostics guard
         run: pnpm guard:diagnostics
 
