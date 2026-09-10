@@ -2628,16 +2628,35 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                         | LedgerEventKind::ToolExecutionFailed
                 )
             });
+            let latest_workspace_write_rejection_index =
+                followup_events.iter().rposition(|event| {
+                    event.kind == LedgerEventKind::ToolIntentRejected
+                        && event
+                            .payload
+                            .as_ref()
+                            .and_then(|payload| payload.get("tool_id"))
+                            .and_then(Value::as_str)
+                            == Some(WORKSPACE_WRITE_TOOL_ID)
+                });
             let followup_read_result_available =
                 match (second_pass_response_index, latest_tool_execution_index) {
                     (Some(response_index), Some(tool_index)) => tool_index > response_index,
                     _ => false,
                 };
+            let followup_rejected_write_available = match (
+                second_pass_response_index,
+                latest_workspace_write_rejection_index,
+            ) {
+                (Some(response_index), Some(rejection_index)) => rejection_index > response_index,
+                _ => false,
+            };
             let followup_write_missing = task_goal_requires_workspace_write_proposal(&running.goal)
                 && !followup_events
                     .iter()
                     .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed);
-            if !followup_read_result_available || !followup_write_missing || followup_attempts >= 2
+            if !(followup_read_result_available || followup_rejected_write_available)
+                || !followup_write_missing
+                || followup_attempts >= 2
             {
                 break;
             }
