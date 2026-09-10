@@ -87,12 +87,13 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-03a: Resolve release evidence collection blocker before E-03 can close:
-  current implementation/tested commit is available from `git.status`, but
+- [ ] E-03a-next: Resolve release evidence collection blocker before E-03a can close:
+  Brownie confirmed the implementation/tested commit from `git.status` (`3989a0acbade50f3391403689ed30fcf5248e170`), but
   workflow run ID and artifact SHA-256 are not available through the current
   Runtime tool plan. Provide a local or MCP-backed release evidence collector,
   then populate the Runtime Release Contract and readiness audit with verified
   workflow/artifact evidence.
+
 - [ ] E-04a-next: Split blocked TODO into a smaller implementable task:
   Source TODO: E-04a: Split blocked TODO into a smaller implementable task:
   Brownie gathered the available context but did not produce a safe workspace.write
