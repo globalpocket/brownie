@@ -7,9 +7,9 @@ use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, VecDeque};
 use std::ffi::{OsStr, OsString};
-use std::fs::{self, File};
 #[cfg(unix)]
 use std::fs::OpenOptions;
+use std::fs::{self, File};
 use std::io::{Error, ErrorKind, Read};
 use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
