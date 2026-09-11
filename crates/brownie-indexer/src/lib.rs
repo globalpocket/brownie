@@ -865,6 +865,7 @@ fn sorted_directory_names(
 }
 
 #[cfg(test)]
+#[cfg_attr(not(unix), allow(dead_code))]
 fn directory_revalidation_result(
     canonical_workspace_root: &Path,
     directory: &Path,
@@ -1188,6 +1189,7 @@ mod tests {
         file.write_all(content).expect("write file");
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     fn entry<'a>(snapshot: &'a CodebaseIndexSnapshot, path: &str) -> &'a CodebaseIndexFileEntry {
         snapshot
             .entries
