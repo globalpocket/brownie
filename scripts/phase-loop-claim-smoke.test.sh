@@ -163,6 +163,84 @@ cat <<'JSON'
 JSON
 SH
 chmod +x "$fake_brownie_workspace_change"
+fake_brownie_todo_md_only_apply="$(mktemp)"
+cat > "$fake_brownie_todo_md_only_apply" <<'SH'
+#!/usr/bin/env bash
+set -eu
+cat <<'JSON'
+{
+  "automation": {
+    "schema_version": 1,
+    "status": "continuation_required",
+    "controller_action": "resume",
+    "stop_class": "continuation_required",
+    "stop_reason": "objective_proposal_candidate_ready",
+    "completed": false,
+    "blocked": false,
+    "retryable": true,
+    "terminal_failure": false,
+    "task_id": "task-todo-md-only",
+    "run_id": "run-todo-md-only",
+    "journey_id": "journey-todo-md-only",
+    "next_action": "inspect_progress_overview",
+    "next_invocation": {"command": "resume", "arguments": []}
+  },
+  "status": "objective_proposal_applied",
+  "task_id": "task-todo-md-only",
+  "run_id": "run-todo-md-only",
+  "journey_id": "journey-todo-md-only",
+  "completion_closure_status": "routed_explicit_action",
+  "next_action": "inspect_progress_overview",
+  "completed": false,
+  "blocked": false,
+  "retryable": true,
+  "terminal_failure": false,
+  "controller_action": "resume",
+  "stop_class": "continuation_required",
+  "stop_reason": "objective_proposal_candidate_ready",
+  "objective_apply_applied": true,
+  "objective_apply_apply_status": "Applied",
+  "objective_apply_path": "todo.md",
+  "next_invocation": {"command": "resume", "arguments": []}
+}
+JSON
+SH
+chmod +x "$fake_brownie_todo_md_only_apply"
+fake_brownie_no_actionable="$(mktemp)"
+cat > "$fake_brownie_no_actionable" <<'SH'
+#!/usr/bin/env bash
+set -eu
+cat <<'JSON'
+{
+  "automation": {
+    "schema_version": 1,
+    "status": "no_actionable_work",
+    "controller_action": "stop",
+    "stop_class": "no_actionable_work",
+    "stop_reason": "no_actionable_work",
+    "completed": false,
+    "blocked": false,
+    "retryable": false,
+    "terminal_failure": false,
+    "task_id": null,
+    "run_id": null,
+    "journey_id": null,
+    "next_action": "inspect_progress_overview",
+    "next_invocation": null
+  },
+  "status": "no_eligible_task",
+  "completed": false,
+  "blocked": false,
+  "retryable": false,
+  "terminal_failure": false,
+  "controller_action": "stop",
+  "stop_class": "no_actionable_work",
+  "stop_reason": "no_actionable_work",
+  "next_action": "inspect_progress_overview"
+}
+JSON
+SH
+chmod +x "$fake_brownie_no_actionable"
 fake_brownie_tracked_workspace_change="$(mktemp)"
 cat > "$fake_brownie_tracked_workspace_change" <<'SH'
 #!/usr/bin/env bash
@@ -362,6 +440,25 @@ assert "blocked external-control boundary" in status["detail"], status
 assert claim["status"] == "blocked", claim
 PY
 
+rm -f "$state_with_blocked/stop"
+printf -- '- [ ] R-09: blocked boundary task\n  Extra context that changes the queue fingerprint.\n- [ ] R-10: next unblocked task\n' > "$todo_with_blocked"
+
+PHASE_LOOP_STATE_DIR="$state_with_blocked" \
+PHASE_LOOP_PROMPT="$prompt_with_blocked" \
+PHASE_LOOP_TODO="$todo_with_blocked" \
+BROWNIE_BIN="$fake_brownie_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+
+python3 - "$state_with_blocked/todo-claims/current.json" <<'PY'
+import json
+import sys
+
+claim = json.load(open(sys.argv[1], encoding="utf-8"))
+assert claim["status"] == "in_progress", claim
+assert claim["selected_todo"].startswith("- [ ] R-10: next unblocked task"), claim
+PY
+
 assert_contains "$prompt_file" '## Active TODO Claim'
 assert_contains "$prompt_file" 'queue_generation'
 assert_contains "$prompt_file" 'B-01: durable claim task'
@@ -425,6 +522,64 @@ assert status["status"] == "no_progress", status
 assert progress["classification"] == "no_progress", progress
 assert progress["same_progress_count"] == 3, progress
 assert progress["meaningful_progress"] is False, progress
+PY
+
+state_todo_md_only="$(mktemp -d)"
+prompt_todo_md_only="$(mktemp)"
+todo_todo_md_only="$(mktemp)"
+workspace_todo_md_only="$(mktemp -d)"
+git -C "$workspace_todo_md_only" init -b main >/dev/null
+git -C "$workspace_todo_md_only" -c user.name=Brownie -c user.email=brownie@example.invalid commit --allow-empty -m init >/dev/null
+printf 'base prompt\n' > "$prompt_todo_md_only"
+printf -- '- [ ] E-08b-next: Finish E-08b after read-budget exhaustion:\n  Source TODO: E-08b: Fail closed on supply-chain scan and network failures.\n' > "$todo_todo_md_only"
+
+PHASE_LOOP_STATE_DIR="$state_todo_md_only" \
+PHASE_LOOP_PROMPT="$prompt_todo_md_only" \
+PHASE_LOOP_TODO="$todo_todo_md_only" \
+BROWNIE_BIN="$fake_brownie_todo_md_only_apply" \
+PHASE_LOOP_WORKSPACE_ROOT="$workspace_todo_md_only" \
+"$PHASE_LOOP" run-once >/dev/null
+
+python3 - "$state_todo_md_only/status.json" "$state_todo_md_only/progress-state.json" "$state_todo_md_only/todo-claims/current.json" "$todo_todo_md_only" <<'PY'
+import json
+import sys
+
+status = json.load(open(sys.argv[1], encoding="utf-8"))
+progress = json.load(open(sys.argv[2], encoding="utf-8"))
+claim = json.load(open(sys.argv[3], encoding="utf-8"))
+todo = open(sys.argv[4], encoding="utf-8").read()
+projection = progress["progress_projection"]
+assert status["status"] == "non_progress_success", status
+assert progress["classification"] == "non_progress_success", progress
+assert progress["meaningful_progress"] is False, progress
+assert projection["todo_md_only_apply_blocked_as_progress"] is True, projection
+assert projection["selected_todo_first_line_still_pending_after_todo_md_apply"] is True, projection
+assert claim["status"] == "in_progress", claim
+assert "E-08b-next" in todo, todo
+PY
+
+PHASE_LOOP_STATE_DIR="$state_todo_md_only" \
+PHASE_LOOP_PROMPT="$prompt_todo_md_only" \
+PHASE_LOOP_TODO="$todo_todo_md_only" \
+BROWNIE_BIN="$fake_brownie_no_actionable" \
+PHASE_LOOP_WORKSPACE_ROOT="$workspace_todo_md_only" \
+"$PHASE_LOOP" run-once >/dev/null
+
+python3 - "$state_todo_md_only/status.json" "$state_todo_md_only/progress-state.json" "$state_todo_md_only/todo-claims/current.json" "$todo_todo_md_only" <<'PY'
+import json
+import sys
+
+status = json.load(open(sys.argv[1], encoding="utf-8"))
+progress = json.load(open(sys.argv[2], encoding="utf-8"))
+claim = json.load(open(sys.argv[3], encoding="utf-8"))
+todo = open(sys.argv[4], encoding="utf-8").read()
+projection = progress["progress_projection"]
+assert status["status"] == "non_progress_success", status
+assert progress["classification"] == "non_progress_success", progress
+assert progress["meaningful_progress"] is False, progress
+assert projection["completed_by_no_actionable_after_apply"] is False, projection
+assert claim["status"] == "in_progress", claim
+assert "E-08b-next" in todo, todo
 PY
 
 state_workspace_progress="$(mktemp -d)"
@@ -870,5 +1025,64 @@ if kill -0 "$child_pid" 2>/dev/null; then
   kill -KILL "$child_pid" 2>/dev/null || true
   exit 1
 fi
+
+exact_workspace="$(mktemp -d)"
+git -C "$exact_workspace" init -b main >/dev/null
+git -C "$exact_workspace" config user.name Brownie
+git -C "$exact_workspace" config user.email brownie@example.invalid
+mkdir -p "$exact_workspace/docs"
+cat > "$exact_workspace/docs/golden.js" <<'EOF'
+export const evidence = {
+  status: 'failed',
+  release_blocking: true,
+  fixture_path: fixtureRoot,
+  commands,
+};
+EOF
+git -C "$exact_workspace" add docs/golden.js
+git -C "$exact_workspace" commit -m init >/dev/null
+
+fake_brownie_should_not_run="$(mktemp)"
+cat > "$fake_brownie_should_not_run" <<'SH'
+#!/usr/bin/env bash
+echo "Brownie should not run for deterministic exact-line TODO fast path" >&2
+exit 99
+SH
+chmod +x "$fake_brownie_should_not_run"
+
+state_exact_fast_path="$(mktemp -d)"
+prompt_exact_fast_path="$(mktemp)"
+todo_exact_fast_path="$(mktemp)"
+printf 'base prompt\n' > "$prompt_exact_fast_path"
+cat > "$todo_exact_fast_path" <<'EOF'
+- [ ] E-exact: Patch only `docs/golden.js`.
+  In the return object, add exactly one line
+  `  lifecycle_evidence: lifecycleEvidence,`
+  immediately after the exact line `  fixture_path: fixtureRoot,`. Do not edit
+  any other line.
+EOF
+
+PHASE_LOOP_STATE_DIR="$state_exact_fast_path" \
+PHASE_LOOP_PROMPT="$prompt_exact_fast_path" \
+PHASE_LOOP_TODO="$todo_exact_fast_path" \
+BROWNIE_BIN="$fake_brownie_should_not_run" \
+PHASE_LOOP_WORKSPACE_ROOT="$exact_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+
+python3 - "$state_exact_fast_path/status.json" "$state_exact_fast_path/todo-claims/current.json" "$todo_exact_fast_path" "$exact_workspace/docs/golden.js" <<'PY'
+import json
+import pathlib
+import sys
+
+status = json.load(open(sys.argv[1], encoding="utf-8"))
+claim = json.load(open(sys.argv[2], encoding="utf-8"))
+todo = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
+target = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8")
+assert status["status"] == "last_run_succeeded", status
+assert "deterministic exact-line TODO fast path" in status["detail"], status
+assert claim["status"] == "completed", claim
+assert "E-exact" not in todo, todo
+assert "  fixture_path: fixtureRoot,\n  lifecycle_evidence: lifecycleEvidence,\n  commands," in target, target
+PY
 
 echo "phase-loop claim smoke passed"

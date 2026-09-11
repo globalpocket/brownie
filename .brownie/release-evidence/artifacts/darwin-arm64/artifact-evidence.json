@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "evidence_id": "brownie-local-release-artifact-v1",
+  "generated_at": "2026-09-08T13:39:32.343Z",
+  "target": "darwin-arm64",
+  "platform": "darwin",
+  "arch": "arm64",
+  "hostname_hash": "sha256:6bd913bcf0f239dff6bb008fb3b4da9fe0c1949a3be6304a8a7e8eae5c956da9",
+  "artifact": {
+    "path": ".brownie/release-evidence/artifacts/darwin-arm64/brownie",
+    "sha256": "sha256:bc32e7bd1482cc312211db9c08c1cea6d9cac6893c3f06c5aaa863c8cda4bf86",
+    "bytes": 1110112,
+    "target": "darwin-arm64"
+  },
+  "build": {
+    "setup": null,
+    "command": "cargo build --release -p brownie-cli",
+    "exit_code": 0,
+    "passed": true,
+    "cargo_target": null
+  },
+  "release_ready": false
+}

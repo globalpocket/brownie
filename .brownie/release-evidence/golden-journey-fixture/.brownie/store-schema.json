@@ -1,0 +1,9 @@
+{
+  "schema_id": "brownie-runtime-durable-store",
+  "manifest_format_version": 1,
+  "store_schema_version": 2,
+  "minimum_runtime_store_schema_version": 1,
+  "state": "current",
+  "migration": "initialized-v2",
+  "layout": "runtime-store-v2-bounded-local-layout"
+}

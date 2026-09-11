@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "evidence_id": "brownie-dependency-security-license-audit-v1",
+  "phase": "RRP-8.5",
+  "repository": "globalpocket/brownie",
+  "generated_at": "2026-09-09T07:39:33.440Z",
+  "source_commit": "7c1a362b4b076751605d1df19363e720e0c18a28",
+  "release_ready": false,
+  "runtime_release_ready": false,
+  "mandatory_gate_passed": true,
+  "required_checks": [
+    "cargo_audit_locked",
+    "cargo_deny_policy",
+    "pnpm_audit_prod"
+  ],
+  "lockfiles": [
+    {
+      "path": "Cargo.lock",
+      "present": true,
+      "sha256": "sha256:56f7a42f3588349afe6ee171e5bbf204010b8325f4f2b564292e0110a3dda1de"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "present": true,
+      "sha256": "sha256:d5c341cf4b43df5f34a276f739edbe20ff1b1fff5a73f6557398869b3ae8df31"
+    }
+  ],
+  "policy": {
+    "cargo_deny_config": {
+      "path": "deny.toml",
+      "present": true,
+      "sha256": "sha256:bdad37cab647f5ed38dab7c79c69688b360e3be63842e5e8ed225d28fd36acc4"
+    }
+  },
+  "checks": [
+    {
+      "id": "cargo_audit_locked",
+      "category": "rust_vulnerability_audit",
+      "command": "cargo audit",
+      "available": true,
+      "passed": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "status": "satisfied",
+      "release_blocking": true
+    },
+    {
+      "id": "cargo_deny_policy",
+      "category": "rust_license_advisory_policy",
+      "command": "cargo deny check",
+      "available": true,
+      "passed": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "status": "satisfied",
+      "release_blocking": true
+    },
+    {
+      "id": "pnpm_audit_prod",
+      "category": "node_vulnerability_audit",
+      "command": "pnpm audit --prod --audit-level moderate --json",
+      "available": true,
+      "passed": true,
+      "exit_code": 0,
+      "timed_out": false,
+      "status": "satisfied",
+      "release_blocking": true
+    }
+  ],
+  "fail_closed_reasons": [],
+  "privacy_policy": "No raw process output, absolute path, secret, environment value, or file content is stored."
+}

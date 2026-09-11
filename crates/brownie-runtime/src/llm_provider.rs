@@ -242,6 +242,83 @@ pub(super) fn provider_kind_name(kind: &LlmProviderKind) -> &'static str {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TaskRunLlmPass {
+    First,
+    Code,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct LlmSamplingOverride {
+    temperature: Option<f64>,
+    top_p: Option<f64>,
+    top_k: Option<u32>,
+}
+
+fn env_nonempty(key: &str) -> Option<String> {
+    std::env::var(key).ok().filter(|v| !v.trim().is_empty())
+}
+
+fn phase_loop_model_override(goal: &str, pass: TaskRunLlmPass) -> Option<String> {
+    if !goal.contains("# Brownie Phase Loop Effective Prompt") {
+        return None;
+    }
+    let key = match pass {
+        TaskRunLlmPass::First => "BROWNIE_LLM_MODEL_FAST",
+        TaskRunLlmPass::Code => "BROWNIE_LLM_MODEL_CODE",
+    };
+    env_nonempty(key)
+}
+
+fn phase_loop_max_tokens_override(goal: &str, pass: TaskRunLlmPass) -> Option<u32> {
+    if !goal.contains("# Brownie Phase Loop Effective Prompt") {
+        return None;
+    }
+    let key = match pass {
+        TaskRunLlmPass::First => "BROWNIE_LLM_MAX_TOKENS_FAST",
+        TaskRunLlmPass::Code => "BROWNIE_LLM_MAX_TOKENS_CODE",
+    };
+    env_nonempty(key)
+        .and_then(|value| value.trim().parse::<u32>().ok())
+        .filter(|value| brownie_llm::validate_openai_compatible_max_tokens(*value).is_ok())
+}
+
+fn phase_loop_sampling_override(goal: &str, pass: TaskRunLlmPass) -> LlmSamplingOverride {
+    if !goal.contains("# Brownie Phase Loop Effective Prompt") {
+        return LlmSamplingOverride::default();
+    }
+    let suffix = match pass {
+        TaskRunLlmPass::First => "FAST",
+        TaskRunLlmPass::Code => "CODE",
+    };
+    let temperature = env_nonempty(&format!("BROWNIE_LLM_TEMPERATURE_{suffix}"))
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .filter(|value| brownie_llm::validate_openai_compatible_temperature(*value).is_ok());
+    let top_p = env_nonempty(&format!("BROWNIE_LLM_TOP_P_{suffix}"))
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .filter(|value| brownie_llm::validate_openai_compatible_top_p(*value).is_ok());
+    let top_k = env_nonempty(&format!("BROWNIE_LLM_TOP_K_{suffix}"))
+        .and_then(|value| value.trim().parse::<u32>().ok())
+        .filter(|value| brownie_llm::validate_openai_compatible_top_k(*value).is_ok());
+    LlmSamplingOverride {
+        temperature,
+        top_p,
+        top_k,
+    }
+}
+
+fn apply_sampling_override(config: &mut OpenAiCompatibleConfig, sampling: LlmSamplingOverride) {
+    if let Some(temperature) = sampling.temperature {
+        config.temperature = Some(temperature);
+    }
+    if let Some(top_p) = sampling.top_p {
+        config.top_p = Some(top_p);
+    }
+    if let Some(top_k) = sampling.top_k {
+        config.top_k = Some(top_k);
+    }
+}
+
 pub fn llm_provider_status_from_workspace(
     workspace_root: &std::path::Path,
 ) -> Result<RuntimeLlmProviderStatus, String> {
@@ -448,15 +525,42 @@ fn status_from_config(config: &BrownieConfig) -> Result<RuntimeLlmProviderStatus
     clippy::result_large_err,
     reason = "provider admission failures carry bounded status evidence for runtime ledgering"
 )]
-pub fn llm_provider_from_workspace_for_task_run(
+pub(super) fn llm_provider_from_workspace_for_task_run_pass(
     workspace_root: &std::path::Path,
+    goal: &str,
+    pass: TaskRunLlmPass,
+) -> Result<Box<dyn LlmProvider>, RuntimeLlmProviderError> {
+    let model_override = phase_loop_model_override(goal, pass);
+    let max_tokens_override = phase_loop_max_tokens_override(goal, pass);
+    let sampling_override = phase_loop_sampling_override(goal, pass);
+    llm_provider_from_workspace_for_task_run_with_model_override(
+        workspace_root,
+        model_override.as_deref(),
+        max_tokens_override,
+        sampling_override,
+    )
+}
+
+#[expect(
+    clippy::result_large_err,
+    reason = "provider admission failures carry bounded status evidence for runtime ledgering"
+)]
+fn llm_provider_from_workspace_for_task_run_with_model_override(
+    workspace_root: &std::path::Path,
+    model_override: Option<&str>,
+    max_tokens_override: Option<u32>,
+    sampling_override: LlmSamplingOverride,
 ) -> Result<Box<dyn LlmProvider>, RuntimeLlmProviderError> {
     if std::env::var("BROWNIE_LLM_PROVIDER")
         .ok()
         .filter(|v| !v.trim().is_empty())
         .is_some()
     {
-        return llm_provider_from_env_for_task_run();
+        return llm_provider_from_env_for_task_run_with_model_override(
+            model_override,
+            max_tokens_override,
+            sampling_override,
+        );
     }
     let config = RuntimeConfigLoader::load_from_workspace(workspace_root).map_err(|e| {
         RuntimeLlmProviderError {
@@ -514,15 +618,19 @@ pub fn llm_provider_from_workspace_for_task_run(
             .clone()
             .unwrap_or_else(|| "BROWNIE_LLM_API_KEY".to_string());
         let api_key = std::env::var(&api_key_env).unwrap_or_default();
-        Ok(Box::new(OpenAiCompatibleLlmProvider::new(
-            OpenAiCompatibleConfig {
-                base_url: base_url.clone(),
-                model: model.clone(),
-                api_key_env,
-                max_tokens: max_tokens.unwrap_or(brownie_llm::OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS),
-            },
-            api_key,
-        )))
+        let mut config = OpenAiCompatibleConfig {
+            base_url: base_url.clone(),
+            model: model_override.unwrap_or(model).to_string(),
+            api_key_env,
+            max_tokens: max_tokens_override.unwrap_or_else(|| {
+                max_tokens.unwrap_or(brownie_llm::OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS)
+            }),
+            temperature: Some(0.0),
+            top_p: None,
+            top_k: None,
+        };
+        apply_sampling_override(&mut config, sampling_override);
+        Ok(Box::new(OpenAiCompatibleLlmProvider::new(config, api_key)))
     } else {
         Ok(Box::new(FakeLlmProvider))
     }
@@ -532,11 +640,14 @@ pub fn llm_provider_from_workspace_for_task_run(
     clippy::result_large_err,
     reason = "provider admission failures carry bounded status evidence for runtime ledgering"
 )]
-pub fn llm_provider_from_env_for_task_run() -> Result<Box<dyn LlmProvider>, RuntimeLlmProviderError>
-{
+fn llm_provider_from_env_for_task_run_with_model_override(
+    model_override: Option<&str>,
+    max_tokens_override: Option<u32>,
+    sampling_override: LlmSamplingOverride,
+) -> Result<Box<dyn LlmProvider>, RuntimeLlmProviderError> {
     match std::env::var("BROWNIE_LLM_PROVIDER").ok().as_deref() {
         Some("openai-compatible") => match OpenAiCompatibleLlmProvider::from_env() {
-            OpenAiCompatibleConfigFromEnv::Enabled(config) => {
+            OpenAiCompatibleConfigFromEnv::Enabled(mut config) => {
                 let selection = llm_provider_status_from_env();
                 if !selection.strict {
                     return Ok(Box::new(FakeLlmProvider));
@@ -548,6 +659,13 @@ pub fn llm_provider_from_env_for_task_run() -> Result<Box<dyn LlmProvider>, Runt
                     });
                 }
                 let api_key = std::env::var(&config.api_key_env).unwrap_or_default();
+                if let Some(model_override) = model_override {
+                    config.model = model_override.to_string();
+                }
+                if let Some(max_tokens_override) = max_tokens_override {
+                    config.max_tokens = max_tokens_override;
+                }
+                apply_sampling_override(&mut config, sampling_override);
                 Ok(Box::new(OpenAiCompatibleLlmProvider::new(config, api_key)))
             }
             OpenAiCompatibleConfigFromEnv::Disabled(status) => {
@@ -1050,6 +1168,9 @@ fn openai_provider_from_workspace_for_health(
             model: model.clone(),
             api_key_env,
             max_tokens: max_tokens.unwrap_or(brownie_llm::OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS),
+            temperature: Some(0.0),
+            top_p: None,
+            top_k: None,
         },
         api_key,
     ))

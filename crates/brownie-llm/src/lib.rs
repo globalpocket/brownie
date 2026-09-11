@@ -292,15 +292,18 @@ pub trait LlmProvider {
     ) -> anyhow::Result<LlmResponse>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OpenAiCompatibleConfig {
     pub base_url: String,
     pub model: String,
     pub api_key_env: String,
     pub max_tokens: u32,
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub top_k: Option<u32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum OpenAiCompatibleConfigFromEnv {
     Enabled(OpenAiCompatibleConfig),
     Disabled(LlmProviderStatus),
@@ -317,6 +320,57 @@ pub fn validate_openai_compatible_max_tokens(max_tokens: u32) -> Result<(), Stri
         ));
     }
     Ok(())
+}
+
+pub fn validate_openai_compatible_temperature(temperature: f64) -> Result<(), String> {
+    if temperature.is_finite() && (0.0..=2.0).contains(&temperature) {
+        return Ok(());
+    }
+    Err("temperature must be between 0 and 2".to_string())
+}
+
+pub fn validate_openai_compatible_top_p(top_p: f64) -> Result<(), String> {
+    if top_p.is_finite() && (0.0..=1.0).contains(&top_p) {
+        return Ok(());
+    }
+    Err("top_p must be between 0 and 1".to_string())
+}
+
+pub fn validate_openai_compatible_top_k(top_k: u32) -> Result<(), String> {
+    if top_k <= 1_000 {
+        return Ok(());
+    }
+    Err("top_k must be between 0 and 1000".to_string())
+}
+
+fn parse_optional_f64_env(
+    key: &str,
+    validate: fn(f64) -> Result<(), String>,
+) -> Result<Option<f64>, String> {
+    let Some(value) = env::var(key).ok().filter(|v| !v.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let parsed = value
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| format!("invalid {key}"))?;
+    validate(parsed).map_err(|_| format!("invalid {key}"))?;
+    Ok(Some(parsed))
+}
+
+fn parse_optional_u32_env(
+    key: &str,
+    validate: fn(u32) -> Result<(), String>,
+) -> Result<Option<u32>, String> {
+    let Some(value) = env::var(key).ok().filter(|v| !v.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let parsed = value
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| format!("invalid {key}"))?;
+    validate(parsed).map_err(|_| format!("invalid {key}"))?;
+    Ok(Some(parsed))
 }
 
 pub struct FakeLlm;
@@ -759,6 +813,47 @@ impl OpenAiCompatibleLlmProvider {
             },
             None => OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS,
         };
+        let temperature = match parse_optional_f64_env(
+            "BROWNIE_LLM_TEMPERATURE",
+            validate_openai_compatible_temperature,
+        ) {
+            Ok(value) => value,
+            Err(reason) => {
+                return OpenAiCompatibleConfigFromEnv::Disabled(LlmProviderStatus {
+                    provider: LlmProviderKind::OpenAiCompatible,
+                    enabled: false,
+                    model: model.unwrap_or_default(),
+                    base_url: base_url.map(|v| redact_secret(&v)),
+                    reason: Some(reason),
+                });
+            }
+        };
+        let top_p =
+            match parse_optional_f64_env("BROWNIE_LLM_TOP_P", validate_openai_compatible_top_p) {
+                Ok(value) => value,
+                Err(reason) => {
+                    return OpenAiCompatibleConfigFromEnv::Disabled(LlmProviderStatus {
+                        provider: LlmProviderKind::OpenAiCompatible,
+                        enabled: false,
+                        model: model.unwrap_or_default(),
+                        base_url: base_url.map(|v| redact_secret(&v)),
+                        reason: Some(reason),
+                    });
+                }
+            };
+        let top_k =
+            match parse_optional_u32_env("BROWNIE_LLM_TOP_K", validate_openai_compatible_top_k) {
+                Ok(value) => value,
+                Err(reason) => {
+                    return OpenAiCompatibleConfigFromEnv::Disabled(LlmProviderStatus {
+                        provider: LlmProviderKind::OpenAiCompatible,
+                        enabled: false,
+                        model: model.unwrap_or_default(),
+                        base_url: base_url.map(|v| redact_secret(&v)),
+                        reason: Some(reason),
+                    });
+                }
+            };
 
         let mut missing = Vec::new();
         if base_url.is_none() {
@@ -798,6 +893,9 @@ impl OpenAiCompatibleLlmProvider {
             model: model.expect("checked"),
             api_key_env,
             max_tokens,
+            temperature: Some(temperature.unwrap_or(0.0)),
+            top_p,
+            top_k,
         })
     }
 
@@ -896,16 +994,23 @@ impl LlmProvider for OpenAiCompatibleLlmProvider {
                 redact_secret(&e.to_string())
             )
         })?;
+        let mut body = serde_json::json!({
+            "model": request.model,
+            "messages": request.messages,
+            "max_tokens": self.config.max_tokens,
+            "temperature": self.config.temperature.unwrap_or(0.0),
+            "stream": false,
+        });
+        if let Some(top_p) = self.config.top_p {
+            body["top_p"] = serde_json::json!(top_p);
+        }
+        if let Some(top_k) = self.config.top_k {
+            body["top_k"] = serde_json::json!(top_k);
+        }
         let response = client
             .post(url)
             .bearer_auth(&self.api_key)
-            .json(&serde_json::json!({
-                "model": request.model,
-                "messages": request.messages,
-                "max_tokens": self.config.max_tokens,
-                "temperature": 0,
-                "stream": false,
-            }))
+            .json(&body)
             .send()
             .map_err(|e| {
                 anyhow!(
@@ -1105,6 +1210,9 @@ mod tests {
             "BROWNIE_LLM_API_KEY_ENV",
             "BROWNIE_LLM_API_KEY",
             "BROWNIE_LLM_MAX_TOKENS",
+            "BROWNIE_LLM_TEMPERATURE",
+            "BROWNIE_LLM_TOP_P",
+            "BROWNIE_LLM_TOP_K",
         ] {
             env::remove_var(key);
         }
@@ -1319,6 +1427,9 @@ mod tests {
         match OpenAiCompatibleLlmProvider::from_env() {
             OpenAiCompatibleConfigFromEnv::Enabled(config) => {
                 assert_eq!(config.max_tokens, OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS);
+                assert_eq!(config.temperature, Some(0.0));
+                assert_eq!(config.top_p, None);
+                assert_eq!(config.top_k, None);
             }
             OpenAiCompatibleConfigFromEnv::Disabled(status) => {
                 panic!("expected enabled config: {:?}", status.reason)
@@ -1326,9 +1437,15 @@ mod tests {
         }
 
         env::set_var("BROWNIE_LLM_MAX_TOKENS", "512");
+        env::set_var("BROWNIE_LLM_TEMPERATURE", "0.1");
+        env::set_var("BROWNIE_LLM_TOP_P", "0.8");
+        env::set_var("BROWNIE_LLM_TOP_K", "20");
         match OpenAiCompatibleLlmProvider::from_env() {
             OpenAiCompatibleConfigFromEnv::Enabled(config) => {
                 assert_eq!(config.max_tokens, 512);
+                assert_eq!(config.temperature, Some(0.1));
+                assert_eq!(config.top_p, Some(0.8));
+                assert_eq!(config.top_k, Some(20));
             }
             OpenAiCompatibleConfigFromEnv::Disabled(status) => {
                 panic!("expected enabled config: {:?}", status.reason)
@@ -1406,6 +1523,9 @@ mod tests {
                 model: "qwen35-MTP".into(),
                 api_key_env: "BROWNIE_LLM_API_KEY".into(),
                 max_tokens: 512,
+                temperature: Some(0.0),
+                top_p: None,
+                top_k: None,
             },
             "local".into(),
         );
@@ -1478,6 +1598,9 @@ mod tests {
                 model: "qwen35-MTP".to_string(),
                 api_key_env: "BROWNIE_LLM_API_KEY".to_string(),
                 max_tokens: 4_096,
+                temperature: Some(0.0),
+                top_p: Some(0.8),
+                top_k: Some(20),
             },
             "local".to_string(),
         );
@@ -1501,7 +1624,9 @@ mod tests {
         assert_eq!(body["messages"][0]["role"], "user");
         assert_eq!(body["messages"][0]["content"], "Hello");
         assert_eq!(body["max_tokens"], 4_096);
-        assert_eq!(body["temperature"], 0);
+        assert_eq!(body["temperature"], 0.0);
+        assert_eq!(body["top_p"], 0.8);
+        assert_eq!(body["top_k"], 20);
         assert_eq!(body["stream"], false);
         server.join().unwrap();
     }

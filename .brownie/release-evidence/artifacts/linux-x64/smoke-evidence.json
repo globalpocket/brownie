@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "evidence_id": "brownie-linux-x64-docker-release-smoke-v1",
+  "generated_at": "2026-09-08T13:39:35.824Z",
+  "target": "linux-x64",
+  "artifact_path": ".brownie/release-evidence/artifacts/linux-x64/brownie",
+  "artifact_sha256": "sha256:e58a5587f8f43526ff3e06ef0c9ec5368fc25d1a70f2c5482c29ea065137f7b8",
+  "container_platform": "linux/amd64",
+  "smoke_image": "alpine:3.20",
+  "status": "satisfied",
+  "commands": [
+    {
+      "args": [
+        "--version"
+      ],
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "args": [
+        "help",
+        "run"
+      ],
+      "exit_code": 0,
+      "passed": true
+    }
+  ],
+  "release_ready": false
+}

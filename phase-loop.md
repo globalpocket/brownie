@@ -19,13 +19,15 @@ selected TODO, the next assistant tool intent must do one of these two things:
    patch; or
 2. emit a bounded `workspace.write` proposal that rewrites the selected
    `todo.md` item into smaller concrete follow-up TODOs naming exact files,
-   missing evidence, or owner decisions.
+   missing evidence, or owner decisions, but only when the selected TODO does
+   not already name a concrete non-`todo.md` implementation file.
 
 Do not answer with only an implementation plan after target files have already
 been read. Do not request another broad discovery read such as `.`, a
 directory, or a repeated `package.json`/workflow read. If the target file was
-read and the patch is clear, write the patch. If the patch is not clear, write
-the TODO decomposition patch.
+read and the patch is clear, write the patch. If the selected TODO names a
+concrete implementation file and the patch is not clear, fail closed instead of
+rewriting `todo.md`.
 
 ## Authority
 
@@ -193,10 +195,11 @@ end a workspace-edit TODO with read-only discovery only.
 When the prompt context already contains `Tool Execution` results for the same
 exact files needed by the selected TODO, the next tool intent must not repeat
 the same `workspace.read` requests. In that read-followup turn, either emit one
-bounded `workspace.write` proposal for the smallest safe patch or patch
-`todo.md` with a narrower blocker/follow-up TODO that names the exact missing
-file, value, or validation command. Repeating read-only tool intent after the
-same files were already read is no progress and should stop rather than loop.
+bounded `workspace.write` proposal for the smallest safe patch or, only for
+genuinely broad TODOs without a concrete target file, patch `todo.md` with a
+narrower blocker/follow-up TODO that names the exact missing file, value, or
+validation command. Repeating read-only tool intent after the same files were
+already read is no progress and should stop rather than loop.
 
 In `implementer` mode, do not request `subtask.spawn` or any tool that the Tool
 Plan marks as denied. Broad TODO decomposition is not a subtask spawn; express
@@ -212,11 +215,21 @@ expected patch must make missing local supply-chain tools fail closed as
 blockers rather than successful release evidence.
 
 When implementation requires editing an existing file, prefer a small
-`workspace.write` `patch_file` proposal over replacing the whole file. The tool
-intent must use the Runtime schema exactly:
+`workspace.write` `patch_file` proposal over replacing the whole file. Use the
+shortest unique complete line or small complete-line block as `old_text`, and
+copy that text exactly from the completed `workspace.read` result. Do not end
+`old_text` in the middle of a word; include the complete line or surrounding
+complete-line context. The tool intent must use the Runtime schema exactly:
+
+If the selected TODO names an exact line replacement, do not synthesize a wider
+block, inferred neighboring fields, repeated evidence fields, or placeholder
+identifiers. Use that exact line as `old_text` and only the requested
+replacement line as `new_text`, including final newlines. For an exact
+line-insertion TODO, use the named adjacent line plus the new line only. A
+single-line TODO should normally produce a single-line `old_text`.
 
 ```brownie-tool-intent
-{"tool_requests":[{"tool_id":"workspace.read","reason":"Read the target file before patching.","input":{"path":"path/to/file"}},{"tool_id":"workspace.write","reason":"Patch one bounded hunk.","input":{"path":"path/to/file","operation":"patch_file","old_text":"exact existing text","new_text":"replacement text"}}]}
+{"tool_requests":[{"tool_id":"workspace.read","reason":"Read the target file before patching.","input":{"path":"path/to/file"}},{"tool_id":"workspace.write","reason":"Patch one bounded hunk.","input":{"path":"path/to/file","operation":"patch_file","old_text":"one shortest unique complete line\n","new_text":"one shortest unique complete line\nnew line\n"}}]}
 ```
 
 Do not nest `tool_requests` inside another `tool_requests` item. The top-level

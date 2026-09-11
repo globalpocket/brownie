@@ -21,7 +21,7 @@
     "workflow_run_id": null,
     "artifact_sha256": null,
     "contract_registry_fingerprint": "sha256:4250fb47242f2bdc4ac26ce1d0cf8ecedbd27627eb9e3117acc82e3719eb934d",
-    "readiness_audit_content_sha256": "sha256:5e0fdd99c070938727ea2d72b440c569f353293c3bf09453752848dd918c8431",
+    "readiness_audit_content_sha256": "sha256:261661066d15f911a2772e104371eb6831ce318966bd754f985da3b849c22f46",
     "mode_pack_fingerprint": null,
     "product_dod_fingerprint": null
   },
@@ -340,6 +340,18 @@
         "command": "pnpm --workspace-root guard:supply-chain-artifact-evidence:test"
       },
       {
+        "id": "runtime_operational_evidence_generate",
+        "command": "pnpm --workspace-root release:runtime-operational-evidence"
+      },
+      {
+        "id": "runtime_operational_evidence_guard",
+        "command": "pnpm --workspace-root guard:runtime-operational-evidence"
+      },
+      {
+        "id": "runtime_operational_evidence_guard_test",
+        "command": "pnpm --workspace-root guard:runtime-operational-evidence:test"
+      },
+      {
         "id": "modepack_distribution_trust_guard",
         "command": "pnpm --workspace-root guard:modepack-distribution-trust"
       },
@@ -494,6 +506,22 @@
       "Missing evidence section is a guard failure.",
       "Missing artifacts, smoke tests, checksums, SBOM, provenance, vulnerability/license audit, or signature/integrity proof keeps runtime_release_ready=false.",
       "Generated evidence uses repository-relative paths only and stores no raw prompt, provider response, file content, absolute/canonical path, secret, environment value, executable content, or process output."
+    ]
+  },
+  "runtime_operational_evidence": {
+    "contract_id": "brownie-runtime-operational-evidence-v1",
+    "generator_script": "pnpm --workspace-root release:runtime-operational-evidence",
+    "guard_script": "pnpm --workspace-root guard:runtime-operational-evidence",
+    "default_path": ".brownie/release-evidence/runtime-operational-evidence.json",
+    "required_sections": [
+      "artifact_lifecycle",
+      "golden_journey_fixture",
+      "soak_test"
+    ],
+    "fail_closed_policy": [
+      "Missing runtime operational evidence section is a guard failure.",
+      "Missing artifacts, failed artifact install/update/rollback/uninstall smoke, failed Golden Journey fixture, or failed soak evidence keeps runtime_release_ready=false.",
+      "Generated runtime operational evidence stores command identifiers, exit codes, bounded paths, counts, hashes, and statuses only; it does not store raw process output, prompt content, provider response, secret/environment values, or executable content."
     ]
   },
   "dependency_security_license_audit": {

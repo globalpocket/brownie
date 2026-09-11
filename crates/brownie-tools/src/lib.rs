@@ -3192,7 +3192,12 @@ impl ToolIntentParser {
             };
         }
         summary.accepted_blocks = 1;
-        let value: Value = match serde_json::from_str(json_block.trim()) {
+        let trimmed_json_block = json_block.trim();
+        let value: Value = match serde_json::from_str(trimmed_json_block)
+            .or_else(|_| parse_tool_requests_with_missing_array_close(trimmed_json_block))
+            .or_else(|_| parse_tool_requests_with_extra_trailing_array_close(trimmed_json_block))
+            .or_else(|_| parse_tool_requests_with_missing_input_object_close(trimmed_json_block))
+        {
             Ok(value) => value,
             Err(_) => {
                 rejected.push(rejection(
@@ -3434,6 +3439,66 @@ impl ToolIntentParser {
             summary,
         }
     }
+}
+
+fn parse_tool_requests_with_missing_array_close(
+    json_block: &str,
+) -> Result<Value, serde_json::Error> {
+    if !json_block.contains("\"tool_requests\"")
+        || !json_block.contains("\"tool_requests\":[")
+        || !json_block.ends_with('}')
+    {
+        return serde_json::from_str(json_block);
+    }
+    let Some(last_brace) = json_block.rfind('}') else {
+        return serde_json::from_str(json_block);
+    };
+    let repaired = format!(
+        "{}]{}",
+        &json_block[..last_brace],
+        &json_block[last_brace..]
+    );
+    serde_json::from_str(&repaired)
+}
+
+fn parse_tool_requests_with_extra_trailing_array_close(
+    json_block: &str,
+) -> Result<Value, serde_json::Error> {
+    if !json_block.contains("\"tool_requests\"")
+        || !json_block.contains("\"tool_requests\":[")
+        || !json_block.ends_with("}]}]}")
+    {
+        return serde_json::from_str(json_block);
+    }
+    let suffix_start = json_block.len().saturating_sub("}]}]}".len());
+    let prefix = &json_block[..suffix_start];
+    let repaired = if prefix.ends_with('}') {
+        // Common drift: a valid {"tool_requests":[{...}]} block followed by an
+        // extra trailing ]}.
+        json_block[..json_block.len().saturating_sub(2)].to_string()
+    } else {
+        // Common drift: the request object closing brace is emitted as ] and
+        // the block ends as ..."}]}]}. Restore the request object close.
+        format!("{prefix}}}}}]}}")
+    };
+    serde_json::from_str(&repaired)
+}
+
+fn parse_tool_requests_with_missing_input_object_close(
+    json_block: &str,
+) -> Result<Value, serde_json::Error> {
+    if !json_block.contains("\"tool_requests\"")
+        || !json_block.contains("\"tool_requests\":[")
+        || !json_block.ends_with("]}")
+    {
+        return serde_json::from_str(json_block);
+    }
+    let repaired = format!(
+        "{}{}",
+        &json_block[..json_block.len().saturating_sub(2)],
+        "}]}"
+    );
+    serde_json::from_str(&repaired)
 }
 
 fn is_dynamic_mcp_tool_candidate(tool_id: &str) -> bool {
@@ -4152,10 +4217,11 @@ fn extract_json_tool_request_blocks(content: &str) -> Vec<&str> {
             .unwrap_or(after)
             .strip_prefix('\n')
             .unwrap_or(after);
-        let Some(end) = after.find("```") else {
-            break;
+        let (block, next_rest) = if let Some(end) = after.find("```") {
+            (&after[..end], &after[end + 3..])
+        } else {
+            (after, "")
         };
-        let block = &after[..end];
         if serde_json::from_str::<Value>(block.trim())
             .ok()
             .and_then(|value| {
@@ -4167,7 +4233,7 @@ fn extract_json_tool_request_blocks(content: &str) -> Vec<&str> {
         {
             blocks.push(block);
         }
-        rest = &after[end + 3..];
+        rest = next_rest;
     }
     blocks
 }
@@ -4860,6 +4926,45 @@ mod tests {
     fn parser_accepts_json_fenced_tool_requests_as_fallback() {
         let parsed = ToolIntentParser::parse_assistant_content("x\n```json\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\",\"input\":{\"path\":\"README.md\"}}]}\n```");
         assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+    }
+
+    #[test]
+    fn parser_accepts_unclosed_json_fenced_tool_requests_as_fallback() {
+        let parsed = ToolIntentParser::parse_assistant_content("brownie-tool-intent\n```json\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\",\"input\":{\"path\":\"README.md\"}}]}");
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+    }
+
+    #[test]
+    fn parser_repairs_missing_tool_requests_array_close() {
+        let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\",\"input\":{\"path\":\"README.md\"}}}\n```");
+        assert_eq!(parsed.requests.len(), 1);
+        assert_eq!(parsed.requests[0].tool_id, "workspace.read");
+        assert!(parsed.rejected.is_empty());
+    }
+
+    #[test]
+    fn parser_repairs_extra_trailing_tool_requests_array_close() {
+        let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\",\"input\":{\"path\":\"README.md\"}}]}]}\n```");
+        assert_eq!(parsed.requests.len(), 1);
+        assert_eq!(parsed.requests[0].tool_id, "workspace.read");
+        assert!(parsed.rejected.is_empty());
+    }
+
+    #[test]
+    fn parser_repairs_tool_request_object_close_emitted_as_array_close() {
+        let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Patch docs.\",\"input\":{\"path\":\"README.md\",\"operation\":\"patch_file\",\"old_text\":\"# Title\",\"new_text\":\"# Title\\n\\nnew line\"}]}]}\n```");
+        assert_eq!(parsed.requests.len(), 1);
+        assert_eq!(parsed.requests[0].tool_id, "workspace.write");
+        assert!(parsed.rejected.is_empty());
+    }
+
+    #[test]
+    fn parser_repairs_missing_input_object_close_before_tool_requests_array_close() {
+        let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Patch docs.\",\"input\":{\"path\":\"README.md\",\"operation\":\"patch_file\",\"old_text\":\"# Title\",\"new_text\":\"# Title\\n\\nnew line\"}]}\n```");
+        assert_eq!(parsed.requests.len(), 1);
+        assert_eq!(parsed.requests[0].tool_id, "workspace.write");
         assert!(parsed.rejected.is_empty());
     }
 

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "evidence_id": "brownie-local-release-artifact-v1",
+  "generated_at": "2026-09-08T13:39:33.805Z",
+  "target": "linux-arm64",
+  "platform": "linux",
+  "arch": "arm64",
+  "hostname_hash": "sha256:d073381e4276088a0192603e805c803f04785b63dcc7a3562e81d690cc3a6101",
+  "artifact": {
+    "path": ".brownie/release-evidence/artifacts/linux-arm64/brownie",
+    "sha256": "sha256:a5f342724e4f7b7ae3e9d4c6f19793664abdce1a67a9043efa1b7fa0b61850a4",
+    "bytes": 1238040,
+    "target": "linux-arm64"
+  },
+  "build": {
+    "command": "cargo build --release -p brownie-cli",
+    "exit_code": 0,
+    "passed": true
+  },
+  "release_ready": false
+}

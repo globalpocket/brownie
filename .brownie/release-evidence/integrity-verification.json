@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "evidence_id": "brownie-release-integrity-verification-v1",
+  "generated_at": "2026-09-08T04:30:02.659Z",
+  "repository": "globalpocket/brownie",
+  "checksum_path": ".brownie/release-evidence/SHA256SUMS",
+  "checksum_file_sha256": "sha256:f8803d55e85aec4d45704e92f02d12e09b1bd7e8b6ec7a66798f64fa3b54ed6e",
+  "verified_entries": [
+    {
+      "path": ".brownie/release-evidence/brownie-runtime-provenance.json",
+      "expected_sha256": "sha256:a5c424934d58ffde049ec657b2a12e479e25be1335153559531139a23a666c46",
+      "actual_sha256": "sha256:a5c424934d58ffde049ec657b2a12e479e25be1335153559531139a23a666c46",
+      "status": "satisfied"
+    },
+    {
+      "path": ".brownie/release-evidence/brownie-runtime-sbom.json",
+      "expected_sha256": "sha256:cecef688a08ef61c70bc98a3a28ebf003ed69c5e7ccf70ecf21812352f8dcd45",
+      "actual_sha256": "sha256:cecef688a08ef61c70bc98a3a28ebf003ed69c5e7ccf70ecf21812352f8dcd45",
+      "status": "satisfied"
+    }
+  ],
+  "status": "satisfied",
+  "release_ready": false,
+  "runtime_release_ready": false,
+  "owner_approval_required": true,
+  "note": "Checksum verification proves local file integrity against SHA256SUMS only; it is not a signature and does not replace owner-approved signing or integrity authority.",
+  "fail_closed_reasons": []
+}

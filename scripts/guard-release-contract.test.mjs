@@ -104,6 +104,11 @@ function validContract(overrides = {}) {
         'provenance'
       ]
     },
+    runtime_operational_evidence: {
+      contract_id: 'brownie-runtime-operational-evidence-v1',
+      default_path: '.brownie/release-evidence/runtime-operational-evidence.json',
+      required_sections: ['artifact_lifecycle', 'golden_journey_fixture', 'soak_test']
+    },
     dependency_security_license_audit: {
       contract_id: 'brownie-dependency-security-license-audit-v1',
       default_path: '.brownie/release-evidence/dependency-security-license-audit.json',
@@ -153,6 +158,7 @@ const validPackageJson = {
     'release:vm-bootstrap': 'node scripts/bootstrap-release-vms.mjs',
     'release:vm-image': 'node scripts/manage-release-vm-images.mjs',
     'release:supply-chain-artifact-evidence': 'node scripts/release-supply-chain-artifact-evidence.mjs',
+    'release:runtime-operational-evidence': 'node scripts/release-runtime-operational-evidence.mjs',
     'release:integrity-verify': 'node scripts/release-integrity-verify.mjs',
     'release:owner-governance-evidence': 'node scripts/release-owner-governance-evidence.mjs',
     'release:owner-governance-evidence:test': 'node --test scripts/release-owner-governance-evidence.test.mjs',
@@ -164,6 +170,8 @@ const validPackageJson = {
       'node --test scripts/guard-dependency-security-license-audit.test.mjs',
     'guard:supply-chain-artifact-evidence': 'node scripts/guard-supply-chain-artifact-evidence.mjs',
     'guard:supply-chain-artifact-evidence:test': 'node --test scripts/guard-supply-chain-artifact-evidence.test.mjs',
+    'guard:runtime-operational-evidence': 'node scripts/guard-runtime-operational-evidence.mjs',
+    'guard:runtime-operational-evidence:test': 'node --test scripts/guard-runtime-operational-evidence.test.mjs',
     'guard:modepack-distribution-trust': 'node scripts/guard-modepack-distribution-trust.mjs',
     'guard:modepack-distribution-trust:test': 'node --test scripts/guard-modepack-distribution-trust.test.mjs',
     'guard:ledger-contract-single-source': 'node scripts/guard-ledger-contract-single-source.mjs',
@@ -177,7 +185,7 @@ const validPackageJson = {
 
 const validVsixPackageJson = {
   scripts: {
-    check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root release:gate -- --dry-run && pnpm --workspace-root release:dependency-security-license-audit:test && pnpm --workspace-root guard:dependency-security-license-audit && pnpm --workspace-root guard:dependency-security-license-audit:test && pnpm --workspace-root guard:local-release-targets && pnpm --workspace-root guard:supply-chain-artifact-evidence && pnpm --workspace-root guard:supply-chain-artifact-evidence:test && pnpm --workspace-root guard:modepack-distribution-trust && pnpm --workspace-root guard:modepack-distribution-trust:test && pnpm --workspace-root guard:ledger-contract-single-source && pnpm --workspace-root guard:ledger-contract-single-source:test && pnpm --workspace-root guard:historical-ledger-fixtures && pnpm --workspace-root guard:historical-ledger-fixtures:test && pnpm --workspace-root guard:owner-governance-evidence && pnpm --workspace-root guard:owner-governance-evidence:test && pnpm --workspace-root release:owner-governance-evidence:test'
+    check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root release:gate -- --dry-run && pnpm --workspace-root release:dependency-security-license-audit:test && pnpm --workspace-root guard:dependency-security-license-audit && pnpm --workspace-root guard:dependency-security-license-audit:test && pnpm --workspace-root guard:local-release-targets && pnpm --workspace-root guard:supply-chain-artifact-evidence && pnpm --workspace-root guard:supply-chain-artifact-evidence:test && pnpm --workspace-root guard:runtime-operational-evidence && pnpm --workspace-root guard:runtime-operational-evidence:test && pnpm --workspace-root guard:modepack-distribution-trust && pnpm --workspace-root guard:modepack-distribution-trust:test && pnpm --workspace-root guard:ledger-contract-single-source && pnpm --workspace-root guard:ledger-contract-single-source:test && pnpm --workspace-root guard:historical-ledger-fixtures && pnpm --workspace-root guard:historical-ledger-fixtures:test && pnpm --workspace-root guard:owner-governance-evidence && pnpm --workspace-root guard:owner-governance-evidence:test && pnpm --workspace-root release:owner-governance-evidence:test'
   }
 };
 
@@ -239,6 +247,7 @@ test('rejects missing release gate package scripts', () => {
   assert(errors.some((error) => error.includes('release:vm-bootstrap')));
   assert(errors.some((error) => error.includes('release:vm-image')));
   assert(errors.some((error) => error.includes('release:supply-chain-artifact-evidence')));
+  assert(errors.some((error) => error.includes('release:runtime-operational-evidence')));
   assert(errors.some((error) => error.includes('guard:local-release-targets')));
   assert(errors.some((error) => error.includes('guard:release-contract')));
   assert(errors.some((error) => error.includes('guard:release-contract:test')));
@@ -246,6 +255,8 @@ test('rejects missing release gate package scripts', () => {
   assert(errors.some((error) => error.includes('guard:dependency-security-license-audit:test')));
   assert(errors.some((error) => error.includes('guard:supply-chain-artifact-evidence')));
   assert(errors.some((error) => error.includes('guard:supply-chain-artifact-evidence:test')));
+  assert(errors.some((error) => error.includes('guard:runtime-operational-evidence')));
+  assert(errors.some((error) => error.includes('guard:runtime-operational-evidence:test')));
   assert(errors.some((error) => error.includes('guard:modepack-distribution-trust')));
   assert(errors.some((error) => error.includes('guard:modepack-distribution-trust:test')));
 });

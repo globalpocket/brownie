@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "evidence_id": "brownie-local-release-artifact-v1",
+  "generated_at": "2026-09-08T04:39:48.383Z",
+  "target": "win32-x64",
+  "platform": "win32",
+  "arch": "arm64",
+  "hostname_hash": "sha256:80894511f4c3cc637b1b38a091ff311e4b8e17c1364762063d80fb8867db5450",
+  "artifact": {
+    "path": ".brownie/release-evidence/artifacts/win32-x64/brownie.exe",
+    "sha256": "sha256:609998186f03111f7ede8a333128111613602db13b989fc376d125ad4746b1c1",
+    "bytes": 998912,
+    "target": "win32-x64"
+  },
+  "build": {
+    "setup": {
+      "command": "rustup target add x86_64-pc-windows-msvc",
+      "exit_code": 0,
+      "passed": true
+    },
+    "command": "cmd.exe /d /c call C:\\BuildTools\\Common7\\Tools\\VsDevCmd.bat -arch=x64 -host_arch=arm64 && cargo build --release -p brownie-cli --target x86_64-pc-windows-msvc",
+    "exit_code": 0,
+    "passed": true,
+    "cargo_target": "x86_64-pc-windows-msvc"
+  },
+  "release_ready": false
+}

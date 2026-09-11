@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "evidence_id": "brownie-local-release-smoke-v1",
+  "generated_at": "2026-09-08T13:39:33.808Z",
+  "target": "linux-arm64",
+  "artifact_path": ".brownie/release-evidence/artifacts/linux-arm64/brownie",
+  "artifact_sha256": "sha256:a5f342724e4f7b7ae3e9d4c6f19793664abdce1a67a9043efa1b7fa0b61850a4",
+  "status": "satisfied",
+  "commands": [
+    {
+      "args": [
+        "--version"
+      ],
+      "exit_code": 0,
+      "passed": true
+    },
+    {
+      "args": [
+        "help",
+        "run"
+      ],
+      "exit_code": 0,
+      "passed": true
+    }
+  ],
+  "release_ready": false
+}

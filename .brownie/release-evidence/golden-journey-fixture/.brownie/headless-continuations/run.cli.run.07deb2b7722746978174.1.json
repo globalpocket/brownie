@@ -1,0 +1,10 @@
+{
+  "decision_id": "headless_decision_9f9af2b69e8b4473922e0c643bf69c6c",
+  "continuation_id": "run.cli.run.07deb2b7722746978174.1",
+  "selected_task_id": "task_647bd28c-651b-476d-9805-7c150cad4777",
+  "selected_run_id": "run_9da314ca-0c96-49b0-ada8-10b18dd92e41",
+  "expected_progress_fingerprint": "sha256:040c007b8a19715a4411d58c5934226c7fbf7195018a38cc218d13ce25e8b891",
+  "expected_aggregate_sequence": 20260911191416309,
+  "candidate_count": 1,
+  "policy_version": "headless_continue_once_v1"
+}

@@ -98,6 +98,7 @@ export const requiredReleaseGateCommands = [
     command: 'pnpm',
     args: ['--workspace-root', 'release:local-artifacts:all']
   },
+
   {
     id: 'supply_chain_artifact_evidence_generate',
     category: 'brownie_release_guard',
@@ -115,6 +116,24 @@ export const requiredReleaseGateCommands = [
     category: 'brownie_release_guard',
     command: 'pnpm',
     args: ['--workspace-root', 'guard:supply-chain-artifact-evidence:test']
+  },
+  {
+    id: 'runtime_operational_evidence_generate',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'release:runtime-operational-evidence']
+  },
+  {
+    id: 'runtime_operational_evidence_guard',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:runtime-operational-evidence']
+  },
+  {
+    id: 'runtime_operational_evidence_guard_test',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:runtime-operational-evidence:test']
   },
   {
     id: 'release_integrity_verify',

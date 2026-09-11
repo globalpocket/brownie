@@ -2486,7 +2486,7 @@ pub(super) fn append_tool_intent_events(
             && runtime_rejection_reason.is_none()
             && decision.tool_id == WORKSPACE_WRITE_TOOL_ID
         {
-            leaf_todo_workspace_write_rejection_reason(record, &decision.input)
+            todo_md_workspace_write_rejection_reason(record, &decision.input)
         } else {
             None
         };
@@ -2583,8 +2583,7 @@ pub(super) fn handle_approved_workspace_intents(
             continue;
         }
         if decision.tool_id == WORKSPACE_WRITE_TOOL_ID {
-            if let Some(reason) =
-                leaf_todo_workspace_write_rejection_reason(record, &decision.input)
+            if let Some(reason) = todo_md_workspace_write_rejection_reason(record, &decision.input)
             {
                 store.tasks().append_task_event_with_payload(
                     record,
@@ -2592,7 +2591,7 @@ pub(super) fn handle_approved_workspace_intents(
                     Some(json!({
                         "tool_id": WORKSPACE_WRITE_TOOL_ID,
                         "reason": reason,
-                        "code": "leaf_todo_todo_md_write_denied"
+                        "code": "todo_md_write_denied_for_implementation_todo"
                     })),
                 )?;
                 continue;
@@ -2651,11 +2650,12 @@ pub(super) fn handle_approved_workspace_intents(
         }
         if decision.tool_id == WORKSPACE_READ_TOOL_ID
             && task_goal_requires_workspace_write_proposal(&record.goal)
-            && run_has_workspace_read_for_same_path_without_write_proposal(
+            && (run_has_workspace_read_for_same_path_without_write_proposal(
                 store,
                 record,
                 &decision.input,
-            )?
+            )? || (task_goal_enforces_workspace_read_budget_before_write(&record.goal)
+                && run_workspace_read_count_without_write_proposal(store, record)? >= 2))
         {
             store.tasks().append_task_event_with_payload(
                 record,
@@ -2663,7 +2663,7 @@ pub(super) fn handle_approved_workspace_intents(
                 Some(json!({
                     "tool_id": decision.tool_id,
                     "status": "Denied",
-                    "reason": "Duplicate workspace.read for this path is not progress after completed read evidence; use the existing Tool Execution output_preview/content_sha256 and request workspace.write or record a concrete blocker.",
+                    "reason": "Additional workspace.read is not progress after the phase-loop read budget is exhausted; use the existing Tool Execution output_preview/content_sha256 and request workspace.write or record a concrete blocker.",
                 })),
             )?;
             duplicate_workspace_read_denied = true;
@@ -2739,6 +2739,11 @@ pub(super) fn append_todo_decomposition_blocker_after_read_only_stall(
     {
         return Ok(());
     }
+    if selected_todo_mentions_non_todo_workspace_path(&record.goal)
+        && !selected_todo_allows_todo_md_edit(&record.goal)
+    {
+        return Ok(());
+    }
     let todo_path = store.workspace_root().join("todo.md");
     let Ok(todo) = fs::read_to_string(&todo_path) else {
         return Ok(());
@@ -2790,6 +2795,10 @@ fn run_has_todo_decomposition_stall(
 ) -> anyhow::Result<bool> {
     let events = store.tasks().read_ledger_events(&record.run_id)?;
     let read_todo = run_events_include_workspace_read_path(&events, "todo.md");
+    if duplicate_workspace_read_denied && selected_todo_first_line_from_goal(&record.goal).is_some()
+    {
+        return Ok(true);
+    }
     if !read_todo {
         return Ok(false);
     }
@@ -3007,13 +3016,20 @@ fn is_concrete_product_ready_leaf_todo(block: &TodoBlock) -> bool {
     })
 }
 
-fn leaf_todo_workspace_write_rejection_reason(
+fn todo_md_workspace_write_rejection_reason(
     record: &brownie_protocol::TaskRecord,
     input: &Value,
 ) -> Option<&'static str> {
     let path = input.get("path").and_then(Value::as_str)?;
     if path != "todo.md" {
         return None;
+    }
+    if selected_todo_mentions_non_todo_workspace_path(&record.goal)
+        && !selected_todo_allows_todo_md_edit(&record.goal)
+    {
+        return Some(
+            "Selected implementation TODO names a concrete non-todo workspace target; do not rewrite todo.md as implementation progress. Edit the named file or fail closed.",
+        );
     }
     let first_line = selected_todo_first_line_from_goal(&record.goal)?;
     let title = first_line
@@ -3029,6 +3045,44 @@ fn leaf_todo_workspace_write_rejection_reason(
     is_concrete_product_ready_leaf_todo(&block).then_some(
         "Leaf Product Ready TODOs must not rewrite todo.md; edit the named implementation files or fail closed.",
     )
+}
+
+fn selected_todo_allows_todo_md_edit(goal: &str) -> bool {
+    let Some(first_line) = selected_todo_first_line_from_goal(goal) else {
+        return false;
+    };
+    let lower = first_line.to_ascii_lowercase();
+    lower.contains("todo.md")
+        || lower.contains("todo list")
+        || lower.contains("todo queue")
+        || lower.contains("decompos")
+        || lower.contains("blocker todo")
+}
+
+fn selected_todo_mentions_non_todo_workspace_path(goal: &str) -> bool {
+    let Some(first_line) = selected_todo_first_line_from_goal(goal) else {
+        return false;
+    };
+    first_line
+        .split(|ch: char| ch.is_whitespace() || matches!(ch, '`' | '"' | '\'' | ',' | ';' | ':'))
+        .map(|token| token.trim_matches(|ch: char| matches!(ch, '.' | ')' | '(' | '[' | ']')))
+        .filter(|token| !token.is_empty())
+        .any(|token| {
+            let normalized = token.trim_start_matches("./");
+            normalized != "todo.md"
+                && !normalized.starts_with(".brownie/")
+                && (normalized.contains('/')
+                    || normalized.ends_with(".rs")
+                    || normalized.ends_with(".md")
+                    || normalized.ends_with(".json")
+                    || normalized.ends_with(".mjs")
+                    || normalized.ends_with(".js")
+                    || normalized.ends_with(".ts")
+                    || normalized.ends_with(".tsx")
+                    || normalized.ends_with(".toml")
+                    || normalized.ends_with(".yml")
+                    || normalized.ends_with(".yaml"))
+        })
 }
 
 fn normalized_parent_todo_id(block: &TodoBlock) -> Option<String> {
@@ -3161,6 +3215,32 @@ fn run_has_workspace_read_for_same_path_without_write_proposal(
                         })
             })
     }))
+}
+
+fn run_workspace_read_count_without_write_proposal(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+) -> anyhow::Result<usize> {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    if events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+    {
+        return Ok(0);
+    }
+    Ok(events
+        .iter()
+        .filter(|event| {
+            event.kind == LedgerEventKind::ToolExecutionCompleted
+                && event.payload.as_ref().is_some_and(|payload| {
+                    payload.get("tool_id").and_then(Value::as_str) == Some(WORKSPACE_READ_TOOL_ID)
+                })
+        })
+        .count())
+}
+
+fn task_goal_enforces_workspace_read_budget_before_write(goal: &str) -> bool {
+    goal.contains("- read_batch_policy:") || goal.contains("# Brownie Phase Loop Effective Prompt")
 }
 
 fn append_approved_mcp_tool_execution(
@@ -5473,7 +5553,7 @@ pub(super) fn tool_execution_ledger_payload(result: &brownie_tools::ToolExecutio
                 .unwrap_or("<unknown>");
             format!(
                 "[workspace.read path={path} bytes_total={bytes_total} content_sha256={content_sha256}]\n{}",
-                preview_tool_output(content)
+                preview_workspace_read_output(content)
             )
         } else {
             preview_tool_output(content)
@@ -5720,15 +5800,26 @@ pub(super) fn append_tool_plan_events(
         goal: record.goal.clone(),
         mode_id: policy.mode_id.clone(),
     });
+    let evaluation = ToolPlanEvaluator::evaluate(policy, plan);
+    let approved_items = evaluation
+        .items
+        .iter()
+        .filter(|decision| decision.allowed)
+        .collect::<Vec<_>>();
     store.tasks().append_task_event_with_payload(
         record,
         LedgerEventKind::ToolPlanned,
         Some(json!({
-            "tool_ids": plan.items.iter().map(|item| item.tool_id.as_str()).collect::<Vec<_>>(),
+            "tool_ids": approved_items
+                .iter()
+                .map(|decision| decision.tool_id.as_str())
+                .collect::<Vec<_>>(),
         })),
     )?;
-    let evaluation = ToolPlanEvaluator::evaluate(policy, plan);
     for decision in evaluation.items {
+        if !decision.allowed {
+            continue;
+        }
         let payload = json!({
             "tool_id": decision.tool_id,
             "required_action": runtime_action_name(&decision.required_action),
@@ -5857,7 +5948,7 @@ mod mcp_approval_lock_tests {
         let mut record = test_task_record();
         record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-07a: Add supply-chain command availability guard:\n  Ensure missing tooling is blocked.\n".to_string();
 
-        let reason = leaf_todo_workspace_write_rejection_reason(
+        let reason = todo_md_workspace_write_rejection_reason(
             &record,
             &json!({
                 "path": "todo.md",
@@ -5875,7 +5966,7 @@ mod mcp_approval_lock_tests {
         let mut record = test_task_record();
         record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-09a: Implement the next concrete step for E-09:\n  Source TODO: E-09.\n".to_string();
 
-        let reason = leaf_todo_workspace_write_rejection_reason(
+        let reason = todo_md_workspace_write_rejection_reason(
             &record,
             &json!({
                 "path": "todo.md",
@@ -5886,5 +5977,44 @@ mod mcp_approval_lock_tests {
         );
 
         assert!(reason.is_some());
+    }
+
+    #[test]
+    fn implementation_todos_with_named_target_files_cannot_patch_todo_md() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] BENCH-doc: Add a short evidence note to docs/architecture/lan-llm-phase-loop-tuning.md.\n".to_string();
+
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": "todo.md",
+                "operation": "patch_file",
+                "old_text": "old",
+                "new_text": "new"
+            }),
+        );
+
+        assert_eq!(
+            reason,
+            Some("Selected implementation TODO names a concrete non-todo workspace target; do not rewrite todo.md as implementation progress. Edit the named file or fail closed.")
+        );
+    }
+
+    #[test]
+    fn explicit_todo_md_maintenance_todos_can_patch_todo_md() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] TODO-maintenance: Update todo.md by decomposing an oversized blocker TODO.\n".to_string();
+
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": "todo.md",
+                "operation": "patch_file",
+                "old_text": "old",
+                "new_text": "new"
+            }),
+        );
+
+        assert!(reason.is_none());
     }
 }

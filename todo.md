@@ -87,44 +87,18 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-03a: Resolve release evidence collection blocker before E-03 can close:
-  current implementation/tested commit is available from `git.status`, but
-  workflow run ID and artifact SHA-256 are not available through the current
-  Runtime tool plan. Provide a local or MCP-backed release evidence collector,
-  then populate the Runtime Release Contract and readiness audit with verified
-  workflow/artifact evidence.
+- [ ] E-15: Runtime operational evidence still fails closed because Linux and
+  Windows artifacts are present but not executed on their target hosts. Run the
+  artifact lifecycle evidence on the configured Linux and Windows VM targets,
+  or extend `scripts/release-runtime-operational-evidence.mjs` to delegate
+  target artifact checks through `docs/architecture/local-release-targets.*`.
 
-- [ ] E-07a: Add supply-chain command availability guard:
-  Ensure `scripts/release-gate.mjs` or a dedicated guard treats missing
-  `cargo audit`, `cargo deny`, SBOM tooling, secret scan tooling, and
-  `pnpm audit` support as blockers.
+- [ ] E-16: Runtime operational Golden Journey still fails closed because the
+  isolated fixture run completed without observing proposal preflight or
+  workspace apply evidence. Change the fixture objective or harness so the
+  JSON run exercises proposal creation, preflight, authorization/apply, and
+  post-apply verification, then regenerate evidence.
 
-- [ ] E-07b: Add supply-chain failure evidence tests:
-  Add tests proving scan failures, network failures, and missing tools cannot
-  be recorded as successful release evidence.
-
-- [ ] E-07c: Wire supply-chain artifact/hash evidence into release audit:
-  Populate only locally verifiable lockfile/artifact hashes and leave external
-  workflow evidence blocked.
-
-- [ ] E-08a: Fail closed on missing supply-chain tooling:
-  Source TODO: E-08: Ensure supply-chain tooling absence, scan failure, and network
-  Add guard coverage proving absent audit/SBOM/secret-scan tools produce blocked release evidence.
-- [ ] E-08b: Fail closed on supply-chain scan and network failures:
-  Add tests proving scan command failures and network errors cannot be treated as success.
-
-- [ ] E-09: Produce and verify distributable artifacts for Ubuntu Linux, macOS
-  Apple Silicon, and Windows.
-- [ ] E-10: For each artifact, verify clean install, `brownie --version`, Base
-  Mode Pack load, fake-provider task, ledger generation, forced-stop resume,
-  stale/replay rejection, checksum verification, update, rollback, uninstall,
-  and source commit match.
-- [ ] E-11: Run Golden Journey in an isolated fixture repository across proposal,
-  authorization, mutation, ledger append, verifier, and completion crash
-  windows.
-- [ ] E-12: Run a 100-iteration soak test and record failure rate, seed,
-  duration, duplicate side effects, ledger/workspace consistency, and
-  unrecoverable-run count.
 - [ ] E-13: Write the Documentation Golden Path only after the executable path
   and evidence are current.
 - [ ] E-14: Perform final Product Ready judgment without counting unresolved OSS

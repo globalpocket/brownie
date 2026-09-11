@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "provenance_id": "brownie-runtime-local-provenance-v1",
+  "source_commit": "7c1a362b4b076751605d1df19363e720e0c18a28",
+  "source_tree_dirty": true,
+  "workflow_run_id": null,
+  "generated_at": "2026-09-09T07:39:37.317Z",
+  "sbom_path": ".brownie/release-evidence/brownie-runtime-sbom.json",
+  "artifact_paths": [
+    ".brownie/release-evidence/artifacts/darwin-arm64/brownie",
+    ".brownie/release-evidence/artifacts/linux-arm64/brownie",
+    ".brownie/release-evidence/artifacts/linux-x64/brownie",
+    ".brownie/release-evidence/artifacts/win32-x64/brownie.exe"
+  ],
+  "release_ready": false,
+  "note": "Local provenance evidence is not a signature and does not replace owner-controlled release signing or GitHub workflow provenance."
+}
