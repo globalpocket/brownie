@@ -930,6 +930,12 @@ pub struct VerificationRecoveryApplyTarget {
     pub expected_target_sha256: Option<String>,
     pub expected_target_absent: Option<bool>,
     pub replacement_content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_old_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_new_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_hunks: Option<Vec<ProposalPatchHunk>>,
     pub authorize_recovery_apply: bool,
 }
 
@@ -1253,7 +1259,13 @@ pub struct ObjectiveProposalApplyTarget {
     pub expected_preflight_snapshot_id: String,
     pub expected_apply_plan_id: String,
     pub expected_target_sha256: String,
-    pub replacement_content: String,
+    pub replacement_content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_old_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_new_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_hunks: Option<Vec<ProposalPatchHunk>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

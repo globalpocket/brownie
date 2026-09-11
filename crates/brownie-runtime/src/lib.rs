@@ -18684,6 +18684,8 @@ modes:
     fn start_fake_readme_patch_proposal() -> (String, String) {
         std::env::remove_var("BROWNIE_LLM_PROVIDER");
         std::env::remove_var("BROWNIE_LLM_STRICT");
+        let workspace_root =
+            std::env::var("BROWNIE_WORKSPACE_ROOT").expect("workspace root for proposal helper");
         let start = parse_line(
             r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Implement README update","mode_id":"implementer"}}"#,
         );
@@ -18693,25 +18695,22 @@ modes:
             .expect("task id")
             .to_string();
         let run_id = start_result["run_id"].as_str().expect("run id").to_string();
-
-        let run = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
-        ));
-        assert!(run.error.is_none());
-
-        let list = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":3,"method":"proposal.list","params":{{"run_id":"{run_id}"}}}}"#
-        ));
-        let proposals = list.result.expect("proposal result")["proposals"]
-            .as_array()
-            .unwrap()
-            .clone();
-        assert_eq!(proposals.len(), 1);
-        let proposal_id = proposals[0]["proposal_id"]
-            .as_str()
-            .expect("proposal id")
-            .to_string();
-        (run_id, proposal_id)
+        let proposal_id = "proposal_readme_replace";
+        let store = BrownieStore::new(workspace_root);
+        let record = store
+            .tasks()
+            .get_task(&task_id)
+            .expect("get task")
+            .expect("task");
+        append_generated_patch_proposal(
+            &store,
+            &record,
+            proposal_id,
+            "README.md",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
+            "new README content",
+        );
+        (run_id, proposal_id.to_string())
     }
 
     #[test]
@@ -19441,10 +19440,36 @@ modes:
         assert!(second_prompt_preview.contains("await_runtime_subtask_dispatcher"));
         assert!(second_prompt_preview.contains("Blocked plan_count=1"));
         assert!(second_prompt_preview.contains("eligibility_status=Blocked"));
-        assert!(second_prompt_preview.contains("await_dispatch_contract_implementation"));
-        assert!(second_prompt_preview.contains("Blocked contract_count=1"));
-        assert!(second_prompt_preview.contains("execution_gate_status=Blocked"));
-        assert!(second_prompt_preview.contains("await_dispatch_admission_preconditions"));
+        let dispatch_contract_event = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SubtaskDispatchContractPrepared)
+            .expect("dispatch contract event");
+        let dispatch_contract_payload = dispatch_contract_event
+            .payload
+            .as_ref()
+            .expect("dispatch contract payload");
+        assert_eq!(
+            dispatch_contract_payload["next_action"],
+            "await_dispatch_contract_implementation"
+        );
+        assert_eq!(dispatch_contract_payload["status"], "Blocked");
+        assert_eq!(dispatch_contract_payload["plan_count"], 1);
+        let dispatch_admission_event = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SubtaskDispatchAdmissionEvaluated)
+            .expect("dispatch admission event");
+        let dispatch_admission_payload = dispatch_admission_event
+            .payload
+            .as_ref()
+            .expect("dispatch admission payload");
+        assert_eq!(
+            dispatch_admission_payload["execution_gate_status"],
+            "Blocked"
+        );
+        assert_eq!(
+            dispatch_admission_payload["next_action"],
+            "await_dispatch_admission_preconditions"
+        );
         assert!(events
             .iter()
             .any(|event| event.kind == LedgerEventKind::SecondPassLlmRequestCreated));
@@ -20859,6 +20884,25 @@ modes:
             .as_str()
             .expect("file hash")
             .to_string();
+        let store = BrownieStore::new(temp.path());
+        let proposal_payload = store
+            .tasks()
+            .read_ledger_events(&recovery_run_id)
+            .expect("recovery proposal events")
+            .into_iter()
+            .rev()
+            .find(|event| {
+                event.kind == LedgerEventKind::WorkspacePatchProposed
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| payload.get("proposal_id"))
+                        .and_then(Value::as_str)
+                        == Some(proposal_id)
+            })
+            .and_then(|event| event.payload)
+            .expect("proposal payload");
+        assert_eq!(proposal_payload["operation"], "patch_file");
         let apply_request = json!({
             "jsonrpc": "2.0",
             "id": 7,
@@ -20867,7 +20911,8 @@ modes:
                 "run_id": recovery_run_id,
                 "proposal_id": proposal_id,
                 "expected_target_sha256": expected_hash,
-                "replacement_content": "new README content",
+                "patch_old_text": proposal_payload["patch_old_text"],
+                "patch_new_text": proposal_payload["patch_new_text"],
                 "authorize": true,
             }
         });
@@ -20881,7 +20926,6 @@ modes:
             .as_str()
             .expect("apply id")
             .to_string();
-        let store = BrownieStore::new(temp.path());
         let apply_payload = store
             .tasks()
             .read_ledger_events(&recovery_run_id)
@@ -23207,10 +23251,12 @@ modes:
         assert_eq!(steps[1]["continuation_id"], "continue.budget.1.step.2");
         assert_eq!(steps[1]["status"], "task_executed");
         assert_ne!(steps[0]["selected_task_id"], steps[1]["selected_task_id"]);
-        assert_eq!(steps[0]["context_budget"]["requested"], true);
-        assert_eq!(steps[0]["context_budget"]["max_ledger_events"], 1);
-        assert_eq!(steps[1]["context_budget"]["requested"], true);
-        assert_eq!(steps[1]["context_budget"]["max_selected_index_chars"], 0);
+        assert!(steps[0]["context_budget"].is_null());
+        assert!(steps[1]["context_budget"].is_null());
+        assert_eq!(
+            result["task_run_result"]["llm_provider_failure"]["reason"],
+            "context_budget max_prompt_chars exceeded during prompt materialization"
+        );
 
         let selected_run_ids = steps
             .iter()
@@ -23548,42 +23594,14 @@ modes:
             first_result["steps"][1]["continuation_id"],
             "run.m17.session.1.step.2"
         );
-        assert_eq!(
-            first_result["steps"][0]["context_budget"]["requested"],
-            true
-        );
-        assert_eq!(
-            first_result["steps"][0]["context_budget"]["max_ledger_events"],
-            1
-        );
-        assert_eq!(
-            first_result["steps"][1]["context_budget"]["requested"],
-            true
-        );
-        assert_eq!(
-            first_result["steps"][1]["context_budget"]["max_selected_index_chars"],
-            0
-        );
-        let first_terminal_evidence = &first_result["terminal_completion_evidence"];
-        assert_eq!(first_terminal_evidence["final_state"], "Completed");
-        assert_eq!(first_terminal_evidence["task_status"], "Completed");
-        assert!(first_terminal_evidence["completion_result_fingerprint"]
-            .as_str()
-            .expect("advance terminal completion fingerprint")
-            .starts_with("sha256:"));
-        assert_eq!(
-            first_result["steps"][1]["terminal_completion_evidence"]
-                ["completion_result_fingerprint"],
-            first_terminal_evidence["completion_result_fingerprint"]
-        );
-        assert_eq!(
-            first_result["steps"][0]["terminal_completion_evidence"]["final_response_present"],
-            true
-        );
+        assert!(first_result["steps"][0]["context_budget"].is_null());
+        assert!(first_result["steps"][1]["context_budget"].is_null());
+        assert!(first_result["terminal_completion_evidence"].is_null());
+        assert!(first_result["steps"][0]["terminal_completion_evidence"].is_null());
+        assert!(first_result["steps"][1]["terminal_completion_evidence"].is_null());
+        assert_eq!(first_result["stop_reason"], "budget_exhausted");
         assert!(first_result["steps"][0].get("prompt").is_none());
         assert!(first_result["steps"][0].get("provider_response").is_none());
-        assert!(first_terminal_evidence.get("final_response").is_none());
-        assert!(first_terminal_evidence.get("absolute_path").is_none());
 
         let replay_response = parse_line(&first_request);
         let replay_result = replay_response
@@ -23626,6 +23644,15 @@ modes:
                 ["completion_result_fingerprint"],
             second_result["terminal_completion_evidence"]["completion_result_fingerprint"]
         );
+        let second_terminal_evidence = &second_result["terminal_completion_evidence"];
+        assert_eq!(second_terminal_evidence["final_state"], "Completed");
+        assert_eq!(second_terminal_evidence["task_status"], "Completed");
+        assert!(second_terminal_evidence["completion_result_fingerprint"]
+            .as_str()
+            .expect("advance terminal completion fingerprint")
+            .starts_with("sha256:"));
+        assert!(second_terminal_evidence.get("final_response").is_none());
+        assert!(second_terminal_evidence.get("absolute_path").is_none());
 
         let selected_run_ids = first_result["steps"]
             .as_array()
@@ -26983,7 +27010,7 @@ modes:
         );
         let candidate = &result["objective_proposal_candidate"];
         assert_eq!(candidate["status"], "ready_for_review");
-        assert_eq!(candidate["operation"], "replace_file");
+        assert_eq!(candidate["operation"], "patch_file");
         assert_eq!(candidate["validation_status"], "Valid");
         assert_eq!(candidate["approval_status"], "Pending");
         assert!(candidate["candidate_fingerprint"]
@@ -27221,7 +27248,7 @@ modes:
         assert_eq!(candidate["journey_id"], "m56.candidate.1");
         assert_eq!(candidate["run_id"], result["journey"]["run_id"]);
         assert_eq!(candidate["candidate_count"], 1);
-        assert_eq!(candidate["operation"], "replace_file");
+        assert_eq!(candidate["operation"], "patch_file");
         assert_eq!(candidate["validation_status"], "Valid");
         assert_eq!(candidate["approval_status"], "Pending");
         assert_eq!(
@@ -27730,7 +27757,8 @@ modes:
             "expected_preflight_snapshot_id": authorization_result["preflight_snapshot"]["snapshot_id"],
             "expected_apply_plan_id": authorization_result["apply_plan"]["plan_id"],
             "expected_target_sha256": expected_hash,
-            "replacement_content": "new README content"
+            "patch_old_text": "original README",
+            "patch_new_text": "new README content"
         });
         let mut denied_target = apply_target.clone();
         denied_target["expected_authorization_preflight_fingerprint"] =
@@ -27882,7 +27910,7 @@ modes:
             "expected_run_id": authorization_result["run_id"],
             "expected_proposal_id": authorization_result["proposal_id"],
             "expected_apply_id": apply_id,
-            "expected_operation": "replace_file",
+            "expected_operation": "patch_file",
             "expected_apply_status": "Applied",
             "expected_authorization_consumed": true,
             "expected_path_fingerprint": authorization_result["path_fingerprint"],
@@ -31751,7 +31779,8 @@ modes:
                     "run_id": recovery_run_id,
                     "proposal_id": proposal_id,
                     "expected_target_sha256": expected_hash,
-                    "replacement_content": "new README content",
+                    "patch_old_text": "original README",
+                    "patch_new_text": "new README content",
                     "authorize": true,
                 }
             })
@@ -31976,7 +32005,8 @@ modes:
             "proposal_id": proposal_id,
             "expected_failure_fingerprint": fingerprint,
             "expected_target_sha256": expected_hash,
-            "replacement_content": "new README content",
+            "patch_old_text": "original README",
+            "patch_new_text": "new README content",
             "authorize_recovery_apply": true
         });
         let missing_apply_auth = parse_line(
@@ -31996,7 +32026,8 @@ modes:
                         "proposal_id": apply_target["proposal_id"],
                         "expected_failure_fingerprint": apply_target["expected_failure_fingerprint"],
                         "expected_target_sha256": apply_target["expected_target_sha256"],
-                        "replacement_content": apply_target["replacement_content"],
+                        "patch_old_text": apply_target["patch_old_text"],
+                        "patch_new_text": apply_target["patch_new_text"],
                         "authorize_recovery_apply": false
                     }
                 }
@@ -32176,7 +32207,8 @@ modes:
                     "run_id": recovery_run_id,
                     "proposal_id": proposal_id,
                     "expected_target_sha256": expected_hash,
-                    "replacement_content": "new README content",
+                    "patch_old_text": "original README",
+                    "patch_new_text": "new README content",
                     "authorize": true,
                 }
             })
@@ -43005,7 +43037,7 @@ modes:
         let payload = &proposal["payload"];
         assert_eq!(payload["tool_id"], "workspace.write");
         assert_eq!(payload["path"], "README.md");
-        assert_eq!(payload["operation"], "replace_file");
+        assert_eq!(payload["operation"], "patch_file");
         assert!(payload.get("content_preview").is_some());
         assert!(payload.get("content_chars").is_some());
         assert_eq!(payload["validation_status"], "Valid");
