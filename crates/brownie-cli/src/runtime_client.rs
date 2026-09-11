@@ -31,7 +31,7 @@ const RUNTIME_OBJECTIVE_TIMEOUT_MS_ENV: &str = "BROWNIE_RUNTIME_OBJECTIVE_TIMEOU
 const CLI_RUN_MODE_ID_ENV: &str = "BROWNIE_CLI_RUN_MODE_ID";
 const DEFAULT_READ_ONLY_TIMEOUT_MS: u64 = 2_000;
 const DEFAULT_OBJECTIVE_EXECUTION_TIMEOUT_MS: u64 = 120_000;
-const MAX_RESPONSE_BYTES: usize = 256 * 1024;
+const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_STATUS_FIELD_CHARS: usize = 128;
 const MAX_RENDERED_OUTPUT_CHARS: usize = 16 * 1024;
 const MAX_TEXT_FIELD_CHARS: usize = 256;
@@ -3265,9 +3265,9 @@ fn objective_proposal_apply_params_with_patch_material(
     )? {
         debug_invalid_response_note(
             "objective_proposal_apply_params",
-            "proposal content is truncated",
+            "proposal content is truncated; skipping automatic apply",
         );
-        return Err(RuntimeClientError::InvalidResponse);
+        return Ok(None);
     }
     if json_bool(
         proposal

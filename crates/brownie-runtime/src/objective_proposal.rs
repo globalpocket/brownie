@@ -1013,8 +1013,9 @@ fn objective_proposal_apply_request_fingerprint(
     let continuation_id = params.continuation_id.as_deref().ok_or_else(|| {
         "objective proposal apply failed: continuation_id is required".to_string()
     })?;
+    let replacement_content = target.replacement_content.as_deref().unwrap_or("");
     let replacement_content_sha256 =
-        objective_proposal_apply_replacement_content_fingerprint(&target.replacement_content);
+        objective_proposal_apply_replacement_content_fingerprint(replacement_content);
     let seed = json!({
         "route_kind": "objective_proposal_apply",
         "continuation_id": continuation_id,
@@ -1045,8 +1046,11 @@ fn objective_proposal_apply_request_fingerprint(
         "expected_apply_plan_id": target.expected_apply_plan_id,
         "expected_target_sha256": target.expected_target_sha256,
         "replacement_content_sha256": replacement_content_sha256,
-        "replacement_content_bytes": target.replacement_content.len(),
-        "replacement_content_chars": target.replacement_content.chars().count(),
+        "replacement_content_bytes": replacement_content.len(),
+        "replacement_content_chars": replacement_content.chars().count(),
+        "patch_old_text_sha256": target.patch_old_text.as_deref().map(objective_proposal_apply_replacement_content_fingerprint),
+        "patch_new_text_sha256": target.patch_new_text.as_deref().map(objective_proposal_apply_replacement_content_fingerprint),
+        "patch_hunks": target.patch_hunks,
     });
     Ok(format!(
         "sha256:{}",
@@ -1251,10 +1255,10 @@ fn headless_continue_objective_proposal_apply(
             proposal_id: target.expected_proposal_id.clone(),
             expected_target_sha256: Some(target.expected_target_sha256.clone()),
             expected_target_absent: None,
-            replacement_content: Some(target.replacement_content.clone()),
-            patch_old_text: None,
-            patch_new_text: None,
-            patch_hunks: None,
+            replacement_content: target.replacement_content.clone(),
+            patch_old_text: target.patch_old_text.clone(),
+            patch_new_text: target.patch_new_text.clone(),
+            patch_hunks: target.patch_hunks.clone(),
             authorize: true,
             transaction_items: None,
             transaction_recovery_source: None,
@@ -1266,8 +1270,9 @@ fn headless_continue_objective_proposal_apply(
     };
     let apply_payload = json!(proposal_apply_result.apply_result);
     let apply_fingerprint = verification_recovery_apply_fingerprint(&apply_payload);
+    let replacement_content = target.replacement_content.as_deref().unwrap_or("");
     let replacement_content_sha256 =
-        objective_proposal_apply_replacement_content_fingerprint(&target.replacement_content);
+        objective_proposal_apply_replacement_content_fingerprint(replacement_content);
     let decision_id = format!("headless_decision_{}", uuid::Uuid::new_v4().simple());
     let policy_version = "headless_continue_once_v1";
     store
@@ -1299,8 +1304,8 @@ fn headless_continue_objective_proposal_apply(
                 "path_fingerprint": target.expected_path_fingerprint.clone(),
                 "expected_target_sha256": target.expected_target_sha256.clone(),
                 "replacement_content_sha256": replacement_content_sha256.clone(),
-                "replacement_content_bytes": target.replacement_content.len(),
-                "replacement_content_chars": target.replacement_content.chars().count(),
+                "replacement_content_bytes": replacement_content.len(),
+                "replacement_content_chars": replacement_content.chars().count(),
                 "apply_id": proposal_apply_result.apply_result.apply_id.clone(),
                 "apply_status": proposal_apply_result.apply_result.apply_status.clone(),
                 "applied": proposal_apply_result.apply_result.applied,

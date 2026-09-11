@@ -18,11 +18,17 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Cargo fmt
+        run: cargo fmt --all -- --check
+
       - name: Cargo check
-        run: cargo check --workspace
+        run: cargo check --workspace --all-targets --all-features
+
+      - name: Cargo clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Cargo test
-        run: cargo test --workspace
+        run: cargo test --workspace --all-features
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -33,7 +39,22 @@ jobs:
         run: corepack enable
 
       - name: Install pnpm dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      - name: Root workspace check
+        run: pnpm --workspace-root check
+
+      - name: Root workspace test
+        run: pnpm --workspace-root test
+
+      - name: Root workspace build
+        run: pnpm --workspace-root build
+
+      - name: Release gate
+        run: pnpm guard:release-gate
+
+      - name: Process-loss E2E test
+        run: pnpm test:rrp3-process-loss
 
       - name: Diagnostics guard
         run: pnpm guard:diagnostics
@@ -69,11 +90,14 @@ jobs:
           toolchain: stable
 
       - name: Cargo check
-        run: cargo check --workspace
+        run: cargo check --workspace --all-targets --all-features
+
+      - name: Cargo clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Runtime cargo test
         if: runner.os != 'Windows'
-        run: cargo test -p brownie-runtime
+        run: cargo test -p brownie-runtime --all-features
 
       - name: Verify unsupported index platform fails closed
         if: runner.os == 'Windows'
@@ -89,6 +113,12 @@ jobs:
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: stable
+
+      - name: Cargo check
+        run: cargo check --workspace --all-targets --all-features
+
+      - name: Cargo clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Verify unsupported index platform fails closed
         run: cargo test -p brownie-indexer unsupported_platform_fails_closed

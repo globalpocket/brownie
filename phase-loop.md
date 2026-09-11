@@ -7,6 +7,26 @@ Run exactly one bounded phase-loop iteration, then exit. The surrounding
 `phase-loop.sh` supervisor starts the next iteration. Do not perform unlimited
 multi-phase work inside one Runtime invocation.
 
+## Implementation Turn Contract
+
+For an unchecked implementation TODO, a read-only investigation is not a
+completed iteration.
+
+After the first tool round has read the exact target files needed for the
+selected TODO, the next assistant tool intent must do one of these two things:
+
+1. emit a bounded `workspace.write` proposal that implements the smallest safe
+   patch; or
+2. emit a bounded `workspace.write` proposal that rewrites the selected
+   `todo.md` item into smaller concrete follow-up TODOs naming exact files,
+   missing evidence, or owner decisions.
+
+Do not answer with only an implementation plan after target files have already
+been read. Do not request another broad discovery read such as `.`, a
+directory, or a repeated `package.json`/workflow read. If the target file was
+read and the patch is clear, write the patch. If the patch is not clear, write
+the TODO decomposition patch.
+
 ## Authority
 
 Always fetch and inspect the latest `origin/main` before selecting work. The
@@ -182,6 +202,15 @@ In `implementer` mode, do not request `subtask.spawn` or any tool that the Tool
 Plan marks as denied. Broad TODO decomposition is not a subtask spawn; express
 it as one bounded `workspace.write` patch to `todo.md`.
 
+For already bounded leaf TODOs such as `E-04a`, `E-04b`, `E-04c`, `E-07a`,
+`E-07b`, `E-07c`, `E-08a`, and `E-08b`, do not rewrite `todo.md` to restate or
+re-split the same TODO. Read the named implementation files and propose the
+smallest implementation patch instead. For `E-07a`, start with
+`scripts/release-gate.mjs`, `scripts/release-supply-chain-artifact-evidence.mjs`,
+`scripts/guard-supply-chain-artifact-evidence.mjs`, and `package.json`; the
+expected patch must make missing local supply-chain tools fail closed as
+blockers rather than successful release evidence.
+
 When implementation requires editing an existing file, prefer a small
 `workspace.write` `patch_file` proposal over replacing the whole file. The tool
 intent must use the Runtime schema exactly:
@@ -189,6 +218,10 @@ intent must use the Runtime schema exactly:
 ```brownie-tool-intent
 {"tool_requests":[{"tool_id":"workspace.read","reason":"Read the target file before patching.","input":{"path":"path/to/file"}},{"tool_id":"workspace.write","reason":"Patch one bounded hunk.","input":{"path":"path/to/file","operation":"patch_file","old_text":"exact existing text","new_text":"replacement text"}}]}
 ```
+
+Do not nest `tool_requests` inside another `tool_requests` item. The top-level
+JSON object must contain exactly one `tool_requests` array whose items are
+direct tool request objects with `tool_id`, `reason`, and `input`.
 
 For multiple hunks, use `"hunks":[{"old_text":"...","new_text":"..."}]` with
 two to five non-overlapping hunks. Do not put a `content` field on

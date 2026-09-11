@@ -1177,10 +1177,10 @@
         "ledger_event_kind": "PromptBuilt",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_descriptor": "strict_typed{payload_optional:false;known_optional_fields:context_budget_max_ledger_events:u64,context_budget_max_prompt_chars:u64,context_budget_max_selected_index_chars:u64,context_budget_prompt_chars:u64,context_budget_prompt_within_budget:boolean,context_budget_protected_context_chars:u64,context_budget_requested:boolean,context_budget_selected_index_content_chars:u64,context_budget_selected_index_context_present:boolean,context_budget_selected_index_materialized_chars:u64,context_budget_selected_index_truncated:boolean,context_first_included_event:string,context_included_events:u64,context_last_included_event:string,context_max_events:u64,context_omitted_events:u64,context_total_events:u64,context_window_bounded:boolean,max_prompt_chars:u64,message_count:u64,prompt_preview:string,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string;known_field_required:true;additional_fields:false;prompt_built_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:5c547a33852f9b2c",
-        "payload_schema_id": "ledger_payload.PromptBuilt.v8",
-        "payload_schema_version": 8,
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;known_optional_fields:context_budget_max_ledger_events:u64,context_budget_max_prompt_chars:u64,context_budget_max_selected_index_chars:u64,context_budget_prompt_chars:u64,context_budget_prompt_within_budget:boolean,context_budget_protected_context_chars:u64,context_budget_requested:boolean,context_budget_selected_index_content_chars:u64,context_budget_selected_index_context_present:boolean,context_budget_selected_index_materialized_chars:u64,context_budget_selected_index_truncated:boolean,context_first_included_event:string,context_included_events:u64,context_last_included_event:string,context_max_events:u64,context_omitted_events:u64,context_total_events:u64,context_window_bounded:boolean,llm_request_duration_ms:u64,llm_request_prompt_chars:u64,max_prompt_chars:u64,message_count:u64,prompt_build_duration_ms:u64,prompt_preview:string,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string;known_field_required:true;additional_fields:false;prompt_built_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:1a04b117e90abbf8",
+        "payload_schema_id": "ledger_payload.PromptBuilt.v9",
+        "payload_schema_version": 9,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1232,10 +1232,10 @@
         "ledger_event_kind": "LlmResponseReceived",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:provider:string;one_of_required:content_preview:string|content_preview_redacted:boolean;known_optional_fields:content_preview:string,content_preview_redacted:boolean,content_preview_redaction_reason:string,response_preview_chars:u64;additional_fields:false;llm_response_received_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:343597c1e8f9c8f7",
-        "payload_schema_id": "ledger_payload.LlmResponseReceived.v8",
-        "payload_schema_version": 8,
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:provider:string;one_of_required:content_preview:string|content_preview_redacted:boolean;known_optional_fields:content_preview:string,content_preview_redacted:boolean,content_preview_redaction_reason:string,llm_request_duration_ms:u64,llm_request_prompt_chars:u64,prompt_build_duration_ms:u64,response_preview_chars:u64;additional_fields:false;llm_response_received_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:8886363af50102a1",
+        "payload_schema_id": "ledger_payload.LlmResponseReceived.v9",
+        "payload_schema_version": 9,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1243,10 +1243,10 @@
         "ledger_event_kind": "SecondPassPromptBuilt",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_descriptor": "strict_typed{payload_optional:false;known_optional_fields:context_budget_max_ledger_events:u64,context_budget_max_prompt_chars:u64,context_budget_max_selected_index_chars:u64,context_budget_prompt_chars:u64,context_budget_prompt_within_budget:boolean,context_budget_protected_context_chars:u64,context_budget_requested:boolean,context_budget_selected_index_content_chars:u64,context_budget_selected_index_context_present:boolean,context_budget_selected_index_materialized_chars:u64,context_budget_selected_index_truncated:boolean,context_first_included_event:string,context_included_events:u64,context_last_included_event:string,context_max_events:u64,context_omitted_events:u64,context_total_events:u64,context_window_bounded:boolean,max_prompt_chars:u64,message_count:u64,prompt_preview:string,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string;known_field_required:true;additional_fields:false;prompt_built_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:7bd776e9ab6cb011",
-        "payload_schema_id": "ledger_payload.SecondPassPromptBuilt.v8",
-        "payload_schema_version": 8,
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;known_optional_fields:context_budget_max_ledger_events:u64,context_budget_max_prompt_chars:u64,context_budget_max_selected_index_chars:u64,context_budget_prompt_chars:u64,context_budget_prompt_within_budget:boolean,context_budget_protected_context_chars:u64,context_budget_requested:boolean,context_budget_selected_index_content_chars:u64,context_budget_selected_index_context_present:boolean,context_budget_selected_index_materialized_chars:u64,context_budget_selected_index_truncated:boolean,context_first_included_event:string,context_included_events:u64,context_last_included_event:string,context_max_events:u64,context_omitted_events:u64,context_total_events:u64,context_window_bounded:boolean,llm_request_duration_ms:u64,llm_request_prompt_chars:u64,max_prompt_chars:u64,message_count:u64,prompt_build_duration_ms:u64,prompt_preview:string,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string;known_field_required:true;additional_fields:false;prompt_built_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:ab580ecf6d9f8e71",
+        "payload_schema_id": "ledger_payload.SecondPassPromptBuilt.v9",
+        "payload_schema_version": 9,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -1276,10 +1276,10 @@
         "ledger_event_kind": "SecondPassLlmResponseReceived",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:provider:string;one_of_required:content_preview:string|content_preview_redacted:boolean;known_optional_fields:content_preview:string,content_preview_redacted:boolean,content_preview_redaction_reason:string,response_preview_chars:u64;additional_fields:false;llm_response_received_payload:true}",
-        "payload_schema_fingerprint": "shape-fnv1a64:680db30dcb6a95bc",
-        "payload_schema_id": "ledger_payload.SecondPassLlmResponseReceived.v8",
-        "payload_schema_version": 8,
+        "payload_schema_descriptor": "strict_typed{payload_optional:false;required_fields:provider:string;one_of_required:content_preview:string|content_preview_redacted:boolean;known_optional_fields:content_preview:string,content_preview_redacted:boolean,content_preview_redaction_reason:string,llm_request_duration_ms:u64,llm_request_prompt_chars:u64,prompt_build_duration_ms:u64,response_preview_chars:u64;additional_fields:false;llm_response_received_payload:true}",
+        "payload_schema_fingerprint": "shape-fnv1a64:57db98e1d3e9b58a",
+        "payload_schema_id": "ledger_payload.SecondPassLlmResponseReceived.v9",
+        "payload_schema_version": 9,
         "release_blocking_until_typed": false,
         "store_schema_version": 2
       },
@@ -2021,17 +2021,20 @@
           "context_omitted_events": 0,
           "context_total_events": 5,
           "context_window_bounded": false,
+          "llm_request_duration_ms": 34,
+          "llm_request_prompt_chars": 1234,
           "max_prompt_chars": 32000,
           "message_count": 2,
+          "prompt_build_duration_ms": 12,
           "prompt_preview_redacted": true,
           "prompt_preview_redaction_reason": "selected_index_context_present"
         },
-        "payload_instance_shape_descriptor": "object{context_included_events:integer,context_max_events:integer,context_omitted_events:integer,context_total_events:integer,context_window_bounded:boolean,max_prompt_chars:integer,message_count:integer,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:9fcae1bd9fa52103",
+        "payload_instance_shape_descriptor": "object{context_included_events:integer,context_max_events:integer,context_omitted_events:integer,context_total_events:integer,context_window_bounded:boolean,llm_request_duration_ms:integer,llm_request_prompt_chars:integer,max_prompt_chars:integer,message_count:integer,prompt_build_duration_ms:integer,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:c875f9bac8346e6a",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:5c547a33852f9b2c",
-        "payload_schema_id": "ledger_payload.PromptBuilt.v8"
+        "payload_schema_fingerprint": "shape-fnv1a64:1a04b117e90abbf8",
+        "payload_schema_id": "ledger_payload.PromptBuilt.v9"
       },
       {
         "ledger_event_kind": "SecondPassPromptBuilt",
@@ -2041,17 +2044,20 @@
           "context_omitted_events": 0,
           "context_total_events": 5,
           "context_window_bounded": false,
+          "llm_request_duration_ms": 34,
+          "llm_request_prompt_chars": 1234,
           "max_prompt_chars": 32000,
           "message_count": 2,
+          "prompt_build_duration_ms": 12,
           "prompt_preview_redacted": true,
           "prompt_preview_redaction_reason": "selected_index_context_present"
         },
-        "payload_instance_shape_descriptor": "object{context_included_events:integer,context_max_events:integer,context_omitted_events:integer,context_total_events:integer,context_window_bounded:boolean,max_prompt_chars:integer,message_count:integer,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:4ae5c071432cd276",
+        "payload_instance_shape_descriptor": "object{context_included_events:integer,context_max_events:integer,context_omitted_events:integer,context_total_events:integer,context_window_bounded:boolean,llm_request_duration_ms:integer,llm_request_prompt_chars:integer,max_prompt_chars:integer,message_count:integer,prompt_build_duration_ms:integer,prompt_preview_redacted:boolean,prompt_preview_redaction_reason:string}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:637972ff8644612b",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:7bd776e9ab6cb011",
-        "payload_schema_id": "ledger_payload.SecondPassPromptBuilt.v8"
+        "payload_schema_fingerprint": "shape-fnv1a64:ab580ecf6d9f8e71",
+        "payload_schema_id": "ledger_payload.SecondPassPromptBuilt.v9"
       },
       {
         "ledger_event_kind": "PromptSensitiveScanCompleted",
@@ -2177,29 +2183,35 @@
         "ledger_event_kind": "LlmResponseReceived",
         "payload": {
           "content_preview": "bounded model response",
+          "llm_request_duration_ms": 34,
+          "llm_request_prompt_chars": 1234,
+          "prompt_build_duration_ms": 12,
           "provider": "OpenAiCompatible",
           "response_preview_chars": 2000
         },
-        "payload_instance_shape_descriptor": "object{content_preview:string,provider:string,response_preview_chars:integer}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:f461da67e0038c68",
+        "payload_instance_shape_descriptor": "object{content_preview:string,llm_request_duration_ms:integer,llm_request_prompt_chars:integer,prompt_build_duration_ms:integer,provider:string,response_preview_chars:integer}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:d4676d79635616e3",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:343597c1e8f9c8f7",
-        "payload_schema_id": "ledger_payload.LlmResponseReceived.v8"
+        "payload_schema_fingerprint": "shape-fnv1a64:8886363af50102a1",
+        "payload_schema_id": "ledger_payload.LlmResponseReceived.v9"
       },
       {
         "ledger_event_kind": "SecondPassLlmResponseReceived",
         "payload": {
           "content_preview": "bounded model response",
+          "llm_request_duration_ms": 34,
+          "llm_request_prompt_chars": 1234,
+          "prompt_build_duration_ms": 12,
           "provider": "OpenAiCompatible",
           "response_preview_chars": 2000
         },
-        "payload_instance_shape_descriptor": "object{content_preview:string,provider:string,response_preview_chars:integer}",
-        "payload_instance_shape_fingerprint": "shape-fnv1a64:2786313a35dd4a85",
+        "payload_instance_shape_descriptor": "object{content_preview:string,llm_request_duration_ms:integer,llm_request_prompt_chars:integer,prompt_build_duration_ms:integer,provider:string,response_preview_chars:integer}",
+        "payload_instance_shape_fingerprint": "shape-fnv1a64:3084ebc88c1e562a",
         "payload_schema_classification": "strict_typed",
         "payload_schema_contract_status": "closed",
-        "payload_schema_fingerprint": "shape-fnv1a64:680db30dcb6a95bc",
-        "payload_schema_id": "ledger_payload.SecondPassLlmResponseReceived.v8"
+        "payload_schema_fingerprint": "shape-fnv1a64:57db98e1d3e9b58a",
+        "payload_schema_id": "ledger_payload.SecondPassLlmResponseReceived.v9"
       },
       {
         "ledger_event_kind": "TaskStarted",
@@ -5286,7 +5298,7 @@
         "modepack_selected_active_rollback_target"
       ],
       "param_type": "HeadlessContinueOnceParams",
-      "request_recursive_schema_fingerprint": "shape-fnv1a64:a70a9a807075c204",
+      "request_recursive_schema_fingerprint": "shape-fnv1a64:3f64e5eb79fb8a31",
       "request_schema": {
         "deny_unknown_fields": true,
         "field_shape_fingerprint": "shape-fnv1a64:14025868fd97ef92",
@@ -6071,7 +6083,7 @@
       "result_schema_ref": "#/type_schemas/HeadlessContinueOnceResult",
       "result_semantics": "HeadlessContinueOnceResult",
       "result_type": "HeadlessContinueOnceResult",
-      "schema_fingerprint": "shape-fnv1a64:a980ce17089acc2c",
+      "schema_fingerprint": "shape-fnv1a64:12e992ceaca6e86a",
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -12456,8 +12468,32 @@
             "journey_id": {
               "type": "string"
             },
+            "patch_hunks": {
+              "items": {
+                "$ref": "#/$defs/ProposalPatchHunk"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "patch_new_text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "patch_old_text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "replacement_content": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "session_id": {
               "type": "string"
@@ -12488,7 +12524,6 @@
             "expected_task_id",
             "expected_validation_status",
             "journey_id",
-            "replacement_content",
             "session_id",
             "source_drive_id"
           ],
@@ -13095,6 +13130,27 @@
               ]
             },
             "expected_target_sha256": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "patch_hunks": {
+              "items": {
+                "$ref": "#/$defs/ProposalPatchHunk"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "patch_new_text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "patch_old_text": {
               "type": [
                 "string",
                 "null"

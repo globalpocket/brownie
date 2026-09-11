@@ -23,7 +23,31 @@ The task goal comes from `TaskRecord`. The ledger summary comes from the persist
 `PromptBuilder` emits a fixed prompt view with two messages:
 
 1. `System`: identifies Brownie Runtime and carries protected runtime policy.
-2. `User`: includes task id, run id, mode id, current goal, and deterministic ledger summary lines.
+2. `User`: includes task id, run id, mode id, the BDK Control Packet, current goal, and deterministic ledger summary lines.
+
+## BDK Control Packet
+
+The BDK Control Packet is runtime-derived execution guidance that keeps the
+LLM, prompt, and BDK state machine aligned. It is not a permission source.
+Permissions still come only from compiled Mode Pack policy and runtime gates.
+
+The packet classifies the next LLM turn into one of a small set of bounded
+states:
+
+- `context_plan`: request the smallest exact read or git-inspection set.
+- `implement_patch`: use completed read evidence and request one
+  `workspace.write` proposal or a concrete blocker TODO.
+- `repair_patch`: use the latest failure evidence as primary context and
+  propose a bounded repair.
+- `decompose_todo`: replace an oversized or unsafe TODO with concrete leaf
+  TODOs.
+- `blocker_or_write`: stop read-only discovery after duplicate read denial and
+  request either a write proposal or a blocker TODO.
+- `direct_answer`: answer without tool intent when no side effect is needed.
+
+The packet exists to prevent the loop from treating the LLM as the scheduler.
+BDK decides the state and supplies the output contract; the LLM performs only
+the bounded judgment required for that state.
 
 ## Persistence rule
 

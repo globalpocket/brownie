@@ -2797,6 +2797,104 @@ pub fn preflight_workspace_write_input(input: &Value) -> Result<(), &'static str
     preflight_workspace_write_input_with_limit(input, DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS)
 }
 
+pub fn workspace_write_unified_diff_content_to_hunks(
+    content: &str,
+) -> Result<Vec<(String, String)>, &'static str> {
+    workspace_write_unified_diff_content_to_hunks_with_limit(
+        content,
+        DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS,
+    )
+}
+
+pub fn workspace_write_unified_diff_content_to_hunks_with_limit(
+    content: &str,
+    max_content_chars: usize,
+) -> Result<Vec<(String, String)>, &'static str> {
+    let max_content_chars = max_content_chars.clamp(
+        MIN_WORKSPACE_WRITE_CONTENT_CHARS,
+        MAX_WORKSPACE_WRITE_CONTENT_CHARS,
+    );
+    if content.trim().is_empty() {
+        return Err("workspace.write patch_file content must not be empty.");
+    }
+    if content.chars().count() > max_content_chars {
+        return Err("workspace.write patch_file content exceeds parser length limit.");
+    }
+    if !content.lines().any(|line| line.starts_with("--- "))
+        || !content.lines().any(|line| line.starts_with("+++ "))
+        || !content.lines().any(|line| line.starts_with("@@"))
+    {
+        return Err("workspace.write patch_file content must be a unified diff.");
+    }
+
+    let mut hunks = Vec::new();
+    let mut in_hunk = false;
+    let mut old_text = String::new();
+    let mut new_text = String::new();
+
+    for line in content.split_inclusive('\n') {
+        let line = if line.is_empty() { "\n" } else { line };
+        if line.starts_with("@@") {
+            if in_hunk {
+                if old_text.is_empty() {
+                    return Err(
+                        "workspace.write patch_file unified diff hunk old_text must not be empty.",
+                    );
+                }
+                hunks.push((std::mem::take(&mut old_text), std::mem::take(&mut new_text)));
+            }
+            in_hunk = true;
+            continue;
+        }
+        if !in_hunk {
+            continue;
+        }
+        if line.starts_with("\\ No newline at end of file") {
+            continue;
+        }
+        if line.is_empty() {
+            return Err("workspace.write patch_file unified diff hunk line is invalid.");
+        }
+        let (prefix, rest) = line.split_at(1);
+        match prefix {
+            " " => {
+                old_text.push_str(rest);
+                new_text.push_str(rest);
+            }
+            "-" => {
+                old_text.push_str(rest);
+            }
+            "+" => {
+                new_text.push_str(rest);
+            }
+            _ => {
+                return Err("workspace.write patch_file unified diff hunk line must start with space, -, or +.");
+            }
+        }
+    }
+
+    if in_hunk {
+        if old_text.is_empty() {
+            return Err("workspace.write patch_file unified diff hunk old_text must not be empty.");
+        }
+        hunks.push((old_text, new_text));
+    }
+    if hunks.is_empty() {
+        return Err("workspace.write patch_file content must contain at least one hunk.");
+    }
+    if hunks.len() > 5 {
+        return Err("workspace.write patch_file content must contain at most 5 hunks.");
+    }
+    let total_chars = hunks
+        .iter()
+        .map(|(old_text, new_text)| old_text.chars().count() + new_text.chars().count())
+        .sum::<usize>();
+    if total_chars > max_content_chars {
+        return Err("workspace.write patch_file unified diff hunks exceed parser length limit.");
+    }
+    Ok(hunks)
+}
+
 pub fn preflight_workspace_write_input_with_limit(
     input: &Value,
     max_content_chars: usize,
@@ -2836,7 +2934,17 @@ pub fn preflight_workspace_write_input_with_limit(
     }
     if operation == "patch_file" {
         if object.contains_key("content") {
-            return Err("workspace.write input.content must be omitted for patch_file.");
+            if object.contains_key("old_text")
+                || object.contains_key("new_text")
+                || object.contains_key("hunks")
+            {
+                return Err("workspace.write input.content cannot be combined with old_text, new_text, or hunks for patch_file.");
+            }
+            let Some(content) = object.get("content").and_then(|value| value.as_str()) else {
+                return Err("workspace.write input.content must be a string for patch_file.");
+            };
+            workspace_write_unified_diff_content_to_hunks_with_limit(content, max_content_chars)?;
+            return Ok(());
         }
         if let Some(hunks) = object.get("hunks") {
             if object.contains_key("old_text") || object.contains_key("new_text") {
@@ -3024,6 +3132,18 @@ impl ToolIntentParser {
                     "missing_closing_fence",
                 ));
             } else {
+                let (requests, markdown_rejections) =
+                    parse_markdown_tool_intent_read_requests(content, config);
+                if !requests.is_empty() || !markdown_rejections.is_empty() {
+                    summary.accepted_requests = requests.len();
+                    rejected.extend(markdown_rejections);
+                    summary.rejected_requests = rejected.len();
+                    return ParsedToolIntent {
+                        requests,
+                        rejected,
+                        summary,
+                    };
+                }
                 let (requests, alias_rejections) =
                     parse_agentmodes_new_task_requests(content, config);
                 if !requests.is_empty() || !alias_rejections.is_empty() {
@@ -3127,7 +3247,21 @@ impl ToolIntentParser {
                 summary,
             };
         };
-        if items.len() > config.max_tool_requests {
+        let mut flattened_items = Vec::new();
+        for item in items {
+            if let Some(object) = item.as_object() {
+                if object.len() == 1 {
+                    if let Some(nested_items) =
+                        object.get("tool_requests").and_then(Value::as_array)
+                    {
+                        flattened_items.extend(nested_items.iter());
+                        continue;
+                    }
+                }
+            }
+            flattened_items.push(item);
+        }
+        if flattened_items.len() > config.max_tool_requests {
             rejected.push(rejection(
                 None,
                 "tool_requests exceeds parser count limit.",
@@ -3141,7 +3275,7 @@ impl ToolIntentParser {
             };
         }
         let mut requests = Vec::new();
-        for item in items {
+        for item in flattened_items {
             let Some(obj) = item.as_object() else {
                 rejected.push(rejection(
                     None,
@@ -3349,6 +3483,50 @@ fn parse_agentmodes_new_task_requests(
         }
     }
     (requests, rejected)
+}
+
+fn parse_markdown_tool_intent_read_requests(
+    content: &str,
+    _config: &ToolIntentParserConfig,
+) -> (Vec<AssistantToolRequest>, Vec<RejectedToolIntent>) {
+    let lower = content.to_ascii_lowercase();
+    let step_read_line = content.lines().any(|line| {
+        let line = line.trim_start().to_ascii_lowercase();
+        line.starts_with("step ") && line.contains(": read `")
+    });
+    if !(lower.contains("tool intent") || step_read_line) || !lower.contains("read") {
+        return (Vec::new(), Vec::new());
+    }
+    let mut candidates = Vec::new();
+    let mut rest = content;
+    while let Some(start) = rest.find('`') {
+        let after_start = &rest[start + 1..];
+        let Some(end) = after_start.find('`') else {
+            break;
+        };
+        let candidate = after_start[..end].trim();
+        if !candidate.is_empty() {
+            candidates.push(candidate.to_string());
+        }
+        rest = &after_start[end + 1..];
+    }
+    for candidate in candidates {
+        if candidate.contains('*') || candidate.contains('\n') {
+            continue;
+        }
+        if preflight_workspace_write_path(&candidate).is_err() {
+            continue;
+        }
+        return (
+            vec![AssistantToolRequest {
+                tool_id: WORKSPACE_READ_TOOL_ID.to_string(),
+                reason: "Read bounded workspace file from markdown read intent.".to_string(),
+                input: json!({ "path": candidate }),
+            }],
+            Vec::new(),
+        );
+    }
+    (Vec::new(), Vec::new())
 }
 
 fn parse_agentmodes_new_task_call(
@@ -4170,6 +4348,10 @@ impl ToolPlanner {
                 "workflow run id",
                 "artifact sha",
                 "artifact sha-256",
+                "origin/main",
+                "fetch latest",
+                "current branch",
+                "branch and status",
             ],
         ) {
             items.push(plan_item(
@@ -4190,6 +4372,9 @@ impl ToolPlanner {
                 "workflow run id",
                 "artifact sha",
                 "artifact sha-256",
+                "origin/main",
+                "uncommitted changes",
+                "working changes",
             ],
         ) {
             items.push(plan_item(
@@ -4628,6 +4813,24 @@ mod tests {
         assert!(ids.contains(&"verification.cargo_check"));
         assert!(!ids.contains(&"verification.cargo_fmt_check"));
     }
+
+    #[test]
+    fn planner_routes_origin_main_context_to_git_inspection() {
+        let plan = ToolPlanner::plan(ToolPlanningInput {
+            task_id: "task_1".into(),
+            goal: "Fetch latest origin/main and inspect current branch and uncommitted changes"
+                .into(),
+            mode_id: "implementer".into(),
+        });
+        let ids: Vec<_> = plan
+            .items
+            .iter()
+            .map(|item| item.tool_id.as_str())
+            .collect();
+        assert!(ids.contains(&"git.status"));
+        assert!(ids.contains(&"git.diff"));
+    }
+
     #[test]
     fn evaluator_allows_and_denies_with_runtime_gate() {
         let policy = BuiltinModeRegistry::get("orchestrator").expect("policy");
@@ -4894,6 +5097,60 @@ mod tests {
         let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Remove obsolete note\",\"input\":{\"path\":\"notes/obsolete.md\",\"operation\":\"delete_file\"}}]}\n```");
         assert_eq!(parsed.requests.len(), 1);
         assert!(parsed.rejected.is_empty());
+    }
+
+    #[test]
+    fn parser_accepts_patch_file_unified_diff_content_intent() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Patch CI.\",\"input\":{\"path\":\".github/workflows/ci.yml\",\"operation\":\"patch_file\",\"content\":\"--- a/.github/workflows/ci.yml\\n+++ b/.github/workflows/ci.yml\\n@@ -1,3 +1,6 @@\\n name: CI\\n+\\n+jobs:\\n+  check:\\n\"}}]}\n```",
+        );
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+        let hunks = workspace_write_unified_diff_content_to_hunks(
+            parsed.requests[0].input["content"]
+                .as_str()
+                .expect("content"),
+        )
+        .expect("unified diff hunks");
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(hunks[0].0, "name: CI\n");
+        assert_eq!(hunks[0].1, "name: CI\n\njobs:\n  check:\n");
+    }
+
+    #[test]
+    fn parser_accepts_markdown_tool_intent_read_path() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "Tool Intent:\n- Read `.github/workflows/ci.yml` to inspect the workflow.",
+        );
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+        assert_eq!(parsed.requests[0].tool_id, WORKSPACE_READ_TOOL_ID);
+        assert_eq!(parsed.requests[0].input["path"], ".github/workflows/ci.yml");
+    }
+
+    #[test]
+    fn parser_accepts_step_read_path_as_markdown_read_intent() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "Plan:\n1. Inspect the release gate.\n\nStep 1: Read `scripts/release-gate.mjs`",
+        );
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+        assert_eq!(parsed.requests[0].tool_id, WORKSPACE_READ_TOOL_ID);
+        assert_eq!(parsed.requests[0].input["path"], "scripts/release-gate.mjs");
+    }
+
+    #[test]
+    fn parser_flattens_single_nested_tool_requests_wrapper() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Create guard.\",\"input\":{\"path\":\"scripts/guard-supply-chain-commands.mjs\",\"operation\":\"create_file\",\"content\":\"console.log('ok');\\n\"}}]}]}\n```",
+        );
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+        assert_eq!(parsed.requests[0].tool_id, WORKSPACE_WRITE_TOOL_ID);
+        assert_eq!(
+            parsed.requests[0].input["path"],
+            "scripts/guard-supply-chain-commands.mjs"
+        );
     }
 
     #[test]

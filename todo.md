@@ -93,17 +93,26 @@ Current synchronization note:
   Runtime tool plan. Provide a local or MCP-backed release evidence collector,
   then populate the Runtime Release Contract and readiness audit with verified
   workflow/artifact evidence.
-- [ ] E-04: Expand CI to include `cargo fmt --all --check`,
-  `cargo check --workspace --all-targets --all-features`,
-  `cargo clippy --workspace --all-targets --all-features -- -D warnings`,
-  `cargo test --workspace --all-features`, frozen pnpm install, root
-  check/test/build, executable release gate, Product Completion Guard, and
-  process-loss E2E.
-- [ ] E-07: Run and enforce supply-chain checks: `cargo audit --locked`,
-  `cargo deny check`, production `pnpm audit`, high-signal secret scan, Rust and
-  Node SBOM, lockfile hashes, artifact SHA-256, and build provenance.
-- [ ] E-08: Ensure supply-chain tooling absence, scan failure, and network
-  failure cannot be treated as successful release evidence.
+
+- [ ] E-07a: Add supply-chain command availability guard:
+  Ensure `scripts/release-gate.mjs` or a dedicated guard treats missing
+  `cargo audit`, `cargo deny`, SBOM tooling, secret scan tooling, and
+  `pnpm audit` support as blockers.
+
+- [ ] E-07b: Add supply-chain failure evidence tests:
+  Add tests proving scan failures, network failures, and missing tools cannot
+  be recorded as successful release evidence.
+
+- [ ] E-07c: Wire supply-chain artifact/hash evidence into release audit:
+  Populate only locally verifiable lockfile/artifact hashes and leave external
+  workflow evidence blocked.
+
+- [ ] E-08a: Fail closed on missing supply-chain tooling:
+  Source TODO: E-08: Ensure supply-chain tooling absence, scan failure, and network
+  Add guard coverage proving absent audit/SBOM/secret-scan tools produce blocked release evidence.
+- [ ] E-08b: Fail closed on supply-chain scan and network failures:
+  Add tests proving scan command failures and network errors cannot be treated as success.
+
 - [ ] E-09: Produce and verify distributable artifacts for Ubuntu Linux, macOS
   Apple Silicon, and Windows.
 - [ ] E-10: For each artifact, verify clean install, `brownie --version`, Base

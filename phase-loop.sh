@@ -13,6 +13,7 @@ SUPERVISOR_LOG="$LOG_DIR/supervisor.log"
 TODO_CLAIM_DIR="$STATE_DIR/todo-claims"
 TODO_CLAIM_FILE="$TODO_CLAIM_DIR/current.json"
 TODO_QUEUE_STATE_FILE="$TODO_CLAIM_DIR/todo-queue-state.json"
+TODO_BLOCKED_FILE="$TODO_CLAIM_DIR/blocked.jsonl"
 PROGRESS_STATE_FILE="$STATE_DIR/progress-state.json"
 LAUNCHD_LABEL="${PHASE_LOOP_LAUNCHD_LABEL:-globalpocket.brownie.phase-loop}"
 SCREEN_NAME="${PHASE_LOOP_SCREEN_NAME:-brownie-phase-loop}"
@@ -41,6 +42,10 @@ PHASE_LOOP_PR_REMOTE="${PHASE_LOOP_PR_REMOTE:-origin}"
 PHASE_LOOP_PR_BASE="${PHASE_LOOP_PR_BASE:-main}"
 PHASE_LOOP_PR_TITLE_PREFIX="${PHASE_LOOP_PR_TITLE_PREFIX:-Brownie phase-loop}"
 PHASE_LOOP_PR_DRAFT="${PHASE_LOOP_PR_DRAFT:-0}"
+PHASE_LOOP_LLM_ROUTING="${PHASE_LOOP_LLM_ROUTING:-1}"
+PHASE_LOOP_LLM_MODEL_FAST="${PHASE_LOOP_LLM_MODEL_FAST:-}"
+PHASE_LOOP_LLM_MODEL_CODE="${PHASE_LOOP_LLM_MODEL_CODE:-}"
+PHASE_LOOP_LLM_MODEL_DEEP="${PHASE_LOOP_LLM_MODEL_DEEP:-}"
 
 mkdir -p "$RUN_DIR" "$LOG_DIR" "$TODO_CLAIM_DIR"
 
@@ -74,6 +79,8 @@ write_status() {
   escaped_claim_file="$(printf '%s' "$TODO_CLAIM_FILE" | json_escape)"
   local escaped_queue_state_file
   escaped_queue_state_file="$(printf '%s' "$TODO_QUEUE_STATE_FILE" | json_escape)"
+  local escaped_blocked_file
+  escaped_blocked_file="$(printf '%s' "$TODO_BLOCKED_FILE" | json_escape)"
   local escaped_progress_state_file
   escaped_progress_state_file="$(printf '%s' "$PROGRESS_STATE_FILE" | json_escape)"
   tmp_status="$STATUS_FILE.$$.$RANDOM.tmp"
@@ -91,6 +98,7 @@ write_status() {
   "todo": "$escaped_todo",
   "todo_claim": "$escaped_claim_file",
   "todo_queue_state": "$escaped_queue_state_file",
+  "todo_blocked": "$escaped_blocked_file",
   "progress_state": "$escaped_progress_state_file",
   "workspace_root": "$escaped_workspace",
   "control_root": "$escaped_control_root"
@@ -131,23 +139,44 @@ todo_first_pending_item() {
   if [ ! -f "$PHASE_LOOP_TODO" ]; then
     return 0
   fi
-  awk '
-    /^[[:space:]]*([-*]|[0-9]+[.)])[[:space:]]+\[[[:space:]]\][[:space:]]+/ {
-      if (found) {
-        exit
-      }
-      found = 1
-      print
-      next
-    }
-    found && /^[[:space:]]+/ {
-      print
-      next
-    }
-    found {
-      exit
-    }
-  ' "$PHASE_LOOP_TODO"
+  python3 - "$PHASE_LOOP_TODO" "$TODO_BLOCKED_FILE" <<'PY'
+import hashlib
+import json
+import pathlib
+import re
+import sys
+
+todo_path = pathlib.Path(sys.argv[1])
+blocked_path = pathlib.Path(sys.argv[2])
+
+try:
+    todo = todo_path.read_text(encoding="utf-8")
+except FileNotFoundError:
+    raise SystemExit(0)
+
+queue_fingerprint = hashlib.sha256(todo.encode("utf-8")).hexdigest()
+blocked_hashes = set()
+if blocked_path.exists():
+    for line in blocked_path.read_text(encoding="utf-8").splitlines():
+        try:
+            record = json.loads(line)
+        except Exception:
+            continue
+        if record.get("queue_fingerprint") == queue_fingerprint:
+            blocked_hash = record.get("selected_todo_sha256")
+            if isinstance(blocked_hash, str):
+                blocked_hashes.add(blocked_hash)
+
+pattern = re.compile(r"^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ \t]\][ \t]+", re.M)
+matches = list(pattern.finditer(todo))
+for index, match in enumerate(matches):
+    end = matches[index + 1].start() if index + 1 < len(matches) else len(todo)
+    block = todo[match.start():end].rstrip("\n")
+    block_hash = hashlib.sha256(block.encode("utf-8")).hexdigest()
+    if block_hash not in blocked_hashes:
+        print(block)
+        raise SystemExit(0)
+PY
 }
 
 todo_queue_fingerprint() {
@@ -259,13 +288,119 @@ active_todo_claim_exists() {
   local status
   status="$(claim_status 2>/dev/null || true)"
   case "$status" in
-    claimed|in_progress|blocked)
+    claimed|in_progress)
       return 0
       ;;
     *)
       return 1
       ;;
   esac
+}
+
+record_blocked_todo_claim() {
+  local run_stamp="$1"
+  if [ ! -f "$TODO_CLAIM_FILE" ]; then
+    return 0
+  fi
+  python3 - "$TODO_CLAIM_FILE" "$TODO_BLOCKED_FILE" "$run_stamp" "$(now_utc)" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+blocked_path = pathlib.Path(sys.argv[2])
+run_stamp = sys.argv[3]
+timestamp = sys.argv[4]
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+selected = claim.get("selected_todo")
+if not isinstance(selected, str) or not selected:
+    raise SystemExit(0)
+record = {
+    "schema_version": 1,
+    "blocked_at": timestamp,
+    "run_stamp": run_stamp,
+    "claim_id": claim.get("claim_id", ""),
+    "queue_generation": claim.get("queue_generation"),
+    "queue_fingerprint": claim.get("queue_fingerprint", ""),
+    "selected_todo_sha256": hashlib.sha256(selected.encode("utf-8")).hexdigest(),
+    "selected_todo_first_line": selected.splitlines()[0] if selected.splitlines() else "",
+}
+blocked_path.parent.mkdir(parents=True, exist_ok=True)
+with open(blocked_path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True))
+    handle.write("\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(blocked_path, 0o600)
+PY
+  sync_parent_dir "$TODO_CLAIM_DIR"
+}
+
+remove_completed_todo_claim_from_queue() {
+  local run_stamp="$1"
+  if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$PHASE_LOOP_TODO" ]; then
+    return 0
+  fi
+  python3 - "$TODO_CLAIM_FILE" "$PHASE_LOOP_TODO" "$run_stamp" "$(now_utc)" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+todo_path = pathlib.Path(sys.argv[2])
+run_stamp = sys.argv[3]
+timestamp = sys.argv[4]
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+selected = claim.get("selected_todo")
+if not isinstance(selected, str) or not selected:
+    raise SystemExit(0)
+first_line = selected.splitlines()[0] if selected.splitlines() else ""
+if "[ ]" not in first_line:
+    raise SystemExit(0)
+try:
+    text = todo_path.read_text(encoding="utf-8")
+except FileNotFoundError:
+    raise SystemExit(0)
+index = text.find(selected)
+if index < 0:
+    raise SystemExit(0)
+if text.find(selected, index + len(selected)) >= 0:
+    raise SystemExit("selected TODO appears more than once; refusing automatic removal")
+end = index + len(selected)
+while end < len(text) and text[end] == "\n":
+    end += 1
+replacement = text[:index] + text[end:]
+if index > 0 and not text[:index].endswith("\n\n") and replacement[index:index + 1] not in ("", "\n"):
+    replacement = text[:index] + "\n" + text[end:]
+tmp_path = todo_path.with_name(f"{todo_path.name}.{os.getpid()}.completed-{run_stamp}.tmp")
+with open(tmp_path, "w", encoding="utf-8") as handle:
+    handle.write(replacement)
+    handle.flush()
+    os.fsync(handle.fileno())
+os.replace(tmp_path, todo_path)
+try:
+    dir_fd = os.open(str(todo_path.parent), os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+except Exception:
+    pass
+print(json.dumps({
+    "removed_at": timestamp,
+    "run_stamp": run_stamp,
+    "selected_todo_first_line": first_line,
+}, ensure_ascii=False, sort_keys=True))
+PY
 }
 
 active_claim_queue_generation() {
@@ -641,7 +776,9 @@ stage_runtime_applied_paths() {
   local stdout_log="$1"
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-    python3 - "$stdout_log" <<'PY' | while IFS= read -r path; do
+    local paths_file
+    paths_file="$(mktemp "${TMPDIR:-/tmp}/brownie-applied-paths.XXXXXX")"
+    python3 - "$stdout_log" > "$paths_file" <<'PY'
 import json
 import sys
 
@@ -656,16 +793,36 @@ path = payload.get("objective_apply_path") if isinstance(payload, dict) else Non
 if isinstance(path, str) and path.strip():
     print(path)
 PY
-      case "$path" in
-        /*|*..*|"" )
+    if [ -s "$paths_file" ]; then
+      while IFS= read -r path; do
+        case "$path" in
+          /*|*..*|"" )
+            rm -f "$paths_file"
+            exit 66
+            ;;
+        esac
+        if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+          rm -f "$paths_file"
           exit 66
-          ;;
-      esac
-      if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
-        exit 66
-      fi
-      git add -- "$path"
-    done
+        fi
+        git add -- "$path"
+      done < "$paths_file"
+    else
+      git diff --name-only --diff-filter=ACMRTUXB | while IFS= read -r path; do
+        case "$path" in
+          /*|*..*|"" )
+            rm -f "$paths_file"
+            exit 66
+            ;;
+        esac
+        if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+          rm -f "$paths_file"
+          exit 66
+        fi
+        git add -- "$path"
+      done
+    fi
+    rm -f "$paths_file"
   )
 }
 
@@ -935,6 +1092,61 @@ def count_sensitive(text):
     ]
     return sum(len(re.findall(pattern, text)) for pattern in patterns)
 
+def infer_bdk_state(todo):
+    lower = todo.lower()
+    if any(token in lower for token in ("decompos", "split", "細分化", "分割")):
+        return "decompose_todo"
+    if any(token in lower for token in ("test", "guard", "failure", "失敗", "検証", "evidence")):
+        return "verify_or_repair"
+    if any(token in lower for token in ("artifact", "release", "installer", "vm", "windows", "linux", "macos")):
+        return "release_engineering"
+    if any(token in lower for token in ("doc", "readme", "documentation", "ドキュメント")):
+        return "documentation"
+    return "implement"
+
+def infer_llm_route(state):
+    if state in ("documentation", "decompose_todo"):
+        return "fast"
+    if state in ("release_engineering", "verify_or_repair"):
+        return "code"
+    return "code"
+
+def infer_context_hints(todo):
+    lower = todo.lower()
+    hints = []
+    if "release" in lower or "artifact" in lower or "supply-chain" in lower:
+        hints.extend([
+            "scripts/release-gate.mjs",
+            "package.json",
+            "docs/architecture/runtime-release-readiness-audit.json",
+        ])
+    if "supply-chain" in lower or "sbom" in lower or "audit" in lower:
+        hints.extend([
+            "scripts/guard-supply-chain-artifact-evidence.mjs",
+            "scripts/guard-dependency-security-license-audit.mjs",
+            "Cargo.lock",
+            "pnpm-lock.yaml",
+        ])
+    if "protocol" in lower or "ledger" in lower:
+        hints.extend([
+            "crates/brownie-protocol/src/semantic_contract.rs",
+            "crates/brownie-store/src/lib.rs",
+            "docs/architecture/runtime-semantic-protocol-contract.json",
+        ])
+    if "prompt" in lower or "llm" in lower or "context" in lower:
+        hints.extend([
+            "crates/brownie-context/src/lib.rs",
+            "crates/brownie-agent-loop/src/lib.rs",
+            "crates/brownie-runtime/src/llm_provider.rs",
+        ])
+    seen = set()
+    deduped = []
+    for hint in hints:
+        if hint not in seen:
+            seen.add(hint)
+            deduped.append(hint)
+    return deduped[:6]
+
 if len(selected_todo.encode("utf-8")) > selected_todo_max_bytes:
     raise SystemExit("selected_todo_exceeds_max_bytes")
 
@@ -942,6 +1154,8 @@ claim = {}
 if claim_path.exists():
     with open(claim_path, encoding="utf-8") as handle:
         claim = json.load(handle)
+    if claim.get("status") not in ("claimed", "in_progress"):
+        claim = {}
 
 todo_text = read_text(todo_path)
 base_prompt_text = read_text(prompt_path)
@@ -958,11 +1172,25 @@ if claim:
 else:
     claim_lines.append("- none")
 
+bdk_state = infer_bdk_state(selected_todo)
+llm_route = infer_llm_route(bdk_state)
+context_hints = infer_context_hints(selected_todo)
+context_hint_lines = [f"- {hint}" for hint in context_hints] or ["- <none inferred; request exact bounded reads only>"]
+
 prompt = "\n".join([
     "# Brownie Phase Loop Effective Prompt",
     "",
     "This generated prompt combines the stable phase-loop contract with the current external TODO queue.",
     "Treat the active TODO claim below as the work item for this bounded invocation.",
+    "",
+    "## BDK Execution Packet",
+    "",
+    f"- state: `{bdk_state}`",
+    f"- llm_route: `{llm_route}`",
+    "- context_policy: use the smallest exact file set; do not read README or overview files unless the active TODO names them.",
+    "- progress_policy: after bounded reads, emit one workspace.write proposal, a concrete blocker TODO, or completion evidence; do not continue read-only discovery.",
+    "- inferred_context_hints:",
+    *context_hint_lines,
     "",
     "## Active TODO Claim",
     "",
@@ -1001,6 +1229,9 @@ metadata = {
     "selected_todo_bytes": len(selected_todo.encode("utf-8")),
     "selected_todo_sha256": sha256_text(selected_todo),
     "selected_todo_complete": True,
+    "bdk_state": bdk_state,
+    "llm_route": llm_route,
+    "context_hints": context_hints,
     "todo_path": str(todo_path),
     "todo_sha256": sha256_text(todo_text),
     "todo_line_count": todo_line_count,
@@ -1027,6 +1258,45 @@ PY
   chmod 600 "$output_path" "$meta_path"
   sync_parent_dir "$RUN_DIR"
   retire_old_prompt_artifacts
+}
+
+apply_phase_loop_llm_route() {
+  local prompt_path="$1"
+  local meta_path route routed_model
+  if [ "${PHASE_LOOP_LLM_ROUTING:-1}" != "1" ]; then
+    return 0
+  fi
+  meta_path="${prompt_path%.prompt.md}.prompt.meta.json"
+  route="$(
+    python3 - "$meta_path" <<'PY'
+import json
+import sys
+try:
+    print(json.load(open(sys.argv[1], encoding="utf-8")).get("llm_route", ""))
+except Exception:
+    print("")
+PY
+  )"
+  case "$route" in
+    fast)
+      routed_model="$PHASE_LOOP_LLM_MODEL_FAST"
+      ;;
+    deep)
+      routed_model="$PHASE_LOOP_LLM_MODEL_DEEP"
+      ;;
+    code)
+      routed_model="$PHASE_LOOP_LLM_MODEL_CODE"
+      ;;
+    *)
+      routed_model=""
+      ;;
+  esac
+  if [ -n "$routed_model" ]; then
+    export BROWNIE_LLM_MODEL="$routed_model"
+    printf '%s llm_route=%s model_override=%s\n' "$(now_utc)" "$route" "$routed_model" >> "$SUPERVISOR_LOG"
+  else
+    printf '%s llm_route=%s model_override=<unchanged>\n' "$(now_utc)" "${route:-none}" >> "$SUPERVISOR_LOG"
+  fi
 }
 
 stop_if_todo_empty() {
@@ -1309,6 +1579,44 @@ interruptible_sleep() {
   return 0
 }
 
+run_with_portable_timeout() {
+  local timeout_seconds="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$timeout_seconds" "$@"
+    return $?
+  fi
+
+  "$@" &
+  local child_pid="$!"
+  local waited=0
+  while pid_is_active "$child_pid"; do
+    if [ "$waited" -ge "$timeout_seconds" ]; then
+      local descendants known_pids
+      descendants="$(supervisor_descendant_pids "$child_pid" | tr '\n' ' ')"
+      known_pids="$child_pid $descendants"
+      printf '%s command timeout after %ss; terminating pid=%s descendants=%s command=%s\n' "$(now_utc)" "$timeout_seconds" "$child_pid" "${descendants:-none}" "$*" >> "$SUPERVISOR_LOG"
+      # shellcheck disable=SC2086
+      kill_known_pids TERM $known_pids
+      # shellcheck disable=SC2086
+      if ! wait_for_known_pids_exit "$PHASE_LOOP_STOP_GRACE_SECONDS" $known_pids; then
+        descendants="$(supervisor_descendant_pids "$child_pid" | tr '\n' ' ')"
+        known_pids="$child_pid $known_pids $descendants"
+        printf '%s command timeout force terminating pid=%s descendants=%s\n' "$(now_utc)" "$child_pid" "${descendants:-none}" >> "$SUPERVISOR_LOG"
+        # shellcheck disable=SC2086
+        kill_known_pids KILL $known_pids
+        # shellcheck disable=SC2086
+        wait_for_known_pids_exit "$PHASE_LOOP_STOP_FORCE_SECONDS" $known_pids || true
+      fi
+      wait "$child_pid" 2>/dev/null || true
+      return 124
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$child_pid"
+}
+
 acquire_lock() {
   if mkdir "$LOCK_DIR" 2>/dev/null; then
     echo "$$" > "$LOCK_DIR/pid"
@@ -1426,18 +1734,13 @@ run_brownie_once() {
     export BROWNIE_WORKSPACE_ROOT="${BROWNIE_WORKSPACE_ROOT:-"$PHASE_LOOP_WORKSPACE_ROOT"}"
     export BROWNIE_STORE_ROOT="${BROWNIE_STORE_ROOT:-"$PHASE_LOOP_BROWNIE_STORE_ROOT"}"
     export PHASE_LOOP_CONTROL_ROOT
-    if command -v timeout >/dev/null 2>&1; then
-      if [ "$use_resume" -eq 1 ]; then
-        timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json resume
-      else
-        timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json run --file "$effective_prompt"
-      fi
+    if [ "$use_resume" -ne 1 ]; then
+      apply_phase_loop_llm_route "$effective_prompt"
+    fi
+    if [ "$use_resume" -eq 1 ]; then
+      run_with_portable_timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json resume
     else
-      if [ "$use_resume" -eq 1 ]; then
-        "$BROWNIE_BIN" --json resume
-      else
-        "$BROWNIE_BIN" --json run --file "$effective_prompt"
-      fi
+      run_with_portable_timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json run --file "$effective_prompt"
     fi
   ) > "$stdout_log" 2> "$stderr_log"
   exit_code=$?
@@ -1497,10 +1800,45 @@ try:
     completed_by_no_actionable_after_apply = projection.get("completed_by_no_actionable_after_apply") is True
 except Exception:
     pass
-sys.exit(0 if payload.get("completed") is True or completed_by_no_actionable_after_apply else 1)
+objective_apply_applied = payload.get("objective_apply_applied") is True
+sys.exit(0 if payload.get("completed") is True or completed_by_no_actionable_after_apply or objective_apply_applied else 1)
 PY
     then
       write_todo_claim "$(claim_field claim_id)" "completed" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      remove_completed_todo_claim_from_queue "$run_stamp" >> "$SUPERVISOR_LOG"
+    elif python3 - "$stdout_log" <<'PY'
+import json, sys
+root = json.load(open(sys.argv[1], encoding="utf-8"))
+if isinstance(root, dict) and isinstance(root.get("run"), dict):
+    payload = root.get("run")
+elif isinstance(root, dict) and isinstance(root.get("resume"), dict):
+    payload = root.get("resume")
+else:
+    payload = root
+if payload.get("blocked") is not True:
+    sys.exit(1)
+stop_class = str(payload.get("stop_class") or "")
+status = str(payload.get("status") or "")
+closure = str(payload.get("completion_closure_status") or "")
+next_action = str(payload.get("next_action") or "")
+controller_action = str(payload.get("controller_action") or "")
+external_control_boundary = (
+    stop_class == "recoverable_unknown_nonterminal"
+    or status == "recoverable_unknown_nonterminal"
+    or closure == "unknown_nonterminal"
+    or next_action == "inspect_progress_overview"
+    or controller_action == "stop"
+)
+sys.exit(0 if external_control_boundary else 1)
+PY
+    then
+      write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      record_blocked_todo_claim "$run_stamp"
+      touch "$STOP_FILE"
+      detail="Brownie run reached a blocked external-control boundary; recorded the blocked TODO and stopped the phase loop. stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE blocked=$TODO_BLOCKED_FILE"
+      write_status "blocked" "$detail" "$run_id" "77" "${CONSECUTIVE_FAILURES:-1}"
+      printf '%s run=%s exit=%s blocked_external_control_boundary=true progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "77" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+      return 77
     elif python3 - "$stdout_log" <<'PY'
 import json, sys
 root = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -1514,13 +1852,11 @@ sys.exit(0 if payload.get("blocked") is True else 1)
 PY
     then
       write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
-      : > "$STOP_FILE"
-      chmod 600 "$STOP_FILE"
-      sync_parent_dir "$STATE_DIR"
-      detail="Brownie run reached a blocked external-control boundary; stopping phase-loop to avoid repeating the same invocation. stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
-      write_status "blocked" "$detail" "$run_id" "77" "${CONSECUTIVE_FAILURES:-0}"
-      printf '%s run=%s exit=%s blocked_boundary=true progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$exit_code" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
-      return 77
+      record_blocked_todo_claim "$run_stamp"
+      detail="Brownie run reached a blocked boundary; recorded the blocked TODO and will continue with the next unblocked TODO. stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE blocked=$TODO_BLOCKED_FILE"
+      write_status "blocked_todo_recorded" "$detail" "$run_id" "$exit_code" "${CONSECUTIVE_FAILURES:-0}"
+      printf '%s run=%s exit=%s blocked_todo_recorded=true progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$exit_code" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+      return 0
     fi
 
     case "$progress_classification" in
