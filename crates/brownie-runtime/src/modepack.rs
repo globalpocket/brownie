@@ -4180,6 +4180,7 @@ pub(super) fn verify_modepack_candidate_provenance(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn validate_modepack_provenance_statement(
     statement: &Value,
     cached_summary: &ModePackCandidateSummary,

@@ -1,7 +1,9 @@
 //! Brownie persistence crate.
 
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
+#[cfg(unix)]
+use std::io::Read;
+use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
@@ -14706,6 +14708,7 @@ mod tests {
         evidence
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     fn run_durable_schema_migration_child(
         root: &Path,
         failpoint: Option<&str>,
@@ -14733,6 +14736,7 @@ mod tests {
             .expect("run terminal transition child")
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     fn assert_interrupted_migration_checkpoint(root: &Path, failpoint: &str) {
         let store = TaskStore::new(root);
         let manifest = store

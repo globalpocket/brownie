@@ -58,6 +58,7 @@
     "guard:local-release-targets": "node scripts/guard-local-release-targets.mjs",
     "guard:owner-governance-evidence": "node scripts/guard-owner-governance-evidence.mjs",
     "guard:owner-governance-evidence:test": "node --test scripts/guard-owner-governance-evidence.test.mjs",
+    "guard:release-gate": "node scripts/release-gate.mjs --dry-run",
     "release:gate": "node scripts/release-gate.mjs",
     "test:rrp3-process-loss": "node scripts/rrp3-process-loss-recovery-e2e.mjs",
     "test": "pnpm --filter brownie-vsix test"

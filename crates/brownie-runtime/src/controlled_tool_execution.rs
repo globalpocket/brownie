@@ -1190,6 +1190,7 @@ fn try_lock_file_nonblocking_platform(file: &fs::File) -> io::Result<bool> {
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::incompatible_msrv)]
 fn try_lock_file_nonblocking_platform(file: &fs::File) -> io::Result<bool> {
     match file.try_lock() {
         Ok(()) => Ok(true),
@@ -1240,6 +1241,7 @@ fn try_acquire_mcp_tool_approval_claim_lock(
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(&lock_path)
     {
         Ok(mut file) => {
