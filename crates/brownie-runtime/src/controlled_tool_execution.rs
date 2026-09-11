@@ -1240,6 +1240,7 @@ fn try_acquire_mcp_tool_approval_claim_lock(
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(&lock_path)
     {
         Ok(mut file) => {

@@ -15004,7 +15004,7 @@ fn headless_run_drive_is_recoverable_unknown_nonterminal_budget_stop(
 fn headless_run_drive_has_no_explicit_implementation_route(
     result: &HeadlessRunDriveResult,
 ) -> bool {
-    result.next_route.as_ref().is_none_or(|route| {
+    result.next_route.as_ref().map_or(true, |route| {
         matches!(
             route.kind,
             HeadlessContinueRouteKind::InspectProgressOverview

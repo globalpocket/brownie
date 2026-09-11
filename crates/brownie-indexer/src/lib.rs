@@ -7,7 +7,9 @@ use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, VecDeque};
 use std::ffi::{OsStr, OsString};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
+#[cfg(unix)]
+use std::fs::OpenOptions;
 use std::io::{Error, ErrorKind, Read};
 use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
@@ -608,6 +610,7 @@ fn read_optional_ignore_policy_file(
     })
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum QueuedDirectoryError {
     Unreadable,
@@ -789,6 +792,7 @@ fn read_directory_entry_names(_directory: &ValidatedDirectory) -> std::io::Resul
     ))
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DirectoryChildKind {
     Symlink,
@@ -874,6 +878,7 @@ struct FileRead {
     byte_length: u64,
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 #[derive(Debug)]
 enum FileReadError {
     Symlink,
@@ -937,6 +942,7 @@ fn read_regular_file_no_follow(
     read_bounded_regular_handle(file, max_file_bytes)
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 fn read_bounded_regular_handle(
     mut file: File,
     max_file_bytes: u64,
@@ -992,6 +998,7 @@ fn c_name_from_os_str(name: &OsStr) -> std::io::Result<std::ffi::CString> {
 }
 
 #[cfg(not(unix))]
+#[cfg_attr(not(unix), allow(dead_code))]
 fn c_name_from_os_str(_name: &OsStr) -> std::io::Result<std::ffi::CString> {
     Err(Error::new(
         ErrorKind::Unsupported,
