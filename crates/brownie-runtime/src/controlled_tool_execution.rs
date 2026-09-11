@@ -1190,6 +1190,7 @@ fn try_lock_file_nonblocking_platform(file: &fs::File) -> io::Result<bool> {
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::incompatible_msrv)]
 fn try_lock_file_nonblocking_platform(file: &fs::File) -> io::Result<bool> {
     match file.try_lock() {
         Ok(()) => Ok(true),

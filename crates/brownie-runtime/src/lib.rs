@@ -18651,6 +18651,7 @@ modes:
         Value::Object(payload)
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     fn append_manual_delete_patch_proposal(
         store: &BrownieStore,
         record: &TaskRecord,
