@@ -241,6 +241,52 @@ cat <<'JSON'
 JSON
 SH
 chmod +x "$fake_brownie_no_actionable"
+fake_brownie_terminal_no_eligible="$(mktemp)"
+cat > "$fake_brownie_terminal_no_eligible" <<'SH'
+#!/usr/bin/env bash
+set -eu
+cat <<'JSON'
+{
+  "command": "run",
+  "ok": true,
+  "run": {
+    "automation": {
+      "schema_version": 1,
+      "status": "terminal_failure",
+      "controller_action": "stop",
+      "stop_class": "terminal_failure",
+      "stop_reason": "terminal_task_failed",
+      "completed": false,
+      "blocked": true,
+      "retryable": false,
+      "terminal_failure": true,
+      "task_id": "task-terminal",
+      "run_id": "run-terminal",
+      "journey_id": "journey-terminal",
+      "next_action": "inspect_progress_overview",
+      "next_invocation": null
+    },
+    "status": "no_eligible_task",
+    "session_id": "session-terminal",
+    "drive_id": "drive-terminal",
+    "task_id": "task-terminal",
+    "run_id": "run-terminal",
+    "journey_id": "journey-terminal",
+    "completion_closure_status": "no_eligible_task",
+    "next_action": "inspect_progress_overview",
+    "completed": false,
+    "blocked": true,
+    "retryable": false,
+    "terminal_failure": true,
+    "controller_action": "stop",
+    "stop_class": "terminal_failure",
+    "stop_reason": "terminal_task_failed",
+    "next_invocation": null
+  }
+}
+JSON
+SH
+chmod +x "$fake_brownie_terminal_no_eligible"
 fake_brownie_tracked_workspace_change="$(mktemp)"
 cat > "$fake_brownie_tracked_workspace_change" <<'SH'
 #!/usr/bin/env bash
@@ -381,6 +427,7 @@ claim = json.load(open(path, encoding="utf-8"))
 queue_state = json.load(open(sys.argv[2], encoding="utf-8"))
 progress_state = json.load(open(sys.argv[3], encoding="utf-8"))
 prompt_meta = json.load(open(sys.argv[5], encoding="utf-8"))
+prompt_text = open(sys.argv[4], encoding="utf-8").read()
 mode = stat.S_IMODE(os.stat(path).st_mode)
 queue_mode = stat.S_IMODE(os.stat(sys.argv[2]).st_mode)
 progress_mode = stat.S_IMODE(os.stat(sys.argv[3]).st_mode)
@@ -402,6 +449,8 @@ assert prompt_meta["context_hints"][:2] == [
     "scripts/release-runtime-operational-evidence.mjs",
     "docs/architecture/local-release-targets.example.json",
 ], prompt_meta
+assert "A valid first response shape is" not in prompt_text, prompt_text
+assert "Never copy a prior read request" in prompt_text, prompt_text
 assert len(prompt_meta["prompt_sha256"]) == 64, prompt_meta
 assert len(prompt_meta["todo_sha256"]) == 64, prompt_meta
 assert len(prompt_meta["base_prompt_sha256"]) == 64, prompt_meta
@@ -436,6 +485,37 @@ assert status["exit_code"] == "0", status
 assert "blocked external-control boundary" in status["detail"], status
 assert "will continue with the next unblocked TODO" in status["detail"], status
 assert claim["status"] == "blocked", claim
+PY
+
+state_terminal_no_eligible="$(mktemp -d)"
+prompt_terminal_no_eligible="$(mktemp)"
+todo_terminal_no_eligible="$(mktemp)"
+printf 'base prompt\n' > "$prompt_terminal_no_eligible"
+printf -- '- [ ] E-15a-redaction-guard: implement concrete guard task\n' > "$todo_terminal_no_eligible"
+
+set +e
+PHASE_LOOP_STATE_DIR="$state_terminal_no_eligible" \
+PHASE_LOOP_PROMPT="$prompt_terminal_no_eligible" \
+PHASE_LOOP_TODO="$todo_terminal_no_eligible" \
+BROWNIE_BIN="$fake_brownie_terminal_no_eligible" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+terminal_no_eligible_exit="$?"
+set -e
+test "$terminal_no_eligible_exit" = "76"
+python3 - "$state_terminal_no_eligible/status.json" "$state_terminal_no_eligible/progress-state.json" "$state_terminal_no_eligible/todo-claims/current.json" <<'PY'
+import json
+import sys
+
+status = json.load(open(sys.argv[1], encoding="utf-8"))
+progress = json.load(open(sys.argv[2], encoding="utf-8"))
+claim = json.load(open(sys.argv[3], encoding="utf-8"))
+assert status["status"] == "no_progress", status
+assert progress["classification"] == "no_progress", progress
+assert progress["meaningful_progress"] is False, progress
+assert progress["progress_projection"]["blocked_by_terminal_task_failure"] is True, progress
+assert progress["workspace_changed"] is False, progress
+assert claim["status"] == "in_progress", claim
 PY
 
 state_all_blocked="$(mktemp -d)"

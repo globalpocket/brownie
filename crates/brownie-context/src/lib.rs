@@ -1646,6 +1646,7 @@ fn infer_bdk_execution_state(
 ) -> BdkExecutionState {
     let goal_lower = goal.to_lowercase();
     let phase_loop_state = extract_phase_loop_bdk_state(goal);
+    let completed_reads = completed_workspace_read_count(tool_execution_summary);
     if tool_execution_summary
         .iter()
         .any(|entry| entry.contains("Duplicate workspace.read"))
@@ -1659,13 +1660,11 @@ fn infer_bdk_execution_state(
     {
         return BdkExecutionState::RepairPatch;
     }
+    if task_goal_looks_like_workspace_edit(&goal_lower) && completed_reads > 0 {
+        return BdkExecutionState::ImplementPatch;
+    }
     if matches!(phase_loop_state.as_deref(), Some("decompose_todo")) {
         return BdkExecutionState::DecomposeTodo;
-    }
-    if task_goal_looks_like_workspace_edit(&goal_lower)
-        && completed_workspace_read_count(tool_execution_summary) > 0
-    {
-        return BdkExecutionState::ImplementPatch;
     }
     if matches!(
         phase_loop_state.as_deref(),
@@ -1958,6 +1957,46 @@ mod tests {
         assert!(prompt.messages[1]
             .content
             .contains("BDK Control Packet:\n- state: context_plan"));
+        assert!(!prompt.messages[1]
+            .content
+            .contains("BDK Control Packet:\n- state: decompose_todo"));
+    }
+
+    #[test]
+    fn prompt_builder_prefers_implement_patch_after_phase_loop_leaf_read() {
+        let context_window = ContextWindowSummary::empty();
+        let prompt = PromptBuilder::build(PromptBuildInput {
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            goal: "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- state: `decompose_todo`\n\n## Selected TODO\n\n- [ ] E-15b-provenance-collector: Patch only `scripts/release-supply-chain-artifact-evidence.mjs` to bind artifact evidence to one current clean source commit:\n  Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.\n".into(),
+            mode_id: Some("implementer".into()),
+            mode_policy_summary: Some("Mode Policy:\nmode_id: implementer".into()),
+            mode_instruction_material: Some("Mode Instructions:\n<none>".into()),
+            permission_summary: vec![],
+            tool_plan_summary: vec![
+                "workspace.read: allowed".into(),
+                "workspace.write: allowed".into(),
+            ],
+            tool_intent_summary: vec![],
+            tool_execution_summary: vec![
+                "workspace.read: Completed bytes_read=42 truncated=false output_preview=\"bounded\""
+                    .into(),
+            ],
+            subtask_orchestration_summary: vec![],
+            verification_recovery_diagnostics_summary: vec![],
+            selected_index_context: None,
+            verification_recovery_context: None,
+            context_window: context_window.clone(),
+            context_budget: ContextBudgetSummary::unrequested(&context_window, None, usize::MAX),
+            ledger_summary: vec![],
+        });
+
+        assert!(prompt.messages[1]
+            .content
+            .contains("BDK Control Packet:\n- state: implement_patch"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("completed_workspace_reads: 1"));
         assert!(!prompt.messages[1]
             .content
             .contains("BDK Control Packet:\n- state: decompose_todo"));
