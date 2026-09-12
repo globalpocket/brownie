@@ -2759,6 +2759,7 @@ pub(super) fn append_todo_decomposition_blocker_after_read_only_stall(
     duplicate_workspace_read_denied: bool,
     workspace_read_failed: bool,
 ) -> anyhow::Result<()> {
+    let read_budget_exhausted = run_has_workspace_read_budget_exhausted(store, record)?;
     if !task_goal_requires_workspace_write_proposal(&record.goal)
         || run_has_workspace_patch_proposal(store, record)?
         || !run_has_todo_decomposition_stall(
@@ -2766,12 +2767,14 @@ pub(super) fn append_todo_decomposition_blocker_after_read_only_stall(
             record,
             duplicate_workspace_read_denied,
             workspace_read_failed,
+            read_budget_exhausted,
         )?
     {
         return Ok(());
     }
     if !duplicate_workspace_read_denied
         && !workspace_read_failed
+        && !read_budget_exhausted
         && selected_todo_mentions_non_todo_workspace_path(&record.goal)
         && !selected_todo_allows_todo_md_edit(&record.goal)
     {
@@ -2786,11 +2789,13 @@ pub(super) fn append_todo_decomposition_blocker_after_read_only_stall(
     else {
         return Ok(());
     };
-    if is_concrete_product_ready_leaf_todo(&block)
-        && (!duplicate_workspace_read_denied && !workspace_read_failed
-            || !is_runtime_refinable_product_ready_leaf_todo(&block))
-    {
-        return Ok(());
+    if is_concrete_product_ready_leaf_todo(&block) && !read_budget_exhausted {
+        let read_only_or_unrefinable_leaf = (!duplicate_workspace_read_denied
+            && !workspace_read_failed)
+            || !is_runtime_refinable_product_ready_leaf_todo(&block);
+        if read_only_or_unrefinable_leaf {
+            return Ok(());
+        }
     }
     let current_head = latest_git_status_current_head(store, record)?;
     let release_evidence_blocked = run_has_release_evidence_blocker_inputs(store, record)?;
@@ -2805,6 +2810,8 @@ pub(super) fn append_todo_decomposition_blocker_after_read_only_stall(
         "Duplicate workspace.read prevented progress on the selected TODO"
     } else if workspace_read_failed {
         "workspace.read failed before implementation progress on the selected TODO"
+    } else if read_budget_exhausted {
+        "The bounded workspace.read budget was exhausted before the selected TODO produced a workspace.write proposal"
     } else {
         "Read-only TODO investigation completed without a workspace.write proposal"
     };
@@ -2831,10 +2838,11 @@ fn run_has_todo_decomposition_stall(
     record: &brownie_protocol::TaskRecord,
     duplicate_workspace_read_denied: bool,
     workspace_read_failed: bool,
+    read_budget_exhausted: bool,
 ) -> anyhow::Result<bool> {
     let events = store.tasks().read_ledger_events(&record.run_id)?;
     let read_todo = run_events_include_workspace_read_path(&events, "todo.md");
-    if (duplicate_workspace_read_denied || workspace_read_failed)
+    if (duplicate_workspace_read_denied || workspace_read_failed || read_budget_exhausted)
         && selected_todo_first_line_from_goal(&record.goal).is_some()
     {
         return Ok(true);
@@ -2863,6 +2871,24 @@ fn run_has_todo_decomposition_stall(
     Ok(second_pass_seen
         && (read_only_completed_tools >= 2
             || run_has_release_evidence_blocker_inputs_from_events(&events)))
+}
+
+fn run_has_workspace_read_budget_exhausted(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+) -> anyhow::Result<bool> {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    Ok(
+        task_goal_enforces_workspace_read_budget_before_write(&record.goal)
+            && events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::ToolExecutionCompleted)
+                .filter_map(|event| event.payload.as_ref())
+                .filter_map(|payload| payload.get("tool_id").and_then(Value::as_str))
+                .filter(|tool_id| *tool_id == WORKSPACE_READ_TOOL_ID)
+                .count()
+                >= 2,
+    )
 }
 
 fn run_has_release_evidence_blocker_inputs(
@@ -6007,6 +6033,37 @@ mod mcp_approval_lock_tests {
         })
     }
 
+    fn write_policy() -> CompiledModePolicy {
+        CompiledModePolicy {
+            mode_id: "implementer".to_string(),
+            display_name: "Implementer".to_string(),
+            role_definition: "Implement bounded changes.".to_string(),
+            when_to_use: None,
+            description: None,
+            prompt_sections: Vec::new(),
+            verification_responsibility: None,
+            instruction_fingerprint: None,
+            permissions: brownie_agentmodes::ModePermissions {
+                read_only: false,
+                workspace_write: true,
+                process_exec: true,
+                git_inspect: true,
+                git_commit: false,
+                network_access: false,
+                llm_provider_access: true,
+                service_control: false,
+                destructive: false,
+                can_spawn_subtasks: false,
+                codebase_index: false,
+                mcp_tool_access: false,
+            },
+            workspace_write_scopes: Vec::new(),
+            allowed_handoff_targets: None,
+            mcp_access: Vec::new(),
+            completion_rules: Vec::new(),
+        }
+    }
+
     #[test]
     fn mcp_approval_lock_write_happens_only_after_lock_ownership() {
         let temp = tempfile::tempdir().expect("temp dir");
@@ -6111,6 +6168,62 @@ mod mcp_approval_lock_tests {
 
         assert!(is_concrete_product_ready_leaf_todo(&block));
         assert!(!is_runtime_refinable_product_ready_leaf_todo(&block));
+    }
+
+    #[test]
+    fn read_budget_exhausted_stall_can_refine_selected_leaf_todo() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let store = BrownieStore::new(temp.path());
+        let selected_todo = "- [ ] E-14a: Write the final Product Ready judgment input memo:\n  File: `docs/architecture/final-product-ready-judgment.md`.\n  Read `docs/architecture/runtime-release-contract.json` and summarize blockers.\n";
+        std::fs::write(temp.path().join("todo.md"), selected_todo).expect("todo");
+        let mut record = test_task_record();
+        record.run_id = "run_read_budget_exhausted".to_string();
+        record.goal = format!(
+            "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- read_batch_policy: request at most one `workspace.read` per tool intent and at most two total `workspace.read` requests before requesting workspace.write or a narrower follow-up TODO.\n\n## Selected TODO\n\n{selected_todo}"
+        );
+        for path in [
+            "docs/architecture/final-product-ready-judgment.md",
+            "docs/architecture/runtime-release-contract.json",
+        ] {
+            store
+                .tasks()
+                .append_task_event_with_payload(
+                    &record,
+                    LedgerEventKind::ToolExecutionCompleted,
+                    Some(json!({
+                        "tool_id": WORKSPACE_READ_TOOL_ID,
+                        "status": "Completed",
+                        "output_preview": format!("[workspace.read path={path} bytes_total=1 content_sha256=sha256:{}]\n", "a".repeat(64)),
+                    })),
+                )
+                .expect("append read event");
+        }
+
+        append_todo_decomposition_blocker_after_read_only_stall(
+            &store,
+            &record,
+            &write_policy(),
+            false,
+            false,
+        )
+        .expect("synthesize follow-up");
+
+        let events = store
+            .tasks()
+            .read_ledger_events(&record.run_id)
+            .expect("events");
+        let proposal = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+            .expect("workspace patch proposal");
+        let payload = proposal.payload.as_ref().expect("proposal payload");
+        assert_eq!(payload["path"], "todo.md");
+        assert_eq!(payload["operation"], "patch_file");
+        assert_eq!(payload["validation_status"], "Valid");
+        assert!(payload["patch_new_text"]
+            .as_str()
+            .expect("new text")
+            .contains("E-14a: Implement the next concrete step"));
     }
 
     #[test]

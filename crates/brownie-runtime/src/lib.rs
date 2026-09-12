@@ -2701,7 +2701,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 && workspace_read_completed_count(&followup_events) >= 2
             {
                 if let Err(error) = append_todo_decomposition_blocker_after_read_only_stall(
-                    &store, &running, &policy, true, false,
+                    &store, &running, &policy, false, false,
                 ) {
                     let _ = store.tasks().append_task_event_with_payload(
                         &running,
