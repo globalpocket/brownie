@@ -1034,7 +1034,12 @@ if not isinstance(previous_projection, dict):
     previous_projection = {}
 
 workspace_changed = workspace_before != workspace_after
-terminal_failed = progress_projection["terminal_final_state"] == "Failed" or progress_projection["terminal_task_status"] == "Failed"
+terminal_failed = (
+    progress_projection["terminal_final_state"] == "Failed"
+    or progress_projection["terminal_task_status"] == "Failed"
+    or progress_projection["stop_class"] == "terminal_failure"
+    or progress_projection["stop_reason"] == "terminal_task_failed"
+)
 blocked = bool(payload.get("blocked")) or bool(automation.get("blocked")) or terminal_failed
 accepted = bool(progress_projection["accepted"])
 finalized = bool(progress_projection["finalization"])
@@ -1104,7 +1109,21 @@ if todo_md_only_apply or selected_first_line_still_pending:
     workspace_changed = False
 progress_projection["todo_md_only_apply_blocked_as_progress"] = todo_md_only_apply
 progress_projection["selected_todo_first_line_still_pending_after_todo_md_apply"] = selected_first_line_still_pending
-meaningful_progress = exit_code == 0 and (workspace_changed or completed or blocked or accepted or finalized or applied)
+terminal_non_progress = (
+    exit_code == 0
+    and blocked
+    and not workspace_changed
+    and not completed
+    and not accepted
+    and not finalized
+    and not applied
+    and (
+        progress_projection["stop_class"] == "terminal_failure"
+        or progress_projection["stop_reason"] == "terminal_task_failed"
+        or progress_projection["cli_status"] in ("no_eligible_task", "no_actionable_work")
+    )
+)
+meaningful_progress = exit_code == 0 and (workspace_changed or completed or accepted or finalized or applied)
 
 encoded = json.dumps(progress_projection, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 fingerprint = "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -1122,7 +1141,7 @@ state = {
     "last_progress_fingerprint": fingerprint,
     "same_progress_count": same_count,
     "stagnation_threshold": threshold,
-    "classification": "no_progress" if stagnated else ("non_progress_success" if no_progress else ("progress" if meaningful_progress else "process_failure")),
+    "classification": "no_progress" if (stagnated or terminal_non_progress) else ("non_progress_success" if no_progress else ("progress" if meaningful_progress else "process_failure")),
     "meaningful_progress": meaningful_progress,
     "workspace_changed": workspace_changed,
     "exit_code": exit_code,
@@ -1625,15 +1644,11 @@ prompt = "\n".join([
     "- context_policy: use the smallest exact file set; do not read README or overview files unless the active TODO names them.",
     "- progress_policy: after bounded reads, emit one workspace.write proposal, a concrete blocker TODO, or completion evidence; do not continue read-only discovery.",
     "- output_policy: if workspace context is needed, your next assistant message must be exactly one fenced `brownie-tool-intent` JSON block and no explanatory prose.",
-    "- read_batch_policy: request at most one `workspace.read` per tool intent and at most two total `workspace.read` requests before requesting workspace.write or a narrower follow-up TODO.",
+    "- read_batch_policy: if completed_workspace_reads is 0, request at most one relevant `workspace.read`; if completed_workspace_reads is 1 or more, do not request `workspace.read` again and request `workspace.write` or a concrete blocker TODO instead.",
     "- inferred_context_hints:",
     *context_hint_lines,
     "",
-    "For this invocation, start from the first inferred context hint when it is relevant. A valid first response shape is:",
-    "",
-    "```brownie-tool-intent",
-    "{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read bounded implementation context for the selected TODO.\",\"input\":{\"path\":\"<one inferred context hint>\"}}]}",
-    "```",
+    "For this invocation, start from the first inferred context hint when it is relevant, but treat completed Tool Execution results as authoritative. Never copy a prior read request after a workspace.read result or read-budget denial; the next tool intent must move to `workspace.write` or a concrete blocker TODO.",
     "",
     "## Active TODO Claim",
     "",
@@ -2440,10 +2455,17 @@ else:
 if payload.get("blocked") is not True:
     sys.exit(1)
 stop_class = str(payload.get("stop_class") or "")
+stop_reason = str(payload.get("stop_reason") or "")
 status = str(payload.get("status") or "")
 closure = str(payload.get("completion_closure_status") or "")
 next_action = str(payload.get("next_action") or "")
 controller_action = str(payload.get("controller_action") or "")
+if (
+    stop_class == "terminal_failure"
+    or stop_reason == "terminal_task_failed"
+    or status in ("no_eligible_task", "no_actionable_work")
+):
+    sys.exit(1)
 external_control_boundary = (
     stop_class == "recoverable_unknown_nonterminal"
     or status == "recoverable_unknown_nonterminal"
@@ -2469,6 +2491,15 @@ elif isinstance(root, dict) and isinstance(root.get("resume"), dict):
     payload = root.get("resume")
 else:
     payload = root
+stop_class = str(payload.get("stop_class") or "")
+stop_reason = str(payload.get("stop_reason") or "")
+status = str(payload.get("status") or "")
+if (
+    stop_class == "terminal_failure"
+    or stop_reason == "terminal_task_failed"
+    or status in ("no_eligible_task", "no_actionable_work")
+):
+    sys.exit(1)
 sys.exit(0 if payload.get("blocked") is True else 1)
 PY
     then
