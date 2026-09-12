@@ -668,7 +668,11 @@ fn format_tool_intent_summary(events: &[LedgerEvent]) -> Vec<String> {
                     .get("tool_id")
                     .and_then(|value| value.as_str())
                     .unwrap_or("<unknown>");
-                summary.push(format!("{tool_id}: rejected"));
+                let reason = payload
+                    .get("reason")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("<unknown>");
+                summary.push(format!("{tool_id}: rejected reason={reason}"));
             }
             _ => {}
         }
@@ -1612,7 +1616,7 @@ impl BdkExecutionState {
                 "request a bounded workspace.write patch to the live TODO queue (`.brownie/todo.md` unless the selected queue is legacy `todo.md`) replacing the broad item with concrete implementable leaf TODOs"
             }
             Self::BlockerOrWrite => {
-                "do not request more reads; request workspace.write patch_file for the named target file using the shortest unique complete-line old_text/new_text, or fail closed"
+                "do not request more workspace.read; if Git state is needed request git.status or git.diff with allowed input; otherwise request workspace.write patch_file for the named target file or refine `.brownie/todo.md` with a concrete follow-up/blocker TODO"
             }
             Self::DirectAnswer => "answer directly without tool intent",
         }
@@ -1631,7 +1635,7 @@ impl BdkExecutionState {
             }
             Self::DecomposeTodo => "split work instead of browsing README/overview material",
             Self::BlockerOrWrite => {
-                "duplicate reads have already been denied, so another LLM read-followup is waste"
+                "the previous read path was denied or already exhausted, so retrying workspace.read is waste"
             }
             Self::DirectAnswer => "keep the response concise",
         }
@@ -1647,10 +1651,10 @@ fn infer_bdk_execution_state(
     let goal_lower = goal.to_lowercase();
     let phase_loop_state = extract_phase_loop_bdk_state(goal);
     let completed_reads = completed_workspace_read_count(tool_execution_summary);
-    if tool_execution_summary
-        .iter()
-        .any(|entry| entry.contains("Duplicate workspace.read"))
-    {
+    if workspace_read_denial_requires_git_or_todo_refinement(
+        tool_execution_summary,
+        tool_intent_summary,
+    ) {
         return BdkExecutionState::BlockerOrWrite;
     }
     if !verification_recovery_diagnostics_summary.is_empty()
@@ -1731,6 +1735,24 @@ fn task_goal_looks_like_workspace_edit(goal_lower: &str) -> bool {
     ]
     .iter()
     .any(|needle| goal_lower.contains(needle))
+}
+
+fn workspace_read_denial_requires_git_or_todo_refinement(
+    tool_execution_summary: &[String],
+    tool_intent_summary: &[String],
+) -> bool {
+    tool_execution_summary
+        .iter()
+        .chain(tool_intent_summary.iter())
+        .any(|entry| {
+            if !entry.contains("workspace.read") {
+                return false;
+            }
+            entry.contains("Duplicate workspace.read")
+                || entry.contains("Additional workspace.read")
+                || entry.contains("protected workspace path")
+                || entry.contains("reading protected workspace paths is not allowed")
+        })
 }
 
 fn completed_workspace_read_count(tool_execution_summary: &[String]) -> usize {
@@ -2042,10 +2064,54 @@ mod tests {
             .contains("BDK Control Packet:\n- state: blocker_or_write"));
         assert!(prompt.messages[1]
             .content
-            .contains("do not request more reads"));
+            .contains("do not request more workspace.read"));
         assert!(prompt.messages[1]
             .content
             .contains("workspace.write patch_file for the named target file"));
+    }
+
+    #[test]
+    fn prompt_builder_redirects_after_protected_workspace_read_rejection() {
+        let context_window = ContextWindowSummary::empty();
+        let prompt = PromptBuilder::build(PromptBuildInput {
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            goal: "Implement release evidence update after checking current Git state".into(),
+            mode_id: Some("implementer".into()),
+            mode_policy_summary: Some("Mode Policy:\nmode_id: implementer".into()),
+            mode_instruction_material: Some("Mode Instructions:\n<none>".into()),
+            permission_summary: vec![],
+            tool_plan_summary: vec![
+                "workspace.read: allowed".into(),
+                "workspace.write: allowed".into(),
+                "git.status: allowed".into(),
+                "git.diff: allowed".into(),
+            ],
+            tool_intent_summary: vec![
+                "workspace.read: rejected reason=workspace.read input.path targets a protected workspace path.".into(),
+            ],
+            tool_execution_summary: vec![],
+            subtask_orchestration_summary: vec![],
+            verification_recovery_diagnostics_summary: vec![],
+            selected_index_context: None,
+            verification_recovery_context: None,
+            context_window: context_window.clone(),
+            context_budget: ContextBudgetSummary::unrequested(&context_window, None, usize::MAX),
+            ledger_summary: vec![],
+        });
+
+        assert!(prompt.messages[1]
+            .content
+            .contains("BDK Control Packet:\n- state: blocker_or_write"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("do not request more workspace.read"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("request git.status or git.diff with allowed input"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("refine `.brownie/todo.md`"));
     }
 
     #[test]
@@ -2625,7 +2691,10 @@ mod tests {
         let materialized = ContextMaterializer::materialize(input);
         assert_eq!(
             materialized.tool_intent_summary,
-            vec!["workspace.read: allowed", "unknown.tool: rejected"]
+            vec![
+                "workspace.read: allowed",
+                "unknown.tool: rejected reason=Unknown tool id."
+            ]
         );
     }
 

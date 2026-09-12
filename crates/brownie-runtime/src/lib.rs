@@ -2680,6 +2680,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                             .and_then(Value::as_str)
                             == Some(WORKSPACE_WRITE_TOOL_ID)
                 });
+            let latest_workspace_read_rejection_index = followup_events
+                .iter()
+                .rposition(is_recoverable_workspace_read_denial_for_followup);
             let followup_read_result_available =
                 match (second_pass_response_index, latest_tool_execution_index) {
                     (Some(response_index), Some(tool_index)) => tool_index > response_index,
@@ -2688,6 +2691,13 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             let followup_rejected_write_available = match (
                 second_pass_response_index,
                 latest_workspace_write_rejection_index,
+            ) {
+                (Some(response_index), Some(rejection_index)) => rejection_index > response_index,
+                _ => false,
+            };
+            let followup_rejected_read_available = match (
+                second_pass_response_index,
+                latest_workspace_read_rejection_index,
             ) {
                 (Some(response_index), Some(rejection_index)) => rejection_index > response_index,
                 _ => false,
@@ -2717,7 +2727,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 }
                 break;
             }
-            if !(followup_read_result_available || followup_rejected_write_available)
+            if !(followup_read_result_available
+                || followup_rejected_write_available
+                || followup_rejected_read_available)
                 || !followup_write_missing
                 || followup_attempts >= 5
             {
@@ -2936,7 +2948,17 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             agent_loop_final_response_content.clear();
         }
     }
-    if task_goal_requires_tool_intent(&running.goal) && rejected_tool_intent_requests > 0 {
+    let unrecovered_rejected_tool_intent_requests = completion_gate_events
+        .iter()
+        .filter(|event| {
+            event.kind == LedgerEventKind::ToolIntentRejected
+                && !is_recoverable_workspace_read_denial_for_followup(event)
+        })
+        .count();
+    if task_goal_requires_tool_intent(&running.goal)
+        && rejected_tool_intent_requests > 0
+        && unrecovered_rejected_tool_intent_requests > 0
+    {
         agent_loop_final_state = AgentLoopState::Failed;
         agent_loop_completion_summary =
             "LLM tool intent contained rejected requests for a side-effect task".to_string();
@@ -3139,6 +3161,30 @@ fn task_goal_requires_tool_intent(goal: &str) -> bool {
 
 fn run_has_duplicate_workspace_read_denial(events: &[LedgerEvent]) -> bool {
     events.iter().any(is_duplicate_workspace_read_denial)
+}
+
+fn is_recoverable_workspace_read_denial_for_followup(event: &LedgerEvent) -> bool {
+    matches!(
+        event.kind,
+        LedgerEventKind::ToolIntentRejected | LedgerEventKind::ToolExecutionDenied
+    ) && event
+        .payload
+        .as_ref()
+        .and_then(|payload| payload.get("tool_id"))
+        .and_then(Value::as_str)
+        == Some(WORKSPACE_READ_TOOL_ID)
+        && event
+            .payload
+            .as_ref()
+            .and_then(|payload| payload.get("reason"))
+            .and_then(Value::as_str)
+            .is_some_and(|reason| {
+                reason.contains("Duplicate workspace.read")
+                    || reason.contains("Additional workspace.read is not progress")
+                    || reason
+                        .contains("workspace.read input.path targets a protected workspace path")
+                    || reason.contains("reading protected workspace paths is not allowed")
+            })
 }
 
 fn is_duplicate_workspace_read_denial(event: &LedgerEvent) -> bool {
@@ -63821,8 +63867,12 @@ content-length: {}
             panic!("run error: {:?}", run.error);
         }
         let run_result = run.result.expect("run result");
-        assert_eq!(run_result["status"], "Completed");
-        assert_eq!(run_result["agent_loop"]["final_state"], "Completed");
+        if run_result["status"] != "Completed" {
+            panic!("unexpected run result: {run_result:#}");
+        }
+        if run_result["agent_loop"]["final_state"] != "Completed" {
+            panic!("unexpected run result: {run_result:#}");
+        }
 
         let observed = handle.join().unwrap();
         assert_eq!(observed.len(), 2);
@@ -63866,6 +63916,80 @@ content-length: {}
         assert!(patch_new_text.contains("E-04c: Add release gate and Product Ready guard CI steps"));
         assert!(!patch_new_text.contains("TODO-decomposition"));
         assert!(!patch_new_text.contains("Split blocked TODO"));
+    }
+
+    #[test]
+    fn openai_task_run_recovers_after_protected_workspace_read_rejection() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join(".brownie")).expect("brownie dir");
+        let original_todo =
+            "- [ ] E-15b: Bind the latest release artifact to the current Git state.\n";
+        std::fs::write(temp.path().join(".brownie/todo.md"), original_todo).expect("todo");
+        let (base_url, handle) = spawn_mock_many(vec![
+            r#"{"choices":[{"message":{"content":"Read the live TODO queue.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read the selected TODO before refining it.\",\"input\":{\"path\":\".brownie/todo.md\"}}]}\n```"}}]}"#,
+            r#"{"choices":[{"message":{"content":"Check the current Git HEAD directly.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read Git HEAD to bind the evidence.\",\"input\":{\"path\":\".git/HEAD\"}}]}\n```"}}]}"#,
+            r#"{"choices":[{"message":{"content":"```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Refine the protected Git-state TODO into an allowed-tool follow-up.\",\"input\":{\"path\":\".brownie/todo.md\",\"operation\":\"patch_file\",\"old_text\":\"- [ ] E-15b: Bind the latest release artifact to the current Git state.\\n\",\"new_text\":\"- [ ] E-15b-a: Use `git.status` and `git.diff` with allowed input to inspect the current Git state, then update release evidence without reading `.git/*` protected paths.\\n\"}}]}\n```"}}]}"#,
+        ]);
+        write_mock_config(temp.path(), &base_url);
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
+        std::env::set_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true");
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"Update .brownie/todo.md by refining the selected protected Git-state blocker TODO","mode_id":"implementer"}}"#,
+        )
+        .result
+        .unwrap();
+        let task_id = start["task_id"].as_str().unwrap();
+        let run_id = start["run_id"].as_str().unwrap();
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        if run.error.is_some() {
+            panic!("run error: {:?}", run.error);
+        }
+        let run_result = run.result.expect("run result");
+        if run_result["status"] != "Completed" {
+            panic!("unexpected run result: {run_result:#}");
+        }
+        if run_result["agent_loop"]["final_state"] != "Completed" {
+            panic!("unexpected run result: {run_result:#}");
+        }
+
+        let observed = handle.join().unwrap();
+        assert_eq!(observed.len(), 3);
+        let third_prompt = observed[2]["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .find(|message| message["role"] == "user")
+            .and_then(|message| message["content"].as_str())
+            .expect("third user prompt");
+        assert!(third_prompt.contains("BDK Control Packet:\n- state: blocker_or_write"));
+        assert!(third_prompt.contains("request git.status or git.diff with allowed input"));
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        let event_list = events["events"].as_array().unwrap();
+        assert!(event_list.iter().any(|event| {
+            event["kind"] == "ToolIntentRejected"
+                && event["payload"]["tool_id"] == WORKSPACE_READ_TOOL_ID
+                && event["payload"]["reason"]
+                    .as_str()
+                    .is_some_and(|reason| reason.contains("protected workspace path"))
+        }));
+        let proposal = event_list
+            .iter()
+            .find(|event| event["kind"] == "WorkspacePatchProposed")
+            .expect("workspace write proposal");
+        assert_eq!(proposal["payload"]["path"], ".brownie/todo.md");
+        assert_eq!(proposal["payload"]["operation"], "patch_file");
+        assert_eq!(proposal["payload"]["validation_status"], "Valid");
     }
 
     #[test]

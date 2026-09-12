@@ -21,7 +21,7 @@
     "workflow_run_id": null,
     "artifact_sha256": null,
     "contract_registry_fingerprint": "sha256:4250fb47242f2bdc4ac26ce1d0cf8ecedbd27627eb9e3117acc82e3719eb934d",
-    "readiness_audit_content_sha256": "sha256:769e0fa934ab461ac2d6a6debba33170462695c26bf881a528c397a2dbaad368",
+    "readiness_audit_content_sha256": "sha256:d97b54248ad003c13be4f01e0db406b45f7608a0a33605e32a23fe1a560fedb4",
     "mode_pack_fingerprint": null,
     "product_dod_fingerprint": null
   },
