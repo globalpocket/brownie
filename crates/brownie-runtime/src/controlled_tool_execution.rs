@@ -2789,11 +2789,11 @@ pub(super) fn append_todo_decomposition_blocker_after_read_only_stall(
     else {
         return Ok(());
     };
-    if is_concrete_product_ready_leaf_todo(&block) && !read_budget_exhausted {
-        let read_only_or_unrefinable_leaf = (!duplicate_workspace_read_denied
-            && !workspace_read_failed)
-            || !is_runtime_refinable_product_ready_leaf_todo(&block);
-        if read_only_or_unrefinable_leaf {
+    if is_concrete_product_ready_leaf_todo(&block) {
+        if !is_runtime_refinable_product_ready_leaf_todo(&block) {
+            return Ok(());
+        }
+        if !read_budget_exhausted && !duplicate_workspace_read_denied && !workspace_read_failed {
             return Ok(());
         }
     }
@@ -3089,7 +3089,18 @@ fn todo_decomposition_replacement(
 }
 
 fn is_concrete_product_ready_leaf_todo(block: &TodoBlock) -> bool {
+    for prefix in ["E-14a-", "E-15a-", "E-16a-"] {
+        if block.title.starts_with(prefix) {
+            return true;
+        }
+    }
     block.id.as_deref().is_some_and(|id| {
+        if id == "E-14a" {
+            return false;
+        }
+        if id.starts_with("E-14a-") || id.starts_with("E-15a-") || id.starts_with("E-16a-") {
+            return true;
+        }
         if id.starts_with("E-")
             && (id.contains("-next") || id.chars().last().is_some_and(|ch| ch.is_ascii_lowercase()))
         {
@@ -6117,7 +6128,12 @@ mod mcp_approval_lock_tests {
 
     #[test]
     fn concrete_product_ready_leaf_todos_are_not_auto_decomposed() {
-        for id in ["E-07a", "E-09a", "E-09-next"] {
+        for id in [
+            "E-07a",
+            "E-09a",
+            "E-09-next",
+            "E-14a-runtime-evidence-section",
+        ] {
             let block = TodoBlock {
                 id: Some(id.to_string()),
                 title: format!("{id}: Concrete Product Ready leaf"),
@@ -6237,6 +6253,56 @@ mod mcp_approval_lock_tests {
             "E-14a-runtime-evidence-section: Patch only `docs/architecture/final-product-ready-judgment.md` with runtime operational evidence:"
         )
         .is_none());
+    }
+
+    #[test]
+    fn read_budget_exhausted_does_not_refine_generated_e14a_leaf_todo() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let store = BrownieStore::new(temp.path());
+        let selected_todo = "- [ ] E-14a-runtime-evidence-section: Patch only `docs/architecture/final-product-ready-judgment.md` with runtime operational evidence:\n  Source TODO: E-14a: Write the final Product Ready judgment input memo.\n  Read only `docs/architecture/final-product-ready-judgment.md` and\n  `.brownie/release-evidence/runtime-operational-evidence.json`. Add or update\n  a bounded section describing satisfied runtime operational evidence and\n  remaining fail-closed runtime evidence. Do not edit JSON files.\n";
+        std::fs::write(temp.path().join("todo.md"), selected_todo).expect("todo");
+        let mut record = test_task_record();
+        record.run_id = "run_read_budget_exhausted_e14a_leaf".to_string();
+        record.goal = format!(
+            "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- read_batch_policy: request at most one `workspace.read` per tool intent and at most two total `workspace.read` requests before requesting workspace.write or a narrower follow-up TODO.\n\n## Selected TODO\n\n{selected_todo}"
+        );
+        for path in [
+            "docs/architecture/final-product-ready-judgment.md",
+            ".brownie/release-evidence/runtime-operational-evidence.json",
+        ] {
+            store
+                .tasks()
+                .append_task_event_with_payload(
+                    &record,
+                    LedgerEventKind::ToolExecutionCompleted,
+                    Some(json!({
+                        "tool_id": WORKSPACE_READ_TOOL_ID,
+                        "status": "Completed",
+                        "output_preview": format!("[workspace.read path={path} bytes_total=1 content_sha256=sha256:{}]\n", "a".repeat(64)),
+                    })),
+                )
+                .expect("append read event");
+        }
+
+        append_todo_decomposition_blocker_after_read_only_stall(
+            &store,
+            &record,
+            &write_policy(),
+            false,
+            false,
+        )
+        .expect("skip generic follow-up");
+
+        let events = store
+            .tasks()
+            .read_ledger_events(&record.run_id)
+            .expect("events");
+        assert!(
+            events
+                .iter()
+                .all(|event| event.kind != LedgerEventKind::WorkspacePatchProposed),
+            "generated E-14a leaf TODO must fail closed instead of creating TODOa"
+        );
     }
 
     #[test]
