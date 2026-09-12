@@ -13875,6 +13875,8 @@ fn append_workspace_patch_proposal(
             &proposal_input,
             &record.goal,
         );
+        proposal_input =
+            normalize_json_line_block_patch_input_from_target(store, path, &proposal_input);
     }
     let proposal = build_workspace_patch_proposal_from_input(
         store,
@@ -14134,15 +14136,18 @@ fn disambiguate_workspace_patch_input_from_goal(
     let Ok(existing) = std::fs::read_to_string(&canonical_target) else {
         return input.clone();
     };
-    if let (Some(old_status_line), Some(new_status_line)) = (
-        status_line_from_patch_text(&hunk.old_text),
-        status_line_from_patch_text(&hunk.new_text),
-    ) {
+    if patch_changes_only_json_status(&hunk.old_text, &hunk.new_text) {
+        let (Some(old_status_line), Some(new_status_line)) = (
+            status_assignment_from_patch_text(&hunk.old_text),
+            status_assignment_from_patch_text(&hunk.new_text),
+        ) else {
+            return input.clone();
+        };
         if let Some((old_text, new_text)) = json_object_id_scoped_status_replacement(
             &existing,
             &object_id,
-            old_status_line,
-            new_status_line,
+            &old_status_line,
+            &new_status_line,
         ) {
             let mut normalized = input.as_object().cloned().unwrap_or_default();
             normalized.insert("old_text".to_string(), json!(old_text));
@@ -14169,17 +14174,220 @@ fn disambiguate_workspace_patch_input_from_goal(
     Value::Object(normalized)
 }
 
-fn status_line_from_patch_text(text: &str) -> Option<&str> {
+fn normalize_json_line_block_patch_input_from_target(
+    store: &BrownieStore,
+    path: &str,
+    input: &Value,
+) -> Value {
+    if !is_json_patch_path(path) {
+        return input.clone();
+    }
+    let Ok(hunks) = patch_hunks_from_input(input) else {
+        return input.clone();
+    };
+    if hunks.len() != 1 || input.get("hunks").is_some() || input.get("content").is_some() {
+        return input.clone();
+    }
+    if input.get("operation").and_then(Value::as_str)
+        != Some(WorkspacePatchOperation::PatchFile.as_str())
+    {
+        return input.clone();
+    }
+    let hunk = &hunks[0];
+    if hunk.old_text.is_empty()
+        || !hunk.old_text.contains('"')
+        || count_text_matches(&hunk.old_text, &hunk.old_text) != 1
+    {
+        return input.clone();
+    }
+    let Ok(root) = store.workspace_root().canonicalize() else {
+        return input.clone();
+    };
+    if brownie_tools::preflight_workspace_write_path(path).is_err() {
+        return input.clone();
+    }
+    let target = root.join(path);
+    let Ok(canonical_target) = target.canonicalize() else {
+        return input.clone();
+    };
+    if !canonical_target.starts_with(&root) {
+        return input.clone();
+    }
+    let Ok(existing) = std::fs::read_to_string(&canonical_target) else {
+        return input.clone();
+    };
+    if count_text_matches(&existing, &hunk.old_text) > 0 {
+        return input.clone();
+    }
+    let Some((old_text, new_text)) =
+        indentation_scoped_json_line_block_replacement(&existing, &hunk.old_text, &hunk.new_text)
+    else {
+        return input.clone();
+    };
+    let mut normalized = input.as_object().cloned().unwrap_or_default();
+    normalized.insert("old_text".to_string(), json!(old_text));
+    normalized.insert("new_text".to_string(), json!(new_text));
+    normalized.remove("content");
+    Value::Object(normalized)
+}
+
+fn is_json_patch_path(path: &str) -> bool {
+    path.ends_with(".json")
+}
+
+fn indentation_scoped_json_line_block_replacement(
+    existing: &str,
+    old_text: &str,
+    new_text: &str,
+) -> Option<(String, String)> {
+    let old_lines = old_text.split_inclusive('\n').collect::<Vec<_>>();
+    let new_lines = new_text.split_inclusive('\n').collect::<Vec<_>>();
+    if old_lines.is_empty() || old_lines.len() != new_lines.len() {
+        return None;
+    }
+    if !old_text.contains('"') || old_lines.iter().any(|line| line.trim().is_empty()) {
+        return None;
+    }
+    let existing_lines = existing.split_inclusive('\n').collect::<Vec<_>>();
+    let mut matches = Vec::new();
+    for start in 0..existing_lines.len() {
+        let end = start + old_lines.len();
+        if end > existing_lines.len() {
+            break;
+        }
+        let candidate = &existing_lines[start..end];
+        if candidate
+            .iter()
+            .zip(old_lines.iter())
+            .all(|(actual, expected)| actual.trim() == expected.trim())
+        {
+            matches.push((start, end));
+        }
+    }
+    if matches.len() != 1 {
+        return None;
+    }
+    let (start, end) = matches[0];
+    let old_segment = existing_lines[start..end].concat();
+    if count_text_matches(existing, &old_segment) != 1 {
+        return None;
+    }
+    let mut new_segment = String::new();
+    for (actual, requested) in existing_lines[start..end].iter().zip(new_lines.iter()) {
+        let indent = actual
+            .chars()
+            .take_while(|ch| *ch == ' ' || *ch == '\t')
+            .collect::<String>();
+        let requested_body = requested.trim_start().trim_end_matches(['\r', '\n']);
+        new_segment.push_str(&indent);
+        new_segment.push_str(requested_body);
+        new_segment.push_str(line_ending(actual));
+    }
+    Some((old_segment, new_segment))
+}
+
+fn status_assignment_from_patch_text(text: &str) -> Option<String> {
     text.lines()
         .map(str::trim_end)
-        .find(|line| line.contains("\"status\""))
+        .find_map(status_assignment_from_line)
+}
+
+fn patch_changes_only_json_status(old_text: &str, new_text: &str) -> bool {
+    if old_text == new_text {
+        return false;
+    }
+    if let Some(status_only) = patch_changes_only_json_object_status(old_text, new_text) {
+        return status_only;
+    }
+    patch_changes_only_json_status_line(old_text, new_text)
+}
+
+fn patch_changes_only_json_object_status(old_text: &str, new_text: &str) -> Option<bool> {
+    let Ok(mut old_value) = serde_json::from_str::<Value>(old_text.trim()) else {
+        return None;
+    };
+    let Ok(mut new_value) = serde_json::from_str::<Value>(new_text.trim()) else {
+        return None;
+    };
+    let old_status = old_value.get("status")?;
+    let new_status = new_value.get("status")?;
+    if old_status == new_status {
+        return Some(false);
+    }
+    *old_value.get_mut("status")? = json!("__brownie_status_placeholder__");
+    *new_value.get_mut("status")? = json!("__brownie_status_placeholder__");
+    Some(old_value == new_value)
+}
+
+fn patch_changes_only_json_status_line(old_text: &str, new_text: &str) -> bool {
+    let old_lines = old_text.lines().collect::<Vec<_>>();
+    let new_lines = new_text.lines().collect::<Vec<_>>();
+    if old_lines.is_empty() || old_lines.len() != new_lines.len() {
+        return false;
+    }
+    let mut changed_status_lines = 0usize;
+    for (old_line, new_line) in old_lines.iter().zip(new_lines.iter()) {
+        if old_line.trim_end() == new_line.trim_end() {
+            continue;
+        }
+        let (Some(old_status), Some(new_status)) = (
+            status_assignment_from_line(old_line),
+            status_assignment_from_line(new_line),
+        ) else {
+            return false;
+        };
+        if old_status == new_status {
+            return false;
+        }
+        let old_without_status = old_line.replacen(&old_status, "__brownie_status__", 1);
+        let new_without_status = new_line.replacen(&new_status, "__brownie_status__", 1);
+        if old_without_status.trim() != new_without_status.trim() {
+            return false;
+        }
+        changed_status_lines += 1;
+    }
+    changed_status_lines == 1
+}
+
+fn status_assignment_from_line(line: &str) -> Option<String> {
+    let key_start = line.find("\"status\"")?;
+    let after_key = &line[key_start + "\"status\"".len()..];
+    let colon_offset = after_key.find(':')?;
+    let after_colon = &after_key[colon_offset + 1..];
+    let value_start = after_colon.find('"')?;
+    let after_value_start = &after_colon[value_start..];
+    let mut escaped = false;
+    for (offset, ch) in after_value_start.char_indices().skip(1) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '"' {
+            let value_literal = &after_value_start[..=offset];
+            return Some(format!("\"status\": {value_literal}"));
+        }
+    }
+    Some(line.trim().to_string())
 }
 
 fn selected_goal_json_object_id(goal: &str) -> Option<String> {
     let marker = "whose `\"id\"` is";
-    let marker_start = goal.find(marker)?;
-    let after_marker = &goal[marker_start + marker.len()..];
-    json_string_literal_from_text(after_marker)
+    if let Some(marker_start) = goal.find(marker) {
+        let after_marker = &goal[marker_start + marker.len()..];
+        return json_string_literal_from_text(after_marker);
+    }
+
+    let whose_start = goal.find("whose")?;
+    let after_whose = &goal[whose_start..];
+    let id_start = after_whose.find("\"id\"")?;
+    let after_id = &after_whose[id_start + "\"id\"".len()..];
+    let is_start = after_id.find(" is ")?;
+    let after_is = &after_id[is_start + " is ".len()..];
+    json_string_literal_from_text(after_is)
 }
 
 fn json_string_literal_from_text(text: &str) -> Option<String> {
@@ -14219,15 +14427,17 @@ fn json_object_id_scoped_status_replacement(
         let search_end = (id_index + 12).min(lines.len());
         for status_index in id_index + 1..search_end {
             let status_line = lines[status_index].trim_end_matches(['\r', '\n']);
-            if status_line != old_line {
+            if status_line.trim_start().starts_with('}') {
+                break;
+            }
+            if normalized_json_status_line(status_line) != normalized_json_status_line(old_line) {
                 continue;
             }
             let old_segment = lines[id_index..=status_index].concat();
             if count_text_matches(existing, &old_segment) != 1 {
                 continue;
             }
-            let new_status_line =
-                line_with_existing_ending(new_text, line_ending(lines[status_index]));
+            let new_status_line = status_line_with_existing_layout(new_text, lines[status_index]);
             let mut new_segment = String::new();
             for (relative_index, line) in lines[id_index..=status_index].iter().enumerate() {
                 if id_index + relative_index == status_index {
@@ -14255,6 +14465,33 @@ fn line_ending(line: &str) -> &'static str {
 fn line_with_existing_ending(line: &str, ending: &str) -> String {
     let stripped = line.trim_end_matches(['\r', '\n']);
     format!("{stripped}{ending}")
+}
+
+fn normalized_json_status_line(line: &str) -> &str {
+    line.trim()
+        .strip_suffix(',')
+        .unwrap_or_else(|| line.trim())
+        .trim_end()
+}
+
+fn status_line_with_existing_layout(new_line: &str, existing_line: &str) -> String {
+    let mut stripped = new_line.trim_end_matches(['\r', '\n']).to_string();
+    if existing_line
+        .trim_end_matches(['\r', '\n'])
+        .trim_end()
+        .ends_with(',')
+        && !stripped.trim_end().ends_with(',')
+    {
+        stripped.push(',');
+    }
+    if stripped.starts_with([' ', '\t']) || stripped.is_empty() {
+        return line_with_existing_ending(&stripped, line_ending(existing_line));
+    }
+    let indent = existing_line
+        .chars()
+        .take_while(|ch| *ch == ' ' || *ch == '\t')
+        .collect::<String>();
+    format!("{indent}{stripped}{}", line_ending(existing_line))
 }
 
 fn count_text_matches(haystack: &str, needle: &str) -> usize {
@@ -46213,6 +46450,253 @@ modes:
             .as_str()
             .unwrap()
             .contains("\"status\": \"blocked_by_independent_owner_reviews\""));
+    }
+
+    #[test]
+    fn disambiguates_unindented_status_hunk_with_plain_selected_json_object_id() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join("docs/architecture")).expect("mkdir docs");
+        std::fs::write(
+            temp.path()
+                .join("docs/architecture/runtime-release-contract.json"),
+            "{\n  \"release_ready_conditions\": [\n    {\n      \"id\": \"provenance_generated\",\n      \"status\": \"local_baseline_generated_workflow_provenance_missing\"\n    },\n    {\n      \"id\": \"other_condition\",\n      \"status\": \"local_baseline_generated_workflow_provenance_missing\"\n    }\n  ]\n}\n",
+        )
+        .expect("write contract");
+        let store = BrownieStore::new(temp.path());
+        let input = json!({
+            "path": "docs/architecture/runtime-release-contract.json",
+            "operation": "patch_file",
+            "old_text": "\"status\": \"local_baseline_generated_workflow_provenance_missing\"",
+            "new_text": "\"status\": \"implemented_sufficient\"",
+        });
+        let goal = "## Selected TODO\n\n- [ ] E-14b-contract-provenance-status: Patch only `docs/architecture/runtime-release-contract.json`: in the `release_ready_conditions` object whose `\"id\"` is `\"provenance_generated\"`, replace only the status line.\n";
+
+        let disambiguated = disambiguate_workspace_patch_input_from_goal(
+            &store,
+            "docs/architecture/runtime-release-contract.json",
+            &input,
+            goal,
+        );
+        let proposal = build_workspace_patch_proposal_from_input(
+            &store,
+            "docs/architecture/runtime-release-contract.json",
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &disambiguated,
+        );
+
+        assert_eq!(proposal.validation_status, "Valid");
+        assert_eq!(
+            disambiguated["new_text"].as_str().unwrap(),
+            "      \"id\": \"provenance_generated\",\n      \"status\": \"implemented_sufficient\"\n"
+        );
+    }
+
+    #[test]
+    fn disambiguates_status_hunk_when_duplicate_status_exists_outside_selected_object() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join("docs/architecture")).expect("mkdir docs");
+        std::fs::write(
+            temp.path()
+                .join("docs/architecture/runtime-release-contract.json"),
+            "{\n  \"release_ready_conditions\": [\n    {\n      \"id\": \"provenance_generated\",\n      \"status\": \"local_baseline_generated_workflow_provenance_missing\",\n      \"release_blocking\": true\n    }\n  ],\n  \"historical_evidence\": [\n    {\n      \"status\": \"local_baseline_generated_workflow_provenance_missing\"\n    }\n  ]\n}\n",
+        )
+        .expect("write contract");
+        let store = BrownieStore::new(temp.path());
+        let input = json!({
+            "path": "docs/architecture/runtime-release-contract.json",
+            "operation": "patch_file",
+            "old_text": "\"status\": \"local_baseline_generated_workflow_provenance_missing\"",
+            "new_text": "\"status\": \"implemented_sufficient\"",
+        });
+        let goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-14b-contract-provenance-status: Patch only `docs/architecture/runtime-release-contract.json`:\n  Read only `docs/architecture/runtime-release-contract.json`. In the\n  `release_ready_conditions` object whose `\"id\"` is `\"provenance_generated\"`,\n  replace only the status line\n  `\"status\": \"local_baseline_generated_workflow_provenance_missing\"` with\n  `\"status\": \"implemented_sufficient\"`. Keep `runtime_release_ready` false. Do\n  not edit any other file.\n";
+
+        let disambiguated = disambiguate_workspace_patch_input_from_goal(
+            &store,
+            "docs/architecture/runtime-release-contract.json",
+            &input,
+            goal,
+        );
+        let proposal = build_workspace_patch_proposal_from_input(
+            &store,
+            "docs/architecture/runtime-release-contract.json",
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &disambiguated,
+        );
+
+        assert_eq!(proposal.validation_status, "Valid");
+        assert!(disambiguated["old_text"]
+            .as_str()
+            .unwrap()
+            .contains("\"id\": \"provenance_generated\""));
+        assert!(!disambiguated["new_text"]
+            .as_str()
+            .unwrap()
+            .contains("historical_evidence"));
+    }
+
+    #[test]
+    fn disambiguates_minified_object_status_hunk_with_selected_json_object_id() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join("docs/architecture")).expect("mkdir docs");
+        std::fs::write(
+            temp.path()
+                .join("docs/architecture/runtime-release-contract.json"),
+            "{\n  \"release_ready_conditions\": [\n    {\n      \"id\": \"tested_commit_matches_artifact_commit\",\n      \"status\": \"missing_artifacts\",\n      \"release_blocking\": true,\n      \"required_evidence\": [\n        \"tested_commit equals artifact source commit\"\n      ]\n    }\n  ]\n}\n",
+        )
+        .expect("write contract");
+        let store = BrownieStore::new(temp.path());
+        let input = json!({
+            "path": "docs/architecture/runtime-release-contract.json",
+            "operation": "patch_file",
+            "old_text": "    {\"id\": \"tested_commit_matches_artifact_commit\", \"status\": \"missing_artifacts\", \"release_blocking\": true, \"required_evidence\": [\"tested_commit equals artifact source commit\"]},",
+            "new_text": "    {\"id\": \"tested_commit_matches_artifact_commit\", \"status\": \"implemented_sufficient\", \"release_blocking\": true, \"required_evidence\": [\"tested_commit equals artifact source commit\"]},",
+        });
+        let goal = "## Selected TODO\n\n- [ ] E-14b-contract-tested-commit-status: Patch only `docs/architecture/runtime-release-contract.json`: In the `release_ready_conditions` object whose `\"id\"` is `\"tested_commit_matches_artifact_commit\"`, replace only the status line.\n";
+
+        let disambiguated = disambiguate_workspace_patch_input_from_goal(
+            &store,
+            "docs/architecture/runtime-release-contract.json",
+            &input,
+            goal,
+        );
+        let proposal = build_workspace_patch_proposal_from_input(
+            &store,
+            "docs/architecture/runtime-release-contract.json",
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &disambiguated,
+        );
+
+        assert_eq!(proposal.validation_status, "Valid");
+        assert_eq!(
+            disambiguated["new_text"].as_str().unwrap(),
+            "      \"id\": \"tested_commit_matches_artifact_commit\",\n      \"status\": \"implemented_sufficient\",\n"
+        );
+    }
+
+    #[test]
+    fn does_not_disambiguate_minified_status_hunk_with_additional_semantic_change() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join("docs/architecture")).expect("mkdir docs");
+        std::fs::write(
+            temp.path()
+                .join("docs/architecture/runtime-release-contract.json"),
+            "{\n  \"release_ready_conditions\": [\n    {\n      \"id\": \"tested_commit_matches_artifact_commit\",\n      \"status\": \"missing_artifacts\",\n      \"release_blocking\": true\n    }\n  ]\n}\n",
+        )
+        .expect("write contract");
+        let store = BrownieStore::new(temp.path());
+        let input = json!({
+            "path": "docs/architecture/runtime-release-contract.json",
+            "operation": "patch_file",
+            "old_text": "{\"id\": \"tested_commit_matches_artifact_commit\", \"status\": \"missing_artifacts\", \"release_blocking\": true}",
+            "new_text": "{\"id\": \"tested_commit_matches_artifact_commit\", \"status\": \"implemented_sufficient\", \"release_blocking\": false}",
+        });
+        let goal = "## Selected TODO\n\n- [ ] E-14b-contract-tested-commit-status: Patch only `docs/architecture/runtime-release-contract.json`: In the `release_ready_conditions` object whose `\"id\"` is `\"tested_commit_matches_artifact_commit\"`, replace only the status line.\n";
+
+        let disambiguated = disambiguate_workspace_patch_input_from_goal(
+            &store,
+            "docs/architecture/runtime-release-contract.json",
+            &input,
+            goal,
+        );
+        let proposal = build_workspace_patch_proposal_from_input(
+            &store,
+            "docs/architecture/runtime-release-contract.json",
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &disambiguated,
+        );
+
+        assert_eq!(disambiguated, input);
+        assert_eq!(proposal.validation_status, "Invalid");
+        assert_eq!(
+            proposal.validation_reason,
+            Some("Patch old_text was not found in the current target.")
+        );
+    }
+
+    #[test]
+    fn normalizes_json_line_block_patch_when_only_indentation_differs() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join("docs/architecture")).expect("mkdir docs");
+        std::fs::write(
+            temp.path()
+                .join("docs/architecture/runtime-release-readiness-audit.json"),
+            "{\n  \"runtime_release_ready\": false,\n  \"release_ready_blocked_by\": [\n    \"runtime-release-guard-ci\"\n  ],\n  \"release_engineering_contract\": {\n    \"status\": \"partial\"\n  }\n}\n",
+        )
+        .expect("write audit");
+        let store = BrownieStore::new(temp.path());
+        let input = json!({
+            "path": "docs/architecture/runtime-release-readiness-audit.json",
+            "operation": "patch_file",
+            "old_text": "    \"release_ready_blocked_by\": [\n      \"runtime-release-guard-ci\"\n    ],",
+            "new_text": "    \"release_ready_blocked_by\": [\n      \"independent_reviews\"\n    ],",
+        });
+
+        let normalized = normalize_json_line_block_patch_input_from_target(
+            &store,
+            "docs/architecture/runtime-release-readiness-audit.json",
+            &input,
+        );
+        let proposal = build_workspace_patch_proposal_from_input(
+            &store,
+            "docs/architecture/runtime-release-readiness-audit.json",
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &normalized,
+        );
+
+        assert_eq!(proposal.validation_status, "Valid");
+        assert_eq!(
+            normalized["old_text"].as_str().unwrap(),
+            "  \"release_ready_blocked_by\": [\n    \"runtime-release-guard-ci\"\n  ],\n"
+        );
+        assert_eq!(
+            normalized["new_text"].as_str().unwrap(),
+            "  \"release_ready_blocked_by\": [\n    \"independent_reviews\"\n  ],\n"
+        );
+    }
+
+    #[test]
+    fn does_not_normalize_indentation_patch_for_non_json_target() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            temp.path().join("script.py"),
+            "def main():\n    print(\"old\")\n",
+        )
+        .expect("write script");
+        let store = BrownieStore::new(temp.path());
+        let input = json!({
+            "path": "script.py",
+            "operation": "patch_file",
+            "old_text": "if True:\n  print(\"old\")",
+            "new_text": "if True:\n  print(\"new\")",
+        });
+
+        let normalized =
+            normalize_json_line_block_patch_input_from_target(&store, "script.py", &input);
+        let proposal = build_workspace_patch_proposal_from_input(
+            &store,
+            "script.py",
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &normalized,
+        );
+
+        assert_eq!(normalized, input);
+        assert_eq!(proposal.validation_status, "Invalid");
+        assert_eq!(
+            proposal.validation_reason,
+            Some("Patch old_text was not found in the current target.")
+        );
     }
 
     #[test]

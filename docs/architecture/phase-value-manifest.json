@@ -144,6 +144,8 @@
       "scripts/release-integrity-verify.mjs",
       "scripts/guard-runtime-release-readiness.mjs",
       "scripts/guard-runtime-release-readiness.test.mjs",
+      "scripts/guard-durable-schema-migration.mjs",
+      "scripts/guard-durable-schema-migration.test.mjs",
       "scripts/guard-supply-chain-artifact-evidence.mjs",
       "scripts/guard-supply-chain-artifact-evidence.test.mjs",
       "scripts/release-dependency-security-license-audit.mjs",

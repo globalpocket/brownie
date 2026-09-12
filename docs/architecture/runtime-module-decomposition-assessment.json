@@ -25,20 +25,20 @@
     "crates/brownie-runtime/src/verification_recovery.rs"
   ],
   "thresholds": {
-    "lib_rs_production_line_ceiling": 15395,
-    "lib_rs_test_line_ceiling": 52803
+    "lib_rs_production_line_ceiling": 15632,
+    "lib_rs_test_line_ceiling": 53050
   },
   "metrics": {
     "files": {
       "crates/brownie-runtime/src/lib.rs": {
-        "line_count": 68198,
+        "line_count": 68682,
         "public_items": 3,
-        "private_items": 517,
-        "production_line_count": 15395,
-        "test_line_count": 52803,
+        "private_items": 526,
+        "production_line_count": 15632,
+        "test_line_count": 53050,
         "state_mutation_mentions": 310,
         "durable_write_mentions": 230,
-        "permission_decision_mentions": 196,
+        "permission_decision_mentions": 197,
         "recovery_mentions": 2263,
         "rpc_dispatch_mentions": 90,
         "approval_mentions": 540,
@@ -386,7 +386,7 @@
     "runtime_release_ready remains false until remaining blockers and owner decisions close",
     "raw prompt/provider response/file content/absolute path/canonical path/secret/environment values/process output are not decomposition evidence"
   ],
-  "updated_at": "2026-09-09T00:00:00Z",
+  "updated_at": "2026-09-12T00:00:00Z",
   "notes": [
     "RRP-8.3 updated module metrics after mandatory clippy gate cleanup; runtime-module-decomposition closure status remains unchanged.",
     "RRP-8.3 updated module metrics after release gate evidence semantics and clippy cleanup; module-decomposition closure status remains unchanged.",
@@ -395,6 +395,8 @@
     "R-18 updated module metrics after propagating pinned-commit distribution evidence through Mode Pack candidate fetch, provenance, approval, and active replacement paths; module-decomposition closure status remains unchanged.",
     "PR pending: controlled_tool_execution metrics updated after preventing generic TODOa decomposition for patch-only file TODO stalls.",
     "PR pending: lib.rs metrics updated after status-patch disambiguation support for Brownie loop proposals.",
-    "PR pending: temporary lib.rs ceilings raised to current metrics for Brownie loop parser/proposal recovery work; runtime_release_ready remains false."
+    "PR pending: temporary lib.rs ceilings raised to current metrics for Brownie loop parser/proposal recovery work; runtime_release_ready remains false.",
+    "RRP-8.7/E-14 adds bounded JSON patch normalization inside the existing workspace patch proposal path; metrics are resynchronized while preserving the explicit module-decomposition guard and leaving broader extraction for a later dedicated refactor.",
+    "PR #452 review hardening adds bounded workspace patch safety checks and owner-governance release-blocker verification inside the existing Runtime release paths; metrics are resynchronized while preserving the module-decomposition guard and leaving broader extraction for a later dedicated refactor."
   ]
 }
