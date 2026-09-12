@@ -19,15 +19,19 @@ selected TODO, the next assistant tool intent must do one of these two things:
    patch; or
 2. emit a bounded `workspace.write` proposal that rewrites the selected
    `todo.md` item into smaller concrete follow-up TODOs naming exact files,
-   missing evidence, or owner decisions, but only when the selected TODO does
-   not already name a concrete non-`todo.md` implementation file.
+   missing evidence, or owner decisions. This is allowed even for a selected
+   TODO that names a concrete implementation file when the completed
+   `workspace.read` result does not expose the exact small `old_text` needed
+   for a safe patch.
 
 Do not answer with only an implementation plan after target files have already
 been read. Do not request another broad discovery read such as `.`, a
 directory, or a repeated `package.json`/workflow read. If the target file was
 read and the patch is clear, write the patch. If the selected TODO names a
-concrete implementation file and the patch is not clear, fail closed instead of
-rewriting `todo.md`.
+concrete implementation file but the visible read result is insufficient to
+copy a short exact `old_text`, do not invent surrounding code. Instead patch
+`.brownie/todo.md` to replace the selected TODO with smaller context-bounded
+follow-up TODOs naming the exact symbol, section, test, or evidence needed.
 
 ## Authority
 
@@ -220,6 +224,13 @@ shortest unique complete line or small complete-line block as `old_text`, and
 copy that text exactly from the completed `workspace.read` result. Do not end
 `old_text` in the middle of a word; include the complete line or surrounding
 complete-line context. The tool intent must use the Runtime schema exactly:
+
+Never infer or invent `old_text` from file sections that are not present in the
+completed `workspace.read` result shown in the prompt. If the needed edit
+location is outside the visible read result, patch `.brownie/todo.md` instead:
+replace the selected TODO with the next smaller TODO that names the exact
+function, guard, test, or evidence file/section to read next. This TODO
+refinement is progress; a hallucinated implementation patch is not.
 
 If the selected TODO names an exact line replacement, do not synthesize a wider
 block, inferred neighboring fields, repeated evidence fields, or placeholder
