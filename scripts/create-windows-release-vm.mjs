@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -40,6 +41,19 @@ function resolveRepoRelative(repoRoot, relativePath) {
     throw new Error(`Path escapes repository root: ${relativePath}`);
   }
   return resolved;
+}
+
+function displayPath(repoRoot, filePath) {
+  const relative = path.relative(repoRoot, filePath);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    return filePath;
+  }
+  return normalizeRelativePath(relative);
+}
+
+function shortWindowsRuntimeDir(vmFullDir) {
+  const fingerprint = crypto.createHash('sha256').update(vmFullDir).digest('hex').slice(0, 12);
+  return path.join('/tmp', `brownie-win-${fingerprint}`);
 }
 
 function parseArgs(argv) {
@@ -306,8 +320,7 @@ function qemuX64Args(options, diskPath, firmware, monitorSocketPath) {
   return args;
 }
 
-function qemuArm64Args(options, diskPath, firmware, varsPath, monitorSocketPath, startupImagePath) {
-  const tpmSocketPath = path.join(path.dirname(monitorSocketPath), 'swtpm.sock');
+function qemuArm64Args(options, diskPath, firmware, varsPath, monitorSocketPath, startupImagePath, tpmSocketPath) {
   const args = [
     '-machine',
     'virt,highmem=on',
@@ -369,9 +382,9 @@ function qemuArm64Args(options, diskPath, firmware, varsPath, monitorSocketPath,
   return args;
 }
 
-function qemuArgs(options, diskPath, firmware, varsPath, monitorSocketPath, startupImagePath) {
+function qemuArgs(options, diskPath, firmware, varsPath, monitorSocketPath, startupImagePath, tpmSocketPath = null) {
   if (options.vmArch === 'arm64') {
-    return qemuArm64Args(options, diskPath, firmware, varsPath, monitorSocketPath, startupImagePath);
+    return qemuArm64Args(options, diskPath, firmware, varsPath, monitorSocketPath, startupImagePath, tpmSocketPath);
   }
   return qemuX64Args(options, diskPath, firmware, monitorSocketPath);
 }
@@ -480,8 +493,11 @@ export function createWindowsReleaseVm(options = {}) {
   const vmDir = normalizeRelativePath(configuredVmDir ?? defaultVmDir);
   const vmFullDir = resolveRepoRelative(repoRoot, vmDir);
   const diskPath = path.join(vmFullDir, `brownie-windows-${options.vmArch}.qcow2`);
-  const monitorSocketPath = path.resolve(vmFullDir, options.monitorSocket);
-  const monitorSocketRelativePath = normalizeRelativePath(path.relative(repoRoot, monitorSocketPath));
+  const runtimeDir = options.vmArch === 'arm64' ? shortWindowsRuntimeDir(vmFullDir) : vmFullDir;
+  const monitorSocketPath = options.vmArch === 'arm64'
+    ? path.join(runtimeDir, options.monitorSocket)
+    : path.resolve(vmFullDir, options.monitorSocket);
+  const monitorSocketDisplayPath = displayPath(repoRoot, monitorSocketPath);
   const varsPath = path.join(vmFullDir, 'edk2-vars.fd');
   const varsRelativePath = normalizeRelativePath(path.relative(repoRoot, varsPath));
   const startupDirPath = path.join(vmFullDir, defaultArm64StartupDir);
@@ -495,8 +511,8 @@ export function createWindowsReleaseVm(options = {}) {
   const startupImageRelativePath = normalizeRelativePath(path.relative(repoRoot, startupImagePath));
   const startupMountPath = path.join(vmFullDir, 'uefi-startup-mount');
   const tpmStateDir = path.join(vmFullDir, 'swtpm-state');
-  const tpmSocketPath = path.join(vmFullDir, 'swtpm.sock');
-  const tpmPidPath = path.join(vmFullDir, 'swtpm.pid');
+  const tpmSocketPath = path.join(runtimeDir, 'swtpm.sock');
+  const tpmPidPath = path.join(runtimeDir, 'swtpm.pid');
   const firmware = findQemuFirmware(options.vmArch);
   if (!firmware) {
     throw new Error(`QEMU ${options.vmArch} EDK2 firmware was not found.`);
@@ -524,14 +540,14 @@ export function createWindowsReleaseVm(options = {}) {
   }
   const launchCommand = [
     qemuBinary(options),
-    ...qemuArgs(options, diskPath, firmware, varsPath, monitorSocketPath, startupImagePath)
+    ...qemuArgs(options, diskPath, firmware, varsPath, monitorSocketPath, startupImagePath, tpmSocketPath)
   ].join(' ');
   const result = {
     dry_run: options.dryRun,
     vm_arch: options.vmArch,
     vm_dir: vmDir,
     disk: normalizeRelativePath(path.relative(repoRoot, diskPath)),
-    monitor_socket: monitorSocketRelativePath,
+    monitor_socket: monitorSocketDisplayPath,
     firmware: firmware.code,
     vars: options.vmArch === 'arm64' ? varsRelativePath : null,
     startup_nsh: options.vmArch === 'arm64' && options.iso ? startupNshRelativePath : null,
@@ -539,6 +555,8 @@ export function createWindowsReleaseVm(options = {}) {
     bypass_bat: options.vmArch === 'arm64' && options.iso ? bypassBatRelativePath : null,
     startup_image: options.vmArch === 'arm64' && options.iso ? startupImageRelativePath : null,
     tpm_state_dir: options.vmArch === 'arm64' ? normalizeRelativePath(path.relative(repoRoot, tpmStateDir)) : null,
+    runtime_dir: options.vmArch === 'arm64' ? runtimeDir : null,
+    tpm_socket: options.vmArch === 'arm64' ? tpmSocketPath : null,
     target,
     ssh_config: sshConfigSnippet(options),
     launch_command: launchCommand,
@@ -588,6 +606,7 @@ export function createWindowsReleaseVm(options = {}) {
     result.manifest = manifestPath;
   }
   if (options.launch) {
+    fs.mkdirSync(runtimeDir, { recursive: true });
     fs.rmSync(monitorSocketPath, { force: true });
     if (options.vmArch === 'arm64') {
       fs.mkdirSync(tpmStateDir, { recursive: true });
@@ -612,7 +631,7 @@ export function createWindowsReleaseVm(options = {}) {
     }
     const launch = run(
       qemuBinary(options),
-      qemuArgs(options, diskPath, firmware, varsPath, monitorSocketPath, startupImagePath),
+      qemuArgs(options, diskPath, firmware, varsPath, monitorSocketPath, startupImagePath, tpmSocketPath),
       { cwd: repoRoot, inherit: true, timeoutMs: 86_400_000 }
     );
     result.launch = launch;

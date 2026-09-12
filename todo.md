@@ -87,21 +87,6 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-15b: Regenerate runtime operational evidence after E-15a on the
-  configured Linux and Windows VM targets:
-  Route: implementation/evidence.
-  Files: `.brownie/release-evidence/runtime-operational-evidence.json` and any
-  target-local artifact lifecycle evidence files produced under
-  `.brownie/release-evidence/`.
-  Run the delegated artifact lifecycle against Linux and Windows targets from
-  `docs/architecture/local-release-targets.*`, confirm each target records
-  checksum verification, install/version/help execution, update, rollback, and
-  uninstall evidence, and leave only real remaining blockers in
-  `fail_closed_reasons`.
-  Verification: run `pnpm --workspace-root release:runtime-operational-evidence`
-  followed by `pnpm --workspace-root guard:runtime-operational-evidence` and
-  `pnpm --workspace-root release:gate -- --dry-run`.
-
 - [ ] E-16b: Regenerate runtime operational evidence after E-16a and prove the
   Golden Journey fixture is satisfied:
   Route: implementation/evidence.
