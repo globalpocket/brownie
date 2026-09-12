@@ -2939,12 +2939,8 @@ struct TodoBlock {
 
 fn first_unchecked_todo_block(todo: &str) -> Option<TodoBlock> {
     let start = next_unchecked_todo_line_start(todo, 0)?;
-    let tail = &todo[start + 1..];
-    let next_offset = tail
-        .find("\n- [ ] ")
-        .map(|offset| offset + 1)
-        .unwrap_or_else(|| todo.len() - start);
-    let old_text = &todo[start..start + next_offset];
+    let end = todo_block_end(todo, start);
+    let old_text = &todo[start..end];
     let first_line = old_text.lines().next()?.trim();
     let title = first_line.strip_prefix("- [ ] ")?.trim().to_string();
     let id = title
@@ -2984,12 +2980,8 @@ fn selected_todo_first_line_from_goal(goal: &str) -> Option<String> {
 fn todo_block_by_first_line(todo: &str, selected_first_line: &str) -> Option<TodoBlock> {
     let mut offset = 0usize;
     while let Some(start) = next_unchecked_todo_line_start(todo, offset) {
-        let tail = &todo[start + 1..];
-        let next_offset = tail
-            .find("\n- [ ] ")
-            .map(|offset| offset + 1)
-            .unwrap_or_else(|| todo.len() - start);
-        let old_text = &todo[start..start + next_offset];
+        let end = todo_block_end(todo, start);
+        let old_text = &todo[start..end];
         let first_line = old_text.lines().next()?.trim();
         if first_line == selected_first_line {
             let title = first_line.strip_prefix("- [ ] ")?.trim().to_string();
@@ -3010,9 +3002,20 @@ fn todo_block_by_first_line(todo: &str, selected_first_line: &str) -> Option<Tod
                 old_text: old_text.to_string(),
             });
         }
-        offset = start + next_offset;
+        offset = end;
     }
     None
+}
+
+fn todo_block_end(todo: &str, start: usize) -> usize {
+    let tail = &todo[start + 1..];
+    let next_todo = tail.find("\n- [ ] ").map(|offset| start + 1 + offset + 1);
+    let next_heading = tail.find("\n## ").map(|offset| start + 1 + offset + 1);
+    [next_todo, next_heading]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(todo.len())
 }
 
 fn next_unchecked_todo_line_start(todo: &str, offset: usize) -> Option<usize> {
@@ -6139,6 +6142,17 @@ mod mcp_approval_lock_tests {
             "E-16a: Make the runtime operational Golden Journey fixture exercise the full proposal/apply path"
         );
         assert!(!first.old_text.contains("Pending work is represented"));
+    }
+
+    #[test]
+    fn todo_block_detection_stops_at_next_heading() {
+        let todo = "- [ ] E-14: Perform final Product Ready judgment.\n  Route: release-judgment.\n\n## Tracked but not Product Ready blocking\n\n- Phase Loop Supervisor as a maintained BDK component.\n";
+
+        let first = first_unchecked_todo_block(todo).expect("first todo");
+
+        assert!(first.old_text.contains("Route: release-judgment."));
+        assert!(!first.old_text.contains("Tracked but not Product Ready"));
+        assert!(!first.old_text.contains("Phase Loop Supervisor"));
     }
 
     #[test]
