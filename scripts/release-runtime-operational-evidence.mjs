@@ -236,7 +236,14 @@ function buildGoldenJourneySection(repoRoot) {
   const fixtureFull = resolveRepoRelative(repoRoot, fixtureRoot);
   fs.mkdirSync(fixtureFull, { recursive: true });
   fs.writeFileSync(path.join(fixtureFull, 'README.md'), '# Brownie golden journey fixture\n');
-  fs.writeFileSync(path.join(fixtureFull, 'objective.md'), 'In this isolated fixture, make the smallest safe workspace change and report completion.');
+  fs.writeFileSync(
+    path.join(fixtureFull, 'objective.md'),
+    [
+      'In this isolated fixture, create or update `golden-journey-output.md`.',
+      'Write one short completion note that says Brownie completed the Golden Journey fixture.',
+      'Use the normal proposal, apply, post-apply verification, and completion path.'
+    ].join(' ')
+  );
   const cliPath = resolveRepoRelative(repoRoot, 'target/debug/brownie');
   if (!fs.existsSync(cliPath)) {
     return {
@@ -254,11 +261,13 @@ function buildGoldenJourneySection(repoRoot) {
   const goldenRunCommand = commands[2];
   const goldenRunJson = parseCommandJson(goldenRunCommand);
   const goldenRunResult = goldenRunJson?.run ?? goldenRunJson;
+  const goldenOutputPath = path.join(fixtureFull, 'golden-journey-output.md');
   const lifecycleEvidence = {
     json_present: goldenRunJson !== null,
     proposal_preflight_observed: typeof goldenRunResult?.objective_proposal_preflight_status === 'string',
     apply_observed: goldenRunResult?.objective_apply_applied === true || typeof goldenRunResult?.objective_apply_apply_status === 'string',
     post_apply_verification_observed: typeof goldenRunResult?.objective_apply_verification_status === 'string' || typeof goldenRunResult?.accepted_completion_verifier_gate_status === 'string',
+    workspace_mutation_observed: fs.existsSync(goldenOutputPath),
     completion_observed: goldenRunResult?.completed === true || goldenRunResult?.automation?.completed === true
   };
   const lifecycleSatisfied = Object.values(lifecycleEvidence).every(Boolean);
