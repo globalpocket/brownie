@@ -126,7 +126,15 @@ Current synchronization note:
 
 - [ ] E-16a-fixture-objective: Make the Golden Journey fixture request a deterministic workspace mutation:
   Source TODO: E-16a: Make the runtime operational Golden Journey fixture exercise the
-  Patch `scripts/release-runtime-operational-evidence.mjs` so `buildGoldenJourneySection` writes a fixture objective that requires one small repository-local file change and can expose proposal/apply lifecycle evidence in the JSON run output.
+  Patch only `scripts/release-runtime-operational-evidence.mjs`. Do not read
+  or patch `scripts/release-gate.mjs`. In `buildGoldenJourneySection`, replace
+  the current `fs.writeFileSync(path.join(fixtureFull, 'objective.md'), ...)`
+  objective text with a deterministic request to create or update
+  `golden-journey-output.md` inside the fixture with a short completion note.
+  Keep the change to one `workspace.write` patch hunk against the existing
+  objective string. This leaf is complete when the fixture objective clearly
+  requires one repository-local workspace mutation that the CLI JSON run can
+  expose as proposal/apply lifecycle evidence.
 - [ ] E-16a-fixture-assertions: Require proposal/apply/post-apply/completion evidence before satisfying Golden Journey:
   Source TODO: E-16a: Make the runtime operational Golden Journey fixture exercise the
   Patch `scripts/release-runtime-operational-evidence.mjs` so `golden_journey_fixture.status` remains failed unless proposal preflight, explicit authorization/apply, workspace mutation, post-apply verification, and accepted completion are all observed.
