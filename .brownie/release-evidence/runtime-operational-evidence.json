@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "evidence_id": "brownie-runtime-operational-evidence-v1",
-  "generated_at": "2026-09-12T07:25:33.306Z",
+  "generated_at": "2026-09-12T07:49:46.014Z",
   "repository": "globalpocket/brownie",
   "release_ready": false,
   "runtime_release_ready": false,
@@ -35,7 +35,7 @@
               "uninstalled": true,
               "commands": [
                 {
-                  "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-r7KAT7/brownie --version",
+                  "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-gdEW6E/brownie --version",
                   "exit_code": 0,
                   "signal": null,
                   "passed": true,
@@ -43,7 +43,7 @@
                   "stderr": ""
                 },
                 {
-                  "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-r7KAT7/brownie help run",
+                  "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-gdEW6E/brownie help run",
                   "exit_code": 0,
                   "signal": null,
                   "passed": true,
@@ -55,7 +55,7 @@
           ],
           "commands": [
             {
-              "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-r7KAT7/brownie --version",
+              "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-gdEW6E/brownie --version",
               "exit_code": 0,
               "signal": null,
               "passed": true,
@@ -63,7 +63,7 @@
               "stderr": ""
             },
             {
-              "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-r7KAT7/brownie help run",
+              "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-gdEW6E/brownie help run",
               "exit_code": 0,
               "signal": null,
               "passed": true,
@@ -127,7 +127,7 @@
               "exit_code": 0,
               "signal": null,
               "passed": true,
-              "stdout": "\n> brownie-workspace@0.1.0 release:local-artifact C:\\Users\\brownie\\brownie\n> node scripts/release-local-artifact.mjs \"--\" \"--target\" \"win32-x64\"\n\n{\n  \"target\": \"win32-x64\",\n  \"outDir\": \".brownie/release-evidence/artifacts/win32-x64\",\n  \"artifact\": {\n    \"path\": \".brownie/release-evidence/artifacts/win32-x64/brownie.exe\",\n    \"sha256\": \"sha256:79aad190ae949a9c4d58dde868bbc564d20b9b31fbc2d53dd796dd2eec9e6444\",\n    \"bytes\": 1067520,\n    \"target\": \"win32-x64\"\n  },\n  \"smoke_status\": \"satisfied\"\n}\n",
+              "stdout": "\n> brownie-workspace@0.1.0 release:local-artifact C:\\Users\\brownie\\brownie\n> node scripts/release-local-artifact.mjs \"--\" \"--target\" \"win32-x64\"\n\n{\n  \"target\": \"win32-x64\",\n  \"outDir\": \".brownie/release-evidence/artifacts/win32-x64\",\n  \"artifact\": {\n    \"path\": \".brownie/release-evidence/artifacts/win32-x64/brownie.exe\",\n    \"sha256\": \"sha256:81a9d8f6820cd3d87fcbaa75a52992d33cc2bf972130395b284794b4e5012134\",\n    \"bytes\": 1067520,\n    \"target\": \"win32-x64\"\n  },\n  \"smoke_status\": \"satisfied\"\n}\n",
               "stderr": "#< CLIXML\r\n<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\"><Obj S=\"progress\" RefId=\"0\"><TN RefId=\"0\"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N=\"SourceId\">1</I64><PR N=\"Record\"><AV>���W���[�������߂Ďg�p���邽�߂̏������Ă��܂��B</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj></Objs>"
             }
           ]
@@ -145,7 +145,7 @@
           "uninstalled": true,
           "commands": [
             {
-              "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-FkJ2ez/brownie --version",
+              "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-Len1u4/brownie --version",
               "exit_code": 0,
               "signal": null,
               "passed": true,
@@ -153,7 +153,7 @@
               "stderr": ""
             },
             {
-              "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-FkJ2ez/brownie help run",
+              "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-Len1u4/brownie help run",
               "exit_code": 0,
               "signal": null,
               "passed": true,
@@ -165,16 +165,16 @@
       ]
     },
     "golden_journey_fixture": {
-      "status": "failed",
+      "status": "satisfied",
       "release_blocking": true,
       "fixture_path": ".brownie/release-evidence/golden-journey-fixture",
       "lifecycle_evidence": {
         "json_present": true,
-        "proposal_preflight_observed": false,
-        "apply_observed": false,
-        "post_apply_verification_observed": false,
-        "workspace_mutation_observed": false,
-        "completion_observed": false
+        "proposal_preflight_observed": true,
+        "apply_observed": true,
+        "post_apply_verification_observed": true,
+        "workspace_mutation_observed": true,
+        "completion_observed": true
       },
       "commands": [
         {
@@ -198,11 +198,19 @@
           "exit_code": 0,
           "signal": null,
           "passed": true,
-          "stdout": "{\"automation\":{\"blocked\":true,\"class\":\"terminal_failure\",\"completed\":false,\"continuation_required\":false,\"controller_action\":\"stop\",\"journey_id\":\"cli.run.a36710787677408c8a73.journey\",\"next_action\":\"inspect_progress_overview\",\"next_invocation\":null,\"outcome_scope\":\"objective\",\"outcome_source\":\"runtime_terminal_completion_closure\",\"retryable\":false,\"run_id\":\"run_e7115c29-996d-414b-82e7-de1e81d3e0be\",\"schema_version\":1,\"status\":\"terminal_failure\",\"stop_class\":\"terminal_failure\",\"stop_reason\":\"terminal_task_failed\",\"task_id\":\"task_63e150d8-19c2-4b75-828c-d4f5c1d5d045\",\"terminal_failure\":true},\"command\":\"run\",\"exit_code\":0,\"ok\":true,\"run\":{\"automation\":{\"blocked\":true,\"class\":\"terminal_failure\",\"completed\":false,\"continuation_required\":false,\"controller_action\":\"stop\",\"journey_id\":\"cli.run.a36710787677408c8a73.journey\",\"next_action\":\"inspect_progress_overview\",\"next_invocation\":null,\"outcome_scope\":\"objective\",\"outcome_source\":\"runtime_terminal_completion_closure\",\"retryable\":false,\"run_id\":\"run_e7115c29-996d-414b-82e7-de1e81d3e0be\",\"schema_version\":1,\"status\":\"terminal_failure\",\"stop_class\":\"terminal_failure\",\"stop_reason\":\"terminal_task_failed\",\"task_id\":\"task_63e150d8-19c2-4b75-828c-d4f5c1d5d045\",\"terminal_failure\":true},\"blocked\":true,\"completed\":false,\"completion_closure_blocked_task_count\":0,\"completion_closure_route_candidate_count\":0,\"completion_closure_runnable_task_count\":0,\"completion_closure_status\":\"unknown_nonterminal\",\"completion_closure_terminal_task_count\":1,\"completion_closure_total_task_count\":1,\"continuation_required\":false,\"controller_action\":\"stop\",\"drive_id\":\"cli.run.a36710787677408c8a73.drive\",\"journey_id\":\"cli.run.a36710787677408c8a73.journey\",\"next_action\":\"inspect_progress_overview\",\"retryable\":false,\"run_id\":\"run_e7115c29-996d-414b-82e7-de1e81d3e0be\",\"session_id\":\"cli.run.a36710787677408c8a73\",\"status\":\"task_executed\",\"stop_class\":\"terminal_failure\",\"stop_reason\":\"terminal_task_failed\",\"task_id\":\"task_63e150d8-19c2-4b75-828c-d4f5c1d5d045\",\"terminal_failure\":true}}\n",
+          "stdout": "{\"automation\":{\"blocked\":false,\"class\":\"continuation_required\",\"completed\":false,\"continuation_required\":true,\"controller_action\":\"resume\",\"journey_id\":\"cli.run.0dfa2d09e41d43638178.journey\",\"next_action\":\"inspect_progress_overview\",\"next_invocation\":{\"arguments\":[],\"command\":\"resume\"},\"outcome_scope\":\"objective\",\"outcome_source\":\"runtime\",\"retryable\":true,\"run_id\":\"run_f129c6a7-9a01-4345-a8b3-116bbe624b60\",\"schema_version\":1,\"status\":\"continuation_required\",\"stop_class\":\"continuation_required\",\"stop_reason\":\"objective_proposal_candidate_ready\",\"task_id\":\"task_d06311e5-c81f-41bf-9ff1-e726732e5642\",\"terminal_failure\":false},\"command\":\"run\",\"exit_code\":0,\"ok\":true,\"run\":{\"automation\":{\"blocked\":false,\"class\":\"continuation_required\",\"completed\":false,\"continuation_required\":true,\"controller_action\":\"resume\",\"journey_id\":\"cli.run.0dfa2d09e41d43638178.journey\",\"next_action\":\"inspect_progress_overview\",\"next_invocation\":{\"arguments\":[],\"command\":\"resume\"},\"outcome_scope\":\"objective\",\"outcome_source\":\"runtime\",\"retryable\":true,\"run_id\":\"run_f129c6a7-9a01-4345-a8b3-116bbe624b60\",\"schema_version\":1,\"status\":\"continuation_required\",\"stop_class\":\"continuation_required\",\"stop_reason\":\"objective_proposal_candidate_ready\",\"task_id\":\"task_d06311e5-c81f-41bf-9ff1-e726732e5642\",\"terminal_failure\":false},\"blocked\":false,\"completed\":false,\"completion_closure_blocked_task_count\":0,\"completion_closure_route_candidate_count\":0,\"completion_closure_runnable_task_count\":0,\"completion_closure_status\":\"routed_explicit_action\",\"completion_closure_terminal_task_count\":1,\"completion_closure_total_task_count\":1,\"completion_result_fingerprint\":\"sha256:bd781fd29e06ca967d4d1ed8d678bb7210d96a8b4e2acc144175c0c2272b57b3\",\"completion_summary_preview\":\"Second-pass LLM agent loop completed for task_d06311e5-c81f-41bf-9ff1-e726732e5642\",\"continuation_required\":true,\"controller_action\":\"resume\",\"drive_id\":\"cli.run.0dfa2d09e41d43638178.drive\",\"journey_id\":\"cli.run.0dfa2d09e41d43638178.journey\",\"next_action\":\"inspect_progress_overview\",\"next_invocation\":{\"arguments\":[],\"command\":\"resume\"},\"objective_apply_applied\":true,\"objective_apply_apply_status\":\"Applied\",\"objective_apply_authorization_consumed\":true,\"objective_apply_operation\":\"patch_file\",\"objective_apply_path\":\"golden-journey-output.md\",\"objective_proposal_preflight_next_action\":\"apply_authorized_objective_proposal\",\"objective_proposal_preflight_operation\":\"patch_file\",\"objective_proposal_preflight_status\":\"authorized_preflight_ready\",\"retryable\":true,\"run_id\":\"run_f129c6a7-9a01-4345-a8b3-116bbe624b60\",\"session_id\":\"cli.run.0dfa2d09e41d43638178\",\"status\":\"objective_proposal_applied\",\"stop_class\":\"continuation_required\",\"stop_reason\":\"objective_proposal_candidate_ready\",\"task_id\":\"task_d06311e5-c81f-41bf-9ff1-e726732e5642\",\"terminal_completion_completion_result_fingerprint\":\"sha256:bd781fd29e06ca967d4d1ed8d678bb7210d96a8b4e2acc144175c0c2272b57b3\",\"terminal_completion_completion_summary_preview\":\"Second-pass LLM agent loop completed for task_d06311e5-c81f-41bf-9ff1-e726732e5642\",\"terminal_completion_final_state\":\"Completed\",\"terminal_completion_task_status\":\"Completed\",\"terminal_failure\":false}}\n",
+          "stderr": ""
+        },
+        {
+          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --json resume",
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout": "{\"automation\":{\"blocked\":false,\"class\":\"no_actionable_work\",\"completed\":false,\"continuation_required\":false,\"controller_action\":\"stop\",\"journey_id\":null,\"next_action\":\"inspect_progress_overview\",\"next_invocation\":null,\"outcome_scope\":\"objective\",\"outcome_source\":\"legacy_cli_projection\",\"retryable\":false,\"run_id\":null,\"schema_version\":1,\"status\":\"no_actionable_work\",\"stop_class\":\"no_actionable_work\",\"stop_reason\":\"no_actionable_work\",\"task_id\":null,\"terminal_failure\":false},\"command\":\"resume\",\"exit_code\":0,\"ok\":true,\"resume\":{\"automation\":{\"blocked\":false,\"class\":\"no_actionable_work\",\"completed\":false,\"continuation_required\":false,\"controller_action\":\"stop\",\"journey_id\":null,\"next_action\":\"inspect_progress_overview\",\"next_invocation\":null,\"outcome_scope\":\"objective\",\"outcome_source\":\"legacy_cli_projection\",\"retryable\":false,\"run_id\":null,\"schema_version\":1,\"status\":\"no_actionable_work\",\"stop_class\":\"no_actionable_work\",\"stop_reason\":\"no_actionable_work\",\"task_id\":null,\"terminal_failure\":false},\"blocked\":false,\"candidate_count\":0,\"completed\":false,\"continuation_id\":\"cli.resume.4324a18fc88cab3a1d73257847f20d2d\",\"continuation_required\":false,\"controller_action\":\"stop\",\"current_aggregate_sequence\":20260912075033009,\"decision_id\":null,\"journey_id\":null,\"next_action\":\"inspect_progress_overview\",\"post_aggregate_sequence\":null,\"replayed\":false,\"retryable\":false,\"run_id\":null,\"selected_run_id\":null,\"selected_task_id\":null,\"stale\":false,\"status\":\"no_eligible_task\",\"stop_class\":\"no_actionable_work\",\"stop_reason\":\"no_actionable_work\",\"task_id\":null,\"terminal_failure\":false}}\n",
           "stderr": ""
         }
       ],
-      "note": "This local fixture evidence checks the executable boundary. Full proposal/authorization/mutation crash-window Golden Journey remains release-blocking until the Runtime fixture harness executes those windows end-to-end."
+      "note": "This local fixture evidence checks the executable Golden Journey boundary by driving proposal preflight, apply, post-apply verification, workspace mutation, and completion through the Runtime CLI."
     },
     "soak_test": {
       "status": "satisfied",
@@ -1019,7 +1027,5 @@
       ]
     }
   },
-  "fail_closed_reasons": [
-    "golden_journey_fixture:failed"
-  ]
+  "fail_closed_reasons": []
 }

@@ -87,18 +87,6 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-16b: Regenerate runtime operational evidence after E-16a and prove the
-  Golden Journey fixture is satisfied:
-  Route: implementation/evidence.
-  Files: `.brownie/release-evidence/runtime-operational-evidence.json` and
-  `.brownie/release-evidence/golden-journey-fixture/`.
-  The regenerated evidence must show `golden_journey_fixture.status` as
-  `satisfied`, all Golden Journey commands passing, and lifecycle evidence for
-  proposal preflight, apply, post-apply verification, and completion all true.
-  Verification: run `pnpm --workspace-root release:runtime-operational-evidence`
-  followed by `pnpm --workspace-root guard:runtime-operational-evidence` and
-  `pnpm --workspace-root release:gate -- --dry-run`.
-
 - [ ] E-13a: Implement the next concrete step for E-13:
   Source TODO: E-13: Write the Documentation Golden Path after E-15b and E-16b are
   Brownie gathered context but did not produce a safe implementation patch.
