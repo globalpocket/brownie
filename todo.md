@@ -91,14 +91,18 @@ Current synchronization note:
   checks through local release targets:
   Route: implementation.
   Files: `scripts/release-runtime-operational-evidence.mjs`,
-  `scripts/release-runtime-operational-evidence.test.mjs`,
+  `scripts/guard-runtime-operational-evidence.test.mjs`,
   `docs/architecture/local-release-targets.schema.json`, and
   `docs/architecture/local-release-targets.example.json` if schema/example
   changes are needed.
   Implement bounded SSH/local delegation for target-host artifact lifecycle
   checks using the existing `docs/architecture/local-release-targets.*`
-  contract. Keep missing, incompatible, unreachable, or failed target execution
-  fail-closed; do not mark `runtime_release_ready` or `release_ready` true.
+  contract and the optional local manifest `.brownie/local-release-targets.json`.
+  Do not read or require a repository-tracked
+  `docs/architecture/local-release-targets.json`; if the local manifest is
+  missing, invalid, incompatible, unreachable, or any target execution fails,
+  keep evidence fail-closed and do not mark `runtime_release_ready` or
+  `release_ready` true.
   Verification: run
   `pnpm --workspace-root release:runtime-operational-evidence:test`,
   `pnpm --workspace-root guard:runtime-operational-evidence:test`,
@@ -120,23 +124,15 @@ Current synchronization note:
   followed by `pnpm --workspace-root guard:runtime-operational-evidence` and
   `pnpm --workspace-root release:gate -- --dry-run`.
 
-- [ ] E-16a: Make the runtime operational Golden Journey fixture exercise the
-  full proposal/apply path:
-  Route: implementation.
-  Files: `scripts/release-runtime-operational-evidence.mjs`,
-  `scripts/release-runtime-operational-evidence.test.mjs`, and fixture files
-  under `.brownie/release-evidence/golden-journey-fixture/` only if generated
-  evidence must be updated.
-  Change the fixture objective or harness so the JSON run observes proposal
-  preflight, explicit authorization/apply, workspace mutation, post-apply
-  verification, and accepted completion. Keep the fixture isolated and
-  deterministic; do not rely on external network services unless already
-  allowed by the runtime test harness.
-  Verification: run
-  `pnpm --workspace-root release:runtime-operational-evidence:test`,
-  `cargo test -p brownie-runtime golden -- --nocapture` if a targeted Rust test
-  is added, `pnpm --workspace-root guard:runtime-operational-evidence`, and
-  `pnpm --workspace-root release:gate -- --dry-run`.
+- [ ] E-16a-fixture-objective: Make the Golden Journey fixture request a deterministic workspace mutation:
+  Source TODO: E-16a: Make the runtime operational Golden Journey fixture exercise the
+  Patch `scripts/release-runtime-operational-evidence.mjs` so `buildGoldenJourneySection` writes a fixture objective that requires one small repository-local file change and can expose proposal/apply lifecycle evidence in the JSON run output.
+- [ ] E-16a-fixture-assertions: Require proposal/apply/post-apply/completion evidence before satisfying Golden Journey:
+  Source TODO: E-16a: Make the runtime operational Golden Journey fixture exercise the
+  Patch `scripts/release-runtime-operational-evidence.mjs` so `golden_journey_fixture.status` remains failed unless proposal preflight, explicit authorization/apply, workspace mutation, post-apply verification, and accepted completion are all observed.
+- [ ] E-16a-fixture-guard: Cover Golden Journey fail-closed and satisfied cases:
+  Source TODO: E-16a: Make the runtime operational Golden Journey fixture exercise the
+  Add `scripts/guard-runtime-operational-evidence.test.mjs` coverage proving incomplete Golden Journey lifecycle evidence is rejected and complete lifecycle evidence is accepted.
 
 - [ ] E-16b: Regenerate runtime operational evidence after E-16a and prove the
   Golden Journey fixture is satisfied:

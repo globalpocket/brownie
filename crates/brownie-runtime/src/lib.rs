@@ -2701,7 +2701,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 && workspace_read_completed_count(&followup_events) >= 2
             {
                 if let Err(error) = append_todo_decomposition_blocker_after_read_only_stall(
-                    &store, &running, &policy, true,
+                    &store, &running, &policy, true, false,
                 ) {
                     let _ = store.tasks().append_task_event_with_payload(
                         &running,
@@ -2894,6 +2894,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             &running,
             &policy,
             run_has_duplicate_workspace_read_denial(&pre_completion_events),
+            run_has_workspace_read_failure(&pre_completion_events),
         ) {
             let _ = store.tasks().append_task_event_with_payload(
                 &running,
@@ -3157,6 +3158,15 @@ fn is_duplicate_workspace_read_denial(event: &LedgerEvent) -> bool {
                 reason.contains("Duplicate workspace.read")
                     || reason.contains("Additional workspace.read is not progress")
             })
+}
+
+fn run_has_workspace_read_failure(events: &[LedgerEvent]) -> bool {
+    events.iter().any(|event| {
+        event.kind == LedgerEventKind::ToolExecutionFailed
+            && event.payload.as_ref().is_some_and(|payload| {
+                payload.get("tool_id").and_then(Value::as_str) == Some(WORKSPACE_READ_TOOL_ID)
+            })
+    })
 }
 
 fn is_valid_workspace_patch_proposal_event(event: &LedgerEvent) -> bool {
