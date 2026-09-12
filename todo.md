@@ -87,15 +87,6 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-13a: Write the Runtime Documentation Golden Path:
-  Route: documentation/evidence.
-  File: `docs/architecture/documentation-golden-path.md`.
-  Create or update this single document so a third party can reproduce the
-  current Runtime Product Ready evidence path from a clean checkout. It must
-  reference the release gate, local VM artifact lifecycle, runtime operational
-  evidence, Golden Journey fixture, owner-governance fail-closed evidence, and
-  final readiness judgment inputs without claiming `runtime_release_ready=true`.
-  Verification: run `pnpm --workspace-root check`.
 - [ ] E-14: Perform final Product Ready judgment after E-13:
   Route: release-judgment.
   Files: `docs/architecture/runtime-release-contract.json`,
