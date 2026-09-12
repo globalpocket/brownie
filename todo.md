@@ -51,6 +51,11 @@ Current synchronization note:
   execution-time `origin/main` after R-20, replacing stale current
   RRP-8.4/RRP-8.6 fingerprint authority while keeping historical evidence
   entries intact.
+- PR #452 closed the previous Runtime-owned Product Ready blocker queue, but the
+  f7f845a follow-up audit reopened Release evidence authenticity,
+  confidentiality, cross-platform E2E, and semantic guard blockers. Runtime
+  Product Ready remains false until those evidence blockers and independent
+  owner reviews close.
 - Runtime Product Ready is not reached.
 
 ## Queue protocol
@@ -86,6 +91,98 @@ Current synchronization note:
 ## Product Ready Blocking Queue
 
 ### P0/P1: Release engineering and evidence
+
+- [ ] E-15a-runtime-operational-evidence-redaction: Remove forbidden local
+  details from runtime operational evidence and add a fail-closed guard:
+  Route: release-evidence/confidentiality. Source concern: the current
+  `.brownie/release-evidence/runtime-operational-evidence.json` may contain
+  absolute local paths, SSH host aliases, raw stdout/stderr, encoded shell
+  commands, or local worktree details while Release documents declare those are
+  not valid release evidence. Implement or update the collector and guard so
+  runtime operational evidence stores only bounded statuses, counts, hashes,
+  relative paths, command identifiers, and non-sensitive summaries. Add tests
+  that reject `/Users/`, `/home/`, `C:/Users/`, SSH host aliases, raw process
+  output fields, PowerShell `EncodedCommand`, and local worktree paths. Keep
+  `runtime_release_ready` false. Verification: run the new/updated guard tests,
+  `pnpm --workspace-root guard:runtime-operational-evidence`, and
+  `pnpm --workspace-root check`.
+- [ ] E-15b-artifact-provenance-current-main-binding: Bind release artifacts,
+  tested commit, workflow run, and provenance to the latest authoritative
+  `origin/main` commit:
+  Route: release-evidence/provenance. Source concern: release contract and
+  supply-chain evidence must not mark artifact/SBOM/provenance conditions
+  implemented while `implementation_commit`, `tested_commit`,
+  `workflow_run_id`, `artifact_sha256`, or audited base data are null, stale,
+  dirty, or inconsistent with current main. Update collectors, evidence files,
+  and guards so final artifact evidence names one source commit, one clean
+  source tree state, one workflow or local release invocation, and one checksum
+  set for the artifacts actually recorded. If artifacts are not regenerated in
+  this task, fail closed with explicit blockers instead of claiming satisfied
+  evidence. Keep `runtime_release_ready` false. Verification: run
+  `pnpm --workspace-root guard:supply-chain-artifact-evidence`,
+  `pnpm --workspace-root guard:release-contract`, and relevant guard tests.
+- [ ] E-15c-cross-platform-artifact-e2e-smoke-contract: Replace shallow
+  artifact smoke with per-target executable E2E smoke requirements:
+  Route: release-evidence/cross-platform-e2e. Source concern: the existing
+  four-target smoke evidence is too shallow if it only proves
+  `brownie --version` and `brownie help run`; Release Contract requires Base
+  Mode Pack load, a minimal task run, Ledger generation, forced stop/resume,
+  and stale/replay rejection for each released artifact/OS target. Update the
+  local artifact smoke runner, evidence schema, and guard so each target is
+  either satisfied by bounded per-target E2E evidence or explicitly fail-closed
+  with the missing target/reason. Do not rely on macOS-only Golden Journey as
+  cross-platform artifact evidence. Keep `runtime_release_ready` false.
+  Verification: run artifact smoke guard tests and
+  `pnpm --workspace-root guard:runtime-operational-evidence`.
+- [ ] E-15d-runtime-soak-evidence-stateful: Replace the 100-run version-only
+  soak with stateful Runtime soak evidence:
+  Route: release-evidence/soak. Source concern: repeating `brownie --version`
+  does not prove Runtime durability. Define and implement soak evidence that
+  exercises task state transitions, Ledger/workspace consistency, resume/replay
+  handling, no duplicate side effects, process-loss recovery, bounded
+  Mode Pack/LLM/MCP paths where available, and finite convergence. The guard
+  must reject version/help-only soak evidence as insufficient. Keep
+  `runtime_release_ready` false unless all release evidence and independent
+  owner reviews are complete. Verification: run soak guard tests and
+  `pnpm --workspace-root check`.
+- [ ] E-15e-release-contract-audit-phase-resync: Resynchronize Release
+  Contract, Release Readiness Audit, Phase Manifest, and final judgment after
+  E-15a through E-15d:
+  Route: release-judgment/resync. Source concern: after evidence hardening, the
+  release documents must accurately reflect current main, current artifacts,
+  fail-closed missing evidence, and owner-controlled independent reviews. Remove
+  stale base commit references such as old audited commits when they are no
+  longer authoritative; do not mark evidence implemented unless the new guards
+  prove the semantic evidence, not just status strings. Keep
+  `runtime_release_ready` false while `independent_reviews` remains incomplete.
+  Verification: run `pnpm --workspace-root guard:runtime-release-readiness`,
+  `pnpm --workspace-root guard:release-contract`,
+  `pnpm --workspace-root guard:phase-value`, and `pnpm --workspace-root check`.
+- [ ] E-15f-release-evidence-semantic-consistency-guard: Add a semantic
+  consistency guard that cross-checks release contract statuses against
+  evidence contents:
+  Route: release-guards/semantic-consistency. Source concern: guards must not
+  accept JSON status strings that contradict evidence fields. Add a guard and
+  tests that fail when satisfied release conditions have null/stale
+  implementation/tested/artifact commits, dirty source trees, missing workflow
+  provenance, missing or mismatched artifact checksums, shallow smoke evidence,
+  version-only soak evidence, or forbidden confidential evidence fields.
+  Wire the guard into VSIX `check`, release gate dry-run command inventory, and
+  phase value manifest. Keep `runtime_release_ready` false unless all semantic
+  checks and owner reviews are complete. Verification: run the new guard tests,
+  `pnpm --workspace-root guard:phase-value`, and `pnpm --workspace-root check`.
+- [ ] E-15g-pr435-stale-phase-loop-pr-hygiene: Resolve stale Phase Loop PR
+  #435:
+  Route: release-ops/pr-hygiene. Source concern: PR #435 remains open against
+  `main` while latest main appears to include or supersede its CI/phase-loop
+  work, and the PR is currently dirty. Verify whether all useful changes from
+  #435 are already included in current `origin/main`. If fully superseded,
+  close the PR with a concise comment that cites the superseding merged PRs or
+  current evidence. If not superseded, create a bounded follow-up TODO naming
+  the exact missing file/change instead of merging stale conflicting work.
+  Verification: record the PR state and conclusion in bounded release-ops
+  evidence or a TODO update; do not change release readiness based solely on PR
+  hygiene.
 
 ## Tracked but not Product Ready blocking
 
