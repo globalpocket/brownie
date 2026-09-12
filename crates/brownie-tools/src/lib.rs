@@ -4197,11 +4197,11 @@ fn extract_fenced_blocks(content: &str) -> Vec<&str> {
             .unwrap_or(after)
             .strip_prefix('\n')
             .unwrap_or(after);
-        let Some(end) = after.find("```") else {
+        let Some((end, close_len)) = find_line_start_closing_fence(after) else {
             break;
         };
         blocks.push(&after[..end]);
-        rest = &after[end + 3..];
+        rest = &after[end + close_len..];
     }
     blocks
 }
@@ -4217,11 +4217,12 @@ fn extract_json_tool_request_blocks(content: &str) -> Vec<&str> {
             .unwrap_or(after)
             .strip_prefix('\n')
             .unwrap_or(after);
-        let (block, next_rest) = if let Some(end) = after.find("```") {
-            (&after[..end], &after[end + 3..])
-        } else {
-            (after, "")
-        };
+        let (block, next_rest) =
+            if let Some((end, close_len)) = find_line_start_closing_fence(after) {
+                (&after[..end], &after[end + close_len..])
+            } else {
+                (after, "")
+            };
         if serde_json::from_str::<Value>(block.trim())
             .ok()
             .and_then(|value| {
@@ -4236,6 +4237,18 @@ fn extract_json_tool_request_blocks(content: &str) -> Vec<&str> {
         rest = next_rest;
     }
     blocks
+}
+
+fn find_line_start_closing_fence(content: &str) -> Option<(usize, usize)> {
+    if content.starts_with("```") {
+        return Some((0, 3));
+    }
+    content.match_indices('\n').find_map(|(newline_index, _)| {
+        let fence_start = newline_index + 1;
+        content[fence_start..]
+            .starts_with("```")
+            .then_some((newline_index, 4))
+    })
 }
 
 fn empty_input_object() -> serde_json::Value {
@@ -4969,6 +4982,16 @@ mod tests {
     }
 
     #[test]
+    fn parser_accepts_workspace_write_content_with_markdown_code_fence() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Create docs.\",\"input\":{\"path\":\"docs/guide.md\",\"operation\":\"create_file\",\"content\":\"# Guide\\n\\n```bash\\npnpm --workspace-root check\\n```\\n\"}}]}\n```",
+        );
+        assert_eq!(parsed.requests.len(), 1);
+        assert_eq!(parsed.requests[0].tool_id, "workspace.write");
+        assert!(parsed.rejected.is_empty());
+    }
+
+    #[test]
     fn parser_returns_empty_without_fence() {
         let parsed = ToolIntentParser::parse_assistant_content("none");
         assert!(parsed.requests.is_empty());
@@ -5000,7 +5023,7 @@ mod tests {
         assert_eq!(unknown.rejected[0].code, "unknown_field");
 
         let config = ToolIntentParserConfig {
-            max_block_bytes: 2,
+            max_block_bytes: 1,
             ..ToolIntentParserConfig::default()
         };
         let oversized = ToolIntentParser::parse_assistant_content_with_config(
