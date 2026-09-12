@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "evidence_id": "brownie-owner-governance-evidence-v1",
-  "generated_at": "2026-09-12T10:38:50.123Z",
+  "generated_at": "2026-09-12T11:02:08.064Z",
   "repository": "globalpocket/brownie",
-  "source_commit": "45704fde6ba4d422957999132d704f544a14104e",
+  "source_commit": "6d94714fd0bff20719e9c922a61c645bafce7fb0",
   "release_ready": false,
   "runtime_release_ready": false,
   "required_sections": [
@@ -45,8 +45,8 @@
       "workflow_run_id_present": true,
       "workflow_sha_present": true,
       "workflow_repository_present": true,
-      "workflow_run_id": "34688575829",
-      "workflow_head_sha": "45704fde6ba4d422957999132d704f544a14104e",
+      "workflow_run_id": "34689249829",
+      "workflow_head_sha": "6d94714fd0bff20719e9c922a61c645bafce7fb0",
       "workflow_conclusion": "success",
       "required_check_names": [
         "check",

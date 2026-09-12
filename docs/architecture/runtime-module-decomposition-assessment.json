@@ -61,11 +61,11 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/controlled_tool_execution.rs": {
-        "line_count": 6424,
+        "line_count": 6471,
         "public_items": 72,
         "private_items": 91,
-        "state_mutation_mentions": 43,
-        "durable_write_mentions": 43,
+        "state_mutation_mentions": 44,
+        "durable_write_mentions": 44,
         "permission_decision_mentions": 63,
         "recovery_mentions": 81,
         "rpc_dispatch_mentions": 0,
@@ -392,6 +392,7 @@
     "RRP-8.3 updated module metrics after release gate evidence semantics and clippy cleanup; module-decomposition closure status remains unchanged.",
     "R-16 updated module metrics after migrating strict provider network opt-in to BROWNIE_LLM_ALLOW_PROVIDER_ACCESS with legacy fallback and conflict fail-closed coverage; module-decomposition closure status remains unchanged.",
     "R-17 updated module metrics after adding llm_provider_access_allowed public status evidence while retaining task_run_network_allowed as a compatibility alias; module-decomposition closure status remains unchanged.",
-    "R-18 updated module metrics after propagating pinned-commit distribution evidence through Mode Pack candidate fetch, provenance, approval, and active replacement paths; module-decomposition closure status remains unchanged."
+    "R-18 updated module metrics after propagating pinned-commit distribution evidence through Mode Pack candidate fetch, provenance, approval, and active replacement paths; module-decomposition closure status remains unchanged.",
+    "PR pending: controlled_tool_execution metrics updated after preventing generic TODOa decomposition for patch-only file TODO stalls."
   ]
 }

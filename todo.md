@@ -87,45 +87,54 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-14a-owner-evidence-section: Patch only `docs/architecture/final-product-ready-judgment.md` with owner governance evidence:
-  Source TODO: E-14a: Write the final Product Ready judgment input memo.
-  Read only `docs/architecture/final-product-ready-judgment.md` and
-  `.brownie/release-evidence/owner-governance-evidence.json`. Replace the
-  existing `## Owner/External Publication Decisions` section in the judgment
-  document; do not insert a second section with the same heading. The section
-  must classify owner-governance evidence as fail-closed for independent
-  reviews and remote CI provenance when the evidence says so, and must mention
-  satisfied protected tag and integrity authority evidence when present. Do not
-  edit JSON files. The next tool intent must be a complete fenced
-  `brownie-tool-intent` JSON block ending with a line containing exactly three
-  backticks.
-- [ ] E-14a-supply-chain-evidence-section: Patch only `docs/architecture/final-product-ready-judgment.md` with supply-chain evidence:
-  Source TODO: E-14a: Write the final Product Ready judgment input memo.
-  Read only `docs/architecture/final-product-ready-judgment.md` and
-  `.brownie/release-evidence/supply-chain-artifact-evidence.json`. Add or
-  update a bounded section describing supply-chain/artifact evidence and
-  fail-closed blockers. Do not edit JSON files.
-- [ ] E-14a-final-summary: Patch only `docs/architecture/final-product-ready-judgment.md` with the final judgment summary:
-  Source TODO: E-14a: Write the final Product Ready judgment input memo.
-  Read only `docs/architecture/final-product-ready-judgment.md`. Add or update
-  a final summary that states which Runtime-owned release blockers are
-  satisfied, which remain fail-closed, and which items are owner/external
-  publication decisions. Verification: run `pnpm --workspace-root check`.
-- [ ] E-14b: Update release contract/readiness audit only if E-14a proves a
-  Runtime-owned judgment change is required:
-  Route: release-judgment/contract.
-  Files: `docs/architecture/runtime-release-contract.json` and
-  `docs/architecture/runtime-release-readiness-audit.json`.
-  Use `docs/architecture/final-product-ready-judgment.md` as the input. If the
-  memo shows only owner/external blockers remain, keep `runtime_release_ready`
-  false and record the remaining fail-closed state without counting it as a
-  Runtime implementation defect. If Runtime-owned blockers remain, preserve
-  them as release-blocking evidence. Do not set `runtime_release_ready=true`
-  unless every release-blocking Runtime-owned condition is satisfied by current
-  evidence.
-  Verification: run `pnpm --workspace-root release:gate -- --dry-run`,
-  `pnpm --workspace-root guard:runtime-release-readiness`, and
-  `pnpm --workspace-root guard:release-contract`.
+- [ ] E-14b-contract-required-before-status: Patch only `docs/architecture/runtime-release-contract.json`:
+  Read only `docs/architecture/runtime-release-contract.json`. In the
+  `release_ready_conditions` object whose `"id"` is
+  `"required_before_release_closed"`, replace only the status line
+  `"status": "blocked_by_runtime_release_guard_ci"` with
+  `"status": "blocked_by_independent_owner_reviews"`. Keep
+  `runtime_release_ready` false. Do not edit any other file.
+- [ ] E-14b-contract-no-unresolved-status: Patch only `docs/architecture/runtime-release-contract.json`:
+  Read only `docs/architecture/runtime-release-contract.json`. In the
+  `release_ready_conditions` object whose `"id"` is
+  `"no_unresolved_release_blockers"`, replace only the status line
+  `"status": "blocked_by_runtime_release_guard_ci"` with
+  `"status": "blocked_by_independent_owner_reviews"`. Keep
+  `runtime_release_ready` false. Do not edit any other file.
+- [ ] E-14b-contract-owner-settings-status: Patch only `docs/architecture/runtime-release-contract.json`:
+  Read only `docs/architecture/runtime-release-contract.json`. In the
+  `release_ready_conditions` object whose `"id"` is
+  `"owner_controlled_settings_complete"`, replace only the status line
+  `"status": "implemented_sufficient"` with
+  `"status": "partial_independent_reviews_missing"`. Keep
+  `runtime_release_ready` false. Do not edit any other file.
+- [ ] E-14b-contract-independent-reviews-status: Patch only `docs/architecture/runtime-release-contract.json`:
+  Read only `docs/architecture/runtime-release-contract.json`. In the
+  `release_ready_conditions` object whose `"id"` is
+  `"required_independent_reviews_complete"`, replace only the status line
+  `"status": "implemented_sufficient"` with `"status": "not_completed"`.
+  Keep `runtime_release_ready` false. Do not edit any other file.
+- [ ] E-14b-contract-satisfied-evidence-flags: Patch only `docs/architecture/runtime-release-contract.json` to stop reporting already-satisfied evidence as missing:
+  Read only `docs/architecture/runtime-release-contract.json`. Keep
+  `runtime_release_ready` false. Do not set any release-ready flag true. Make
+  only small status string replacements for these exact condition ids when
+  present: `mandatory_ci_success`, `os_artifacts_generated`,
+  `artifact_smoke_tests`, `security_dependency_secret_scans`, `sbom_generated`,
+  `checksums_generated`, `signature_or_integrity_proof`,
+  `provenance_generated`, `tested_commit_matches_artifact_commit`, and
+  `audit_trace_matches_tested_commit` should use a satisfied/implemented status
+  consistent with current evidence rather than a missing/blocked status. Do not
+  rewrite large JSON blocks; use narrow patches over exact status lines.
+- [ ] E-14b-audit-resync: Patch only `docs/architecture/runtime-release-readiness-audit.json` to align with the E-14a judgment memo:
+  Read only `docs/architecture/runtime-release-readiness-audit.json`. Keep
+  `runtime_release_ready` false. Do not set any release-ready flag true.
+  Current judgment facts: Runtime operational evidence is satisfied;
+  supply-chain artifact evidence is satisfied; owner governance is satisfied
+  except `independent_reviews` is not completed. Update stale audit text or
+  status fields that still describe Runtime-owned release-gate, CI, artifact,
+  supply-chain, or provenance work as the remaining Product Ready blocker when
+  the current judgment says the remaining blocker is independent owner reviews.
+  Prefer minimal JSON string changes and keep valid formatting.
 - [ ] E-14c: Verify and package the final Product Ready judgment PR:
   Route: release-judgment/verification.
   Files: `docs/architecture/final-product-ready-judgment.md`,
