@@ -87,22 +87,102 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-15: Runtime operational evidence still fails closed because Linux and
-  Windows artifacts are present but not executed on their target hosts. Run the
-  artifact lifecycle evidence on the configured Linux and Windows VM targets,
-  or extend `scripts/release-runtime-operational-evidence.mjs` to delegate
-  target artifact checks through `docs/architecture/local-release-targets.*`.
+- [ ] E-15a: Teach runtime operational evidence to execute artifact lifecycle
+  checks through local release targets:
+  Route: implementation.
+  Files: `scripts/release-runtime-operational-evidence.mjs`,
+  `scripts/release-runtime-operational-evidence.test.mjs`,
+  `docs/architecture/local-release-targets.schema.json`, and
+  `docs/architecture/local-release-targets.example.json` if schema/example
+  changes are needed.
+  Implement bounded SSH/local delegation for target-host artifact lifecycle
+  checks using the existing `docs/architecture/local-release-targets.*`
+  contract. Keep missing, incompatible, unreachable, or failed target execution
+  fail-closed; do not mark `runtime_release_ready` or `release_ready` true.
+  Verification: run
+  `pnpm --workspace-root release:runtime-operational-evidence:test`,
+  `pnpm --workspace-root guard:runtime-operational-evidence:test`,
+  `pnpm --workspace-root guard:runtime-operational-evidence`, and
+  `pnpm --workspace-root guard:release-contract`.
 
-- [ ] E-16: Runtime operational Golden Journey still fails closed because the
-  isolated fixture run completed without observing proposal preflight or
-  workspace apply evidence. Change the fixture objective or harness so the
-  JSON run exercises proposal creation, preflight, authorization/apply, and
-  post-apply verification, then regenerate evidence.
+- [ ] E-15b: Regenerate runtime operational evidence after E-15a on the
+  configured Linux and Windows VM targets:
+  Route: implementation/evidence.
+  Files: `.brownie/release-evidence/runtime-operational-evidence.json` and any
+  target-local artifact lifecycle evidence files produced under
+  `.brownie/release-evidence/`.
+  Run the delegated artifact lifecycle against Linux and Windows targets from
+  `docs/architecture/local-release-targets.*`, confirm each target records
+  checksum verification, install/version/help execution, update, rollback, and
+  uninstall evidence, and leave only real remaining blockers in
+  `fail_closed_reasons`.
+  Verification: run `pnpm --workspace-root release:runtime-operational-evidence`
+  followed by `pnpm --workspace-root guard:runtime-operational-evidence` and
+  `pnpm --workspace-root release:gate -- --dry-run`.
 
-- [ ] E-13: Write the Documentation Golden Path only after the executable path
-  and evidence are current.
-- [ ] E-14: Perform final Product Ready judgment without counting unresolved OSS
-  publication decisions against Runtime technical maturity.
+- [ ] E-16a: Make the runtime operational Golden Journey fixture exercise the
+  full proposal/apply path:
+  Route: implementation.
+  Files: `scripts/release-runtime-operational-evidence.mjs`,
+  `scripts/release-runtime-operational-evidence.test.mjs`, and fixture files
+  under `.brownie/release-evidence/golden-journey-fixture/` only if generated
+  evidence must be updated.
+  Change the fixture objective or harness so the JSON run observes proposal
+  preflight, explicit authorization/apply, workspace mutation, post-apply
+  verification, and accepted completion. Keep the fixture isolated and
+  deterministic; do not rely on external network services unless already
+  allowed by the runtime test harness.
+  Verification: run
+  `pnpm --workspace-root release:runtime-operational-evidence:test`,
+  `cargo test -p brownie-runtime golden -- --nocapture` if a targeted Rust test
+  is added, `pnpm --workspace-root guard:runtime-operational-evidence`, and
+  `pnpm --workspace-root release:gate -- --dry-run`.
+
+- [ ] E-16b: Regenerate runtime operational evidence after E-16a and prove the
+  Golden Journey fixture is satisfied:
+  Route: implementation/evidence.
+  Files: `.brownie/release-evidence/runtime-operational-evidence.json` and
+  `.brownie/release-evidence/golden-journey-fixture/`.
+  The regenerated evidence must show `golden_journey_fixture.status` as
+  `satisfied`, all Golden Journey commands passing, and lifecycle evidence for
+  proposal preflight, apply, post-apply verification, and completion all true.
+  Verification: run `pnpm --workspace-root release:runtime-operational-evidence`
+  followed by `pnpm --workspace-root guard:runtime-operational-evidence` and
+  `pnpm --workspace-root release:gate -- --dry-run`.
+
+- [ ] E-13: Write the Documentation Golden Path after E-15b and E-16b are
+  current:
+  Route: documentation.
+  Files: `README.md`, `docs/architecture/runtime-release-contract.json`,
+  `docs/architecture/runtime-release-readiness-audit.json`, and any
+  Product-Ready/Golden-Path document that already exists.
+  Document the local VM artifact lifecycle path, Golden Journey fixture path,
+  release evidence regeneration commands, expected fail-closed behavior, and
+  the exact command sequence a maintainer should run before final Product Ready
+  judgment. Do not claim Runtime Product Ready unless E-14 closes it.
+  Verification: run `pnpm --workspace-root guard:runtime-release-readiness`,
+  `pnpm --workspace-root guard:release-contract`, and
+  `pnpm --workspace-root guard:product-completion`.
+
+- [ ] E-14: Perform final Product Ready judgment after E-13:
+  Route: release-judgment.
+  Files: `docs/architecture/runtime-release-contract.json`,
+  `docs/architecture/runtime-release-readiness-audit.json`,
+  `.brownie/release-evidence/runtime-operational-evidence.json`,
+  `.brownie/release-evidence/owner-governance-evidence.json`, and
+  `.brownie/release-evidence/supply-chain-artifact-evidence.json`.
+  Recompute current release evidence on `origin/main`, distinguish Runtime
+  technical maturity from unresolved OSS publication decisions, and update the
+  release contract/readiness audit only when every Runtime-owned blocker is
+  satisfied. If any owner-controlled or external publication decision remains,
+  record it as owner/external fail-closed evidence without counting it against
+  Runtime technical maturity. Do not set `runtime_release_ready=true` unless
+  every release-blocking Runtime-owned condition is satisfied by evidence.
+  Verification: run `pnpm --workspace-root release:gate -- --dry-run`,
+  `pnpm --workspace-root guard:runtime-release-readiness`,
+  `pnpm --workspace-root guard:release-contract`,
+  `pnpm --workspace-root guard:owner-governance-evidence`, and the full CI
+  check path before PR creation.
 
 ## Tracked but not Product Ready blocking
 
