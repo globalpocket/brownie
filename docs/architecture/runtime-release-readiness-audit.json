@@ -124,7 +124,7 @@
       "scripts/guard-runtime-release-readiness.mjs",
       "scripts/rrp3-process-loss-recovery-e2e.mjs"
     ],
-    "tracked_fingerprint": "sha256:2c55531268ac6745e5bf43486b91e6eb89d5f502d1aa1113fdf99191d53355fa",
+    "tracked_fingerprint": "sha256:d0cd292cca0ec46f690a7d0efa577d9ba3f673a2b1dca085d8d424140d96e90f",
     "status": "implemented_sufficient"
   },
   "owner_decisions": [
@@ -397,7 +397,7 @@
       "next_action": "Do not use these items to block Brownie Runtime release."
     }
   ],
-  "updated_at": "2026-09-04T13:40:00Z",
+  "updated_at": "2026-09-12T00:00:00Z",
   "evidence": [
     "RRP-8.5 adds pnpm --workspace-root release:dependency-security-license-audit to pnpm release:gate, plus contract guards and CI-invoked tests. Missing cargo audit, cargo deny, pnpm audit execution, missing lockfiles, missing deny.toml, or failed audit results are release-blocking and cannot be counted as Release Ready.",
     "RRP-8.6 binds pnpm --workspace-root release:gate -- --dry-run into the existing GitHub-CI-invoked brownie-vsix check path and guards that binding without editing .github/workflows/ci.yml.",
