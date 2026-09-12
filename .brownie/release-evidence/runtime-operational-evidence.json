@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "evidence_id": "brownie-runtime-operational-evidence-v1",
-  "generated_at": "2026-09-11T19:14:15.834Z",
+  "generated_at": "2026-09-12T07:25:33.306Z",
   "repository": "globalpocket/brownie",
   "release_ready": false,
   "runtime_release_ready": false,
@@ -12,8 +12,127 @@
   ],
   "sections": {
     "artifact_lifecycle": {
-      "status": "failed",
+      "status": "satisfied",
       "release_blocking": true,
+      "local_release_targets_status": "loaded",
+      "local_release_targets_path": ".brownie/local-release-targets.json",
+      "local_release_targets_errors": [],
+      "target_results": [
+        {
+          "target": "darwin-arm64",
+          "kind": "local",
+          "status": "satisfied",
+          "passed": true,
+          "artifact_results": [
+            {
+              "target": "darwin-arm64",
+              "path": ".brownie/release-evidence/artifacts/darwin-arm64/brownie",
+              "status": "satisfied",
+              "passed": true,
+              "checksum_verified": true,
+              "update_sha256": "sha256:bc32e7bd1482cc312211db9c08c1cea6d9cac6893c3f06c5aaa863c8cda4bf86",
+              "rollback_sha256": "sha256:bc32e7bd1482cc312211db9c08c1cea6d9cac6893c3f06c5aaa863c8cda4bf86",
+              "uninstalled": true,
+              "commands": [
+                {
+                  "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-r7KAT7/brownie --version",
+                  "exit_code": 0,
+                  "signal": null,
+                  "passed": true,
+                  "stdout": "brownie 0.1.0\n",
+                  "stderr": ""
+                },
+                {
+                  "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-r7KAT7/brownie help run",
+                  "exit_code": 0,
+                  "signal": null,
+                  "passed": true,
+                  "stdout": "brownie run\n\nUsage:\n  brownie run <objective>\n  brownie run --file <path>\n  brownie --json run <objective>\n  brownie --json run --file <path>\n\nRuns one general autonomous objective through the Rust runtime.\nThe objective is free text. Tokens after run, including --help, -V, --version, and --json, remain part of the objective.\nWith --file, the CLI reads the UTF-8 file and sends its contents as the objective.\nSet BROWNIE_CLI_RUN_MODE_ID to request a specific runtime mode for the admitted task.\nFor strict OpenAI-compatible provider runs, use BROWNIE_CLI_RUN_MODE_ID=provider-runner together with BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true.\nOne invocation performs bounded progress, persists through the runtime, and exits.\nJSON output includes an automation object and controller_action for external loops.\n\nExamples:\n  brownie run \"summarize this repository\"\n  brownie run --file sample.md\n  BROWNIE_CLI_RUN_MODE_ID=provider-runner brownie run \"Hello\"\n  brownie --json run \"inspect the current task state\"\n\nBoundary:\n  The CLI invokes runtime-owned headless execution. It does not select tasks, apply workspace changes, or own runtime policy.\n",
+                  "stderr": ""
+                }
+              ]
+            }
+          ],
+          "commands": [
+            {
+              "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-r7KAT7/brownie --version",
+              "exit_code": 0,
+              "signal": null,
+              "passed": true,
+              "stdout": "brownie 0.1.0\n",
+              "stderr": ""
+            },
+            {
+              "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-r7KAT7/brownie help run",
+              "exit_code": 0,
+              "signal": null,
+              "passed": true,
+              "stdout": "brownie run\n\nUsage:\n  brownie run <objective>\n  brownie run --file <path>\n  brownie --json run <objective>\n  brownie --json run --file <path>\n\nRuns one general autonomous objective through the Rust runtime.\nThe objective is free text. Tokens after run, including --help, -V, --version, and --json, remain part of the objective.\nWith --file, the CLI reads the UTF-8 file and sends its contents as the objective.\nSet BROWNIE_CLI_RUN_MODE_ID to request a specific runtime mode for the admitted task.\nFor strict OpenAI-compatible provider runs, use BROWNIE_CLI_RUN_MODE_ID=provider-runner together with BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true.\nOne invocation performs bounded progress, persists through the runtime, and exits.\nJSON output includes an automation object and controller_action for external loops.\n\nExamples:\n  brownie run \"summarize this repository\"\n  brownie run --file sample.md\n  BROWNIE_CLI_RUN_MODE_ID=provider-runner brownie run \"Hello\"\n  brownie --json run \"inspect the current task state\"\n\nBoundary:\n  The CLI invokes runtime-owned headless execution. It does not select tasks, apply workspace changes, or own runtime policy.\n",
+              "stderr": ""
+            }
+          ]
+        },
+        {
+          "target": "linux-arm64",
+          "kind": "ssh",
+          "host": "brownie-linux",
+          "workspace": "/home/ubuntu/brownie",
+          "shell": "posix",
+          "status": "delegated_artifact_build_completed",
+          "passed": true,
+          "delegated_result": null,
+          "commands": [
+            {
+              "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 brownie-linux export PATH=\"$HOME/.cargo/bin:$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH\" && cd '/home/ubuntu/brownie' && 'pnpm' '--workspace-root' 'release:local-artifact' '--' '--target' 'linux-arm64'",
+              "exit_code": 0,
+              "signal": null,
+              "passed": true,
+              "stdout": "\n> brownie-workspace@0.1.0 release:local-artifact /home/ubuntu/brownie\n> node scripts/release-local-artifact.mjs \"--\" \"--target\" \"linux-arm64\"\n\n{\n  \"target\": \"linux-arm64\",\n  \"outDir\": \".brownie/release-evidence/artifacts/linux-arm64\",\n  \"artifact\": {\n    \"path\": \".brownie/release-evidence/artifacts/linux-arm64/brownie\",\n    \"sha256\": \"sha256:13d80e9a6399986e6f95b97c6da5bcc01f702bf8bbd945224d3d7f9b1e2cd9d7\",\n    \"bytes\": 1314536,\n    \"target\": \"linux-arm64\"\n  },\n  \"smoke_status\": \"satisfied\"\n}\n",
+              "stderr": ""
+            }
+          ]
+        },
+        {
+          "target": "linux-x64",
+          "kind": "ssh",
+          "host": "brownie-linux",
+          "workspace": "/home/ubuntu/brownie",
+          "shell": "posix",
+          "status": "delegated_artifact_build_completed",
+          "passed": true,
+          "delegated_result": null,
+          "commands": [
+            {
+              "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 brownie-linux export PATH=\"$HOME/.cargo/bin:$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH\" && cd '/home/ubuntu/brownie' && 'pnpm' '--workspace-root' 'run' 'release:linux-x64-docker-artifact' '--' '--platform' 'linux/amd64' '--target' 'linux-x64'",
+              "exit_code": 0,
+              "signal": null,
+              "passed": true,
+              "stdout": "\n> brownie-workspace@0.1.0 release:linux-x64-docker-artifact /home/ubuntu/brownie\n> node scripts/release-linux-x64-docker-artifact.mjs \"--\" \"--platform\" \"linux/amd64\" \"--target\" \"linux-x64\"\n\n{\n  \"target\": \"linux-x64\",\n  \"platform\": \"linux/amd64\",\n  \"outDir\": \".brownie/release-evidence/artifacts/linux-x64\",\n  \"artifact\": {\n    \"path\": \".brownie/release-evidence/artifacts/linux-x64/brownie\",\n    \"sha256\": \"sha256:83a07ff0aecf4d8f0427a5c6537564c17d068ac7800ed01b9a1af3d5a5dbf213\",\n    \"bytes\": 1742008,\n    \"target\": \"linux-x64\"\n  },\n  \"smoke_status\": \"satisfied\"\n}\n",
+              "stderr": ""
+            }
+          ]
+        },
+        {
+          "target": "win32-x64",
+          "kind": "ssh",
+          "host": "brownie-windows",
+          "workspace": "C:/Users/brownie/brownie",
+          "shell": "powershell",
+          "status": "delegated_artifact_build_completed",
+          "passed": true,
+          "delegated_result": null,
+          "commands": [
+            {
+              "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 brownie-windows powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand UwBlAHQALQBMAG8AYwBhAHQAaQBvAG4AIAAnAEMAOgAvAFUAcwBlAHIAcwAvAGIAcgBvAHcAbgBpAGUALwBiAHIAbwB3AG4AaQBlACcAOwAgACYAIAAnAHAAbgBwAG0AJwAgACcALQAtAHcAbwByAGsAcwBwAGEAYwBlAC0AcgBvAG8AdAAnACAAJwByAGUAbABlAGEAcwBlADoAbABvAGMAYQBsAC0AYQByAHQAaQBmAGEAYwB0ACcAIAAnAC0ALQAnACAAJwAtAC0AdABhAHIAZwBlAHQAJwAgACcAdwBpAG4AMwAyAC0AeAA2ADQAJwA=",
+              "exit_code": 0,
+              "signal": null,
+              "passed": true,
+              "stdout": "\n> brownie-workspace@0.1.0 release:local-artifact C:\\Users\\brownie\\brownie\n> node scripts/release-local-artifact.mjs \"--\" \"--target\" \"win32-x64\"\n\n{\n  \"target\": \"win32-x64\",\n  \"outDir\": \".brownie/release-evidence/artifacts/win32-x64\",\n  \"artifact\": {\n    \"path\": \".brownie/release-evidence/artifacts/win32-x64/brownie.exe\",\n    \"sha256\": \"sha256:79aad190ae949a9c4d58dde868bbc564d20b9b31fbc2d53dd796dd2eec9e6444\",\n    \"bytes\": 1067520,\n    \"target\": \"win32-x64\"\n  },\n  \"smoke_status\": \"satisfied\"\n}\n",
+              "stderr": "#< CLIXML\r\n<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\"><Obj S=\"progress\" RefId=\"0\"><TN RefId=\"0\"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N=\"SourceId\">1</I64><PR N=\"Record\"><AV>���W���[�������߂Ďg�p���邽�߂̏������Ă��܂��B</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj></Objs>"
+            }
+          ]
+        }
+      ],
       "lifecycle_results": [
         {
           "target": "darwin-arm64",
@@ -26,7 +145,7 @@
           "uninstalled": true,
           "commands": [
             {
-              "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-ZNb41o/brownie --version",
+              "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-FkJ2ez/brownie --version",
               "exit_code": 0,
               "signal": null,
               "passed": true,
@@ -34,7 +153,7 @@
               "stderr": ""
             },
             {
-              "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-ZNb41o/brownie help run",
+              "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-FkJ2ez/brownie help run",
               "exit_code": 0,
               "signal": null,
               "passed": true,
@@ -42,33 +161,6 @@
               "stderr": ""
             }
           ]
-        },
-        {
-          "target": "linux-arm64",
-          "path": ".brownie/release-evidence/artifacts/linux-arm64/brownie",
-          "status": "not_executed_incompatible_host",
-          "passed": false,
-          "checksum_verified": true,
-          "host_target": "darwin-arm64",
-          "commands": []
-        },
-        {
-          "target": "linux-x64",
-          "path": ".brownie/release-evidence/artifacts/linux-x64/brownie",
-          "status": "not_executed_incompatible_host",
-          "passed": false,
-          "checksum_verified": true,
-          "host_target": "darwin-arm64",
-          "commands": []
-        },
-        {
-          "target": "win32-x64",
-          "path": ".brownie/release-evidence/artifacts/win32-x64/brownie.exe",
-          "status": "not_executed_incompatible_host",
-          "passed": false,
-          "checksum_verified": true,
-          "host_target": "darwin-arm64",
-          "commands": []
         }
       ]
     },
@@ -80,8 +172,9 @@
         "json_present": true,
         "proposal_preflight_observed": false,
         "apply_observed": false,
-        "post_apply_verification_observed": true,
-        "completion_observed": true
+        "post_apply_verification_observed": false,
+        "workspace_mutation_observed": false,
+        "completion_observed": false
       },
       "commands": [
         {
@@ -105,7 +198,7 @@
           "exit_code": 0,
           "signal": null,
           "passed": true,
-          "stdout": "{\"automation\":{\"blocked\":false,\"class\":\"completed\",\"completed\":true,\"continuation_required\":false,\"controller_action\":\"stop\",\"journey_id\":\"cli.run.07deb2b7722746978174.journey\",\"next_action\":\"inspect_progress_overview\",\"next_invocation\":null,\"outcome_scope\":\"objective\",\"outcome_source\":\"runtime\",\"retryable\":false,\"run_id\":\"run_9da314ca-0c96-49b0-ada8-10b18dd92e41\",\"schema_version\":1,\"status\":\"completed\",\"stop_class\":\"completed\",\"stop_reason\":\"no_eligible_task\",\"task_id\":\"task_647bd28c-651b-476d-9805-7c150cad4777\",\"terminal_failure\":false},\"command\":\"run\",\"exit_code\":0,\"ok\":true,\"run\":{\"accepted_completion_acceptance_fingerprint\":\"sha256:3381a13d5febc1ccb3d2912d9bf6f7ed228db9eed1e41d2cf20e1c0683b8653c\",\"accepted_completion_acceptance_id\":\"cli.run.07deb2b7722746978174.ok\",\"accepted_completion_next_action\":\"close_headless_run\",\"accepted_completion_run_id\":\"run_9da314ca-0c96-49b0-ada8-10b18dd92e41\",\"accepted_completion_status\":\"AcceptedComplete\",\"accepted_completion_task_id\":\"task_647bd28c-651b-476d-9805-7c150cad4777\",\"accepted_completion_terminal_completion_fingerprint\":\"sha256:40f93df0fc705ad50297157289f9e34e94734366d96189d6ccca9f1d9e703610\",\"accepted_completion_verifier_gate_status\":\"NotRequired\",\"automation\":{\"blocked\":false,\"class\":\"completed\",\"completed\":true,\"continuation_required\":false,\"controller_action\":\"stop\",\"journey_id\":\"cli.run.07deb2b7722746978174.journey\",\"next_action\":\"inspect_progress_overview\",\"next_invocation\":null,\"outcome_scope\":\"objective\",\"outcome_source\":\"runtime\",\"retryable\":false,\"run_id\":\"run_9da314ca-0c96-49b0-ada8-10b18dd92e41\",\"schema_version\":1,\"status\":\"completed\",\"stop_class\":\"completed\",\"stop_reason\":\"no_eligible_task\",\"task_id\":\"task_647bd28c-651b-476d-9805-7c150cad4777\",\"terminal_failure\":false},\"blocked\":false,\"completed\":true,\"completion_closure_blocked_task_count\":0,\"completion_closure_route_candidate_count\":0,\"completion_closure_runnable_task_count\":0,\"completion_closure_status\":\"complete\",\"completion_closure_terminal_task_count\":1,\"completion_closure_total_task_count\":1,\"completion_finalization_closure_fingerprint\":\"sha256:41b9fe900813f9ba5e7cfae43a8b6c3a8d13aacac1248bc91ad676db2917f37b\",\"completion_finalization_finalization_fingerprint\":\"sha256:ca7b38346aa2c592f42a1a1461e9d31c8182bdd182748614f591bd5a8bd8a802\",\"completion_finalization_next_action\":\"close_headless_run\",\"completion_finalization_status\":\"finalized\",\"completion_result_fingerprint\":\"sha256:40f93df0fc705ad50297157289f9e34e94734366d96189d6ccca9f1d9e703610\",\"completion_summary_preview\":\"Second-pass LLM agent loop completed for task_647bd28c-651b-476d-9805-7c150cad4777\",\"continuation_required\":false,\"controller_action\":\"stop\",\"drive_id\":\"cli.run.07deb2b7722746978174.finalize\",\"journey_id\":\"cli.run.07deb2b7722746978174.journey\",\"next_action\":\"inspect_progress_overview\",\"retryable\":false,\"run_id\":\"run_9da314ca-0c96-49b0-ada8-10b18dd92e41\",\"session_id\":\"cli.run.07deb2b7722746978174\",\"status\":\"no_eligible_task\",\"stop_class\":\"completed\",\"stop_reason\":\"no_eligible_task\",\"task_id\":\"task_647bd28c-651b-476d-9805-7c150cad4777\",\"terminal_completion_completion_result_fingerprint\":\"sha256:40f93df0fc705ad50297157289f9e34e94734366d96189d6ccca9f1d9e703610\",\"terminal_completion_completion_summary_preview\":\"Second-pass LLM agent loop completed for task_647bd28c-651b-476d-9805-7c150cad4777\",\"terminal_completion_final_state\":\"Completed\",\"terminal_completion_task_status\":\"Completed\",\"terminal_failure\":false}}\n",
+          "stdout": "{\"automation\":{\"blocked\":true,\"class\":\"terminal_failure\",\"completed\":false,\"continuation_required\":false,\"controller_action\":\"stop\",\"journey_id\":\"cli.run.a36710787677408c8a73.journey\",\"next_action\":\"inspect_progress_overview\",\"next_invocation\":null,\"outcome_scope\":\"objective\",\"outcome_source\":\"runtime_terminal_completion_closure\",\"retryable\":false,\"run_id\":\"run_e7115c29-996d-414b-82e7-de1e81d3e0be\",\"schema_version\":1,\"status\":\"terminal_failure\",\"stop_class\":\"terminal_failure\",\"stop_reason\":\"terminal_task_failed\",\"task_id\":\"task_63e150d8-19c2-4b75-828c-d4f5c1d5d045\",\"terminal_failure\":true},\"command\":\"run\",\"exit_code\":0,\"ok\":true,\"run\":{\"automation\":{\"blocked\":true,\"class\":\"terminal_failure\",\"completed\":false,\"continuation_required\":false,\"controller_action\":\"stop\",\"journey_id\":\"cli.run.a36710787677408c8a73.journey\",\"next_action\":\"inspect_progress_overview\",\"next_invocation\":null,\"outcome_scope\":\"objective\",\"outcome_source\":\"runtime_terminal_completion_closure\",\"retryable\":false,\"run_id\":\"run_e7115c29-996d-414b-82e7-de1e81d3e0be\",\"schema_version\":1,\"status\":\"terminal_failure\",\"stop_class\":\"terminal_failure\",\"stop_reason\":\"terminal_task_failed\",\"task_id\":\"task_63e150d8-19c2-4b75-828c-d4f5c1d5d045\",\"terminal_failure\":true},\"blocked\":true,\"completed\":false,\"completion_closure_blocked_task_count\":0,\"completion_closure_route_candidate_count\":0,\"completion_closure_runnable_task_count\":0,\"completion_closure_status\":\"unknown_nonterminal\",\"completion_closure_terminal_task_count\":1,\"completion_closure_total_task_count\":1,\"continuation_required\":false,\"controller_action\":\"stop\",\"drive_id\":\"cli.run.a36710787677408c8a73.drive\",\"journey_id\":\"cli.run.a36710787677408c8a73.journey\",\"next_action\":\"inspect_progress_overview\",\"retryable\":false,\"run_id\":\"run_e7115c29-996d-414b-82e7-de1e81d3e0be\",\"session_id\":\"cli.run.a36710787677408c8a73\",\"status\":\"task_executed\",\"stop_class\":\"terminal_failure\",\"stop_reason\":\"terminal_task_failed\",\"task_id\":\"task_63e150d8-19c2-4b75-828c-d4f5c1d5d045\",\"terminal_failure\":true}}\n",
           "stderr": ""
         }
       ],
@@ -927,7 +1020,6 @@
     }
   },
   "fail_closed_reasons": [
-    "artifact_lifecycle:failed",
     "golden_journey_fixture:failed"
   ]
 }

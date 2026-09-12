@@ -305,17 +305,44 @@ function shellQuotePowerShell(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
 }
 
+function powershellEncodedCommand(script) {
+  return Buffer.from(script, 'utf16le').toString('base64');
+}
+
 function targetArtifactLifecycleCommand(target) {
+  if (target.id === 'linux-x64') {
+    return [
+      'pnpm',
+      '--workspace-root',
+      'run',
+      'release:linux-x64-docker-artifact',
+      '--',
+      '--platform',
+      target.container_platform ?? 'linux/amd64',
+      '--target',
+      target.id
+    ];
+  }
   return ['pnpm', '--workspace-root', 'release:local-artifact', '--', '--target', target.id];
 }
 
 function runSshTargetCommand(target) {
   const command = targetArtifactLifecycleCommand(target);
   const workspace = String(target.workspace ?? '');
-  const remoteCommand =
-    target.shell === 'powershell'
-      ? `Set-Location ${shellQuotePowerShell(workspace)}; ${command.map(shellQuotePowerShell).join(' ')}`
-      : `cd ${shellQuotePosix(workspace)} && ${command.map(shellQuotePosix).join(' ')}`;
+  const remoteCommand = target.shell === 'powershell'
+    ? [
+        'powershell',
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-EncodedCommand',
+        powershellEncodedCommand(`Set-Location ${shellQuotePowerShell(workspace)}; & ${command.map(shellQuotePowerShell).join(' ')}`)
+      ].join(' ')
+    : [
+        'export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"',
+        `cd ${shellQuotePosix(workspace)}`,
+        command.map(shellQuotePosix).join(' ')
+      ].join(' && ');
   return run(
     'ssh',
     [
@@ -365,6 +392,7 @@ function lifecycleForTarget(repoRoot, target, artifacts) {
   }
 
   const command = runSshTargetCommand(target);
+  const delegatedResult = parseCommandJson(command);
   return {
     target: target.id,
     kind: target.kind,
@@ -373,6 +401,7 @@ function lifecycleForTarget(repoRoot, target, artifacts) {
     shell: target.shell,
     status: command.passed ? 'delegated_artifact_build_completed' : 'blocked_external',
     passed: command.passed,
+    delegated_result: delegatedResult,
     commands: [command]
   };
 }
@@ -394,7 +423,9 @@ function buildArtifactLifecycleSection(repoRoot, artifacts) {
       lifecycle_results: []
     };
   }
-  const lifecycleResults = artifacts.map((artifact) => lifecycleForArtifact(repoRoot, artifact));
+  const lifecycleResults = artifacts
+    .filter((artifact) => canExecuteArtifactLocally(artifact))
+    .map((artifact) => lifecycleForArtifact(repoRoot, artifact));
   const allLifecyclePassed = lifecycleResults.every((result) => result.passed);
   const allTargetResultsPassed = targetPlan.status === 'loaded' && targetResults.every((result) => result.passed);
   return {

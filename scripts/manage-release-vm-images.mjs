@@ -31,6 +31,11 @@ function resolveRepoRelative(repoRoot, relativePath) {
   return resolved;
 }
 
+function shortWindowsRuntimeDir(vmFullDir) {
+  const fingerprint = crypto.createHash('sha256').update(vmFullDir).digest('hex').slice(0, 12);
+  return path.join('/tmp', `brownie-win-${fingerprint}`);
+}
+
 function parseArgs(argv) {
   const options = {
     repoRoot: defaultRepoRoot,
@@ -215,12 +220,14 @@ function linuxSnapshot(repoRoot, instance, snapshotName) {
 function windowsPaths(repoRoot, vmDir, vmArch) {
   const fullDir = resolveRepoRelative(repoRoot, vmDir);
   const disk = path.join(fullDir, `brownie-windows-${vmArch}.qcow2`);
+  const runtimeDir = vmArch === 'arm64' ? shortWindowsRuntimeDir(fullDir) : fullDir;
   return {
     fullDir,
     disk,
     vars: path.join(fullDir, 'edk2-vars.fd'),
     tpmStateDir: path.join(fullDir, 'swtpm-state'),
-    monitorSocket: path.join(fullDir, 'qemu-monitor.sock')
+    runtimeDir,
+    monitorSocket: path.join(runtimeDir, 'qemu-monitor.sock')
   };
 }
 
@@ -231,7 +238,9 @@ function windowsProcessStatus(repoRoot, vmDir, vmArch) {
     vm_dir: normalizeRelativePath(path.relative(repoRoot, paths.fullDir)),
     disk: normalizeRelativePath(path.relative(repoRoot, paths.disk)),
     disk_exists: fs.existsSync(paths.disk),
+    runtime_dir: paths.runtimeDir,
     monitor_socket_exists: fs.existsSync(paths.monitorSocket),
+    monitor_socket: paths.monitorSocket,
     running: pgrep.passed && pgrep.stdout.trim().length > 0,
     process: pgrep.stdout.trim()
   };
@@ -404,11 +413,25 @@ function windowsStart(repoRoot, options) {
     stdio: 'ignore'
   });
   child.unref();
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);
+  const after = windowsProcessStatus(repoRoot, options.windowsVmDir, options.windowsVmArch);
+  if (!after.running) {
+    return {
+      target: 'windows',
+      changed: false,
+      command: ['node', ...args].join(' '),
+      pid: child.pid,
+      status: after,
+      passed: false,
+      error: 'Windows VM launch process exited before QEMU stayed running.'
+    };
+  }
   return {
     target: 'windows',
     changed: true,
     command: ['node', ...args].join(' '),
     pid: child.pid,
+    status: after,
     passed: true
   };
 }
