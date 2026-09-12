@@ -2772,10 +2772,7 @@ pub(super) fn append_todo_decomposition_blocker_after_read_only_stall(
     {
         return Ok(());
     }
-    if !duplicate_workspace_read_denied
-        && !workspace_read_failed
-        && !read_budget_exhausted
-        && selected_todo_mentions_non_todo_workspace_path(&record.goal)
+    if selected_todo_mentions_non_todo_workspace_path(&record.goal)
         && !selected_todo_allows_todo_md_edit(&record.goal)
     {
         return Ok(());
@@ -6302,6 +6299,56 @@ mod mcp_approval_lock_tests {
                 .iter()
                 .all(|event| event.kind != LedgerEventKind::WorkspacePatchProposed),
             "generated E-14a leaf TODO must fail closed instead of creating TODOa"
+        );
+    }
+
+    #[test]
+    fn read_budget_exhausted_does_not_rewrite_patch_only_file_todo() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let store = BrownieStore::new(temp.path());
+        let selected_todo = "- [ ] E-14b-contract-required-before-status: Patch only `docs/architecture/runtime-release-contract.json`:\n  Read only `docs/architecture/runtime-release-contract.json`. Replace one status line.\n";
+        std::fs::write(temp.path().join("todo.md"), selected_todo).expect("todo");
+        let mut record = test_task_record();
+        record.run_id = "run_read_budget_exhausted_patch_only_file".to_string();
+        record.goal = format!(
+            "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- read_batch_policy: request at most one `workspace.read` per tool intent and at most two total `workspace.read` requests before requesting workspace.write or a narrower follow-up TODO.\n\n## Selected TODO\n\n{selected_todo}"
+        );
+        for path in [
+            "docs/architecture/runtime-release-contract.json",
+            "docs/architecture/runtime-release-contract.json",
+        ] {
+            store
+                .tasks()
+                .append_task_event_with_payload(
+                    &record,
+                    LedgerEventKind::ToolExecutionCompleted,
+                    Some(json!({
+                        "tool_id": WORKSPACE_READ_TOOL_ID,
+                        "status": "Completed",
+                        "output_preview": format!("[workspace.read path={path} bytes_total=1 content_sha256=sha256:{}]\n", "a".repeat(64)),
+                    })),
+                )
+                .expect("append read event");
+        }
+
+        append_todo_decomposition_blocker_after_read_only_stall(
+            &store,
+            &record,
+            &write_policy(),
+            false,
+            false,
+        )
+        .expect("skip todo rewrite");
+
+        let events = store
+            .tasks()
+            .read_ledger_events(&record.run_id)
+            .expect("events");
+        assert!(
+            events
+                .iter()
+                .all(|event| event.kind != LedgerEventKind::WorkspacePatchProposed),
+            "patch-only file TODOs must fail closed instead of generating TODOa"
         );
     }
 

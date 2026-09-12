@@ -16,14 +16,36 @@
 
 - Ledger contract schema-v1 replay/read rejection: fail-closed behavior implemented with historical fixtures and release-gate/CI guard coverage.
 
+## Supply-Chain Evidence
+
+- Supply-chain artifact evidence: fail-closed behavior implemented with release-gate/CI guard coverage.
+
 ## Runtime-Owned Blockers
 
-- Ledger contract schema-v1 replay/read rejection: fail-closed behavior implemented with historical fixtures and release-gate/CI guard coverage. Awaiting release-gate wiring and CI-reachable VSIX check.
+- Ledger contract schema-v1 replay/read rejection: fail-closed behavior implemented with historical fixtures and release-gate/CI guard coverage.
+- Supply-chain artifact evidence: fail-closed behavior implemented with release-gate/CI guard coverage.
 
 ## Owner/External Publication Decisions
 
-- Release engineering maturity assessment: blocked pending ledger-contract-schema-v1-replay-read-rejection release-gate wiring and CI-reachable VSIX check.
+- Release engineering maturity: satisfied.
+- Supply-chain artifact evidence: satisfied.
 
-## Status
+## Final Judgment Summary
 
-Runtime Product Ready: not reached.
+### Satisfied Runtime-Owned Blockers
+
+- Ledger contract schema-v1 replay/read rejection: fail-closed behavior implemented with historical fixtures and release-gate/CI guard coverage.
+- Supply-chain artifact evidence: fail-closed behavior implemented with release-gate/CI guard coverage.
+
+### Remaining Fail-Closed Blockers
+
+- Independent owner reviews: awaiting completion.
+
+### Owner/External Publication Decisions
+
+- Release engineering maturity: satisfied.
+- Supply-chain artifact evidence: satisfied.
+
+### Status
+
+Runtime Product Ready: not reached. Awaiting independent owner reviews completion.
