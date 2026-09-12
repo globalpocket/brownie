@@ -88,6 +88,21 @@ test('accepts contract-only mode when generated runtime operational evidence is 
   assert.equal(result.validatedEvidence, false);
 });
 
+test('rejects incomplete golden journey fixture evidence', () => {
+  const evidence = validEvidence();
+  evidence.sections.golden_journey_fixture = section('not_executed_missing_artifacts', { commands: [] });
+  const errors = validateRuntimeOperationalEvidence(evidence);
+  assert(errors.some((error) => error.includes('fail_closed_reasons must include golden_journey_fixture')));
+});
+
+test('accepts fail-closed golden journey with explicit reason', () => {
+  const evidence = validEvidence({
+    fail_closed_reasons: ['golden_journey_fixture:not_executed_missing_artifacts']
+  });
+  evidence.sections.golden_journey_fixture = section('not_executed_missing_artifacts', { commands: [] });
+  assert.deepEqual(validateRuntimeOperationalEvidence(evidence), []);
+});
+
 test('rejects release-ready claims', () => {
   const errors = validateRuntimeOperationalEvidence(validEvidence({ runtime_release_ready: true }));
   assert(errors.some((error) => error.includes('runtime_release_ready true')));

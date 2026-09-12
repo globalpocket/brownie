@@ -138,9 +138,6 @@ Current synchronization note:
 - [ ] E-16a-fixture-assertions: Require proposal/apply/post-apply/completion evidence before satisfying Golden Journey:
   Source TODO: E-16a: Make the runtime operational Golden Journey fixture exercise the
   Patch `scripts/release-runtime-operational-evidence.mjs` so `golden_journey_fixture.status` remains failed unless proposal preflight, explicit authorization/apply, workspace mutation, post-apply verification, and accepted completion are all observed.
-- [ ] E-16a-fixture-guard: Cover Golden Journey fail-closed and satisfied cases:
-  Source TODO: E-16a: Make the runtime operational Golden Journey fixture exercise the
-  Add `scripts/guard-runtime-operational-evidence.test.mjs` coverage proving incomplete Golden Journey lifecycle evidence is rejected and complete lifecycle evidence is accepted.
 
 - [ ] E-16b: Regenerate runtime operational evidence after E-16a and prove the
   Golden Journey fixture is satisfied:
