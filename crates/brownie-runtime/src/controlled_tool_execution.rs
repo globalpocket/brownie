@@ -2768,8 +2768,8 @@ pub(super) fn append_todo_decomposition_blocker_after_read_only_stall(
         return Ok(());
     };
     if is_concrete_product_ready_leaf_todo(&block)
-        && !duplicate_workspace_read_denied
-        && !workspace_read_failed
+        && (!duplicate_workspace_read_denied && !workspace_read_failed
+            || !is_runtime_refinable_product_ready_leaf_todo(&block))
     {
         return Ok(());
     }
@@ -3052,6 +3052,10 @@ fn is_concrete_product_ready_leaf_todo(block: &TodoBlock) -> bool {
             "E-04a" | "E-04b" | "E-04c" | "E-07a" | "E-07b" | "E-07c" | "E-08a" | "E-08b"
         )
     })
+}
+
+fn is_runtime_refinable_product_ready_leaf_todo(block: &TodoBlock) -> bool {
+    matches!(block.id.as_deref(), Some("E-15a" | "E-16a"))
 }
 
 fn todo_md_workspace_write_rejection_reason(
@@ -6024,6 +6028,18 @@ mod mcp_approval_lock_tests {
         assert!(replacement.contains("E-16a-fixture-assertions"));
         assert!(replacement.contains("E-16a-fixture-guard"));
         assert!(!replacement.contains("Implement the next concrete step"));
+    }
+
+    #[test]
+    fn generated_product_ready_leaf_todos_are_not_runtime_refinable() {
+        let block = TodoBlock {
+            id: Some("E-16a-fixture-objective".to_string()),
+            title: "E-16a-fixture-objective: Make the Golden Journey fixture request a deterministic workspace mutation".to_string(),
+            old_text: "- [ ] E-16a-fixture-objective: Make the Golden Journey fixture request a deterministic workspace mutation\n".to_string(),
+        };
+
+        assert!(is_concrete_product_ready_leaf_todo(&block));
+        assert!(!is_runtime_refinable_product_ready_leaf_todo(&block));
     }
 
     #[test]
