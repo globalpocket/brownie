@@ -2841,6 +2841,21 @@ pub fn preflight_workspace_write_input(input: &Value) -> Result<(), &'static str
     preflight_workspace_write_input_with_limit(input, DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS)
 }
 
+fn normalize_workspace_write_input(input: Value) -> Value {
+    let Some(object) = input.as_object() else {
+        return input;
+    };
+    if object.get("operation").and_then(Value::as_str) != Some("patch_file") {
+        return input;
+    }
+    if !(object.contains_key("old_text") && object.contains_key("new_text")) {
+        return input;
+    }
+    let mut normalized = object.clone();
+    normalized.remove("content");
+    Value::Object(normalized)
+}
+
 pub fn workspace_write_unified_diff_content_to_hunks(
     content: &str,
 ) -> Result<Vec<(String, String)>, &'static str> {
@@ -3166,6 +3181,11 @@ impl ToolIntentParser {
         if blocks.is_empty() {
             blocks = extract_json_tool_request_blocks(content);
         }
+        if blocks.is_empty() {
+            if let Some(block) = extract_recoverable_unclosed_brownie_tool_intent_block(content) {
+                blocks.push(block);
+            }
+        }
         summary.found_blocks = blocks.len();
         let mut rejected = Vec::new();
         if blocks.is_empty() {
@@ -3222,7 +3242,12 @@ impl ToolIntentParser {
             };
         }
         let json_block = blocks[0];
-        if json_block.len() > config.max_block_bytes {
+        let oversized_recovered_value = if json_block.len() > config.max_block_bytes {
+            parse_patch_file_old_new_text_from_malformed_tool_request(json_block.trim()).ok()
+        } else {
+            None
+        };
+        if json_block.len() > config.max_block_bytes && oversized_recovered_value.is_none() {
             rejected.push(rejection(
                 None,
                 "brownie-tool-intent block exceeds parser size limit.",
@@ -3237,11 +3262,19 @@ impl ToolIntentParser {
         }
         summary.accepted_blocks = 1;
         let trimmed_json_block = json_block.trim();
-        let value: Value = match serde_json::from_str(trimmed_json_block)
-            .or_else(|_| parse_tool_requests_with_missing_array_close(trimmed_json_block))
-            .or_else(|_| parse_tool_requests_with_extra_trailing_array_close(trimmed_json_block))
-            .or_else(|_| parse_tool_requests_with_missing_input_object_close(trimmed_json_block))
-        {
+        let value: Value = match oversized_recovered_value.map(Ok).unwrap_or_else(|| {
+            serde_json::from_str(trimmed_json_block)
+                .or_else(|_| parse_tool_requests_with_missing_array_close(trimmed_json_block))
+                .or_else(|_| {
+                    parse_tool_requests_with_extra_trailing_array_close(trimmed_json_block)
+                })
+                .or_else(|_| {
+                    parse_tool_requests_with_missing_input_object_close(trimmed_json_block)
+                })
+                .or_else(|_| {
+                    parse_patch_file_old_new_text_from_malformed_tool_request(trimmed_json_block)
+                })
+        }) {
             Ok(value) => value,
             Err(_) => {
                 rejected.push(rejection(
@@ -3386,7 +3419,7 @@ impl ToolIntentParser {
                 ));
                 continue;
             }
-            let input = match obj.get("input") {
+            let mut input = match obj.get("input") {
                 Some(value) if value.is_object() => value.clone(),
                 Some(_) => {
                     rejected.push(rejection(
@@ -3398,6 +3431,9 @@ impl ToolIntentParser {
                 }
                 None => empty_input_object(),
             };
+            if tool_id_value == WORKSPACE_WRITE_TOOL_ID {
+                input = normalize_workspace_write_input(input);
+            }
             if input.to_string().len() > config.max_input_bytes {
                 rejected.push(rejection(
                     Some(tool_id_value),
@@ -3543,6 +3579,103 @@ fn parse_tool_requests_with_missing_input_object_close(
         "}]}"
     );
     serde_json::from_str(&repaired)
+}
+
+fn parse_patch_file_old_new_text_from_malformed_tool_request(
+    json_block: &str,
+) -> Result<Value, serde_json::Error> {
+    if !json_block.contains("\"tool_requests\"") {
+        return malformed_patch_file_recovery_error();
+    }
+    let Some(candidate) = workspace_write_patch_file_recovery_candidate(json_block) else {
+        return malformed_patch_file_recovery_error();
+    };
+    if !candidate.contains("\"tool_id\"")
+        || !candidate.contains("\"workspace.write\"")
+        || !candidate.contains("\"operation\"")
+        || !candidate.contains("\"patch_file\"")
+        || !candidate.contains("\"old_text\"")
+        || !candidate.contains("\"new_text\"")
+    {
+        return malformed_patch_file_recovery_error();
+    }
+    let reason =
+        json_string_field(candidate, "reason").unwrap_or_else(|| "Patch file.".to_string());
+    let Some(path) = json_string_field(candidate, "path") else {
+        return malformed_patch_file_recovery_error();
+    };
+    let Some(operation) = json_string_field(candidate, "operation") else {
+        return malformed_patch_file_recovery_error();
+    };
+    if operation != "patch_file" {
+        return malformed_patch_file_recovery_error();
+    }
+    let Some(old_text) = json_string_field(candidate, "old_text") else {
+        return malformed_patch_file_recovery_error();
+    };
+    let Some(new_text) = json_string_field(candidate, "new_text") else {
+        return malformed_patch_file_recovery_error();
+    };
+    Ok(json!({
+        "tool_requests": [{
+            "tool_id": WORKSPACE_WRITE_TOOL_ID,
+            "reason": reason,
+            "input": {
+                "path": path,
+                "operation": "patch_file",
+                "old_text": old_text,
+                "new_text": new_text
+            }
+        }]
+    }))
+}
+
+fn malformed_patch_file_recovery_error() -> Result<Value, serde_json::Error> {
+    serde_json::from_str("")
+}
+
+fn workspace_write_patch_file_recovery_candidate(json_block: &str) -> Option<&str> {
+    let mut search_start = 0usize;
+    while let Some(relative_pos) = json_block[search_start..].find("\"workspace.write\"") {
+        let workspace_write_pos = search_start + relative_pos;
+        let request_start = json_block[..workspace_write_pos].rfind('{')?;
+        let candidate = &json_block[request_start..];
+        if candidate.contains("\"operation\"")
+            && candidate.contains("\"patch_file\"")
+            && candidate.contains("\"old_text\"")
+            && candidate.contains("\"new_text\"")
+        {
+            return Some(candidate);
+        }
+        search_start = workspace_write_pos + "\"workspace.write\"".len();
+    }
+    None
+}
+
+fn json_string_field(json_block: &str, field_name: &str) -> Option<String> {
+    let key = format!("\"{field_name}\"");
+    let key_start = json_block.find(&key)?;
+    let after_key = &json_block[key_start + key.len()..];
+    let colon = after_key.find(':')?;
+    let after_colon = after_key[colon + 1..].trim_start();
+    if !after_colon.starts_with('"') {
+        return None;
+    }
+    let mut escaped = false;
+    for (offset, ch) in after_colon.char_indices().skip(1) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '"' {
+            return serde_json::from_str::<String>(&after_colon[..=offset]).ok();
+        }
+    }
+    None
 }
 
 fn is_dynamic_mcp_tool_candidate(tool_id: &str) -> bool {
@@ -4256,6 +4389,19 @@ fn extract_fenced_blocks(content: &str) -> Vec<&str> {
         rest = &after[end + close_len..];
     }
     blocks
+}
+
+fn extract_recoverable_unclosed_brownie_tool_intent_block(content: &str) -> Option<&str> {
+    let marker = "```brownie-tool-intent";
+    let pos = content.find(marker)?;
+    let after = &content[pos + marker.len()..];
+    let after = after
+        .strip_prefix('\r')
+        .unwrap_or(after)
+        .strip_prefix('\n')
+        .unwrap_or(after);
+    parse_patch_file_old_new_text_from_malformed_tool_request(after.trim()).ok()?;
+    Some(after)
 }
 
 fn extract_json_tool_request_blocks(content: &str) -> Vec<&str> {
@@ -5323,6 +5469,62 @@ mod tests {
         assert_eq!(hunks.len(), 1);
         assert_eq!(hunks[0].0, "name: CI\n");
         assert_eq!(hunks[0].1, "name: CI\n\njobs:\n  check:\n");
+    }
+
+    #[test]
+    fn parser_prefers_patch_file_old_new_text_when_content_is_also_present() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Patch one status line.\",\"input\":{\"path\":\"docs/architecture/runtime-release-contract.json\",\"operation\":\"patch_file\",\"old_text\":\"      \\\"status\\\": \\\"blocked_by_runtime_release_guard_ci\\\",\",\"new_text\":\"      \\\"status\\\": \\\"blocked_by_independent_owner_reviews\\\",\",\"content\":\"--- a/docs/architecture/runtime-release-contract.json\\n+++ b/docs/architecture/runtime-release-contract.json\\n@@ -1,1 +1,1 @@\\n-old\\n+new\\n\"}}]}\n```",
+        );
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+        assert!(parsed.requests[0].input.get("content").is_none());
+        assert_eq!(
+            parsed.requests[0].input["old_text"],
+            "      \"status\": \"blocked_by_runtime_release_guard_ci\","
+        );
+    }
+
+    #[test]
+    fn parser_recovers_patch_file_old_new_text_when_trailing_content_breaks_json() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Patch one status line.\",\"input\":{\"path\":\"docs/architecture/runtime-release-contract.json\",\"operation\":\"patch_file\",\"old_text\":\"      \\\"status\\\": \\\"blocked_by_runtime_release_guard_ci\\\",\",\"new_text\":\"      \\\"status\\\": \\\"blocked_by_independent_owner_reviews\\\",\",\"content\":\"--- a/docs/architecture/runtime-release-contract.json\\n+++ b/docs/architecture/runtime-release-contract.json\\n@@ -1,4 +1,4 @@\\n-  \\\"release_ready_conditions\\\": [\\n+  \\\"release_ready_conditions\\\": [\n```",
+        );
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+        assert!(parsed.requests[0].input.get("content").is_none());
+        assert_eq!(
+            parsed.requests[0].input["new_text"],
+            "      \"status\": \"blocked_by_independent_owner_reviews\","
+        );
+    }
+
+    #[test]
+    fn parser_recovers_unclosed_oversized_patch_file_old_new_text() {
+        let oversized_content = "x".repeat(16_384 + 64);
+        let assistant_content = format!(
+            "```brownie-tool-intent\n{{\"tool_requests\":[{{\"tool_id\":\"workspace.write\",\"reason\":\"Patch one status line.\",\"input\":{{\"path\":\"docs/architecture/runtime-release-contract.json\",\"operation\":\"patch_file\",\"old_text\":\"      \\\"status\\\": \\\"blocked_by_runtime_release_guard_ci\\\",\",\"new_text\":\"      \\\"status\\\": \\\"blocked_by_independent_owner_reviews\\\",\",\"content\":\"{oversized_content}"
+        );
+
+        let parsed = ToolIntentParser::parse_assistant_content(&assistant_content);
+
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+        assert!(parsed.requests[0].input.get("content").is_none());
+        assert_eq!(
+            parsed.requests[0].input["old_text"],
+            "      \"status\": \"blocked_by_runtime_release_guard_ci\","
+        );
+    }
+
+    #[test]
+    fn parser_does_not_mix_recovery_fields_across_tool_requests() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read context.\",\"input\":{\"path\":\"README.md\"}},{\"tool_id\":\"workspace.write\",\"reason\":\"Patch one status line.\",\"input\":{\"operation\":\"patch_file\",\"old_text\":\"      \\\"status\\\": \\\"blocked_by_runtime_release_guard_ci\\\",\",\"new_text\":\"      \\\"status\\\": \\\"blocked_by_independent_owner_reviews\\\",\",\"content\":\"--- a/docs/architecture/runtime-release-contract.json\n",
+        );
+
+        assert!(parsed.requests.is_empty());
+        assert_eq!(parsed.rejected[0].code, "missing_closing_fence");
     }
 
     #[test]

@@ -87,33 +87,6 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-14b-contract-required-before-status: Patch only `docs/architecture/runtime-release-contract.json`:
-  Read only `docs/architecture/runtime-release-contract.json`. In the
-  `release_ready_conditions` object whose `"id"` is
-  `"required_before_release_closed"`, replace only the status line
-  `"status": "blocked_by_runtime_release_guard_ci"` with
-  `"status": "blocked_by_independent_owner_reviews"`. Keep
-  `runtime_release_ready` false. Do not edit any other file.
-- [ ] E-14b-contract-no-unresolved-status: Patch only `docs/architecture/runtime-release-contract.json`:
-  Read only `docs/architecture/runtime-release-contract.json`. In the
-  `release_ready_conditions` object whose `"id"` is
-  `"no_unresolved_release_blockers"`, replace only the status line
-  `"status": "blocked_by_runtime_release_guard_ci"` with
-  `"status": "blocked_by_independent_owner_reviews"`. Keep
-  `runtime_release_ready` false. Do not edit any other file.
-- [ ] E-14b-contract-owner-settings-status: Patch only `docs/architecture/runtime-release-contract.json`:
-  Read only `docs/architecture/runtime-release-contract.json`. In the
-  `release_ready_conditions` object whose `"id"` is
-  `"owner_controlled_settings_complete"`, replace only the status line
-  `"status": "implemented_sufficient"` with
-  `"status": "partial_independent_reviews_missing"`. Keep
-  `runtime_release_ready` false. Do not edit any other file.
-- [ ] E-14b-contract-independent-reviews-status: Patch only `docs/architecture/runtime-release-contract.json`:
-  Read only `docs/architecture/runtime-release-contract.json`. In the
-  `release_ready_conditions` object whose `"id"` is
-  `"required_independent_reviews_complete"`, replace only the status line
-  `"status": "implemented_sufficient"` with `"status": "not_completed"`.
-  Keep `runtime_release_ready` false. Do not edit any other file.
 - [ ] E-14b-contract-satisfied-evidence-flags: Patch only `docs/architecture/runtime-release-contract.json` to stop reporting already-satisfied evidence as missing:
   Read only `docs/architecture/runtime-release-contract.json`. Keep
   `runtime_release_ready` false. Do not set any release-ready flag true. Make

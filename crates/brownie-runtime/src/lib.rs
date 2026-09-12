@@ -13868,6 +13868,14 @@ fn append_workspace_patch_proposal(
         )?;
         return Ok(());
     }
+    if operation == WorkspacePatchOperation::PatchFile.as_str() {
+        proposal_input = disambiguate_workspace_patch_input_from_goal(
+            store,
+            path,
+            &proposal_input,
+            &record.goal,
+        );
+    }
     let proposal = build_workspace_patch_proposal_from_input(
         store,
         path,
@@ -14078,6 +14086,182 @@ fn patch_hunks_from_input(input: &Value) -> Result<Vec<PatchTextHunk>, &'static 
         old_text: old_text.to_string(),
         new_text: new_text.to_string(),
     }])
+}
+
+fn disambiguate_workspace_patch_input_from_goal(
+    store: &BrownieStore,
+    path: &str,
+    input: &Value,
+    goal: &str,
+) -> Value {
+    let Some(object_id) = selected_goal_json_object_id(goal) else {
+        return input.clone();
+    };
+    let Ok(mut hunks) = patch_hunks_from_input(input) else {
+        return input.clone();
+    };
+    if hunks.len() != 1 || input.get("hunks").is_some() || input.get("content").is_some() {
+        return input.clone();
+    }
+    let hunk = &mut hunks[0];
+    if hunk.old_text.is_empty()
+        || !hunk.old_text.contains("\"status\"")
+        || !hunk.new_text.contains("\"status\"")
+    {
+        return input.clone();
+    }
+    if input.get("operation").and_then(Value::as_str)
+        != Some(WorkspacePatchOperation::PatchFile.as_str())
+    {
+        return input.clone();
+    }
+    if count_text_matches(&hunk.old_text, &hunk.old_text) != 1 {
+        return input.clone();
+    }
+    let Ok(root) = store.workspace_root().canonicalize() else {
+        return input.clone();
+    };
+    if brownie_tools::preflight_workspace_write_path(path).is_err() {
+        return input.clone();
+    }
+    let target = root.join(path);
+    let Ok(canonical_target) = target.canonicalize() else {
+        return input.clone();
+    };
+    if !canonical_target.starts_with(&root) {
+        return input.clone();
+    }
+    let Ok(existing) = std::fs::read_to_string(&canonical_target) else {
+        return input.clone();
+    };
+    if let (Some(old_status_line), Some(new_status_line)) = (
+        status_line_from_patch_text(&hunk.old_text),
+        status_line_from_patch_text(&hunk.new_text),
+    ) {
+        if let Some((old_text, new_text)) = json_object_id_scoped_status_replacement(
+            &existing,
+            &object_id,
+            old_status_line,
+            new_status_line,
+        ) {
+            let mut normalized = input.as_object().cloned().unwrap_or_default();
+            normalized.insert("old_text".to_string(), json!(old_text));
+            normalized.insert("new_text".to_string(), json!(new_text));
+            normalized.remove("content");
+            return Value::Object(normalized);
+        }
+    }
+    if count_text_matches(&existing, &hunk.old_text) <= 1 {
+        return input.clone();
+    }
+    let Some((old_text, new_text)) = json_object_id_scoped_status_replacement(
+        &existing,
+        &object_id,
+        &hunk.old_text,
+        &hunk.new_text,
+    ) else {
+        return input.clone();
+    };
+    let mut normalized = input.as_object().cloned().unwrap_or_default();
+    normalized.insert("old_text".to_string(), json!(old_text));
+    normalized.insert("new_text".to_string(), json!(new_text));
+    normalized.remove("content");
+    Value::Object(normalized)
+}
+
+fn status_line_from_patch_text(text: &str) -> Option<&str> {
+    text.lines()
+        .map(str::trim_end)
+        .find(|line| line.contains("\"status\""))
+}
+
+fn selected_goal_json_object_id(goal: &str) -> Option<String> {
+    let marker = "whose `\"id\"` is";
+    let marker_start = goal.find(marker)?;
+    let after_marker = &goal[marker_start + marker.len()..];
+    json_string_literal_from_text(after_marker)
+}
+
+fn json_string_literal_from_text(text: &str) -> Option<String> {
+    let quote_start = text.find('"')?;
+    let after_quote = &text[quote_start..];
+    let mut escaped = false;
+    for (offset, ch) in after_quote.char_indices().skip(1) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '"' {
+            return serde_json::from_str::<String>(&after_quote[..=offset]).ok();
+        }
+    }
+    None
+}
+
+fn json_object_id_scoped_status_replacement(
+    existing: &str,
+    object_id: &str,
+    old_text: &str,
+    new_text: &str,
+) -> Option<(String, String)> {
+    let id_literal = serde_json::to_string(object_id).ok()?;
+    let id_match = format!("\"id\": {id_literal}");
+    let old_line = old_text.trim_end_matches(['\r', '\n']);
+    let lines = existing.split_inclusive('\n').collect::<Vec<_>>();
+    for id_index in 0..lines.len() {
+        if !lines[id_index].contains(&id_match) {
+            continue;
+        }
+        let search_end = (id_index + 12).min(lines.len());
+        for status_index in id_index + 1..search_end {
+            let status_line = lines[status_index].trim_end_matches(['\r', '\n']);
+            if status_line != old_line {
+                continue;
+            }
+            let old_segment = lines[id_index..=status_index].concat();
+            if count_text_matches(existing, &old_segment) != 1 {
+                continue;
+            }
+            let new_status_line =
+                line_with_existing_ending(new_text, line_ending(lines[status_index]));
+            let mut new_segment = String::new();
+            for (relative_index, line) in lines[id_index..=status_index].iter().enumerate() {
+                if id_index + relative_index == status_index {
+                    new_segment.push_str(&new_status_line);
+                } else {
+                    new_segment.push_str(line);
+                }
+            }
+            return Some((old_segment, new_segment));
+        }
+    }
+    None
+}
+
+fn line_ending(line: &str) -> &'static str {
+    if line.ends_with("\r\n") {
+        "\r\n"
+    } else if line.ends_with('\n') {
+        "\n"
+    } else {
+        ""
+    }
+}
+
+fn line_with_existing_ending(line: &str, ending: &str) -> String {
+    let stripped = line.trim_end_matches(['\r', '\n']);
+    format!("{stripped}{ending}")
+}
+
+fn count_text_matches(haystack: &str, needle: &str) -> usize {
+    if needle.is_empty() {
+        return 0;
+    }
+    haystack.match_indices(needle).count()
 }
 
 fn patch_hunks_from_apply_params(
@@ -45983,6 +46167,92 @@ modes:
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
             "alpha\nbeta\nbeta\ngamma\n"
+        );
+    }
+
+    #[test]
+    fn disambiguates_patch_file_status_hunk_with_selected_json_object_id() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join("docs/architecture")).expect("mkdir docs");
+        std::fs::write(
+            temp.path()
+                .join("docs/architecture/runtime-release-contract.json"),
+            "{\n  \"release_ready_conditions\": [\n    {\n      \"id\": \"runtime_guard_ci\",\n      \"status\": \"blocked_by_runtime_release_guard_ci\"\n    },\n    {\n      \"id\": \"required_before_release_closed\",\n      \"status\": \"blocked_by_runtime_release_guard_ci\"\n    }\n  ]\n}\n",
+        )
+        .expect("write contract");
+        let store = BrownieStore::new(temp.path());
+        let input = json!({
+            "path": "docs/architecture/runtime-release-contract.json",
+            "operation": "patch_file",
+            "old_text": "      \"status\": \"blocked_by_runtime_release_guard_ci\"",
+            "new_text": "      \"status\": \"blocked_by_independent_owner_reviews\"",
+        });
+        let goal = "## Selected TODO\n\n- [ ] E-14b-contract-required-before-status: Patch only `docs/architecture/runtime-release-contract.json`: in the `release_ready_conditions` object whose `\"id\"` is `\"required_before_release_closed\"`, replace only the status line.\n";
+
+        let disambiguated = disambiguate_workspace_patch_input_from_goal(
+            &store,
+            "docs/architecture/runtime-release-contract.json",
+            &input,
+            goal,
+        );
+        let proposal = build_workspace_patch_proposal_from_input(
+            &store,
+            "docs/architecture/runtime-release-contract.json",
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &disambiguated,
+        );
+
+        assert_eq!(proposal.validation_status, "Valid");
+        assert!(disambiguated["old_text"]
+            .as_str()
+            .unwrap()
+            .contains("\"id\": \"required_before_release_closed\""));
+        assert!(disambiguated["new_text"]
+            .as_str()
+            .unwrap()
+            .contains("\"status\": \"blocked_by_independent_owner_reviews\""));
+    }
+
+    #[test]
+    fn disambiguates_incomplete_status_hunk_with_trailing_space_using_selected_json_object_id() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join("docs/architecture")).expect("mkdir docs");
+        std::fs::write(
+            temp.path()
+                .join("docs/architecture/runtime-release-contract.json"),
+            "{\n  \"release_ready_conditions\": [\n    {\n      \"id\": \"required_independent_reviews_complete\",\n      \"status\": \"implemented_sufficient\",\n      \"release_blocking\": true,\n      \"required_evidence\": [\n        \"independent human review for Release workflow\",\n        \"independent human review for permission model\"\n      ]\n    }\n  ]\n}\n",
+        )
+        .expect("write contract");
+        let store = BrownieStore::new(temp.path());
+        let input = json!({
+            "path": "docs/architecture/runtime-release-contract.json",
+            "operation": "patch_file",
+            "old_text": "    {\n      \"id\": \"required_independent_reviews_complete\",\n      \"status\": \"implemented_sufficient\",\n      \"release_blocking\": true,\n      \"required_evidence\": [\n        \"independent human review for Release workflow\",\n  ",
+            "new_text": "    {\n      \"id\": \"required_independent_reviews_complete\",\n      \"status\": \"not_completed\",\n      \"release_blocking\": true,\n      \"required_evidence\": [\n        \"independent human review for Release workflow\",\n  ",
+        });
+        let goal = "## Selected TODO\n\n- [ ] E-14b-contract-independent-reviews-status: Patch only `docs/architecture/runtime-release-contract.json`: in the `release_ready_conditions` object whose `\"id\"` is `\"required_independent_reviews_complete\"`, replace only the status line.\n";
+
+        let disambiguated = disambiguate_workspace_patch_input_from_goal(
+            &store,
+            "docs/architecture/runtime-release-contract.json",
+            &input,
+            goal,
+        );
+        let proposal = build_workspace_patch_proposal_from_input(
+            &store,
+            "docs/architecture/runtime-release-contract.json",
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &disambiguated,
+        );
+
+        assert_eq!(proposal.validation_status, "Valid");
+        assert_eq!(
+            disambiguated["new_text"].as_str().unwrap(),
+            "      \"id\": \"required_independent_reviews_complete\",\n      \"status\": \"not_completed\",\n"
         );
     }
 
