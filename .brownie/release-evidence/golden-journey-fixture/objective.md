@@ -1,1 +1,1 @@
-In this isolated fixture, create or update `golden-journey-output.md`. Write one short completion note that says Brownie completed the Golden Journey fixture. Use the normal proposal, apply, post-apply verification, and completion path.
+In this isolated fixture, update `golden-journey-output.md`. Replace its contents with exactly: Brownie completed the Golden Journey fixture. Use the normal workspace.write proposal, apply, post-apply verification, and completion path.
