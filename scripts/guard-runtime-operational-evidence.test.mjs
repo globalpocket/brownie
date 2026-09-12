@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
   runRuntimeOperationalEvidenceGuard,
   validateRuntimeOperationalEvidence
 } from './guard-runtime-operational-evidence.mjs';
+import { buildRuntimeOperationalEvidence } from './release-runtime-operational-evidence.mjs';
 
 const requiredSections = ['artifact_lifecycle', 'golden_journey_fixture', 'soak_test'];
 
@@ -173,6 +177,60 @@ test('accepts fail-closed artifact lifecycle when cross-platform artifacts are h
         checksum_verified: true,
         host_target: 'darwin-arm64',
         commands: []
+      }
+    ]
+  });
+  assert.deepEqual(validateRuntimeOperationalEvidence(evidence), []);
+});
+
+test('accepts fail-closed artifact lifecycle when local release target manifest is missing', () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-runtime-operational-evidence-test-'));
+  const evidence = buildRuntimeOperationalEvidence({
+    repoRoot,
+    iterations: 1,
+    generatedAt: '2026-09-12T00:00:00.000Z'
+  });
+  evidence.sections.golden_journey_fixture = section('not_executed_missing_artifacts', { commands: [] });
+  evidence.sections.soak_test = section('not_executed_missing_artifacts', {
+    iterations_requested: 1,
+    iterations_completed: 0,
+    failure_count: 0,
+    failure_rate: 1
+  });
+  evidence.fail_closed_reasons = [
+    `artifact_lifecycle:${evidence.sections.artifact_lifecycle.status}`,
+    'golden_journey_fixture:not_executed_missing_artifacts',
+    'soak_test:not_executed_missing_artifacts'
+  ];
+  assert.equal(evidence.sections.artifact_lifecycle.local_release_targets_path, '.brownie/local-release-targets.json');
+  assert.deepEqual(validateRuntimeOperationalEvidence(evidence), []);
+});
+
+test('accepts fail-closed delegated target command failures', () => {
+  const evidence = validEvidence({
+    fail_closed_reasons: ['artifact_lifecycle:failed']
+  });
+  evidence.sections.artifact_lifecycle = section('failed', {
+    local_release_targets_status: 'loaded',
+    local_release_targets_path: '.brownie/local-release-targets.json',
+    local_release_targets_errors: [],
+    lifecycle_results: [],
+    target_results: [
+      {
+        target: 'linux-x64',
+        kind: 'ssh',
+        host: 'brownie-linux',
+        workspace: '/home/ubuntu/brownie',
+        shell: 'posix',
+        status: 'blocked_external',
+        passed: false,
+        commands: [
+          {
+            command: 'ssh -o BatchMode=yes -o ConnectTimeout=10 brownie-linux cd /home/ubuntu/brownie',
+            exit_code: 255,
+            passed: false
+          }
+        ]
       }
     ]
   });

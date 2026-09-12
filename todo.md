@@ -87,28 +87,6 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-15a: Teach runtime operational evidence to execute artifact lifecycle
-  checks through local release targets:
-  Route: implementation.
-  Files: `scripts/release-runtime-operational-evidence.mjs`,
-  `scripts/guard-runtime-operational-evidence.test.mjs`,
-  `docs/architecture/local-release-targets.schema.json`, and
-  `docs/architecture/local-release-targets.example.json` if schema/example
-  changes are needed.
-  Implement bounded SSH/local delegation for target-host artifact lifecycle
-  checks using the existing `docs/architecture/local-release-targets.*`
-  contract and the optional local manifest `.brownie/local-release-targets.json`.
-  Do not read or require a repository-tracked
-  `docs/architecture/local-release-targets.json`; if the local manifest is
-  missing, invalid, incompatible, unreachable, or any target execution fails,
-  keep evidence fail-closed and do not mark `runtime_release_ready` or
-  `release_ready` true.
-  Verification: run
-  `pnpm --workspace-root release:runtime-operational-evidence:test`,
-  `pnpm --workspace-root guard:runtime-operational-evidence:test`,
-  `pnpm --workspace-root guard:runtime-operational-evidence`, and
-  `pnpm --workspace-root guard:release-contract`.
-
 - [ ] E-15b: Regenerate runtime operational evidence after E-15a on the
   configured Linux and Windows VM targets:
   Route: implementation/evidence.
@@ -136,20 +114,11 @@ Current synchronization note:
   followed by `pnpm --workspace-root guard:runtime-operational-evidence` and
   `pnpm --workspace-root release:gate -- --dry-run`.
 
-- [ ] E-13: Write the Documentation Golden Path after E-15b and E-16b are
-  current:
-  Route: documentation.
-  Files: `README.md`, `docs/architecture/runtime-release-contract.json`,
-  `docs/architecture/runtime-release-readiness-audit.json`, and any
-  Product-Ready/Golden-Path document that already exists.
-  Document the local VM artifact lifecycle path, Golden Journey fixture path,
-  release evidence regeneration commands, expected fail-closed behavior, and
-  the exact command sequence a maintainer should run before final Product Ready
-  judgment. Do not claim Runtime Product Ready unless E-14 closes it.
-  Verification: run `pnpm --workspace-root guard:runtime-release-readiness`,
-  `pnpm --workspace-root guard:release-contract`, and
-  `pnpm --workspace-root guard:product-completion`.
-
+- [ ] E-13a: Implement the next concrete step for E-13:
+  Source TODO: E-13: Write the Documentation Golden Path after E-15b and E-16b are
+  Brownie gathered context but did not produce a safe implementation patch.
+  Replace this item with one exact file edit or verification command target;
+  do not create another generic TODO-decomposition item.
 - [ ] E-14: Perform final Product Ready judgment after E-13:
   Route: release-judgment.
   Files: `docs/architecture/runtime-release-contract.json`,

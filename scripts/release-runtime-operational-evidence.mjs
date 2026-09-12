@@ -10,8 +10,90 @@ const __dirname = path.dirname(__filename);
 const defaultRepoRoot = path.resolve(__dirname, '..');
 const defaultOutPath = '.brownie/release-evidence/runtime-operational-evidence.json';
 const defaultArtifactRoot = '.brownie/release-evidence/artifacts';
+const defaultLocalReleaseTargetsPath = '.brownie/local-release-targets.json';
 
 const requiredSections = ['artifact_lifecycle', 'golden_journey_fixture', 'soak_test'];
+const allowedTargetIds = new Set(['darwin-arm64', 'linux-arm64', 'linux-x64', 'win32-x64']);
+const allowedTargetKinds = new Set(['local', 'ssh']);
+const allowedTargetShells = new Set(['posix', 'powershell']);
+
+function loadLocalReleaseTargets(repoRoot) {
+  const configPath = resolveRepoRelative(repoRoot, defaultLocalReleaseTargetsPath);
+  if (!fs.existsSync(configPath)) {
+    return {
+      status: 'missing_config',
+      targets: [],
+      errors: [`${defaultLocalReleaseTargetsPath} is missing`]
+    };
+  }
+  try {
+    const manifest = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    return validateLocalReleaseTargets(manifest);
+  } catch (error) {
+    return {
+      status: 'invalid_config',
+      targets: [],
+      errors: [`${defaultLocalReleaseTargetsPath} is not readable JSON: ${error.message}`]
+    };
+  }
+}
+
+function validateLocalReleaseTargets(manifest) {
+  const errors = [];
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    errors.push(`${defaultLocalReleaseTargetsPath} must be an object`);
+  }
+  if (manifest?.schema_version !== 1) {
+    errors.push(`${defaultLocalReleaseTargetsPath}.schema_version must be 1`);
+  }
+  const targets = Array.isArray(manifest?.targets) ? manifest.targets : [];
+  if (targets.length === 0) {
+    errors.push(`${defaultLocalReleaseTargetsPath}.targets must be non-empty`);
+  }
+  const seen = new Set();
+  for (const [index, target] of targets.entries()) {
+    const owner = `${defaultLocalReleaseTargetsPath}.targets[${index}]`;
+    if (!target || typeof target !== 'object' || Array.isArray(target)) {
+      errors.push(`${owner} must be an object`);
+      continue;
+    }
+    if (!allowedTargetIds.has(target.id)) {
+      errors.push(`${owner}.id is unsupported`);
+    }
+    if (seen.has(target.id)) {
+      errors.push(`${owner}.id duplicates ${target.id}`);
+    }
+    seen.add(target.id);
+    if (!allowedTargetKinds.has(target.kind)) {
+      errors.push(`${owner}.kind must be local or ssh`);
+    }
+    if (typeof target.required !== 'boolean') {
+      errors.push(`${owner}.required must be boolean`);
+    }
+    if (target.kind === 'ssh') {
+      if (typeof target.host !== 'string' || target.host.length === 0) {
+        errors.push(`${owner}.host is required for ssh targets`);
+      }
+      if (typeof target.workspace !== 'string' || target.workspace.length === 0) {
+        errors.push(`${owner}.workspace is required for ssh targets`);
+      }
+      if (!allowedTargetShells.has(target.shell)) {
+        errors.push(`${owner}.shell must be posix or powershell`);
+      }
+    }
+    if (target.kind === 'local' && (target.host !== undefined || target.workspace !== undefined || target.shell !== undefined)) {
+      errors.push(`${owner} local targets must omit host, workspace, and shell`);
+    }
+  }
+  if (errors.length > 0) {
+    return { status: 'invalid_config', targets: [], errors };
+  }
+  return {
+    status: 'loaded',
+    targets: targets.filter((target) => target.required === true),
+    errors: []
+  };
+}
 
 function isMainModule() {
   return process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
@@ -215,18 +297,113 @@ function lifecycleForArtifact(repoRoot, artifact) {
   };
 }
 
+function shellQuotePosix(value) {
+  return `'${String(value).replaceAll("'", "'\"'\"'")}'`;
+}
+
+function shellQuotePowerShell(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+function targetArtifactLifecycleCommand(target) {
+  return ['pnpm', '--workspace-root', 'release:local-artifact', '--', '--target', target.id];
+}
+
+function runSshTargetCommand(target) {
+  const command = targetArtifactLifecycleCommand(target);
+  const workspace = String(target.workspace ?? '');
+  const remoteCommand =
+    target.shell === 'powershell'
+      ? `Set-Location ${shellQuotePowerShell(workspace)}; ${command.map(shellQuotePowerShell).join(' ')}`
+      : `cd ${shellQuotePosix(workspace)} && ${command.map(shellQuotePosix).join(' ')}`;
+  return run(
+    'ssh',
+    [
+      '-o',
+      'BatchMode=yes',
+      '-o',
+      'ConnectTimeout=10',
+      String(target.host),
+      remoteCommand
+    ],
+    { timeoutMs: 120_000 }
+  );
+}
+
+function lifecycleForTarget(repoRoot, target, artifacts) {
+  const matchingArtifacts = artifacts.filter((artifact) => artifact.target === target.id);
+  if (target.kind === 'local') {
+    const hostTarget = currentTarget();
+    if (target.id !== hostTarget) {
+      return {
+        target: target.id,
+        kind: target.kind,
+        status: 'not_executed_incompatible_host',
+        passed: false,
+        host_target: hostTarget,
+        commands: []
+      };
+    }
+    if (matchingArtifacts.length === 0) {
+      return {
+        target: target.id,
+        kind: target.kind,
+        status: 'not_executed_missing_artifacts',
+        passed: false,
+        commands: []
+      };
+    }
+    const artifactResults = matchingArtifacts.map((artifact) => lifecycleForArtifact(repoRoot, artifact));
+    return {
+      target: target.id,
+      kind: target.kind,
+      status: artifactResults.every((result) => result.passed) ? 'satisfied' : 'failed',
+      passed: artifactResults.every((result) => result.passed),
+      artifact_results: artifactResults,
+      commands: artifactResults.flatMap((result) => result.commands ?? [])
+    };
+  }
+
+  const command = runSshTargetCommand(target);
+  return {
+    target: target.id,
+    kind: target.kind,
+    host: target.host,
+    workspace: target.workspace,
+    shell: target.shell,
+    status: command.passed ? 'delegated_artifact_build_completed' : 'blocked_external',
+    passed: command.passed,
+    commands: [command]
+  };
+}
+
 function buildArtifactLifecycleSection(repoRoot, artifacts) {
+  const targetPlan = loadLocalReleaseTargets(repoRoot);
+  const targetResults =
+    targetPlan.status === 'loaded'
+      ? targetPlan.targets.map((target) => lifecycleForTarget(repoRoot, target, artifacts))
+      : [];
   if (artifacts.length === 0) {
     return {
-      status: 'not_executed_missing_artifacts',
+      status: targetPlan.status === 'loaded' ? 'not_executed_missing_artifacts' : targetPlan.status,
       release_blocking: true,
+      local_release_targets_status: targetPlan.status,
+      local_release_targets_path: defaultLocalReleaseTargetsPath,
+      local_release_targets_errors: targetPlan.errors,
+      target_results: targetResults,
       lifecycle_results: []
     };
   }
   const lifecycleResults = artifacts.map((artifact) => lifecycleForArtifact(repoRoot, artifact));
+  const allLifecyclePassed = lifecycleResults.every((result) => result.passed);
+  const allTargetResultsPassed = targetPlan.status === 'loaded' && targetResults.every((result) => result.passed);
   return {
-    status: lifecycleResults.every((result) => result.passed) ? 'satisfied' : 'failed',
+    status: allLifecyclePassed && allTargetResultsPassed ? 'satisfied' : 'failed',
     release_blocking: true,
+    local_release_targets_status: targetPlan.status,
+    local_release_targets_path: defaultLocalReleaseTargetsPath,
+    local_release_targets_errors: targetPlan.errors,
+    target_results: targetResults,
     lifecycle_results: lifecycleResults
   };
 }

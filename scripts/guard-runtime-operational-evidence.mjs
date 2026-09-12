@@ -14,6 +14,8 @@ const allowedIncompleteStatuses = new Set([
   'not_executed',
   'not_executed_missing_artifacts',
   'not_executed_incompatible_host',
+  'missing_config',
+  'invalid_config',
   'blocked_external'
 ]);
 
