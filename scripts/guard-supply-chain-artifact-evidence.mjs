@@ -174,6 +174,28 @@ function validateEvidence(evidence, options = {}) {
     }
   }
 
+  const dependencySecurityLicenseScan = evidence.sections?.dependency_security_license_scan;
+  if (dependencySecurityLicenseScan?.status === 'satisfied') {
+    requireValue(
+      Array.isArray(dependencySecurityLicenseScan.tools) && dependencySecurityLicenseScan.tools.length > 0,
+      errors,
+      'satisfied dependency_security_license_scan must include tool results.'
+    );
+    for (const [index, tool] of (Array.isArray(dependencySecurityLicenseScan.tools) ? dependencySecurityLicenseScan.tools : []).entries()) {
+      requireValue(
+        isNonEmptyString(tool?.id) || isNonEmptyString(tool?.name),
+        errors,
+        `sections.dependency_security_license_scan.tools[${index}] must include a non-empty id or name.`
+      );
+      requireValue(tool?.available === true, errors, `sections.dependency_security_license_scan.tools[${index}] must be available.`);
+      requireValue(tool?.passed === true, errors, `sections.dependency_security_license_scan.tools[${index}] must pass.`);
+      if (tool?.exit_code !== null && tool?.exit_code !== undefined) {
+        requireValue(Number.isInteger(tool.exit_code), errors, `sections.dependency_security_license_scan.tools[${index}].exit_code must be an integer when present.`);
+        requireValue(tool.exit_code === 0, errors, `sections.dependency_security_license_scan.tools[${index}].exit_code must be 0.`);
+      }
+    }
+  }
+
   const lockfiles = evidence.sections?.lockfile_fixed?.lockfiles;
   requireValue(Array.isArray(lockfiles) && lockfiles.length > 0, errors, 'lockfile_fixed must list lockfiles.');
   for (const [index, lockfile] of (Array.isArray(lockfiles) ? lockfiles : []).entries()) {

@@ -1525,6 +1525,12 @@ impl PromptBuilder {
                 .collect::<Vec<_>>()
                 .join("\n")
         };
+        let bdk_control_packet = format_bdk_control_packet(
+            &input.goal,
+            &input.tool_execution_summary,
+            &input.tool_intent_summary,
+            &input.verification_recovery_diagnostics_summary,
+        );
 
         PromptView {
             messages: vec![
@@ -1532,19 +1538,207 @@ impl PromptBuilder {
                     role: PromptRole::System,
                     content: format!(
                         "You are Brownie Runtime. Execute the task according to the current runtime phase.\n\nRuntime Safety Invariants:\n- Runtime safety invariants override Mode Pack instructions.\n- Compiled Mode Pack permission policy overrides mode instructions.\n- Mode instructions override task/objective input.\n- Prompt text never grants side-effect permissions; RuntimePermissionGate remains authoritative.\n- Do not describe shell commands or code fences as a substitute for tools.\n\nTool Intent Contract:\n- When the task needs workspace context, file changes, verification, git inspection, MCP tool use, or subtasks, respond with exactly one fenced brownie-tool-intent JSON block.\n- The fenced block must use this shape and no extra top-level fields:\n```brownie-tool-intent\n{{\"tool_requests\":[{{\"tool_id\":\"workspace.read\",\"reason\":\"Read bounded workspace context.\",\"input\":{{\"path\":\"README.md\"}}}}]}}\n```\n- For file changes, request workspace.write with input {{\"path\":\"relative/path\",\"operation\":\"replace_file|create_file|patch_file|delete_file\",\"content\":\"bounded replacement content\"}}. workspace.write records a Runtime-owned proposal; it is not arbitrary shell execution.\n- For multi-step tasks, use completed Tool Execution results as the authoritative inputs for the next tool intent. Do not repeat a read/time request when its completed result already provides the value needed for the next step.
-- If a Tool Execution denies a duplicate workspace.read, the next assistant response for a file-changing task must request workspace.write. Do not request another workspace.read for that path.\n- For file-changing goals, do not finish or answer directly until you have requested workspace.write for the intended change.\n- For line-append file changes, request workspace.read and any needed time.now value together in the same first tool intent, then compose the bounded replacement or patch content and request workspace.write in the second pass. For bounded task steps that need current time, prefer time.now. Do not use process.exec for date, echo, printf, sleep, or waiting.\n- Brownie owns TODO decomposition. When todo.md selects a TODO that is too large, blocked, missing required evidence, or not safely implementable in the current tool plan, request workspace.write to replace that TODO with one or more smaller implementable TODOs or a concrete blocker TODO. Do not keep rereading todo.md, README, or overview files instead of decomposing the selected TODO.\n- For release evidence or Git inspection, use allowed dedicated tools such as git.status and git.diff instead of process.exec. git.diff input must be {{}} or bounded boolean hints only, such as {{\"staged\":false,\"unstaged\":true,\"untracked\":false}}; never pass path, cwd, command, branch, ref, or revision to git.diff. If required workflow, artifact, or external evidence is unavailable through allowed tools, request workspace.write to refine todo.md with the concrete blocker or follow-up TODO instead of failing silently.\n- Only request tools that appear as allowed in the Tool Plan.\n- If the Tool Plan omits a tool or marks it denied, do not request that tool.\n- If no tool is needed, answer directly without a brownie-tool-intent block.\n\nCompiled Mode Pack Policy:\n{mode_policy_summary}\n\nCompiled Mode Pack Instructions:\n{mode_instruction_material}"
+- For patch_file after workspace.read, prefer old_text/new_text because Runtime can convert it into a bounded patch proposal: {{\"path\":\"relative/path\",\"operation\":\"patch_file\",\"old_text\":\"one shortest unique complete line or small complete-line block copied from Tool Execution\",\"new_text\":\"replacement text\"}}. Keep old_text/new_text short enough to fit the fenced JSON response. Never end old_text in the middle of a word; include the complete line or surrounding complete-line context.\n- If using content for patch_file, content must be a valid unified diff beginning with --- a/path, +++ b/path, and @@ hunk headers.\n- If a Tool Execution denies a duplicate workspace.read, the next assistant response for a file-changing task must request workspace.write. Do not request another workspace.read for that path.\n- For file-changing goals, do not finish or answer directly until you have requested workspace.write for the intended change.\n- For line-append file changes, request workspace.read and any needed time.now value together in the same first tool intent, then compose the bounded replacement or patch content and request workspace.write in the second pass. For bounded task steps that need current time, prefer time.now. Do not use process.exec for date, echo, printf, sleep, or waiting.\n- Brownie owns TODO decomposition. When todo.md selects a TODO that is too large, blocked, missing required evidence, or not safely implementable in the current tool plan, request workspace.write to replace that TODO with one or more smaller implementable TODOs or a concrete blocker TODO. Do not keep rereading todo.md, README, or overview files instead of decomposing the selected TODO.\n- For release evidence or Git inspection, use allowed dedicated tools such as git.status and git.diff instead of process.exec. git.diff input must be {{}} or bounded boolean hints only, such as {{\"staged\":false,\"unstaged\":true,\"untracked\":false}}; never pass path, cwd, command, branch, ref, or revision to git.diff. If required workflow, artifact, or external evidence is unavailable through allowed tools, request workspace.write to refine todo.md with the concrete blocker or follow-up TODO instead of failing silently.\n- Only request tools that appear as allowed in the Tool Plan.\n- If the Tool Plan omits a tool or marks it denied, do not request that tool.\n- If no tool is needed, answer directly without a brownie-tool-intent block.\n\nCompiled Mode Pack Policy:\n{mode_policy_summary}\n\nCompiled Mode Pack Instructions:\n{mode_instruction_material}"
                     ),
                 },
                 PromptMessage {
                     role: PromptRole::User,
                     content: format!(
-                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nAssistant Tool Intent:\n{}\n\nTool Execution:\n{}{}{}\n\nSubtask Orchestration:\n{}\n\nVerification Recovery Diagnostics:\n{}\n\nContext Window:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
-                        input.task_id, input.run_id, mode_id, permission_checks, tool_plan, tool_intent, tool_execution, selected_index_context, verification_recovery_context, subtask_orchestration, verification_recovery_diagnostics, context_window, input.goal, ledger
+                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n\nBDK Control Packet:\n{}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nAssistant Tool Intent:\n{}\n\nTool Execution:\n{}{}{}\n\nSubtask Orchestration:\n{}\n\nVerification Recovery Diagnostics:\n{}\n\nContext Window:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
+                        input.task_id, input.run_id, mode_id, bdk_control_packet, permission_checks, tool_plan, tool_intent, tool_execution, selected_index_context, verification_recovery_context, subtask_orchestration, verification_recovery_diagnostics, context_window, input.goal, ledger
                     ),
                 },
             ],
         }
     }
+}
+
+fn format_bdk_control_packet(
+    goal: &str,
+    tool_execution_summary: &[String],
+    tool_intent_summary: &[String],
+    verification_recovery_diagnostics_summary: &[String],
+) -> String {
+    let state = infer_bdk_execution_state(
+        goal,
+        tool_execution_summary,
+        tool_intent_summary,
+        verification_recovery_diagnostics_summary,
+    );
+    let completed_reads = completed_workspace_read_count(tool_execution_summary);
+    format!(
+        "- state: {}\n- completed_workspace_reads: {}\n- next_output: {}\n- efficiency_rule: {}",
+        state.name(),
+        completed_reads,
+        state.next_output_contract(),
+        state.efficiency_rule(),
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BdkExecutionState {
+    ContextPlan,
+    ImplementPatch,
+    RepairPatch,
+    DecomposeTodo,
+    BlockerOrWrite,
+    DirectAnswer,
+}
+
+impl BdkExecutionState {
+    fn name(self) -> &'static str {
+        match self {
+            Self::ContextPlan => "context_plan",
+            Self::ImplementPatch => "implement_patch",
+            Self::RepairPatch => "repair_patch",
+            Self::DecomposeTodo => "decompose_todo",
+            Self::BlockerOrWrite => "blocker_or_write",
+            Self::DirectAnswer => "direct_answer",
+        }
+    }
+
+    fn next_output_contract(self) -> &'static str {
+        match self {
+            Self::ContextPlan => {
+                "request one smallest exact workspace.read/git inspection step; avoid overview files unless named by the TODO"
+            }
+            Self::ImplementPatch => {
+                "request exactly one workspace.write patch_file for the named target file using the shortest unique complete-line old_text/new_text copied from completed Tool Execution; do not read again"
+            }
+            Self::RepairPatch => {
+                "request a bounded workspace.write repair that directly addresses the latest failure evidence"
+            }
+            Self::DecomposeTodo => {
+                "request a bounded workspace.write patch to todo.md replacing the broad item with concrete implementable leaf TODOs"
+            }
+            Self::BlockerOrWrite => {
+                "do not request more reads; request workspace.write patch_file for the named target file using the shortest unique complete-line old_text/new_text, or fail closed"
+            }
+            Self::DirectAnswer => "answer directly without tool intent",
+        }
+    }
+
+    fn efficiency_rule(self) -> &'static str {
+        match self {
+            Self::ContextPlan => {
+                "read one exact file first; move to implement_patch or a narrower follow-up instead of batching broad reads"
+            }
+            Self::ImplementPatch => {
+                "reuse completed read evidence; repeated read-only output is no progress"
+            }
+            Self::RepairPatch => {
+                "use the failure excerpt as the primary context; do not rediscover unrelated files"
+            }
+            Self::DecomposeTodo => "split work instead of browsing README/overview material",
+            Self::BlockerOrWrite => {
+                "duplicate reads have already been denied, so another LLM read-followup is waste"
+            }
+            Self::DirectAnswer => "keep the response concise",
+        }
+    }
+}
+
+fn infer_bdk_execution_state(
+    goal: &str,
+    tool_execution_summary: &[String],
+    tool_intent_summary: &[String],
+    verification_recovery_diagnostics_summary: &[String],
+) -> BdkExecutionState {
+    let goal_lower = goal.to_lowercase();
+    let phase_loop_state = extract_phase_loop_bdk_state(goal);
+    if tool_execution_summary
+        .iter()
+        .any(|entry| entry.contains("Duplicate workspace.read"))
+    {
+        return BdkExecutionState::BlockerOrWrite;
+    }
+    if !verification_recovery_diagnostics_summary.is_empty()
+        && !verification_recovery_diagnostics_summary
+            .iter()
+            .any(|entry| entry == "<none>")
+    {
+        return BdkExecutionState::RepairPatch;
+    }
+    if matches!(phase_loop_state.as_deref(), Some("decompose_todo")) {
+        return BdkExecutionState::DecomposeTodo;
+    }
+    if task_goal_looks_like_workspace_edit(&goal_lower)
+        && completed_workspace_read_count(tool_execution_summary) > 0
+    {
+        return BdkExecutionState::ImplementPatch;
+    }
+    if matches!(
+        phase_loop_state.as_deref(),
+        Some("verify_or_repair" | "release_engineering" | "implement" | "documentation")
+    ) {
+        return BdkExecutionState::ContextPlan;
+    }
+    if goal_lower.contains("decompos")
+        || goal_lower.contains("split")
+        || goal_lower.contains("細分化")
+        || goal_lower.contains("分割")
+    {
+        return BdkExecutionState::DecomposeTodo;
+    }
+    if task_goal_looks_like_workspace_edit(&goal_lower) || !tool_intent_summary.is_empty() {
+        return BdkExecutionState::ContextPlan;
+    }
+    BdkExecutionState::DirectAnswer
+}
+
+fn extract_phase_loop_bdk_state(goal: &str) -> Option<String> {
+    let mut in_bdk_packet = false;
+    for line in goal.lines() {
+        let trimmed = line.trim();
+        if trimmed == "## BDK Execution Packet" {
+            in_bdk_packet = true;
+            continue;
+        }
+        if in_bdk_packet && trimmed.starts_with("## ") {
+            return None;
+        }
+        if !in_bdk_packet {
+            continue;
+        }
+        if let Some(raw_state) = trimmed.strip_prefix("- state:") {
+            let state = raw_state.trim().trim_matches('`').trim().to_lowercase();
+            if !state.is_empty() {
+                return Some(state);
+            }
+        }
+    }
+    None
+}
+
+fn task_goal_looks_like_workspace_edit(goal_lower: &str) -> bool {
+    [
+        "write",
+        "edit",
+        "modify",
+        "implement",
+        "append",
+        "create",
+        "update",
+        "delete",
+        "workspace.write",
+        "修正",
+        "編集",
+        "実装",
+        "追記",
+        "作成",
+        "更新",
+        "追加",
+        "削除",
+    ]
+    .iter()
+    .any(|needle| goal_lower.contains(needle))
+}
+
+fn completed_workspace_read_count(tool_execution_summary: &[String]) -> usize {
+    tool_execution_summary
+        .iter()
+        .filter(|entry| entry.starts_with("workspace.read: Completed"))
+        .count()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1686,7 +1880,127 @@ mod tests {
         assert!(prompt.messages[1].content.contains("Task ID: task_1"));
         assert!(prompt.messages[1]
             .content
+            .contains("BDK Control Packet:\n- state: direct_answer"));
+        assert!(prompt.messages[1]
+            .content
             .contains("- TaskStarted\n- TaskRunning"));
+    }
+
+    #[test]
+    fn prompt_builder_moves_to_implement_patch_after_completed_read() {
+        let context_window = ContextWindowSummary::empty();
+        let prompt = PromptBuilder::build(PromptBuildInput {
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            goal: "Implement update to README.md".into(),
+            mode_id: Some("implementer".into()),
+            mode_policy_summary: Some("Mode Policy:\nmode_id: implementer".into()),
+            mode_instruction_material: Some("Mode Instructions:\n<none>".into()),
+            permission_summary: vec![],
+            tool_plan_summary: vec![
+                "workspace.read: allowed".into(),
+                "workspace.write: allowed".into(),
+            ],
+            tool_intent_summary: vec![],
+            tool_execution_summary: vec![
+                "workspace.read: Completed bytes_read=42 truncated=false output_preview=\"bounded\""
+                    .into(),
+            ],
+            subtask_orchestration_summary: vec![],
+            verification_recovery_diagnostics_summary: vec![],
+            selected_index_context: None,
+            verification_recovery_context: None,
+            context_window: context_window.clone(),
+            context_budget: ContextBudgetSummary::unrequested(&context_window, None, usize::MAX),
+            ledger_summary: vec![],
+        });
+
+        assert!(prompt.messages[1]
+            .content
+            .contains("BDK Control Packet:\n- state: implement_patch"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("completed_workspace_reads: 1"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("using the shortest unique complete-line old_text/new_text"));
+        assert!(prompt.messages[0]
+            .content
+            .contains("For patch_file after workspace.read, prefer old_text/new_text"));
+    }
+
+    #[test]
+    fn prompt_builder_honors_phase_loop_bdk_state_before_decomposition_keywords() {
+        let context_window = ContextWindowSummary::empty();
+        let prompt = PromptBuilder::build(PromptBuildInput {
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            goal: "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- state: `verify_or_repair`\n- progress_policy: split work only if blocked\n\n## Selected TODO\n\n- [ ] E-08b: Fail closed on supply-chain scan and network failures:\n  Add tests proving scan command failures and network errors cannot be treated as success.\n".into(),
+            mode_id: Some("implementer".into()),
+            mode_policy_summary: Some("Mode Policy:\nmode_id: implementer".into()),
+            mode_instruction_material: Some("Mode Instructions:\n<none>".into()),
+            permission_summary: vec![],
+            tool_plan_summary: vec![
+                "workspace.read: allowed".into(),
+                "workspace.write: allowed".into(),
+            ],
+            tool_intent_summary: vec![],
+            tool_execution_summary: vec![],
+            subtask_orchestration_summary: vec![],
+            verification_recovery_diagnostics_summary: vec![],
+            selected_index_context: None,
+            verification_recovery_context: None,
+            context_window: context_window.clone(),
+            context_budget: ContextBudgetSummary::unrequested(&context_window, None, usize::MAX),
+            ledger_summary: vec![],
+        });
+
+        assert!(prompt.messages[1]
+            .content
+            .contains("BDK Control Packet:\n- state: context_plan"));
+        assert!(!prompt.messages[1]
+            .content
+            .contains("BDK Control Packet:\n- state: decompose_todo"));
+    }
+
+    #[test]
+    fn prompt_builder_stops_read_loop_after_duplicate_read_denial() {
+        let context_window = ContextWindowSummary::empty();
+        let prompt = PromptBuilder::build(PromptBuildInput {
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            goal: "Implement update to README.md".into(),
+            mode_id: Some("implementer".into()),
+            mode_policy_summary: Some("Mode Policy:\nmode_id: implementer".into()),
+            mode_instruction_material: Some("Mode Instructions:\n<none>".into()),
+            permission_summary: vec![],
+            tool_plan_summary: vec![
+                "workspace.read: allowed".into(),
+                "workspace.write: allowed".into(),
+            ],
+            tool_intent_summary: vec![],
+            tool_execution_summary: vec![
+                "workspace.read: Denied reason=\"Duplicate workspace.read prevented progress\""
+                    .into(),
+            ],
+            subtask_orchestration_summary: vec![],
+            verification_recovery_diagnostics_summary: vec![],
+            selected_index_context: None,
+            verification_recovery_context: None,
+            context_window: context_window.clone(),
+            context_budget: ContextBudgetSummary::unrequested(&context_window, None, usize::MAX),
+            ledger_summary: vec![],
+        });
+
+        assert!(prompt.messages[1]
+            .content
+            .contains("BDK Control Packet:\n- state: blocker_or_write"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("do not request more reads"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("workspace.write patch_file for the named target file"));
     }
 
     #[test]

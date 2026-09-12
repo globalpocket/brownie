@@ -1,0 +1,58 @@
+{
+  "session_id": "cli.run.07deb2b7722746978174",
+  "advance_id": "cli.run.07deb2b7722746978174.finalize.3",
+  "session_sequence": 3,
+  "result": {
+    "status": "no_eligible_task",
+    "session_id": "cli.run.07deb2b7722746978174",
+    "advance_id": "cli.run.07deb2b7722746978174.finalize.3",
+    "session_sequence": 3,
+    "replayed": false,
+    "start_progress": {
+      "progress_fingerprint": "sha256:2260c346744a596d6469dfaee9cc4c26fe05a7815a660ad2ea53e6557127c04e",
+      "aggregate_sequence": 20260911191416565
+    },
+    "post_progress": {
+      "progress_fingerprint": "sha256:2260c346744a596d6469dfaee9cc4c26fe05a7815a660ad2ea53e6557127c04e",
+      "aggregate_sequence": 20260911191416565
+    },
+    "max_steps": 1,
+    "step_count": 1,
+    "executed_count": 0,
+    "replayed_count": 0,
+    "stop_reason": "no_eligible_task",
+    "checkpoint_fingerprint": "sha256:2166bf1f3b93141c508e7e4f3e6a08170b4dad7861e39959a756f3201a199789",
+    "next_route": {
+      "kind": "no_eligible_task",
+      "reason": "No created or queued task is currently eligible for headless continuation.",
+      "progress_fingerprint": "sha256:2260c346744a596d6469dfaee9cc4c26fe05a7815a660ad2ea53e6557127c04e",
+      "aggregate_sequence": 20260911191416565,
+      "next_action": "inspect_progress_overview"
+    },
+    "steps": [
+      {
+        "step_index": 1,
+        "status": "no_eligible_task",
+        "decision_id": null,
+        "continuation_id": "run.cli.run.07deb2b7722746978174.3",
+        "selected_task_id": null,
+        "selected_run_id": null,
+        "candidate_count": 0,
+        "current_progress_fingerprint": "sha256:2260c346744a596d6469dfaee9cc4c26fe05a7815a660ad2ea53e6557127c04e",
+        "current_aggregate_sequence": 20260911191416565,
+        "post_progress_fingerprint": null,
+        "post_aggregate_sequence": null,
+        "replayed": false,
+        "next_route": {
+          "kind": "no_eligible_task",
+          "reason": "No created or queued task is currently eligible for headless continuation.",
+          "progress_fingerprint": "sha256:2260c346744a596d6469dfaee9cc4c26fe05a7815a660ad2ea53e6557127c04e",
+          "aggregate_sequence": 20260911191416565,
+          "next_action": "inspect_progress_overview"
+        },
+        "next_action": "inspect_progress_overview"
+      }
+    ],
+    "next_action": "inspect_progress_overview"
+  }
+}

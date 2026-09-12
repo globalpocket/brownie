@@ -5,6 +5,7 @@ use brownie_llm::{
     enforce_prompt_sensitive_guard, FakeLlmProvider, LlmMessage, LlmProvider, LlmRequest,
     LlmRequestBudget, LlmResponse, PromptSensitiveGuardMode, PromptSensitiveScanResult,
 };
+use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentLoopState {
@@ -44,6 +45,9 @@ pub struct AgentLoopRunOutput {
     pub llm_request: LlmRequest,
     pub llm_response: LlmResponse,
     pub sensitive_scan: PromptSensitiveScanResult,
+    pub prompt_build_duration_ms: u128,
+    pub llm_request_duration_ms: u128,
+    pub prompt_chars: usize,
     pub completion_summary: String,
 }
 
@@ -54,6 +58,9 @@ pub struct AgentLoopSecondPassOutput {
     pub llm_request: LlmRequest,
     pub llm_response: LlmResponse,
     pub sensitive_scan: PromptSensitiveScanResult,
+    pub prompt_build_duration_ms: u128,
+    pub llm_request_duration_ms: u128,
+    pub prompt_chars: usize,
     pub completion_summary: String,
 }
 
@@ -73,7 +80,7 @@ impl AgentLoop {
         budget: &LlmRequestBudget,
         sensitive_guard_mode: PromptSensitiveGuardMode,
     ) -> anyhow::Result<AgentLoopRunOutput> {
-        let (task_id, prompt, llm_request, sensitive_scan, llm_response) =
+        let (task_id, prompt, llm_request, sensitive_scan, llm_response, measurements) =
             run_llm(prompt_input, provider, budget, sensitive_guard_mode)?;
         Ok(AgentLoopRunOutput {
             final_state: AgentLoopState::Completed,
@@ -82,6 +89,9 @@ impl AgentLoop {
             completion_summary: format!("LLM agent loop completed for {task_id}"),
             llm_response,
             sensitive_scan,
+            prompt_build_duration_ms: measurements.prompt_build_duration_ms,
+            llm_request_duration_ms: measurements.llm_request_duration_ms,
+            prompt_chars: measurements.prompt_chars,
         })
     }
 
@@ -91,7 +101,7 @@ impl AgentLoop {
         budget: &LlmRequestBudget,
         sensitive_guard_mode: PromptSensitiveGuardMode,
     ) -> anyhow::Result<AgentLoopSecondPassOutput> {
-        let (task_id, prompt, llm_request, sensitive_scan, llm_response) =
+        let (task_id, prompt, llm_request, sensitive_scan, llm_response, measurements) =
             run_llm(prompt_input, provider, budget, sensitive_guard_mode)?;
         Ok(AgentLoopSecondPassOutput {
             final_state: AgentLoopState::Completed,
@@ -100,6 +110,9 @@ impl AgentLoop {
             completion_summary: format!("Second-pass LLM agent loop completed for {task_id}"),
             llm_response,
             sensitive_scan,
+            prompt_build_duration_ms: measurements.prompt_build_duration_ms,
+            llm_request_duration_ms: measurements.llm_request_duration_ms,
+            prompt_chars: measurements.prompt_chars,
         })
     }
 
@@ -137,9 +150,12 @@ fn run_llm(
     LlmRequest,
     PromptSensitiveScanResult,
     LlmResponse,
+    AgentLoopMeasurements,
 )> {
     let task_id = prompt_input.task_id.clone();
+    let prompt_build_started = Instant::now();
     let prompt = PromptBuilder::build(prompt_input);
+    let prompt_build_duration_ms = prompt_build_started.elapsed().as_millis();
     let llm_request = LlmRequest {
         model: provider.status().model,
         messages: prompt
@@ -151,11 +167,36 @@ fn run_llm(
             })
             .collect(),
     };
+    let prompt_chars = llm_request
+        .messages
+        .iter()
+        .map(|m| m.content.chars().count())
+        .sum();
     validate_request_budget(&llm_request, budget)?;
     let sensitive_scan =
         enforce_prompt_sensitive_guard(&llm_request.messages, sensitive_guard_mode)?;
+    let llm_request_started = Instant::now();
     let llm_response = provider.complete(&llm_request, budget)?;
-    Ok((task_id, prompt, llm_request, sensitive_scan, llm_response))
+    let llm_request_duration_ms = llm_request_started.elapsed().as_millis();
+    Ok((
+        task_id,
+        prompt,
+        llm_request,
+        sensitive_scan,
+        llm_response,
+        AgentLoopMeasurements {
+            prompt_build_duration_ms,
+            llm_request_duration_ms,
+            prompt_chars,
+        },
+    ))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AgentLoopMeasurements {
+    prompt_build_duration_ms: u128,
+    llm_request_duration_ms: u128,
+    prompt_chars: usize,
 }
 
 fn validate_request_budget(request: &LlmRequest, budget: &LlmRequestBudget) -> anyhow::Result<()> {

@@ -131,4 +131,5 @@ Passing CI, preserving `apply_authorized=false`, and avoiding workspace writes a
 - A deprecation and migration plan exists.
 - A value guard exists in `docs/architecture/phase-value-gate.md`.
 - A review/auto-merge guard exists in `docs/architecture/phase-value-gate.md` and this document.
+- Phase-loop replacement readiness requires Brownie to complete a bounded TODO through read, write, patch apply, verification, commit, push, and PR creation using the `brownie-agent` account.
 - The next milestone is explicitly redirected to `agent_loop_integration` unless a documented blocker requires `mode_pack_runtime` or `controlled_apply_readiness` first.

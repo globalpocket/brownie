@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "evidence_id": "brownie-linux-x64-docker-release-artifact-v1",
+  "generated_at": "2026-09-08T13:39:35.821Z",
+  "target": "linux-x64",
+  "platform": "linux",
+  "arch": "x64",
+  "build_host_platform": "linux",
+  "build_host_arch": "arm64",
+  "container_platform": "linux/amd64",
+  "smoke_image": "alpine:3.20",
+  "hostname_hash": "sha256:d073381e4276088a0192603e805c803f04785b63dcc7a3562e81d690cc3a6101",
+  "artifact": {
+    "path": ".brownie/release-evidence/artifacts/linux-x64/brownie",
+    "sha256": "sha256:e58a5587f8f43526ff3e06ef0c9ec5368fc25d1a70f2c5482c29ea065137f7b8",
+    "bytes": 1681728,
+    "target": "linux-x64"
+  },
+  "build": {
+    "rust_target": "x86_64-unknown-linux-musl",
+    "linker": "rust-lld",
+    "command": "cargo build --release -p brownie-cli --target x86_64-unknown-linux-musl",
+    "exit_code": 0,
+    "passed": true
+  },
+  "release_ready": false
+}

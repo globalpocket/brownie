@@ -1618,6 +1618,7 @@ sleep 5
     }
 
     #[derive(Debug)]
+    #[cfg_attr(not(unix), allow(dead_code))]
     struct StaticSecretResolver {
         secret_ref: String,
         value: String,
@@ -1630,6 +1631,7 @@ sleep 5
     }
 
     #[derive(Debug, Default)]
+    #[cfg_attr(not(unix), allow(dead_code))]
     struct MissingSecretResolver;
 
     impl McpSecretResolver for MissingSecretResolver {

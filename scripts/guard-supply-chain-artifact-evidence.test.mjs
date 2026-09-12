@@ -171,3 +171,61 @@ test('rejects contract that omits repository-local supply-chain gate commands', 
   const errors = validate({ contract });
   assert(errors.some((error) => error.includes('release:supply-chain-artifact-evidence')));
 });
+
+test('rejects satisfied dependency scan with failed tool result', () => {
+  const evidence = validEvidence();
+  evidence.fail_closed_reasons = evidence.fail_closed_reasons.filter(
+    (reason) => !reason.startsWith('dependency_security_license_scan:')
+  );
+  evidence.sections.dependency_security_license_scan = section('satisfied', {
+    tools: [
+      {
+        id: 'cargo_audit',
+        available: true,
+        passed: false,
+        exit_code: 1
+      }
+    ]
+  });
+  const errors = validate({ evidence });
+  assert(errors.some((error) => error.includes('dependency_security_license_scan.tools[0] must pass')));
+});
+
+test('accepts failed dependency scan only when it is fail-closed', () => {
+  const evidence = validEvidence();
+  evidence.sections.dependency_security_license_scan = section('failed', {
+    tools: [
+      {
+        id: 'cargo_audit',
+        available: true,
+        passed: false,
+        exit_code: 1
+      }
+    ]
+  });
+  assert.deepEqual(validate({ evidence }), []);
+});
+
+test('rejects satisfied artifact smoke with failed command result', () => {
+  const evidence = validEvidence();
+  evidence.fail_closed_reasons = evidence.fail_closed_reasons.filter(
+    (reason) => !reason.startsWith('artifact_smoke:')
+  );
+  evidence.sections.artifact_smoke = section('satisfied', {
+    smoke_results: [
+      {
+        target: 'darwin-arm64',
+        passed: true,
+        commands: [
+          {
+            command: 'brownie --version',
+            exit_code: 1,
+            passed: false
+          }
+        ]
+      }
+    ]
+  });
+  const errors = validate({ evidence });
+  assert(errors.some((error) => error.includes('artifact_smoke.smoke_results[0].commands[0] must pass')));
+});

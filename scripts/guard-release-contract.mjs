@@ -159,6 +159,7 @@ function validateRuntimeReleaseContract(contract, options = {}) {
   requireValue(packageJson.scripts?.['release:vm-bootstrap'] === 'node scripts/bootstrap-release-vms.mjs', errors, `${defaultPackagePath} must define release:vm-bootstrap.`);
   requireValue(packageJson.scripts?.['release:vm-image'] === 'node scripts/manage-release-vm-images.mjs', errors, `${defaultPackagePath} must define release:vm-image.`);
   requireValue(packageJson.scripts?.['release:supply-chain-artifact-evidence'] === 'node scripts/release-supply-chain-artifact-evidence.mjs', errors, `${defaultPackagePath} must define release:supply-chain-artifact-evidence.`);
+  requireValue(packageJson.scripts?.['release:runtime-operational-evidence'] === 'node scripts/release-runtime-operational-evidence.mjs', errors, `${defaultPackagePath} must define release:runtime-operational-evidence.`);
   requireValue(packageJson.scripts?.['release:integrity-verify'] === 'node scripts/release-integrity-verify.mjs', errors, `${defaultPackagePath} must define release:integrity-verify.`);
   requireValue(packageJson.scripts?.['release:owner-governance-evidence'] === 'node scripts/release-owner-governance-evidence.mjs', errors, `${defaultPackagePath} must define release:owner-governance-evidence.`);
   requireValue(packageJson.scripts?.['release:owner-governance-evidence:test'] === 'node --test scripts/release-owner-governance-evidence.test.mjs', errors, `${defaultPackagePath} must define release:owner-governance-evidence:test.`);
@@ -169,6 +170,8 @@ function validateRuntimeReleaseContract(contract, options = {}) {
   requireValue(packageJson.scripts?.['guard:dependency-security-license-audit:test'] === 'node --test scripts/guard-dependency-security-license-audit.test.mjs', errors, `${defaultPackagePath} must define guard:dependency-security-license-audit:test.`);
   requireValue(packageJson.scripts?.['guard:supply-chain-artifact-evidence'] === 'node scripts/guard-supply-chain-artifact-evidence.mjs', errors, `${defaultPackagePath} must define guard:supply-chain-artifact-evidence.`);
   requireValue(packageJson.scripts?.['guard:supply-chain-artifact-evidence:test'] === 'node --test scripts/guard-supply-chain-artifact-evidence.test.mjs', errors, `${defaultPackagePath} must define guard:supply-chain-artifact-evidence:test.`);
+  requireValue(packageJson.scripts?.['guard:runtime-operational-evidence'] === 'node scripts/guard-runtime-operational-evidence.mjs', errors, `${defaultPackagePath} must define guard:runtime-operational-evidence.`);
+  requireValue(packageJson.scripts?.['guard:runtime-operational-evidence:test'] === 'node --test scripts/guard-runtime-operational-evidence.test.mjs', errors, `${defaultPackagePath} must define guard:runtime-operational-evidence:test.`);
   requireValue(packageJson.scripts?.['guard:modepack-distribution-trust'] === 'node scripts/guard-modepack-distribution-trust.mjs', errors, `${defaultPackagePath} must define guard:modepack-distribution-trust.`);
   requireValue(packageJson.scripts?.['guard:modepack-distribution-trust:test'] === 'node --test scripts/guard-modepack-distribution-trust.test.mjs', errors, `${defaultPackagePath} must define guard:modepack-distribution-trust:test.`);
   requireValue(packageJson.scripts?.['guard:ledger-contract-single-source'] === 'node scripts/guard-ledger-contract-single-source.mjs', errors, `${defaultPackagePath} must define guard:ledger-contract-single-source.`);
@@ -182,6 +185,8 @@ function validateRuntimeReleaseContract(contract, options = {}) {
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root release:gate -- --dry-run'), errors, `${defaultVsixPackagePath} check must invoke release:gate dry-run through the existing CI path.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:supply-chain-artifact-evidence'), errors, `${defaultVsixPackagePath} check must invoke guard:supply-chain-artifact-evidence.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:supply-chain-artifact-evidence:test'), errors, `${defaultVsixPackagePath} check must invoke guard:supply-chain-artifact-evidence:test.`);
+  requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:runtime-operational-evidence'), errors, `${defaultVsixPackagePath} check must invoke guard:runtime-operational-evidence.`);
+  requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:runtime-operational-evidence:test'), errors, `${defaultVsixPackagePath} check must invoke guard:runtime-operational-evidence:test.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:modepack-distribution-trust'), errors, `${defaultVsixPackagePath} check must invoke guard:modepack-distribution-trust.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:modepack-distribution-trust:test'), errors, `${defaultVsixPackagePath} check must invoke guard:modepack-distribution-trust:test.`);
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:ledger-contract-single-source'), errors, `${defaultVsixPackagePath} check must invoke guard:ledger-contract-single-source.`);
@@ -239,6 +244,25 @@ function validateRuntimeReleaseContract(contract, options = {}) {
       Array.isArray(supplyChainEvidence.required_sections) && supplyChainEvidence.required_sections.includes(section),
       errors,
       `${contractPath} supply_chain_artifact_evidence.required_sections must include ${section}.`
+    );
+  }
+
+  const runtimeOperationalEvidence = contract.runtime_operational_evidence ?? {};
+  requireValue(
+    runtimeOperationalEvidence.contract_id === 'brownie-runtime-operational-evidence-v1',
+    errors,
+    `${contractPath} runtime_operational_evidence.contract_id must match the repo-local runtime operational evidence contract.`
+  );
+  requireValue(
+    runtimeOperationalEvidence.default_path === '.brownie/release-evidence/runtime-operational-evidence.json',
+    errors,
+    `${contractPath} runtime_operational_evidence.default_path must point to the ignored local evidence path.`
+  );
+  for (const section of ['artifact_lifecycle', 'golden_journey_fixture', 'soak_test']) {
+    requireValue(
+      Array.isArray(runtimeOperationalEvidence.required_sections) && runtimeOperationalEvidence.required_sections.includes(section),
+      errors,
+      `${contractPath} runtime_operational_evidence.required_sections must include ${section}.`
     );
   }
 

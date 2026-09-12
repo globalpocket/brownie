@@ -13,11 +13,13 @@ SUPERVISOR_LOG="$LOG_DIR/supervisor.log"
 TODO_CLAIM_DIR="$STATE_DIR/todo-claims"
 TODO_CLAIM_FILE="$TODO_CLAIM_DIR/current.json"
 TODO_QUEUE_STATE_FILE="$TODO_CLAIM_DIR/todo-queue-state.json"
+TODO_BLOCKED_FILE="$TODO_CLAIM_DIR/blocked.jsonl"
 PROGRESS_STATE_FILE="$STATE_DIR/progress-state.json"
 LAUNCHD_LABEL="${PHASE_LOOP_LAUNCHD_LABEL:-globalpocket.brownie.phase-loop}"
 SCREEN_NAME="${PHASE_LOOP_SCREEN_NAME:-brownie-phase-loop}"
 
 BROWNIE_BIN="${BROWNIE_BIN:-"$ROOT_DIR/target/debug/brownie"}"
+PHASE_LOOP_DEFAULT_BROWNIE_BIN="$ROOT_DIR/target/debug/brownie"
 PHASE_LOOP_PROMPT="${PHASE_LOOP_PROMPT:-"$ROOT_DIR/phase-loop.md"}"
 PHASE_LOOP_TODO="${PHASE_LOOP_TODO:-"$ROOT_DIR/todo.md"}"
 PHASE_LOOP_WORKSPACE_ROOT="${PHASE_LOOP_WORKSPACE_ROOT:-"$ROOT_DIR"}"
@@ -30,8 +32,8 @@ PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS="${PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS:-14400}
 PHASE_LOOP_STAGNATION_THRESHOLD="${PHASE_LOOP_STAGNATION_THRESHOLD:-3}"
 PHASE_LOOP_PROMPT_MAX_BYTES="${PHASE_LOOP_PROMPT_MAX_BYTES:-65536}"
 PHASE_LOOP_SELECTED_TODO_MAX_BYTES="${PHASE_LOOP_SELECTED_TODO_MAX_BYTES:-8192}"
-PHASE_LOOP_TODO_SNAPSHOT_LINES="${PHASE_LOOP_TODO_SNAPSHOT_LINES:-240}"
-PHASE_LOOP_BASE_PROMPT_SNAPSHOT_LINES="${PHASE_LOOP_BASE_PROMPT_SNAPSHOT_LINES:-400}"
+PHASE_LOOP_TODO_SNAPSHOT_LINES="${PHASE_LOOP_TODO_SNAPSHOT_LINES:-80}"
+PHASE_LOOP_BASE_PROMPT_SNAPSHOT_LINES="${PHASE_LOOP_BASE_PROMPT_SNAPSHOT_LINES:-80}"
 PHASE_LOOP_PROMPT_RETENTION_COUNT="${PHASE_LOOP_PROMPT_RETENTION_COUNT:-20}"
 PHASE_LOOP_STOP_GRACE_SECONDS="${PHASE_LOOP_STOP_GRACE_SECONDS:-15}"
 PHASE_LOOP_STOP_FORCE_SECONDS="${PHASE_LOOP_STOP_FORCE_SECONDS:-5}"
@@ -41,6 +43,20 @@ PHASE_LOOP_PR_REMOTE="${PHASE_LOOP_PR_REMOTE:-origin}"
 PHASE_LOOP_PR_BASE="${PHASE_LOOP_PR_BASE:-main}"
 PHASE_LOOP_PR_TITLE_PREFIX="${PHASE_LOOP_PR_TITLE_PREFIX:-Brownie phase-loop}"
 PHASE_LOOP_PR_DRAFT="${PHASE_LOOP_PR_DRAFT:-0}"
+PHASE_LOOP_LLM_ROUTING="${PHASE_LOOP_LLM_ROUTING:-1}"
+PHASE_LOOP_LLM_MODEL_FAST="${PHASE_LOOP_LLM_MODEL_FAST:-}"
+PHASE_LOOP_LLM_MODEL_CODE="${PHASE_LOOP_LLM_MODEL_CODE:-}"
+PHASE_LOOP_LLM_MODEL_DEEP="${PHASE_LOOP_LLM_MODEL_DEEP:-}"
+PHASE_LOOP_LLM_MAX_TOKENS_FAST="${PHASE_LOOP_LLM_MAX_TOKENS_FAST:-}"
+PHASE_LOOP_LLM_MAX_TOKENS_CODE="${PHASE_LOOP_LLM_MAX_TOKENS_CODE:-}"
+PHASE_LOOP_LLM_TEMPERATURE_FAST="${PHASE_LOOP_LLM_TEMPERATURE_FAST:-}"
+PHASE_LOOP_LLM_TEMPERATURE_CODE="${PHASE_LOOP_LLM_TEMPERATURE_CODE:-}"
+PHASE_LOOP_LLM_TOP_P_FAST="${PHASE_LOOP_LLM_TOP_P_FAST:-}"
+PHASE_LOOP_LLM_TOP_P_CODE="${PHASE_LOOP_LLM_TOP_P_CODE:-}"
+PHASE_LOOP_LLM_TOP_K_FAST="${PHASE_LOOP_LLM_TOP_K_FAST:-}"
+PHASE_LOOP_LLM_TOP_K_CODE="${PHASE_LOOP_LLM_TOP_K_CODE:-}"
+PHASE_LOOP_LLM_FAST_MAX_PROMPT_BYTES="${PHASE_LOOP_LLM_FAST_MAX_PROMPT_BYTES:-20000}"
+PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK="${PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK:-0}"
 
 mkdir -p "$RUN_DIR" "$LOG_DIR" "$TODO_CLAIM_DIR"
 
@@ -74,6 +90,8 @@ write_status() {
   escaped_claim_file="$(printf '%s' "$TODO_CLAIM_FILE" | json_escape)"
   local escaped_queue_state_file
   escaped_queue_state_file="$(printf '%s' "$TODO_QUEUE_STATE_FILE" | json_escape)"
+  local escaped_blocked_file
+  escaped_blocked_file="$(printf '%s' "$TODO_BLOCKED_FILE" | json_escape)"
   local escaped_progress_state_file
   escaped_progress_state_file="$(printf '%s' "$PROGRESS_STATE_FILE" | json_escape)"
   tmp_status="$STATUS_FILE.$$.$RANDOM.tmp"
@@ -91,6 +109,7 @@ write_status() {
   "todo": "$escaped_todo",
   "todo_claim": "$escaped_claim_file",
   "todo_queue_state": "$escaped_queue_state_file",
+  "todo_blocked": "$escaped_blocked_file",
   "progress_state": "$escaped_progress_state_file",
   "workspace_root": "$escaped_workspace",
   "control_root": "$escaped_control_root"
@@ -116,6 +135,101 @@ finally:
 PY
 }
 
+check_brownie_binary_freshness() {
+  if [ "$PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK" = "1" ]; then
+    return 0
+  fi
+  if [ "$BROWNIE_BIN" != "$PHASE_LOOP_DEFAULT_BROWNIE_BIN" ]; then
+    return 0
+  fi
+  local runtime_bin
+  runtime_bin="${BROWNIE_RUNTIME_PATH:-"$ROOT_DIR/target/debug/brownie-runtime"}"
+  python3 - "$PHASE_LOOP_WORKSPACE_ROOT" "$BROWNIE_BIN" "$runtime_bin" <<'PY'
+import pathlib
+import subprocess
+import sys
+
+repo_root = pathlib.Path(sys.argv[1]).resolve()
+cli_binary = pathlib.Path(sys.argv[2]).resolve()
+runtime_binary = pathlib.Path(sys.argv[3]).resolve()
+
+try:
+    tracked = subprocess.check_output(
+        ["git", "ls-files", "Cargo.lock", "Cargo.toml", "crates/**/*.rs", "crates/**/Cargo.toml"],
+        cwd=repo_root,
+        text=True,
+        stderr=subprocess.DEVNULL,
+    ).splitlines()
+except Exception as error:
+    print(f"failed to inspect tracked Rust sources for binary freshness: {error}")
+    sys.exit(3)
+
+def mtime(path):
+    try:
+        return path.stat().st_mtime
+    except FileNotFoundError:
+        return None
+
+def source_exists(relative):
+    return (repo_root / relative).exists()
+
+def is_cli_input(relative):
+    return (
+        relative in {"Cargo.lock", "Cargo.toml", "crates/brownie-cli/Cargo.toml", "crates/brownie-protocol/Cargo.toml"}
+        or relative.startswith("crates/brownie-cli/src/")
+        or relative.startswith("crates/brownie-protocol/src/")
+    )
+
+def is_runtime_input(relative):
+    return (
+        relative in {"Cargo.lock", "Cargo.toml"}
+        or (
+            relative.startswith("crates/")
+            and not relative.startswith("crates/brownie-cli/")
+        )
+    )
+
+def newer_inputs(binary, predicate):
+    binary_mtime = mtime(binary)
+    if binary_mtime is None:
+        return ["<missing binary>"]
+    newer = []
+    for relative in tracked:
+        if not predicate(relative) or not source_exists(relative):
+            continue
+        source_mtime = mtime(repo_root / relative)
+        if source_mtime is not None and source_mtime > binary_mtime:
+            newer.append(relative)
+    return newer
+
+stale = []
+for label, binary, predicate in [
+    ("brownie CLI", cli_binary, is_cli_input),
+    ("brownie Runtime", runtime_binary, is_runtime_input),
+]:
+    newer = newer_inputs(binary, predicate)
+    if newer:
+        stale.append((label, binary, newer))
+
+if stale:
+    parts = []
+    for label, binary, newer in stale:
+        parts.append(
+            f"{label} binary is stale ({binary}); newer tracked Rust inputs include: "
+            + ", ".join(newer[:8])
+            + (" ..." if len(newer) > 8 else "")
+        )
+    print(
+        "Brownie binary freshness check failed; run "
+        "`cargo build -p brownie-cli --bin brownie -p brownie-runtime --bin brownie-runtime` "
+        "before phase-loop run-once. "
+        + " ".join(parts)
+    )
+    sys.exit(1)
+sys.exit(0)
+PY
+}
+
 todo_pending_count() {
   if [ ! -f "$PHASE_LOOP_TODO" ]; then
     echo 0
@@ -131,23 +245,49 @@ todo_first_pending_item() {
   if [ ! -f "$PHASE_LOOP_TODO" ]; then
     return 0
   fi
-  awk '
-    /^[[:space:]]*([-*]|[0-9]+[.)])[[:space:]]+\[[[:space:]]\][[:space:]]+/ {
-      if (found) {
-        exit
-      }
-      found = 1
-      print
-      next
-    }
-    found && /^[[:space:]]+/ {
-      print
-      next
-    }
-    found {
-      exit
-    }
-  ' "$PHASE_LOOP_TODO"
+  python3 - "$PHASE_LOOP_TODO" "$TODO_BLOCKED_FILE" <<'PY'
+import hashlib
+import json
+import pathlib
+import re
+import sys
+
+todo_path = pathlib.Path(sys.argv[1])
+blocked_path = pathlib.Path(sys.argv[2])
+
+try:
+    todo = todo_path.read_text(encoding="utf-8")
+except FileNotFoundError:
+    raise SystemExit(0)
+
+queue_fingerprint = hashlib.sha256(todo.encode("utf-8")).hexdigest()
+blocked_hashes_for_current_queue = set()
+blocked_first_lines = set()
+if blocked_path.exists():
+    for line in blocked_path.read_text(encoding="utf-8").splitlines():
+        try:
+            record = json.loads(line)
+        except Exception:
+            continue
+        first_line = record.get("selected_todo_first_line")
+        if isinstance(first_line, str) and first_line:
+            blocked_first_lines.add(first_line)
+        if record.get("queue_fingerprint") == queue_fingerprint:
+            blocked_hash = record.get("selected_todo_sha256")
+            if isinstance(blocked_hash, str):
+                blocked_hashes_for_current_queue.add(blocked_hash)
+
+pattern = re.compile(r"^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ \t]\][ \t]+", re.M)
+matches = list(pattern.finditer(todo))
+for index, match in enumerate(matches):
+    end = matches[index + 1].start() if index + 1 < len(matches) else len(todo)
+    block = todo[match.start():end].rstrip("\n")
+    first_line = block.splitlines()[0].strip() if block.splitlines() else ""
+    block_hash = hashlib.sha256(block.encode("utf-8")).hexdigest()
+    if block_hash not in blocked_hashes_for_current_queue and first_line not in blocked_first_lines:
+        print(block)
+        raise SystemExit(0)
+PY
 }
 
 todo_queue_fingerprint() {
@@ -259,13 +399,119 @@ active_todo_claim_exists() {
   local status
   status="$(claim_status 2>/dev/null || true)"
   case "$status" in
-    claimed|in_progress|blocked)
+    claimed|in_progress)
       return 0
       ;;
     *)
       return 1
       ;;
   esac
+}
+
+record_blocked_todo_claim() {
+  local run_stamp="$1"
+  if [ ! -f "$TODO_CLAIM_FILE" ]; then
+    return 0
+  fi
+  python3 - "$TODO_CLAIM_FILE" "$TODO_BLOCKED_FILE" "$run_stamp" "$(now_utc)" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+blocked_path = pathlib.Path(sys.argv[2])
+run_stamp = sys.argv[3]
+timestamp = sys.argv[4]
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+selected = claim.get("selected_todo")
+if not isinstance(selected, str) or not selected:
+    raise SystemExit(0)
+record = {
+    "schema_version": 1,
+    "blocked_at": timestamp,
+    "run_stamp": run_stamp,
+    "claim_id": claim.get("claim_id", ""),
+    "queue_generation": claim.get("queue_generation"),
+    "queue_fingerprint": claim.get("queue_fingerprint", ""),
+    "selected_todo_sha256": hashlib.sha256(selected.encode("utf-8")).hexdigest(),
+    "selected_todo_first_line": selected.splitlines()[0] if selected.splitlines() else "",
+}
+blocked_path.parent.mkdir(parents=True, exist_ok=True)
+with open(blocked_path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True))
+    handle.write("\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(blocked_path, 0o600)
+PY
+  sync_parent_dir "$TODO_CLAIM_DIR"
+}
+
+remove_completed_todo_claim_from_queue() {
+  local run_stamp="$1"
+  if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$PHASE_LOOP_TODO" ]; then
+    return 0
+  fi
+  python3 - "$TODO_CLAIM_FILE" "$PHASE_LOOP_TODO" "$run_stamp" "$(now_utc)" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+todo_path = pathlib.Path(sys.argv[2])
+run_stamp = sys.argv[3]
+timestamp = sys.argv[4]
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+selected = claim.get("selected_todo")
+if not isinstance(selected, str) or not selected:
+    raise SystemExit(0)
+first_line = selected.splitlines()[0] if selected.splitlines() else ""
+if "[ ]" not in first_line:
+    raise SystemExit(0)
+try:
+    text = todo_path.read_text(encoding="utf-8")
+except FileNotFoundError:
+    raise SystemExit(0)
+index = text.find(selected)
+if index < 0:
+    raise SystemExit(0)
+if text.find(selected, index + len(selected)) >= 0:
+    raise SystemExit("selected TODO appears more than once; refusing automatic removal")
+end = index + len(selected)
+while end < len(text) and text[end] == "\n":
+    end += 1
+replacement = text[:index] + text[end:]
+if index > 0 and not text[:index].endswith("\n\n") and replacement[index:index + 1] not in ("", "\n"):
+    replacement = text[:index] + "\n" + text[end:]
+tmp_path = todo_path.with_name(f"{todo_path.name}.{os.getpid()}.completed-{run_stamp}.tmp")
+with open(tmp_path, "w", encoding="utf-8") as handle:
+    handle.write(replacement)
+    handle.flush()
+    os.fsync(handle.fileno())
+os.replace(tmp_path, todo_path)
+try:
+    dir_fd = os.open(str(todo_path.parent), os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+except Exception:
+    pass
+print(json.dumps({
+    "removed_at": timestamp,
+    "run_stamp": run_stamp,
+    "selected_todo_first_line": first_line,
+}, ensure_ascii=False, sort_keys=True))
+PY
 }
 
 active_claim_queue_generation() {
@@ -317,6 +563,146 @@ verify_todo_fresh_for_runtime_start() {
     return 1
   fi
   return 0
+}
+
+try_exact_line_todo_fast_path() {
+  local run_stamp="$1"
+  if [ ! -f "$TODO_CLAIM_FILE" ]; then
+    return 2
+  fi
+  python3 - "$TODO_CLAIM_FILE" "$PHASE_LOOP_WORKSPACE_ROOT" "$run_stamp" "$(now_utc)" <<'PY'
+import json
+import os
+import pathlib
+import re
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+workspace_root = pathlib.Path(sys.argv[2]).resolve()
+run_stamp = sys.argv[3]
+timestamp = sys.argv[4]
+
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(2)
+
+todo = claim.get("selected_todo")
+if not isinstance(todo, str) or not todo.strip():
+    raise SystemExit(2)
+
+code_spans = re.findall(r"`([^`\n]+)`", todo)
+
+def resolve_repo_path(path_text):
+    path = pathlib.PurePosixPath(path_text)
+    if path.is_absolute() or ".." in path.parts:
+        return None
+    full = (workspace_root / pathlib.Path(*path.parts)).resolve()
+    try:
+        full.relative_to(workspace_root)
+    except ValueError:
+        return None
+    return full
+
+target = None
+target_text = None
+for span in code_spans:
+    if "/" not in span:
+        continue
+    full = resolve_repo_path(span)
+    if full and full.exists() and full.is_file():
+        target = full
+        target_text = span
+        break
+if target is None:
+    raise SystemExit(2)
+
+def with_line_end(line):
+    return line if line.endswith("\n") else f"{line}\n"
+
+operation = None
+old_text = None
+new_text = None
+
+insert_patterns = [
+    r"add exactly one line\s+`([^`\n]+)`\s+immediately after the exact line\s+`([^`\n]+)`",
+    r"add(?: the)? line\s+`([^`\n]+)`\s+immediately after(?: the exact line)?\s+`([^`\n]+)`",
+]
+for pattern in insert_patterns:
+    match = re.search(pattern, todo, flags=re.IGNORECASE | re.DOTALL)
+    if match:
+        inserted, anchor = match.group(1), match.group(2)
+        old_text = with_line_end(anchor)
+        new_text = with_line_end(anchor) + with_line_end(inserted)
+        operation = "insert_after_exact_line"
+        break
+
+if operation is None:
+    replace_patterns = [
+        r"replace(?: only)?(?: the)?(?: exact complete)? line\s+`([^`\n]+)`\s+with(?: the)?(?: exact complete)? line\s+`([^`\n]+)`",
+        r"replaces(?: the)?(?: exact complete)? line\s+`([^`\n]+)`\s+with(?: the)?(?: exact complete)? line\s+`([^`\n]+)`",
+    ]
+    for pattern in replace_patterns:
+        match = re.search(pattern, todo, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            old_line, new_line = match.group(1), match.group(2)
+            old_text = with_line_end(old_line)
+            new_text = with_line_end(new_line)
+            operation = "replace_exact_line"
+            break
+
+if operation is None:
+    raise SystemExit(2)
+
+content = target.read_text(encoding="utf-8")
+count = content.count(old_text)
+if count != 1:
+    print(json.dumps({
+        "applied": False,
+        "eligible": True,
+        "reason": "old_text_not_unique",
+        "operation": operation,
+        "path": target_text,
+        "match_count": count,
+    }, ensure_ascii=False, sort_keys=True))
+    raise SystemExit(1)
+
+updated = content.replace(old_text, new_text, 1)
+if updated == content:
+    print(json.dumps({
+        "applied": False,
+        "eligible": True,
+        "reason": "no_content_change",
+        "operation": operation,
+        "path": target_text,
+    }, ensure_ascii=False, sort_keys=True))
+    raise SystemExit(1)
+
+tmp = target.with_name(f"{target.name}.{os.getpid()}.exact-line-{run_stamp}.tmp")
+with open(tmp, "w", encoding="utf-8") as handle:
+    handle.write(updated)
+    handle.flush()
+    os.fsync(handle.fileno())
+os.replace(tmp, target)
+try:
+    dir_fd = os.open(str(target.parent), os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+except Exception:
+    pass
+
+print(json.dumps({
+    "applied": True,
+    "applied_at": timestamp,
+    "operation": operation,
+    "path": target_text,
+    "run_stamp": run_stamp,
+    "old_text_chars": len(old_text),
+    "new_text_chars": len(new_text),
+}, ensure_ascii=False, sort_keys=True))
+PY
 }
 
 archive_stale_todo_claim() {
@@ -464,7 +850,7 @@ write_progress_state() {
   local timestamp tmp_progress
   timestamp="$(now_utc)"
   tmp_progress="$PROGRESS_STATE_FILE.$$.$RANDOM.tmp"
-  python3 - "$tmp_progress" "$PROGRESS_STATE_FILE" "$stdout_log" "$run_stamp" "$exit_code" "$workspace_before" "$workspace_after" "$head_commit" "$TODO_CLAIM_FILE" "$timestamp" "$PHASE_LOOP_STAGNATION_THRESHOLD" <<'PY'
+  python3 - "$tmp_progress" "$PROGRESS_STATE_FILE" "$stdout_log" "$run_stamp" "$exit_code" "$workspace_before" "$workspace_after" "$head_commit" "$TODO_CLAIM_FILE" "$timestamp" "$PHASE_LOOP_STAGNATION_THRESHOLD" "$PHASE_LOOP_TODO" <<'PY'
 import hashlib
 import json
 import os
@@ -482,6 +868,7 @@ head_commit = sys.argv[8]
 claim_path = pathlib.Path(sys.argv[9])
 timestamp = sys.argv[10]
 threshold = int(sys.argv[11])
+todo_path = pathlib.Path(sys.argv[12])
 
 payload = None
 if stdout_log.exists() and stdout_log.stat().st_size > 0:
@@ -526,6 +913,7 @@ progress_projection = {
     "route": text(payload.get("next_invocation")) or text(automation.get("next_invocation")),
     "closure": text(payload.get("completion_closure_status")),
     "applied": text(payload.get("objective_apply_applied")) or text(payload.get("objective_apply_apply_status")),
+    "applied_path": text(payload.get("objective_apply_path")),
     "accepted": text(payload.get("accepted_completion_status")) or text(payload.get("objective_completion_acceptance_acceptance_status")),
     "finalization": text(payload.get("completion_finalization_status")) or text(payload.get("completion_finalization_finalization_fingerprint")),
     "terminal_final_state": text(payload.get("terminal_completion_final_state")),
@@ -550,12 +938,49 @@ blocked = bool(payload.get("blocked")) or bool(automation.get("blocked")) or ter
 accepted = bool(progress_projection["accepted"])
 finalized = bool(progress_projection["finalization"])
 applied = progress_projection["applied"].lower() not in ("", "false", "none", "not_applicable")
+selected_todo_lower = progress_projection["selected_todo"].lower()
+todo_md_edit_allowed = (
+    "todo.md" in selected_todo_lower
+    or "todo list" in selected_todo_lower
+    or "todo queue" in selected_todo_lower
+    or "decompos" in selected_todo_lower
+    or "blocker todo" in selected_todo_lower
+)
+selected_first_line = progress_projection["selected_todo"].splitlines()[0] if progress_projection["selected_todo"].splitlines() else ""
+selected_first_line_still_pending = False
+if applied and progress_projection["applied_path"] == "todo.md" and selected_first_line:
+    try:
+        todo_text_after_apply = todo_path.read_text(encoding="utf-8")
+        selected_first_line_still_pending = selected_first_line in todo_text_after_apply
+    except Exception:
+        selected_first_line_still_pending = False
+todo_md_only_apply = (
+    applied
+    and progress_projection["applied_path"] == "todo.md"
+    and not todo_md_edit_allowed
+    and selected_first_line_still_pending
+)
 previous_applied = text(previous_projection.get("applied")).lower() not in ("", "false", "none", "not_applicable")
 same_claim_as_previous = bool(progress_projection["claim_id"]) and progress_projection["claim_id"] == text(previous_projection.get("claim_id"))
+previous_selected_first_line = text(previous_projection.get("selected_todo")).splitlines()[0] if text(previous_projection.get("selected_todo")).splitlines() else ""
+previous_selected_first_line_still_pending = False
+if previous_selected_first_line:
+    try:
+        previous_selected_first_line_still_pending = previous_selected_first_line in todo_path.read_text(encoding="utf-8")
+    except Exception:
+        previous_selected_first_line_still_pending = False
+previous_todo_md_apply_left_selected_todo_pending = (
+    (
+        previous_projection.get("todo_md_only_apply_blocked_as_progress") is True
+        or previous_projection.get("selected_todo_first_line_still_pending_after_todo_md_apply") is True
+    )
+    and previous_selected_first_line_still_pending
+)
 no_actionable_after_apply = (
     exit_code == 0
     and same_claim_as_previous
     and previous_applied
+    and not previous_todo_md_apply_left_selected_todo_pending
     and progress_projection["cli_status"] in ("no_eligible_task", "no_actionable_work")
     and progress_projection["stop_class"] == "no_actionable_work"
 )
@@ -565,6 +990,14 @@ if no_actionable_after_apply and not applied:
 progress_projection["completed_by_no_actionable_after_apply"] = no_actionable_after_apply
 progress_projection["blocked_by_terminal_task_failure"] = terminal_failed
 completed = bool(payload.get("completed")) or bool(automation.get("completed")) or no_actionable_after_apply
+if todo_md_only_apply or selected_first_line_still_pending:
+    applied = False
+    completed = False
+    accepted = False
+    finalized = False
+    workspace_changed = False
+progress_projection["todo_md_only_apply_blocked_as_progress"] = todo_md_only_apply
+progress_projection["selected_todo_first_line_still_pending_after_todo_md_apply"] = selected_first_line_still_pending
 meaningful_progress = exit_code == 0 and (workspace_changed or completed or blocked or accepted or finalized or applied)
 
 encoded = json.dumps(progress_projection, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
@@ -641,7 +1074,9 @@ stage_runtime_applied_paths() {
   local stdout_log="$1"
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-    python3 - "$stdout_log" <<'PY' | while IFS= read -r path; do
+    local paths_file
+    paths_file="$(mktemp "${TMPDIR:-/tmp}/brownie-applied-paths.XXXXXX")"
+    python3 - "$stdout_log" > "$paths_file" <<'PY'
 import json
 import sys
 
@@ -656,16 +1091,36 @@ path = payload.get("objective_apply_path") if isinstance(payload, dict) else Non
 if isinstance(path, str) and path.strip():
     print(path)
 PY
-      case "$path" in
-        /*|*..*|"" )
+    if [ -s "$paths_file" ]; then
+      while IFS= read -r path; do
+        case "$path" in
+          /*|*..*|"" )
+            rm -f "$paths_file"
+            exit 66
+            ;;
+        esac
+        if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+          rm -f "$paths_file"
           exit 66
-          ;;
-      esac
-      if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
-        exit 66
-      fi
-      git add -- "$path"
-    done
+        fi
+        git add -- "$path"
+      done < "$paths_file"
+    else
+      git diff --name-only --diff-filter=ACMRTUXB | while IFS= read -r path; do
+        case "$path" in
+          /*|*..*|"" )
+            rm -f "$paths_file"
+            exit 66
+            ;;
+        esac
+        if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+          rm -f "$paths_file"
+          exit 66
+        fi
+        git add -- "$path"
+      done
+    fi
+    rm -f "$paths_file"
   )
 }
 
@@ -935,6 +1390,62 @@ def count_sensitive(text):
     ]
     return sum(len(re.findall(pattern, text)) for pattern in patterns)
 
+def infer_bdk_state(todo):
+    lower = todo.lower()
+    if any(token in lower for token in ("decompos", "split", "細分化", "分割")):
+        return "decompose_todo"
+    if any(token in lower for token in ("test", "guard", "failure", "失敗", "検証", "evidence")):
+        return "verify_or_repair"
+    if any(token in lower for token in ("artifact", "release", "installer", "vm", "windows", "linux", "macos")):
+        return "release_engineering"
+    if any(token in lower for token in ("doc", "readme", "documentation", "ドキュメント")):
+        return "documentation"
+    return "implement"
+
+def infer_llm_route(state):
+    if state in ("documentation", "decompose_todo"):
+        return "fast"
+    if state in ("release_engineering", "verify_or_repair"):
+        return "code"
+    return "code"
+
+def infer_context_hints(todo):
+    lower = todo.lower()
+    hints = []
+    if "supply-chain" in lower or "sbom" in lower or "audit" in lower:
+        hints.extend([
+            "scripts/guard-supply-chain-artifact-evidence.mjs",
+            "scripts/guard-dependency-security-license-audit.mjs",
+            "scripts/release-gate.mjs",
+            "Cargo.lock",
+            "pnpm-lock.yaml",
+        ])
+    if "release" in lower or "artifact" in lower or "supply-chain" in lower:
+        hints.extend([
+            "scripts/release-gate.mjs",
+            "package.json",
+            "docs/architecture/runtime-release-readiness-audit.json",
+        ])
+    if "protocol" in lower or "ledger" in lower:
+        hints.extend([
+            "crates/brownie-protocol/src/semantic_contract.rs",
+            "crates/brownie-store/src/lib.rs",
+            "docs/architecture/runtime-semantic-protocol-contract.json",
+        ])
+    if "prompt" in lower or "llm" in lower or "context" in lower:
+        hints.extend([
+            "crates/brownie-context/src/lib.rs",
+            "crates/brownie-agent-loop/src/lib.rs",
+            "crates/brownie-runtime/src/llm_provider.rs",
+        ])
+    seen = set()
+    deduped = []
+    for hint in hints:
+        if hint not in seen:
+            seen.add(hint)
+            deduped.append(hint)
+    return deduped[:6]
+
 if len(selected_todo.encode("utf-8")) > selected_todo_max_bytes:
     raise SystemExit("selected_todo_exceeds_max_bytes")
 
@@ -942,6 +1453,8 @@ claim = {}
 if claim_path.exists():
     with open(claim_path, encoding="utf-8") as handle:
         claim = json.load(handle)
+    if claim.get("status") not in ("claimed", "in_progress"):
+        claim = {}
 
 todo_text = read_text(todo_path)
 base_prompt_text = read_text(prompt_path)
@@ -958,11 +1471,33 @@ if claim:
 else:
     claim_lines.append("- none")
 
+bdk_state = infer_bdk_state(selected_todo)
+llm_route = infer_llm_route(bdk_state)
+context_hints = infer_context_hints(selected_todo)
+context_hint_lines = [f"- {hint}" for hint in context_hints] or ["- <none inferred; request exact bounded reads only>"]
+
 prompt = "\n".join([
     "# Brownie Phase Loop Effective Prompt",
     "",
     "This generated prompt combines the stable phase-loop contract with the current external TODO queue.",
     "Treat the active TODO claim below as the work item for this bounded invocation.",
+    "",
+    "## BDK Execution Packet",
+    "",
+    f"- state: `{bdk_state}`",
+    f"- llm_route: `{llm_route}`",
+    "- context_policy: use the smallest exact file set; do not read README or overview files unless the active TODO names them.",
+    "- progress_policy: after bounded reads, emit one workspace.write proposal, a concrete blocker TODO, or completion evidence; do not continue read-only discovery.",
+    "- output_policy: if workspace context is needed, your next assistant message must be exactly one fenced `brownie-tool-intent` JSON block and no explanatory prose.",
+    "- read_batch_policy: request at most one `workspace.read` per tool intent and at most two total `workspace.read` requests before requesting workspace.write or a narrower follow-up TODO.",
+    "- inferred_context_hints:",
+    *context_hint_lines,
+    "",
+    "For this invocation, start from the first inferred context hint when it is relevant. A valid first response shape is:",
+    "",
+    "```brownie-tool-intent",
+    "{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read bounded implementation context for the selected TODO.\",\"input\":{\"path\":\"<one inferred context hint>\"}}]}",
+    "```",
     "",
     "## Active TODO Claim",
     "",
@@ -1001,6 +1536,9 @@ metadata = {
     "selected_todo_bytes": len(selected_todo.encode("utf-8")),
     "selected_todo_sha256": sha256_text(selected_todo),
     "selected_todo_complete": True,
+    "bdk_state": bdk_state,
+    "llm_route": llm_route,
+    "context_hints": context_hints,
     "todo_path": str(todo_path),
     "todo_sha256": sha256_text(todo_text),
     "todo_line_count": todo_line_count,
@@ -1027,6 +1565,161 @@ PY
   chmod 600 "$output_path" "$meta_path"
   sync_parent_dir "$RUN_DIR"
   retire_old_prompt_artifacts
+}
+
+phase_loop_sampling_defaults_for_model() {
+  local pass="$1"
+  local model="$2"
+  case "$pass:$model" in
+    fast:qwen35-4b-q4km|fast:qwen35-9b-q4km)
+      printf '0 0.8 20\n'
+      ;;
+    fast:gemma4-12B)
+      printf '0 0.95 40\n'
+      ;;
+    code:qwen35-9b-coder-q4km)
+      printf '0 0.8 20\n'
+      ;;
+    code:qwen122)
+      printf '0 0.8 20\n'
+      ;;
+    code:qwen122-long)
+      printf '0 0.7 20\n'
+      ;;
+    code:qwen35|code:qwen35-MTP)
+      printf '0 0.7 20\n'
+      ;;
+    code:qwen36-35b-a3b-iq4xs)
+      printf '0 0.8 20\n'
+      ;;
+    code:devstral-small2-24b-iq4xs)
+      printf '0 0.8 20\n'
+      ;;
+    *)
+      printf '0 1 \n'
+      ;;
+  esac
+}
+
+apply_phase_loop_llm_route() {
+  local prompt_path="$1"
+  local meta_path route routed_model fast_model code_model deep_model prompt_bytes
+  local fast_max_tokens code_max_tokens
+  local fast_temperature code_temperature fast_top_p code_top_p fast_top_k code_top_k defaults
+  if [ "${PHASE_LOOP_LLM_ROUTING:-1}" != "1" ]; then
+    return 0
+  fi
+  fast_model="${BROWNIE_LLM_MODEL_FAST:-${PHASE_LOOP_LLM_MODEL_FAST:-}}"
+  code_model="${BROWNIE_LLM_MODEL_CODE:-${PHASE_LOOP_LLM_MODEL_CODE:-}}"
+  deep_model="${BROWNIE_LLM_MODEL_DEEP:-${PHASE_LOOP_LLM_MODEL_DEEP:-}}"
+  fast_max_tokens="${BROWNIE_LLM_MAX_TOKENS_FAST:-${PHASE_LOOP_LLM_MAX_TOKENS_FAST:-}}"
+  code_max_tokens="${BROWNIE_LLM_MAX_TOKENS_CODE:-${PHASE_LOOP_LLM_MAX_TOKENS_CODE:-}}"
+  fast_temperature="${BROWNIE_LLM_TEMPERATURE_FAST:-${PHASE_LOOP_LLM_TEMPERATURE_FAST:-}}"
+  code_temperature="${BROWNIE_LLM_TEMPERATURE_CODE:-${PHASE_LOOP_LLM_TEMPERATURE_CODE:-}}"
+  fast_top_p="${BROWNIE_LLM_TOP_P_FAST:-${PHASE_LOOP_LLM_TOP_P_FAST:-}}"
+  code_top_p="${BROWNIE_LLM_TOP_P_CODE:-${PHASE_LOOP_LLM_TOP_P_CODE:-}}"
+  fast_top_k="${BROWNIE_LLM_TOP_K_FAST:-${PHASE_LOOP_LLM_TOP_K_FAST:-}}"
+  code_top_k="${BROWNIE_LLM_TOP_K_CODE:-${PHASE_LOOP_LLM_TOP_K_CODE:-}}"
+  if [ -n "$fast_model" ] && { [ -z "$fast_temperature" ] || [ -z "$fast_top_p" ] || [ -z "$fast_top_k" ]; }; then
+    defaults="$(phase_loop_sampling_defaults_for_model fast "$fast_model")"
+    set -- $defaults
+    fast_temperature="${fast_temperature:-${1:-}}"
+    fast_top_p="${fast_top_p:-${2:-}}"
+    fast_top_k="${fast_top_k:-${3:-}}"
+  fi
+  if [ -n "$code_model" ] && { [ -z "$code_temperature" ] || [ -z "$code_top_p" ] || [ -z "$code_top_k" ]; }; then
+    defaults="$(phase_loop_sampling_defaults_for_model code "$code_model")"
+    set -- $defaults
+    code_temperature="${code_temperature:-${1:-}}"
+    code_top_p="${code_top_p:-${2:-}}"
+    code_top_k="${code_top_k:-${3:-}}"
+  fi
+  if [ -n "$fast_model" ]; then
+    export BROWNIE_LLM_MODEL_FAST="$fast_model"
+  fi
+  if [ -n "$code_model" ]; then
+    export BROWNIE_LLM_MODEL_CODE="$code_model"
+  fi
+  if [ -n "$deep_model" ]; then
+    export BROWNIE_LLM_MODEL_DEEP="$deep_model"
+  fi
+  if [ -n "$fast_max_tokens" ]; then
+    export BROWNIE_LLM_MAX_TOKENS_FAST="$fast_max_tokens"
+  fi
+  if [ -n "$code_max_tokens" ]; then
+    export BROWNIE_LLM_MAX_TOKENS_CODE="$code_max_tokens"
+  fi
+  if [ -n "$fast_temperature" ]; then
+    export BROWNIE_LLM_TEMPERATURE_FAST="$fast_temperature"
+  fi
+  if [ -n "$code_temperature" ]; then
+    export BROWNIE_LLM_TEMPERATURE_CODE="$code_temperature"
+  fi
+  if [ -n "$fast_top_p" ]; then
+    export BROWNIE_LLM_TOP_P_FAST="$fast_top_p"
+  fi
+  if [ -n "$code_top_p" ]; then
+    export BROWNIE_LLM_TOP_P_CODE="$code_top_p"
+  fi
+  if [ -n "$fast_top_k" ]; then
+    export BROWNIE_LLM_TOP_K_FAST="$fast_top_k"
+  fi
+  if [ -n "$code_top_k" ]; then
+    export BROWNIE_LLM_TOP_K_CODE="$code_top_k"
+  fi
+  meta_path="${prompt_path%.prompt.md}.prompt.meta.json"
+  route="$(
+    python3 - "$meta_path" <<'PY'
+import json
+import sys
+try:
+    print(json.load(open(sys.argv[1], encoding="utf-8")).get("llm_route", ""))
+except Exception:
+    print("")
+PY
+  )"
+  prompt_bytes="$(
+    python3 - "$meta_path" <<'PY'
+import json
+import sys
+try:
+    print(json.load(open(sys.argv[1], encoding="utf-8")).get("prompt_bytes", 0))
+except Exception:
+    print(0)
+PY
+  )"
+  if [ -n "$fast_model" ] && [ "${prompt_bytes:-0}" -gt "$PHASE_LOOP_LLM_FAST_MAX_PROMPT_BYTES" ]; then
+    printf '%s llm_route=%s fast_model_disabled=prompt_too_large prompt_bytes=%s fast_max_prompt_bytes=%s fast=%s\n' "$(now_utc)" "${route:-none}" "${prompt_bytes:-0}" "$PHASE_LOOP_LLM_FAST_MAX_PROMPT_BYTES" "$fast_model" >> "$SUPERVISOR_LOG"
+    fast_model=""
+    unset BROWNIE_LLM_MODEL_FAST
+    unset BROWNIE_LLM_TEMPERATURE_FAST
+    unset BROWNIE_LLM_TOP_P_FAST
+    unset BROWNIE_LLM_TOP_K_FAST
+  fi
+  if [ -n "$fast_model" ] || [ -n "$code_model" ]; then
+    printf '%s llm_route=%s model_override=per-pass fast=%s code=%s max_tokens_fast=%s max_tokens_code=%s temperature_fast=%s temperature_code=%s top_p_fast=%s top_p_code=%s top_k_fast=%s top_k_code=%s\n' "$(now_utc)" "${route:-none}" "${fast_model:-<unchanged>}" "${code_model:-<unchanged>}" "${fast_max_tokens:-<unchanged>}" "${code_max_tokens:-<unchanged>}" "${fast_temperature:-<unchanged>}" "${code_temperature:-<unchanged>}" "${fast_top_p:-<unchanged>}" "${code_top_p:-<unchanged>}" "${fast_top_k:-<unchanged>}" "${code_top_k:-<unchanged>}" >> "$SUPERVISOR_LOG"
+    return 0
+  fi
+  case "$route" in
+    fast)
+      routed_model="$fast_model"
+      ;;
+    deep)
+      routed_model="$deep_model"
+      ;;
+    code)
+      routed_model="$code_model"
+      ;;
+    *)
+      routed_model=""
+      ;;
+  esac
+  if [ -n "$routed_model" ]; then
+    export BROWNIE_LLM_MODEL="$routed_model"
+    printf '%s llm_route=%s model_override=%s\n' "$(now_utc)" "$route" "$routed_model" >> "$SUPERVISOR_LOG"
+  else
+    printf '%s llm_route=%s model_override=<unchanged>\n' "$(now_utc)" "${route:-none}" >> "$SUPERVISOR_LOG"
+  fi
 }
 
 stop_if_todo_empty() {
@@ -1061,6 +1754,12 @@ load_env() {
     # This file is ignored and may contain local credentials.
     # shellcheck disable=SC1091
     . "$ROOT_DIR/.test/brownie-loop.env"
+  fi
+  if [ -f "$ROOT_DIR/.brownie/private/llm.env" ]; then
+    # Local LAN LLM credentials and model routing live under .brownie/private.
+    # This file is ignored and must not be logged.
+    # shellcheck disable=SC1091
+    . "$ROOT_DIR/.brownie/private/llm.env"
   fi
   if [ -f "$ROOT_DIR/phase-loop.env" ]; then
     # shellcheck disable=SC1091
@@ -1309,6 +2008,64 @@ interruptible_sleep() {
   return 0
 }
 
+run_with_portable_timeout() {
+  local timeout_seconds="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$timeout_seconds" "$@"
+    return $?
+  fi
+
+  "$@" &
+  local child_pid="$!"
+  local waited=0
+  while pid_is_active "$child_pid"; do
+    if [ -f "$STOP_FILE" ]; then
+      local descendants known_pids
+      descendants="$(supervisor_descendant_pids "$child_pid" | tr '\n' ' ')"
+      known_pids="$child_pid $descendants"
+      printf '%s stop file observed during command wait; terminating pid=%s descendants=%s command=%s\n' "$(now_utc)" "$child_pid" "${descendants:-none}" "$*" >> "$SUPERVISOR_LOG"
+      # shellcheck disable=SC2086
+      kill_known_pids TERM $known_pids
+      # shellcheck disable=SC2086
+      if ! wait_for_known_pids_exit "$PHASE_LOOP_STOP_GRACE_SECONDS" $known_pids; then
+        descendants="$(supervisor_descendant_pids "$child_pid" | tr '\n' ' ')"
+        known_pids="$child_pid $known_pids $descendants"
+        printf '%s stop file force terminating pid=%s descendants=%s\n' "$(now_utc)" "$child_pid" "${descendants:-none}" >> "$SUPERVISOR_LOG"
+        # shellcheck disable=SC2086
+        kill_known_pids KILL $known_pids
+        # shellcheck disable=SC2086
+        wait_for_known_pids_exit "$PHASE_LOOP_STOP_FORCE_SECONDS" $known_pids || true
+      fi
+      wait "$child_pid" 2>/dev/null || true
+      return 130
+    fi
+    if [ "$waited" -ge "$timeout_seconds" ]; then
+      local descendants known_pids
+      descendants="$(supervisor_descendant_pids "$child_pid" | tr '\n' ' ')"
+      known_pids="$child_pid $descendants"
+      printf '%s command timeout after %ss; terminating pid=%s descendants=%s command=%s\n' "$(now_utc)" "$timeout_seconds" "$child_pid" "${descendants:-none}" "$*" >> "$SUPERVISOR_LOG"
+      # shellcheck disable=SC2086
+      kill_known_pids TERM $known_pids
+      # shellcheck disable=SC2086
+      if ! wait_for_known_pids_exit "$PHASE_LOOP_STOP_GRACE_SECONDS" $known_pids; then
+        descendants="$(supervisor_descendant_pids "$child_pid" | tr '\n' ' ')"
+        known_pids="$child_pid $known_pids $descendants"
+        printf '%s command timeout force terminating pid=%s descendants=%s\n' "$(now_utc)" "$child_pid" "${descendants:-none}" >> "$SUPERVISOR_LOG"
+        # shellcheck disable=SC2086
+        kill_known_pids KILL $known_pids
+        # shellcheck disable=SC2086
+        wait_for_known_pids_exit "$PHASE_LOOP_STOP_FORCE_SECONDS" $known_pids || true
+      fi
+      wait "$child_pid" 2>/dev/null || true
+      return 124
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$child_pid"
+}
+
 acquire_lock() {
   if mkdir "$LOCK_DIR" 2>/dev/null; then
     echo "$$" > "$LOCK_DIR/pid"
@@ -1354,6 +2111,13 @@ run_brownie_once() {
     printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
     write_status "blocked" "$detail" "$run_stamp" "127" "${CONSECUTIVE_FAILURES:-0}"
     return 127
+  fi
+  local freshness_output
+  if ! freshness_output="$(check_brownie_binary_freshness 2>&1)"; then
+    detail="${freshness_output:-Brownie binary freshness check failed.}"
+    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+    write_status "blocked" "$detail" "$run_stamp" "79" "${CONSECUTIVE_FAILURES:-0}"
+    return 79
   fi
   if [ ! -f "$PHASE_LOOP_PROMPT" ]; then
     detail="Phase loop prompt is missing: $PHASE_LOOP_PROMPT"
@@ -1421,23 +2185,38 @@ run_brownie_once() {
       return 75
     fi
   fi
+  local exact_fast_path_output exact_fast_path_status
+  exact_fast_path_output="$(try_exact_line_todo_fast_path "$run_stamp" 2>&1)"
+  exact_fast_path_status=$?
+  if [ "$exact_fast_path_status" -eq 0 ]; then
+    workspace_after="$(git_workspace_fingerprint)"
+    printf '%s\n' "$exact_fast_path_output" > "$stdout_log"
+    : > "$stderr_log"
+    write_todo_claim "$(claim_field claim_id)" "completed" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+    remove_completed_todo_claim_from_queue "$run_stamp" >> "$SUPERVISOR_LOG"
+    detail="Applied deterministic exact-line TODO fast path without LLM generation: $exact_fast_path_output"
+    write_status "last_run_succeeded" "$detail" "exact-line-$run_stamp" "0" "0"
+    printf '%s run=%s exact_line_fast_path=true result=%s\n' "$(now_utc)" "exact-line-$run_stamp" "$exact_fast_path_output" >> "$SUPERVISOR_LOG"
+    phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after" || true
+    return 0
+  elif [ "$exact_fast_path_status" -eq 1 ]; then
+    detail="Exact-line TODO fast path was eligible but failed safely: $exact_fast_path_output"
+    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+    write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+    return 74
+  fi
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
     export BROWNIE_WORKSPACE_ROOT="${BROWNIE_WORKSPACE_ROOT:-"$PHASE_LOOP_WORKSPACE_ROOT"}"
     export BROWNIE_STORE_ROOT="${BROWNIE_STORE_ROOT:-"$PHASE_LOOP_BROWNIE_STORE_ROOT"}"
     export PHASE_LOOP_CONTROL_ROOT
-    if command -v timeout >/dev/null 2>&1; then
-      if [ "$use_resume" -eq 1 ]; then
-        timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json resume
-      else
-        timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json run --file "$effective_prompt"
-      fi
+    if [ "$use_resume" -ne 1 ]; then
+      apply_phase_loop_llm_route "$effective_prompt"
+    fi
+    if [ "$use_resume" -eq 1 ]; then
+      run_with_portable_timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json resume
     else
-      if [ "$use_resume" -eq 1 ]; then
-        "$BROWNIE_BIN" --json resume
-      else
-        "$BROWNIE_BIN" --json run --file "$effective_prompt"
-      fi
+      run_with_portable_timeout "$PHASE_LOOP_BROWNIE_TIMEOUT_SECONDS" "$BROWNIE_BIN" --json run --file "$effective_prompt"
     fi
   ) > "$stdout_log" 2> "$stderr_log"
   exit_code=$?
@@ -1491,16 +2270,57 @@ elif isinstance(root, dict) and isinstance(root.get("resume"), dict):
 else:
     payload = root
 completed_by_no_actionable_after_apply = False
+todo_md_only_apply_blocked_as_progress = False
+selected_todo_first_line_still_pending = False
 try:
     state = json.load(open(sys.argv[2], encoding="utf-8"))
     projection = state.get("progress_projection", {})
     completed_by_no_actionable_after_apply = projection.get("completed_by_no_actionable_after_apply") is True
+    todo_md_only_apply_blocked_as_progress = projection.get("todo_md_only_apply_blocked_as_progress") is True
+    selected_todo_first_line_still_pending = projection.get("selected_todo_first_line_still_pending_after_todo_md_apply") is True
 except Exception:
     pass
-sys.exit(0 if payload.get("completed") is True or completed_by_no_actionable_after_apply else 1)
+objective_apply_applied = payload.get("objective_apply_applied") is True
+if todo_md_only_apply_blocked_as_progress or selected_todo_first_line_still_pending:
+    objective_apply_applied = False
+sys.exit(0 if payload.get("completed") is True or completed_by_no_actionable_after_apply or objective_apply_applied else 1)
 PY
     then
       write_todo_claim "$(claim_field claim_id)" "completed" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      remove_completed_todo_claim_from_queue "$run_stamp" >> "$SUPERVISOR_LOG"
+    elif python3 - "$stdout_log" <<'PY'
+import json, sys
+root = json.load(open(sys.argv[1], encoding="utf-8"))
+if isinstance(root, dict) and isinstance(root.get("run"), dict):
+    payload = root.get("run")
+elif isinstance(root, dict) and isinstance(root.get("resume"), dict):
+    payload = root.get("resume")
+else:
+    payload = root
+if payload.get("blocked") is not True:
+    sys.exit(1)
+stop_class = str(payload.get("stop_class") or "")
+status = str(payload.get("status") or "")
+closure = str(payload.get("completion_closure_status") or "")
+next_action = str(payload.get("next_action") or "")
+controller_action = str(payload.get("controller_action") or "")
+external_control_boundary = (
+    stop_class == "recoverable_unknown_nonterminal"
+    or status == "recoverable_unknown_nonterminal"
+    or closure == "unknown_nonterminal"
+    or next_action == "inspect_progress_overview"
+    or controller_action == "stop"
+)
+sys.exit(0 if external_control_boundary else 1)
+PY
+    then
+      write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      record_blocked_todo_claim "$run_stamp"
+      touch "$STOP_FILE"
+      detail="Brownie run reached a blocked external-control boundary; recorded the blocked TODO and stopped the phase loop. stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE blocked=$TODO_BLOCKED_FILE"
+      write_status "blocked" "$detail" "$run_id" "77" "${CONSECUTIVE_FAILURES:-1}"
+      printf '%s run=%s exit=%s blocked_external_control_boundary=true progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "77" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+      return 77
     elif python3 - "$stdout_log" <<'PY'
 import json, sys
 root = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -1514,13 +2334,11 @@ sys.exit(0 if payload.get("blocked") is True else 1)
 PY
     then
       write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
-      : > "$STOP_FILE"
-      chmod 600 "$STOP_FILE"
-      sync_parent_dir "$STATE_DIR"
-      detail="Brownie run reached a blocked external-control boundary; stopping phase-loop to avoid repeating the same invocation. stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
-      write_status "blocked" "$detail" "$run_id" "77" "${CONSECUTIVE_FAILURES:-0}"
-      printf '%s run=%s exit=%s blocked_boundary=true progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$exit_code" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
-      return 77
+      record_blocked_todo_claim "$run_stamp"
+      detail="Brownie run reached a blocked boundary; recorded the blocked TODO and will continue with the next unblocked TODO. stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE blocked=$TODO_BLOCKED_FILE"
+      write_status "blocked_todo_recorded" "$detail" "$run_id" "$exit_code" "${CONSECUTIVE_FAILURES:-0}"
+      printf '%s run=%s exit=%s blocked_todo_recorded=true progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$exit_code" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+      return 0
     fi
 
     case "$progress_classification" in
@@ -1688,12 +2506,16 @@ case "${1:-status}" in
   status)
     status
     ;;
+  check-binary-freshness)
+    load_env
+    check_brownie_binary_freshness
+    ;;
   run-once)
     CONSECUTIVE_FAILURES=0
     run_brownie_once
     ;;
   *)
-    echo "usage: $0 {start|status|stop|restart|run-once}" >&2
+    echo "usage: $0 {start|status|stop|restart|check-binary-freshness|run-once}" >&2
     exit 64
     ;;
 esac

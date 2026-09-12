@@ -1,0 +1,1 @@
+In this isolated fixture, make the smallest safe workspace change and report completion.

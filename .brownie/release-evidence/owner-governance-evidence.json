@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "evidence_id": "brownie-owner-governance-evidence-v1",
+  "generated_at": "2026-09-10T01:57:36.304Z",
+  "repository": "globalpocket/brownie",
+  "source_commit": "0cee5d024ae1af16ad2265b6e1a46fabc64fd2b2",
+  "release_ready": false,
+  "runtime_release_ready": false,
+  "required_sections": [
+    "branch_protection",
+    "required_status_checks",
+    "protected_tag_policy",
+    "remote_ci_workflow_provenance",
+    "signature_or_integrity_authority",
+    "independent_reviews",
+    "oss_license_publish_posture"
+  ],
+  "sections": {
+    "branch_protection": {
+      "status": "satisfied",
+      "release_blocking": true,
+      "checked_via": "gh api branches/main/protection",
+      "required_pull_request_reviews_present": true,
+      "enforce_admins_enabled": true
+    },
+    "required_status_checks": {
+      "status": "satisfied",
+      "release_blocking": true,
+      "checked_via": "gh api branches/main/protection",
+      "strict": true,
+      "required_context_count": 2,
+      "required_app_check_count": 2
+    },
+    "protected_tag_policy": {
+      "status": "satisfied",
+      "release_blocking": true,
+      "checked_via": "gh api repos/rulesets",
+      "protected_tag_ruleset_count": 1
+    },
+    "remote_ci_workflow_provenance": {
+      "status": "remote_ci_checks_missing_or_failed",
+      "release_blocking": true,
+      "provider": "github_actions",
+      "checked_via": "gh api actions/workflows/ci.yml/runs + commits/{head_sha}/check-runs",
+      "workflow_run_id_present": true,
+      "workflow_sha_present": true,
+      "workflow_repository_present": true,
+      "workflow_run_id": "34427288857",
+      "workflow_head_sha": "2350a95e813eb2e42ec996a96a7958670259a49e",
+      "workflow_conclusion": null,
+      "required_check_names": [
+        "check",
+        "index-platform"
+      ],
+      "successful_required_check_count": 1,
+      "missing_or_failed_required_check_names": [
+        "check"
+      ]
+    },
+    "signature_or_integrity_authority": {
+      "status": "satisfied",
+      "release_blocking": true,
+      "owner_decision": {
+        "path": "docs/architecture/owner-integrity-authority-decision.json",
+        "exists": true,
+        "sha256": "sha256:00a94cd76b7264557a958b2dde91230382dc16f8bac8fc0b31b83fb2508717ba"
+      },
+      "local_integrity_verification": {
+        "path": ".brownie/release-evidence/integrity-verification.json",
+        "exists": true,
+        "sha256": "sha256:7c7afacb9f4e10f475f4897692dc75fab6b55141176aa44e13e527263a3424ba"
+      },
+      "local_checksum_verification_available": true,
+      "note": "Runtime can verify checksum integrity locally, but owner must approve the release signing or formal integrity authority before Release Ready."
+    },
+    "independent_reviews": {
+      "status": "not_completed",
+      "release_blocking": true,
+      "owner_evidence": {
+        "path": "docs/architecture/owner-independent-review-evidence.json",
+        "exists": true,
+        "sha256": "sha256:9fa4cc2fc9c81ce65dc83631ecae7952dd0dc08a78d67b3ac37fe9921041b66e"
+      },
+      "required_review_ids": [
+        "release_workflow",
+        "permission_model",
+        "ledger_contract",
+        "mode_pack_trust_boundary",
+        "signing_provenance",
+        "release_ready_judgment"
+      ],
+      "approved_review_count": 0,
+      "missing_review_ids": [
+        "release_workflow",
+        "permission_model",
+        "ledger_contract",
+        "mode_pack_trust_boundary",
+        "signing_provenance",
+        "release_ready_judgment"
+      ],
+      "github_review_provenance": [],
+      "github_review_verification_failures": []
+    },
+    "oss_license_publish_posture": {
+      "status": "satisfied",
+      "release_blocking": true,
+      "owner_decision": {
+        "path": "docs/architecture/owner-oss-publication-decision.json",
+        "exists": true,
+        "sha256": "sha256:22e5d6231bf7f7aac5eb061757a002e25eca152f74ddfe9f1d044f4664b57d77"
+      },
+      "license_file_present": true,
+      "note": "License and publish posture are owner decisions; Runtime automation only records whether the decision evidence exists."
+    }
+  },
+  "fail_closed_reasons": [
+    "remote_ci_workflow_provenance:remote_ci_checks_missing_or_failed",
+    "independent_reviews:not_completed"
+  ]
+}

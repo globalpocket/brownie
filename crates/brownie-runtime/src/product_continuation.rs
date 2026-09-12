@@ -223,7 +223,7 @@ pub(super) fn classify_product_loop_stop_recovery_result(
 fn product_loop_stop_recovery_has_no_explicit_implementation_route(
     result: &HeadlessRunDriveResult,
 ) -> bool {
-    result.next_route.as_ref().is_none_or(|route| {
+    result.next_route.as_ref().map_or(true, |route| {
         matches!(
             route.kind,
             HeadlessContinueRouteKind::InspectProgressOverview

@@ -109,3 +109,25 @@ See [LLM Request Budget Spec v0](llm-request-budget-spec-v0.md). Runtime provide
 Runtime LLM configuration keeps the `sensitive_guard` knob (`off`, `warn`, `fail`) with `BROWNIE_LLM_SENSITIVE_GUARD` as the highest-priority override. Prompt text is scanned with low-false-positive sensitive-content detection before provider calls, and scan evidence records only categories and message indexes. Runtime status, diagnostics, ledger, and inspection APIs still must not expose API key values, Authorization/Bearer header values, matched secret values, or full provider responses.
 
 OpenAI-compatible provider egress is constrained to the configured origin. Runtime accepts only `http` or `https` base URLs with a host and without userinfo, query, or fragment components. Request endpoints are derived only by appending the fixed `/models` or `/chat/completions` suffix under the configured base path, and the resulting scheme, host, and port must match the configured base URL. Provider clients disable ambient proxy use and redirect following, and pin DNS resolution to the address set resolved before the request is sent.
+
+## Phase-loop BDK model routing
+
+The external phase-loop wrapper may classify each claimed TODO into a BDK
+execution state and LLM route (`fast`, `code`, or `deep`) before invoking
+Runtime. This routing is optional and does not change Runtime permission
+semantics. If route-specific environment variables are unset, the wrapper keeps
+the existing `BROWNIE_LLM_MODEL`.
+
+Supported wrapper variables:
+
+- `PHASE_LOOP_LLM_ROUTING=1` enables route lookup.
+- `PHASE_LOOP_LLM_MODEL_FAST` selects the model for decomposition,
+  documentation, and lightweight planning.
+- `PHASE_LOOP_LLM_MODEL_CODE` selects the model for implementation,
+  verification, and release-engineering TODOs.
+- `PHASE_LOOP_LLM_MODEL_DEEP` selects the model for explicitly deep design
+  work.
+
+This keeps Brownie autonomous development from binding every state to the same
+large LAN model. BDK supplies the state, prompt supplies the output contract,
+and the LLM route supplies the smallest model class appropriate for the turn.
