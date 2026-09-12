@@ -21,14 +21,14 @@
     "workflow_run_id": null,
     "artifact_sha256": null,
     "contract_registry_fingerprint": "sha256:4250fb47242f2bdc4ac26ce1d0cf8ecedbd27627eb9e3117acc82e3719eb934d",
-    "readiness_audit_content_sha256": "sha256:adbb0b631448754222e10906e7e64cf7eb3096c94be1a2fa0f03296eb896363e",
+    "readiness_audit_content_sha256": "sha256:726587fcd631e539a2c1ef631b4d991981d165137f0fc1641756842f7a4f4883",
     "mode_pack_fingerprint": null,
     "product_dod_fingerprint": null
   },
   "release_ready_conditions": [
     {
       "id": "required_before_release_closed",
-      "status": "blocked_by_runtime_release_guard_ci",
+      "status": "blocked_by_independent_owner_reviews",
       "release_blocking": true,
       "required_evidence": [
         "runtime-release-readiness audit has zero Runtime-owned P0/P1 required_before_release items",
@@ -154,7 +154,7 @@
     },
     {
       "id": "no_unresolved_release_blockers",
-      "status": "blocked_by_runtime_release_guard_ci",
+      "status": "blocked_by_independent_owner_reviews",
       "release_blocking": true,
       "required_evidence": [
         "release_ready_blocked_by is empty",
@@ -163,7 +163,7 @@
     },
     {
       "id": "owner_controlled_settings_complete",
-      "status": "implemented_sufficient",
+      "status": "partial_independent_reviews_missing",
       "release_blocking": true,
       "required_evidence": [
         "OSS license and publish posture decision recorded",
@@ -175,7 +175,7 @@
     },
     {
       "id": "required_independent_reviews_complete",
-      "status": "implemented_sufficient",
+      "status": "not_completed",
       "release_blocking": true,
       "required_evidence": [
         "independent human review for Release workflow",
