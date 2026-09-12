@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "evidence_id": "brownie-owner-governance-evidence-v1",
-  "generated_at": "2026-09-10T01:57:36.304Z",
+  "generated_at": "2026-09-12T10:07:00.046Z",
   "repository": "globalpocket/brownie",
-  "source_commit": "0cee5d024ae1af16ad2265b6e1a46fabc64fd2b2",
+  "source_commit": "a63f185224a73f9a0286f30bf6f9e2f76cf0b4ab",
   "release_ready": false,
   "runtime_release_ready": false,
   "required_sections": [
@@ -38,24 +38,22 @@
       "protected_tag_ruleset_count": 1
     },
     "remote_ci_workflow_provenance": {
-      "status": "remote_ci_checks_missing_or_failed",
+      "status": "satisfied",
       "release_blocking": true,
       "provider": "github_actions",
       "checked_via": "gh api actions/workflows/ci.yml/runs + commits/{head_sha}/check-runs",
       "workflow_run_id_present": true,
       "workflow_sha_present": true,
       "workflow_repository_present": true,
-      "workflow_run_id": "34427288857",
-      "workflow_head_sha": "2350a95e813eb2e42ec996a96a7958670259a49e",
-      "workflow_conclusion": null,
+      "workflow_run_id": "34687334726",
+      "workflow_head_sha": "a63f185224a73f9a0286f30bf6f9e2f76cf0b4ab",
+      "workflow_conclusion": "success",
       "required_check_names": [
         "check",
         "index-platform"
       ],
-      "successful_required_check_count": 1,
-      "missing_or_failed_required_check_names": [
-        "check"
-      ]
+      "successful_required_check_count": 2,
+      "missing_or_failed_required_check_names": []
     },
     "signature_or_integrity_authority": {
       "status": "satisfied",
@@ -114,7 +112,6 @@
     }
   },
   "fail_closed_reasons": [
-    "remote_ci_workflow_provenance:remote_ci_checks_missing_or_failed",
     "independent_reviews:not_completed"
   ]
 }

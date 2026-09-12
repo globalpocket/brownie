@@ -3231,6 +3231,9 @@ fn concrete_product_ready_decomposition(parent_id: &str, title: &str) -> Option<
             "- [ ] E-08a: Fail closed on missing supply-chain tooling:\n  Source TODO: {source}\n  Add guard coverage proving absent audit/SBOM/secret-scan tools produce blocked release evidence.\n- [ ] E-08b: Fail closed on supply-chain scan and network failures:\n  Add tests proving scan command failures and network errors cannot be treated as success.\n"
         ));
     }
+    if parent_id.starts_with("E-14a-") || source.contains("E-14a-") {
+        return None;
+    }
     if source.contains("E-14a") {
         return Some(format!(
             "- [ ] E-14a-contract-section: Patch only `docs/architecture/final-product-ready-judgment.md` with the release contract state:\n  Source TODO: {source}\n  Read only `docs/architecture/final-product-ready-judgment.md` and `docs/architecture/runtime-release-contract.json`. Add or update a bounded section summarizing `runtime_release_ready`, release-engineering maturity, and contract-level fail-closed blockers. Do not edit JSON files and do not claim `runtime_release_ready=true`.\n- [ ] E-14a-audit-section: Patch only `docs/architecture/final-product-ready-judgment.md` with readiness audit state:\n  Source TODO: {source}\n  Read only `docs/architecture/final-product-ready-judgment.md` and `docs/architecture/runtime-release-readiness-audit.json`. Add or update a bounded section separating Runtime-owned blockers from owner/external publication decisions. Do not edit JSON files.\n- [ ] E-14a-runtime-evidence-section: Patch only `docs/architecture/final-product-ready-judgment.md` with runtime operational evidence:\n  Source TODO: {source}\n  Read only `docs/architecture/final-product-ready-judgment.md` and `.brownie/release-evidence/runtime-operational-evidence.json`. Add or update a bounded section describing satisfied runtime operational evidence and remaining fail-closed runtime evidence. Do not edit JSON files.\n- [ ] E-14a-owner-evidence-section: Patch only `docs/architecture/final-product-ready-judgment.md` with owner governance evidence:\n  Source TODO: {source}\n  Read only `docs/architecture/final-product-ready-judgment.md` and `.brownie/release-evidence/owner-governance-evidence.json`. Add or update a bounded section classifying owner/external publication decisions. Do not edit JSON files.\n- [ ] E-14a-supply-chain-evidence-section: Patch only `docs/architecture/final-product-ready-judgment.md` with supply-chain evidence:\n  Source TODO: {source}\n  Read only `docs/architecture/final-product-ready-judgment.md` and `.brownie/release-evidence/supply-chain-artifact-evidence.json`. Add or update a bounded section describing supply-chain/artifact evidence and fail-closed blockers. Do not edit JSON files.\n- [ ] E-14a-final-summary: Patch only `docs/architecture/final-product-ready-judgment.md` with the final judgment summary:\n  Source TODO: {source}\n  Read only `docs/architecture/final-product-ready-judgment.md`. Add or update a final summary that states which Runtime-owned release blockers are satisfied, which remain fail-closed, and which items are owner/external publication decisions. Verification: run `pnpm --workspace-root check`.\n"
@@ -6229,6 +6232,11 @@ mod mcp_approval_lock_tests {
         assert!(patch_new_text.contains("E-14a-contract-section"));
         assert!(patch_new_text.contains("E-14a-final-summary"));
         assert!(!patch_new_text.contains("Implement the next concrete step"));
+        assert!(concrete_product_ready_decomposition(
+            "E-14a-runtime-evidence-section",
+            "E-14a-runtime-evidence-section: Patch only `docs/architecture/final-product-ready-judgment.md` with runtime operational evidence:"
+        )
+        .is_none());
     }
 
     #[test]
