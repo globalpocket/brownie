@@ -87,25 +87,45 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-14: Perform final Product Ready judgment after E-13:
-  Route: release-judgment.
-  Files: `docs/architecture/runtime-release-contract.json`,
+- [ ] E-14a: Write the final Product Ready judgment input memo:
+  Route: release-judgment/documentation.
+  File: `docs/architecture/final-product-ready-judgment.md`.
+  Create or update this single document. Read
+  `docs/architecture/runtime-release-contract.json`,
   `docs/architecture/runtime-release-readiness-audit.json`,
   `.brownie/release-evidence/runtime-operational-evidence.json`,
   `.brownie/release-evidence/owner-governance-evidence.json`, and
-  `.brownie/release-evidence/supply-chain-artifact-evidence.json`.
-  Recompute current release evidence on `origin/main`, distinguish Runtime
-  technical maturity from unresolved OSS publication decisions, and update the
-  release contract/readiness audit only when every Runtime-owned blocker is
-  satisfied. If any owner-controlled or external publication decision remains,
-  record it as owner/external fail-closed evidence without counting it against
-  Runtime technical maturity. Do not set `runtime_release_ready=true` unless
-  every release-blocking Runtime-owned condition is satisfied by evidence.
+  `.brownie/release-evidence/supply-chain-artifact-evidence.json`. Summarize
+  which Runtime-owned release blockers are satisfied, which remain
+  fail-closed, and which items are owner/external publication decisions. Do not
+  edit JSON files in this task and do not claim `runtime_release_ready=true`.
+  Verification: run `pnpm --workspace-root check`.
+- [ ] E-14b: Update release contract/readiness audit only if E-14a proves a
+  Runtime-owned judgment change is required:
+  Route: release-judgment/contract.
+  Files: `docs/architecture/runtime-release-contract.json` and
+  `docs/architecture/runtime-release-readiness-audit.json`.
+  Use `docs/architecture/final-product-ready-judgment.md` as the input. If the
+  memo shows only owner/external blockers remain, keep `runtime_release_ready`
+  false and record the remaining fail-closed state without counting it as a
+  Runtime implementation defect. If Runtime-owned blockers remain, preserve
+  them as release-blocking evidence. Do not set `runtime_release_ready=true`
+  unless every release-blocking Runtime-owned condition is satisfied by current
+  evidence.
   Verification: run `pnpm --workspace-root release:gate -- --dry-run`,
-  `pnpm --workspace-root guard:runtime-release-readiness`,
-  `pnpm --workspace-root guard:release-contract`,
-  `pnpm --workspace-root guard:owner-governance-evidence`, and the full CI
-  check path before PR creation.
+  `pnpm --workspace-root guard:runtime-release-readiness`, and
+  `pnpm --workspace-root guard:release-contract`.
+- [ ] E-14c: Verify and package the final Product Ready judgment PR:
+  Route: release-judgment/verification.
+  Files: `docs/architecture/final-product-ready-judgment.md`,
+  `docs/architecture/runtime-release-contract.json`, and
+  `docs/architecture/runtime-release-readiness-audit.json`.
+  Run the full local check path, confirm owner-governance evidence remains
+  fail-closed for owner/external decisions when applicable, and leave the queue
+  ready for PR creation/merge.
+  Verification: run `pnpm --workspace-root check`,
+  `pnpm --workspace-root guard:owner-governance-evidence`, and
+  `pnpm --workspace-root phase-loop:implementation-preflight`.
 
 ## Tracked but not Product Ready blocking
 
