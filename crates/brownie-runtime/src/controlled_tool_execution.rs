@@ -2651,6 +2651,25 @@ pub(super) fn handle_approved_workspace_intents(
         }
         if decision.tool_id == WORKSPACE_READ_TOOL_ID
             && task_goal_requires_workspace_write_proposal(&record.goal)
+        {
+            if let Some(reason) =
+                workspace_read_rejection_reason_from_selected_todo(&record.goal, &decision.input)
+            {
+                store.tasks().append_task_event_with_payload(
+                    record,
+                    LedgerEventKind::ToolExecutionDenied,
+                    Some(json!({
+                        "tool_id": decision.tool_id,
+                        "status": "Denied",
+                        "reason": reason,
+                    })),
+                )?;
+                duplicate_workspace_read_denied = true;
+                continue;
+            }
+        }
+        if decision.tool_id == WORKSPACE_READ_TOOL_ID
+            && task_goal_requires_workspace_write_proposal(&record.goal)
             && (run_has_workspace_read_for_same_path_without_write_proposal(
                 store,
                 record,
@@ -3293,6 +3312,55 @@ fn run_workspace_read_count_without_write_proposal(
 
 fn task_goal_enforces_workspace_read_budget_before_write(goal: &str) -> bool {
     goal.contains("- read_batch_policy:") || goal.contains("# Brownie Phase Loop Effective Prompt")
+}
+
+fn workspace_read_rejection_reason_from_selected_todo(goal: &str, input: &Value) -> Option<String> {
+    let requested_path = input.get("path").and_then(Value::as_str)?;
+    if let Some(only_path) = patch_only_path_from_goal(goal) {
+        if requested_path != only_path {
+            return Some(format!(
+                "Selected TODO says to patch only `{only_path}`; reading `{requested_path}` is not progress. Use the existing target-file context and request workspace.write."
+            ));
+        }
+    }
+    if forbidden_read_paths_from_goal(goal)
+        .iter()
+        .any(|forbidden| forbidden == requested_path)
+    {
+        return Some(format!(
+            "Selected TODO explicitly forbids reading `{requested_path}`; request workspace.write for the named target file instead."
+        ));
+    }
+    None
+}
+
+fn patch_only_path_from_goal(goal: &str) -> Option<String> {
+    let marker = "Patch only `";
+    let start = goal.find(marker)? + marker.len();
+    let end = goal[start..].find('`')? + start;
+    let path = goal[start..end].trim();
+    (!path.is_empty()).then(|| path.to_string())
+}
+
+fn forbidden_read_paths_from_goal(goal: &str) -> Vec<String> {
+    let Some(start) = goal.find("Do not read") else {
+        return Vec::new();
+    };
+    let tail = &goal[start..goal.len().min(start + 400)];
+    let mut paths = Vec::new();
+    let mut rest = tail;
+    while let Some(open) = rest.find('`') {
+        let after_open = &rest[open + 1..];
+        let Some(close) = after_open.find('`') else {
+            break;
+        };
+        let candidate = after_open[..close].trim();
+        if candidate.contains('/') && !candidate.is_empty() {
+            paths.push(candidate.to_string());
+        }
+        rest = &after_open[close + 1..];
+    }
+    paths
 }
 
 fn append_approved_mcp_tool_execution(
@@ -6040,6 +6108,24 @@ mod mcp_approval_lock_tests {
 
         assert!(is_concrete_product_ready_leaf_todo(&block));
         assert!(!is_runtime_refinable_product_ready_leaf_todo(&block));
+    }
+
+    #[test]
+    fn patch_only_todo_rejects_unrelated_workspace_read() {
+        let goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-16a-fixture-objective: Make the Golden Journey fixture request a deterministic workspace mutation:\n  Patch only `scripts/release-runtime-operational-evidence.mjs`. Do not read\n  or patch `scripts/release-gate.mjs`.\n";
+
+        let reason = workspace_read_rejection_reason_from_selected_todo(
+            goal,
+            &json!({"path": "scripts/release-gate.mjs"}),
+        )
+        .expect("rejection");
+
+        assert!(reason.contains("patch only `scripts/release-runtime-operational-evidence.mjs`"));
+        assert!(workspace_read_rejection_reason_from_selected_todo(
+            goal,
+            &json!({"path": "scripts/release-runtime-operational-evidence.mjs"})
+        )
+        .is_none());
     }
 
     #[test]
