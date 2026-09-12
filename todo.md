@@ -87,19 +87,6 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-14a-contract-section: Patch only `docs/architecture/final-product-ready-judgment.md` with the release contract state:
-  Source TODO: E-14a: Write the final Product Ready judgment input memo.
-  Read only `docs/architecture/final-product-ready-judgment.md` and
-  `docs/architecture/runtime-release-contract.json`. Add or update a bounded
-  section summarizing `runtime_release_ready`, release-engineering maturity, and
-  contract-level fail-closed blockers. Do not edit JSON files and do not claim
-  `runtime_release_ready=true`.
-- [ ] E-14a-audit-section: Patch only `docs/architecture/final-product-ready-judgment.md` with readiness audit state:
-  Source TODO: E-14a: Write the final Product Ready judgment input memo.
-  Read only `docs/architecture/final-product-ready-judgment.md` and
-  `docs/architecture/runtime-release-readiness-audit.json`. Add or update a
-  bounded section separating Runtime-owned blockers from owner/external
-  publication decisions. Do not edit JSON files.
 - [ ] E-14a-runtime-evidence-section: Patch only `docs/architecture/final-product-ready-judgment.md` with runtime operational evidence:
   Source TODO: E-14a: Write the final Product Ready judgment input memo.
   Read only `docs/architecture/final-product-ready-judgment.md` and
