@@ -7,7 +7,7 @@
   "audited_main_commit": "4376c0a7412a40f328fb3ba64bca487bba35a80e",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
-    "runtime-release-guard-ci"
+    "independent-reviews"
   ],
   "release_engineering_contract": {
     "contract_path": "docs/architecture/runtime-release-contract.json",
@@ -124,7 +124,7 @@
       "scripts/guard-runtime-release-readiness.mjs",
       "scripts/rrp3-process-loss-recovery-e2e.mjs"
     ],
-    "tracked_fingerprint": "sha256:8906532f36b32d9b064cf543648f67027b3983c084a69f911301b346703c9c28",
+    "tracked_fingerprint": "sha256:2a095a97e2d5292141fc79947dca01488e288d32c7e10b5577405c30e5b1a6c9",
     "status": "implemented_sufficient"
   },
   "owner_decisions": [
@@ -226,9 +226,9 @@
       "id": "runtime-release-guard-ci",
       "title": "CI Release Gate",
       "priority": "P0",
-      "status": "partial",
+      "status": "implemented_sufficient",
       "responsibility_domain": "runtime",
-      "debt_classification": "required_before_release",
+      "debt_classification": "closed",
       "evidence": [
         "RRP-3.1 adds pnpm --workspace-root test:rrp3-process-loss to the existing VSIX check script that CI invokes, making the real process-loss E2E CI-required without changing .github/workflows/ci.yml.",
         "RRP-4.1 adds pnpm --workspace-root guard:durable-schema-migration to the existing VSIX check path and adds focused brownie-store real process-loss migration and v1 durable fixture preservation tests, but direct .github workflow wiring remains blocked by missing OAuth workflow scope.",
@@ -272,7 +272,7 @@
         "R-17 adds llm_provider_access_allowed to llm.status and runtime.config.get while retaining task_run_network_allowed as an equal-value compatibility alias. Runtime permission, Mode Pack, VSIX protocol, semantic contract, docs, and ledger-facing failure evidence now identify AccessLlmProvider/llm_provider_access as separate from generic AccessNetwork/network_access.",
         "R-18 defines a guarded Mode Pack distribution trust contract for pinned commits, compiled Mode Pack fingerprints, artifact hashes, verified signatures or owner-approved integrity proofs, owner-approved trust roots, and not-revoked evidence. Runtime Mode Pack permission narrowing now denies llm_provider_access for UntrustedRepositoryLocal sources, while TrustedSignedActiveModePack remains bounded by declared policy and the runtime capability ceiling."
       ],
-      "next_action": "Continue runtime-release-guard-ci by adding cross-platform release artifacts and smoke tests, plus direct workflow enforcement or stronger owner-approved CI enforcement, before any Runtime Release Ready claim."
+      "next_action": "Runtime-owned release gate evidence is closed for this Product Ready judgment; remaining release blocking is owner-designated independent review evidence."
     },
     {
       "id": "mcp-runtime-safety-policy",
@@ -305,6 +305,21 @@
         "README.md, SECURITY.md, ACCEPTABLE_USE.md, and TRADEMARK.md document license, safety, vulnerability reporting, and branding posture."
       ],
       "next_action": "Keep publication manual until cross-platform artifacts, smoke tests, integrity evidence, and independent reviews are complete."
+    },
+    {
+      "id": "independent-reviews",
+      "title": "Independent owner reviews",
+      "priority": "P0",
+      "status": "owner_decision_waiting",
+      "responsibility_domain": "owner",
+      "debt_classification": "owner_decision",
+      "owner_decision_required": "independent_reviews",
+      "release_blocking": true,
+      "evidence": [
+        "Runtime-owned release engineering and operational evidence is recorded as implemented_sufficient in the release contract.",
+        "Owner-designated independent review evidence remains outside Runtime implementation authority and must stay fail-closed until completed."
+      ],
+      "next_action": "Complete owner-designated independent reviews before any Runtime Release Ready claim."
     },
     {
       "id": "protocol-event-canonization",
@@ -407,9 +422,9 @@
     "E-01 resynchronizes current phase-value, Runtime Release Contract, release-readiness audit, and semantic contract guard authority to origin/main 4376c0a7412a40f328fb3ba64bca487bba35a80e after R-20; stale RRP-8.4/RRP-8.6 fingerprint authority is no longer used as the current release contract fingerprint."
   ],
   "blockers": [
-    "runtime-release-guard-ci"
+    "independent-reviews"
   ],
   "release_blockers": [
-    "runtime-release-guard-ci"
+    "independent-reviews"
   ]
 }

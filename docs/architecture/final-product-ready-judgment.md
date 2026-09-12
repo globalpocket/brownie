@@ -3,8 +3,8 @@
 ## Release Contract State
 
 - `runtime_release_ready`: false
-- `release_engineering_maturity`: blocked
-- `contract-level_fail_closed_blockers`: ledger-contract-schema-v1-replay-read-rejection
+- `release_engineering_maturity`: owner-review-blocked
+- `contract-level_fail_closed_blockers`: independent_reviews
 
 ## Evidence
 
@@ -48,4 +48,4 @@
 
 ### Status
 
-Runtime Product Ready: not reached. Awaiting independent owner reviews completion.
+Runtime Product Ready: not reached. Runtime-owned blockers are satisfied, but independent owner reviews remain an owner/external fail-closed blocker.

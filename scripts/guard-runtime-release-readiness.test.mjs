@@ -306,6 +306,80 @@ test('rejects release blockers that name closed Runtime items', () => {
   assert(errors.some((error) => error.includes('release_ready_blocked_by must not include closed')));
 });
 
+test('accepts explicit owner release blocker while runtime release remains fail-closed', () => {
+  const audit = terminalRuntimeReadyAudit({
+    runtime_release_ready: false,
+    release_ready_blocked_by: ['independent-reviews'],
+    classifications: [
+      ...terminalRuntimeReadyAudit().classifications,
+      item({
+        id: 'independent-reviews',
+        title: 'Independent owner reviews',
+        priority: 'P0',
+        status: 'owner_decision_waiting',
+        responsibility_domain: 'owner',
+        debt_classification: 'owner_decision',
+        owner_decision_required: 'independent_reviews',
+        release_blocking: true
+      })
+    ]
+  });
+  const errors = validate(audit);
+  assert.deepEqual(errors, []);
+});
+
+test('rejects closed owner release blocker without satisfied owner-governance evidence', () => {
+  const audit = terminalRuntimeReadyAudit({
+    classifications: [
+      ...terminalRuntimeReadyAudit().classifications,
+      item({
+        id: 'independent-reviews',
+        title: 'Independent owner reviews',
+        priority: 'P0',
+        status: 'implemented_sufficient',
+        responsibility_domain: 'owner',
+        debt_classification: 'closed',
+        owner_decision_required: 'independent_reviews',
+        release_blocking: true,
+        evidence: ['bounded owner evidence reference']
+      })
+    ]
+  });
+  const errors = validate(audit, { cargoText: 'license = "Apache-2.0"\n' });
+  assert(errors.some((error) => error.includes('owner release blocker independent-reviews must have satisfied owner-governance evidence')));
+});
+
+test('accepts closed owner release blocker with satisfied owner-governance evidence', () => {
+  const audit = terminalRuntimeReadyAudit({
+    classifications: [
+      ...terminalRuntimeReadyAudit().classifications,
+      item({
+        id: 'independent-reviews',
+        title: 'Independent owner reviews',
+        priority: 'P0',
+        status: 'implemented_sufficient',
+        responsibility_domain: 'owner',
+        debt_classification: 'closed',
+        owner_decision_required: 'independent_reviews',
+        release_blocking: true,
+        evidence: ['bounded owner evidence reference']
+      })
+    ]
+  });
+  const errors = validate(audit, {
+    cargoText: 'license = "Apache-2.0"\n',
+    ownerGovernanceEvidence: {
+      sections: {
+        independent_reviews: {
+          status: 'satisfied',
+          release_blocking: true
+        }
+      }
+    }
+  });
+  assert.deepEqual(errors, []);
+});
+
 test('rejects open Runtime P0 item misclassified as external post-v0 debt', () => {
   const audit = validAudit({
     classifications: validAudit().classifications.map((entry) =>

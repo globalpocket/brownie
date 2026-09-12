@@ -12,6 +12,7 @@ const defaultBoundaryContractPath = 'docs/architecture/runtime-boundary-canonica
 const defaultCiPath = '.github/workflows/ci.yml';
 const defaultCargoPath = 'Cargo.toml';
 const defaultVsixPackagePath = 'extensions/brownie-vsix/package.json';
+const defaultOwnerGovernanceEvidencePath = '.brownie/release-evidence/owner-governance-evidence.json';
 
 const allowedStatuses = new Set([
   'implemented_sufficient',
@@ -296,6 +297,26 @@ function findOwnerDecision(audit, id) {
   return decisions.find((decision) => decision && decision.id === id);
 }
 
+function ownerGovernanceEvidenceSection(evidence, ownerDecisionRequired) {
+  if (!isNonEmptyString(ownerDecisionRequired)) {
+    return undefined;
+  }
+  return evidence?.sections?.[ownerDecisionRequired];
+}
+
+function isVerifiedClosedOwnerReleaseBlocker(item, ownerGovernanceEvidence) {
+  if (
+    item.responsibility_domain !== 'owner' ||
+    item.release_blocking !== true ||
+    item.status !== 'implemented_sufficient' ||
+    item.debt_classification !== 'closed'
+  ) {
+    return false;
+  }
+  const section = ownerGovernanceEvidenceSection(ownerGovernanceEvidence, item.owner_decision_required);
+  return section?.release_blocking === true && section.status === 'satisfied';
+}
+
 function isOpenRuntimeReleaseBlocker(item) {
   return (
     item.responsibility_domain === 'runtime' &&
@@ -303,6 +324,19 @@ function isOpenRuntimeReleaseBlocker(item) {
     item.status !== 'implemented_sufficient' &&
     item.debt_classification === 'required_before_release'
   );
+}
+
+function isOpenOwnerReleaseBlocker(item) {
+  return (
+    item.responsibility_domain === 'owner' &&
+    item.release_blocking === true &&
+    item.status !== 'implemented_sufficient' &&
+    item.debt_classification === 'owner_decision'
+  );
+}
+
+function isOpenReleaseBlocker(item) {
+  return isOpenRuntimeReleaseBlocker(item) || isOpenOwnerReleaseBlocker(item);
 }
 
 function allStrings(value) {
@@ -404,6 +438,7 @@ export function validateRuntimeReleaseReadinessAudit(audit, options = {}) {
   const ciText = options.ciText ?? '';
   const cargoText = options.cargoText ?? '';
   const vsixPackageText = options.vsixPackageText ?? '';
+  const ownerGovernanceEvidence = options.ownerGovernanceEvidence ?? {};
   const errors = [];
 
   requireValue(Number.isInteger(audit.schema_version) && audit.schema_version > 0, errors, `${auditPath} schema_version must be a positive integer.`);
@@ -502,12 +537,19 @@ export function validateRuntimeReleaseReadinessAudit(audit, options = {}) {
         `${auditPath} implemented Runtime ${item.priority} item ${item.id} must be closed.`
       );
     }
+    if (item.responsibility_domain === 'owner' && item.release_blocking === true && item.status === 'implemented_sufficient') {
+      requireValue(
+        isVerifiedClosedOwnerReleaseBlocker(item, ownerGovernanceEvidence),
+        errors,
+        `${auditPath} owner release blocker ${item.id} must have satisfied owner-governance evidence before it can be closed.`
+      );
+    }
   }
 
   const blockedBy = new Set(Array.isArray(audit.release_ready_blocked_by) ? audit.release_ready_blocked_by : []);
-  const openRuntimeBlockers = classifications.filter(isOpenRuntimeReleaseBlocker);
+  const openReleaseBlockers = classifications.filter(isOpenReleaseBlocker);
   for (const item of classifications) {
-    if (isOpenRuntimeReleaseBlocker(item)) {
+    if (isOpenReleaseBlocker(item)) {
       requireValue(blockedBy.has(item.id), errors, `${auditPath} release_ready_blocked_by must include ${item.id}.`);
     }
   }
@@ -518,19 +560,19 @@ export function validateRuntimeReleaseReadinessAudit(audit, options = {}) {
       continue;
     }
     requireValue(
-      isOpenRuntimeReleaseBlocker(item),
+      isOpenReleaseBlocker(item),
       errors,
-      `${auditPath} release_ready_blocked_by must not include closed or non-runtime item ${id}.`
+      `${auditPath} release_ready_blocked_by must not include closed or non-release-blocking item ${id}.`
     );
   }
-  if (openRuntimeBlockers.length > 0) {
+  if (openReleaseBlockers.length > 0) {
     requireValue(
       audit.runtime_release_ready === false,
       errors,
-      `${auditPath} runtime_release_ready must remain false while required Runtime P0/P1 debt is open.`
+      `${auditPath} runtime_release_ready must remain false while required Runtime or owner release blockers are open.`
     );
   } else {
-    requireValue(audit.runtime_release_ready === true, errors, `${auditPath} runtime_release_ready must be true after all Runtime P0/P1 release blockers are closed.`);
+    requireValue(audit.runtime_release_ready === true, errors, `${auditPath} runtime_release_ready must be true after all Runtime and owner release blockers are closed.`);
     requireValue(blockedBy.size === 0, errors, `${auditPath} release_ready_blocked_by must be empty when Runtime release is ready.`);
   }
 
@@ -568,12 +610,13 @@ export function runRuntimeReleaseReadinessGuard(options = {}) {
   const readErrors = [];
   const audit = options.audit ?? readJson(repoRoot, auditPath, readErrors);
   const boundaryContract = options.boundaryContract ?? readJson(repoRoot, boundaryContractPath, readErrors);
+  const ownerGovernanceEvidence = options.ownerGovernanceEvidence ?? readJson(repoRoot, defaultOwnerGovernanceEvidencePath, readErrors);
   const ciText = options.ciText ?? readText(repoRoot, defaultCiPath, readErrors);
   const cargoText = options.cargoText ?? readText(repoRoot, defaultCargoPath, readErrors);
   const vsixPackageText = options.vsixPackageText ?? readText(repoRoot, defaultVsixPackagePath, readErrors);
   const errors = [
     ...readErrors,
-    ...validateRuntimeReleaseReadinessAudit(audit, { auditPath, repoRoot, ciText, cargoText, vsixPackageText }),
+    ...validateRuntimeReleaseReadinessAudit(audit, { auditPath, repoRoot, ciText, cargoText, vsixPackageText, ownerGovernanceEvidence }),
     ...validateRuntimeBoundaryContract(boundaryContract, { contractPath: boundaryContractPath })
   ];
   return { errors, auditPath };

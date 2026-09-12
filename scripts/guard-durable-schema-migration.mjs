@@ -78,7 +78,15 @@ export function validateDurableSchemaMigration({ storeText, audit, packageText, 
   }
 
   const blockedBy = new Set(Array.isArray(audit.release_ready_blocked_by) ? audit.release_ready_blocked_by : []);
-  requireValue(blockedBy.has('runtime-release-guard-ci'), errors, 'release_ready_blocked_by must include reopened blocker runtime-release-guard-ci.');
+  const runtimeReleaseGuard = byId.get('runtime-release-guard-ci');
+  const runtimeReleaseGuardClosed =
+    runtimeReleaseGuard?.status === 'implemented_sufficient' &&
+    runtimeReleaseGuard?.debt_classification === 'closed';
+  requireValue(
+    runtimeReleaseGuardClosed || blockedBy.has('runtime-release-guard-ci'),
+    errors,
+    'release_ready_blocked_by must include runtime-release-guard-ci unless Runtime release guard evidence has closed it.'
+  );
   const protocolCanonization = byId.get('protocol-event-canonization');
   const protocolCanonizationClosed =
     protocolCanonization?.status === 'implemented_sufficient' &&

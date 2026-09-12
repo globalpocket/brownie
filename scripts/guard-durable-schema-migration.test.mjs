@@ -63,6 +63,19 @@ test('valid durable schema migration evidence passes', () => {
   assert.deepEqual(validateDurableSchemaMigration(validFixture()), []);
 });
 
+test('guard accepts closed Runtime release guard without reopened blocker id', () => {
+  const fixture = validFixture();
+  fixture.audit.release_ready_blocked_by = ['independent-reviews'];
+  fixture.audit.classifications.push({
+    id: 'runtime-release-guard-ci',
+    status: 'implemented_sufficient',
+    debt_classification: 'closed',
+    evidence: ['Runtime release guard evidence closed for this judgment.']
+  });
+
+  assert.deepEqual(validateDurableSchemaMigration(fixture), []);
+});
+
 test('guard fails without real v1 to v2 migration registry', () => {
   const fixture = validFixture();
   fixture.storeText = fixture.storeText.replace('to_version: 2', 'to_version: 1');

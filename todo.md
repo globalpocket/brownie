@@ -87,39 +87,6 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-14b-contract-satisfied-evidence-flags: Patch only `docs/architecture/runtime-release-contract.json` to stop reporting already-satisfied evidence as missing:
-  Read only `docs/architecture/runtime-release-contract.json`. Keep
-  `runtime_release_ready` false. Do not set any release-ready flag true. Make
-  only small status string replacements for these exact condition ids when
-  present: `mandatory_ci_success`, `os_artifacts_generated`,
-  `artifact_smoke_tests`, `security_dependency_secret_scans`, `sbom_generated`,
-  `checksums_generated`, `signature_or_integrity_proof`,
-  `provenance_generated`, `tested_commit_matches_artifact_commit`, and
-  `audit_trace_matches_tested_commit` should use a satisfied/implemented status
-  consistent with current evidence rather than a missing/blocked status. Do not
-  rewrite large JSON blocks; use narrow patches over exact status lines.
-- [ ] E-14b-audit-resync: Patch only `docs/architecture/runtime-release-readiness-audit.json` to align with the E-14a judgment memo:
-  Read only `docs/architecture/runtime-release-readiness-audit.json`. Keep
-  `runtime_release_ready` false. Do not set any release-ready flag true.
-  Current judgment facts: Runtime operational evidence is satisfied;
-  supply-chain artifact evidence is satisfied; owner governance is satisfied
-  except `independent_reviews` is not completed. Update stale audit text or
-  status fields that still describe Runtime-owned release-gate, CI, artifact,
-  supply-chain, or provenance work as the remaining Product Ready blocker when
-  the current judgment says the remaining blocker is independent owner reviews.
-  Prefer minimal JSON string changes and keep valid formatting.
-- [ ] E-14c: Verify and package the final Product Ready judgment PR:
-  Route: release-judgment/verification.
-  Files: `docs/architecture/final-product-ready-judgment.md`,
-  `docs/architecture/runtime-release-contract.json`, and
-  `docs/architecture/runtime-release-readiness-audit.json`.
-  Run the full local check path, confirm owner-governance evidence remains
-  fail-closed for owner/external decisions when applicable, and leave the queue
-  ready for PR creation/merge.
-  Verification: run `pnpm --workspace-root check`,
-  `pnpm --workspace-root guard:owner-governance-evidence`, and
-  `pnpm --workspace-root phase-loop:implementation-preflight`.
-
 ## Tracked but not Product Ready blocking
 
 These items are intentionally not part of the Product Ready blocking queue above
