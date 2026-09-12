@@ -2559,6 +2559,7 @@ pub(super) fn handle_approved_workspace_intents(
             None => false,
         };
     let mut duplicate_workspace_read_denied = false;
+    let mut workspace_read_failed = false;
     for (intent_index, decision) in evaluation.items.into_iter().enumerate() {
         let builtin_controlled_execution_tool = matches!(
             decision.tool_id.as_str(),
@@ -2650,6 +2651,25 @@ pub(super) fn handle_approved_workspace_intents(
         }
         if decision.tool_id == WORKSPACE_READ_TOOL_ID
             && task_goal_requires_workspace_write_proposal(&record.goal)
+        {
+            if let Some(reason) =
+                workspace_read_rejection_reason_from_selected_todo(&record.goal, &decision.input)
+            {
+                store.tasks().append_task_event_with_payload(
+                    record,
+                    LedgerEventKind::ToolExecutionDenied,
+                    Some(json!({
+                        "tool_id": decision.tool_id,
+                        "status": "Denied",
+                        "reason": reason,
+                    })),
+                )?;
+                duplicate_workspace_read_denied = true;
+                continue;
+            }
+        }
+        if decision.tool_id == WORKSPACE_READ_TOOL_ID
+            && task_goal_requires_workspace_write_proposal(&record.goal)
             && (run_has_workspace_read_for_same_path_without_write_proposal(
                 store,
                 record,
@@ -2707,6 +2727,10 @@ pub(super) fn handle_approved_workspace_intents(
                 input: execution_input,
             },
         )?;
+        if result.tool_id == WORKSPACE_READ_TOOL_ID && result.status == ToolExecutionStatus::Failed
+        {
+            workspace_read_failed = true;
+        }
         let kind = match result.status {
             ToolExecutionStatus::Completed => LedgerEventKind::ToolExecutionCompleted,
             ToolExecutionStatus::Denied => LedgerEventKind::ToolExecutionDenied,
@@ -2723,6 +2747,7 @@ pub(super) fn handle_approved_workspace_intents(
         record,
         policy,
         duplicate_workspace_read_denied,
+        workspace_read_failed,
     )?;
     Ok(())
 }
@@ -2732,14 +2757,22 @@ pub(super) fn append_todo_decomposition_blocker_after_read_only_stall(
     record: &brownie_protocol::TaskRecord,
     policy: &CompiledModePolicy,
     duplicate_workspace_read_denied: bool,
+    workspace_read_failed: bool,
 ) -> anyhow::Result<()> {
     if !task_goal_requires_workspace_write_proposal(&record.goal)
         || run_has_workspace_patch_proposal(store, record)?
-        || !run_has_todo_decomposition_stall(store, record, duplicate_workspace_read_denied)?
+        || !run_has_todo_decomposition_stall(
+            store,
+            record,
+            duplicate_workspace_read_denied,
+            workspace_read_failed,
+        )?
     {
         return Ok(());
     }
-    if selected_todo_mentions_non_todo_workspace_path(&record.goal)
+    if !duplicate_workspace_read_denied
+        && !workspace_read_failed
+        && selected_todo_mentions_non_todo_workspace_path(&record.goal)
         && !selected_todo_allows_todo_md_edit(&record.goal)
     {
         return Ok(());
@@ -2753,7 +2786,10 @@ pub(super) fn append_todo_decomposition_blocker_after_read_only_stall(
     else {
         return Ok(());
     };
-    if is_concrete_product_ready_leaf_todo(&block) {
+    if is_concrete_product_ready_leaf_todo(&block)
+        && (!duplicate_workspace_read_denied && !workspace_read_failed
+            || !is_runtime_refinable_product_ready_leaf_todo(&block))
+    {
         return Ok(());
     }
     let current_head = latest_git_status_current_head(store, record)?;
@@ -2767,6 +2803,8 @@ pub(super) fn append_todo_decomposition_blocker_after_read_only_stall(
         .unwrap_or_else(|| "<unknown-current-head>".to_string());
     let reason_prefix = if duplicate_workspace_read_denied {
         "Duplicate workspace.read prevented progress on the selected TODO"
+    } else if workspace_read_failed {
+        "workspace.read failed before implementation progress on the selected TODO"
     } else {
         "Read-only TODO investigation completed without a workspace.write proposal"
     };
@@ -2792,10 +2830,12 @@ fn run_has_todo_decomposition_stall(
     store: &BrownieStore,
     record: &brownie_protocol::TaskRecord,
     duplicate_workspace_read_denied: bool,
+    workspace_read_failed: bool,
 ) -> anyhow::Result<bool> {
     let events = store.tasks().read_ledger_events(&record.run_id)?;
     let read_todo = run_events_include_workspace_read_path(&events, "todo.md");
-    if duplicate_workspace_read_denied && selected_todo_first_line_from_goal(&record.goal).is_some()
+    if (duplicate_workspace_read_denied || workspace_read_failed)
+        && selected_todo_first_line_from_goal(&record.goal).is_some()
     {
         return Ok(true);
     }
@@ -2898,13 +2938,9 @@ struct TodoBlock {
 }
 
 fn first_unchecked_todo_block(todo: &str) -> Option<TodoBlock> {
-    let start = todo.find("- [ ] ")?;
-    let tail = &todo[start + 1..];
-    let next_offset = tail
-        .find("\n- [ ] ")
-        .map(|offset| offset + 1)
-        .unwrap_or_else(|| todo.len() - start);
-    let old_text = &todo[start..start + next_offset];
+    let start = next_unchecked_todo_line_start(todo, 0)?;
+    let end = todo_block_end(todo, start);
+    let old_text = &todo[start..end];
     let first_line = old_text.lines().next()?.trim();
     let title = first_line.strip_prefix("- [ ] ")?.trim().to_string();
     let id = title
@@ -2943,14 +2979,9 @@ fn selected_todo_first_line_from_goal(goal: &str) -> Option<String> {
 
 fn todo_block_by_first_line(todo: &str, selected_first_line: &str) -> Option<TodoBlock> {
     let mut offset = 0usize;
-    while let Some(relative_start) = todo[offset..].find("- [ ] ") {
-        let start = offset + relative_start;
-        let tail = &todo[start + 1..];
-        let next_offset = tail
-            .find("\n- [ ] ")
-            .map(|offset| offset + 1)
-            .unwrap_or_else(|| todo.len() - start);
-        let old_text = &todo[start..start + next_offset];
+    while let Some(start) = next_unchecked_todo_line_start(todo, offset) {
+        let end = todo_block_end(todo, start);
+        let old_text = &todo[start..end];
         let first_line = old_text.lines().next()?.trim();
         if first_line == selected_first_line {
             let title = first_line.strip_prefix("- [ ] ")?.trim().to_string();
@@ -2971,7 +3002,36 @@ fn todo_block_by_first_line(todo: &str, selected_first_line: &str) -> Option<Tod
                 old_text: old_text.to_string(),
             });
         }
-        offset = start + next_offset;
+        offset = end;
+    }
+    None
+}
+
+fn todo_block_end(todo: &str, start: usize) -> usize {
+    let tail = &todo[start + 1..];
+    let next_todo = tail.find("\n- [ ] ").map(|offset| start + 1 + offset + 1);
+    let next_heading = tail.find("\n## ").map(|offset| start + 1 + offset + 1);
+    [next_todo, next_heading]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(todo.len())
+}
+
+fn next_unchecked_todo_line_start(todo: &str, offset: usize) -> Option<usize> {
+    let mut cursor = offset.min(todo.len());
+    while cursor < todo.len() {
+        let line_end = todo[cursor..]
+            .find('\n')
+            .map(|relative| cursor + relative)
+            .unwrap_or(todo.len());
+        if todo[cursor..line_end].starts_with("- [ ] ") {
+            return Some(cursor);
+        }
+        if line_end == todo.len() {
+            break;
+        }
+        cursor = line_end + 1;
     }
     None
 }
@@ -3014,6 +3074,10 @@ fn is_concrete_product_ready_leaf_todo(block: &TodoBlock) -> bool {
             "E-04a" | "E-04b" | "E-04c" | "E-07a" | "E-07b" | "E-07c" | "E-08a" | "E-08b"
         )
     })
+}
+
+fn is_runtime_refinable_product_ready_leaf_todo(block: &TodoBlock) -> bool {
+    matches!(block.id.as_deref(), Some("E-15a" | "E-16a"))
 }
 
 fn todo_md_workspace_write_rejection_reason(
@@ -3141,6 +3205,16 @@ fn concrete_product_ready_decomposition(parent_id: &str, title: &str) -> Option<
             "- [ ] E-08a: Fail closed on missing supply-chain tooling:\n  Source TODO: {source}\n  Add guard coverage proving absent audit/SBOM/secret-scan tools produce blocked release evidence.\n- [ ] E-08b: Fail closed on supply-chain scan and network failures:\n  Add tests proving scan command failures and network errors cannot be treated as success.\n"
         ));
     }
+    if source.contains("E-15a") {
+        return Some(format!(
+            "- [ ] E-15a-target-config: Add local release target config loading for runtime operational evidence:\n  Source TODO: {source}\n  Read `docs/architecture/local-release-targets.example.json` and teach `scripts/release-runtime-operational-evidence.mjs` to discover enabled artifact lifecycle targets without executing remote commands yet. Missing or invalid target config must remain fail-closed.\n- [ ] E-15a-target-runner: Execute one configured artifact lifecycle target through bounded local/SSH delegation:\n  Source TODO: {source}\n  Extend `scripts/release-runtime-operational-evidence.mjs` to run the existing artifact lifecycle checks on a selected local release target with timeout-bounded command execution and failed/unreachable targets recorded as release-blocking evidence.\n- [ ] E-15a-target-guard: Cover delegated artifact lifecycle success and fail-closed paths:\n  Source TODO: {source}\n  Add coverage in `scripts/guard-runtime-operational-evidence.test.mjs` for delegated target results, unreachable targets, command failures, and incompatible/missing artifacts.\n"
+        ));
+    }
+    if source.contains("E-16a") {
+        return Some(format!(
+            "- [ ] E-16a-fixture-objective: Make the Golden Journey fixture request a deterministic workspace mutation:\n  Source TODO: {source}\n  Patch `scripts/release-runtime-operational-evidence.mjs` so `buildGoldenJourneySection` writes a fixture objective that requires one small repository-local file change and can expose proposal/apply lifecycle evidence in the JSON run output.\n- [ ] E-16a-fixture-assertions: Require proposal/apply/post-apply/completion evidence before satisfying Golden Journey:\n  Source TODO: {source}\n  Patch `scripts/release-runtime-operational-evidence.mjs` so `golden_journey_fixture.status` remains failed unless proposal preflight, explicit authorization/apply, workspace mutation, post-apply verification, and accepted completion are all observed.\n- [ ] E-16a-fixture-guard: Cover Golden Journey fail-closed and satisfied cases:\n  Source TODO: {source}\n  Add `scripts/guard-runtime-operational-evidence.test.mjs` coverage proving incomplete Golden Journey lifecycle evidence is rejected and complete lifecycle evidence is accepted.\n"
+        ));
+    }
     None
 }
 
@@ -3241,6 +3315,55 @@ fn run_workspace_read_count_without_write_proposal(
 
 fn task_goal_enforces_workspace_read_budget_before_write(goal: &str) -> bool {
     goal.contains("- read_batch_policy:") || goal.contains("# Brownie Phase Loop Effective Prompt")
+}
+
+fn workspace_read_rejection_reason_from_selected_todo(goal: &str, input: &Value) -> Option<String> {
+    let requested_path = input.get("path").and_then(Value::as_str)?;
+    if let Some(only_path) = patch_only_path_from_goal(goal) {
+        if requested_path != only_path {
+            return Some(format!(
+                "Selected TODO says to patch only `{only_path}`; reading `{requested_path}` is not progress. Use the existing target-file context and request workspace.write."
+            ));
+        }
+    }
+    if forbidden_read_paths_from_goal(goal)
+        .iter()
+        .any(|forbidden| forbidden == requested_path)
+    {
+        return Some(format!(
+            "Selected TODO explicitly forbids reading `{requested_path}`; request workspace.write for the named target file instead."
+        ));
+    }
+    None
+}
+
+fn patch_only_path_from_goal(goal: &str) -> Option<String> {
+    let marker = "Patch only `";
+    let start = goal.find(marker)? + marker.len();
+    let end = goal[start..].find('`')? + start;
+    let path = goal[start..end].trim();
+    (!path.is_empty()).then(|| path.to_string())
+}
+
+fn forbidden_read_paths_from_goal(goal: &str) -> Vec<String> {
+    let Some(start) = goal.find("Do not read") else {
+        return Vec::new();
+    };
+    let tail = &goal[start..goal.len().min(start + 400)];
+    let mut paths = Vec::new();
+    let mut rest = tail;
+    while let Some(open) = rest.find('`') {
+        let after_open = &rest[open + 1..];
+        let Some(close) = after_open.find('`') else {
+            break;
+        };
+        let candidate = after_open[..close].trim();
+        if candidate.contains('/') && !candidate.is_empty() {
+            paths.push(candidate.to_string());
+        }
+        rest = &after_open[close + 1..];
+    }
+    paths
 }
 
 fn append_approved_mcp_tool_execution(
@@ -5941,6 +6064,95 @@ mod mcp_approval_lock_tests {
                 "{id} must fail closed instead of being rewritten into duplicate TODOs"
             );
         }
+    }
+
+    #[test]
+    fn duplicate_read_stall_can_refine_concrete_leaf_todo() {
+        let replacement = todo_decomposition_replacement(
+            &TodoBlock {
+                id: Some("E-15a".to_string()),
+                title: "E-15a: Teach runtime operational evidence to execute artifact lifecycle checks through local release targets".to_string(),
+                old_text: "- [ ] E-15a: Teach runtime operational evidence to execute artifact lifecycle checks through local release targets\n".to_string(),
+            },
+            None,
+            false,
+        );
+
+        assert!(replacement.contains("E-15a-target-config"));
+        assert!(replacement.contains("E-15a-target-runner"));
+        assert!(replacement.contains("E-15a-target-guard"));
+    }
+
+    #[test]
+    fn duplicate_read_stall_can_refine_golden_journey_leaf_todo() {
+        let replacement = todo_decomposition_replacement(
+            &TodoBlock {
+                id: Some("E-16a".to_string()),
+                title: "E-16a: Make the runtime operational Golden Journey fixture exercise the full proposal/apply path".to_string(),
+                old_text: "- [ ] E-16a: Make the runtime operational Golden Journey fixture exercise the full proposal/apply path\n".to_string(),
+            },
+            None,
+            false,
+        );
+
+        assert!(replacement.contains("E-16a-fixture-objective"));
+        assert!(replacement.contains("E-16a-fixture-assertions"));
+        assert!(replacement.contains("E-16a-fixture-guard"));
+        assert!(!replacement.contains("Implement the next concrete step"));
+    }
+
+    #[test]
+    fn generated_product_ready_leaf_todos_are_not_runtime_refinable() {
+        let block = TodoBlock {
+            id: Some("E-16a-fixture-objective".to_string()),
+            title: "E-16a-fixture-objective: Make the Golden Journey fixture request a deterministic workspace mutation".to_string(),
+            old_text: "- [ ] E-16a-fixture-objective: Make the Golden Journey fixture request a deterministic workspace mutation\n".to_string(),
+        };
+
+        assert!(is_concrete_product_ready_leaf_todo(&block));
+        assert!(!is_runtime_refinable_product_ready_leaf_todo(&block));
+    }
+
+    #[test]
+    fn patch_only_todo_rejects_unrelated_workspace_read() {
+        let goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-16a-fixture-objective: Make the Golden Journey fixture request a deterministic workspace mutation:\n  Patch only `scripts/release-runtime-operational-evidence.mjs`. Do not read\n  or patch `scripts/release-gate.mjs`.\n";
+
+        let reason = workspace_read_rejection_reason_from_selected_todo(
+            goal,
+            &json!({"path": "scripts/release-gate.mjs"}),
+        )
+        .expect("rejection");
+
+        assert!(reason.contains("patch only `scripts/release-runtime-operational-evidence.mjs`"));
+        assert!(workspace_read_rejection_reason_from_selected_todo(
+            goal,
+            &json!({"path": "scripts/release-runtime-operational-evidence.mjs"})
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn todo_block_detection_ignores_inline_task_marker_examples() {
+        let todo = "## Queue protocol\n\n- Pending work is represented by unchecked Markdown task items: `- [ ] ...`.\n\n## Product Ready Blocking Queue\n\n- [ ] E-16a: Make the runtime operational Golden Journey fixture exercise the full proposal/apply path\n  Route: implementation.\n";
+
+        let first = first_unchecked_todo_block(todo).expect("first todo");
+
+        assert_eq!(
+            first.title,
+            "E-16a: Make the runtime operational Golden Journey fixture exercise the full proposal/apply path"
+        );
+        assert!(!first.old_text.contains("Pending work is represented"));
+    }
+
+    #[test]
+    fn todo_block_detection_stops_at_next_heading() {
+        let todo = "- [ ] E-14: Perform final Product Ready judgment.\n  Route: release-judgment.\n\n## Tracked but not Product Ready blocking\n\n- Phase Loop Supervisor as a maintained BDK component.\n";
+
+        let first = first_unchecked_todo_block(todo).expect("first todo");
+
+        assert!(first.old_text.contains("Route: release-judgment."));
+        assert!(!first.old_text.contains("Tracked but not Product Ready"));
+        assert!(!first.old_text.contains("Phase Loop Supervisor"));
     }
 
     #[test]

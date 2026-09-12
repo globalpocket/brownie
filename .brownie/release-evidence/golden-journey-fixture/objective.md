@@ -1,1 +1,1 @@
-In this isolated fixture, make the smallest safe workspace change and report completion.
+In this isolated fixture, create or update `golden-journey-output.md`. Write one short completion note that says Brownie completed the Golden Journey fixture. Use the normal proposal, apply, post-apply verification, and completion path.

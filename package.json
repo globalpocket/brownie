@@ -59,6 +59,7 @@
     "release:vm-image": "node scripts/manage-release-vm-images.mjs",
     "release:supply-chain-artifact-evidence": "node scripts/release-supply-chain-artifact-evidence.mjs",
     "release:runtime-operational-evidence": "node scripts/release-runtime-operational-evidence.mjs",
+    "release:runtime-operational-evidence:test": "node --test scripts/guard-runtime-operational-evidence.test.mjs",
     "release:integrity-verify": "node scripts/release-integrity-verify.mjs",
     "release:owner-governance-evidence": "node scripts/release-owner-governance-evidence.mjs",
     "release:owner-governance-evidence:test": "node --test scripts/release-owner-governance-evidence.test.mjs",

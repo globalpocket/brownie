@@ -110,6 +110,26 @@ export function validateRuntimeOperationalEvidence(evidence) {
       errors,
       'sections.golden_journey_fixture.commands'
     );
+    const lifecycleEvidence = evidence.sections.golden_journey_fixture.lifecycle_evidence;
+    requireValue(
+      lifecycleEvidence && typeof lifecycleEvidence === 'object',
+      errors,
+      'sections.golden_journey_fixture.lifecycle_evidence must be present when satisfied.'
+    );
+    for (const field of [
+      'json_present',
+      'proposal_preflight_observed',
+      'apply_observed',
+      'post_apply_verification_observed',
+      'workspace_mutation_observed',
+      'completion_observed'
+    ]) {
+      requireValue(
+        lifecycleEvidence?.[field] === true,
+        errors,
+        `sections.golden_journey_fixture.lifecycle_evidence.${field} must be true when satisfied.`
+      );
+    }
   }
 
   const soak = evidence.sections?.soak_test;

@@ -58,7 +58,15 @@ function validEvidence(overrides = {}) {
         ]
       }),
       golden_journey_fixture: section('satisfied', {
-        commands: [{ command: 'brownie help run', exit_code: 0, passed: true }]
+        commands: [{ command: 'brownie help run', exit_code: 0, passed: true }],
+        lifecycle_evidence: {
+          json_present: true,
+          proposal_preflight_observed: true,
+          apply_observed: true,
+          post_apply_verification_observed: true,
+          workspace_mutation_observed: true,
+          completion_observed: true
+        }
       }),
       soak_test: section('satisfied', {
         iterations_requested: 100,
@@ -86,6 +94,28 @@ test('accepts contract-only mode when generated runtime operational evidence is 
   });
   assert.deepEqual(result.errors, []);
   assert.equal(result.validatedEvidence, false);
+});
+
+test('rejects incomplete golden journey fixture evidence', () => {
+  const evidence = validEvidence();
+  evidence.sections.golden_journey_fixture = section('not_executed_missing_artifacts', { commands: [] });
+  const errors = validateRuntimeOperationalEvidence(evidence);
+  assert(errors.some((error) => error.includes('fail_closed_reasons must include golden_journey_fixture')));
+});
+
+test('accepts fail-closed golden journey with explicit reason', () => {
+  const evidence = validEvidence({
+    fail_closed_reasons: ['golden_journey_fixture:not_executed_missing_artifacts']
+  });
+  evidence.sections.golden_journey_fixture = section('not_executed_missing_artifacts', { commands: [] });
+  assert.deepEqual(validateRuntimeOperationalEvidence(evidence), []);
+});
+
+test('rejects satisfied golden journey without complete lifecycle evidence', () => {
+  const evidence = validEvidence();
+  evidence.sections.golden_journey_fixture.lifecycle_evidence.workspace_mutation_observed = false;
+  const errors = validateRuntimeOperationalEvidence(evidence);
+  assert(errors.some((error) => error.includes('workspace_mutation_observed must be true')));
 });
 
 test('rejects release-ready claims', () => {
