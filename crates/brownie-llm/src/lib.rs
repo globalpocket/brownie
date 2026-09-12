@@ -524,9 +524,9 @@ impl FakeLlm {
             let intent = serde_json::json!({
                 "tool_requests": [{
                     "tool_id": "workspace.write",
-                    "reason": "Decompose the blocked selected TODO in todo.md instead of looping on duplicate reads.",
+                    "reason": "Decompose the blocked selected TODO in .brownie/todo.md instead of looping on duplicate reads.",
                     "input": {
-                        "path": "todo.md",
+                        "path": ".brownie/todo.md",
                         "operation": "replace_file",
                         "content": "- [ ] TODO-decomposition: Split the blocked selected TODO into one smaller implementable task or a concrete blocker with missing evidence/tool/owner decision.\n"
                     }

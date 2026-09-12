@@ -21,7 +21,8 @@ SCREEN_NAME="${PHASE_LOOP_SCREEN_NAME:-brownie-phase-loop}"
 BROWNIE_BIN="${BROWNIE_BIN:-"$ROOT_DIR/target/debug/brownie"}"
 PHASE_LOOP_DEFAULT_BROWNIE_BIN="$ROOT_DIR/target/debug/brownie"
 PHASE_LOOP_PROMPT="${PHASE_LOOP_PROMPT:-"$ROOT_DIR/phase-loop.md"}"
-PHASE_LOOP_TODO="${PHASE_LOOP_TODO:-"$ROOT_DIR/todo.md"}"
+PHASE_LOOP_TODO="${PHASE_LOOP_TODO:-"$ROOT_DIR/.brownie/todo.md"}"
+PHASE_LOOP_TODO_BREAKDOWN="${PHASE_LOOP_TODO_BREAKDOWN:-"$(dirname "$PHASE_LOOP_TODO")/todo-breakdown.md"}"
 PHASE_LOOP_WORKSPACE_ROOT="${PHASE_LOOP_WORKSPACE_ROOT:-"$ROOT_DIR"}"
 PHASE_LOOP_CONTROL_ROOT="${PHASE_LOOP_CONTROL_ROOT:-"/Users/satoshitanaka/.codex/automations/brownie-cli-phase-loop"}"
 PHASE_LOOP_BROWNIE_STORE_ROOT="${PHASE_LOOP_BROWNIE_STORE_ROOT:-"$ROOT_DIR/.brownie/private/runtime-store"}"
@@ -287,6 +288,106 @@ for index, match in enumerate(matches):
     if block_hash not in blocked_hashes_for_current_queue and first_line not in blocked_first_lines:
         print(block)
         raise SystemExit(0)
+PY
+}
+
+ensure_blocked_todo_decomposition_request() {
+  if [ ! -f "$PHASE_LOOP_TODO" ]; then
+    return 1
+  fi
+  python3 - "$PHASE_LOOP_TODO" "$TODO_BLOCKED_FILE" "$PHASE_LOOP_TODO_BREAKDOWN" "$(now_utc)" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import re
+import sys
+
+todo_path = pathlib.Path(sys.argv[1])
+blocked_path = pathlib.Path(sys.argv[2])
+breakdown_path = pathlib.Path(sys.argv[3])
+timestamp = sys.argv[4]
+
+todo = todo_path.read_text(encoding="utf-8")
+pattern = re.compile(r"^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ \t]\][ \t]+", re.M)
+matches = list(pattern.finditer(todo))
+if not matches:
+    raise SystemExit(1)
+
+blocks = []
+base_blocks = []
+for index, match in enumerate(matches):
+    end = matches[index + 1].start() if index + 1 < len(matches) else len(todo)
+    block = todo[match.start():end].rstrip("\n")
+    first_line = block.splitlines()[0].strip() if block.splitlines() else ""
+    block_hash = hashlib.sha256(block.encode("utf-8")).hexdigest()
+    blocks.append((first_line, block_hash))
+    if "TODO-decompose-blocked-queue-" not in first_line:
+        base_blocks.append((first_line, block_hash, block))
+
+if not base_blocks:
+    raise SystemExit(1)
+
+base_queue_material = "\n\n".join(block for _, _, block in base_blocks)
+queue_fingerprint = hashlib.sha256(base_queue_material.encode("utf-8")).hexdigest()
+
+blocked_hashes_for_current_queue = set()
+blocked_first_lines = set()
+if blocked_path.exists():
+    for line in blocked_path.read_text(encoding="utf-8").splitlines():
+        try:
+            record = json.loads(line)
+        except Exception:
+            continue
+        first_line = record.get("selected_todo_first_line")
+        if isinstance(first_line, str) and first_line:
+            blocked_first_lines.add(first_line)
+        if record.get("queue_fingerprint") == queue_fingerprint:
+            blocked_hash = record.get("selected_todo_sha256")
+            if isinstance(blocked_hash, str):
+                blocked_hashes_for_current_queue.add(blocked_hash)
+
+blocked_blocks = [
+    first_line
+    for first_line, block_hash, _block in base_blocks
+    if block_hash in blocked_hashes_for_current_queue or first_line in blocked_first_lines
+]
+if len(blocked_blocks) != len(base_blocks):
+    raise SystemExit(1)
+
+short_hash = queue_fingerprint[:12]
+decompose_id = f"TODO-decompose-blocked-queue-{short_hash}"
+if decompose_id in todo:
+    raise SystemExit(1)
+
+try:
+    relative_breakdown = breakdown_path.relative_to(todo_path.parent.parent)
+except Exception:
+    relative_breakdown = breakdown_path
+
+item = f"""
+
+- [ ] {decompose_id}: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
+  Route: todo-decomposition. Source: every unchecked item in `.brownie/todo.md`
+  for queue fingerprint `{queue_fingerprint}` is recorded as blocked in
+  `.brownie-phase-loop/todo-claims/blocked.jsonl`. Brownie must own the
+  decomposition: read `.brownie/todo.md`, the blocked claim log, and only the
+  smallest relevant target files; then propose a bounded `workspace.write`
+  patch that replaces broad blocked TODOs in `.brownie/todo.md` with smaller
+  unchecked leaf TODOs naming exact files and verification commands. Brownie
+  may also create or update `{relative_breakdown}` in the same `.brownie`
+  hierarchy as a decomposition ledger, but the live queue must remain
+  `.brownie/todo.md`. Do not implement the release-evidence fixes in this
+  decomposition task; only split them into executable work or explicit blocker
+  TODOs. Keep owner-only or external-control requirements as explicit blocker
+  TODOs. Generated at `{timestamp}`.
+"""
+
+with open(todo_path, "a", encoding="utf-8") as handle:
+    handle.write(item)
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(todo_path, 0o600)
 PY
 }
 
@@ -948,7 +1049,12 @@ todo_md_edit_allowed = (
 )
 selected_first_line = progress_projection["selected_todo"].splitlines()[0] if progress_projection["selected_todo"].splitlines() else ""
 selected_first_line_still_pending = False
-if applied and progress_projection["applied_path"] == "todo.md" and selected_first_line:
+todo_apply_paths = {"todo.md", ".brownie/todo.md", str(todo_path)}
+try:
+    todo_apply_paths.add(str(todo_path.relative_to(pathlib.Path.cwd())))
+except Exception:
+    pass
+if applied and progress_projection["applied_path"] in todo_apply_paths and selected_first_line:
     try:
         todo_text_after_apply = todo_path.read_text(encoding="utf-8")
         selected_first_line_still_pending = selected_first_line in todo_text_after_apply
@@ -956,7 +1062,7 @@ if applied and progress_projection["applied_path"] == "todo.md" and selected_fir
         selected_first_line_still_pending = False
 todo_md_only_apply = (
     applied
-    and progress_projection["applied_path"] == "todo.md"
+    and progress_projection["applied_path"] in todo_apply_paths
     and not todo_md_edit_allowed
     and selected_first_line_still_pending
 )
@@ -2169,10 +2275,14 @@ run_brownie_once() {
     use_resume=1
   fi
   if ! claim_first_pending_todo "$run_stamp"; then
-    detail="Failed to claim first pending TODO from queue: $PHASE_LOOP_TODO"
-    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
-    write_status "blocked" "$detail" "$run_stamp" "75" "${CONSECUTIVE_FAILURES:-0}"
-    return 75
+    if ensure_blocked_todo_decomposition_request && claim_first_pending_todo "$run_stamp"; then
+      printf '%s blocked_todo_decomposition_request_created todo=%s breakdown=%s\n' "$(now_utc)" "$PHASE_LOOP_TODO" "$PHASE_LOOP_TODO_BREAKDOWN" >> "$SUPERVISOR_LOG"
+    else
+      detail="Failed to claim first pending TODO from queue: $PHASE_LOOP_TODO"
+      printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+      write_status "blocked" "$detail" "$run_stamp" "75" "${CONSECUTIVE_FAILURES:-0}"
+      return 75
+    fi
   fi
   if [ "$use_resume" -ne 1 ]; then
     if ! build_effective_prompt "$effective_prompt"; then
@@ -2346,11 +2456,10 @@ PY
     then
       write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
       record_blocked_todo_claim "$run_stamp"
-      touch "$STOP_FILE"
-      detail="Brownie run reached a blocked external-control boundary; recorded the blocked TODO and stopped the phase loop. stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE blocked=$TODO_BLOCKED_FILE"
-      write_status "blocked" "$detail" "$run_id" "77" "${CONSECUTIVE_FAILURES:-1}"
-      printf '%s run=%s exit=%s blocked_external_control_boundary=true progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "77" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
-      return 77
+      detail="Brownie run reached a blocked external-control boundary; recorded the blocked TODO and will continue with the next unblocked TODO. stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE blocked=$TODO_BLOCKED_FILE"
+      write_status "blocked_todo_recorded" "$detail" "$run_id" "$exit_code" "${CONSECUTIVE_FAILURES:-0}"
+      printf '%s run=%s exit=%s blocked_external_control_boundary_recorded=true progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$exit_code" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+      return 0
     elif python3 - "$stdout_log" <<'PY'
 import json, sys
 root = json.load(open(sys.argv[1], encoding="utf-8"))

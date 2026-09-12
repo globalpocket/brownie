@@ -2710,7 +2710,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                             "tool_id": WORKSPACE_WRITE_TOOL_ID,
                             "status": "Failed",
                             "reason": format!(
-                                "failed to synthesize todo.md read-budget follow-up before another LLM request: {error}"
+                                "failed to synthesize live TODO queue read-budget follow-up before another LLM request: {error}"
                             ),
                         })),
                     );
@@ -2903,7 +2903,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     "tool_id": WORKSPACE_WRITE_TOOL_ID,
                     "status": "Failed",
                     "reason": format!(
-                        "failed to synthesize todo.md decomposition workspace.write proposal: {error}"
+                        "failed to synthesize live TODO queue decomposition workspace.write proposal: {error}"
                     ),
                 })),
             );
@@ -63792,14 +63792,15 @@ content-length: {}
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let _guard = EnvGuard::clear();
         let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join(".brownie")).expect("brownie dir");
         std::fs::write(
-            temp.path().join("todo.md"),
+            temp.path().join(".brownie/todo.md"),
             "- [ ] E-04: Expand CI to include `cargo fmt --all --check`,\n  `cargo check --workspace --all-targets --all-features`,\n  `cargo clippy --workspace --all-targets --all-features -- -D warnings`,\n  `cargo test --workspace --all-features`, frozen pnpm install, root\n  check/test/build, executable release gate, Product Completion Guard, and\n  process-loss E2E.\n",
         )
         .expect("todo");
         let (base_url, handle) = spawn_mock_many(vec![
-            r#"{"choices":[{"message":{"content":"Read the TODO before editing.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read todo.md before proposing the blocker refinement.\",\"input\":{\"path\":\"todo.md\"}}]}\n```"}}]}"#,
-            r#"{"choices":[{"message":{"content":"Try to read the same TODO again.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Re-read todo.md before editing.\",\"input\":{\"path\":\"todo.md\"}}]}\n```"}}]}"#,
+            r#"{"choices":[{"message":{"content":"Read the TODO before editing.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read .brownie/todo.md before proposing the blocker refinement.\",\"input\":{\"path\":\".brownie/todo.md\"}}]}\n```"}}]}"#,
+            r#"{"choices":[{"message":{"content":"Try to read the same TODO again.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Re-read .brownie/todo.md before editing.\",\"input\":{\"path\":\".brownie/todo.md\"}}]}\n```"}}]}"#,
         ]);
         write_mock_config(temp.path(), &base_url);
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -63807,7 +63808,7 @@ content-length: {}
         std::env::set_var("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true");
 
         let start = parse_line(
-            r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"Update todo.md by decomposing the selected blocker TODO","mode_id":"implementer"}}"#,
+            r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"Update .brownie/todo.md by decomposing the selected blocker TODO","mode_id":"implementer"}}"#,
         )
         .result
         .unwrap();
@@ -63832,7 +63833,7 @@ content-length: {}
             .find(|message| message["role"] == "user")
             .and_then(|message| message["content"].as_str())
             .expect("second user prompt");
-        assert!(second_prompt.contains("todo.md"));
+        assert!(second_prompt.contains(".brownie/todo.md"));
 
         let events = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":4,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
@@ -63851,7 +63852,7 @@ content-length: {}
             .iter()
             .find(|event| event["kind"] == "WorkspacePatchProposed")
             .expect("workspace write proposal");
-        assert_eq!(proposal["payload"]["path"], "todo.md");
+        assert_eq!(proposal["payload"]["path"], ".brownie/todo.md");
         assert_eq!(proposal["payload"]["operation"], "patch_file");
         assert_eq!(proposal["payload"]["validation_status"], "Valid");
         let patch_new_text = proposal["payload"]["patch_new_text"]
@@ -63891,8 +63892,9 @@ content-length: {}
         )
         .expect("dependency audit guard");
         std::fs::write(temp.path().join("package.json"), "{\"scripts\":{}}\n").expect("package");
+        std::fs::create_dir_all(temp.path().join(".brownie")).expect("brownie dir");
         std::fs::write(
-            temp.path().join("todo.md"),
+            temp.path().join(".brownie/todo.md"),
             "- [ ] E-08: Close supply-chain evidence fail-closed gaps:\n  Add coverage proving missing tools, scan command failures, and network errors cannot be treated as successful release evidence.\n\n- [ ] E-09: Produce release artifacts.\n",
         )
         .expect("todo");
@@ -63940,7 +63942,7 @@ content-length: {}
             .iter()
             .find(|event| event["kind"] == "WorkspacePatchProposed")
             .expect("runtime-synthesized follow-up proposal");
-        assert_eq!(proposal["payload"]["path"], "todo.md");
+        assert_eq!(proposal["payload"]["path"], ".brownie/todo.md");
         assert_eq!(proposal["payload"]["operation"], "patch_file");
         assert_eq!(proposal["payload"]["validation_status"], "Valid");
         let patch_new_text = proposal["payload"]["patch_new_text"]

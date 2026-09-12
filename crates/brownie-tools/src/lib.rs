@@ -272,9 +272,26 @@ fn is_allowed_shared_brownie_read_path(path: &Path) -> bool {
         })
         .collect::<Vec<_>>();
     if components.len() == 2 {
-        return components[0] == ".brownie" && components[1] == "local-release-targets.json";
+        return components[0] == ".brownie"
+            && matches!(
+                components[1].as_ref(),
+                "local-release-targets.json" | "todo.md" | "todo-breakdown.md"
+            );
     }
     components.len() >= 3 && components[0] == ".brownie" && components[1] == "release-evidence"
+}
+
+fn is_allowed_shared_brownie_write_path(path: &Path) -> bool {
+    let components = path
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(name) => Some(name.to_string_lossy()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    components.len() == 2
+        && components[0] == ".brownie"
+        && matches!(components[1].as_ref(), "todo.md" | "todo-breakdown.md")
 }
 
 fn reject_symlink_ancestors(root: &Path, relative_path: &Path) -> anyhow::Result<()> {
@@ -3086,12 +3103,16 @@ pub fn preflight_workspace_write_path(relative_path: &str) -> Result<(), &'stati
     if requested_path.is_absolute() {
         return Err("workspace.write input.path must be workspace-relative.");
     }
+    let allow_shared_brownie_write = is_allowed_shared_brownie_write_path(requested_path);
     for component in requested_path.components() {
         match component {
             Component::ParentDir => {
                 return Err("workspace.write input.path must not contain path traversal.")
             }
-            Component::Normal(name) if is_blocked_component(name.to_string_lossy().as_ref()) => {
+            Component::Normal(name)
+                if is_blocked_component(name.to_string_lossy().as_ref())
+                    && !allow_shared_brownie_write =>
+            {
                 return Err("workspace.write input.path targets a protected workspace path.")
             }
             Component::Prefix(_) | Component::RootDir => {
@@ -3264,6 +3285,9 @@ impl ToolIntentParser {
         let trimmed_json_block = json_block.trim();
         let value: Value = match oversized_recovered_value.map(Ok).unwrap_or_else(|| {
             serde_json::from_str(trimmed_json_block)
+                .or_else(|_| {
+                    parse_tool_requests_with_extra_request_object_close(trimmed_json_block)
+                })
                 .or_else(|_| parse_tool_requests_with_missing_array_close(trimmed_json_block))
                 .or_else(|_| {
                     parse_tool_requests_with_extra_trailing_array_close(trimmed_json_block)
@@ -3561,6 +3585,20 @@ fn parse_tool_requests_with_extra_trailing_array_close(
         // the block ends as ..."}]}]}. Restore the request object close.
         format!("{prefix}}}}}]}}")
     };
+    serde_json::from_str(&repaired)
+}
+
+fn parse_tool_requests_with_extra_request_object_close(
+    json_block: &str,
+) -> Result<Value, serde_json::Error> {
+    if !json_block.contains("\"tool_requests\"")
+        || !json_block.contains("\"tool_requests\":[")
+        || !json_block.ends_with("}}}]}")
+    {
+        return serde_json::from_str(json_block);
+    }
+    let suffix_start = json_block.len().saturating_sub("}}}]}".len());
+    let repaired = format!("{}{}", &json_block[..suffix_start], "}}]}");
     serde_json::from_str(&repaired)
 }
 
@@ -5192,6 +5230,15 @@ mod tests {
     }
 
     #[test]
+    fn parser_repairs_extra_tool_request_object_close_before_array_close() {
+        let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read the blocked TODO queue.\",\"input\":{\"path\":\".brownie/todo.md\"}}}]}\n```");
+        assert_eq!(parsed.requests.len(), 1);
+        assert_eq!(parsed.requests[0].tool_id, "workspace.read");
+        assert_eq!(parsed.requests[0].input["path"], ".brownie/todo.md");
+        assert!(parsed.rejected.is_empty());
+    }
+
+    #[test]
     fn parser_repairs_tool_request_object_close_emitted_as_array_close() {
         let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Patch docs.\",\"input\":{\"path\":\"README.md\",\"operation\":\"patch_file\",\"old_text\":\"# Title\",\"new_text\":\"# Title\\n\\nnew line\"}]}]}\n```");
         assert_eq!(parsed.requests.len(), 1);
@@ -5596,6 +5643,23 @@ mod tests {
     }
 
     #[test]
+    fn parser_allows_shared_brownie_todo_write_paths_only() {
+        for path in [".brownie/todo.md", ".brownie/todo-breakdown.md"] {
+            let input = serde_json::json!({"path":path,"operation":"replace_file","content":"x\n"});
+            assert!(preflight_workspace_write_input(&input).is_ok(), "{path}");
+        }
+        for path in [
+            ".brownie/private/token.txt",
+            ".brownie/release-evidence/runtime-operational-evidence.json",
+            ".brownie/other.md",
+            ".git/config",
+        ] {
+            let input = serde_json::json!({"path":path,"operation":"replace_file","content":"x\n"});
+            assert!(preflight_workspace_write_input(&input).is_err(), "{path}");
+        }
+    }
+
+    #[test]
     fn parser_rejects_workspace_write_content_too_large() {
         let content = "x".repeat(101);
         let input =
@@ -5755,6 +5819,12 @@ mod tests {
             "{}",
         )
         .expect("write local targets");
+        std::fs::write(temp.path().join(".brownie/todo.md"), "- [ ] task\n").expect("write todo");
+        std::fs::write(
+            temp.path().join(".brownie/todo-breakdown.md"),
+            "# Breakdown\n",
+        )
+        .expect("write todo breakdown");
         std::fs::write(temp.path().join(".brownie/private/token.txt"), "secret")
             .expect("write private");
 
@@ -5772,6 +5842,17 @@ mod tests {
         )
         .expect("read local targets result");
         assert_eq!(local_targets.status, ToolExecutionStatus::Completed);
+        let todo =
+            WorkspaceReadExecutor::read(temp.path(), ".brownie/todo.md", MAX_WORKSPACE_READ_BYTES)
+                .expect("read todo result");
+        assert_eq!(todo.status, ToolExecutionStatus::Completed);
+        let todo_breakdown = WorkspaceReadExecutor::read(
+            temp.path(),
+            ".brownie/todo-breakdown.md",
+            MAX_WORKSPACE_READ_BYTES,
+        )
+        .expect("read todo breakdown result");
+        assert_eq!(todo_breakdown.status, ToolExecutionStatus::Completed);
         let private = WorkspaceReadExecutor::read(
             temp.path(),
             ".brownie/private/token.txt",
