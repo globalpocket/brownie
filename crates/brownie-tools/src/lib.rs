@@ -188,11 +188,15 @@ impl WorkspaceReadExecutor {
         if requested_path.is_absolute() {
             bail!("absolute paths are not allowed");
         }
+        let allow_shared_brownie_read = is_allowed_shared_brownie_read_path(requested_path);
         for component in requested_path.components() {
             match component {
                 Component::ParentDir => bail!("path traversal is not allowed"),
                 Component::Normal(name)
-                    if is_blocked_component(name.to_string_lossy().as_ref()) =>
+                    if is_blocked_component_for_read(
+                        name.to_string_lossy().as_ref(),
+                        allow_shared_brownie_read,
+                    ) =>
                 {
                     bail!("reading protected workspace paths is not allowed")
                 }
@@ -209,6 +213,8 @@ impl WorkspaceReadExecutor {
                 workspace_root.display()
             )
         })?;
+        reject_symlink_ancestors(&root, requested_path)
+            .with_context(|| format!("failed to inspect ancestors for {}", relative_path))?;
         let target = root.join(requested_path);
         let target_metadata = fs::symlink_metadata(&target)
             .with_context(|| format!("failed to inspect {}", relative_path))?;
@@ -250,6 +256,44 @@ impl WorkspaceReadExecutor {
 
 fn is_blocked_component(component: &str) -> bool {
     matches!(component, ".git" | ".brownie" | "node_modules" | "target")
+}
+
+fn is_blocked_component_for_read(component: &str, allow_shared_brownie_read: bool) -> bool {
+    matches!(component, ".git" | "node_modules" | "target")
+        || (component == ".brownie" && !allow_shared_brownie_read)
+}
+
+fn is_allowed_shared_brownie_read_path(path: &Path) -> bool {
+    let components = path
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(name) => Some(name.to_string_lossy()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if components.len() == 2 {
+        return components[0] == ".brownie" && components[1] == "local-release-targets.json";
+    }
+    components.len() >= 3 && components[0] == ".brownie" && components[1] == "release-evidence"
+}
+
+fn reject_symlink_ancestors(root: &Path, relative_path: &Path) -> anyhow::Result<()> {
+    let mut current = root.to_path_buf();
+    let mut components = relative_path.components().peekable();
+    while let Some(component) = components.next() {
+        if components.peek().is_none() {
+            break;
+        }
+        if let Component::Normal(name) = component {
+            current.push(name);
+            let metadata = fs::symlink_metadata(&current)
+                .with_context(|| format!("failed to inspect {}", current.display()))?;
+            if metadata.file_type().is_symlink() {
+                bail!("symlink ancestors are not supported");
+            }
+        }
+    }
+    Ok(())
 }
 
 pub struct ToolExecutor;
@@ -3748,12 +3792,18 @@ pub fn preflight_workspace_read_path(relative_path: &str) -> Result<(), &'static
     if requested_path.is_absolute() {
         return Err("workspace.read input.path must be workspace-relative.");
     }
+    let allow_shared_brownie_read = is_allowed_shared_brownie_read_path(requested_path);
     for component in requested_path.components() {
         match component {
             Component::ParentDir => {
                 return Err("workspace.read input.path must not contain path traversal.")
             }
-            Component::Normal(name) if is_blocked_component(name.to_string_lossy().as_ref()) => {
+            Component::Normal(name)
+                if is_blocked_component_for_read(
+                    name.to_string_lossy().as_ref(),
+                    allow_shared_brownie_read,
+                ) =>
+            {
                 return Err("workspace.read input.path targets a protected workspace path.")
             }
             Component::Prefix(_) | Component::RootDir => {
@@ -5454,6 +5504,73 @@ mod tests {
             .expect("read result");
             assert_eq!(result.status, ToolExecutionStatus::Failed, "{dir}");
         }
+    }
+
+    #[test]
+    fn workspace_read_executor_allows_shared_brownie_evidence_only() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join(".brownie/release-evidence"))
+            .expect("mkdir release evidence");
+        std::fs::create_dir_all(temp.path().join(".brownie/private")).expect("mkdir private");
+        std::fs::write(
+            temp.path()
+                .join(".brownie/release-evidence/runtime-operational-evidence.json"),
+            "{}",
+        )
+        .expect("write evidence");
+        std::fs::write(
+            temp.path().join(".brownie/local-release-targets.json"),
+            "{}",
+        )
+        .expect("write local targets");
+        std::fs::write(temp.path().join(".brownie/private/token.txt"), "secret")
+            .expect("write private");
+
+        let evidence = WorkspaceReadExecutor::read(
+            temp.path(),
+            ".brownie/release-evidence/runtime-operational-evidence.json",
+            MAX_WORKSPACE_READ_BYTES,
+        )
+        .expect("read evidence result");
+        assert_eq!(evidence.status, ToolExecutionStatus::Completed);
+        let local_targets = WorkspaceReadExecutor::read(
+            temp.path(),
+            ".brownie/local-release-targets.json",
+            MAX_WORKSPACE_READ_BYTES,
+        )
+        .expect("read local targets result");
+        assert_eq!(local_targets.status, ToolExecutionStatus::Completed);
+        let private = WorkspaceReadExecutor::read(
+            temp.path(),
+            ".brownie/private/token.txt",
+            MAX_WORKSPACE_READ_BYTES,
+        )
+        .expect("read private result");
+        assert_eq!(private.status, ToolExecutionStatus::Failed);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_read_executor_rejects_shared_brownie_evidence_symlink_ancestor() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join(".brownie/private")).expect("mkdir private");
+        std::fs::write(temp.path().join(".brownie/private/token.txt"), "secret")
+            .expect("write private");
+        symlink(
+            temp.path().join(".brownie/private"),
+            temp.path().join(".brownie/release-evidence"),
+        )
+        .expect("symlink release evidence to private");
+
+        let result = WorkspaceReadExecutor::read(
+            temp.path(),
+            ".brownie/release-evidence/token.txt",
+            MAX_WORKSPACE_READ_BYTES,
+        )
+        .expect("read result");
+        assert_eq!(result.status, ToolExecutionStatus::Failed);
     }
 
     #[test]
