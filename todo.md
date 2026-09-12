@@ -87,18 +87,18 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-14a-runtime-evidence-section: Patch only `docs/architecture/final-product-ready-judgment.md` with runtime operational evidence:
-  Source TODO: E-14a: Write the final Product Ready judgment input memo.
-  Read only `docs/architecture/final-product-ready-judgment.md` and
-  `.brownie/release-evidence/runtime-operational-evidence.json`. Add or update
-  a bounded section describing satisfied runtime operational evidence and
-  remaining fail-closed runtime evidence. Do not edit JSON files.
 - [ ] E-14a-owner-evidence-section: Patch only `docs/architecture/final-product-ready-judgment.md` with owner governance evidence:
   Source TODO: E-14a: Write the final Product Ready judgment input memo.
   Read only `docs/architecture/final-product-ready-judgment.md` and
-  `.brownie/release-evidence/owner-governance-evidence.json`. Add or update a
-  bounded section classifying owner/external publication decisions. Do not edit
-  JSON files.
+  `.brownie/release-evidence/owner-governance-evidence.json`. Replace the
+  existing `## Owner/External Publication Decisions` section in the judgment
+  document; do not insert a second section with the same heading. The section
+  must classify owner-governance evidence as fail-closed for independent
+  reviews and remote CI provenance when the evidence says so, and must mention
+  satisfied protected tag and integrity authority evidence when present. Do not
+  edit JSON files. The next tool intent must be a complete fenced
+  `brownie-tool-intent` JSON block ending with a line containing exactly three
+  backticks.
 - [ ] E-14a-supply-chain-evidence-section: Patch only `docs/architecture/final-product-ready-judgment.md` with supply-chain evidence:
   Source TODO: E-14a: Write the final Product Ready judgment input memo.
   Read only `docs/architecture/final-product-ready-judgment.md` and
