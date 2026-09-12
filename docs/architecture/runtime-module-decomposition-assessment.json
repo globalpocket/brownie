@@ -26,16 +26,16 @@
   ],
   "thresholds": {
     "lib_rs_production_line_ceiling": 15632,
-    "lib_rs_test_line_ceiling": 53050
+    "lib_rs_test_line_ceiling": 53052
   },
   "metrics": {
     "files": {
       "crates/brownie-runtime/src/lib.rs": {
-        "line_count": 68682,
+        "line_count": 68684,
         "public_items": 3,
         "private_items": 526,
         "production_line_count": 15632,
-        "test_line_count": 53050,
+        "test_line_count": 53052,
         "state_mutation_mentions": 310,
         "durable_write_mentions": 230,
         "permission_decision_mentions": 197,
@@ -61,17 +61,17 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/controlled_tool_execution.rs": {
-        "line_count": 6471,
+        "line_count": 6534,
         "public_items": 72,
-        "private_items": 91,
+        "private_items": 93,
         "state_mutation_mentions": 44,
         "durable_write_mentions": 44,
         "permission_decision_mentions": 63,
-        "recovery_mentions": 81,
+        "recovery_mentions": 82,
         "rpc_dispatch_mentions": 0,
         "approval_mentions": 228,
-        "mcp_mentions": 367,
-        "product_dod_mentions": 57,
+        "mcp_mentions": 368,
+        "product_dod_mentions": 59,
         "diagnostics_mentions": 14
       },
       "crates/brownie-runtime/src/headless_continue.rs": {
@@ -397,6 +397,7 @@
     "PR pending: lib.rs metrics updated after status-patch disambiguation support for Brownie loop proposals.",
     "PR pending: temporary lib.rs ceilings raised to current metrics for Brownie loop parser/proposal recovery work; runtime_release_ready remains false.",
     "RRP-8.7/E-14 adds bounded JSON patch normalization inside the existing workspace patch proposal path; metrics are resynchronized while preserving the explicit module-decomposition guard and leaving broader extraction for a later dedicated refactor.",
-    "PR #452 review hardening adds bounded workspace patch safety checks and owner-governance release-blocker verification inside the existing Runtime release paths; metrics are resynchronized while preserving the module-decomposition guard and leaving broader extraction for a later dedicated refactor."
+    "PR #452 review hardening adds bounded workspace patch safety checks and owner-governance release-blocker verification inside the existing Runtime release paths; metrics are resynchronized while preserving the module-decomposition guard and leaving broader extraction for a later dedicated refactor.",
+    "PR pending: runtime module metrics refreshed after Brownie-owned TODO decomposition parser/proposal recovery work; runtime_release_ready remains false."
   ]
 }

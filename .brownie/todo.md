@@ -4,7 +4,7 @@ This file is the shared priority queue between the external Brownie phase-loop
 controller and Brownie itself.
 
 `phase-loop.md` remains the execution prompt and product boundary contract.
-`todo.md` is the ordered list of concrete work items Brownie should consume.
+`.brownie/todo.md` is the ordered list of concrete work items Brownie should consume.
 The external controller may add, remove, or reorder unchecked items. Brownie may
 refine the list when evidence changes, but must keep the list small, concrete,
 and ordered by priority.
@@ -218,3 +218,41 @@ unless the owner explicitly promotes them.
 - Independent reviews for release workflow, permission model, Ledger Contract,
   Mode Pack trust boundary, and Release Ready logic.
 - `SECURITY.md`, `CONTRIBUTING.md`, and vulnerability report channel.
+
+
+- [ ] E-15a-redaction-collector: Patch only `scripts/release-runtime-operational-evidence.mjs` to sanitize runtime operational evidence:
+  Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
+  Store only bounded statuses, counts, hashes, relative paths, command identifiers, and non-sensitive summaries. Remove absolute local paths, SSH host aliases, raw stdout/stderr, encoded shell commands, and local worktree details from persisted evidence.
+  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.
+- [ ] E-15a-redaction-guard: Patch only `scripts/guard-runtime-operational-evidence.mjs` and `scripts/guard-runtime-operational-evidence.test.mjs` to reject forbidden local evidence fields:
+  Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
+  Add fail-closed checks and tests for `/Users/`, `/home/`, `C:/Users/`, SSH host aliases, raw process output fields, PowerShell `EncodedCommand`, and local worktree paths.
+  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`.
+- [ ] E-15b-provenance-collector: Patch only `scripts/release-supply-chain-artifact-evidence.mjs` to bind artifact evidence to one current clean source commit:
+  Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
+  Record current source commit, clean/dirty state, release invocation identity, artifact paths, and checksum set for the artifacts actually collected. Missing workflow run or artifact SHA must remain explicit fail-closed blockers.
+  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`.
+- [ ] E-15b-release-contract-binding-guard: Patch only `scripts/guard-release-contract.mjs` and its tests to reject stale/null commit and artifact binding fields:
+  Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
+  Fail when implemented artifact/SBOM/provenance conditions have null/stale implementation commit, tested commit, workflow run ID, artifact SHA-256, dirty source tree, or mismatched current main evidence.
+  Verification: run `pnpm --workspace-root guard:release-contract:test` and `pnpm --workspace-root guard:release-contract`.
+- [ ] E-15c-artifact-smoke-runner-contract: Patch only local artifact smoke collection scripts to require per-target E2E smoke fields:
+  Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
+  For each released artifact/OS target, require Base Mode Pack load, minimal task run, Ledger generation, forced stop/resume, and stale/replay rejection, or record a target-specific fail-closed reason.
+  Verification: run the artifact smoke guard tests and `pnpm --workspace-root guard:runtime-operational-evidence`.
+- [ ] E-15d-stateful-soak-contract: Patch only runtime operational evidence collection and guard tests to replace version-only 100-run soak with stateful soak evidence:
+  Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
+  Require task state transitions, Ledger/workspace consistency, resume/replay handling, no duplicate side effects, process-loss recovery, bounded Mode Pack/LLM/MCP paths where available, and finite convergence. Reject version/help-only soak evidence.
+  Verification: run soak guard tests and `pnpm --workspace-root check`.
+- [ ] E-15e-release-doc-resync-after-evidence: Patch only release judgment/contract/audit/manifest documents after E-15a through E-15d are implemented:
+  Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
+  Resynchronize current main, current artifacts, fail-closed missing evidence, and owner-controlled independent reviews. Do not mark `runtime_release_ready=true` while independent reviews remain incomplete.
+  Verification: run `pnpm --workspace-root guard:runtime-release-readiness`, `pnpm --workspace-root guard:release-contract`, `pnpm --workspace-root guard:phase-value`, and `pnpm --workspace-root check`.
+- [ ] E-15f-semantic-consistency-guard: Add a release evidence semantic consistency guard and tests:
+  Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
+  Fail when release contract statuses contradict evidence contents, including stale/null commits, dirty trees, missing workflow provenance, missing or mismatched artifact checksums, shallow smoke, version-only soak, or forbidden confidential fields. Wire into VSIX `check`, release gate dry-run inventory, and phase value manifest.
+  Verification: run the new guard tests, `pnpm --workspace-root guard:phase-value`, and `pnpm --workspace-root check`.
+- [ ] E-15g-pr435-hygiene-evidence: Resolve stale Phase Loop PR #435 with bounded evidence or a follow-up TODO:
+  Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
+  Verify whether all useful changes from #435 are included in current `origin/main`. If superseded, close the PR with a concise comment citing superseding evidence. If not, update `.brownie/todo.md` with the exact missing file/change instead of merging stale conflicting work.
+  Verification: record the PR state and conclusion in bounded release-ops evidence or TODO update.

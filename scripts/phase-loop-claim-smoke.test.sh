@@ -418,33 +418,106 @@ todo_with_blocked="$(mktemp)"
 printf 'base prompt\n' > "$prompt_with_blocked"
 printf -- '- [ ] R-09: blocked boundary task\n' > "$todo_with_blocked"
 
-set +e
 PHASE_LOOP_STATE_DIR="$state_with_blocked" \
 PHASE_LOOP_PROMPT="$prompt_with_blocked" \
 PHASE_LOOP_TODO="$todo_with_blocked" \
 BROWNIE_BIN="$fake_brownie_blocked_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 "$PHASE_LOOP" run-once >/dev/null
-blocked_exit=$?
-set -e
-if [ "$blocked_exit" -ne 77 ]; then
-  echo "expected blocked run-once exit 77, got $blocked_exit" >&2
-  exit 1
-fi
-test -f "$state_with_blocked/stop"
+test ! -f "$state_with_blocked/stop"
 python3 - "$state_with_blocked/status.json" "$state_with_blocked/todo-claims/current.json" <<'PY'
 import json
 import sys
 
 status = json.load(open(sys.argv[1], encoding="utf-8"))
 claim = json.load(open(sys.argv[2], encoding="utf-8"))
-assert status["status"] == "blocked", status
-assert status["exit_code"] == "77", status
+assert status["status"] == "blocked_todo_recorded", status
+assert status["exit_code"] == "0", status
 assert "blocked external-control boundary" in status["detail"], status
+assert "will continue with the next unblocked TODO" in status["detail"], status
 assert claim["status"] == "blocked", claim
 PY
 
-rm -f "$state_with_blocked/stop"
+state_all_blocked="$(mktemp -d)"
+prompt_all_blocked="$(mktemp)"
+todo_all_blocked="$(mktemp)"
+todo_breakdown_all_blocked="$(mktemp)"
+printf 'base prompt\n' > "$prompt_all_blocked"
+printf -- '- [ ] R-09: blocked boundary task\n' > "$todo_all_blocked"
+
+PHASE_LOOP_STATE_DIR="$state_all_blocked" \
+PHASE_LOOP_PROMPT="$prompt_all_blocked" \
+PHASE_LOOP_TODO="$todo_all_blocked" \
+PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_all_blocked" \
+BROWNIE_BIN="$fake_brownie_blocked_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+
+PHASE_LOOP_STATE_DIR="$state_all_blocked" \
+PHASE_LOOP_PROMPT="$prompt_all_blocked" \
+PHASE_LOOP_TODO="$todo_all_blocked" \
+PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_all_blocked" \
+BROWNIE_BIN="$fake_brownie_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+
+python3 - "$state_all_blocked/todo-claims/current.json" "$todo_all_blocked" <<'PY'
+import json
+import sys
+
+claim = json.load(open(sys.argv[1], encoding="utf-8"))
+todo = open(sys.argv[2], encoding="utf-8").read()
+assert claim["status"] == "in_progress", claim
+assert "TODO-decompose-blocked-queue-" in claim["selected_todo"], claim
+assert "Brownie must own the" in claim["selected_todo"], claim
+assert "TODO-decompose-blocked-queue-" in todo, todo
+assert "decomposition ledger" in todo, todo
+PY
+
+state_blocked_decomposition="$(mktemp -d)"
+prompt_blocked_decomposition="$(mktemp)"
+todo_blocked_decomposition="$(mktemp)"
+todo_breakdown_blocked_decomposition="$(mktemp)"
+printf 'base prompt\n' > "$prompt_blocked_decomposition"
+printf -- '- [ ] R-09: blocked boundary task\n' > "$todo_blocked_decomposition"
+
+PHASE_LOOP_STATE_DIR="$state_blocked_decomposition" \
+PHASE_LOOP_PROMPT="$prompt_blocked_decomposition" \
+PHASE_LOOP_TODO="$todo_blocked_decomposition" \
+PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_blocked_decomposition" \
+BROWNIE_BIN="$fake_brownie_blocked_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+
+PHASE_LOOP_STATE_DIR="$state_blocked_decomposition" \
+PHASE_LOOP_PROMPT="$prompt_blocked_decomposition" \
+PHASE_LOOP_TODO="$todo_blocked_decomposition" \
+PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_blocked_decomposition" \
+BROWNIE_BIN="$fake_brownie_blocked_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+
+set +e
+PHASE_LOOP_STATE_DIR="$state_blocked_decomposition" \
+PHASE_LOOP_PROMPT="$prompt_blocked_decomposition" \
+PHASE_LOOP_TODO="$todo_blocked_decomposition" \
+PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_blocked_decomposition" \
+BROWNIE_BIN="$fake_brownie_blocked_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+blocked_decomposition_exit="$?"
+set -e
+test "$blocked_decomposition_exit" = "75"
+
+python3 - "$todo_blocked_decomposition" <<'PY'
+import re
+import sys
+
+todo = open(sys.argv[1], encoding="utf-8").read()
+decomposition_items = re.findall(r"TODO-decompose-blocked-queue-", todo)
+assert len(decomposition_items) == 1, todo
+PY
+
 printf -- '- [ ] R-09: blocked boundary task\n  Extra context that changes the queue fingerprint.\n- [ ] R-10: next unblocked task\n' > "$todo_with_blocked"
 
 PHASE_LOOP_STATE_DIR="$state_with_blocked" \
