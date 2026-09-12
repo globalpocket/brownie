@@ -355,7 +355,7 @@ state_with_claim="$(mktemp -d)"
 prompt_with_claim="$(mktemp)"
 todo_with_claim="$(mktemp)"
 printf 'base prompt\n' > "$prompt_with_claim"
-printf -- '- [ ] B-01: durable claim task\n  with detail\n- [ ] B-02: next task\n' > "$todo_with_claim"
+printf -- '- [ ] B-01: durable claim task\n  with detail\n  Files: `scripts/release-runtime-operational-evidence.mjs`, `docs/architecture/local-release-targets.example.json`.\n- [ ] B-02: next task\n' > "$todo_with_claim"
 
 PHASE_LOOP_STATE_DIR="$state_with_claim" \
 PHASE_LOOP_PROMPT="$prompt_with_claim" \
@@ -398,6 +398,10 @@ assert progress_state["meaningful_progress"] is False, progress_state
 assert progress_state["progress_projection"]["closure"] == "budget_exhausted", progress_state
 assert progress_state["progress_projection"]["next_action"] == "inspect_progress_overview", progress_state
 assert prompt_meta["selected_todo_complete"] is True, prompt_meta
+assert prompt_meta["context_hints"][:2] == [
+    "scripts/release-runtime-operational-evidence.mjs",
+    "docs/architecture/local-release-targets.example.json",
+], prompt_meta
 assert len(prompt_meta["prompt_sha256"]) == 64, prompt_meta
 assert len(prompt_meta["todo_sha256"]) == 64, prompt_meta
 assert len(prompt_meta["base_prompt_sha256"]) == 64, prompt_meta

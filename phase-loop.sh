@@ -1412,6 +1412,36 @@ def infer_llm_route(state):
 def infer_context_hints(todo):
     lower = todo.lower()
     hints = []
+    explicit_paths = []
+    for match in re.findall(r"`([^`]+)`", todo):
+        candidate = match.strip()
+        if not candidate or any(char.isspace() for char in candidate):
+            continue
+        if candidate.startswith((
+            ".brownie/",
+            ".github/",
+            "crates/",
+            "docs/",
+            "extensions/",
+            "scripts/",
+        )) or candidate in ("Cargo.lock", "package.json", "pnpm-lock.yaml", "README.md", "todo.md"):
+            explicit_paths.append(candidate)
+    hints.extend(explicit_paths)
+    if "e-15a" in lower or "local release target" in lower or "local-release-targets" in lower:
+        hints.extend([
+            "scripts/release-runtime-operational-evidence.mjs",
+            "scripts/guard-runtime-operational-evidence.test.mjs",
+            "docs/architecture/local-release-targets.schema.json",
+            "docs/architecture/local-release-targets.example.json",
+            ".brownie/local-release-targets.json",
+        ])
+    if "e-16a" in lower or "golden journey" in lower:
+        hints.extend([
+            "scripts/release-runtime-operational-evidence.mjs",
+            "scripts/guard-runtime-operational-evidence.test.mjs",
+            ".brownie/release-evidence/golden-journey-fixture/objective.md",
+            ".brownie/release-evidence/runtime-operational-evidence.json",
+        ])
     if "supply-chain" in lower or "sbom" in lower or "audit" in lower:
         hints.extend([
             "scripts/guard-supply-chain-artifact-evidence.mjs",
