@@ -4247,7 +4247,9 @@ fn extract_fenced_blocks(content: &str) -> Vec<&str> {
             .unwrap_or(after)
             .strip_prefix('\n')
             .unwrap_or(after);
-        let Some((end, close_len)) = find_line_start_closing_fence(after) else {
+        let Some((end, close_len)) =
+            find_line_start_closing_fence(after).or_else(|| find_inline_json_closing_fence(after))
+        else {
             break;
         };
         blocks.push(&after[..end]);
@@ -4298,6 +4300,26 @@ fn find_line_start_closing_fence(content: &str) -> Option<(usize, usize)> {
         content[fence_start..]
             .starts_with("```")
             .then_some((newline_index, 4))
+    })
+}
+
+fn find_inline_json_closing_fence(content: &str) -> Option<(usize, usize)> {
+    let mut fence_starts = content
+        .match_indices("```")
+        .map(|(fence_start, _)| fence_start)
+        .collect::<Vec<_>>();
+    fence_starts.reverse();
+    fence_starts.into_iter().find_map(|fence_start| {
+        let candidate = content[..fence_start].trim();
+        serde_json::from_str::<Value>(candidate)
+            .ok()
+            .and_then(|value| {
+                value.as_object().and_then(|object| {
+                    object
+                        .contains_key("tool_requests")
+                        .then_some((fence_start, 3))
+                })
+            })
     })
 }
 
@@ -5004,6 +5026,14 @@ mod tests {
         let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\",\"input\":{\"path\":\"README.md\"}}}\n```");
         assert_eq!(parsed.requests.len(), 1);
         assert_eq!(parsed.requests[0].tool_id, "workspace.read");
+        assert!(parsed.rejected.is_empty());
+    }
+
+    #[test]
+    fn parser_accepts_inline_closing_fence_after_valid_tool_intent_json() {
+        let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Patch docs.\",\"input\":{\"path\":\"README.md\",\"operation\":\"patch_file\",\"old_text\":\"# Title\",\"new_text\":\"# Title\\n\\nnew line\"}}]}```");
+        assert_eq!(parsed.requests.len(), 1);
+        assert_eq!(parsed.requests[0].tool_id, "workspace.write");
         assert!(parsed.rejected.is_empty());
     }
 
