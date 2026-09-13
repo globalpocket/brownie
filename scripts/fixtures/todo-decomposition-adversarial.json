@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "broad-release-ready-claim",
+      "description": "Rejects leaf TODOs that claim broad Product Ready completion instead of bounded evidence work.",
+      "should_fail_with": "Completion condition is too broad",
+      "todo": "- [ ] E-99a: Patch only `scripts/guard-release-contract.mjs`:\n  Route: implementation.\n  Source TODO: E-99: Release evidence work.\n  Depends on: <none>.\n  Completion condition: fix every problem and make the release ready immediately.\n  Forbidden changes: do not edit unrelated release evidence files.\n  Verification: run `pnpm --workspace-root guard:release-contract:test`."
+    },
+    {
+      "id": "dependency-cycle",
+      "description": "Rejects child TODO dependency cycles.",
+      "should_fail_with": "dependencies must not contain cycles",
+      "todo": "- [ ] E-99a: Patch only `scripts/guard-release-contract.mjs`:\n  Route: implementation.\n  Source TODO: E-99: Release evidence work.\n  Depends on: E-99b.\n  Completion condition: the first bounded guard change is implemented and verified.\n  Forbidden changes: do not edit unrelated release evidence files.\n  Verification: run `pnpm --workspace-root guard:release-contract:test`.\n- [ ] E-99b: Patch only `scripts/guard-release-contract.test.mjs`:\n  Route: implementation.\n  Source TODO: E-99: Release evidence work.\n  Depends on: E-99a.\n  Completion condition: the second bounded guard test is implemented and verified.\n  Forbidden changes: do not edit unrelated release evidence files.\n  Verification: run `pnpm --workspace-root guard:release-contract:test`."
+    },
+    {
+      "id": "implementation-inspect-only",
+      "description": "Rejects implementation leaves that have no executable verification.",
+      "should_fail_with": "implementation leaves need executable verification",
+      "todo": "- [ ] E-99a: Patch only `scripts/guard-release-contract.mjs`:\n  Route: implementation.\n  Source TODO: E-99: Release evidence work.\n  Depends on: <none>.\n  Completion condition: the bounded guard change is implemented and verified.\n  Forbidden changes: do not edit unrelated release evidence files.\n  Verification: inspect the release contract manually."
+    }
+  ]
+}

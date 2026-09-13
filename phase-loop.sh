@@ -246,49 +246,7 @@ todo_first_pending_item() {
   if [ ! -f "$PHASE_LOOP_TODO" ]; then
     return 0
   fi
-  python3 - "$PHASE_LOOP_TODO" "$TODO_BLOCKED_FILE" <<'PY'
-import hashlib
-import json
-import pathlib
-import re
-import sys
-
-todo_path = pathlib.Path(sys.argv[1])
-blocked_path = pathlib.Path(sys.argv[2])
-
-try:
-    todo = todo_path.read_text(encoding="utf-8")
-except FileNotFoundError:
-    raise SystemExit(0)
-
-queue_fingerprint = hashlib.sha256(todo.encode("utf-8")).hexdigest()
-blocked_hashes_for_current_queue = set()
-blocked_first_lines = set()
-if blocked_path.exists():
-    for line in blocked_path.read_text(encoding="utf-8").splitlines():
-        try:
-            record = json.loads(line)
-        except Exception:
-            continue
-        first_line = record.get("selected_todo_first_line")
-        if isinstance(first_line, str) and first_line:
-            blocked_first_lines.add(first_line)
-        if record.get("queue_fingerprint") == queue_fingerprint:
-            blocked_hash = record.get("selected_todo_sha256")
-            if isinstance(blocked_hash, str):
-                blocked_hashes_for_current_queue.add(blocked_hash)
-
-pattern = re.compile(r"^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ \t]\][ \t]+", re.M)
-matches = list(pattern.finditer(todo))
-for index, match in enumerate(matches):
-    end = matches[index + 1].start() if index + 1 < len(matches) else len(todo)
-    block = todo[match.start():end].rstrip("\n")
-    first_line = block.splitlines()[0].strip() if block.splitlines() else ""
-    block_hash = hashlib.sha256(block.encode("utf-8")).hexdigest()
-    if block_hash not in blocked_hashes_for_current_queue and first_line not in blocked_first_lines:
-        print(block)
-        raise SystemExit(0)
-PY
+  node "$ROOT_DIR/scripts/phase-loop-todo-evaluator.mjs" select --todo "$PHASE_LOOP_TODO" --blocked "$TODO_BLOCKED_FILE"
 }
 
 ensure_blocked_todo_decomposition_request() {
@@ -612,6 +570,48 @@ print(json.dumps({
     "run_stamp": run_stamp,
     "selected_todo_first_line": first_line,
 }, ensure_ascii=False, sort_keys=True))
+PY
+}
+
+classify_no_progress_recovery() {
+  local stdout_log="$1"
+  local stderr_log="$2"
+  local progress_file="$3"
+  python3 - "$stdout_log" "$stderr_log" "$progress_file" <<'PY'
+import json
+import pathlib
+import sys
+
+stdout_log = pathlib.Path(sys.argv[1])
+stderr_log = pathlib.Path(sys.argv[2])
+progress_file = pathlib.Path(sys.argv[3])
+
+def read(path):
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
+
+combined = "\n".join([read(stdout_log), read(stderr_log), read(progress_file)]).lower()
+label = "unknown_no_progress"
+action = "record_blocked_todo_and_request_decomposition"
+if "protected" in combined and "read" in combined and ("denied" in combined or "rejection" in combined):
+    label = "protected_read_denial_loop"
+    action = "redirect_to_git_status_git_diff_or_bounded_todo_refinement"
+elif "workspace.write" in combined and ("denied" in combined or "invalid" in combined or "rejection" in combined):
+    label = "workspace_write_rejected"
+    action = "emit_exact_patch_target_or_concrete_blocker"
+elif "patch only target does not exist" in combined or "missing package script" in combined:
+    label = "invalid_decomposition_leaf"
+    action = "rerun_decomposition_with_existing_targets_and_valid_verification"
+elif "no_eligible_task" in combined or "no actionable" in combined:
+    label = "no_actionable_runtime_task"
+    action = "close_or_decompose_external_todo_queue"
+elif "tool intent" in combined and "workspace.write" not in combined:
+    label = "read_only_tool_intent_loop"
+    action = "force_workspace_write_or_blocker_after_one_read"
+
+print(f"{label}:{action}")
 PY
 }
 
@@ -1517,7 +1517,18 @@ def count_sensitive(text):
 
 def infer_bdk_state(todo):
     lower = todo.lower()
-    if any(token in lower for token in ("decompos", "split", "細分化", "分割")):
+    first_line = todo.splitlines()[0] if todo.splitlines() else ""
+    route_match = re.search(r"(?im)^\s*Route:\s*([^.:\n]+)", todo)
+    route = route_match.group(1).strip().lower() if route_match else ""
+    if route in ("implementation", "implement", "verify_or_repair", "release_engineering", "documentation"):
+        if route in ("verify_or_repair",):
+            return "verify_or_repair"
+        if route in ("release_engineering",):
+            return "release_engineering"
+        if route in ("documentation",):
+            return "documentation"
+        return "implement"
+    if "todo-decomposition" in route or "TODO-decompose-blocked-queue-" in first_line:
         return "decompose_todo"
     if any(token in lower for token in ("test", "guard", "failure", "失敗", "検証", "evidence")):
         return "verify_or_repair"
@@ -1630,6 +1641,16 @@ bdk_state = infer_bdk_state(selected_todo)
 llm_route = infer_llm_route(bdk_state)
 context_hints = infer_context_hints(selected_todo)
 context_hint_lines = [f"- {hint}" for hint in context_hints] or ["- <none inferred; request exact bounded reads only>"]
+decomposition_policy_lines = []
+if bdk_state == "decompose_todo":
+    decomposition_policy_lines = [
+        "- decomposition_policy: this invocation is TODO decomposition only; do not patch implementation, guard, evidence, source, or documentation files.",
+        "- decomposition_write_policy: the only allowed workspace.write target is the live TODO queue (`.brownie/todo.md` or explicitly selected legacy `todo.md`).",
+        "- decomposition_leaf_policy: replace the broad blocked item with unchecked leaf TODOs; every leaf must include `Route:`, `Source TODO:`, `Depends on:`, `Completion condition:`, `Forbidden changes:`, and `Verification:`.",
+        "- decomposition_verification_policy: `Verification:` must use bounded commands such as `pnpm --workspace-root ...`, `cargo ...`, `node scripts/...`, `node --test scripts/...`, or an explicit inspect/blocker/fail-closed condition.",
+        "- decomposition_scope_policy: every implementation leaf must name a bounded `Patch only`/`Create only` scope with at most two concrete backticked paths, or state an explicit blocker/fail-closed condition.",
+        "- decomposition_ledger_policy: also update `.brownie/todo-breakdown.md` with the parent TODO, dependency graph, verification ledger, and a short history note for the generated leaf TODOs.",
+    ]
 
 prompt = "\n".join([
     "# Brownie Phase Loop Effective Prompt",
@@ -1645,6 +1666,9 @@ prompt = "\n".join([
     "- progress_policy: after bounded reads, emit one workspace.write proposal, a concrete blocker TODO, or completion evidence; do not continue read-only discovery.",
     "- output_policy: if workspace context is needed, your next assistant message must be exactly one fenced `brownie-tool-intent` JSON block and no explanatory prose.",
     "- read_batch_policy: if completed_workspace_reads is 0, request at most one relevant `workspace.read`; if completed_workspace_reads is 1 or more, do not request `workspace.read` again and request `workspace.write` or a concrete blocker TODO instead.",
+    "- implementation_preflight_policy: before any workspace.write, internally verify the active TODO id, bounded target files, forbidden files, needed reads, verification command, and blocker condition; if any item is unknown, emit a concrete blocker instead of editing.",
+    "- dependency_policy: do not work on a TODO whose `Depends on:` entries are still pending in the live unchecked TODO queue.",
+    *decomposition_policy_lines,
     "- inferred_context_hints:",
     *context_hint_lines,
     "",
@@ -2513,9 +2537,15 @@ PY
 
     case "$progress_classification" in
       no_progress)
-        detail="Brownie run exited successfully but repeated the same non-progress fingerprint; stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+        recovery_hint="$(classify_no_progress_recovery "$stdout_log" "$stderr_log" "$PROGRESS_STATE_FILE")"
+        if active_todo_claim_exists; then
+          write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+          record_blocked_todo_claim "$run_stamp"
+          ensure_blocked_todo_decomposition_request || true
+        fi
+        detail="Brownie run exited successfully but repeated the same non-progress fingerprint; recovery=$recovery_hint stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
         write_status "no_progress" "$detail" "$run_id" "76" "${CONSECUTIVE_FAILURES:-1}"
-        printf '%s run=%s exit=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$exit_code" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+        printf '%s run=%s exit=%s recovery=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$exit_code" "$recovery_hint" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
         return 76
         ;;
       non_progress_success)

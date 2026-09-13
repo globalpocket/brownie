@@ -13,6 +13,15 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local file="$1"
+  local pattern="$2"
+  if rg -q "$pattern" "$file"; then
+    echo "expected $file not to contain pattern: $pattern" >&2
+    exit 1
+  fi
+}
+
 test_workspace="$(mktemp -d)"
 git -C "$test_workspace" init -b main >/dev/null
 git -C "$test_workspace" -c user.name=Brownie -c user.email=brownie@example.invalid commit --allow-empty -m init >/dev/null
@@ -511,11 +520,12 @@ status = json.load(open(sys.argv[1], encoding="utf-8"))
 progress = json.load(open(sys.argv[2], encoding="utf-8"))
 claim = json.load(open(sys.argv[3], encoding="utf-8"))
 assert status["status"] == "no_progress", status
+assert "recovery=" in status["detail"], status
 assert progress["classification"] == "no_progress", progress
 assert progress["meaningful_progress"] is False, progress
 assert progress["progress_projection"]["blocked_by_terminal_task_failure"] is True, progress
 assert progress["workspace_changed"] is False, progress
-assert claim["status"] == "in_progress", claim
+assert claim["status"] == "blocked", claim
 PY
 
 state_all_blocked="$(mktemp -d)"
@@ -553,6 +563,33 @@ assert "Brownie must own the" in claim["selected_todo"], claim
 assert "TODO-decompose-blocked-queue-" in todo, todo
 assert "decomposition ledger" in todo, todo
 PY
+
+decomposition_prompt_file="$(find "$state_all_blocked/runs" -name '*.prompt.md' -print | sort | tail -n 1)"
+assert_contains "$decomposition_prompt_file" 'state: `decompose_todo`'
+assert_contains "$decomposition_prompt_file" 'decomposition_policy: this invocation is TODO decomposition only'
+assert_contains "$decomposition_prompt_file" 'decomposition_write_policy: the only allowed workspace.write target is the live TODO queue'
+assert_contains "$decomposition_prompt_file" 'decomposition_leaf_policy: replace the broad blocked item with unchecked leaf TODOs'
+assert_contains "$decomposition_prompt_file" 'decomposition_verification_policy: `Verification:` must use bounded commands'
+assert_contains "$decomposition_prompt_file" 'decomposition_scope_policy: every implementation leaf must name a bounded `Patch only`/`Create only` scope'
+assert_contains "$decomposition_prompt_file" 'decomposition_ledger_policy: also update `.brownie/todo-breakdown.md`'
+
+state_decomposition_leaf="$(mktemp -d)"
+prompt_decomposition_leaf="$(mktemp)"
+todo_decomposition_leaf="$(mktemp)"
+printf 'base prompt\n' > "$prompt_decomposition_leaf"
+printf -- '- [ ] E-15b-provenance-collector-a: Patch only `scripts/release-supply-chain-artifact-evidence.mjs` to record one clean current source commit:\n  Route: implementation.\n  Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:\n  Depends on: <none>.\n  Completion condition: the bounded collector path records source commit evidence.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`.\n' > "$todo_decomposition_leaf"
+
+PHASE_LOOP_STATE_DIR="$state_decomposition_leaf" \
+PHASE_LOOP_PROMPT="$prompt_decomposition_leaf" \
+PHASE_LOOP_TODO="$todo_decomposition_leaf" \
+BROWNIE_BIN="$fake_brownie_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+
+decomposition_leaf_prompt_file="$(find "$state_decomposition_leaf/runs" -name '*.prompt.md' -print | sort | tail -n 1)"
+assert_contains "$decomposition_leaf_prompt_file" 'state: `implement`'
+assert_not_contains "$decomposition_leaf_prompt_file" 'state: `decompose_todo`'
+assert_not_contains "$decomposition_leaf_prompt_file" 'decomposition_policy: this invocation is TODO decomposition only'
 
 state_blocked_decomposition="$(mktemp -d)"
 prompt_blocked_decomposition="$(mktemp)"
@@ -614,6 +651,32 @@ import sys
 claim = json.load(open(sys.argv[1], encoding="utf-8"))
 assert claim["status"] == "in_progress", claim
 assert claim["selected_todo"].startswith("- [ ] R-10: next unblocked task"), claim
+PY
+
+state_dependency="$(mktemp -d)"
+prompt_dependency="$(mktemp)"
+todo_dependency="$(mktemp)"
+printf 'base prompt\n' > "$prompt_dependency"
+printf -- '- [ ] E-15-child: Patch only `scripts/child.mjs`:\n  Route: implementation.\n  Source TODO: E-15.\n  Depends on: E-15-parent.\n  Completion condition: the child change is implemented after the parent is done.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n- [ ] E-15-parent: Patch only `scripts/parent.mjs`:\n  Route: implementation.\n  Source TODO: E-15.\n  Depends on: <none>.\n  Completion condition: the parent change is implemented before child work starts.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n' > "$todo_dependency"
+
+PHASE_LOOP_STATE_DIR="$state_dependency" \
+PHASE_LOOP_PROMPT="$prompt_dependency" \
+PHASE_LOOP_TODO="$todo_dependency" \
+BROWNIE_BIN="$fake_brownie_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+
+dependency_prompt_file="$(find "$state_dependency/runs" -name '*.prompt.md' -print | sort | tail -n 1)"
+assert_contains "$dependency_prompt_file" 'dependency_policy: do not work on a TODO whose `Depends on:` entries are still pending'
+assert_contains "$dependency_prompt_file" 'implementation_preflight_policy: before any workspace.write'
+
+python3 - "$state_dependency/todo-claims/current.json" <<'PY'
+import json
+import sys
+
+claim = json.load(open(sys.argv[1], encoding="utf-8"))
+assert claim["status"] == "in_progress", claim
+assert claim["selected_todo"].startswith("- [ ] E-15-parent:"), claim
 PY
 
 assert_contains "$prompt_file" '## Active TODO Claim'

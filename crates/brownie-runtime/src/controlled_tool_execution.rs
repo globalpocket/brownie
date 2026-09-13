@@ -3130,8 +3130,22 @@ fn todo_md_workspace_write_rejection_reason(
     input: &Value,
 ) -> Option<&'static str> {
     let path = input.get("path").and_then(Value::as_str)?;
+    if selected_todo_forbids_workspace_write_path(&record.goal, path) {
+        return Some(
+            "Selected TODO `Forbidden changes:` forbids writing this path; choose the bounded target file or fail closed.",
+        );
+    }
+    let decomposition_only = selected_todo_requires_decomposition_only(&record.goal);
     if !is_todo_workspace_path(path) {
+        if decomposition_only {
+            return Some(
+                "TODO decomposition tasks may only patch the live TODO queue; do not edit implementation files in the decomposition pass.",
+            );
+        }
         return None;
+    }
+    if decomposition_only {
+        return todo_decomposition_workspace_write_rejection_reason(record, input);
     }
     if selected_todo_mentions_non_todo_workspace_path(&record.goal)
         && !selected_todo_allows_todo_md_edit(&record.goal)
@@ -3154,6 +3168,240 @@ fn todo_md_workspace_write_rejection_reason(
     is_concrete_product_ready_leaf_todo(&block).then_some(
         "Leaf Product Ready TODOs must not rewrite the live TODO queue; edit the named implementation files or fail closed.",
     )
+}
+
+fn selected_todo_requires_decomposition_only(goal: &str) -> bool {
+    let goal_lower = goal.to_ascii_lowercase();
+    if goal_lower.contains("- state: `decompose_todo`")
+        || goal_lower.contains("- state: decompose_todo")
+    {
+        return true;
+    }
+    selected_todo_first_line_from_goal(goal).is_some_and(|first_line| {
+        let lower = first_line.to_ascii_lowercase();
+        lower.contains("todo-decompose-blocked-queue")
+            || lower.contains("decompos")
+            || lower.contains("split")
+            || lower.contains("細分化")
+            || lower.contains("分割")
+    })
+}
+
+fn todo_decomposition_workspace_write_rejection_reason(
+    record: &brownie_protocol::TaskRecord,
+    input: &Value,
+) -> Option<&'static str> {
+    let Some(operation) = input.get("operation").and_then(Value::as_str) else {
+        return Some(
+            "TODO decomposition must use a bounded patch_file against the live TODO queue.",
+        );
+    };
+    if operation != "patch_file" {
+        return Some(
+            "TODO decomposition must use a bounded patch_file against the live TODO queue.",
+        );
+    }
+    let Some(old_text) = input.get("old_text").and_then(Value::as_str) else {
+        return Some(
+            "TODO decomposition must use old_text/new_text to replace the selected TODO block.",
+        );
+    };
+    let selected_first_line = selected_todo_first_line_from_goal(&record.goal);
+    if let Some(first_line) = selected_first_line.as_deref() {
+        if !old_text.contains(first_line) {
+            return Some(
+                "TODO decomposition old_text must include the selected TODO first line; do not rewrite unrelated TODO queue entries.",
+            );
+        }
+    }
+    if let Some(selected_block) = selected_todo_block_text_from_goal(&record.goal) {
+        for line in selected_block
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+        {
+            if !old_text.contains(line) {
+                return Some(
+                    "TODO decomposition old_text must include the full selected TODO block.",
+                );
+            }
+        }
+    }
+    let Some(new_text) = input
+        .get("new_text")
+        .and_then(Value::as_str)
+        .or_else(|| input.get("content").and_then(Value::as_str))
+    else {
+        return Some(
+            "TODO decomposition must replace the broad item with one or more unchecked leaf TODOs.",
+        );
+    };
+    let leaf_blocks = unchecked_todo_blocks_from_text(new_text);
+    if leaf_blocks.is_empty() {
+        return Some(
+            "TODO decomposition must replace the broad item with one or more unchecked leaf TODOs.",
+        );
+    }
+    if let Some(first_line) = selected_first_line.as_deref() {
+        if new_text.contains(first_line) {
+            return Some(
+                "TODO decomposition new_text must not keep the selected broad TODO pending.",
+            );
+        }
+    }
+    let parent_reference = selected_todo_parent_reference(&record.goal);
+    for leaf in leaf_blocks {
+        let first_line = leaf.lines().next().unwrap_or_default();
+        if first_line.contains("TODO-decompose-blocked-queue") {
+            return Some(
+                "TODO decomposition must replace the broad decomposition item with leaf TODOs, not keep it pending.",
+            );
+        }
+        if !leaf.contains("Source TODO:") {
+            return Some(
+                "Every TODO decomposition leaf must preserve the parent by including `Source TODO:`.",
+            );
+        }
+        if !leaf.contains("Route:") {
+            return Some("Every TODO decomposition leaf must include `Route:`.");
+        }
+        if !leaf.contains("Completion condition:") {
+            return Some("Every TODO decomposition leaf must include `Completion condition:`.");
+        }
+        if !leaf.contains("Depends on:") {
+            return Some(
+                "Every TODO decomposition leaf must include `Depends on:`; use `<none>` for independent leaves.",
+            );
+        }
+        if !leaf.contains("Forbidden changes:") {
+            return Some("Every TODO decomposition leaf must include `Forbidden changes:`.");
+        }
+        if let Some(parent) = parent_reference.as_deref() {
+            if !leaf_source_todo_lines_reference_parent(leaf, parent) {
+                return Some(
+                    "Every TODO decomposition leaf `Source TODO:` must reference the selected parent TODO.",
+                );
+            }
+        }
+        if !leaf.contains("Verification:") {
+            return Some(
+                "Every TODO decomposition leaf must include concrete verification commands or a fail-closed blocker verification condition.",
+            );
+        }
+        if !leaf_verification_lines_are_allowed(leaf) {
+            return Some(
+                "Every TODO decomposition leaf `Verification:` must use allowed bounded commands such as pnpm workspace guards, cargo checks/tests, node scripts, or an explicit inspect/blocker condition.",
+            );
+        }
+        let leaf_lower = leaf.to_ascii_lowercase();
+        if !leaf.contains("Patch only `")
+            && !leaf.contains("Create only `")
+            && !leaf_lower.contains("blocker")
+            && !leaf_lower.contains("fail-closed")
+        {
+            return Some(
+                "Every TODO decomposition leaf must name a bounded `Patch only`/`Create only` scope or an explicit fail-closed blocker.",
+            );
+        }
+        if leaf.len() > 1800 || leaf.lines().count() > 12 {
+            return Some(
+                "Every TODO decomposition leaf must stay small enough for direct execution.",
+            );
+        }
+    }
+    None
+}
+
+fn selected_todo_forbids_workspace_write_path(goal: &str, path: &str) -> bool {
+    let Some(block) = selected_todo_block_text_from_goal(goal) else {
+        return false;
+    };
+    for line in block.lines().map(str::trim) {
+        if !line.starts_with("Forbidden changes:") {
+            continue;
+        }
+        if backticked_values(line).iter().any(|target| target == path) {
+            return true;
+        }
+    }
+    false
+}
+
+fn backticked_values(text: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut remainder = text;
+    while let Some(start) = remainder.find('`') {
+        let after_start = &remainder[start + 1..];
+        let Some(end) = after_start.find('`') else {
+            break;
+        };
+        values.push(after_start[..end].to_string());
+        remainder = &after_start[end + 1..];
+    }
+    values
+}
+
+fn selected_todo_block_text_from_goal(goal: &str) -> Option<String> {
+    let marker = "\n## Selected TODO\n";
+    let marker_index = goal.find(marker)?;
+    let after_marker = &goal[marker_index + marker.len()..];
+    let next_section = after_marker.find("\n## ").unwrap_or(after_marker.len());
+    let block = after_marker[..next_section].trim();
+    (!block.is_empty()).then(|| block.to_string())
+}
+
+fn selected_todo_parent_reference(goal: &str) -> Option<String> {
+    let first_line = selected_todo_first_line_from_goal(goal)?;
+    let title = first_line
+        .strip_prefix("- [ ] ")
+        .or_else(|| first_line.strip_prefix("* [ ] "))
+        .unwrap_or(&first_line)
+        .trim();
+    title
+        .split_once(':')
+        .map(|(id, _)| id.trim())
+        .filter(|id| !id.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| Some(title.to_string()).filter(|value| !value.is_empty()))
+}
+
+fn leaf_source_todo_lines_reference_parent(leaf: &str, parent: &str) -> bool {
+    leaf.lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("Source TODO:"))
+        .any(|line| line.contains(parent))
+}
+
+fn leaf_verification_lines_are_allowed(leaf: &str) -> bool {
+    leaf.lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_prefix("Verification:"))
+        .all(|verification| {
+            let lower = verification.to_ascii_lowercase();
+            lower.contains("pnpm --workspace-root ")
+                || lower.contains("cargo fmt ")
+                || lower.contains("cargo check")
+                || lower.contains("cargo test")
+                || lower.contains("node scripts/")
+                || lower.contains("node --test scripts/")
+                || lower.contains("inspect ")
+                || lower.contains("blocker")
+                || lower.contains("fail-closed")
+        })
+}
+
+fn unchecked_todo_blocks_from_text(text: &str) -> Vec<&str> {
+    let mut blocks = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(start) = next_unchecked_todo_line_start(text, cursor) {
+        let end = todo_block_end(text, start);
+        blocks.push(&text[start..end]);
+        if end <= cursor {
+            break;
+        }
+        cursor = end;
+    }
+    blocks
 }
 
 fn selected_todo_allows_todo_md_edit(goal: &str) -> bool {
@@ -6515,6 +6763,38 @@ mod mcp_approval_lock_tests {
     }
 
     #[test]
+    fn selected_todo_forbidden_changes_rejects_named_workspace_write_path() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-16a-fixture-objective: Patch only `scripts/allowed.mjs`.\n  Forbidden changes: do not edit `scripts/forbidden.mjs`.\n".to_string();
+
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": "scripts/forbidden.mjs",
+                "operation": "patch_file",
+                "old_text": "old",
+                "new_text": "new"
+            }),
+        );
+
+        assert_eq!(
+            reason,
+            Some("Selected TODO `Forbidden changes:` forbids writing this path; choose the bounded target file or fail closed.")
+        );
+
+        assert!(todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": "scripts/allowed.mjs",
+                "operation": "patch_file",
+                "old_text": "old",
+                "new_text": "new"
+            }),
+        )
+        .is_none());
+    }
+
+    #[test]
     fn explicit_todo_md_maintenance_todos_can_patch_todo_md() {
         let mut record = test_task_record();
         record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] TODO-maintenance: Update todo.md by decomposing an oversized blocker TODO.\n".to_string();
@@ -6524,8 +6804,172 @@ mod mcp_approval_lock_tests {
             &json!({
                 "path": "todo.md",
                 "operation": "patch_file",
+                "old_text": "- [ ] TODO-maintenance: Update todo.md by decomposing an oversized blocker TODO.\n",
+                "new_text": "- [ ] TODO-maintenance-a: Patch only `.brownie/todo.md` with the first bounded queue refinement.\n  Route: todo-decomposition.\n  Source TODO: TODO-maintenance.\n  Depends on: <none>.\n  Completion condition: the broad blocker is replaced by bounded leaf TODOs.\n  Forbidden changes: do not edit implementation files in this decomposition pass.\n  Verification: inspect `.brownie/todo.md` and confirm the broad blocker was replaced by bounded leaf TODOs.\n"
+            }),
+        );
+
+        assert!(reason.is_none());
+    }
+
+    #[test]
+    fn decompose_todo_state_cannot_patch_implementation_files() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- state: `decompose_todo`\n\n## Selected TODO\n\n- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.\n".to_string();
+
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": "scripts/release-supply-chain-artifact-evidence.mjs",
+                "operation": "patch_file",
                 "old_text": "old",
                 "new_text": "new"
+            }),
+        );
+
+        assert_eq!(
+            reason,
+            Some("TODO decomposition tasks may only patch the live TODO queue; do not edit implementation files in the decomposition pass.")
+        );
+    }
+
+    #[test]
+    fn decompose_todo_requires_parent_source_and_verification() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- state: `decompose_todo`\n\n## Selected TODO\n\n- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.\n".to_string();
+
+        let wrong_old_text = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "old_text": "- [ ] TODO-other: Decompose unrelated work.\n",
+                "new_text": "- [ ] E-15b-a: Patch only `scripts/example.mjs`.\n  Route: implementation.\n  Source TODO: TODO-decompose-blocked-queue-abc123.\n  Depends on: <none>.\n  Completion condition: the bounded example patch is implemented and verified.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n"
+            }),
+        );
+        assert_eq!(
+            wrong_old_text,
+            Some("TODO decomposition old_text must include the selected TODO first line; do not rewrite unrelated TODO queue entries.")
+        );
+
+        let missing_source = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "old_text": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.\n",
+                "new_text": "- [ ] E-15b-a: Patch one file.\n  Route: implementation.\n  Completion condition: the bounded example patch is implemented and verified.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n"
+            }),
+        );
+        assert_eq!(
+            missing_source,
+            Some("Every TODO decomposition leaf must preserve the parent by including `Source TODO:`.")
+        );
+
+        let wrong_source = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "old_text": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.\n",
+                "new_text": "- [ ] E-15b-a: Patch only `scripts/example.mjs`.\n  Route: implementation.\n  Source TODO: TODO-other.\n  Depends on: <none>.\n  Completion condition: the bounded example patch is implemented and verified.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n"
+            }),
+        );
+        assert_eq!(
+            wrong_source,
+            Some("Every TODO decomposition leaf `Source TODO:` must reference the selected parent TODO.")
+        );
+
+        let missing_verification = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "old_text": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.\n",
+                "new_text": "- [ ] E-15b-a: Patch one file.\n  Route: implementation.\n  Source TODO: TODO-decompose-blocked-queue-abc123.\n  Depends on: <none>.\n  Completion condition: the bounded example patch is implemented and verified.\n  Forbidden changes: do not edit unrelated files.\n"
+            }),
+        );
+        assert_eq!(
+            missing_verification,
+            Some("Every TODO decomposition leaf must include concrete verification commands or a fail-closed blocker verification condition.")
+        );
+    }
+
+    #[test]
+    fn decompose_todo_validates_each_leaf_independently() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- state: `decompose_todo`\n\n## Selected TODO\n\n- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.\n".to_string();
+
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "old_text": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.\n",
+                "new_text": "- [ ] E-15b-a: Patch only `scripts/example-a.mjs`.\n  Route: implementation.\n  Source TODO: TODO-decompose-blocked-queue-abc123.\n  Depends on: <none>.\n  Completion condition: the bounded example patch is implemented and verified.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n- [ ] E-15b-b: Patch only `scripts/example-b.mjs`.\n  Route: implementation.\n  Depends on: <none>.\n  Completion condition: the bounded example patch is implemented and verified.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n"
+            }),
+        );
+
+        assert_eq!(
+            reason,
+            Some("Every TODO decomposition leaf must preserve the parent by including `Source TODO:`.")
+        );
+    }
+
+    #[test]
+    fn decompose_todo_rejects_kept_broad_decomposition_item() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- state: `decompose_todo`\n\n## Selected TODO\n\n- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.\n".to_string();
+
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "old_text": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.\n",
+                "new_text": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.\n  Route: todo-decomposition.\n  Source TODO: TODO-decompose-blocked-queue-abc123.\n  Depends on: <none>.\n  Completion condition: the broad item is replaced.\n  Forbidden changes: do not edit implementation files.\n  Verification: run `pnpm --workspace-root check`.\n"
+            }),
+        );
+
+        assert_eq!(
+            reason,
+            Some("TODO decomposition new_text must not keep the selected broad TODO pending.")
+        );
+    }
+
+    #[test]
+    fn decompose_todo_rejects_unscoped_leaf() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- state: `decompose_todo`\n\n## Selected TODO\n\n- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.\n".to_string();
+
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "old_text": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.\n",
+                "new_text": "- [ ] E-15b-a: Fix the release evidence problems.\n  Route: implementation.\n  Source TODO: TODO-decompose-blocked-queue-abc123.\n  Depends on: <none>.\n  Completion condition: the bounded example patch is implemented and verified.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n"
+            }),
+        );
+
+        assert_eq!(
+            reason,
+            Some("Every TODO decomposition leaf must name a bounded `Patch only`/`Create only` scope or an explicit fail-closed blocker.")
+        );
+    }
+
+    #[test]
+    fn decompose_todo_allows_structured_leaf_todo_patch() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- state: `decompose_todo`\n\n## Selected TODO\n\n- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.\n".to_string();
+
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "old_text": "- [ ] TODO-decompose-blocked-queue-abc123: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.\n",
+                "new_text": "- [ ] E-15b-a: Patch only `scripts/example.mjs`.\n  Route: implementation.\n  Source TODO: TODO-decompose-blocked-queue-abc123.\n  Depends on: <none>.\n  Completion condition: the bounded example patch is implemented and verified.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n"
             }),
         );
 
