@@ -21,7 +21,7 @@
     "workflow_run_id": null,
     "artifact_sha256": null,
     "contract_registry_fingerprint": "sha256:4250fb47242f2bdc4ac26ce1d0cf8ecedbd27627eb9e3117acc82e3719eb934d",
-    "readiness_audit_content_sha256": "sha256:d97b54248ad003c13be4f01e0db406b45f7608a0a33605e32a23fe1a560fedb4",
+    "readiness_audit_content_sha256": "sha256:8cfbcc313f95831f9107bc7a234255c83de681960fd556ae982c652d89aaab10",
     "mode_pack_fingerprint": null,
     "product_dod_fingerprint": null
   },
@@ -382,6 +382,26 @@
       {
         "id": "phase_loop_actor_separation_guard_test",
         "command": "pnpm --workspace-root guard:phase-loop-actor-separation:test"
+      },
+      {
+        "id": "brownie_work_product_guard",
+        "command": "pnpm --workspace-root guard:brownie-work-product"
+      },
+      {
+        "id": "brownie_work_product_guard_test",
+        "command": "pnpm --workspace-root guard:brownie-work-product:test"
+      },
+      {
+        "id": "phase_loop_todo_evaluator_test",
+        "command": "pnpm --workspace-root phase-loop:todo-evaluator:test"
+      },
+      {
+        "id": "todo_decomposition_guard",
+        "command": "pnpm --workspace-root guard:todo-decomposition"
+      },
+      {
+        "id": "todo_decomposition_guard_test",
+        "command": "pnpm --workspace-root guard:todo-decomposition:test"
       },
       {
         "id": "runtime_release_readiness_guard",

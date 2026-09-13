@@ -184,6 +184,36 @@ export const requiredReleaseGateCommands = [
     args: ['--workspace-root', 'guard:phase-loop-actor-separation:test']
   },
   {
+    id: 'brownie_work_product_guard',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:brownie-work-product']
+  },
+  {
+    id: 'brownie_work_product_guard_test',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:brownie-work-product:test']
+  },
+  {
+    id: 'phase_loop_todo_evaluator_test',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'phase-loop:todo-evaluator:test']
+  },
+  {
+    id: 'todo_decomposition_guard',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:todo-decomposition']
+  },
+  {
+    id: 'todo_decomposition_guard_test',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:todo-decomposition:test']
+  },
+  {
     id: 'runtime_release_readiness_guard',
     category: 'brownie_release_guard',
     command: 'pnpm',

@@ -221,38 +221,60 @@ unless the owner explicitly promotes them.
 
 
 - [ ] E-15a-redaction-collector: Patch only `scripts/release-runtime-operational-evidence.mjs` to sanitize runtime operational evidence:
+  Route: implementation.
   Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
+  Depends on: <none>.
   Store only bounded statuses, counts, hashes, relative paths, command identifiers, and non-sensitive summaries. Remove absolute local paths, SSH host aliases, raw stdout/stderr, encoded shell commands, and local worktree details from persisted evidence.
+  Completion condition: runtime operational evidence stores only bounded non-sensitive summaries for this collector path and remains fail-closed for missing evidence.
+  Forbidden changes: do not edit release contract readiness status, owner governance evidence, or unrelated artifact collectors.
   Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.
 - [ ] E-15a-redaction-guard: Patch only `scripts/guard-runtime-operational-evidence.mjs` and `scripts/guard-runtime-operational-evidence.test.mjs` to reject forbidden local evidence fields:
+  Route: implementation.
   Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
+  Depends on: E-15a-redaction-collector.
   Add fail-closed checks and tests for `/Users/`, `/home/`, `C:/Users/`, SSH host aliases, raw process output fields, PowerShell `EncodedCommand`, and local worktree paths.
+  Completion condition: guard tests reject forbidden local evidence fields and the runtime operational evidence guard passes.
+  Forbidden changes: do not regenerate unrelated release evidence or broaden allowed evidence fields.
   Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`.
-- [ ] E-15b-provenance-collector: Patch only `scripts/release-supply-chain-artifact-evidence.mjs` to bind artifact evidence to one current clean source commit:
+
+- [ ] E-15b-provenance-collector-a: Patch only the existing collector path in `scripts/release-supply-chain-artifact-evidence.mjs` to record one clean current source commit and dirty-state evidence for collected artifacts:
+  Route: implementation.
   Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
-  Record current source commit, clean/dirty state, release invocation identity, artifact paths, and checksum set for the artifacts actually collected. Missing workflow run or artifact SHA must remain explicit fail-closed blockers.
+  Depends on: <none>.
+  Do not add a duplicate `main()` or broad replacement collector. First read the existing collector functions, then patch the smallest existing function that builds supply-chain/artifact evidence. Evidence must identify the current source commit and whether the source tree was clean at collection time; dirty source trees must remain fail-closed, not release-ready.
+  Completion condition: supply-chain artifact evidence records current source commit and dirty-state evidence without claiming release-ready on dirty trees.
+  Forbidden changes: do not add duplicate collector entrypoints, do not replace broad collector structure, and do not mark missing workflow/artifact evidence satisfied.
   Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`.
-- [ ] E-15b-release-contract-binding-guard: Patch only `scripts/guard-release-contract.mjs` and its tests to reject stale/null commit and artifact binding fields:
+- [ ] E-15b-release-contract-binding-guard-a: Patch only `scripts/guard-release-contract.mjs` and `scripts/guard-release-contract.test.mjs` to reject implemented artifact/SBOM/provenance evidence with missing commit/workflow/artifact bindings:
+  Route: implementation.
   Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
-  Fail when implemented artifact/SBOM/provenance conditions have null/stale implementation commit, tested commit, workflow run ID, artifact SHA-256, dirty source tree, or mismatched current main evidence.
+  Depends on: E-15b-provenance-collector-a.
+  Do not make `commit_trace.workflow_run_id` or `artifact_sha256` globally non-null while the release contract is still fail-closed. Add conditional validation for sections whose status claims implemented/satisfied artifact, SBOM, or provenance evidence. Null values are allowed only when the corresponding evidence remains explicitly fail-closed.
+  Completion condition: release contract guard conditionally rejects implemented/satisfied artifact, SBOM, or provenance claims with missing bindings while preserving fail-closed null allowances.
+  Forbidden changes: do not globally require workflow_run_id or artifact_sha256 while evidence remains fail-closed.
   Verification: run `pnpm --workspace-root guard:release-contract:test` and `pnpm --workspace-root guard:release-contract`.
-- [ ] E-15c-artifact-smoke-runner-contract: Patch only local artifact smoke collection scripts to require per-target E2E smoke fields:
+
+- [ ] E-15e-release-doc-resync-after-evidence: Patch only `docs/architecture/final-product-ready-judgment.md` after E-15a through E-15d are implemented:
+  Route: documentation.
   Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
-  For each released artifact/OS target, require Base Mode Pack load, minimal task run, Ledger generation, forced stop/resume, and stale/replay rejection, or record a target-specific fail-closed reason.
-  Verification: run the artifact smoke guard tests and `pnpm --workspace-root guard:runtime-operational-evidence`.
-- [ ] E-15d-stateful-soak-contract: Patch only runtime operational evidence collection and guard tests to replace version-only 100-run soak with stateful soak evidence:
-  Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
-  Require task state transitions, Ledger/workspace consistency, resume/replay handling, no duplicate side effects, process-loss recovery, bounded Mode Pack/LLM/MCP paths where available, and finite convergence. Reject version/help-only soak evidence.
-  Verification: run soak guard tests and `pnpm --workspace-root check`.
-- [ ] E-15e-release-doc-resync-after-evidence: Patch only release judgment/contract/audit/manifest documents after E-15a through E-15d are implemented:
-  Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
+  Depends on: E-15a-redaction-guard, E-15b-release-contract-binding-guard-a, E-15c-artifact-smoke-runner-contract, E-15d-stateful-soak-contract.
   Resynchronize current main, current artifacts, fail-closed missing evidence, and owner-controlled independent reviews. Do not mark `runtime_release_ready=true` while independent reviews remain incomplete.
+  Completion condition: release documents are resynchronized after evidence work without claiming runtime_release_ready while independent reviews remain incomplete.
+  Forbidden changes: do not edit implementation scripts in this documentation task and do not remove owner-controlled blockers.
   Verification: run `pnpm --workspace-root guard:runtime-release-readiness`, `pnpm --workspace-root guard:release-contract`, `pnpm --workspace-root guard:phase-value`, and `pnpm --workspace-root check`.
-- [ ] E-15f-semantic-consistency-guard: Add a release evidence semantic consistency guard and tests:
+- [ ] E-15f-semantic-consistency-guard: Create only `scripts/guard-release-evidence-semantic-consistency.mjs` and `scripts/guard-release-evidence-semantic-consistency.test.mjs` to add a release evidence semantic consistency guard and tests:
+  Route: implementation.
   Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
+  Depends on: E-15b-release-contract-binding-guard-a, E-15c-artifact-smoke-runner-contract, E-15d-stateful-soak-contract.
   Fail when release contract statuses contradict evidence contents, including stale/null commits, dirty trees, missing workflow provenance, missing or mismatched artifact checksums, shallow smoke, version-only soak, or forbidden confidential fields. Wire into VSIX `check`, release gate dry-run inventory, and phase value manifest.
+  Completion condition: semantic consistency guard fails on contradictory release contract/evidence state and is wired into check and release-gate coverage.
+  Forbidden changes: do not mark release-ready or remove fail-closed owner/external evidence blockers.
   Verification: run the new guard tests, `pnpm --workspace-root guard:phase-value`, and `pnpm --workspace-root check`.
-- [ ] E-15g-pr435-hygiene-evidence: Resolve stale Phase Loop PR #435 with bounded evidence or a follow-up TODO:
+- [ ] E-15g-pr435-hygiene-evidence: Record an explicit fail-closed blocker or bounded release-ops evidence for stale Phase Loop PR #435:
+  Route: release-ops.
   Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
+  Depends on: <none>.
   Verify whether all useful changes from #435 are included in current `origin/main`. If superseded, close the PR with a concise comment citing superseding evidence. If not, update `.brownie/todo.md` with the exact missing file/change instead of merging stale conflicting work.
-  Verification: record the PR state and conclusion in bounded release-ops evidence or TODO update.
+  Completion condition: PR #435 state is resolved or an exact follow-up TODO records the missing file/change.
+  Forbidden changes: do not merge stale conflicting work and do not close the PR without bounded superseding evidence.
+  Verification: inspect PR #435 state and record the conclusion in bounded release-ops evidence or a fail-closed TODO update.

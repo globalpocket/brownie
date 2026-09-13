@@ -13,6 +13,30 @@ const defaultArtifactRoot = '.brownie/release-evidence/artifacts';
 const defaultLocalReleaseTargetsPath = '.brownie/local-release-targets.json';
 
 const requiredSections = ['artifact_lifecycle', 'golden_journey_fixture', 'soak_test'];
+
+const soakEvidence = {
+  stateful_transition: {
+    description: 'Records stateful transition evidence from idle to task-run to ledger-generation to forced-stop to resume to stale-replay-rejection.',
+    fields: ['idle', 'task_run', 'ledger_generation', 'forced_stop', 'resume', 'stale_replay_rejection'],
+    required: true
+  },
+  ledger_consistency: {
+    description: 'Records ledger consistency evidence across state transitions.',
+    fields: ['idle_ledger', 'task_run_ledger', 'forced_stop_ledger', 'resume_ledger', 'stale_replay_rejection_ledger'],
+    required: true
+  },
+  finite_convergence: {
+    description: 'Records finite-convergence evidence: task-run completes within bounded iterations, forced-stop terminates within bounded time, resume recovers to consistent state, stale-replay-rejection rejects replay of stale ledger.',
+    fields: ['task_run_iteration_bound', 'forced_stop_time_bound', 'resume_state_recovery', 'stale_replay_rejection'],
+    required: true
+  }
+};
+
+const requiredE2EFields = {
+  artifact_lifecycle: ['base_mode_pack_load', 'minimal_task_run', 'ledger_generation', 'forced_stop_resume', 'stale_replay_rejection'],
+  golden_journey_fixture: ['base_mode_pack_load', 'minimal_task_run', 'ledger_generation', 'forced_stop_resume', 'stale_replay_rejection'],
+  soak_test: ['base_mode_pack_load', 'minimal_task_run', 'ledger_generation', 'forced_stop_resume', 'stale_replay_rejection']
+};
 const allowedTargetIds = new Set(['darwin-arm64', 'linux-arm64', 'linux-x64', 'win32-x64']);
 const allowedTargetKinds = new Set(['local', 'ssh']);
 const allowedTargetShells = new Set(['posix', 'powershell']);
