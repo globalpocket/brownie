@@ -289,9 +289,13 @@ fn is_allowed_shared_brownie_write_path(path: &Path) -> bool {
             _ => None,
         })
         .collect::<Vec<_>>();
-    components.len() == 2
+    if components.len() == 2
         && components[0] == ".brownie"
         && matches!(components[1].as_ref(), "todo.md" | "todo-breakdown.md")
+    {
+        return true;
+    }
+    components.len() >= 3 && components[0] == ".brownie" && components[1] == "release-evidence"
 }
 
 fn reject_symlink_ancestors(root: &Path, relative_path: &Path) -> anyhow::Result<()> {
@@ -2865,6 +2869,13 @@ fn normalize_workspace_write_input(input: Value) -> Value {
     if object.get("operation").and_then(Value::as_str) != Some("patch_file") {
         return input;
     }
+    if object.contains_key("hunks") {
+        let mut normalized = object.clone();
+        normalized.remove("content");
+        normalized.remove("old_text");
+        normalized.remove("new_text");
+        return Value::Object(normalized);
+    }
     if !(object.contains_key("old_text") && object.contains_key("new_text")) {
         return input;
     }
@@ -3009,19 +3020,6 @@ pub fn preflight_workspace_write_input_with_limit(
         return Ok(());
     }
     if operation == "patch_file" {
-        if object.contains_key("content") {
-            if object.contains_key("old_text")
-                || object.contains_key("new_text")
-                || object.contains_key("hunks")
-            {
-                return Err("workspace.write input.content cannot be combined with old_text, new_text, or hunks for patch_file.");
-            }
-            let Some(content) = object.get("content").and_then(|value| value.as_str()) else {
-                return Err("workspace.write input.content must be a string for patch_file.");
-            };
-            workspace_write_unified_diff_content_to_hunks_with_limit(content, max_content_chars)?;
-            return Ok(());
-        }
         if let Some(hunks) = object.get("hunks") {
             if object.contains_key("old_text") || object.contains_key("new_text") {
                 return Err("workspace.write input.hunks cannot be combined with old_text or new_text for patch_file.");
@@ -3029,9 +3027,9 @@ pub fn preflight_workspace_write_input_with_limit(
             let Some(hunks) = hunks.as_array() else {
                 return Err("workspace.write input.hunks must be an array for patch_file.");
             };
-            if !(2..=5).contains(&hunks.len()) {
+            if !(1..=5).contains(&hunks.len()) {
                 return Err(
-                    "workspace.write input.hunks must contain 2 to 5 hunks for patch_file.",
+                    "workspace.write input.hunks must contain 1 to 5 hunks for patch_file.",
                 );
             }
             let mut hunk_chars = 0usize;
@@ -3056,11 +3054,32 @@ pub fn preflight_workspace_write_input_with_limit(
                         "workspace.write input.hunks[].old_text must not be empty for patch_file.",
                     );
                 }
+                if let Some(occurrence) = hunk.get("occurrence") {
+                    let Some(raw) = occurrence.as_u64() else {
+                        return Err(
+                            "workspace.write input.hunks[].occurrence must be a positive integer for patch_file.",
+                        );
+                    };
+                    if raw == 0 {
+                        return Err(
+                            "workspace.write input.hunks[].occurrence must be a positive integer for patch_file.",
+                        );
+                    }
+                }
                 hunk_chars += old_text.chars().count() + new_text.chars().count();
             }
             if hunk_chars > max_content_chars {
                 return Err("workspace.write patch hunks exceed parser length limit.");
             }
+        } else if object.contains_key("content") {
+            if object.contains_key("old_text") || object.contains_key("new_text") {
+                return Err("workspace.write input.content cannot be combined with old_text or new_text for patch_file.");
+            }
+            let Some(content) = object.get("content").and_then(|value| value.as_str()) else {
+                return Err("workspace.write input.content must be a string for patch_file.");
+            };
+            workspace_write_unified_diff_content_to_hunks_with_limit(content, max_content_chars)?;
+            return Ok(());
         } else {
             let Some(old_text) = object.get("old_text") else {
                 return Err("workspace.write input.old_text is required for patch_file.");
@@ -3291,6 +3310,14 @@ impl ToolIntentParser {
                 .or_else(|_| parse_tool_requests_with_missing_array_close(trimmed_json_block))
                 .or_else(|_| {
                     parse_tool_requests_with_extra_trailing_array_close(trimmed_json_block)
+                })
+                .or_else(|_| {
+                    parse_tool_requests_with_missing_outer_object_close(trimmed_json_block)
+                })
+                .or_else(|_| {
+                    parse_tool_requests_with_missing_request_object_close_before_next_request(
+                        trimmed_json_block,
+                    )
                 })
                 .or_else(|_| {
                     parse_tool_requests_with_missing_input_object_close(trimmed_json_block)
@@ -3602,6 +3629,38 @@ fn parse_tool_requests_with_extra_request_object_close(
     serde_json::from_str(&repaired)
 }
 
+fn parse_tool_requests_with_missing_outer_object_close(
+    json_block: &str,
+) -> Result<Value, serde_json::Error> {
+    if !json_block.contains("\"tool_requests\"")
+        || !json_block.contains("\"tool_requests\":[")
+        || !json_block.starts_with('{')
+        || !json_block.ends_with(']')
+    {
+        return serde_json::from_str(json_block);
+    }
+    let repaired = format!("{json_block}}}");
+    serde_json::from_str(&repaired)
+}
+
+fn parse_tool_requests_with_missing_request_object_close_before_next_request(
+    json_block: &str,
+) -> Result<Value, serde_json::Error> {
+    if !json_block.contains("\"tool_requests\"")
+        || !json_block.contains("\"tool_requests\":[")
+        || !json_block.contains("{\"tool_id\"")
+    {
+        return serde_json::from_str(json_block);
+    }
+    let repaired = json_block
+        .replace("\"},{\"tool_id\"", "\"}},{\"tool_id\"")
+        .replace("\"},\n{\"tool_id\"", "\"}},\n{\"tool_id\"");
+    if repaired == json_block {
+        return serde_json::from_str(json_block);
+    }
+    serde_json::from_str(&repaired)
+}
+
 fn parse_tool_requests_with_missing_input_object_close(
     json_block: &str,
 ) -> Result<Value, serde_json::Error> {
@@ -3654,6 +3713,26 @@ fn parse_patch_file_old_new_text_from_malformed_tool_request(
     let Some(new_text) = json_string_field(candidate, "new_text") else {
         return malformed_patch_file_recovery_error();
     };
+    if candidate.contains("\"hunks\"") {
+        let mut hunk = json!({
+            "old_text": old_text,
+            "new_text": new_text,
+        });
+        if let Some(occurrence) = json_u64_field(candidate, "occurrence") {
+            hunk["occurrence"] = json!(occurrence);
+        }
+        return Ok(json!({
+            "tool_requests": [{
+                "tool_id": WORKSPACE_WRITE_TOOL_ID,
+                "reason": reason,
+                "input": {
+                    "path": path,
+                    "operation": "patch_file",
+                    "hunks": [hunk]
+                }
+            }]
+        }));
+    }
     Ok(json!({
         "tool_requests": [{
             "tool_id": WORKSPACE_WRITE_TOOL_ID,
@@ -3688,6 +3767,22 @@ fn workspace_write_patch_file_recovery_candidate(json_block: &str) -> Option<&st
         search_start = workspace_write_pos + "\"workspace.write\"".len();
     }
     None
+}
+
+fn json_u64_field(json_block: &str, field_name: &str) -> Option<u64> {
+    let key = format!("\"{field_name}\"");
+    let key_start = json_block.find(&key)?;
+    let after_key = &json_block[key_start + key.len()..];
+    let colon = after_key.find(':')?;
+    let after_colon = after_key[colon + 1..].trim_start();
+    let digits = after_colon
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse().ok()
 }
 
 fn json_string_field(json_block: &str, field_name: &str) -> Option<String> {
@@ -5255,6 +5350,33 @@ mod tests {
     }
 
     #[test]
+    fn parser_repairs_missing_outer_object_close_after_tool_requests_array() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Create evidence.\",\"input\":{\"path\":\".brownie/release-evidence/pr435-hygiene-evidence.json\",\"operation\":\"create_file\",\"content\":\"{\\n  \\\"status\\\": \\\"fail-closed\\\"\\n}\"}}]\n```",
+        );
+        assert_eq!(parsed.requests.len(), 1);
+        assert_eq!(parsed.requests[0].tool_id, "workspace.write");
+        assert_eq!(
+            parsed.requests[0].input["path"],
+            ".brownie/release-evidence/pr435-hygiene-evidence.json"
+        );
+        assert_eq!(parsed.requests[0].input["operation"], "create_file");
+        assert!(parsed.rejected.is_empty());
+    }
+
+    #[test]
+    fn parser_repairs_missing_request_object_close_before_next_tool_request() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Create evidence.\",\"input\":{\"path\":\".brownie/release-evidence/pr435-hygiene-evidence.json\",\"operation\":\"create_file\",\"content\":\"{\\n  \\\"status\\\": \\\"fail-closed\\\"\\n}\"},\n{\"tool_id\":\"git.status\",\"reason\":\"Inspect git state.\",\"input\":{}}]}\n```",
+        );
+        assert_eq!(parsed.requests.len(), 2);
+        assert_eq!(parsed.requests[0].tool_id, "workspace.write");
+        assert_eq!(parsed.requests[0].input["operation"], "create_file");
+        assert_eq!(parsed.requests[1].tool_id, "git.status");
+        assert!(parsed.rejected.is_empty());
+    }
+
+    #[test]
     fn parser_accepts_workspace_write_content_with_markdown_code_fence() {
         let parsed = ToolIntentParser::parse_assistant_content(
             "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Create docs.\",\"input\":{\"path\":\"docs/guide.md\",\"operation\":\"create_file\",\"content\":\"# Guide\\n\\n```bash\\npnpm --workspace-root check\\n```\\n\"}}]}\n```",
@@ -5533,6 +5655,44 @@ mod tests {
     }
 
     #[test]
+    fn parser_prefers_patch_file_hunks_when_content_is_also_present() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Patch duplicate declaration.\",\"input\":{\"path\":\"scripts/release-runtime-operational-evidence.mjs\",\"operation\":\"patch_file\",\"hunks\":[{\"old_text\":\"const soakEvidenceFixture = {\",\"new_text\":\"const soakEvidenceFixtureDuplicate = {\",\"occurrence\":2}],\"content\":\"const soakEvidenceFixture = {\\n  oversized stale block\\n\"}}]}\n```",
+        );
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+        let input = &parsed.requests[0].input;
+        assert!(input.get("content").is_none());
+        assert!(input.get("old_text").is_none());
+        assert_eq!(
+            input["hunks"][0]["old_text"],
+            "const soakEvidenceFixture = {"
+        );
+        assert_eq!(input["hunks"][0]["occurrence"], 2);
+    }
+
+    #[test]
+    fn parser_recovers_patch_file_hunks_when_trailing_content_breaks_json() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Patch duplicate declaration.\",\"input\":{\"path\":\"scripts/release-runtime-operational-evidence.mjs\",\"operation\":\"patch_file\",\"hunks\":[{\"old_text\":\"const soakEvidenceFixture = {\",\"new_text\":\"const soakEvidenceFixtureDuplicate = {\",\"occurrence\":2}]},\"content\":\"const soakEvidenceFixture = {\n```",
+        );
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+        let input = &parsed.requests[0].input;
+        assert!(input.get("content").is_none());
+        assert!(input.get("old_text").is_none());
+        assert_eq!(
+            input["hunks"][0]["old_text"],
+            "const soakEvidenceFixture = {"
+        );
+        assert_eq!(
+            input["hunks"][0]["new_text"],
+            "const soakEvidenceFixtureDuplicate = {"
+        );
+        assert_eq!(input["hunks"][0]["occurrence"], 2);
+    }
+
+    #[test]
     fn parser_recovers_patch_file_old_new_text_when_trailing_content_breaks_json() {
         let parsed = ToolIntentParser::parse_assistant_content(
             "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Patch one status line.\",\"input\":{\"path\":\"docs/architecture/runtime-release-contract.json\",\"operation\":\"patch_file\",\"old_text\":\"      \\\"status\\\": \\\"blocked_by_runtime_release_guard_ci\\\",\",\"new_text\":\"      \\\"status\\\": \\\"blocked_by_independent_owner_reviews\\\",\",\"content\":\"--- a/docs/architecture/runtime-release-contract.json\\n+++ b/docs/architecture/runtime-release-contract.json\\n@@ -1,4 +1,4 @@\\n-  \\\"release_ready_conditions\\\": [\\n+  \\\"release_ready_conditions\\\": [\n```",
@@ -5643,14 +5803,17 @@ mod tests {
     }
 
     #[test]
-    fn parser_allows_shared_brownie_todo_write_paths_only() {
-        for path in [".brownie/todo.md", ".brownie/todo-breakdown.md"] {
+    fn parser_allows_shared_brownie_todo_and_release_evidence_write_paths_only() {
+        for path in [
+            ".brownie/todo.md",
+            ".brownie/todo-breakdown.md",
+            ".brownie/release-evidence/runtime-operational-evidence.json",
+        ] {
             let input = serde_json::json!({"path":path,"operation":"replace_file","content":"x\n"});
             assert!(preflight_workspace_write_input(&input).is_ok(), "{path}");
         }
         for path in [
             ".brownie/private/token.txt",
-            ".brownie/release-evidence/runtime-operational-evidence.json",
             ".brownie/other.md",
             ".git/config",
         ] {

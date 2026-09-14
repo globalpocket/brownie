@@ -7279,6 +7279,7 @@ fn validate_workspace_patch_proposed_payload_schema(
         validate_optional_payload_bool_field(object, field)?;
     }
     validate_optional_payload_string_array_field(object, "failed_verifier_tool_ids")?;
+    validate_optional_payload_array_field(object, "patch_hunks")?;
     Ok(())
 }
 
@@ -9318,6 +9319,7 @@ const WORKSPACE_PATCH_PROPOSED_KNOWN_PAYLOAD_FIELDS: &[&str] = &[
     "hunk_fingerprint",
     "operation",
     "patch_apply_recovery_repair",
+    "patch_hunks",
     "patch_new_text",
     "patch_old_text",
     "path",

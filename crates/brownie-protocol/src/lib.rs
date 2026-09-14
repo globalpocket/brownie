@@ -1743,6 +1743,8 @@ pub struct TaskRunSelectedIndexContext {
 #[serde(deny_unknown_fields)]
 pub struct RunEventsParams {
     pub run_id: String,
+    #[serde(default)]
+    pub include_patch_material: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -2004,6 +2006,8 @@ pub struct ProposalApplyTransactionRecoverySource {
 pub struct ProposalPatchHunk {
     pub old_text: String,
     pub new_text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurrence: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "evidence_id": "brownie-runtime-operational-evidence-v1",
-  "generated_at": "2026-09-12T07:49:46.014Z",
+  "generated_at": "2026-09-13T09:39:15.758Z",
   "repository": "globalpocket/brownie",
   "release_ready": false,
   "runtime_release_ready": false,
@@ -12,7 +12,7 @@
   ],
   "sections": {
     "artifact_lifecycle": {
-      "status": "satisfied",
+      "status": "failed",
       "release_blocking": true,
       "local_release_targets_status": "loaded",
       "local_release_targets_path": ".brownie/local-release-targets.json",
@@ -35,100 +35,198 @@
               "uninstalled": true,
               "commands": [
                 {
-                  "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-gdEW6E/brownie --version",
+                  "command_summary": {
+                    "kind": "command_summary",
+                    "word_count": 2,
+                    "sha256": "f72788915b5440907aa468efa2fa4c266c4854452da9141cadb139d627da4ad0"
+                  },
                   "exit_code": 0,
                   "signal": null,
                   "passed": true,
-                  "stdout": "brownie 0.1.0\n",
-                  "stderr": ""
+                  "stdout_summary": {
+                    "kind": "process_output_summary",
+                    "byte_length": 14,
+                    "line_count": 1,
+                    "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+                  },
+                  "stderr_summary": {
+                    "kind": "process_output_summary",
+                    "byte_length": 0,
+                    "line_count": 0,
+                    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                  }
                 },
                 {
-                  "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-gdEW6E/brownie help run",
+                  "command_summary": {
+                    "kind": "command_summary",
+                    "word_count": 3,
+                    "sha256": "50ec0a21c46afc4289dd8ae5d238529d53c5865d2a7d1c7e94f57f6088c881f9"
+                  },
                   "exit_code": 0,
                   "signal": null,
                   "passed": true,
-                  "stdout": "brownie run\n\nUsage:\n  brownie run <objective>\n  brownie run --file <path>\n  brownie --json run <objective>\n  brownie --json run --file <path>\n\nRuns one general autonomous objective through the Rust runtime.\nThe objective is free text. Tokens after run, including --help, -V, --version, and --json, remain part of the objective.\nWith --file, the CLI reads the UTF-8 file and sends its contents as the objective.\nSet BROWNIE_CLI_RUN_MODE_ID to request a specific runtime mode for the admitted task.\nFor strict OpenAI-compatible provider runs, use BROWNIE_CLI_RUN_MODE_ID=provider-runner together with BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true.\nOne invocation performs bounded progress, persists through the runtime, and exits.\nJSON output includes an automation object and controller_action for external loops.\n\nExamples:\n  brownie run \"summarize this repository\"\n  brownie run --file sample.md\n  BROWNIE_CLI_RUN_MODE_ID=provider-runner brownie run \"Hello\"\n  brownie --json run \"inspect the current task state\"\n\nBoundary:\n  The CLI invokes runtime-owned headless execution. It does not select tasks, apply workspace changes, or own runtime policy.\n",
-                  "stderr": ""
+                  "stdout_summary": {
+                    "kind": "process_output_summary",
+                    "byte_length": 1144,
+                    "line_count": 24,
+                    "sha256": "dd740a50fadab24657587d3701d488f1c22980a3bf2e4c09659329cec2827e58"
+                  },
+                  "stderr_summary": {
+                    "kind": "process_output_summary",
+                    "byte_length": 0,
+                    "line_count": 0,
+                    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                  }
                 }
               ]
             }
           ],
           "commands": [
             {
-              "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-gdEW6E/brownie --version",
+              "command_summary": {
+                "kind": "command_summary",
+                "word_count": 2,
+                "sha256": "f72788915b5440907aa468efa2fa4c266c4854452da9141cadb139d627da4ad0"
+              },
               "exit_code": 0,
               "signal": null,
               "passed": true,
-              "stdout": "brownie 0.1.0\n",
-              "stderr": ""
+              "stdout_summary": {
+                "kind": "process_output_summary",
+                "byte_length": 14,
+                "line_count": 1,
+                "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+              },
+              "stderr_summary": {
+                "kind": "process_output_summary",
+                "byte_length": 0,
+                "line_count": 0,
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              }
             },
             {
-              "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-gdEW6E/brownie help run",
+              "command_summary": {
+                "kind": "command_summary",
+                "word_count": 3,
+                "sha256": "50ec0a21c46afc4289dd8ae5d238529d53c5865d2a7d1c7e94f57f6088c881f9"
+              },
               "exit_code": 0,
               "signal": null,
               "passed": true,
-              "stdout": "brownie run\n\nUsage:\n  brownie run <objective>\n  brownie run --file <path>\n  brownie --json run <objective>\n  brownie --json run --file <path>\n\nRuns one general autonomous objective through the Rust runtime.\nThe objective is free text. Tokens after run, including --help, -V, --version, and --json, remain part of the objective.\nWith --file, the CLI reads the UTF-8 file and sends its contents as the objective.\nSet BROWNIE_CLI_RUN_MODE_ID to request a specific runtime mode for the admitted task.\nFor strict OpenAI-compatible provider runs, use BROWNIE_CLI_RUN_MODE_ID=provider-runner together with BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true.\nOne invocation performs bounded progress, persists through the runtime, and exits.\nJSON output includes an automation object and controller_action for external loops.\n\nExamples:\n  brownie run \"summarize this repository\"\n  brownie run --file sample.md\n  BROWNIE_CLI_RUN_MODE_ID=provider-runner brownie run \"Hello\"\n  brownie --json run \"inspect the current task state\"\n\nBoundary:\n  The CLI invokes runtime-owned headless execution. It does not select tasks, apply workspace changes, or own runtime policy.\n",
-              "stderr": ""
+              "stdout_summary": {
+                "kind": "process_output_summary",
+                "byte_length": 1144,
+                "line_count": 24,
+                "sha256": "dd740a50fadab24657587d3701d488f1c22980a3bf2e4c09659329cec2827e58"
+              },
+              "stderr_summary": {
+                "kind": "process_output_summary",
+                "byte_length": 0,
+                "line_count": 0,
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              }
             }
           ]
         },
         {
           "target": "linux-arm64",
           "kind": "ssh",
-          "host": "brownie-linux",
-          "workspace": "/home/ubuntu/brownie",
+          "host": "[redacted-host]",
+          "workspace": "[redacted-local-evidence]",
           "shell": "posix",
-          "status": "delegated_artifact_build_completed",
-          "passed": true,
-          "delegated_result": null,
+          "status": "blocked_external",
+          "passed": false,
+          "delegated_result": {},
           "commands": [
             {
-              "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 brownie-linux export PATH=\"$HOME/.cargo/bin:$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH\" && cd '/home/ubuntu/brownie' && 'pnpm' '--workspace-root' 'release:local-artifact' '--' '--target' 'linux-arm64'",
-              "exit_code": 0,
+              "command_summary": {
+                "kind": "command_summary",
+                "word_count": 18,
+                "sha256": "769f0386e5c96e0a8e18477c625eb86774d57ff173f720729d86ba96b2d499fd"
+              },
+              "exit_code": 255,
               "signal": null,
-              "passed": true,
-              "stdout": "\n> brownie-workspace@0.1.0 release:local-artifact /home/ubuntu/brownie\n> node scripts/release-local-artifact.mjs \"--\" \"--target\" \"linux-arm64\"\n\n{\n  \"target\": \"linux-arm64\",\n  \"outDir\": \".brownie/release-evidence/artifacts/linux-arm64\",\n  \"artifact\": {\n    \"path\": \".brownie/release-evidence/artifacts/linux-arm64/brownie\",\n    \"sha256\": \"sha256:13d80e9a6399986e6f95b97c6da5bcc01f702bf8bbd945224d3d7f9b1e2cd9d7\",\n    \"bytes\": 1314536,\n    \"target\": \"linux-arm64\"\n  },\n  \"smoke_status\": \"satisfied\"\n}\n",
-              "stderr": ""
+              "passed": false,
+              "stdout_summary": {
+                "kind": "process_output_summary",
+                "byte_length": 0,
+                "line_count": 0,
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              },
+              "stderr_summary": {
+                "kind": "process_output_summary",
+                "byte_length": 65,
+                "line_count": 1,
+                "sha256": "0904f8339ad910d5e47d3aaaf3d38511a8086bf6cdde8c1b40b654917e687b6c"
+              }
             }
           ]
         },
         {
           "target": "linux-x64",
           "kind": "ssh",
-          "host": "brownie-linux",
-          "workspace": "/home/ubuntu/brownie",
+          "host": "[redacted-host]",
+          "workspace": "[redacted-local-evidence]",
           "shell": "posix",
-          "status": "delegated_artifact_build_completed",
-          "passed": true,
-          "delegated_result": null,
+          "status": "blocked_external",
+          "passed": false,
+          "delegated_result": {},
           "commands": [
             {
-              "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 brownie-linux export PATH=\"$HOME/.cargo/bin:$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH\" && cd '/home/ubuntu/brownie' && 'pnpm' '--workspace-root' 'run' 'release:linux-x64-docker-artifact' '--' '--platform' 'linux/amd64' '--target' 'linux-x64'",
-              "exit_code": 0,
+              "command_summary": {
+                "kind": "command_summary",
+                "word_count": 21,
+                "sha256": "f8833b415207f1c0a33a24589171199f6072e89b612125b3785e3a102b4086f0"
+              },
+              "exit_code": 255,
               "signal": null,
-              "passed": true,
-              "stdout": "\n> brownie-workspace@0.1.0 release:linux-x64-docker-artifact /home/ubuntu/brownie\n> node scripts/release-linux-x64-docker-artifact.mjs \"--\" \"--platform\" \"linux/amd64\" \"--target\" \"linux-x64\"\n\n{\n  \"target\": \"linux-x64\",\n  \"platform\": \"linux/amd64\",\n  \"outDir\": \".brownie/release-evidence/artifacts/linux-x64\",\n  \"artifact\": {\n    \"path\": \".brownie/release-evidence/artifacts/linux-x64/brownie\",\n    \"sha256\": \"sha256:83a07ff0aecf4d8f0427a5c6537564c17d068ac7800ed01b9a1af3d5a5dbf213\",\n    \"bytes\": 1742008,\n    \"target\": \"linux-x64\"\n  },\n  \"smoke_status\": \"satisfied\"\n}\n",
-              "stderr": ""
+              "passed": false,
+              "stdout_summary": {
+                "kind": "process_output_summary",
+                "byte_length": 0,
+                "line_count": 0,
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              },
+              "stderr_summary": {
+                "kind": "process_output_summary",
+                "byte_length": 65,
+                "line_count": 1,
+                "sha256": "0904f8339ad910d5e47d3aaaf3d38511a8086bf6cdde8c1b40b654917e687b6c"
+              }
             }
           ]
         },
         {
           "target": "win32-x64",
           "kind": "ssh",
-          "host": "brownie-windows",
-          "workspace": "C:/Users/brownie/brownie",
+          "host": "[redacted-host]",
+          "workspace": "[redacted-local-evidence]",
           "shell": "powershell",
-          "status": "delegated_artifact_build_completed",
-          "passed": true,
-          "delegated_result": null,
+          "status": "blocked_external",
+          "passed": false,
+          "delegated_result": {},
           "commands": [
             {
-              "command": "ssh -o BatchMode=yes -o ConnectTimeout=10 brownie-windows powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand UwBlAHQALQBMAG8AYwBhAHQAaQBvAG4AIAAnAEMAOgAvAFUAcwBlAHIAcwAvAGIAcgBvAHcAbgBpAGUALwBiAHIAbwB3AG4AaQBlACcAOwAgACYAIAAnAHAAbgBwAG0AJwAgACcALQAtAHcAbwByAGsAcwBwAGEAYwBlAC0AcgBvAG8AdAAnACAAJwByAGUAbABlAGEAcwBlADoAbABvAGMAYQBsAC0AYQByAHQAaQBmAGEAYwB0ACcAIAAnAC0ALQAnACAAJwAtAC0AdABhAHIAZwBlAHQAJwAgACcAdwBpAG4AMwAyAC0AeAA2ADQAJwA=",
-              "exit_code": 0,
+              "command_summary": {
+                "kind": "command_summary",
+                "word_count": 12,
+                "sha256": "74adb42fca2250af35123588765feb722ad9724f54a8643f0fbd4a6f0706f8c1"
+              },
+              "exit_code": 255,
               "signal": null,
-              "passed": true,
-              "stdout": "\n> brownie-workspace@0.1.0 release:local-artifact C:\\Users\\brownie\\brownie\n> node scripts/release-local-artifact.mjs \"--\" \"--target\" \"win32-x64\"\n\n{\n  \"target\": \"win32-x64\",\n  \"outDir\": \".brownie/release-evidence/artifacts/win32-x64\",\n  \"artifact\": {\n    \"path\": \".brownie/release-evidence/artifacts/win32-x64/brownie.exe\",\n    \"sha256\": \"sha256:81a9d8f6820cd3d87fcbaa75a52992d33cc2bf972130395b284794b4e5012134\",\n    \"bytes\": 1067520,\n    \"target\": \"win32-x64\"\n  },\n  \"smoke_status\": \"satisfied\"\n}\n",
-              "stderr": "#< CLIXML\r\n<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\"><Obj S=\"progress\" RefId=\"0\"><TN RefId=\"0\"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N=\"SourceId\">1</I64><PR N=\"Record\"><AV>���W���[�������߂Ďg�p���邽�߂̏������Ă��܂��B</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj></Objs>"
+              "passed": false,
+              "stdout_summary": {
+                "kind": "process_output_summary",
+                "byte_length": 0,
+                "line_count": 0,
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              },
+              "stderr_summary": {
+                "kind": "process_output_summary",
+                "byte_length": 62,
+                "line_count": 1,
+                "sha256": "29c1cb7a44bf795c4b334d205a1db7c3c55e0c324ce37215925ef2e4de96192f"
+              }
             }
           ]
         }
@@ -145,20 +243,48 @@
           "uninstalled": true,
           "commands": [
             {
-              "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-Len1u4/brownie --version",
+              "command_summary": {
+                "kind": "command_summary",
+                "word_count": 2,
+                "sha256": "1d5739877103601ebae731981d28dfa692ccaaa7f2e86492c75a9a886f19f0c2"
+              },
               "exit_code": 0,
               "signal": null,
               "passed": true,
-              "stdout": "brownie 0.1.0\n",
-              "stderr": ""
+              "stdout_summary": {
+                "kind": "process_output_summary",
+                "byte_length": 14,
+                "line_count": 1,
+                "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+              },
+              "stderr_summary": {
+                "kind": "process_output_summary",
+                "byte_length": 0,
+                "line_count": 0,
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              }
             },
             {
-              "command": "/var/folders/rb/vfgmvyvn7zv98wrzfxcg3qw00000gn/T/brownie-artifact-lifecycle-Len1u4/brownie help run",
+              "command_summary": {
+                "kind": "command_summary",
+                "word_count": 3,
+                "sha256": "8111e87da466596ce14d1f0084f833be07fbe5035f3da4e685fa53f4c907524f"
+              },
               "exit_code": 0,
               "signal": null,
               "passed": true,
-              "stdout": "brownie run\n\nUsage:\n  brownie run <objective>\n  brownie run --file <path>\n  brownie --json run <objective>\n  brownie --json run --file <path>\n\nRuns one general autonomous objective through the Rust runtime.\nThe objective is free text. Tokens after run, including --help, -V, --version, and --json, remain part of the objective.\nWith --file, the CLI reads the UTF-8 file and sends its contents as the objective.\nSet BROWNIE_CLI_RUN_MODE_ID to request a specific runtime mode for the admitted task.\nFor strict OpenAI-compatible provider runs, use BROWNIE_CLI_RUN_MODE_ID=provider-runner together with BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true.\nOne invocation performs bounded progress, persists through the runtime, and exits.\nJSON output includes an automation object and controller_action for external loops.\n\nExamples:\n  brownie run \"summarize this repository\"\n  brownie run --file sample.md\n  BROWNIE_CLI_RUN_MODE_ID=provider-runner brownie run \"Hello\"\n  brownie --json run \"inspect the current task state\"\n\nBoundary:\n  The CLI invokes runtime-owned headless execution. It does not select tasks, apply workspace changes, or own runtime policy.\n",
-              "stderr": ""
+              "stdout_summary": {
+                "kind": "process_output_summary",
+                "byte_length": 1144,
+                "line_count": 24,
+                "sha256": "dd740a50fadab24657587d3701d488f1c22980a3bf2e4c09659329cec2827e58"
+              },
+              "stderr_summary": {
+                "kind": "process_output_summary",
+                "byte_length": 0,
+                "line_count": 0,
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              }
             }
           ]
         }
@@ -178,42 +304,98 @@
       },
       "commands": [
         {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
           "exit_code": 0,
           "signal": null,
           "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
         },
         {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie help run",
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 3,
+            "sha256": "1b060a7ed6f69715c1e83d41f5b335e4978103559f6e53f767f2e12a772d2bd5"
+          },
           "exit_code": 0,
           "signal": null,
           "passed": true,
-          "stdout": "brownie run\n\nUsage:\n  brownie run <objective>\n  brownie run --file <path>\n  brownie --json run <objective>\n  brownie --json run --file <path>\n\nRuns one general autonomous objective through the Rust runtime.\nThe objective is free text. Tokens after run, including --help, -V, --version, and --json, remain part of the objective.\nWith --file, the CLI reads a bounded UTF-8 file and sends its contents as the objective.\nSet BROWNIE_CLI_RUN_FILE_MAX_BYTES to override the default 65536-byte run-file objective limit.\nSet BROWNIE_CLI_RUN_MODE_ID to request a specific runtime mode for the admitted task.\nFor strict OpenAI-compatible provider runs, use BROWNIE_CLI_RUN_MODE_ID=provider-runner together with BROWNIE_LLM_ALLOW_PROVIDER_ACCESS=true.\nOne invocation performs bounded progress, persists through the runtime, and exits.\nJSON output includes an automation object and controller_action for external loops.\n\nExamples:\n  brownie run \"summarize this repository\"\n  brownie run --file sample.md\n  BROWNIE_CLI_RUN_MODE_ID=provider-runner brownie run \"Hello\"\n  brownie --json run \"inspect the current task state\"\n\nBoundary:\n  The CLI invokes runtime-owned headless execution. It does not select tasks, apply workspace changes, or own runtime policy.\n",
-          "stderr": ""
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 1245,
+            "line_count": 25,
+            "sha256": "768466cdb62ae0e7a187f4a9ff395b4237131f58b463653cad291c09825dc9d3"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
         },
         {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --json run --file objective.md",
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 5,
+            "sha256": "62839162aedc7876096350b150e5d230ff88cfa2d75816f0eaeba9b6a2ea001d"
+          },
           "exit_code": 0,
           "signal": null,
           "passed": true,
-          "stdout": "{\"automation\":{\"blocked\":false,\"class\":\"continuation_required\",\"completed\":false,\"continuation_required\":true,\"controller_action\":\"resume\",\"journey_id\":\"cli.run.0dfa2d09e41d43638178.journey\",\"next_action\":\"inspect_progress_overview\",\"next_invocation\":{\"arguments\":[],\"command\":\"resume\"},\"outcome_scope\":\"objective\",\"outcome_source\":\"runtime\",\"retryable\":true,\"run_id\":\"run_f129c6a7-9a01-4345-a8b3-116bbe624b60\",\"schema_version\":1,\"status\":\"continuation_required\",\"stop_class\":\"continuation_required\",\"stop_reason\":\"objective_proposal_candidate_ready\",\"task_id\":\"task_d06311e5-c81f-41bf-9ff1-e726732e5642\",\"terminal_failure\":false},\"command\":\"run\",\"exit_code\":0,\"ok\":true,\"run\":{\"automation\":{\"blocked\":false,\"class\":\"continuation_required\",\"completed\":false,\"continuation_required\":true,\"controller_action\":\"resume\",\"journey_id\":\"cli.run.0dfa2d09e41d43638178.journey\",\"next_action\":\"inspect_progress_overview\",\"next_invocation\":{\"arguments\":[],\"command\":\"resume\"},\"outcome_scope\":\"objective\",\"outcome_source\":\"runtime\",\"retryable\":true,\"run_id\":\"run_f129c6a7-9a01-4345-a8b3-116bbe624b60\",\"schema_version\":1,\"status\":\"continuation_required\",\"stop_class\":\"continuation_required\",\"stop_reason\":\"objective_proposal_candidate_ready\",\"task_id\":\"task_d06311e5-c81f-41bf-9ff1-e726732e5642\",\"terminal_failure\":false},\"blocked\":false,\"completed\":false,\"completion_closure_blocked_task_count\":0,\"completion_closure_route_candidate_count\":0,\"completion_closure_runnable_task_count\":0,\"completion_closure_status\":\"routed_explicit_action\",\"completion_closure_terminal_task_count\":1,\"completion_closure_total_task_count\":1,\"completion_result_fingerprint\":\"sha256:bd781fd29e06ca967d4d1ed8d678bb7210d96a8b4e2acc144175c0c2272b57b3\",\"completion_summary_preview\":\"Second-pass LLM agent loop completed for task_d06311e5-c81f-41bf-9ff1-e726732e5642\",\"continuation_required\":true,\"controller_action\":\"resume\",\"drive_id\":\"cli.run.0dfa2d09e41d43638178.drive\",\"journey_id\":\"cli.run.0dfa2d09e41d43638178.journey\",\"next_action\":\"inspect_progress_overview\",\"next_invocation\":{\"arguments\":[],\"command\":\"resume\"},\"objective_apply_applied\":true,\"objective_apply_apply_status\":\"Applied\",\"objective_apply_authorization_consumed\":true,\"objective_apply_operation\":\"patch_file\",\"objective_apply_path\":\"golden-journey-output.md\",\"objective_proposal_preflight_next_action\":\"apply_authorized_objective_proposal\",\"objective_proposal_preflight_operation\":\"patch_file\",\"objective_proposal_preflight_status\":\"authorized_preflight_ready\",\"retryable\":true,\"run_id\":\"run_f129c6a7-9a01-4345-a8b3-116bbe624b60\",\"session_id\":\"cli.run.0dfa2d09e41d43638178\",\"status\":\"objective_proposal_applied\",\"stop_class\":\"continuation_required\",\"stop_reason\":\"objective_proposal_candidate_ready\",\"task_id\":\"task_d06311e5-c81f-41bf-9ff1-e726732e5642\",\"terminal_completion_completion_result_fingerprint\":\"sha256:bd781fd29e06ca967d4d1ed8d678bb7210d96a8b4e2acc144175c0c2272b57b3\",\"terminal_completion_completion_summary_preview\":\"Second-pass LLM agent loop completed for task_d06311e5-c81f-41bf-9ff1-e726732e5642\",\"terminal_completion_final_state\":\"Completed\",\"terminal_completion_task_status\":\"Completed\",\"terminal_failure\":false}}\n",
-          "stderr": ""
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 3165,
+            "line_count": 1,
+            "sha256": "848922cea4937c7192dd72cb2f346214a731792343e0d3370e01024a50dceabb"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
         },
         {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --json resume",
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 3,
+            "sha256": "c2b629d3eb7da307293bfcfd8c249b668f8c092c13e215e902d17577043a354d"
+          },
           "exit_code": 0,
           "signal": null,
           "passed": true,
-          "stdout": "{\"automation\":{\"blocked\":false,\"class\":\"no_actionable_work\",\"completed\":false,\"continuation_required\":false,\"controller_action\":\"stop\",\"journey_id\":null,\"next_action\":\"inspect_progress_overview\",\"next_invocation\":null,\"outcome_scope\":\"objective\",\"outcome_source\":\"legacy_cli_projection\",\"retryable\":false,\"run_id\":null,\"schema_version\":1,\"status\":\"no_actionable_work\",\"stop_class\":\"no_actionable_work\",\"stop_reason\":\"no_actionable_work\",\"task_id\":null,\"terminal_failure\":false},\"command\":\"resume\",\"exit_code\":0,\"ok\":true,\"resume\":{\"automation\":{\"blocked\":false,\"class\":\"no_actionable_work\",\"completed\":false,\"continuation_required\":false,\"controller_action\":\"stop\",\"journey_id\":null,\"next_action\":\"inspect_progress_overview\",\"next_invocation\":null,\"outcome_scope\":\"objective\",\"outcome_source\":\"legacy_cli_projection\",\"retryable\":false,\"run_id\":null,\"schema_version\":1,\"status\":\"no_actionable_work\",\"stop_class\":\"no_actionable_work\",\"stop_reason\":\"no_actionable_work\",\"task_id\":null,\"terminal_failure\":false},\"blocked\":false,\"candidate_count\":0,\"completed\":false,\"continuation_id\":\"cli.resume.4324a18fc88cab3a1d73257847f20d2d\",\"continuation_required\":false,\"controller_action\":\"stop\",\"current_aggregate_sequence\":20260912075033009,\"decision_id\":null,\"journey_id\":null,\"next_action\":\"inspect_progress_overview\",\"post_aggregate_sequence\":null,\"replayed\":false,\"retryable\":false,\"run_id\":null,\"selected_run_id\":null,\"selected_task_id\":null,\"stale\":false,\"status\":\"no_eligible_task\",\"stop_class\":\"no_actionable_work\",\"stop_reason\":\"no_actionable_work\",\"task_id\":null,\"terminal_failure\":false}}\n",
-          "stderr": ""
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 1589,
+            "line_count": 1,
+            "sha256": "eb0eca8c22c161ffc8b24158e20160da23d81324389097b20d7c044395425839"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
         }
       ],
       "note": "This local fixture evidence checks the executable Golden Journey boundary by driving proposal preflight, apply, post-apply verification, workspace mutation, and completion through the Runtime CLI."
     },
     "soak_test": {
-      "status": "satisfied",
+      "status": "not_executed",
       "release_blocking": true,
       "seed": "brownie-runtime-operational-soak-v1",
       "iterations_requested": 100,
@@ -223,809 +405,2221 @@
       "duplicate_side_effects_observed": false,
       "ledger_workspace_consistency_status": "not_exercised_by_version_soak",
       "unrecoverable_run_count": 0,
+      "missing_stateful_steps": [
+        "task_state_transition",
+        "ledger_workspace_consistency",
+        "resume_replay_handling",
+        "duplicate_side_effect_rejection",
+        "process_loss_recovery",
+        "finite_convergence"
+      ],
+      "note": "Version-only soak is retained as bounded CLI-startup diagnostics but is not sufficient Runtime durability evidence.",
       "commands": [
         {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
-        },
-        {
-          "command": "/Users/satoshitanaka/.codex/worktrees/17bc/brownie/target/debug/brownie --version",
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout": "brownie 0.1.0\n",
-          "stderr": ""
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "command_summary": {
+            "kind": "command_summary",
+            "word_count": 2,
+            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
+          },
+          "exit_code": 0,
+          "signal": null,
+          "passed": true,
+          "stdout_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 14,
+            "line_count": 1,
+            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
+          },
+          "stderr_summary": {
+            "kind": "process_output_summary",
+            "byte_length": 0,
+            "line_count": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
         }
       ]
     }
   },
-  "fail_closed_reasons": []
+  "fail_closed_reasons": [
+    "artifact_lifecycle:failed",
+    "soak_test:not_executed"
+  ]
 }

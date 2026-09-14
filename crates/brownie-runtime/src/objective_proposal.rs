@@ -355,6 +355,7 @@ fn validate_objective_proposal_authorization_preflight_target(
 
 fn is_objective_workspace_operation(operation: &str) -> bool {
     operation == WorkspacePatchOperation::ReplaceFile.as_str()
+        || operation == WorkspacePatchOperation::CreateFile.as_str()
         || operation == WorkspacePatchOperation::PatchFile.as_str()
 }
 
@@ -1423,4 +1424,23 @@ fn headless_continue_objective_proposal_apply(
         steps: Vec::new(),
         next_action,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn objective_workspace_operations_include_create_file() {
+        assert!(is_objective_workspace_operation(
+            WorkspacePatchOperation::ReplaceFile.as_str()
+        ));
+        assert!(is_objective_workspace_operation(
+            WorkspacePatchOperation::CreateFile.as_str()
+        ));
+        assert!(is_objective_workspace_operation(
+            WorkspacePatchOperation::PatchFile.as_str()
+        ));
+        assert!(!is_objective_workspace_operation("delete_file"));
+    }
 }

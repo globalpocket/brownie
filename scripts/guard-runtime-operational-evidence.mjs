@@ -9,6 +9,14 @@ const defaultContractPath = 'docs/architecture/runtime-release-contract.json';
 const defaultEvidencePath = '.brownie/release-evidence/runtime-operational-evidence.json';
 
 const requiredSections = ['artifact_lifecycle', 'golden_journey_fixture', 'soak_test'];
+const requiredStatefulSoakStepIds = [
+  'task_state_transition',
+  'ledger_workspace_consistency',
+  'resume_replay_handling',
+  'duplicate_side_effect_rejection',
+  'process_loss_recovery',
+  'finite_convergence'
+];
 const allowedIncompleteStatuses = new Set([
   'failed',
   'not_executed',
@@ -18,6 +26,8 @@ const allowedIncompleteStatuses = new Set([
   'invalid_config',
   'blocked_external'
 ]);
+const forbiddenEvidenceStringPattern = /(?:\/Users\/|\/home\/|[A-Za-z]:\/Users\/|EncodedCommand|brownie-linux|worktree)/u;
+const forbiddenRawProcessFieldNames = new Set(['command', 'stdout', 'stderr']);
 
 function isMainModule() {
   return process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
@@ -51,6 +61,24 @@ function validateCommand(command, errors, owner) {
   requireValue(typeof command?.passed === 'boolean', errors, `${owner}.passed must be boolean.`);
 }
 
+function validateNoForbiddenLocalEvidence(value, errors, owner = 'runtime operational evidence') {
+  if (typeof value === 'string') {
+    requireValue(!forbiddenEvidenceStringPattern.test(value), errors, `${owner} must not contain forbidden local evidence.`);
+    return;
+  }
+  if (!value || typeof value !== 'object') {
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => validateNoForbiddenLocalEvidence(entry, errors, `${owner}[${index}]`));
+    return;
+  }
+  for (const [key, entry] of Object.entries(value)) {
+    requireValue(!forbiddenRawProcessFieldNames.has(key), errors, `${owner}.${key} must not store raw process evidence.`);
+    validateNoForbiddenLocalEvidence(entry, errors, `${owner}.${key}`);
+  }
+}
+
 function validateSatisfiedCommands(commands, errors, owner) {
   requireValue(Array.isArray(commands) && commands.length > 0, errors, `${owner} must include commands.`);
   for (const [index, command] of (Array.isArray(commands) ? commands : []).entries()) {
@@ -60,8 +88,36 @@ function validateSatisfiedCommands(commands, errors, owner) {
   }
 }
 
+function validateSatisfiedStatefulSoakSteps(steps, errors) {
+  requireValue(
+    Array.isArray(steps) && steps.length > 0,
+    errors,
+    'satisfied soak_test must include stateful_steps.'
+  );
+  const byId = new Map((Array.isArray(steps) ? steps : []).map((step) => [step?.id, step]));
+  for (const stepId of requiredStatefulSoakStepIds) {
+    const step = byId.get(stepId);
+    requireValue(
+      step && typeof step === 'object',
+      errors,
+      `satisfied soak_test.stateful_steps must include ${stepId}.`
+    );
+    requireValue(
+      step?.passed === true,
+      errors,
+      `satisfied soak_test.stateful_steps.${stepId}.passed must be true.`
+    );
+    requireValue(
+      step?.status === 'satisfied',
+      errors,
+      `satisfied soak_test.stateful_steps.${stepId}.status must be satisfied.`
+    );
+  }
+}
+
 export function validateRuntimeOperationalEvidence(evidence) {
   const errors = [];
+  validateNoForbiddenLocalEvidence(evidence, errors);
   requireValue(evidence.schema_version === 1, errors, 'runtime operational evidence schema_version must be 1.');
   requireValue(evidence.evidence_id === 'brownie-runtime-operational-evidence-v1', errors, 'runtime operational evidence_id must match.');
   requireValue(evidence.repository === 'globalpocket/brownie', errors, 'runtime operational evidence repository must be globalpocket/brownie.');
@@ -147,6 +203,7 @@ export function validateRuntimeOperationalEvidence(evidence) {
       requireValue(soak.duplicate_side_effects_observed === false, errors, 'satisfied soak_test must not observe duplicate side effects.');
       requireValue(soak.unrecoverable_run_count === 0, errors, 'satisfied soak_test must have zero unrecoverable runs.');
       validateSatisfiedCommands(soak.commands, errors, 'sections.soak_test.commands');
+      validateSatisfiedStatefulSoakSteps(soak.stateful_steps, errors);
     }
   }
   return errors;

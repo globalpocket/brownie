@@ -229,3 +229,28 @@ test('rejects satisfied artifact smoke with failed command result', () => {
   const errors = validate({ evidence });
   assert(errors.some((error) => error.includes('artifact_smoke.smoke_results[0].commands[0] must pass')));
 });
+
+test('rejects satisfied artifact smoke without required E2E step evidence', () => {
+  const evidence = validEvidence();
+  evidence.fail_closed_reasons = evidence.fail_closed_reasons.filter(
+    (reason) => !reason.startsWith('artifact_smoke:')
+  );
+  evidence.sections.artifact_smoke = section('satisfied', {
+    smoke_results: [
+      {
+        target: 'darwin-arm64',
+        passed: true,
+        commands: [
+          { args: ['--version'], exit_code: 0, passed: true },
+          { args: ['help', 'run'], exit_code: 0, passed: true }
+        ]
+      }
+    ]
+  });
+  const errors = validate({ evidence });
+  assert(errors.some((error) => error.includes('missing required E2E step base_mode_pack_load')));
+  assert(errors.some((error) => error.includes('missing required E2E step minimal_task_run')));
+  assert(errors.some((error) => error.includes('missing required E2E step ledger_generation')));
+  assert(errors.some((error) => error.includes('missing required E2E step forced_stop_resume')));
+  assert(errors.some((error) => error.includes('missing required E2E step stale_replay_rejection')));
+});

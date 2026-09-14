@@ -22,6 +22,13 @@ const requiredSections = [
 ];
 
 const hashPattern = /^sha256:[a-f0-9]{64}$/;
+const requiredArtifactSmokeE2eStepIds = [
+  'base_mode_pack_load',
+  'minimal_task_run',
+  'ledger_generation',
+  'forced_stop_resume',
+  'stale_replay_rejection'
+];
 const allowedIncompleteStatuses = new Set([
   'blocked_external',
   'failed',
@@ -167,6 +174,14 @@ function validateEvidence(evidence, options = {}) {
     for (const [index, smokeResult] of (Array.isArray(artifactSmoke.smoke_results) ? artifactSmoke.smoke_results : []).entries()) {
       requireValue(smokeResult?.passed === true, errors, `sections.artifact_smoke.smoke_results[${index}] must pass.`);
       requireValue(Array.isArray(smokeResult?.commands) && smokeResult.commands.length > 0, errors, `sections.artifact_smoke.smoke_results[${index}] must include commands.`);
+      const e2eSteps = new Set(Array.isArray(smokeResult?.e2e_steps) ? smokeResult.e2e_steps : []);
+      for (const stepId of requiredArtifactSmokeE2eStepIds) {
+        requireValue(
+          e2eSteps.has(stepId),
+          errors,
+          `sections.artifact_smoke.smoke_results[${index}] missing required E2E step ${stepId}.`
+        );
+      }
       for (const [commandIndex, command] of (Array.isArray(smokeResult?.commands) ? smokeResult.commands : []).entries()) {
         requireValue(command?.passed === true, errors, `sections.artifact_smoke.smoke_results[${index}].commands[${commandIndex}] must pass.`);
         requireValue(Number.isInteger(command?.exit_code), errors, `sections.artifact_smoke.smoke_results[${index}].commands[${commandIndex}].exit_code must be an integer.`);

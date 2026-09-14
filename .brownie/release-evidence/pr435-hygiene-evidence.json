@@ -1,0 +1,5 @@
+{
+  "pr_number": 435,
+  "hygiene_status": "fail-closed",
+  "conclusion": "PR #435 is superseded and unresolved. Remaining action: complete release-gate wiring for ledger schema-v1 compatibility."
+}

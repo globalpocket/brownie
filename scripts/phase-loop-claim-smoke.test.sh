@@ -405,6 +405,13 @@ cat <<'JSON'
 JSON
 SH
 chmod +x "$fake_brownie_blocked_json"
+fake_brownie_must_not_run="$(mktemp)"
+cat > "$fake_brownie_must_not_run" <<'SH'
+#!/usr/bin/env bash
+echo "Brownie should not run for explicit blocker TODO claims" >&2
+exit 99
+SH
+chmod +x "$fake_brownie_must_not_run"
 
 state_with_claim="$(mktemp -d)"
 prompt_with_claim="$(mktemp)"
@@ -512,20 +519,23 @@ PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 terminal_no_eligible_exit="$?"
 set -e
 test "$terminal_no_eligible_exit" = "76"
-python3 - "$state_terminal_no_eligible/status.json" "$state_terminal_no_eligible/progress-state.json" "$state_terminal_no_eligible/todo-claims/current.json" <<'PY'
+python3 - "$state_terminal_no_eligible/status.json" "$state_terminal_no_eligible/progress-state.json" "$state_terminal_no_eligible/todo-claims/current.json" "$state_terminal_no_eligible/todo-claims/repair-feedback.json" <<'PY'
 import json
 import sys
 
 status = json.load(open(sys.argv[1], encoding="utf-8"))
 progress = json.load(open(sys.argv[2], encoding="utf-8"))
 claim = json.load(open(sys.argv[3], encoding="utf-8"))
+feedback = json.load(open(sys.argv[4], encoding="utf-8"))
 assert status["status"] == "no_progress", status
 assert "recovery=" in status["detail"], status
 assert progress["classification"] == "no_progress", progress
 assert progress["meaningful_progress"] is False, progress
 assert progress["progress_projection"]["blocked_by_terminal_task_failure"] is True, progress
 assert progress["workspace_changed"] is False, progress
-assert claim["status"] == "blocked", claim
+assert claim["status"] == "in_progress", claim
+assert feedback["claim_id"] == claim["claim_id"], feedback
+assert feedback["reason"] == "runtime_terminal_failure", feedback
 PY
 
 state_all_blocked="$(mktemp -d)"
@@ -567,11 +577,14 @@ PY
 decomposition_prompt_file="$(find "$state_all_blocked/runs" -name '*.prompt.md' -print | sort | tail -n 1)"
 assert_contains "$decomposition_prompt_file" 'state: `decompose_todo`'
 assert_contains "$decomposition_prompt_file" 'decomposition_policy: this invocation is TODO decomposition only'
-assert_contains "$decomposition_prompt_file" 'decomposition_write_policy: the only allowed workspace.write target is the live TODO queue'
-assert_contains "$decomposition_prompt_file" 'decomposition_leaf_policy: replace the broad blocked item with unchecked leaf TODOs'
+assert_contains "$decomposition_prompt_file" 'decomposition_write_policy: the only allowed workspace.write targets are the live TODO queue'
+assert_contains "$decomposition_prompt_file" 'Prefer one compact `.brownie/todo.md` replacement first'
+assert_contains "$decomposition_prompt_file" 'decomposition_leaf_policy: replace the active decomposition request and its broad source TODO with unchecked leaf TODOs'
 assert_contains "$decomposition_prompt_file" 'decomposition_verification_policy: `Verification:` must use bounded commands'
 assert_contains "$decomposition_prompt_file" 'decomposition_scope_policy: every implementation leaf must name a bounded `Patch only`/`Create only` scope'
-assert_contains "$decomposition_prompt_file" 'decomposition_ledger_policy: also update `.brownie/todo-breakdown.md`'
+assert_contains "$decomposition_prompt_file" 'decomposition_size_policy: keep the next workspace.write compact'
+assert_contains "$decomposition_prompt_file" 'decomposition_ledger_policy: update `.brownie/todo-breakdown.md`'
+assert_contains "$decomposition_prompt_file" 'let the guard request the breakdown repair next'
 
 state_decomposition_leaf="$(mktemp -d)"
 prompt_decomposition_leaf="$(mktemp)"
@@ -626,13 +639,17 @@ blocked_decomposition_exit="$?"
 set -e
 test "$blocked_decomposition_exit" = "75"
 
-python3 - "$todo_blocked_decomposition" <<'PY'
+python3 - "$todo_blocked_decomposition" "$state_blocked_decomposition/status.json" <<'PY'
+import json
 import re
 import sys
 
 todo = open(sys.argv[1], encoding="utf-8").read()
+status = json.load(open(sys.argv[2], encoding="utf-8"))
 decomposition_items = re.findall(r"TODO-decompose-blocked-queue-", todo)
 assert len(decomposition_items) == 1, todo
+assert status["status"] == "blocked", status
+assert "Failed to claim first pending TODO" in status["detail"], status
 PY
 
 printf -- '- [ ] R-09: blocked boundary task\n  Extra context that changes the queue fingerprint.\n- [ ] R-10: next unblocked task\n' > "$todo_with_blocked"
@@ -650,7 +667,7 @@ import sys
 
 claim = json.load(open(sys.argv[1], encoding="utf-8"))
 assert claim["status"] == "in_progress", claim
-assert claim["selected_todo"].startswith("- [ ] R-10: next unblocked task"), claim
+assert claim["selected_todo"].startswith("- [ ] R-09: blocked boundary task"), claim
 PY
 
 state_dependency="$(mktemp -d)"
@@ -682,6 +699,66 @@ PY
 assert_contains "$prompt_file" '## Active TODO Claim'
 assert_contains "$prompt_file" 'queue_generation'
 assert_contains "$prompt_file" 'B-01: durable claim task'
+
+state_explicit_blocker="$(mktemp -d)"
+prompt_explicit_blocker="$(mktemp)"
+todo_explicit_blocker="$(mktemp)"
+printf 'base prompt\n' > "$prompt_explicit_blocker"
+cat > "$todo_explicit_blocker" <<'EOF'
+- [ ] E-15e-doc-sync-blocker: Blocker: missing owner-controlled independent review evidence for Release workflow, permission model, Ledger Contract, Mode Pack trust boundary, signing/provenance, and Release Ready判定ロジック.
+  Route: documentation.
+  Depends on: E-15e-release-contract-audit-phase-resync-doc-sync-leaf.
+  Completion condition: all six independent human reviews are completed and recorded.
+  Forbidden changes: do not patch runtime-release-contract.json until all reviews are complete.
+  Verification: blocker: exact missing evidence or field is named, and no workspace file is patched until that evidence is available.
+
+- [ ] E-15f-next: Patch only `scripts/guard-release-contract.mjs`:
+  Route: implementation.
+  Source TODO: E-15f.
+  Depends on: <none>.
+  Completion condition: the next TODO remains schedulable after the blocker is recorded.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run `pnpm --workspace-root guard:release-contract:test`.
+EOF
+
+PHASE_LOOP_STATE_DIR="$state_explicit_blocker" \
+PHASE_LOOP_PROMPT="$prompt_explicit_blocker" \
+PHASE_LOOP_TODO="$todo_explicit_blocker" \
+BROWNIE_BIN="$fake_brownie_must_not_run" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+
+python3 - "$state_explicit_blocker/status.json" "$state_explicit_blocker/todo-claims/current.json" "$state_explicit_blocker/todo-claims/blocked.jsonl" <<'PY'
+import json
+import pathlib
+import sys
+
+status = json.load(open(sys.argv[1], encoding="utf-8"))
+claim = json.load(open(sys.argv[2], encoding="utf-8"))
+blocked = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
+assert status["status"] == "blocked_todo_recorded", status
+assert status["exit_code"] == "0", status
+assert "explicit owner/release blocker" in status["detail"], status
+assert claim["status"] == "blocked", claim
+assert claim["selected_todo"].startswith("- [ ] E-15e-doc-sync-blocker:"), claim
+assert "E-15e-doc-sync-blocker" in blocked, blocked
+PY
+
+PHASE_LOOP_STATE_DIR="$state_explicit_blocker" \
+PHASE_LOOP_PROMPT="$prompt_explicit_blocker" \
+PHASE_LOOP_TODO="$todo_explicit_blocker" \
+BROWNIE_BIN="$fake_brownie_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+
+python3 - "$state_explicit_blocker/todo-claims/current.json" <<'PY'
+import json
+import sys
+
+claim = json.load(open(sys.argv[1], encoding="utf-8"))
+assert claim["status"] == "in_progress", claim
+assert claim["selected_todo"].startswith("- [ ] E-15f-next:"), claim
+PY
 
 printf '' > "$todo_with_claim"
 
@@ -1303,6 +1380,191 @@ assert "deterministic exact-line TODO fast path" in status["detail"], status
 assert claim["status"] == "completed", claim
 assert "E-exact" not in todo, todo
 assert "  fixture_path: fixtureRoot,\n  lifecycle_evidence: lifecycleEvidence,\n  commands," in target, target
+PY
+
+broad_decomposition_state="$(mktemp -d)"
+broad_decomposition_prompt="$(mktemp)"
+broad_decomposition_todo="$(mktemp)"
+broad_decomposition_breakdown="$(mktemp)"
+broad_decomposition_workspace="$(mktemp -d)"
+git -C "$broad_decomposition_workspace" init -b main >/dev/null
+git -C "$broad_decomposition_workspace" config user.name Brownie
+git -C "$broad_decomposition_workspace" config user.email brownie@example.invalid
+touch "$broad_decomposition_workspace/package.json"
+git -C "$broad_decomposition_workspace" add package.json
+git -C "$broad_decomposition_workspace" commit -m init >/dev/null
+printf 'base prompt\n' > "$broad_decomposition_prompt"
+cat > "$broad_decomposition_todo" <<'EOF'
+- [ ] E-99-runtime-release-evidence: Replace broad release evidence with complete Product Ready evidence:
+  Route: implementation.
+  Source concern: this broad task spans multiple independent implementation surfaces.
+  Update collectors, guards, evidence files, release documents, and operational tests.
+  Ensure provenance, smoke, soak, release contract, and semantic consistency are all fixed.
+  Verification: run `pnpm --workspace-root check`.
+EOF
+
+fake_brownie_broad_decomposition="$(mktemp)"
+cat > "$fake_brownie_broad_decomposition" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = "--json" ] && [ "$2" = "run" ]; then
+  printf '%s\n' '{"ok":true,"command":"run","exit_code":0,"run":{"status":"no_eligible_task","completed":false,"blocked":true,"terminal_failure":true,"automation":{"status":"terminal_failure","blocked":true,"completed":false,"terminal_failure":true,"controller_action":"stop","stop_class":"terminal_failure","stop_reason":"terminal_task_failed"}}}'
+  exit 0
+fi
+printf '%s\n' '{"ok":true}'
+SH
+chmod +x "$fake_brownie_broad_decomposition"
+
+PHASE_LOOP_STATE_DIR="$broad_decomposition_state" \
+PHASE_LOOP_PROMPT="$broad_decomposition_prompt" \
+PHASE_LOOP_TODO="$broad_decomposition_todo" \
+PHASE_LOOP_TODO_BREAKDOWN="$broad_decomposition_breakdown" \
+PHASE_LOOP_WORKSPACE_ROOT="$broad_decomposition_workspace" \
+PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
+BROWNIE_BIN="$fake_brownie_broad_decomposition" \
+"$PHASE_LOOP" run-once >/dev/null || true
+
+broad_decomposition_prompt_file="$(find "$broad_decomposition_state/runs" -name '*.prompt.md' -print | sort | tail -n 1)"
+python3 - "$broad_decomposition_todo" "$broad_decomposition_prompt_file" <<'PY'
+import pathlib
+import sys
+
+todo = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+prompt = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
+assert "TODO-decompose-broad-todo-" in todo, todo
+assert "Decompose broad TODO `E-99-runtime-release-evidence`" in todo, todo
+assert "state: `decompose_todo`" in prompt, prompt
+assert "decomposition_policy: this invocation is TODO decomposition only" in prompt, prompt
+assert "replace the active decomposition request and its broad source TODO" in prompt, prompt
+PY
+
+repair_feedback_state="$(mktemp -d)"
+repair_feedback_prompt="$(mktemp)"
+repair_feedback_todo="$(mktemp)"
+repair_feedback_workspace="$(mktemp -d)"
+repair_feedback_argv="$repair_feedback_state/fake-brownie.argv"
+git -C "$repair_feedback_workspace" init -b main >/dev/null
+git -C "$repair_feedback_workspace" config user.name Brownie
+git -C "$repair_feedback_workspace" config user.email brownie@example.invalid
+touch "$repair_feedback_workspace/package.json"
+git -C "$repair_feedback_workspace" add package.json
+git -C "$repair_feedback_workspace" commit -m init >/dev/null
+printf 'base prompt\n' > "$repair_feedback_prompt"
+cat > "$repair_feedback_todo" <<'EOF'
+- [ ] E-other: keep queue non-empty while active claim is repaired.
+EOF
+mkdir -p "$repair_feedback_state/todo-claims"
+cat > "$repair_feedback_state/progress-state.json" <<'EOF'
+{
+  "schema_version": 1,
+  "progress_projection": {
+    "route": "{\"command\":\"resume\",\"arguments\":[]}"
+  }
+}
+EOF
+cat > "$repair_feedback_state/todo-claims/current.json" <<'EOF'
+{
+  "claim_id": "todo-g1-repair",
+  "queue_fingerprint": "abc",
+  "queue_generation": 1,
+  "run_stamp": "20260913T000000Z",
+  "schema_version": 1,
+  "selected_todo": "- [ ] E-repair: Patch only `scripts/release-runtime-operational-evidence.mjs` to generate satisfied soak evidence.\n  Route: implementation.\n  Completion condition: generated satisfied soak evidence has all required stateful steps from a bounded Runtime fixture, not version-only repetition.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.",
+  "status": "in_progress"
+}
+EOF
+cat > "$repair_feedback_state/todo-claims/repair-feedback.json" <<'EOF'
+{
+  "claim_id": "todo-g1-repair",
+  "reason": "semantic_completion_not_satisfied",
+  "run_stamp": "20260913T000000Z",
+  "schema_version": 1,
+  "verification": {
+    "actual": "not_executed",
+    "completed": false,
+    "expected": "sections.soak_test.status=satisfied",
+    "reason": "semantic_completion_not_satisfied",
+    "results": [
+      {
+        "command": "pnpm --workspace-root guard:runtime-operational-evidence:test",
+        "exit_code": 0,
+        "stdout_tail": "tests passed but soak_test.status remained not_executed",
+        "stderr_tail": ""
+      }
+    ]
+  }
+}
+EOF
+
+fake_brownie_repair_feedback="$(mktemp)"
+cat > "$fake_brownie_repair_feedback" <<'SH'
+#!/usr/bin/env bash
+set -eu
+printf '%s\n' "$*" > "$PHASE_LOOP_TEST_ARGV_FILE"
+cat <<'JSON'
+{
+  "command": "run",
+  "ok": true,
+  "run": {
+    "automation": {
+      "schema_version": 1,
+      "status": "continuation_required",
+      "controller_action": "resume",
+      "stop_class": "continuation_required",
+      "stop_reason": "bounded_progress",
+      "completed": false,
+      "blocked": false,
+      "retryable": true,
+      "terminal_failure": false,
+      "task_id": "task-repair",
+      "run_id": "run-repair",
+      "journey_id": "journey-repair",
+      "next_action": "inspect_progress_overview",
+      "next_invocation": {"command": "resume", "arguments": []}
+    },
+    "status": "task_executed",
+    "session_id": "session-repair",
+    "drive_id": "drive-repair",
+    "task_id": "task-repair",
+    "run_id": "run-repair",
+    "journey_id": "journey-repair",
+    "completion_closure_status": "budget_exhausted",
+    "next_action": "inspect_progress_overview",
+    "completed": false,
+    "blocked": false,
+    "retryable": true,
+    "terminal_failure": false,
+    "controller_action": "resume",
+    "stop_class": "continuation_required",
+    "stop_reason": "bounded_progress",
+    "next_invocation": {"command": "resume", "arguments": []}
+  }
+}
+JSON
+SH
+chmod +x "$fake_brownie_repair_feedback"
+
+PHASE_LOOP_STATE_DIR="$repair_feedback_state" \
+PHASE_LOOP_PROMPT="$repair_feedback_prompt" \
+PHASE_LOOP_TODO="$repair_feedback_todo" \
+PHASE_LOOP_WORKSPACE_ROOT="$repair_feedback_workspace" \
+PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
+PHASE_LOOP_TEST_ARGV_FILE="$repair_feedback_argv" \
+BROWNIE_BIN="$fake_brownie_repair_feedback" \
+"$PHASE_LOOP" run-once >/dev/null
+
+repair_feedback_prompt_file="$(find "$repair_feedback_state/runs" -name '*.prompt.md' -print | sort | tail -n 1)"
+python3 - "$repair_feedback_argv" "$repair_feedback_prompt_file" <<'PY'
+import pathlib
+import sys
+
+argv = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+prompt = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
+assert "--json run --file" in argv, argv
+assert "--json resume" not in argv, argv
+assert "state: `verify_or_repair`" in prompt, prompt
+assert "## Previous Repair Feedback" in prompt, prompt
+assert "semantic_completion_not_satisfied" in prompt, prompt
+assert "sections.soak_test.status=satisfied" in prompt, prompt
 PY
 
 echo "phase-loop claim smoke passed"

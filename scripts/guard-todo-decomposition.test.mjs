@@ -17,6 +17,21 @@ test('accepts structured decomposition leaf TODO', () => {
   }), []);
 });
 
+test('scope parsing ignores descriptive backticks after the bounded path', () => {
+  const descriptiveLeaf = `- [ ] E-15d-child: Patch only \`scripts/guard-todo-decomposition.mjs\` to ensure \`soakEvidenceFixture\` includes \`name\`, \`version\`, \`description\`, and \`fixture\`.
+  Route: implementation.
+  Source TODO: E-15d: Decompose release evidence work.
+  Depends on: <none>.
+  Completion condition: the bounded patch is implemented and verified.
+  Forbidden changes: do not edit unrelated release evidence files.
+  Verification: run \`pnpm --workspace-root guard:todo-decomposition:test\`.`;
+
+  assert.deepEqual(validateTodoDecompositionText(descriptiveLeaf, {
+    repoRoot: process.cwd(),
+    packageScripts: new Set(['guard:todo-decomposition:test'])
+  }), []);
+});
+
 test('rejects decomposition leaf without required schema fields', () => {
   const errors = validateTodoDecompositionText(`- [ ] E-15b-child: Patch only \`scripts/example.mjs\`:
   Source TODO: E-15b: Decompose release evidence work.
@@ -32,6 +47,40 @@ test('rejects child id that loses parent prefix', () => {
   const errors = validateTodoDecompositionText(validLeaf.replace('E-15b-child', 'E-16a-child'));
 
   assert(errors.some((error) => error.includes('must preserve parent prefix E-15b-')), errors.join('\n'));
+});
+
+test('rejects duplicate unchecked leaf ids', () => {
+  const duplicate = `${validLeaf}
+${validLeaf.replace('scripts/example.mjs', 'scripts/other-example.mjs')}`;
+  const errors = validateTodoDecompositionText(duplicate, {
+    packageScripts: new Set(['guard:release-contract:test'])
+  });
+
+  assert(errors.some((error) => error.includes('duplicate unchecked TODO id appears 2 times')), errors.join('\n'));
+});
+
+test('rejects leaf Source TODO that points at itself', () => {
+  const selfSource = validLeaf.replace(
+    'Source TODO: E-15b: Decompose release evidence work.',
+    'Source TODO: E-15b-child: Patch only `scripts/example.mjs`.'
+  );
+  const errors = validateTodoDecompositionText(selfSource, {
+    packageScripts: new Set(['guard:release-contract:test'])
+  });
+
+  assert(errors.some((error) => error.includes('Source TODO must reference the parent TODO')), errors.join('\n'));
+});
+
+test('rejects self Source TODO even with trailing punctuation', () => {
+  const selfSource = validLeaf.replace(
+    'Source TODO: E-15b: Decompose release evidence work.',
+    'Source TODO: E-15b-child.'
+  );
+  const errors = validateTodoDecompositionText(selfSource, {
+    packageScripts: new Set(['guard:release-contract:test'])
+  });
+
+  assert(errors.some((error) => error.includes('Source TODO must reference the parent TODO')), errors.join('\n'));
 });
 
 test('rejects broad decomposition item kept as leaf', () => {
