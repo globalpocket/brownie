@@ -7,7 +7,7 @@
   "audited_main_commit": "4376c0a7412a40f328fb3ba64bca487bba35a80e",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
-    "independent-reviews"
+    "release-evidence-executable-bindings"
   ],
   "release_engineering_contract": {
     "contract_path": "docs/architecture/runtime-release-contract.json",
@@ -310,16 +310,16 @@
       "id": "independent-reviews",
       "title": "Independent owner reviews",
       "priority": "P0",
-      "status": "owner_decision_waiting",
+      "status": "implemented_sufficient",
       "responsibility_domain": "owner",
-      "debt_classification": "owner_decision",
+      "debt_classification": "closed",
       "owner_decision_required": "independent_reviews",
-      "release_blocking": true,
+      "release_blocking": false,
       "evidence": [
-        "Runtime-owned release engineering and operational evidence is recorded as implemented_sufficient in the release contract.",
-        "Owner-designated independent review evidence remains outside Runtime implementation authority and must stay fail-closed until completed."
+        "docs/architecture/owner-independent-review-evidence.json records all six owner-designated independent review scopes as approved by globalpocket.",
+        ".brownie/release-evidence/owner-governance-evidence.json verifies PR #458 GitHub review provenance for reviewer globalpocket, implementation actor brownie-agent, and approved_review_count=6."
       ],
-      "next_action": "Complete owner-designated independent reviews before any Runtime Release Ready claim."
+      "next_action": "Closed for owner-governance independent review evidence. Runtime Release Ready remains false until release evidence executable bindings are complete."
     },
     {
       "id": "protocol-event-canonization",
@@ -410,6 +410,21 @@
         "Tenant management, SSO/RBAC server, customer admin UI, billing, certified stack, continuity assurance, and broad BDK/Enterprise/Assurance surfaces are outside this Runtime-owned campaign."
       ],
       "next_action": "Do not use these items to block Brownie Runtime release."
+    },
+    {
+      "id": "release-evidence-executable-bindings",
+      "title": "Release evidence executable bindings",
+      "priority": "P0",
+      "status": "partial",
+      "responsibility_domain": "runtime",
+      "debt_classification": "required_before_release",
+      "release_blocking": true,
+      "evidence": [
+        ".brownie/release-evidence/supply-chain-artifact-evidence.json still records fail_closed_reasons including source_tree_dirty:true and artifact_smoke:not_executed.",
+        ".brownie/release-evidence/runtime-operational-evidence.json still records fail_closed_reasons including artifact_lifecycle:failed and soak_test:not_executed.",
+        "Owner-governance independent reviews are now satisfied, so remaining release blockers are executable release evidence bindings."
+      ],
+      "next_action": "Regenerate supply-chain and runtime operational evidence from a clean tested source commit with artifact smoke, artifact lifecycle, and stateful soak evidence, then rerun the release guards."
     }
   ],
   "updated_at": "2026-09-12T00:00:00Z",
@@ -422,9 +437,9 @@
     "E-01 resynchronizes current phase-value, Runtime Release Contract, release-readiness audit, and semantic contract guard authority to origin/main 4376c0a7412a40f328fb3ba64bca487bba35a80e after R-20; stale RRP-8.4/RRP-8.6 fingerprint authority is no longer used as the current release contract fingerprint."
   ],
   "blockers": [
-    "independent-reviews"
+    "release-evidence-executable-bindings"
   ],
   "release_blockers": [
-    "independent-reviews"
+    "release-evidence-executable-bindings"
   ]
 }

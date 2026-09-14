@@ -17,7 +17,7 @@
       "status": "approved",
       "reviewer": "globalpocket",
       "self_approval": false,
-      "reviewed_at": "2026-09-08T13:55:00+09:00",
+      "reviewed_at": "2026-09-14T17:52:04Z",
       "scope": "Release workflow, protected branch/tag policy, required status checks, remote CI provenance, and release gate binding."
     },
     {
@@ -25,7 +25,7 @@
       "status": "approved",
       "reviewer": "globalpocket",
       "self_approval": false,
-      "reviewed_at": "2026-09-08T13:55:00+09:00",
+      "reviewed_at": "2026-09-14T17:52:04Z",
       "scope": "Runtime-enforced permission model, VSIX thin-client boundary, MCP approval binding, and fail-closed authority separation."
     },
     {
@@ -33,7 +33,7 @@
       "status": "approved",
       "reviewer": "globalpocket",
       "self_approval": false,
-      "reviewed_at": "2026-09-08T13:55:00+09:00",
+      "reviewed_at": "2026-09-14T17:52:04Z",
       "scope": "Durable ledger payload contract, protocol/event canonicalization, replay/stale rejection, and schema migration evidence."
     },
     {
@@ -41,7 +41,7 @@
       "status": "approved",
       "reviewer": "globalpocket",
       "self_approval": false,
-      "reviewed_at": "2026-09-08T13:55:00+09:00",
+      "reviewed_at": "2026-09-14T17:52:04Z",
       "scope": "External AgentModes Mode Pack boundary, runtime policy materialization, and prevention of model-instruction authority escalation."
     },
     {
@@ -49,7 +49,7 @@
       "status": "approved",
       "reviewer": "globalpocket",
       "self_approval": false,
-      "reviewed_at": "2026-09-08T13:55:00+09:00",
+      "reviewed_at": "2026-09-14T17:52:04Z",
       "scope": "Owner-approved integrity authority, SHA256SUMS verification, release artifact provenance, and protected release tag policy."
     },
     {
@@ -57,8 +57,70 @@
       "status": "approved",
       "reviewer": "globalpocket",
       "self_approval": false,
-      "reviewed_at": "2026-09-08T13:55:00+09:00",
+      "reviewed_at": "2026-09-14T17:52:04Z",
       "scope": "Release Ready judgment logic, forbidden success claims, owner-governance evidence, and remaining cross-platform artifact blockers."
+    }
+  ],
+  "github_review_provenance": [
+    {
+      "required_review_id": "release_workflow",
+      "pull_request_number": 458,
+      "review_id": "PRR_kwDOTGOop88AAAABNgGjGg",
+      "reviewer": "globalpocket",
+      "pull_request_author": "brownie-agent",
+      "state": "APPROVED",
+      "commit_sha": "77a1818c643e7155d7df3a372cd0f2d2bb055aa7",
+      "submitted_at": "2026-09-14T17:52:04Z"
+    },
+    {
+      "required_review_id": "permission_model",
+      "pull_request_number": 458,
+      "review_id": "PRR_kwDOTGOop88AAAABNgGjGg",
+      "reviewer": "globalpocket",
+      "pull_request_author": "brownie-agent",
+      "state": "APPROVED",
+      "commit_sha": "77a1818c643e7155d7df3a372cd0f2d2bb055aa7",
+      "submitted_at": "2026-09-14T17:52:04Z"
+    },
+    {
+      "required_review_id": "ledger_contract",
+      "pull_request_number": 458,
+      "review_id": "PRR_kwDOTGOop88AAAABNgGjGg",
+      "reviewer": "globalpocket",
+      "pull_request_author": "brownie-agent",
+      "state": "APPROVED",
+      "commit_sha": "77a1818c643e7155d7df3a372cd0f2d2bb055aa7",
+      "submitted_at": "2026-09-14T17:52:04Z"
+    },
+    {
+      "required_review_id": "mode_pack_trust_boundary",
+      "pull_request_number": 458,
+      "review_id": "PRR_kwDOTGOop88AAAABNgGjGg",
+      "reviewer": "globalpocket",
+      "pull_request_author": "brownie-agent",
+      "state": "APPROVED",
+      "commit_sha": "77a1818c643e7155d7df3a372cd0f2d2bb055aa7",
+      "submitted_at": "2026-09-14T17:52:04Z"
+    },
+    {
+      "required_review_id": "signing_provenance",
+      "pull_request_number": 458,
+      "review_id": "PRR_kwDOTGOop88AAAABNgGjGg",
+      "reviewer": "globalpocket",
+      "pull_request_author": "brownie-agent",
+      "state": "APPROVED",
+      "commit_sha": "77a1818c643e7155d7df3a372cd0f2d2bb055aa7",
+      "submitted_at": "2026-09-14T17:52:04Z"
+    },
+    {
+      "required_review_id": "release_ready_judgment",
+      "pull_request_number": 458,
+      "review_id": "PRR_kwDOTGOop88AAAABNgGjGg",
+      "reviewer": "globalpocket",
+      "pull_request_author": "brownie-agent",
+      "state": "APPROVED",
+      "commit_sha": "77a1818c643e7155d7df3a372cd0f2d2bb055aa7",
+      "submitted_at": "2026-09-14T17:52:04Z"
     }
   ],
   "limitations": [

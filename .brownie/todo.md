@@ -92,9 +92,31 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-15e-doc-sync-blocker: Blocker: missing owner-controlled independent review evidence for Release workflow, permission model, Ledger Contract, Mode Pack trust boundary, signing/provenance, and Release Ready判定ロジック.
-  Route: documentation.
-  Depends on: E-15e-phase-value-manifest-sync-leaf.
-  Completion condition: all six independent human reviews are completed and recorded.
-  Forbidden changes: do not patch runtime-release-contract.json until all reviews are complete.
-  Verification: blocker: exact missing evidence or field is named, and no workspace file is patched until that evidence is available.
+
+- [ ] E-16a-supply-chain-clean-source-binding: Patch only `scripts/release-supply-chain-artifact-evidence.mjs` and related guard tests so generated supply-chain evidence fails closed on dirty source during local development but can record a clean tested source commit for release validation:
+  Route: implementation.
+  Depends on: <none>.
+  Completion condition: supply-chain evidence can be regenerated from a clean source tree without `source_tree_dirty:true`, while dirty-tree evidence remains fail-closed.
+  Forbidden changes: do not mark Runtime Release Ready and do not weaken dirty-tree validation.
+  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`, `pnpm --workspace-root guard:supply-chain-artifact-evidence`, and `pnpm --workspace-root check`.
+
+- [ ] E-16b-artifact-smoke-execution: Patch only release artifact smoke collection and guard fixtures so artifact smoke is executable and no longer `not_executed` when configured artifacts are present:
+  Route: implementation.
+  Depends on: E-16a-supply-chain-clean-source-binding.
+  Completion condition: `.brownie/release-evidence/supply-chain-artifact-evidence.json` can contain satisfied artifact_smoke evidence with required E2E smoke steps for the configured artifact set.
+  Forbidden changes: do not replace E2E smoke with `brownie --version` only, and do not store raw paths/stdout/stderr.
+  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`, `pnpm --workspace-root guard:supply-chain-artifact-evidence`, and `pnpm --workspace-root check`.
+
+- [ ] E-16c-runtime-artifact-lifecycle-evidence: Patch only runtime operational evidence collection and guard tests so artifact_lifecycle can be satisfied for the configured local/VM targets or records exact target-specific blockers:
+  Route: implementation.
+  Depends on: E-16b-artifact-smoke-execution.
+  Completion condition: runtime operational evidence no longer has `artifact_lifecycle:failed` for available configured targets, or records bounded target-specific blockers that keep the queue actionable.
+  Forbidden changes: do not persist absolute paths, SSH aliases, raw command output, or EncodedCommand values.
+  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`, `pnpm --workspace-root guard:runtime-operational-evidence`, and `pnpm --workspace-root check`.
+
+- [ ] E-16d-stateful-soak-execution: Patch only runtime operational evidence collection and guard tests so stateful soak evidence is executed instead of `not_executed`:
+  Route: implementation.
+  Depends on: E-16c-runtime-artifact-lifecycle-evidence.
+  Completion condition: `.brownie/release-evidence/runtime-operational-evidence.json` records satisfied stateful soak steps for task transition, ledger/workspace consistency, resume/replay, duplicate side-effect rejection, process-loss recovery, and finite convergence.
+  Forbidden changes: do not use version-only soak and do not store raw process output or local paths.
+  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`, `pnpm --workspace-root guard:runtime-operational-evidence`, and `pnpm --workspace-root check`.
