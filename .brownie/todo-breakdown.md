@@ -143,3 +143,55 @@ Verification ledger:
 History:
 
 - 2026-09-14T06:04:47Z: Applied deterministic fallback after Brownie repeatedly failed to turn the two-file documentation leaf into a workspace.write.
+
+## E-16 release executable evidence split
+
+Parent TODO: E-16a/E-16b/E-16c/E-16d release executable evidence blockers reopened after owner-controlled review evidence was closed.
+
+Dependency graph:
+
+- E-16a-artifact-source-local-producer: <none>
+- E-16a-artifact-source-linux-producer: E-16a-artifact-source-local-producer
+- E-16a-clean-source-collector: E-16a-artifact-source-linux-producer
+- E-16a-clean-source-guard: E-16a-clean-source-collector
+- E-16a-clean-source-test: E-16a-clean-source-guard
+- E-16b-artifact-smoke-steps-guard: E-16a-clean-source-test
+- E-16b-artifact-smoke-collector: E-16b-artifact-smoke-steps-guard
+- E-16b-artifact-smoke-test: E-16b-artifact-smoke-collector
+- E-16c-artifact-lifecycle-collector: E-16b-artifact-smoke-test
+- E-16c-artifact-lifecycle-guard: E-16c-artifact-lifecycle-collector
+- E-16c-artifact-lifecycle-test: E-16c-artifact-lifecycle-guard
+- E-16d-stateful-soak-collector: E-16c-artifact-lifecycle-test
+- E-16d-stateful-soak-guard: E-16d-stateful-soak-collector
+- E-16d-stateful-soak-test: E-16d-stateful-soak-guard
+
+Verification ledger:
+
+- E-16a-artifact-source-local-producer: `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`; `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-16a-artifact-source-linux-producer: `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`; `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-16a-clean-source-collector: `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`; `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-16a-clean-source-guard: `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`; `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-16a-clean-source-test: `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`; `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-16b-artifact-smoke-steps-guard: `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`; `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-16b-artifact-smoke-collector: `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`; `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-16b-artifact-smoke-test: `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`; `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-16c-artifact-lifecycle-collector: `pnpm --workspace-root guard:runtime-operational-evidence:test`; `pnpm --workspace-root guard:runtime-operational-evidence`
+- E-16c-artifact-lifecycle-guard: `pnpm --workspace-root guard:runtime-operational-evidence:test`; `pnpm --workspace-root guard:runtime-operational-evidence`
+- E-16c-artifact-lifecycle-test: `pnpm --workspace-root guard:runtime-operational-evidence:test`; `pnpm --workspace-root guard:runtime-operational-evidence`
+- E-16d-stateful-soak-collector: `pnpm --workspace-root guard:runtime-operational-evidence:test`; `pnpm --workspace-root guard:runtime-operational-evidence`
+- E-16d-stateful-soak-guard: `pnpm --workspace-root guard:runtime-operational-evidence:test`; `pnpm --workspace-root guard:runtime-operational-evidence`
+- E-16d-stateful-soak-test: `pnpm --workspace-root guard:runtime-operational-evidence:test`; `pnpm --workspace-root guard:runtime-operational-evidence`
+
+Quality rubric:
+
+- Each leaf names exactly one concrete Patch only target so current phase-loop read/write routing can inspect the intended file.
+- Artifact producer leaves record source identity at build time before collectors bind artifacts to tested source commits.
+- Collector leaves update evidence generation with bounded sanitized fields.
+- Guard leaves add or tighten executable validation without claiming Runtime Release Ready.
+- Test leaves add focused regression coverage only after the corresponding production path exists.
+- Dependency order prevents smoke, lifecycle, and soak work from running before source binding is clean.
+
+History:
+
+- 2026-09-15: Split broad E-16 executable release evidence blockers after live phase-loop returned `no_actionable_runtime_task`; the split makes the next schedulable item a bounded implementation leaf instead of an ambiguous parent TODO.
+- 2026-09-15: Refined PR #460 after review showed multi-file `Patch only` leaves exceed current phase-loop read routing and artifact provenance needs producer-side source identity before collector-side binding.

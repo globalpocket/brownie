@@ -93,30 +93,114 @@ Current synchronization note:
 ### P0/P1: Release engineering and evidence
 
 
-- [ ] E-16a-supply-chain-clean-source-binding: Patch only `scripts/release-supply-chain-artifact-evidence.mjs` and related guard tests so generated supply-chain evidence fails closed on dirty source during local development but can record a clean tested source commit for release validation:
+- [ ] E-16a-artifact-source-local-producer: Patch only `scripts/release-local-artifact.mjs` to record artifact source identity at build time:
   Route: implementation.
+  Source TODO: E-16a-artifact-source-identity.
   Depends on: <none>.
-  Completion condition: supply-chain evidence can be regenerated from a clean source tree without `source_tree_dirty:true`, while dirty-tree evidence remains fail-closed.
-  Forbidden changes: do not mark Runtime Release Ready and do not weaken dirty-tree validation.
-  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`, `pnpm --workspace-root guard:supply-chain-artifact-evidence`, and `pnpm --workspace-root check`.
+  Completion condition: local artifact evidence records the source commit and clean-tree state used to build the artifact, without storing absolute paths or raw command output.
+  Forbidden changes: do not mark Runtime Release Ready and do not weaken artifact checksum generation.
+  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`.
 
-- [ ] E-16b-artifact-smoke-execution: Patch only release artifact smoke collection and guard fixtures so artifact smoke is executable and no longer `not_executed` when configured artifacts are present:
+- [ ] E-16a-artifact-source-linux-producer: Patch only `scripts/release-linux-x64-docker-artifact.mjs` to record artifact source identity at build time:
   Route: implementation.
-  Depends on: E-16a-supply-chain-clean-source-binding.
-  Completion condition: `.brownie/release-evidence/supply-chain-artifact-evidence.json` can contain satisfied artifact_smoke evidence with required E2E smoke steps for the configured artifact set.
-  Forbidden changes: do not replace E2E smoke with `brownie --version` only, and do not store raw paths/stdout/stderr.
-  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`, `pnpm --workspace-root guard:supply-chain-artifact-evidence`, and `pnpm --workspace-root check`.
+  Source TODO: E-16a-artifact-source-identity.
+  Depends on: E-16a-artifact-source-local-producer.
+  Completion condition: linux docker artifact evidence records the source commit and clean-tree state used to build the artifact, without storing host paths, container paths, or raw command output.
+  Forbidden changes: do not edit local artifact generation or loosen docker artifact checksum generation.
+  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`.
 
-- [ ] E-16c-runtime-artifact-lifecycle-evidence: Patch only runtime operational evidence collection and guard tests so artifact_lifecycle can be satisfied for the configured local/VM targets or records exact target-specific blockers:
+- [ ] E-16a-clean-source-collector: Patch only `scripts/release-supply-chain-artifact-evidence.mjs` to bind collected artifacts to clean source identity:
   Route: implementation.
-  Depends on: E-16b-artifact-smoke-execution.
-  Completion condition: runtime operational evidence no longer has `artifact_lifecycle:failed` for available configured targets, or records bounded target-specific blockers that keep the queue actionable.
-  Forbidden changes: do not persist absolute paths, SSH aliases, raw command output, or EncodedCommand values.
-  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`, `pnpm --workspace-root guard:runtime-operational-evidence`, and `pnpm --workspace-root check`.
+  Source TODO: E-16a-supply-chain-clean-source-binding.
+  Depends on: E-16a-artifact-source-linux-producer.
+  Completion condition: generated supply-chain evidence distinguishes current clean tested source from dirty local state and records artifact source identity when artifact evidence provides it.
+  Forbidden changes: do not fabricate source identity for artifacts that lack producer evidence.
+  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`.
 
-- [ ] E-16d-stateful-soak-execution: Patch only runtime operational evidence collection and guard tests so stateful soak evidence is executed instead of `not_executed`:
+- [ ] E-16a-clean-source-guard: Patch only `scripts/guard-supply-chain-artifact-evidence.mjs` to fail closed on dirty, stale, or missing artifact source binding:
   Route: implementation.
-  Depends on: E-16c-runtime-artifact-lifecycle-evidence.
-  Completion condition: `.brownie/release-evidence/runtime-operational-evidence.json` records satisfied stateful soak steps for task transition, ledger/workspace consistency, resume/replay, duplicate side-effect rejection, process-loss recovery, and finite convergence.
+  Source TODO: E-16a-supply-chain-clean-source-binding.
+  Depends on: E-16a-clean-source-collector.
+  Completion condition: the supply-chain guard rejects dirty source evidence and rejects satisfied artifact provenance when artifact source identity is absent or not bound to the tested source commit.
+  Forbidden changes: do not edit Runtime readiness documents or loosen artifact checksum validation.
+  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`.
+
+- [ ] E-16a-clean-source-test: Patch only `scripts/guard-supply-chain-artifact-evidence.test.mjs` to cover clean and dirty source binding:
+  Route: implementation.
+  Source TODO: E-16a-supply-chain-clean-source-binding.
+  Depends on: E-16a-clean-source-guard.
+  Completion condition: tests prove clean current artifact source binding is accepted and dirty, stale, or missing binding remains fail-closed.
+  Forbidden changes: do not modify production collector or guard logic from this test-only leaf.
+  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`.
+
+- [ ] E-16b-artifact-smoke-steps-guard: Patch only `scripts/guard-supply-chain-artifact-evidence.mjs` to require E2E artifact smoke steps:
+  Route: implementation.
+  Source TODO: E-16b-artifact-smoke-execution.
+  Depends on: E-16a-clean-source-test.
+  Completion condition: artifact smoke evidence is rejected unless each target records base mode pack load, minimal task run, ledger generation, forced stop/resume, and stale/replay rejection.
+  Forbidden changes: do not accept `brownie --version` or help-only smoke as E2E evidence.
+  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`.
+
+- [ ] E-16b-artifact-smoke-collector: Patch only `scripts/release-supply-chain-artifact-evidence.mjs` to collect bounded E2E smoke evidence:
+  Route: implementation.
+  Source TODO: E-16b-artifact-smoke-execution.
+  Depends on: E-16b-artifact-smoke-steps-guard.
+  Completion condition: configured artifact targets produce sanitized artifact smoke records or target-specific fail-closed blockers without raw paths or command output.
+  Forbidden changes: do not store absolute paths, SSH host aliases, raw stdout, raw stderr, or PowerShell EncodedCommand values.
+  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`.
+
+- [ ] E-16b-artifact-smoke-test: Patch only `scripts/guard-supply-chain-artifact-evidence.test.mjs` to cover artifact smoke E2E requirements:
+  Route: implementation.
+  Source TODO: E-16b-artifact-smoke-execution.
+  Depends on: E-16b-artifact-smoke-collector.
+  Completion condition: tests reject version/help-only smoke and accept sanitized smoke records containing the required E2E step statuses.
+  Forbidden changes: do not modify production collector or guard logic from this test-only leaf.
+  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`.
+
+- [ ] E-16c-artifact-lifecycle-collector: Patch only `scripts/release-runtime-operational-evidence.mjs` to collect artifact lifecycle evidence:
+  Route: implementation.
+  Source TODO: E-16c-runtime-artifact-lifecycle-evidence.
+  Depends on: E-16b-artifact-smoke-test.
+  Completion condition: runtime operational evidence records sanitized per-target artifact lifecycle status or bounded target-specific fail-closed blockers.
+  Forbidden changes: do not persist absolute paths, SSH aliases, raw command output, local worktree paths, or EncodedCommand values.
+  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`.
+
+- [ ] E-16c-artifact-lifecycle-guard: Patch only `scripts/guard-runtime-operational-evidence.mjs` to reject incomplete artifact lifecycle evidence:
+  Route: implementation.
+  Source TODO: E-16c-runtime-artifact-lifecycle-evidence.
+  Depends on: E-16c-artifact-lifecycle-collector.
+  Completion condition: the guard rejects missing artifact lifecycle target status and accepts sanitized satisfied or fail-closed target records.
+  Forbidden changes: do not weaken redaction checks or accept raw process output fields.
+  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`.
+
+- [ ] E-16c-artifact-lifecycle-test: Patch only `scripts/guard-runtime-operational-evidence.test.mjs` to cover artifact lifecycle evidence:
+  Route: implementation.
+  Source TODO: E-16c-runtime-artifact-lifecycle-evidence.
+  Depends on: E-16c-artifact-lifecycle-guard.
+  Completion condition: tests reject missing or raw artifact lifecycle evidence and accept sanitized satisfied or fail-closed target records.
+  Forbidden changes: do not modify production collector or guard logic from this test-only leaf.
+  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`.
+
+- [ ] E-16d-stateful-soak-collector: Patch only `scripts/release-runtime-operational-evidence.mjs` to execute stateful soak evidence:
+  Route: implementation.
+  Source TODO: E-16d-stateful-soak-execution.
+  Depends on: E-16c-artifact-lifecycle-test.
+  Completion condition: runtime operational evidence records stateful soak steps for transitions, ledger/workspace consistency, resume/replay, duplicate side-effect rejection, process-loss recovery, and finite convergence.
   Forbidden changes: do not use version-only soak and do not store raw process output or local paths.
-  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`, `pnpm --workspace-root guard:runtime-operational-evidence`, and `pnpm --workspace-root check`.
+  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`.
+
+- [ ] E-16d-stateful-soak-guard: Patch only `scripts/guard-runtime-operational-evidence.mjs` to reject version-only soak evidence:
+  Route: implementation.
+  Source TODO: E-16d-stateful-soak-execution.
+  Depends on: E-16d-stateful-soak-collector.
+  Completion condition: the guard rejects `brownie --version` repetition as soak evidence and accepts only stateful soak records with the required Runtime behaviors.
+  Forbidden changes: do not mark Runtime Release Ready or weaken artifact lifecycle validation.
+  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`.
+
+- [ ] E-16d-stateful-soak-test: Patch only `scripts/guard-runtime-operational-evidence.test.mjs` to cover stateful soak requirements:
+  Route: implementation.
+  Source TODO: E-16d-stateful-soak-execution.
+  Depends on: E-16d-stateful-soak-guard.
+  Completion condition: tests reject version-only soak and accept stateful soak records with transitions, ledger/workspace consistency, resume/replay, duplicate side-effect rejection, process-loss recovery, and finite convergence.
+  Forbidden changes: do not modify production collector or guard logic from this test-only leaf.
+  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`.
