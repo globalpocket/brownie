@@ -2,7 +2,7 @@
 
 use super::*;
 use anyhow::{bail, Context};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 #[cfg(unix)]
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
@@ -2465,7 +2465,10 @@ pub(super) fn append_tool_intent_events(
             Some(json!({ "tool_id": tool_id, "reason": rejected.reason, "code": rejected.code })),
         )?;
     }
-    for decision in evaluation.items {
+    for mut decision in evaluation.items {
+        if decision.tool_id == WORKSPACE_WRITE_TOOL_ID {
+            decision.input = normalize_todo_md_workspace_write_input(record, &decision.input);
+        }
         let runtime_plan_rejection_reason = if decision.allowed
             && builtin_tool_missing_from_runtime_plan(&decision.tool_id, &planned_allowed_tool_ids)
         {
@@ -2490,13 +2493,25 @@ pub(super) fn append_tool_intent_events(
         } else {
             None
         };
+        let workspace_read_rejection_reason = if decision.allowed
+            && runtime_plan_rejection_reason.is_none()
+            && runtime_rejection_reason.is_none()
+            && workspace_write_rejection_reason.is_none()
+            && decision.tool_id == WORKSPACE_READ_TOOL_ID
+        {
+            workspace_read_intent_runtime_rejection_reason(store, record, &decision.input)?
+        } else {
+            None
+        };
         let allowed = decision.allowed
             && runtime_plan_rejection_reason.is_none()
             && runtime_rejection_reason.is_none()
-            && workspace_write_rejection_reason.is_none();
+            && workspace_write_rejection_reason.is_none()
+            && workspace_read_rejection_reason.is_none();
         let reason = runtime_plan_rejection_reason
             .or(runtime_rejection_reason)
             .or(workspace_write_rejection_reason)
+            .or(workspace_read_rejection_reason.as_deref())
             .unwrap_or(decision.reason.as_str());
         let mut payload = json!({
             "tool_id": decision.tool_id,
@@ -2560,7 +2575,10 @@ pub(super) fn handle_approved_workspace_intents(
         };
     let mut duplicate_workspace_read_denied = false;
     let mut workspace_read_failed = false;
-    for (intent_index, decision) in evaluation.items.into_iter().enumerate() {
+    for (intent_index, mut decision) in evaluation.items.into_iter().enumerate() {
+        if decision.tool_id == WORKSPACE_WRITE_TOOL_ID {
+            decision.input = normalize_todo_md_workspace_write_input(record, &decision.input);
+        }
         let builtin_controlled_execution_tool = matches!(
             decision.tool_id.as_str(),
             WORKSPACE_READ_TOOL_ID
@@ -2622,6 +2640,12 @@ pub(super) fn handle_approved_workspace_intents(
         if !builtin_controlled_execution_tool {
             continue;
         }
+        if decision.tool_id == WORKSPACE_READ_TOOL_ID
+            && workspace_read_intent_runtime_rejection_reason(store, record, &decision.input)?
+                .is_some()
+        {
+            continue;
+        }
         store.tasks().append_task_event_with_payload(
             record,
             LedgerEventKind::ToolExecutionRequested,
@@ -2652,6 +2676,24 @@ pub(super) fn handle_approved_workspace_intents(
         if decision.tool_id == WORKSPACE_READ_TOOL_ID
             && task_goal_requires_workspace_write_proposal(&record.goal)
         {
+            let workspace_read_path = decision.input.get("path").and_then(Value::as_str);
+            let todo_repair_read_allowed = workspace_read_path.is_some_and(is_todo_workspace_path)
+                && selected_todo_allows_todo_md_edit(&record.goal);
+            if task_goal_embeds_repair_workspace_read_preview(&record.goal)
+                && !todo_repair_read_allowed
+            {
+                store.tasks().append_task_event_with_payload(
+                    record,
+                    LedgerEventKind::ToolExecutionDenied,
+                    Some(json!({
+                        "tool_id": decision.tool_id,
+                        "status": "Denied",
+                        "reason": "Repair feedback already embeds previous workspace.read output_preview; workspace.read is not progress. Request workspace.write or record a concrete blocker TODO.",
+                    })),
+                )?;
+                duplicate_workspace_read_denied = true;
+                continue;
+            }
             if let Some(reason) =
                 workspace_read_rejection_reason_from_selected_todo(&record.goal, &decision.input)
             {
@@ -2760,20 +2802,25 @@ pub(super) fn append_todo_decomposition_blocker_after_read_only_stall(
     workspace_read_failed: bool,
 ) -> anyhow::Result<()> {
     let read_budget_exhausted = run_has_workspace_read_budget_exhausted(store, record)?;
-    if !task_goal_requires_workspace_write_proposal(&record.goal)
-        || run_has_workspace_patch_proposal(store, record)?
-        || !run_has_todo_decomposition_stall(
-            store,
-            record,
-            duplicate_workspace_read_denied,
-            workspace_read_failed,
-            read_budget_exhausted,
-        )?
-    {
+    let requires_write = task_goal_requires_workspace_write_proposal(&record.goal);
+    let has_patch = run_has_workspace_patch_proposal(store, record)?;
+    let has_stall = run_has_todo_decomposition_stall(
+        store,
+        record,
+        duplicate_workspace_read_denied,
+        workspace_read_failed,
+        read_budget_exhausted,
+    )?;
+    if !requires_write || has_patch || !has_stall {
         return Ok(());
     }
+    let repair_preview_read_denied = run_has_repair_preview_workspace_read_denial(store, record)?;
     if selected_todo_mentions_non_todo_workspace_path(&record.goal)
         && !selected_todo_allows_todo_md_edit(&record.goal)
+        && !repair_preview_read_denied
+        && !read_budget_exhausted
+        && !duplicate_workspace_read_denied
+        && !workspace_read_failed
     {
         return Ok(());
     }
@@ -2788,7 +2835,7 @@ pub(super) fn append_todo_decomposition_blocker_after_read_only_stall(
         return Ok(());
     };
     if is_concrete_product_ready_leaf_todo(&block) {
-        if !is_runtime_refinable_product_ready_leaf_todo(&block) {
+        if !is_runtime_refinable_product_ready_leaf_todo(&block) && !repair_preview_read_denied {
             return Ok(());
         }
         if !read_budget_exhausted && !duplicate_workspace_read_denied && !workspace_read_failed {
@@ -2813,6 +2860,7 @@ pub(super) fn append_todo_decomposition_blocker_after_read_only_stall(
     } else {
         "Read-only TODO investigation completed without a workspace.write proposal"
     };
+    append_synthesized_additional_read_denial_for_decomposition_stall(store, record)?;
     let decision = ToolIntentDecision {
         tool_id: WORKSPACE_WRITE_TOOL_ID.to_string(),
         required_action: RuntimeAction::WriteWorkspace,
@@ -2831,6 +2879,37 @@ pub(super) fn append_todo_decomposition_blocker_after_read_only_stall(
     append_workspace_patch_proposal(store, record, policy, &decision)
 }
 
+fn append_synthesized_additional_read_denial_for_decomposition_stall(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+) -> anyhow::Result<()> {
+    if !selected_todo_requires_decomposition_only(&record.goal) {
+        return Ok(());
+    }
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    if events.iter().any(|event| {
+        event.kind == LedgerEventKind::ToolExecutionDenied
+            && event.payload.as_ref().is_some_and(|payload| {
+                payload.get("tool_id").and_then(Value::as_str) == Some(WORKSPACE_READ_TOOL_ID)
+                    && payload
+                        .get("reason")
+                        .and_then(Value::as_str)
+                        .is_some_and(|reason| reason.contains("Additional workspace.read"))
+            })
+    }) {
+        return Ok(());
+    }
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::ToolExecutionDenied,
+        Some(json!({
+            "tool_id": WORKSPACE_READ_TOOL_ID,
+            "status": "Denied",
+            "reason": "Additional workspace.read is not progress after the phase-loop TODO decomposition stall; use existing TODO context and request workspace.write or record a concrete blocker.",
+        })),
+    )
+}
+
 fn run_has_todo_decomposition_stall(
     store: &BrownieStore,
     record: &brownie_protocol::TaskRecord,
@@ -2841,9 +2920,15 @@ fn run_has_todo_decomposition_stall(
     let events = store.tasks().read_ledger_events(&record.run_id)?;
     let read_todo = run_events_include_workspace_read_path(&events, "todo.md")
         || run_events_include_workspace_read_path(&events, ".brownie/todo.md");
+    let second_pass_seen = events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived);
     if (duplicate_workspace_read_denied || workspace_read_failed || read_budget_exhausted)
         && selected_todo_first_line_from_goal(&record.goal).is_some()
     {
+        return Ok(true);
+    }
+    if selected_todo_requires_decomposition_only(&record.goal) && second_pass_seen {
         return Ok(true);
     }
     if !read_todo {
@@ -2852,9 +2937,6 @@ fn run_has_todo_decomposition_stall(
     if duplicate_workspace_read_denied {
         return Ok(true);
     }
-    let second_pass_seen = events
-        .iter()
-        .any(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived);
     let read_only_completed_tools = events
         .iter()
         .filter(|event| event.kind == LedgerEventKind::ToolExecutionCompleted)
@@ -2888,6 +2970,30 @@ fn run_has_workspace_read_budget_exhausted(
                 .count()
                 >= 2,
     )
+}
+
+fn run_has_repair_preview_workspace_read_denial(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+) -> anyhow::Result<bool> {
+    Ok(store
+        .tasks()
+        .read_ledger_events(&record.run_id)?
+        .iter()
+        .any(|event| {
+            event.kind == LedgerEventKind::ToolExecutionDenied
+                && event.payload.as_ref().is_some_and(|payload| {
+                    payload.get("tool_id").and_then(Value::as_str) == Some(WORKSPACE_READ_TOOL_ID)
+                        && payload
+                            .get("reason")
+                            .and_then(Value::as_str)
+                            .is_some_and(|reason| {
+                                reason.contains(
+                                    "Repair feedback already embeds previous workspace.read",
+                                )
+                            })
+                })
+        }))
 }
 
 fn run_has_release_evidence_blocker_inputs(
@@ -3125,7 +3231,7 @@ fn is_todo_workspace_path(path: &str) -> bool {
     path == "todo.md" || path == ".brownie/todo.md"
 }
 
-fn todo_md_workspace_write_rejection_reason(
+pub(super) fn todo_md_workspace_write_rejection_reason(
     record: &brownie_protocol::TaskRecord,
     input: &Value,
 ) -> Option<&'static str> {
@@ -3147,9 +3253,21 @@ fn todo_md_workspace_write_rejection_reason(
     if decomposition_only {
         return todo_decomposition_workspace_write_rejection_reason(record, input);
     }
-    if selected_todo_mentions_non_todo_workspace_path(&record.goal)
-        && !selected_todo_allows_todo_md_edit(&record.goal)
-    {
+    if selected_todo_allows_todo_md_edit(&record.goal) {
+        if let Some(reason) = todo_repair_workspace_write_rejection_reason(input) {
+            return Some(reason);
+        }
+        return None;
+    }
+    if verification_failure_requires_target_file_repair(&record.goal) {
+        return Some(
+            "Previous verification reported a concrete target-file failure; do not rewrite `.brownie/todo.md` or decompose the TODO. Repair the named target file directly or fail closed.",
+        );
+    }
+    if todo_md_write_looks_like_decomposition_attempt(input) {
+        return todo_decomposition_workspace_write_rejection_reason(record, input);
+    }
+    if selected_todo_mentions_non_todo_workspace_path(&record.goal) {
         return Some(
             "Selected implementation TODO names a concrete non-todo workspace target; do not rewrite the live TODO queue as implementation progress. Edit the named file or fail closed.",
         );
@@ -3170,10 +3288,210 @@ fn todo_md_workspace_write_rejection_reason(
     )
 }
 
+pub(super) fn normalize_todo_md_workspace_write_input(
+    record: &brownie_protocol::TaskRecord,
+    input: &Value,
+) -> Value {
+    let Some(path) = input.get("path").and_then(Value::as_str) else {
+        return input.clone();
+    };
+    if !is_todo_workspace_path(path) {
+        return input.clone();
+    }
+    let mut normalized = input.clone();
+    let Some(object) = normalized.as_object_mut() else {
+        return input.clone();
+    };
+    for key in ["new_text", "content"] {
+        let Some(raw) = object.get(key).and_then(Value::as_str) else {
+            continue;
+        };
+        let fixed = normalize_inline_todo_leaf_text(record, raw);
+        if fixed != raw {
+            object.insert(key.to_string(), Value::String(fixed));
+        }
+    }
+    normalized
+}
+
+fn normalize_inline_todo_leaf_text(record: &brownie_protocol::TaskRecord, text: &str) -> String {
+    let mut normalized_blocks = Vec::new();
+    let mut changed = false;
+    for block in unchecked_todo_blocks_from_text(text) {
+        let normalized = normalize_inline_todo_leaf_block(record, block);
+        if normalized != block {
+            changed = true;
+        }
+        normalized_blocks.push((block, normalized));
+    }
+    if !changed {
+        return text.to_string();
+    }
+    let mut output = text.to_string();
+    for (old, new) in normalized_blocks {
+        output = output.replacen(old, &new, 1);
+    }
+    output
+}
+
+fn normalize_inline_todo_leaf_block(record: &brownie_protocol::TaskRecord, block: &str) -> String {
+    let line_count = block.lines().count();
+    let contains_inline_markers = [
+        "Source TODO:",
+        "Depends on:",
+        "Completion condition:",
+        "Forbidden changes:",
+        "Verification:",
+    ]
+    .iter()
+    .filter(|marker| block.contains(**marker))
+    .count()
+        >= 2;
+    if line_count > 2 || !contains_inline_markers {
+        return block.to_string();
+    }
+    let Some(first_line) = block.lines().next() else {
+        return block.to_string();
+    };
+    let markers = [
+        "Route:",
+        "Source TODO:",
+        "Depends on:",
+        "Completion condition:",
+        "Forbidden changes:",
+        "Verification:",
+    ];
+    let mut positions: Vec<(usize, &str)> = markers
+        .iter()
+        .filter_map(|marker| first_line.find(marker).map(|index| (index, *marker)))
+        .collect();
+    if positions.is_empty() {
+        return block.to_string();
+    }
+    positions.sort_by_key(|(index, _)| *index);
+    let title_end = positions[0].0;
+    let title = first_line[..title_end].trim_end();
+    if !title.starts_with("- [ ] ") && !title.starts_with("* [ ] ") {
+        return block.to_string();
+    }
+    let mut lines = vec![title.to_string()];
+    if !positions.iter().any(|(_, marker)| *marker == "Route:") {
+        let route = selected_todo_route_from_goal(&record.goal).unwrap_or("documentation");
+        lines.push(format!("  Route: {route}."));
+    }
+    for (idx, (start, marker)) in positions.iter().enumerate() {
+        let end = positions
+            .get(idx + 1)
+            .map(|(next_start, _)| *next_start)
+            .unwrap_or(first_line.len());
+        let value = first_line[*start + marker.len()..end].trim();
+        if value.is_empty() {
+            lines.push(format!("  {marker}"));
+        } else {
+            lines.push(format!("  {marker} {value}"));
+        }
+    }
+    let trailing_lines: Vec<&str> = block.lines().skip(1).collect();
+    for line in trailing_lines {
+        if !line.trim().is_empty() {
+            lines.push(line.to_string());
+        }
+    }
+    let mut result = lines.join("\n");
+    if block.ends_with('\n') {
+        result.push('\n');
+    }
+    result
+}
+
+fn selected_todo_route_from_goal(goal: &str) -> Option<&'static str> {
+    let block = selected_todo_block_text_from_goal(goal)?;
+    for line in block.lines().map(str::trim) {
+        let Some(route) = line.strip_prefix("Route:") else {
+            continue;
+        };
+        let route = route.trim().trim_end_matches('.').to_ascii_lowercase();
+        return match route.as_str() {
+            "implementation" => Some("implementation"),
+            "documentation" => Some("documentation"),
+            "release-ops" => Some("release-ops"),
+            "todo-decomposition" => Some("todo-decomposition"),
+            _ => None,
+        };
+    }
+    None
+}
+
+fn workspace_read_intent_runtime_rejection_reason(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+    input: &Value,
+) -> anyhow::Result<Option<String>> {
+    if !task_goal_requires_workspace_write_proposal(&record.goal) {
+        return Ok(None);
+    }
+    let workspace_read_path = input.get("path").and_then(Value::as_str);
+    let todo_repair_read_allowed = workspace_read_path.is_some_and(is_todo_workspace_path)
+        && selected_todo_allows_todo_md_edit(&record.goal);
+    if task_goal_embeds_repair_workspace_read_preview(&record.goal) && !todo_repair_read_allowed {
+        return Ok(Some(
+            "Repair feedback already embeds previous workspace.read output_preview; workspace.read is not progress. Request workspace.write or record a concrete blocker TODO."
+                .to_string(),
+        ));
+    }
+    if task_goal_forbids_leaf_repair_workspace_read(&record.goal) && !todo_repair_read_allowed {
+        return Ok(Some(
+            "Bounded leaf repair requires the next tool to be workspace.write for the selected target; workspace.read is not progress in this repair turn."
+                .to_string(),
+        ));
+    }
+    if let Some(reason) = workspace_read_rejection_reason_from_selected_todo(&record.goal, input) {
+        return Ok(Some(reason));
+    }
+    if run_has_workspace_read_for_same_path_without_write_proposal(store, record, input)?
+        || (task_goal_enforces_workspace_read_budget_before_write(&record.goal)
+            && run_workspace_read_count_without_write_proposal(store, record)? >= 2)
+    {
+        return Ok(Some(
+            "Additional workspace.read is not progress after the phase-loop read budget is exhausted; use the existing Tool Execution output_preview/content_sha256 and request workspace.write or record a concrete blocker."
+                .to_string(),
+        ));
+    }
+    Ok(None)
+}
+
+fn todo_md_write_looks_like_decomposition_attempt(input: &Value) -> bool {
+    let Some(new_text) = input
+        .get("new_text")
+        .and_then(Value::as_str)
+        .or_else(|| input.get("content").and_then(Value::as_str))
+    else {
+        return false;
+    };
+    new_text.contains("- [ ] ")
+        && (new_text.contains("Source TODO:")
+            || new_text.contains("Completion condition:")
+            || new_text.contains("Forbidden changes:")
+            || new_text.contains("Verification:"))
+}
+
 fn selected_todo_requires_decomposition_only(goal: &str) -> bool {
     let goal_lower = goal.to_ascii_lowercase();
+    if goal_lower.contains("## previous repair feedback")
+        || goal_lower.contains("repair_reason:")
+        || goal_lower.contains("repair_hint:")
+        || goal_lower.contains("todo_guard_repair_policy")
+        || goal_lower.contains("todo_decomposition_guard_failed_after_todo_apply")
+    {
+        return false;
+    }
     if goal_lower.contains("- state: `decompose_todo`")
         || goal_lower.contains("- state: decompose_todo")
+        || ((goal_lower.contains("todo.md") || goal_lower.contains("todo queue"))
+            && (goal_lower.contains("decompos")
+                || goal_lower.contains("split")
+                || goal_lower.contains("細分化")
+                || goal_lower.contains("分割")))
     {
         return true;
     }
@@ -3185,6 +3503,116 @@ fn selected_todo_requires_decomposition_only(goal: &str) -> bool {
             || lower.contains("細分化")
             || lower.contains("分割")
     })
+}
+
+fn todo_repair_workspace_write_rejection_reason(input: &Value) -> Option<&'static str> {
+    if let Some(hunks) = input.get("hunks").and_then(Value::as_array) {
+        let old_text = hunks
+            .iter()
+            .filter_map(|hunk| hunk.get("old_text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let new_text = hunks
+            .iter()
+            .filter_map(|hunk| {
+                hunk.get("new_text")
+                    .and_then(Value::as_str)
+                    .or_else(|| hunk.get("content").and_then(Value::as_str))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !new_text.is_empty() {
+            return todo_repair_text_rejection_reason(
+                if old_text.is_empty() {
+                    None
+                } else {
+                    Some(old_text.as_str())
+                },
+                &new_text,
+            );
+        }
+    }
+    let old_text = input.get("old_text").and_then(Value::as_str);
+    let new_text = input
+        .get("new_text")
+        .and_then(Value::as_str)
+        .or_else(|| input.get("content").and_then(Value::as_str))?;
+    todo_repair_text_rejection_reason(old_text, new_text)
+}
+
+fn todo_repair_text_rejection_reason(
+    old_text: Option<&str>,
+    new_text: &str,
+) -> Option<&'static str> {
+    let leaf_blocks = unchecked_todo_blocks_from_text(new_text);
+    if let Some(old_text) = old_text {
+        let old_ids: HashSet<String> = unchecked_todo_blocks_from_text(old_text)
+            .into_iter()
+            .filter_map(todo_block_id_from_text)
+            .collect();
+        let introduces_new_leaf_id = leaf_blocks
+            .iter()
+            .filter_map(|leaf| todo_block_id_from_text(leaf))
+            .any(|id| !old_ids.is_empty() && !old_ids.contains(&id));
+        if introduces_new_leaf_id {
+            return Some("TODO repair patch must replace the existing corrupt TODO block, not append new leaf ids; include the whole duplicate block in old_text or remove duplicates without adding new ids.");
+        }
+    }
+    let mut ids = HashSet::new();
+    for leaf in leaf_blocks {
+        let Some(id) = todo_block_id_from_text(leaf) else {
+            continue;
+        };
+        if !ids.insert(id.to_string()) {
+            return Some("TODO repair patch must not create duplicate unchecked TODO ids.");
+        }
+        if leaf
+            .lines()
+            .map(str::trim)
+            .filter_map(|line| line.strip_prefix("Source TODO:"))
+            .any(|source| source.trim().starts_with(&id))
+        {
+            return Some("TODO repair patch must not set a leaf `Source TODO:` to the leaf itself; preserve the original parent TODO.");
+        }
+    }
+    None
+}
+
+fn todo_block_id_from_text(block: &str) -> Option<String> {
+    let first_line = block.lines().next()?.trim();
+    first_line
+        .strip_prefix("- [ ] ")
+        .or_else(|| first_line.strip_prefix("* [ ] "))
+        .and_then(|title| title.split_once(':').map(|(id, _)| id.trim()))
+        .filter(|id| !id.is_empty())
+        .map(ToString::to_string)
+}
+
+fn todo_leaf_title_starts_with_read_only_discovery(first_line: &str) -> bool {
+    let Some(title) = first_line
+        .trim()
+        .strip_prefix("- [ ] ")
+        .or_else(|| first_line.trim().strip_prefix("* [ ] "))
+    else {
+        return false;
+    };
+    let title_after_id = title
+        .split_once(':')
+        .map(|(_, rest)| rest)
+        .unwrap_or(title)
+        .trim_start()
+        .to_ascii_lowercase();
+    [
+        "read ",
+        "inspect ",
+        "investigate ",
+        "analyze ",
+        "analyse ",
+        "確認",
+        "調査",
+    ]
+    .iter()
+    .any(|prefix| title_after_id.starts_with(prefix))
 }
 
 fn todo_decomposition_workspace_write_rejection_reason(
@@ -3250,6 +3678,7 @@ fn todo_decomposition_workspace_write_rejection_reason(
         }
     }
     let parent_reference = selected_todo_parent_reference(&record.goal);
+    let source_parent_reference = selected_todo_source_reference(&record.goal);
     for leaf in leaf_blocks {
         let first_line = leaf.lines().next().unwrap_or_default();
         if first_line.contains("TODO-decompose-blocked-queue") {
@@ -3277,7 +3706,14 @@ fn todo_decomposition_workspace_write_rejection_reason(
             return Some("Every TODO decomposition leaf must include `Forbidden changes:`.");
         }
         if let Some(parent) = parent_reference.as_deref() {
-            if !leaf_source_todo_lines_reference_parent(leaf, parent) {
+            let references_selected_parent = leaf_source_todo_lines_reference_parent(leaf, parent);
+            let references_source_parent =
+                source_parent_reference
+                    .as_deref()
+                    .is_some_and(|source_parent| {
+                        leaf_source_todo_lines_reference_parent(leaf, source_parent)
+                    });
+            if !references_selected_parent && !references_source_parent {
                 return Some(
                     "Every TODO decomposition leaf `Source TODO:` must reference the selected parent TODO.",
                 );
@@ -3294,6 +3730,13 @@ fn todo_decomposition_workspace_write_rejection_reason(
             );
         }
         let leaf_lower = leaf.to_ascii_lowercase();
+        if todo_leaf_title_starts_with_read_only_discovery(first_line)
+            && !leaf_lower.contains("fail-closed")
+        {
+            return Some(
+                "TODO decomposition leaves must be implementation or fail-closed blocker work, not read-only discovery tasks.",
+            );
+        }
         if !leaf.contains("Patch only `")
             && !leaf.contains("Create only `")
             && !leaf_lower.contains("blocker")
@@ -3310,6 +3753,15 @@ fn todo_decomposition_workspace_write_rejection_reason(
         }
     }
     None
+}
+
+fn verification_failure_requires_target_file_repair(goal: &str) -> bool {
+    let goal_lower = goal.to_ascii_lowercase();
+    (goal_lower.contains("verification_failure_target_repair_policy")
+        || goal_lower.contains("syntaxerror:")
+        || goal_lower.contains("duplicate_declaration_repair_policy")
+        || goal_lower.contains("identifier 'soakevidencefixture' has already been declared"))
+        && selected_todo_mentions_non_todo_workspace_path(goal)
 }
 
 fn selected_todo_forbids_workspace_write_path(goal: &str, path: &str) -> bool {
@@ -3365,6 +3817,20 @@ fn selected_todo_parent_reference(goal: &str) -> Option<String> {
         .or_else(|| Some(title.to_string()).filter(|value| !value.is_empty()))
 }
 
+fn selected_todo_source_reference(goal: &str) -> Option<String> {
+    let block = selected_todo_block_text_from_goal(goal)?;
+    block
+        .lines()
+        .map(str::trim)
+        .find_map(|line| line.strip_prefix("Source TODO:"))
+        .map(str::trim)
+        .map(|source| source.trim_end_matches('.').trim())
+        .and_then(|source| source.split_once(':').map(|(id, _)| id).or(Some(source)))
+        .map(str::trim)
+        .filter(|source| !source.is_empty())
+        .map(ToString::to_string)
+}
+
 fn leaf_source_todo_lines_reference_parent(leaf: &str, parent: &str) -> bool {
     leaf.lines()
         .map(str::trim)
@@ -3405,6 +3871,17 @@ fn unchecked_todo_blocks_from_text(text: &str) -> Vec<&str> {
 }
 
 fn selected_todo_allows_todo_md_edit(goal: &str) -> bool {
+    let goal_lower = goal.to_ascii_lowercase();
+    if goal_lower.contains("todo_decomposition_guard_failed_after_todo_apply")
+        || goal_lower.contains("repair `.brownie/todo.md` only")
+        || goal_lower.contains("repair `.brownie/todo.md`")
+        || goal_lower.contains("repair_override_target: `.brownie/todo.md`")
+        || goal_lower.contains("todo_guard_repair_policy")
+        || goal_lower.contains("todo decomposition guard failed")
+        || goal_lower.contains("duplicate unchecked todo id")
+    {
+        return true;
+    }
     let Some(first_line) = selected_todo_first_line_from_goal(goal) else {
         return false;
     };
@@ -3489,17 +3966,17 @@ fn concrete_product_ready_decomposition(parent_id: &str, title: &str) -> Option<
     }
     if parent_id == "E-04" || source.contains("E-04") {
         return Some(format!(
-            "- [ ] E-04a: Update `.github/workflows/ci.yml` Rust quality checks:\n  Source TODO: {source}\n  Add explicit CI steps for `cargo fmt --all -- --check`,\n  `cargo check --workspace --all-targets --all-features`,\n  `cargo clippy --workspace --all-targets --all-features -- -D warnings`,\n  and `cargo test --workspace --all-features`.\n- [ ] E-04b: Update `.github/workflows/ci.yml` Node workspace checks:\n  Add frozen `pnpm install --frozen-lockfile` plus root `pnpm --workspace-root check`,\n  `pnpm --workspace-root test`, and `pnpm --workspace-root build` CI steps.\n- [ ] E-04c: Add release gate and Product Ready guard CI steps:\n  Wire existing package scripts for the executable release gate, Product Completion Guard,\n  and process-loss E2E into CI without inventing release evidence.\n"
+            "- [ ] E-04a: Update `.github/workflows/ci.yml` Rust quality checks:\n  Route: implementation.\n  Source TODO: {source}\n  Depends on: <none>.\n  Completion condition: CI includes explicit Rust fmt, check, clippy, and test steps.\n  Forbidden changes: do not edit release evidence or unrelated workflow jobs.\n  Patch only `.github/workflows/ci.yml`. Add explicit CI steps for `cargo fmt --all -- --check`, `cargo check --workspace --all-targets --all-features`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test --workspace --all-features`.\n  Verification: run `pnpm --workspace-root check`.\n- [ ] E-04b: Update `.github/workflows/ci.yml` Node workspace checks:\n  Route: implementation.\n  Source TODO: {source}\n  Depends on: E-04a.\n  Completion condition: CI installs pnpm dependencies with a frozen lockfile and runs root check, test, and build scripts.\n  Forbidden changes: do not edit release evidence or unrelated workflow jobs.\n  Patch only `.github/workflows/ci.yml`. Add frozen `pnpm install --frozen-lockfile` plus root `pnpm --workspace-root check`, `pnpm --workspace-root test`, and `pnpm --workspace-root build` CI steps.\n  Verification: run `pnpm --workspace-root check`.\n- [ ] E-04c: Add release gate and Product Ready guard CI steps:\n  Route: implementation.\n  Source TODO: {source}\n  Depends on: E-04b.\n  Completion condition: CI runs existing executable release gate, Product Completion Guard, and process-loss E2E scripts without inventing evidence.\n  Forbidden changes: do not claim release readiness or generate synthetic release evidence.\n  Patch only `.github/workflows/ci.yml`. Wire existing package scripts for the executable release gate, Product Completion Guard, and process-loss E2E into CI.\n  Verification: run `pnpm --workspace-root check`.\n"
         ));
     }
     if parent_id == "E-07" || source.contains("E-07") {
         return Some(format!(
-            "- [ ] E-07a: Add supply-chain command availability guard:\n  Source TODO: {source}\n  Ensure `scripts/release-gate.mjs` or a dedicated guard treats missing `cargo audit`,\n  `cargo deny`, SBOM tooling, secret scan tooling, and `pnpm audit` support as blockers.\n- [ ] E-07b: Add supply-chain failure evidence tests:\n  Add tests proving scan failures, network failures, and missing tools cannot be recorded\n  as successful release evidence.\n- [ ] E-07c: Wire supply-chain artifact/hash evidence into release audit:\n  Populate only locally verifiable lockfile/artifact hashes and leave external workflow evidence blocked.\n"
+            "- [ ] E-07a: Patch only supply-chain guard scripts to fail closed on missing command availability:\n  Route: implementation.\n  Source TODO: {source}\n  Depends on: <none>.\n  Completion condition: missing `cargo audit`, `cargo deny`, SBOM tooling, secret scan tooling, or `pnpm audit` support is recorded as a blocker.\n  Forbidden changes: do not mark supply-chain evidence successful when required tools are absent.\n  Ensure `scripts/release-gate.mjs` or a dedicated guard treats missing audit/SBOM/secret-scan tooling as blockers.\n  Verification: run `pnpm --workspace-root check`.\n- [ ] E-07b: Patch only supply-chain guard tests for command, scan, and network failures:\n  Route: implementation.\n  Source TODO: {source}\n  Depends on: E-07a.\n  Completion condition: tests prove scan failures, network failures, and missing tools cannot be recorded as successful release evidence.\n  Forbidden changes: do not loosen fail-closed supply-chain requirements.\n  Verification: run `pnpm --workspace-root check`.\n- [ ] E-07c: Patch only supply-chain artifact/hash evidence collection and audit wiring:\n  Route: implementation.\n  Source TODO: {source}\n  Depends on: E-07b.\n  Completion condition: only locally verifiable lockfile/artifact hashes are populated and unavailable external workflow evidence remains blocked.\n  Forbidden changes: do not invent workflow provenance or artifact checksums.\n  Verification: run `pnpm --workspace-root check`.\n"
         ));
     }
     if parent_id == "E-08" || source.contains("E-08") {
         return Some(format!(
-            "- [ ] E-08a: Fail closed on missing supply-chain tooling:\n  Source TODO: {source}\n  Add guard coverage proving absent audit/SBOM/secret-scan tools produce blocked release evidence.\n- [ ] E-08b: Fail closed on supply-chain scan and network failures:\n  Add tests proving scan command failures and network errors cannot be treated as success.\n"
+            "- [ ] E-08a: Fail closed on missing supply-chain tooling:\n  Route: implementation.\n  Source TODO: {source}\n  Depends on: <none>.\n  Completion condition: absent audit, SBOM, and secret-scan tools produce blocked release evidence.\n  Forbidden changes: do not mark missing tooling as successful release evidence.\n  Patch only supply-chain guard tests. Add guard coverage proving absent audit/SBOM/secret-scan tools produce blocked release evidence.\n  Verification: run `pnpm --workspace-root check`.\n- [ ] E-08b: Fail closed on supply-chain scan and network failures:\n  Route: implementation.\n  Source TODO: {source}\n  Depends on: E-08a.\n  Completion condition: scan command failures and network errors cannot be treated as success.\n  Forbidden changes: do not loosen fail-closed supply-chain evidence requirements.\n  Patch only supply-chain guard tests. Add tests proving scan command failures and network errors cannot be treated as success.\n  Verification: run `pnpm --workspace-root check`.\n"
         ));
     }
     if parent_id.starts_with("E-14a-") || source.contains("E-14a-") {
@@ -3507,12 +3984,17 @@ fn concrete_product_ready_decomposition(parent_id: &str, title: &str) -> Option<
     }
     if source.contains("E-14a") {
         return Some(format!(
-            "- [ ] E-14a-contract-section: Patch only `docs/architecture/final-product-ready-judgment.md` with the release contract state:\n  Source TODO: {source}\n  Read only `docs/architecture/final-product-ready-judgment.md` and `docs/architecture/runtime-release-contract.json`. Add or update a bounded section summarizing `runtime_release_ready`, release-engineering maturity, and contract-level fail-closed blockers. Do not edit JSON files and do not claim `runtime_release_ready=true`.\n- [ ] E-14a-audit-section: Patch only `docs/architecture/final-product-ready-judgment.md` with readiness audit state:\n  Source TODO: {source}\n  Read only `docs/architecture/final-product-ready-judgment.md` and `docs/architecture/runtime-release-readiness-audit.json`. Add or update a bounded section separating Runtime-owned blockers from owner/external publication decisions. Do not edit JSON files.\n- [ ] E-14a-runtime-evidence-section: Patch only `docs/architecture/final-product-ready-judgment.md` with runtime operational evidence:\n  Source TODO: {source}\n  Read only `docs/architecture/final-product-ready-judgment.md` and `.brownie/release-evidence/runtime-operational-evidence.json`. Add or update a bounded section describing satisfied runtime operational evidence and remaining fail-closed runtime evidence. Do not edit JSON files.\n- [ ] E-14a-owner-evidence-section: Patch only `docs/architecture/final-product-ready-judgment.md` with owner governance evidence:\n  Source TODO: {source}\n  Read only `docs/architecture/final-product-ready-judgment.md` and `.brownie/release-evidence/owner-governance-evidence.json`. Add or update a bounded section classifying owner/external publication decisions. Do not edit JSON files.\n- [ ] E-14a-supply-chain-evidence-section: Patch only `docs/architecture/final-product-ready-judgment.md` with supply-chain evidence:\n  Source TODO: {source}\n  Read only `docs/architecture/final-product-ready-judgment.md` and `.brownie/release-evidence/supply-chain-artifact-evidence.json`. Add or update a bounded section describing supply-chain/artifact evidence and fail-closed blockers. Do not edit JSON files.\n- [ ] E-14a-final-summary: Patch only `docs/architecture/final-product-ready-judgment.md` with the final judgment summary:\n  Source TODO: {source}\n  Read only `docs/architecture/final-product-ready-judgment.md`. Add or update a final summary that states which Runtime-owned release blockers are satisfied, which remain fail-closed, and which items are owner/external publication decisions. Verification: run `pnpm --workspace-root check`.\n"
+            "- [ ] E-14a-contract-section: Patch only `docs/architecture/final-product-ready-judgment.md` with the release contract state:\n  Route: documentation.\n  Source TODO: {source}\n  Depends on: <none>.\n  Completion condition: final judgment includes a bounded release contract section without claiming Runtime Product Ready.\n  Forbidden changes: do not edit JSON files and do not claim `runtime_release_ready=true`.\n  Read only `docs/architecture/final-product-ready-judgment.md` and `docs/architecture/runtime-release-contract.json`. Add or update a bounded section summarizing `runtime_release_ready`, release-engineering maturity, and contract-level fail-closed blockers.\n  Verification: run `pnpm --workspace-root check`.\n- [ ] E-14a-audit-section: Patch only `docs/architecture/final-product-ready-judgment.md` with readiness audit state:\n  Route: documentation.\n  Source TODO: {source}\n  Depends on: E-14a-contract-section.\n  Completion condition: final judgment separates Runtime-owned blockers from owner/external publication decisions.\n  Forbidden changes: do not edit JSON files and do not claim Runtime Product Ready.\n  Read only `docs/architecture/final-product-ready-judgment.md` and `docs/architecture/runtime-release-readiness-audit.json`. Add or update a bounded section separating Runtime-owned blockers from owner/external publication decisions.\n  Verification: run `pnpm --workspace-root check`.\n- [ ] E-14a-runtime-evidence-section: Patch only `docs/architecture/final-product-ready-judgment.md` with runtime operational evidence:\n  Route: documentation.\n  Source TODO: {source}\n  Depends on: E-14a-audit-section.\n  Completion condition: final judgment describes satisfied runtime operational evidence and remaining fail-closed runtime evidence.\n  Forbidden changes: do not edit JSON files and do not claim Runtime Product Ready.\n  Read only `docs/architecture/final-product-ready-judgment.md` and `.brownie/release-evidence/runtime-operational-evidence.json`. Add or update a bounded section describing satisfied runtime operational evidence and remaining fail-closed runtime evidence.\n  Verification: run `pnpm --workspace-root check`.\n- [ ] E-14a-owner-evidence-section: Patch only `docs/architecture/final-product-ready-judgment.md` with owner governance evidence:\n  Route: documentation.\n  Source TODO: {source}\n  Depends on: E-14a-runtime-evidence-section.\n  Completion condition: final judgment classifies owner/external publication decisions separately from Runtime-owned blockers.\n  Forbidden changes: do not edit JSON files and do not treat owner decisions as Runtime implementation work.\n  Read only `docs/architecture/final-product-ready-judgment.md` and `.brownie/release-evidence/owner-governance-evidence.json`. Add or update a bounded section classifying owner/external publication decisions.\n  Verification: run `pnpm --workspace-root check`.\n- [ ] E-14a-supply-chain-evidence-section: Patch only `docs/architecture/final-product-ready-judgment.md` with supply-chain evidence:\n  Route: documentation.\n  Source TODO: {source}\n  Depends on: E-14a-owner-evidence-section.\n  Completion condition: final judgment describes supply-chain/artifact evidence and fail-closed blockers.\n  Forbidden changes: do not edit JSON files and do not claim missing artifact provenance as satisfied.\n  Read only `docs/architecture/final-product-ready-judgment.md` and `.brownie/release-evidence/supply-chain-artifact-evidence.json`. Add or update a bounded section describing supply-chain/artifact evidence and fail-closed blockers.\n  Verification: run `pnpm --workspace-root check`.\n- [ ] E-14a-final-summary: Patch only `docs/architecture/final-product-ready-judgment.md` with the final judgment summary:\n  Route: documentation.\n  Source TODO: {source}\n  Depends on: E-14a-supply-chain-evidence-section.\n  Completion condition: final summary states which Runtime-owned release blockers are satisfied, which remain fail-closed, and which items are owner/external publication decisions.\n  Forbidden changes: do not edit JSON files and do not mark Runtime Product Ready while fail-closed blockers remain.\n  Read only `docs/architecture/final-product-ready-judgment.md`. Add or update a final summary that states which Runtime-owned release blockers are satisfied, which remain fail-closed, and which items are owner/external publication decisions.\n  Verification: run `pnpm --workspace-root check`.\n"
         ));
     }
     if source.contains("E-15a") {
         return Some(format!(
             "- [ ] E-15a-target-config: Patch only `scripts/release-runtime-operational-evidence.mjs` to load local release target config:\n  Source TODO: {source}\n  Do not read `docs/architecture/local-release-targets.example.json`; the target schema is `schema_version` plus `targets[]` entries with `id`, `kind`, `required`, and optional `host`, `workspace`, `shell`, `container_platform`, and `runner_arch`. Teach runtime operational evidence to discover enabled artifact lifecycle targets from `.brownie/local-release-targets.json`; missing or invalid config must remain fail-closed.\n- [ ] E-15a-target-runner: Patch only `scripts/release-runtime-operational-evidence.mjs` to execute one configured artifact lifecycle target:\n  Source TODO: {source}\n  Extend runtime operational evidence to run existing artifact lifecycle checks through one selected local/SSH target with timeout-bounded command execution; failed or unreachable targets must be recorded as release-blocking evidence.\n- [ ] E-15a-target-guard: Patch only `scripts/guard-runtime-operational-evidence.test.mjs` for delegated artifact lifecycle paths:\n  Source TODO: {source}\n  Add coverage for delegated target results, unreachable targets, command failures, and incompatible/missing artifacts.\n"
+        ));
+    }
+    if source.contains("E-15d") {
+        return Some(format!(
+            "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs` to make generated soak evidence satisfied from a bounded stateful fixture:\n  Route: implementation.\n  Source TODO: {source}\n  Depends on: <none>.\n  Replace version/help-only or raw command-output soak evidence with sanitized stateful evidence for task run, ledger generation, forced stop/resume, stale replay rejection, duplicate-side-effect rejection, and finite convergence.\n  Completion condition: generated runtime operational evidence has a satisfied soak_test section with all required stateful steps and no raw command/stdout/stderr fields.\n  Forbidden changes: do not edit release-ready status, release documents, guard tests, or unrelated collectors.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n- [ ] E-15d-soak-section-guard: Patch only `scripts/guard-runtime-operational-evidence.test.mjs` to cover the generated stateful soak fixture:\n  Route: implementation.\n  Source TODO: {source}\n  Depends on: E-15d-soak-section-collector.\n  Add or update tests proving generated soak evidence is accepted only when all required stateful steps are present and raw command/stdout/stderr evidence remains rejected.\n  Completion condition: guard tests accept the generated bounded stateful soak evidence and reject missing stateful steps plus raw process output evidence.\n  Forbidden changes: do not loosen runtime operational evidence guard requirements, do not edit release readiness documents, and do not patch collector code.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`.\n"
         ));
     }
     if source.contains("E-16a") {
@@ -3622,8 +4104,26 @@ fn task_goal_enforces_workspace_read_budget_before_write(goal: &str) -> bool {
     goal.contains("- read_batch_policy:") || goal.contains("# Brownie Phase Loop Effective Prompt")
 }
 
+fn task_goal_embeds_repair_workspace_read_preview(goal: &str) -> bool {
+    goal.contains("- read_budget_repair_policy:")
+        && goal.contains("- previous_workspace_read_preview_")
+}
+
+fn task_goal_forbids_leaf_repair_workspace_read(goal: &str) -> bool {
+    goal.contains("- leaf_required_next_tool_policy:")
+        || goal.contains("- leaf_retry_required_next_tool:")
+}
+
 fn workspace_read_rejection_reason_from_selected_todo(goal: &str, input: &Value) -> Option<String> {
     let requested_path = input.get("path").and_then(Value::as_str)?;
+    if is_todo_workspace_path(requested_path) && selected_todo_allows_todo_md_edit(goal) {
+        return None;
+    }
+    if let Some(only_path) = create_only_path_from_goal(goal) {
+        return Some(format!(
+            "Selected TODO says to create only `{only_path}`; workspace.read of `{requested_path}` is not progress. Request workspace.write create_file for the named target or write one concrete blocker TODO."
+        ));
+    }
     if let Some(only_path) = patch_only_path_from_goal(goal) {
         if requested_path != only_path {
             return Some(format!(
@@ -3640,6 +4140,14 @@ fn workspace_read_rejection_reason_from_selected_todo(goal: &str, input: &Value)
         ));
     }
     None
+}
+
+fn create_only_path_from_goal(goal: &str) -> Option<String> {
+    let marker = "Create only `";
+    let start = goal.find(marker)? + marker.len();
+    let end = goal[start..].find('`')? + start;
+    let path = goal[start..end].trim();
+    (!path.is_empty()).then(|| path.to_string())
 }
 
 fn patch_only_path_from_goal(goal: &str) -> Option<String> {
@@ -6500,6 +7008,32 @@ mod mcp_approval_lock_tests {
     }
 
     #[test]
+    fn concrete_patch_leaf_cannot_be_refined_to_todo_md_by_generic_guard_policy() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n\
+- todo_refinement_verification_policy: if writing `.brownie/todo.md`, every new leaf must have a concrete `Verification:` line using `run pnpm --workspace-root guard:todo-decomposition`.\n\n\
+## Selected TODO\n\n\
+- [ ] E-15e-release-readiness-audit-sync-leaf: Patch only `docs/architecture/runtime-release-readiness-audit.json`:\n  Route: documentation.\n  Source TODO: E-15e-release-contract-audit-phase-resync.\n  Depends on: E-15e-release-contract-doc-sync-leaf.\n  Completion condition: runtime release readiness audit records the current fail-closed evidence state without claiming Runtime Product Ready.\n  Forbidden changes: do not mark Runtime Product Ready and do not remove owner-controlled independent review blockers.\n  Verification: run `pnpm --workspace-root guard:runtime-release-readiness`.\n".to_string();
+
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "old_text": "- [ ] E-15e-release-readiness-audit-sync-leaf: Patch only `docs/architecture/runtime-release-readiness-audit.json`:\n  Route: documentation.\n  Source TODO: E-15e-release-contract-audit-phase-resync.\n  Depends on: E-15e-release-contract-doc-sync-leaf.\n  Completion condition: runtime release readiness audit records the current fail-closed evidence state without claiming Runtime Product Ready.\n  Forbidden changes: do not mark Runtime Product Ready and do not remove owner-controlled independent review blockers.\n  Verification: run `pnpm --workspace-root guard:runtime-release-readiness`.",
+                "new_text": "- [ ] E-15e-release-readiness-audit-sync-blocker: Read `docs/architecture/runtime-release-readiness-audit.json` to extract current evidence state:\n  Route: documentation.\n  Source TODO: E-15e-release-readiness-audit-sync-leaf.\n  Depends on: E-15e-release-contract-doc-sync-leaf.\n  Completion condition: extract all evidence entries and status fields from the JSON file.\n  Forbidden changes: do not modify the file content.\n  Verification: inspect `docs/architecture/runtime-release-readiness-audit.json` for evidence entries.",
+            }),
+        );
+
+        assert_eq!(
+            reason,
+            Some(
+                "TODO decomposition leaves must be implementation or fail-closed blocker work, not read-only discovery tasks."
+            )
+        );
+    }
+
+    #[test]
     fn read_budget_exhausted_stall_can_refine_selected_leaf_todo() {
         let temp = tempfile::tempdir().expect("temp dir");
         let store = BrownieStore::new(temp.path());
@@ -6682,6 +7216,126 @@ mod mcp_approval_lock_tests {
     }
 
     #[test]
+    fn patch_only_todo_unrelated_workspace_read_is_denied_at_intent_gate() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let store = BrownieStore::new(temp.path());
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-16a-fixture-objective: Make the Golden Journey fixture request a deterministic workspace mutation:\n  Patch only `scripts/release-runtime-operational-evidence.mjs`. Do not read\n  or patch `scripts/release-gate.mjs`.\n"
+            .to_string();
+
+        let reason = workspace_read_intent_runtime_rejection_reason(
+            &store,
+            &record,
+            &json!({"path": "scripts/release-gate.mjs"}),
+        )
+        .expect("intent rejection");
+
+        assert!(reason
+            .expect("reason")
+            .contains("reading `scripts/release-gate.mjs` is not progress"));
+    }
+
+    #[test]
+    fn patch_only_leaf_repair_denies_even_target_workspace_read_at_intent_gate() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let store = BrownieStore::new(temp.path());
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- leaf_required_next_tool_policy: the next tool must be `workspace.write` for `docs/architecture/runtime-release-readiness-audit.json` unless final-answer fail-closed is unavoidable; `workspace.read` and `.brownie/todo.md` writes are not progress for this repair turn.\n\n## Selected TODO\n\n- [ ] E-15e-release-readiness-audit-sync-leaf: Patch only `docs/architecture/runtime-release-readiness-audit.json`:\n  Route: documentation.\n  Source TODO: E-15e-release-contract-audit-phase-resync.\n"
+            .to_string();
+
+        let reason = workspace_read_intent_runtime_rejection_reason(
+            &store,
+            &record,
+            &json!({"path": "docs/architecture/runtime-release-readiness-audit.json"}),
+        )
+        .expect("intent rejection")
+        .expect("reason");
+
+        assert!(reason.contains("workspace.write for the selected target"));
+        assert!(reason.contains("workspace.read is not progress"));
+    }
+
+    #[test]
+    fn create_only_todo_denies_initial_workspace_read_at_intent_gate() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let store = BrownieStore::new(temp.path());
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- create_only_policy: do not request `workspace.read` for the missing Create only target.\n\n## Selected TODO\n\n- [ ] E-15g-pr435-hygiene-evidence: Create only `.brownie/release-evidence/pr435-hygiene-evidence.json` to record the bounded PR #435 hygiene conclusion.\n"
+            .to_string();
+
+        let reason = workspace_read_intent_runtime_rejection_reason(
+            &store,
+            &record,
+            &json!({"path": "README.md"}),
+        )
+        .expect("intent rejection")
+        .expect("reason");
+
+        assert!(
+            reason.contains("create only `.brownie/release-evidence/pr435-hygiene-evidence.json`")
+        );
+        assert!(reason.contains("workspace.read of `README.md` is not progress"));
+    }
+
+    #[test]
+    fn repair_feedback_preview_disables_initial_workspace_read() {
+        let goal = "# Brownie Phase Loop Effective Prompt\n\n## Previous Repair Feedback\n\n- read_budget_repair_policy: previous workspace.read content is embedded below; do not emit workspace.read in this invocation.\n- previous_workspace_read_preview_0: \"[workspace.read path=scripts/release-runtime-operational-evidence.mjs bytes_total=1 content_sha256=sha256:aaa]\\nconst x = 1;\"\n\n## Selected TODO\n\n- [ ] E-15d: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n";
+
+        assert!(task_goal_embeds_repair_workspace_read_preview(goal));
+        assert!(!task_goal_embeds_repair_workspace_read_preview(
+            "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-15d: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n"
+        ));
+    }
+
+    #[test]
+    fn repair_preview_read_denial_can_refine_patch_only_leaf_todo() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let store = BrownieStore::new(temp.path());
+        let selected_todo = "- [ ] E-15d-stateful-soak-runner-real: Patch only `scripts/release-runtime-operational-evidence.mjs` and `scripts/guard-runtime-operational-evidence.test.mjs` to generate satisfied stateful soak evidence from a bounded Runtime fixture:\n  Route: implementation.\n  Completion condition: generated satisfied soak evidence has all required stateful steps from a bounded Runtime fixture, not version-only repetition.\n";
+        std::fs::create_dir_all(temp.path().join(".brownie")).expect("brownie dir");
+        std::fs::write(temp.path().join(".brownie/todo.md"), selected_todo).expect("todo");
+        let mut record = test_task_record();
+        record.run_id = "run_repair_preview_read_denial".to_string();
+        record.goal = format!(
+            "# Brownie Phase Loop Effective Prompt\n\n## Previous Repair Feedback\n\n- read_budget_repair_policy: previous workspace.read content is embedded below; do not emit workspace.read in this invocation.\n- previous_workspace_read_preview_0: \"[workspace.read path=scripts/release-runtime-operational-evidence.mjs bytes_total=1 content_sha256=sha256:aaa]\\nconst x = 1;\"\n\n## Selected TODO\n\n{selected_todo}"
+        );
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &record,
+                LedgerEventKind::ToolExecutionDenied,
+                Some(json!({
+                    "tool_id": WORKSPACE_READ_TOOL_ID,
+                    "status": "Denied",
+                    "reason": "Repair feedback already embeds previous workspace.read output_preview; workspace.read is not progress. Request workspace.write or record a concrete blocker TODO.",
+                })),
+            )
+            .expect("append denial");
+
+        append_todo_decomposition_blocker_after_read_only_stall(
+            &store,
+            &record,
+            &write_policy(),
+            true,
+            false,
+        )
+        .expect("synthesize repair follow-up");
+
+        let events = store
+            .tasks()
+            .read_ledger_events(&record.run_id)
+            .expect("events");
+        let proposal = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+            .expect("workspace patch proposal");
+        let payload = proposal.payload.as_ref().expect("proposal payload");
+        assert_eq!(payload["path"], ".brownie/todo.md");
+        assert_eq!(payload["operation"], "patch_file");
+        assert_eq!(payload["validation_status"], "Valid");
+    }
+
+    #[test]
     fn todo_block_detection_ignores_inline_task_marker_examples() {
         let todo = "## Queue protocol\n\n- Pending work is represented by unchecked Markdown task items: `- [ ] ...`.\n\n## Product Ready Blocking Queue\n\n- [ ] E-16a: Make the runtime operational Golden Journey fixture exercise the full proposal/apply path\n  Route: implementation.\n";
 
@@ -6760,6 +7414,215 @@ mod mcp_approval_lock_tests {
             reason,
             Some("Selected implementation TODO names a concrete non-todo workspace target; do not rewrite the live TODO queue as implementation progress. Edit the named file or fail closed.")
         );
+    }
+
+    #[test]
+    fn implementation_todo_can_patch_todo_md_when_replacing_selected_todo_with_valid_leaf_decomposition(
+    ) {
+        let mut record = test_task_record();
+        let selected = "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs` to make generated soak evidence satisfied from a bounded stateful fixture:\n  Route: implementation.\n  Source TODO: E-15d-runtime-soak-evidence-stateful.\n  Depends on: <none>.\n  Completion condition: generated runtime operational evidence has a satisfied soak_test section.\n  Forbidden changes: do not edit release-ready status.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n";
+        record.goal =
+            format!("# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n{selected}");
+
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "old_text": selected,
+                "new_text": "- [ ] E-15d-soak-section-fixture-shape: Patch only `scripts/release-runtime-operational-evidence.mjs` to add the bounded stateful soak fixture shape:\n  Route: implementation.\n  Source TODO: E-15d-soak-section-collector.\n  Depends on: <none>.\n  Completion condition: generated soak evidence contains sanitized stateful step names without raw process output.\n  Forbidden changes: do not edit release-ready status.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n"
+            }),
+        );
+
+        assert!(reason.is_none(), "{reason:?}");
+    }
+
+    #[test]
+    fn implementation_todo_decomposition_attempt_must_not_keep_selected_todo_pending() {
+        let mut record = test_task_record();
+        let selected = "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs` to make generated soak evidence satisfied from a bounded stateful fixture:\n  Route: implementation.\n  Source TODO: E-15d-runtime-soak-evidence-stateful.\n  Depends on: <none>.\n  Completion condition: generated runtime operational evidence has a satisfied soak_test section.\n  Forbidden changes: do not edit release-ready status.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n";
+        record.goal =
+            format!("# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n{selected}");
+
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "old_text": selected,
+                "new_text": selected
+            }),
+        );
+
+        assert_eq!(
+            reason,
+            Some("TODO decomposition new_text must not keep the selected broad TODO pending.")
+        );
+    }
+
+    #[test]
+    fn repair_feedback_can_patch_todo_md_after_todo_decomposition_guard_failure() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs` to make generated soak evidence satisfied.\n\n## Previous Repair Feedback\n\n- repair_reason: `todo_decomposition_guard_failed_after_todo_apply`\n- repair_hint: \"Repair `.brownie/todo.md` only: remove duplicate leaf ids.\"\n".to_string();
+
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "old_text": "old",
+                "new_text": "new"
+            }),
+        );
+
+        assert!(reason.is_none());
+    }
+
+    #[test]
+    fn runtime_failure_with_todo_guard_trace_can_patch_todo_md() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs` to make generated soak evidence satisfied.\n\n## Previous Repair Feedback\n\n- repair_reason: `runtime_terminal_failure`\n- failed_command_0: `pnpm --workspace-root guard:todo-decomposition`\n- process_stderr_tail: \"TODO decomposition guard failed: duplicate unchecked TODO id appears 5 times.\"\n".to_string();
+
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "old_text": "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n",
+                "new_text": "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n"
+            }),
+        );
+
+        assert!(reason.is_none());
+    }
+
+    #[test]
+    fn todo_repair_patch_rejects_self_source_leaf() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n\n## Previous Repair Feedback\n\n- repair_reason: `todo_decomposition_guard_failed_after_todo_apply`\n- repair_hint: \"Repair `.brownie/todo.md` only: remove duplicate leaf ids.\"\n".to_string();
+
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "old_text": "old",
+                "new_text": "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n  Depends on: <none>.\n  Completion condition: generated evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n"
+            }),
+        );
+
+        assert_eq!(
+            reason,
+            Some("TODO repair patch must not set a leaf `Source TODO:` to the leaf itself; preserve the original parent TODO.")
+        );
+    }
+
+    #[test]
+    fn todo_repair_patch_rejects_duplicate_leaf_ids_in_new_text() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n\n## Previous Repair Feedback\n\n- repair_reason: `todo_decomposition_guard_failed_after_todo_apply`\n- repair_hint: \"Repair `.brownie/todo.md` only: remove duplicate leaf ids.\"\n".to_string();
+
+        let leaf = "- [ ] E-15d-soak-section-guard: Patch only `scripts/guard-runtime-operational-evidence.test.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: E-15d-soak-section-collector.\n  Completion condition: guard evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n";
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "old_text": "old",
+                "new_text": format!("{leaf}{leaf}")
+            }),
+        );
+
+        assert_eq!(
+            reason,
+            Some("TODO repair patch must not create duplicate unchecked TODO ids.")
+        );
+    }
+
+    #[test]
+    fn todo_repair_patch_rejects_duplicate_leaf_ids_inside_hunks() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n\n## Previous Repair Feedback\n\n- repair_reason: `todo_decomposition_guard_failed_after_todo_apply`\n- repair_hint: \"Repair `.brownie/todo.md` only: remove duplicate leaf ids.\"\n".to_string();
+
+        let leaf = "- [ ] E-15d-soak-section-guard: Patch only `scripts/guard-runtime-operational-evidence.test.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: E-15d-soak-section-collector.\n  Completion condition: guard evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n";
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "hunks": [
+                    {
+                        "old_text": "old",
+                        "new_text": format!("{leaf}{leaf}")
+                    }
+                ]
+            }),
+        );
+
+        assert_eq!(
+            reason,
+            Some("TODO repair patch must not create duplicate unchecked TODO ids.")
+        );
+    }
+
+    #[test]
+    fn todo_repair_patch_rejects_appended_leaf_ids_outside_old_text() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n\n## Previous Repair Feedback\n\n- repair_reason: `todo_decomposition_guard_failed_after_todo_apply`\n- repair_hint: \"Repair `.brownie/todo.md` only: remove duplicate leaf ids.\"\n".to_string();
+
+        let collector = "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: <none>.\n  Completion condition: collector evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n";
+        let guard = "- [ ] E-15d-soak-section-guard: Patch only `scripts/guard-runtime-operational-evidence.test.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: E-15d-soak-section-collector.\n  Completion condition: guard evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n";
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "old_text": collector,
+                "new_text": format!("{collector}{guard}")
+            }),
+        );
+
+        assert_eq!(
+            reason,
+            Some("TODO repair patch must replace the existing corrupt TODO block, not append new leaf ids; include the whole duplicate block in old_text or remove duplicates without adding new ids.")
+        );
+    }
+
+    #[test]
+    fn todo_repair_patch_allows_whole_corrupt_block_replacement() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n\n## Previous Repair Feedback\n\n- repair_reason: `todo_decomposition_guard_failed_after_todo_apply`\n- repair_hint: \"Repair `.brownie/todo.md` only: remove duplicate leaf ids.\"\n".to_string();
+
+        let collector = "- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: <none>.\n  Completion condition: collector evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n";
+        let guard = "- [ ] E-15d-soak-section-guard: Patch only `scripts/guard-runtime-operational-evidence.test.mjs`:\n  Route: implementation.\n  Source TODO: E-15d-stateful-soak-runner-real.\n  Depends on: E-15d-soak-section-collector.\n  Completion condition: guard evidence is repaired.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.\n";
+        let duplicate_guard = format!("{guard}{guard}");
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "old_text": format!("{collector}{duplicate_guard}"),
+                "new_text": format!("{collector}{guard}")
+            }),
+        );
+
+        assert!(reason.is_none(), "{reason:?}");
+    }
+
+    #[test]
+    fn repair_feedback_can_read_todo_md_after_todo_decomposition_guard_failure() {
+        let goal = "# Brownie Phase Loop Effective Prompt\n\n## Previous Repair Feedback\n\n- read_budget_repair_policy: previous workspace.read content is embedded below; do not emit workspace.read in this invocation.\n- repair_reason: `todo_decomposition_guard_failed_after_todo_apply`\n- repair_hint: \"Repair `.brownie/todo.md` only: remove duplicate leaf ids.\"\n- previous_workspace_read_preview_0: \"[workspace.read path=scripts/release-runtime-operational-evidence.mjs bytes_total=1 content_sha256=sha256:aaa]\\nconst x = 1;\"\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n";
+
+        assert!(workspace_read_rejection_reason_from_selected_todo(
+            goal,
+            &json!({"path": ".brownie/todo.md"})
+        )
+        .is_none());
+        assert!(workspace_read_rejection_reason_from_selected_todo(
+            goal,
+            &json!({"path": "scripts/release-gate.mjs"})
+        )
+        .is_some());
     }
 
     #[test]
@@ -6974,5 +7837,42 @@ mod mcp_approval_lock_tests {
         );
 
         assert!(reason.is_none());
+    }
+
+    #[test]
+    fn todo_md_write_normalizes_inline_blocker_leaf_before_validation() {
+        let mut record = test_task_record();
+        let selected = "- [ ] E-15e-release-readiness-audit-sync-leaf: Patch only `docs/architecture/runtime-release-readiness-audit.json`:\n  Route: documentation.\n  Source TODO: E-15e-release-contract-audit-phase-resync.\n  Depends on: E-15e-release-contract-doc-sync-leaf.\n  Completion condition: runtime release readiness audit records the current fail-closed evidence state without claiming Runtime Product Ready.\n  Forbidden changes: do not mark Runtime Product Ready and do not remove owner-controlled independent review blockers.\n  Verification: run `pnpm --workspace-root guard:runtime-release-readiness`.\n";
+        record.goal =
+            format!("# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n{selected}");
+        let inline_blocker = "- [ ] E-15e-release-readiness-audit-sync-blocker: Blocker: cannot patch `docs/architecture/runtime-release-readiness-audit.json` without a safe exact old_text. Source TODO: E-15e-release-contract-audit-phase-resync. Depends on: E-15e-release-contract-doc-sync-leaf. Completion condition: runtime release readiness audit records the current fail-closed evidence state without claiming Runtime Product Ready. Forbidden changes: do not mark Runtime Product Ready and do not remove owner-controlled independent review blockers. Verification: run `pnpm --workspace-root guard:runtime-release-readiness` and inspect `docs/architecture/runtime-release-readiness-audit.json` for the required section.\n";
+        let input = json!({
+            "path": ".brownie/todo.md",
+            "operation": "patch_file",
+            "old_text": selected,
+            "new_text": inline_blocker,
+        });
+
+        let normalized = normalize_todo_md_workspace_write_input(&record, &input);
+        let normalized_new_text = normalized
+            .get("new_text")
+            .and_then(Value::as_str)
+            .expect("normalized new_text");
+        assert!(normalized_new_text.contains("\n  Route: documentation.\n"));
+        assert!(normalized_new_text
+            .contains("\n  Source TODO: E-15e-release-contract-audit-phase-resync."));
+        assert!(
+            normalized_new_text.contains("\n  Depends on: E-15e-release-contract-doc-sync-leaf.")
+        );
+        assert!(normalized_new_text
+            .contains("\n  Completion condition: runtime release readiness audit records"));
+        assert!(normalized_new_text
+            .contains("\n  Forbidden changes: do not mark Runtime Product Ready"));
+        assert!(normalized_new_text.contains(
+            "\n  Verification: run `pnpm --workspace-root guard:runtime-release-readiness`"
+        ));
+
+        let reason = todo_md_workspace_write_rejection_reason(&record, &normalized);
+        assert!(reason.is_none(), "{reason:?}");
     }
 }

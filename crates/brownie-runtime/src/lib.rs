@@ -3181,6 +3181,7 @@ fn is_recoverable_workspace_read_denial_for_followup(event: &LedgerEvent) -> boo
             .is_some_and(|reason| {
                 reason.contains("Duplicate workspace.read")
                     || reason.contains("Additional workspace.read is not progress")
+                    || reason.contains("Repair feedback already embeds previous workspace.read")
                     || reason
                         .contains("workspace.read input.path targets a protected workspace path")
                     || reason.contains("reading protected workspace paths is not allowed")
@@ -3203,6 +3204,7 @@ fn is_duplicate_workspace_read_denial(event: &LedgerEvent) -> bool {
             .is_some_and(|reason| {
                 reason.contains("Duplicate workspace.read")
                     || reason.contains("Additional workspace.read is not progress")
+                    || reason.contains("Repair feedback already embeds previous workspace.read")
             })
 }
 
@@ -3811,7 +3813,13 @@ fn handle_run_events(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
         id,
         json!(RunEventsResult {
             run_id: params.run_id,
-            events: events.into_iter().map(ledger_event_summary).collect(),
+            events: events
+                .into_iter()
+                .map(|event| ledger_event_summary_with_options(
+                    event,
+                    params.include_patch_material
+                ))
+                .collect(),
         }),
     )
 }
@@ -12855,7 +12863,10 @@ fn latest_content_preview(events: &[LedgerEvent], kind: LedgerEventKind) -> Opti
         })
 }
 
-fn ledger_event_summary(event: LedgerEvent) -> LedgerEventSummary {
+fn ledger_event_summary_with_options(
+    event: LedgerEvent,
+    include_patch_material: bool,
+) -> LedgerEventSummary {
     let kind = format!("{:?}", event.kind);
     LedgerEventSummary {
         event_id: event.event_id,
@@ -12863,11 +12874,18 @@ fn ledger_event_summary(event: LedgerEvent) -> LedgerEventSummary {
         run_id: event.run_id,
         kind,
         timestamp: event.timestamp,
-        payload: sanitize_ledger_payload(event.payload),
+        payload: sanitize_ledger_payload_with_options(event.payload, include_patch_material),
     }
 }
 
 fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
+    sanitize_ledger_payload_with_options(payload, false)
+}
+
+fn sanitize_ledger_payload_with_options(
+    payload: Option<Value>,
+    include_patch_material: bool,
+) -> Option<Value> {
     let Value::Object(map) = payload? else {
         return None;
     };
@@ -13109,7 +13127,10 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
     ];
     let mut sanitized = map
         .into_iter()
-        .filter(|(key, _)| ALLOWED_KEYS.contains(&key.as_str()))
+        .filter(|(key, _)| {
+            ALLOWED_KEYS.contains(&key.as_str())
+                || (include_patch_material && key.as_str() == "patch_hunks")
+        })
         .collect::<serde_json::Map<_, _>>();
     if sanitized.get("tool_id").and_then(Value::as_str) == Some(WORKSPACE_READ_TOOL_ID)
         && sanitized.contains_key("output_preview")
@@ -13924,6 +13945,22 @@ fn append_workspace_patch_proposal(
         proposal_input =
             normalize_json_line_block_patch_input_from_target(store, path, &proposal_input);
     }
+    proposal_input =
+        controlled_tool_execution::normalize_todo_md_workspace_write_input(record, &proposal_input);
+    if let Some(reason) =
+        controlled_tool_execution::todo_md_workspace_write_rejection_reason(record, &proposal_input)
+    {
+        store.tasks().append_task_event_with_payload(
+            record,
+            LedgerEventKind::ToolIntentRejected,
+            Some(json!({
+                "tool_id": WORKSPACE_WRITE_TOOL_ID,
+                "reason": reason,
+                "code": "todo_md_write_denied_for_implementation_todo"
+            })),
+        )?;
+        return Ok(());
+    }
     let proposal = build_workspace_patch_proposal_from_input(
         store,
         path,
@@ -13957,7 +13994,7 @@ fn append_workspace_patch_proposal(
         && !proposal.diff_redacted
     {
         if let Ok(hunks) = patch_hunks_from_input(&proposal_input) {
-            if hunks.len() == 1 {
+            if hunks.len() == 1 && hunks[0].occurrence.is_none() {
                 payload["patch_old_text"] = json!(hunks[0].old_text.as_str());
                 payload["patch_new_text"] = json!(hunks[0].new_text.as_str());
             } else {
@@ -13966,6 +14003,7 @@ fn append_workspace_patch_proposal(
                     .map(|hunk| json!({
                         "old_text": hunk.old_text,
                         "new_text": hunk.new_text,
+                        "occurrence": hunk.occurrence,
                     }))
                     .collect::<Vec<_>>());
             }
@@ -14048,10 +14086,11 @@ fn patch_hunk_fingerprint(old_text: &str, new_text: &str) -> String {
 struct PatchTextHunk {
     old_text: String,
     new_text: String,
+    occurrence: Option<usize>,
 }
 
 fn patch_hunks_fingerprint(hunks: &[PatchTextHunk]) -> String {
-    if hunks.len() == 1 {
+    if hunks.len() == 1 && hunks[0].occurrence.is_none() {
         return patch_hunk_fingerprint(&hunks[0].old_text, &hunks[0].new_text);
     }
     let canonical_hunks = hunks
@@ -14062,6 +14101,7 @@ fn patch_hunks_fingerprint(hunks: &[PatchTextHunk]) -> String {
                 "old_text_sha256": format!("sha256:{}", hex_sha256(hunk.old_text.as_bytes())),
                 "new_text_chars": hunk.new_text.chars().count(),
                 "new_text_sha256": format!("sha256:{}", hex_sha256(hunk.new_text.as_bytes())),
+                "occurrence": hunk.occurrence,
             })
         })
         .collect::<Vec<_>>();
@@ -14073,22 +14113,6 @@ fn patch_hunks_fingerprint(hunks: &[PatchTextHunk]) -> String {
 }
 
 fn patch_hunks_from_input(input: &Value) -> Result<Vec<PatchTextHunk>, &'static str> {
-    if let Some(content) = input.get("content").and_then(Value::as_str) {
-        if input.get("hunks").is_some()
-            || input.get("old_text").is_some()
-            || input.get("new_text").is_some()
-        {
-            return Err("patch_file content cannot be combined with hunks, old_text, or new_text");
-        }
-        return brownie_tools::workspace_write_unified_diff_content_to_hunks(content).map(
-            |hunks| {
-                hunks
-                    .into_iter()
-                    .map(|(old_text, new_text)| PatchTextHunk { old_text, new_text })
-                    .collect()
-            },
-        );
-    }
     if let Some(hunks_value) = input.get("hunks") {
         if input.get("old_text").is_some() || input.get("new_text").is_some() {
             return Err("patch_file hunks cannot be combined with old_text or new_text");
@@ -14096,8 +14120,8 @@ fn patch_hunks_from_input(input: &Value) -> Result<Vec<PatchTextHunk>, &'static 
         let Some(hunks) = hunks_value.as_array() else {
             return Err("patch_file hunks must be an array");
         };
-        if !(2..=5).contains(&hunks.len()) {
-            return Err("patch_file hunks must contain 2 to 5 entries");
+        if !(1..=5).contains(&hunks.len()) {
+            return Err("patch_file hunks must contain 1 to 5 entries");
         }
         return hunks
             .iter()
@@ -14114,12 +14138,45 @@ fn patch_hunks_from_input(input: &Value) -> Result<Vec<PatchTextHunk>, &'static 
                 if old_text.is_empty() {
                     return Err("patch_file hunk old_text must not be empty");
                 }
+                let occurrence = match hunk.get("occurrence") {
+                    None => None,
+                    Some(value) => {
+                        let Some(raw) = value.as_u64() else {
+                            return Err("patch_file hunk occurrence must be a positive integer");
+                        };
+                        let Ok(raw) = usize::try_from(raw) else {
+                            return Err("patch_file hunk occurrence is too large");
+                        };
+                        if raw == 0 {
+                            return Err("patch_file hunk occurrence must be a positive integer");
+                        }
+                        Some(raw)
+                    }
+                };
                 Ok(PatchTextHunk {
                     old_text: old_text.to_string(),
                     new_text: new_text.to_string(),
+                    occurrence,
                 })
             })
             .collect();
+    }
+    if let Some(content) = input.get("content").and_then(Value::as_str) {
+        if input.get("old_text").is_some() || input.get("new_text").is_some() {
+            return Err("patch_file content cannot be combined with old_text or new_text");
+        }
+        return brownie_tools::workspace_write_unified_diff_content_to_hunks(content).map(
+            |hunks| {
+                hunks
+                    .into_iter()
+                    .map(|(old_text, new_text)| PatchTextHunk {
+                        old_text,
+                        new_text,
+                        occurrence: None,
+                    })
+                    .collect()
+            },
+        );
     }
     let Some(old_text) = input.get("old_text").and_then(Value::as_str) else {
         return Err("patch_file old_text is required");
@@ -14130,9 +14187,25 @@ fn patch_hunks_from_input(input: &Value) -> Result<Vec<PatchTextHunk>, &'static 
     if old_text.is_empty() {
         return Err("patch_file old_text must not be empty");
     }
+    let occurrence = match input.get("occurrence") {
+        None => None,
+        Some(value) => {
+            let Some(raw) = value.as_u64() else {
+                return Err("patch_file occurrence must be a positive integer");
+            };
+            let Ok(raw) = usize::try_from(raw) else {
+                return Err("patch_file occurrence is too large");
+            };
+            if raw == 0 {
+                return Err("patch_file occurrence must be a positive integer");
+            }
+            Some(raw)
+        }
+    };
     Ok(vec![PatchTextHunk {
         old_text: old_text.to_string(),
         new_text: new_text.to_string(),
+        occurrence,
     }])
 }
 
@@ -14142,6 +14215,53 @@ fn disambiguate_workspace_patch_input_from_goal(
     input: &Value,
     goal: &str,
 ) -> Value {
+    let goal_lower = goal.to_lowercase();
+    if (path == ".brownie/todo.md" || path == "todo.md")
+        && goal_lower.contains("duplicate unchecked todo id")
+        && goal_lower.contains("todo")
+        && input.get("hunks").is_none()
+        && input.get("content").is_none()
+        && input.get("operation").and_then(Value::as_str)
+            == Some(WorkspacePatchOperation::PatchFile.as_str())
+    {
+        if let Ok(hunks) = patch_hunks_from_input(input) {
+            if hunks.len() == 1 && hunks[0].occurrence.is_none() {
+                let hunk = &hunks[0];
+                if !hunk.old_text.is_empty() && hunk.old_text != hunk.new_text {
+                    if let Ok(root) = store.workspace_root().canonicalize() {
+                        if brownie_tools::preflight_workspace_write_path(path).is_ok() {
+                            let target = root.join(path);
+                            if let Ok(canonical_target) = target.canonicalize() {
+                                if canonical_target.starts_with(&root) {
+                                    if let Ok(existing) = std::fs::read_to_string(&canonical_target)
+                                    {
+                                        if count_text_matches(&existing, &hunk.old_text) > 1 {
+                                            let mut normalized =
+                                                input.as_object().cloned().unwrap_or_default();
+                                            normalized.remove("old_text");
+                                            normalized.remove("new_text");
+                                            normalized.remove("content");
+                                            normalized.insert(
+                                                "hunks".to_string(),
+                                                json!([
+                                                    {
+                                                        "old_text": hunk.old_text,
+                                                        "new_text": hunk.new_text,
+                                                        "occurrence": 2
+                                                    }
+                                                ]),
+                                            );
+                                            return Value::Object(normalized);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     let Some(object_id) = selected_goal_json_object_id(goal) else {
         return input.clone();
     };
@@ -14554,8 +14674,8 @@ fn patch_hunks_from_apply_params(
         if params.patch_old_text.is_some() || params.patch_new_text.is_some() {
             return Err("Patch-file apply patch_hunks cannot be combined with patch_old_text or patch_new_text.");
         }
-        if !(2..=5).contains(&hunks.len()) {
-            return Err("Patch-file apply patch_hunks must contain 2 to 5 hunks.");
+        if !(1..=5).contains(&hunks.len()) {
+            return Err("Patch-file apply patch_hunks must contain 1 to 5 hunks.");
         }
         return hunks
             .iter()
@@ -14566,6 +14686,7 @@ fn patch_hunks_from_apply_params(
                 Ok(PatchTextHunk {
                     old_text: hunk.old_text.clone(),
                     new_text: hunk.new_text.clone(),
+                    occurrence: hunk.occurrence,
                 })
             })
             .collect();
@@ -14582,6 +14703,7 @@ fn patch_hunks_from_apply_params(
     Ok(vec![PatchTextHunk {
         old_text: patch_old_text.to_string(),
         new_text: patch_new_text.to_string(),
+        occurrence: None,
     }])
 }
 
@@ -14597,13 +14719,23 @@ fn apply_text_hunks(
         if hunk.old_text.is_empty() {
             return Err("Patch old_text must not be empty.");
         }
-        let mut matches = current_content.match_indices(&hunk.old_text);
-        let Some((start, _)) = matches.next() else {
+        let all_matches = current_content
+            .match_indices(&hunk.old_text)
+            .collect::<Vec<_>>();
+        if all_matches.is_empty() {
             return Err("Patch old_text was not found in the current target.");
-        };
-        if matches.next().is_some() {
-            return Err("Patch old_text appears more than once in the current target.");
         }
+        let start = if let Some(occurrence) = hunk.occurrence {
+            let Some((start, _)) = all_matches.get(occurrence - 1) else {
+                return Err("Patch old_text occurrence was not found in the current target.");
+            };
+            *start
+        } else {
+            if all_matches.len() > 1 {
+                return Err("Patch old_text appears more than once in the current target.");
+            }
+            all_matches[0].0
+        };
         if patch_match_splits_word(current_content, start, &hunk.old_text) {
             return Err(
                 "Patch old_text matches inside a word; include the full line or surrounding context.",
@@ -14735,6 +14867,11 @@ fn build_workspace_patch_proposal_from_input(
         if result.content_chars > DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS {
             result.validation_status = "Invalid";
             result.validation_reason = Some("patch_file hunks exceed runtime write limit");
+            return result;
+        }
+        if hunks.iter().any(|hunk| hunk.old_text == hunk.new_text) {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("patch_file hunk new_text must differ from old_text");
             return result;
         }
         if hunks.iter().any(|hunk| {
@@ -18905,7 +19042,7 @@ modes:
             path,
             WorkspacePatchOperation::PatchFile.as_str(),
             "",
-            &json!({ "hunks": proposal_hunks }),
+            &json!({ "hunks": proposal_hunks.clone() }),
         );
         let mut payload = json!({
             "proposal_id": proposal_id,
@@ -18927,6 +19064,7 @@ modes:
         if let Some(hunk_fingerprint) = proposal.hunk_fingerprint {
             payload["hunk_fingerprint"] = json!(hunk_fingerprint);
         }
+        payload["patch_hunks"] = json!(proposal_hunks);
         store
             .tasks()
             .append_task_event_with_payload(
@@ -18935,6 +19073,51 @@ modes:
                 Some(payload),
             )
             .expect("append patch hunks proposal");
+    }
+
+    fn append_generated_patch_hunks_value_proposal(
+        store: &BrownieStore,
+        record: &TaskRecord,
+        proposal_id: &str,
+        path: &str,
+        hunks: Value,
+    ) {
+        let proposal = build_workspace_patch_proposal_from_input(
+            store,
+            path,
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &json!({ "hunks": hunks.clone() }),
+        );
+        let mut payload = json!({
+            "proposal_id": proposal_id,
+            "tool_id": WORKSPACE_WRITE_TOOL_ID,
+            "path": path,
+            "operation": WorkspacePatchOperation::PatchFile.as_str(),
+            "content_preview": proposal.content_preview,
+            "content_chars": proposal.content_chars,
+            "truncated": proposal.truncated,
+            "validation_status": proposal.validation_status,
+            "validation_reason": proposal.validation_reason,
+            "diff_preview": proposal.diff_preview,
+            "diff_truncated": proposal.diff_truncated,
+            "diff_redacted": proposal.diff_redacted,
+        });
+        if let Some(hunk_count) = proposal.hunk_count {
+            payload["hunk_count"] = json!(hunk_count);
+        }
+        if let Some(hunk_fingerprint) = proposal.hunk_fingerprint {
+            payload["hunk_fingerprint"] = json!(hunk_fingerprint);
+        }
+        payload["patch_hunks"] = hunks;
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                record,
+                LedgerEventKind::WorkspacePatchProposed,
+                Some(payload),
+            )
+            .expect("append patch hunks value proposal");
     }
 
     fn partial_transaction_source_payload(
@@ -46370,6 +46553,107 @@ modes:
     }
 
     #[test]
+    fn proposal_apply_patch_file_occurrence_hunk_removes_second_duplicate() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            temp.path().join("todo.md"),
+            "alpha\n- [ ] duplicate: task\n  body\n- [ ] duplicate: task\n  body\nomega\n",
+        )
+        .expect("write todo");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Patch duplicate TODO hunk","mode_id":"implementer"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let run_id = start_result["run_id"].as_str().unwrap().to_string();
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .get_task_by_run_id(&run_id)
+            .unwrap()
+            .expect("task");
+        let proposal_id = "patch_occurrence_hunk_proposal";
+        append_generated_patch_hunks_value_proposal(
+            &store,
+            &record,
+            proposal_id,
+            "todo.md",
+            json!([
+                {
+                    "old_text": "- [ ] duplicate: task\n  body\n",
+                    "new_text": "",
+                    "occurrence": 2
+                }
+            ]),
+        );
+
+        let approve = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"patch occurrence hunk apply test"}}}}"#
+        ));
+        assert!(approve.error.is_none());
+        let preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let preflight_result = preflight.result.expect("preflight result");
+        let expected_hash = preflight_result["snapshot"]["file_sha256"]
+            .as_str()
+            .expect("file hash")
+            .to_string();
+
+        let apply_request = json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "proposal.apply",
+            "params": {
+                "run_id": run_id,
+                "proposal_id": proposal_id,
+                "expected_target_sha256": expected_hash,
+                "patch_hunks": [
+                    {
+                        "old_text": "- [ ] duplicate: task\n  body\n",
+                        "new_text": "",
+                        "occurrence": 2
+                    }
+                ],
+                "authorize": true,
+            }
+        });
+        let apply = parse_line(&apply_request.to_string());
+        let apply_result = apply.result.expect("apply result");
+        assert_eq!(apply_result["proposal"]["operation"], "patch_file");
+        assert_eq!(apply_result["proposal"]["hunk_count"], 1);
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Applied");
+        assert_eq!(apply_result["apply_result"]["applied"], true);
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("todo.md")).unwrap(),
+            "alpha\n- [ ] duplicate: task\n  body\nomega\n"
+        );
+
+        let default_events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let default_serialized =
+            serde_json::to_string(&default_events.result.expect("default events")["events"])
+                .unwrap();
+        assert!(!default_serialized.contains("patch_hunks"));
+        assert!(!default_serialized.contains("duplicate: task"));
+
+        let material_events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":6,"method":"run.events","params":{{"run_id":"{run_id}","include_patch_material":true}}}}"#
+        ));
+        let material_serialized =
+            serde_json::to_string(&material_events.result.expect("material events")["events"])
+                .unwrap();
+        assert!(material_serialized.contains("patch_hunks"));
+        assert!(material_serialized.contains("duplicate: task"));
+        assert!(material_serialized.contains("\"occurrence\":2"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn patch_file_proposal_rejects_overlapping_multi_hunk_context_without_writing() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -46451,6 +46735,44 @@ modes:
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
             "alpha\nbeta\nbeta\ngamma\n"
         );
+    }
+
+    #[test]
+    fn duplicate_todo_repair_normalizes_top_level_patch_to_occurrence_hunk() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join(".brownie")).expect("mkdir brownie");
+        let duplicate_block = "- [ ] E-15d-soak-section-guard: Patch only `scripts/guard-runtime-operational-evidence.test.mjs`\n  Route: implementation.\n";
+        std::fs::write(
+            temp.path().join(".brownie/todo.md"),
+            format!("# Queue\n\n{duplicate_block}{duplicate_block}"),
+        )
+        .expect("write todo");
+        let store = BrownieStore::new(temp.path());
+        let input = json!({
+            "path": ".brownie/todo.md",
+            "operation": "patch_file",
+            "old_text": duplicate_block,
+            "new_text": "",
+        });
+        let goal = "TODO decomposition guard failed: .brownie/todo.md E-15d-soak-section-guard: duplicate unchecked TODO id appears 2 times.";
+
+        let normalized =
+            disambiguate_workspace_patch_input_from_goal(&store, ".brownie/todo.md", &input, goal);
+
+        assert!(normalized.get("old_text").is_none());
+        assert_eq!(normalized["hunks"][0]["old_text"], duplicate_block);
+        assert_eq!(normalized["hunks"][0]["new_text"], "");
+        assert_eq!(normalized["hunks"][0]["occurrence"], 2);
+
+        let proposal = build_workspace_patch_proposal_from_input(
+            &store,
+            ".brownie/todo.md",
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &normalized,
+        );
+        assert_eq!(proposal.validation_status, "Valid");
     }
 
     #[test]
@@ -63470,16 +63792,43 @@ mod phase_2_3_tests {
             let mut observed = Vec::new();
             for (index, body) in bodies.into_iter().enumerate() {
                 let (mut stream, _) = listener.accept().unwrap();
-                let mut buf = [0_u8; 8192];
-                let n = stream.read(&mut buf).unwrap();
-                let req = String::from_utf8_lossy(&buf[..n]).to_string();
-                let header_end = req.find("\r\n\r\n").unwrap();
-                let (headers, request_body) = req.split_at(header_end + 4);
+                let mut bytes = Vec::new();
+                let mut header_end = None;
+                let mut content_length = None;
+                loop {
+                    let mut chunk = [0_u8; 4096];
+                    let n = stream.read(&mut chunk).unwrap();
+                    assert!(n > 0, "mock request ended before full body");
+                    bytes.extend_from_slice(&chunk[..n]);
+                    let req = String::from_utf8_lossy(&bytes);
+                    if header_end.is_none() {
+                        if let Some(end) = req.find("\r\n\r\n") {
+                            let headers = &req[..end];
+                            content_length = headers.lines().find_map(|line| {
+                                let (name, value) = line.split_once(':')?;
+                                name.eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().ok())
+                                    .flatten()
+                            });
+                            header_end = Some(end + 4);
+                        }
+                    }
+                    if let (Some(end), Some(length)) = (header_end, content_length) {
+                        if bytes.len() >= end + length {
+                            break;
+                        }
+                    }
+                }
+                let req = String::from_utf8_lossy(&bytes).to_string();
+                let header_end = header_end.expect("header end");
+                let headers = &req[..header_end];
+                let body_length = content_length.expect("content length");
+                let request_body = &bytes[header_end..header_end + body_length];
                 assert!(headers.starts_with("POST /v1/chat/completions HTTP/1.1"));
                 assert!(headers.lines().any(|line| line
                     .to_ascii_lowercase()
                     .starts_with("authorization: bearer ")));
-                let json: serde_json::Value = serde_json::from_str(request_body).unwrap();
+                let json: serde_json::Value = serde_json::from_slice(request_body).unwrap();
                 let expected_model = expected_models
                     .as_ref()
                     .and_then(|models| models.get(index).copied())

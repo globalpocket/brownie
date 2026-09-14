@@ -225,6 +225,21 @@ copy that text exactly from the completed `workspace.read` result. Do not end
 `old_text` in the middle of a word; include the complete line or surrounding
 complete-line context. The tool intent must use the Runtime schema exactly:
 
+Keep each `brownie-tool-intent` JSON block compact enough to close its fence
+reliably. If a safe implementation patch would require a large `new_text`
+string, do not emit a long partial `workspace.write`. Instead, patch
+`.brownie/todo.md` with the next smaller TODO that names the exact function,
+line, or guard fixture to edit. A small follow-up TODO is better progress than
+an oversized workspace.write block that may be truncated before the closing
+fence.
+
+When the selected TODO gives an exact replacement line, adjacent line, constant
+value, regex, array, or JSON field, copy that exact requested text. Do not
+expand a short regex into a broad generated allow/deny list, do not invent long
+configuration tables, and do not synthesize repeated path/tool names. If the
+requested line seems insufficient, write a small blocker TODO explaining the
+missing acceptance criterion instead of generating a larger patch.
+
 Never infer or invent `old_text` from file sections that are not present in the
 completed `workspace.read` result shown in the prompt. If the needed edit
 location is outside the visible read result, patch `.brownie/todo.md` instead:
@@ -254,6 +269,13 @@ tool-intent block short enough to remain fully present in the recorded LLM
 response preview, because the CLI can auto-apply `patch_file` proposals only
 when the matching hunk material is available and its fingerprint matches the
 approved proposal metadata.
+
+If a `workspace.read` succeeded but the returned preview does not include the
+specific lines needed for a safe patch, do not request the same file again.
+Patch `.brownie/todo.md` instead: replace the selected TODO with smaller
+exact-line or exact-symbol TODOs that name the current file, the nearby
+constant/function/object key, and the one verification command. Repeated
+`workspace.read` after a read-budget denial is non-progress.
 
 Use this order:
 

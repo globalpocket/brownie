@@ -235,6 +235,23 @@ test('rejects fake satisfied artifact evidence', () => {
   assert(errors.some((error) => error.includes('release_artifact_evidence.sbom')));
 });
 
+test('rejects implemented artifact provenance evidence with null commit bindings', () => {
+  const contract = validContract({
+    release_artifact_evidence: {
+      ...validContract().release_artifact_evidence,
+      artifacts: { status: 'implemented_sufficient', path: '.brownie/release-evidence/artifacts.json' },
+      sha256sums: { status: 'implemented_sufficient', path: '.brownie/release-evidence/SHA256SUMS' },
+      sbom: { status: 'implemented_sufficient', path: '.brownie/release-evidence/brownie-runtime-sbom.json' },
+      provenance: { status: 'implemented_sufficient', path: '.brownie/release-evidence/brownie-runtime-provenance.json' }
+    }
+  });
+  const errors = validate(contract);
+  assert(errors.some((error) => error.includes('commit_trace.implementation_commit')));
+  assert(errors.some((error) => error.includes('commit_trace.tested_commit')));
+  assert(errors.some((error) => error.includes('commit_trace.workflow_run_id')));
+  assert(errors.some((error) => error.includes('commit_trace.artifact_sha256')));
+});
+
 test('rejects missing release gate package scripts', () => {
   const errors = validate(validContract(), { packageJson: { scripts: {} } });
   assert(errors.some((error) => error.includes('release:gate')));

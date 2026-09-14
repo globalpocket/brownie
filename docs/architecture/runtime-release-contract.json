@@ -21,7 +21,7 @@
     "workflow_run_id": null,
     "artifact_sha256": null,
     "contract_registry_fingerprint": "sha256:4250fb47242f2bdc4ac26ce1d0cf8ecedbd27627eb9e3117acc82e3719eb934d",
-    "readiness_audit_content_sha256": "sha256:8cfbcc313f95831f9107bc7a234255c83de681960fd556ae982c652d89aaab10",
+    "readiness_audit_content_sha256": "sha256:a3b2e2e9ea54ffa4fddd2e54657e11791e2adb9283056d52306492394b84fe49",
     "mode_pack_fingerprint": null,
     "product_dod_fingerprint": null
   },
@@ -132,7 +132,8 @@
       "release_blocking": true,
       "required_evidence": [
         "Repository-local provenance baseline binds source commit, tree dirtiness, generated SBOM, checksums, and artifact paths",
-        "Final Release Ready requires GitHub workflow run provenance or an owner-approved equivalent build provenance mechanism"
+        "Final Release Ready requires GitHub workflow run provenance or an owner-approved equivalent build provenance mechanism",
+        "Provenance chain must include cryptographic signing of the provenance manifest by the release authority"
       ]
     },
     {
@@ -184,7 +185,8 @@
         "independent human review for Mode Pack trust boundary",
         "independent human review for signing/provenance",
         "independent human review for Release Ready判定ロジック"
-      ]
+      ],
+      "runtime_release_ready": false
     }
   ],
   "finite_phase_plan": [

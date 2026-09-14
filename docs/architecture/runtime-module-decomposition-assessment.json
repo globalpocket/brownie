@@ -25,20 +25,20 @@
     "crates/brownie-runtime/src/verification_recovery.rs"
   ],
   "thresholds": {
-    "lib_rs_production_line_ceiling": 15678,
-    "lib_rs_test_line_ceiling": 53130
+    "lib_rs_production_line_ceiling": 15815,
+    "lib_rs_test_line_ceiling": 53342
   },
   "metrics": {
     "files": {
       "crates/brownie-runtime/src/lib.rs": {
-        "line_count": 68808,
+        "line_count": 69157,
         "public_items": 3,
-        "private_items": 527,
-        "production_line_count": 15678,
-        "test_line_count": 53130,
-        "state_mutation_mentions": 310,
-        "durable_write_mentions": 230,
-        "permission_decision_mentions": 197,
+        "private_items": 528,
+        "production_line_count": 15815,
+        "test_line_count": 53342,
+        "state_mutation_mentions": 312,
+        "durable_write_mentions": 232,
+        "permission_decision_mentions": 202,
         "recovery_mentions": 2263,
         "rpc_dispatch_mentions": 90,
         "approval_mentions": 540,
@@ -61,17 +61,17 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/controlled_tool_execution.rs": {
-        "line_count": 6978,
-        "public_items": 72,
-        "private_items": 102,
-        "state_mutation_mentions": 44,
-        "durable_write_mentions": 44,
-        "permission_decision_mentions": 79,
+        "line_count": 7878,
+        "public_items": 74,
+        "private_items": 117,
+        "state_mutation_mentions": 47,
+        "durable_write_mentions": 47,
+        "permission_decision_mentions": 101,
         "recovery_mentions": 82,
         "rpc_dispatch_mentions": 0,
         "approval_mentions": 228,
         "mcp_mentions": 368,
-        "product_dod_mentions": 73,
+        "product_dod_mentions": 87,
         "diagnostics_mentions": 14
       },
       "crates/brownie-runtime/src/headless_continue.rs": {
@@ -145,9 +145,9 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/objective_proposal.rs": {
-        "line_count": 1426,
+        "line_count": 1446,
         "public_items": 7,
-        "private_items": 22,
+        "private_items": 23,
         "state_mutation_mentions": 3,
         "durable_write_mentions": 3,
         "permission_decision_mentions": 0,
@@ -399,6 +399,8 @@
     "RRP-8.7/E-14 adds bounded JSON patch normalization inside the existing workspace patch proposal path; metrics are resynchronized while preserving the explicit module-decomposition guard and leaving broader extraction for a later dedicated refactor.",
     "PR #452 review hardening adds bounded workspace patch safety checks and owner-governance release-blocker verification inside the existing Runtime release paths; metrics are resynchronized while preserving the module-decomposition guard and leaving broader extraction for a later dedicated refactor.",
     "PR pending: runtime module metrics refreshed after Brownie-owned TODO decomposition parser/proposal recovery work; runtime_release_ready remains false.",
-    "PR pending: runtime module metrics refreshed after protected workspace.read denial recovery routing; runtime_release_ready remains false and broader extraction remains a later dedicated refactor."
+    "PR pending: runtime module metrics refreshed after protected workspace.read denial recovery routing; runtime_release_ready remains false and broader extraction remains a later dedicated refactor.",
+    "PR #458 updated runtime-module-decomposition metrics after phase-loop TODO decomposition hardening and long prompt mock request handling; closure status remains unchanged.",
+    "PR #458 follow-up updated runtime-module-decomposition metrics after review-thread fixes for TODO repair hunk validation; closure status remains unchanged."
   ]
 }

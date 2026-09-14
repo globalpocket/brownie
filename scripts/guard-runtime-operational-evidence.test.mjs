@@ -8,9 +8,40 @@ import {
   runRuntimeOperationalEvidenceGuard,
   validateRuntimeOperationalEvidence
 } from './guard-runtime-operational-evidence.mjs';
-import { buildRuntimeOperationalEvidence } from './release-runtime-operational-evidence.mjs';
+import {
+  buildRuntimeOperationalEvidence,
+  redactDelegatedResult
+} from './release-runtime-operational-evidence.mjs';
 
 const requiredSections = ['artifact_lifecycle', 'golden_journey_fixture', 'soak_test'];
+
+const forbiddenGeneratedEvidencePatterns = [
+  /\/Users\//,
+  /\/home\//,
+  /[A-Za-z]:\/Users\//,
+  /brownie-linux/i,
+  /EncodedCommand/i,
+  /worktree/i,
+  /"command"\s*:/,
+  /"stdout"\s*:/,
+  /"stderr"\s*:/
+];
+
+function generatedEvidenceForbiddenMatches(evidence) {
+  const serialized = JSON.stringify(evidence);
+  return forbiddenGeneratedEvidencePatterns
+    .filter((pattern) => pattern.test(serialized))
+    .map((pattern) => String(pattern));
+}
+
+const requiredStatefulSoakStepIds = [
+  'task_state_transition',
+  'ledger_workspace_consistency',
+  'resume_replay_handling',
+  'duplicate_side_effect_rejection',
+  'process_loss_recovery',
+  'finite_convergence'
+];
 
 function validContract(overrides = {}) {
   return {
@@ -38,6 +69,28 @@ function section(status = 'satisfied', extra = {}) {
   };
 }
 
+function commandSummary(overrides = {}) {
+  return {
+    command_summary: { kind: 'command_summary', word_count: 2, sha256: 'a'.repeat(64) },
+    exit_code: 0,
+    signal: null,
+    passed: true,
+    stdout_summary: { kind: 'process_output_summary', byte_length: 0, line_count: 0, sha256: 'b'.repeat(64) },
+    stderr_summary: { kind: 'process_output_summary', byte_length: 0, line_count: 0, sha256: 'c'.repeat(64) },
+    ...overrides
+  };
+}
+
+function statefulSoakSteps(overrides = {}) {
+  return requiredStatefulSoakStepIds.map((id) => ({
+    id,
+    status: 'satisfied',
+    passed: true,
+    evidence_summary: { kind: 'stateful_soak_step_summary', sha256: id.padEnd(64, id.at(0) ?? 'a').slice(0, 64) },
+    ...overrides[id]
+  }));
+}
+
 function validEvidence(overrides = {}) {
   return {
     schema_version: 1,
@@ -57,12 +110,12 @@ function validEvidence(overrides = {}) {
             passed: true,
             checksum_verified: true,
             uninstalled: true,
-            commands: [{ command: 'brownie --version', exit_code: 0, passed: true }]
+            commands: [commandSummary()]
           }
         ]
       }),
       golden_journey_fixture: section('satisfied', {
-        commands: [{ command: 'brownie help run', exit_code: 0, passed: true }],
+        commands: [commandSummary()],
         lifecycle_evidence: {
           json_present: true,
           proposal_preflight_observed: true,
@@ -79,7 +132,8 @@ function validEvidence(overrides = {}) {
         failure_rate: 0,
         duplicate_side_effects_observed: false,
         unrecoverable_run_count: 0,
-        commands: [{ command: 'brownie --version', exit_code: 0, passed: true }]
+        commands: [commandSummary()],
+        stateful_steps: statefulSoakSteps()
       })
     },
     ...overrides
@@ -136,7 +190,7 @@ test('requires fail-closed reasons for incomplete artifact lifecycle evidence', 
         path: '.brownie/release-evidence/artifacts/darwin-arm64/brownie',
         status: 'failed',
         passed: false,
-        commands: [{ command: 'brownie --version', exit_code: 1, passed: false }]
+        commands: [commandSummary({ exit_code: 1, passed: false })]
       }
     ]
   });
@@ -206,6 +260,38 @@ test('accepts fail-closed artifact lifecycle when local release target manifest 
   assert.deepEqual(validateRuntimeOperationalEvidence(evidence), []);
 });
 
+test('collector keeps version-only soak fail-closed', () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-runtime-operational-evidence-test-'));
+  const cliPath = path.join(repoRoot, 'target/debug/brownie');
+  fs.mkdirSync(path.dirname(cliPath), { recursive: true });
+  fs.writeFileSync(cliPath, '#!/bin/sh\necho brownie 0.0.0\n');
+  fs.chmodSync(cliPath, 0o755);
+  const evidence = buildRuntimeOperationalEvidence({
+    repoRoot,
+    iterations: 2,
+    generatedAt: '2026-09-12T00:00:00.000Z'
+  });
+  assert.equal(evidence.sections.soak_test.status, 'not_executed');
+  assert.deepEqual(evidence.sections.soak_test.missing_stateful_steps, requiredStatefulSoakStepIds);
+  assert(evidence.fail_closed_reasons.includes('soak_test:not_executed'));
+  assert.deepEqual(validateRuntimeOperationalEvidence(evidence), []);
+});
+
+test('collector generated evidence contains no forbidden local or raw process details', () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-runtime-operational-evidence-test-'));
+  const cliPath = path.join(repoRoot, 'target/debug/brownie');
+  fs.mkdirSync(path.dirname(cliPath), { recursive: true });
+  fs.writeFileSync(cliPath, '#!/bin/sh\necho brownie 0.0.0\n');
+  fs.chmodSync(cliPath, 0o755);
+  const evidence = buildRuntimeOperationalEvidence({
+    repoRoot,
+    iterations: 1,
+    generatedAt: '2026-09-12T00:00:00.000Z'
+  });
+  assert.deepEqual(generatedEvidenceForbiddenMatches(evidence), []);
+  assert.deepEqual(validateRuntimeOperationalEvidence(evidence), []);
+});
+
 test('accepts fail-closed delegated target command failures', () => {
   const evidence = validEvidence({
     fail_closed_reasons: ['artifact_lifecycle:failed']
@@ -219,21 +305,60 @@ test('accepts fail-closed delegated target command failures', () => {
       {
         target: 'linux-x64',
         kind: 'ssh',
-        host: 'brownie-linux',
-        workspace: '/home/ubuntu/brownie',
+        host: '[redacted-host]',
+        workspace: '[redacted-local-evidence]',
         shell: 'posix',
         status: 'blocked_external',
         passed: false,
         commands: [
           {
-            command: 'ssh -o BatchMode=yes -o ConnectTimeout=10 brownie-linux cd /home/ubuntu/brownie',
             exit_code: 255,
-            passed: false
+            passed: false,
+            command_summary: { kind: 'command_summary', word_count: 8, sha256: 'd'.repeat(64) },
+            stdout_summary: { kind: 'process_output_summary', byte_length: 0, line_count: 0, sha256: 'e'.repeat(64) },
+            stderr_summary: { kind: 'process_output_summary', byte_length: 90, line_count: 1, sha256: 'f'.repeat(64) }
           }
         ]
       }
     ]
   });
+  assert.deepEqual(validateRuntimeOperationalEvidence(evidence), []);
+});
+
+test('redacts successful delegated target JSON before evidence persistence', () => {
+  const delegated = redactDelegatedResult({
+    build: {
+      command: 'pnpm --workspace-root release:local-artifacts:all',
+      stdout: 'artifact written to /Users/example/brownie/dist/brownie',
+      stderr: '',
+      artifact_path: '/Users/example/brownie/dist/brownie'
+    },
+    host: 'brownie-linux',
+    workspace: '/home/ubuntu/brownie-worktree'
+  });
+  const evidence = validEvidence({
+    fail_closed_reasons: ['artifact_lifecycle:failed']
+  });
+  evidence.sections.artifact_lifecycle = section('failed', {
+    local_release_targets_status: 'loaded',
+    local_release_targets_path: '.brownie/local-release-targets.json',
+    local_release_targets_errors: [],
+    lifecycle_results: [],
+    target_results: [
+      {
+        target: 'linux-x64',
+        kind: 'ssh',
+        host: '[redacted-host]',
+        workspace: '[redacted-local-evidence]',
+        shell: 'posix',
+        status: 'delegated_artifact_build_completed',
+        passed: true,
+        delegated_result: delegated,
+        commands: [commandSummary()]
+      }
+    ]
+  });
+  assert.deepEqual(generatedEvidenceForbiddenMatches(evidence), []);
   assert.deepEqual(validateRuntimeOperationalEvidence(evidence), []);
 });
 
@@ -245,12 +370,28 @@ test('rejects satisfied soak evidence with failures', () => {
   assert(errors.some((error) => error.includes('zero failures')));
 });
 
+test('rejects satisfied soak evidence without stateful steps', () => {
+  const evidence = validEvidence();
+  delete evidence.sections.soak_test.stateful_steps;
+  const errors = validateRuntimeOperationalEvidence(evidence);
+  assert(errors.some((error) => error.includes('must include stateful_steps')), errors);
+});
+
+test('rejects satisfied soak evidence with missing stateful step', () => {
+  const evidence = validEvidence();
+  evidence.sections.soak_test.stateful_steps = evidence.sections.soak_test.stateful_steps.filter(
+    (step) => step.id !== 'process_loss_recovery'
+  );
+  const errors = validateRuntimeOperationalEvidence(evidence);
+  assert(errors.some((error) => error.includes('process_loss_recovery')), errors);
+});
+
 test('rejects satisfied artifact lifecycle with failed command', () => {
   const evidence = validEvidence();
   evidence.sections.artifact_lifecycle.lifecycle_results[0].commands[0] = {
-    command: 'brownie --version',
     exit_code: 1,
-    passed: false
+    passed: false,
+    command_summary: { kind: 'command_summary', word_count: 2, sha256: 'a'.repeat(64) }
   };
   const errors = validateRuntimeOperationalEvidence(evidence);
   assert(errors.some((error) => error.includes('must pass')));
@@ -259,10 +400,35 @@ test('rejects satisfied artifact lifecycle with failed command', () => {
 test('rejects satisfied golden journey with failed command', () => {
   const evidence = validEvidence();
   evidence.sections.golden_journey_fixture.commands[0] = {
-    command: 'brownie help run',
     exit_code: 1,
-    passed: false
+    passed: false,
+    command_summary: { kind: 'command_summary', word_count: 3, sha256: 'a'.repeat(64) }
   };
   const errors = validateRuntimeOperationalEvidence(evidence);
   assert(errors.some((error) => error.includes('must pass')));
+});
+
+test('rejects forbidden local and raw process evidence', () => {
+  const evidence = validEvidence();
+  evidence.sections.golden_journey_fixture.commands[0] = {
+    command: '/Users/example/brownie --version',
+    exit_code: 0,
+    passed: true,
+    stdout: 'raw output',
+    stderr: 'raw error'
+  };
+  evidence.sections.artifact_lifecycle.target_results = [
+    {
+      target: 'linux-x64',
+      kind: 'ssh',
+      host: 'brownie-linux',
+      workspace: '/home/ubuntu/brownie',
+      status: 'blocked_external',
+      passed: false,
+      commands: []
+    }
+  ];
+  const errors = validateRuntimeOperationalEvidence(evidence);
+  assert(errors.some((error) => error.includes('must not store raw process evidence')), errors);
+  assert(errors.some((error) => error.includes('must not contain forbidden local evidence')), errors);
 });

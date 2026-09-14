@@ -672,7 +672,11 @@ fn format_tool_intent_summary(events: &[LedgerEvent]) -> Vec<String> {
                     .get("reason")
                     .and_then(|value| value.as_str())
                     .unwrap_or("<unknown>");
-                summary.push(format!("{tool_id}: rejected reason={reason}"));
+                let code = payload
+                    .get("code")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("<unknown>");
+                summary.push(format!("{tool_id}: rejected code={code} reason={reason}"));
             }
             _ => {}
         }
@@ -1584,6 +1588,8 @@ enum BdkExecutionState {
     ContextPlan,
     ImplementPatch,
     RepairPatch,
+    TodoQueueRepair,
+    OversizedWriteRecovery,
     DecomposeTodo,
     BlockerOrWrite,
     DirectAnswer,
@@ -1595,6 +1601,8 @@ impl BdkExecutionState {
             Self::ContextPlan => "context_plan",
             Self::ImplementPatch => "implement_patch",
             Self::RepairPatch => "repair_patch",
+            Self::TodoQueueRepair => "todo_queue_repair",
+            Self::OversizedWriteRecovery => "oversized_write_recovery",
             Self::DecomposeTodo => "decompose_todo",
             Self::BlockerOrWrite => "blocker_or_write",
             Self::DirectAnswer => "direct_answer",
@@ -1610,13 +1618,19 @@ impl BdkExecutionState {
                 "request exactly one workspace.write patch_file for the named target file using the shortest unique complete-line old_text/new_text copied from completed Tool Execution; if the needed old_text is not visible, patch `.brownie/todo.md` with a smaller context-bounded follow-up TODO; do not read again"
             }
             Self::RepairPatch => {
-                "request a bounded workspace.write repair that directly addresses the latest failure evidence"
+                "request a bounded workspace.write repair to the target file that directly addresses the latest verification failure evidence. Do not patch `.brownie/todo.md` merely to avoid a concrete syntax/test failure after an implementation patch"
+            }
+            Self::TodoQueueRepair => {
+                "request exactly one workspace.write patch_file for `.brownie/todo.md`; prefer input `hunks:[{old_text,new_text,occurrence},...]`; for self-source repair use tiny complete-line hunks; for duplicate-only repair use only the exact duplicate block provided in the focused repair context as old_text, set new_text to an empty string, and set occurrence:2; do not invent TODO block text or include Queue protocol, Base Phase Loop Prompt, unrelated headings, or implementation files"
+            }
+            Self::OversizedWriteRecovery => {
+                "do not retry the oversized workspace.write. Request exactly one small workspace.write patch_file for `.brownie/todo.md`: old_text must be the full selected TODO block, and new_text must contain exactly one smaller unchecked leaf TODO under 1200 characters. The leaf must use a new unique TODO id and include `Route:`, `Source TODO:` referencing the selected TODO id, `Depends on:`, `Completion condition:`, `Forbidden changes:`, and `Verification:`. The leaf must name at most one target file and one verification command. new_text must not contain the selected TODO first line, selected TODO id, the original broad TODO title, multiple TODO items, or implementation patch content"
             }
             Self::DecomposeTodo => {
-                "request a bounded workspace.write patch to the live TODO queue (`.brownie/todo.md` unless the selected queue is legacy `todo.md`) replacing the broad item with concrete implementable leaf TODOs"
+                "request exactly one workspace.write patch_file to the live TODO queue (`.brownie/todo.md` unless the selected queue is legacy `todo.md`). old_text must be the full selected TODO block exactly as shown under `## Selected TODO`. new_text must contain only 1-2 short unchecked leaf TODOs under 1800 total characters. Each leaf must use this multi-line shape exactly: first line `- [ ] E-...: Patch only `path` ...:` or `- [ ] E-...: Blocker: ...`, then separate indented lines starting `Route:`, `Source TODO:`, `Depends on:`, `Completion condition:`, `Forbidden changes:`, and `Verification:`. Never copy the selected TODO first line, selected TODO id, `TODO-decompose-...`, or the broad source TODO title into new_text. Do not target any later TODO, do not keep the selected decomposition item pending, and do not use only the first line as old_text"
             }
             Self::BlockerOrWrite => {
-                "do not request more workspace.read; if Git state is needed request git.status or git.diff with allowed input; otherwise request workspace.write patch_file for the named target file or refine `.brownie/todo.md` with a concrete follow-up/blocker TODO"
+                "workspace.read is forbidden for the next output. Request exactly one workspace.write create_file/replace_file/patch_file for the named target file, or one workspace.write patch_file to `.brownie/todo.md` with exactly one short concrete follow-up/blocker TODO. If writing `.brownie/todo.md`, old_text must be the full selected TODO block shown in `## Selected TODO`, and new_text must be one unchecked leaf under 900 characters with separate `Route:`, `Source TODO:`, `Depends on:`, `Completion condition:`, `Forbidden changes:`, and `Verification:` lines; use a new unique TODO id and do not keep the selected TODO id or selected first line. If Git state is needed, request git.status or git.diff with allowed input. Do not request workspace.read again"
             }
             Self::DirectAnswer => "answer directly without tool intent",
         }
@@ -1631,11 +1645,19 @@ impl BdkExecutionState {
                 "reuse completed read evidence; repeated read-only output is no progress"
             }
             Self::RepairPatch => {
-                "use the failure excerpt as the primary context; do not rediscover unrelated files"
+                "use the failure excerpt as the primary context; do not rediscover unrelated files and do not decompose TODOs when a concrete target-file verification failure is available"
             }
-            Self::DecomposeTodo => "split work instead of browsing README/overview material",
+            Self::TodoQueueRepair => {
+                "repair the TODO queue before implementation work; use the smallest visible exact old_text/new_text hunk and avoid large replacement JSON"
+            }
+            Self::OversizedWriteRecovery => {
+                "the previous workspace.write input exceeded parser limits; one short leaf TODO is progress, while multiple leaves, implementation patch content, repeating the large patch, or keeping the selected broad TODO pending is no progress"
+            }
+            Self::DecomposeTodo => {
+                "split the selected TODO shown in `## Selected TODO` only; new leaf TODOs replace the selected item. Repeating the selected TODO text, keeping `TODO-decompose-...`, jumping to a later queue item, or using partial old_text is no progress"
+            }
             Self::BlockerOrWrite => {
-                "the previous read path was denied or already exhausted, so retrying workspace.read is waste"
+                "forbidden_next_tool=workspace.read; the previous read path was denied or already exhausted, so retrying workspace.read is no progress. If emitting a TODO refinement, one compact schema-complete leaf is progress; repeating the broad selected TODO, omitting Source TODO, or producing an unfinished fence is no progress"
             }
             Self::DirectAnswer => "keep the response concise",
         }
@@ -1651,10 +1673,36 @@ fn infer_bdk_execution_state(
     let goal_lower = goal.to_lowercase();
     let phase_loop_state = extract_phase_loop_bdk_state(goal);
     let completed_reads = completed_workspace_read_count(tool_execution_summary);
+    if goal_lower.contains("repair_override_target: `.brownie/todo.md`")
+        || goal_lower.contains("todo_guard_repair_policy")
+        || goal_lower.contains("guard:todo-decomposition")
+        || goal_lower.contains("todo decomposition guard failed")
+        || goal_lower.contains("duplicate unchecked todo id")
+    {
+        return BdkExecutionState::TodoQueueRepair;
+    }
+    if tool_intent_summary.iter().any(|entry| {
+        entry.contains("workspace.write: rejected")
+            && (entry.contains("code=input_too_large")
+                || entry.contains("input exceeds parser size limit"))
+    }) {
+        return BdkExecutionState::OversizedWriteRecovery;
+    }
     if workspace_read_denial_requires_git_or_todo_refinement(
         tool_execution_summary,
         tool_intent_summary,
     ) {
+        return BdkExecutionState::BlockerOrWrite;
+    }
+    if goal_lower.contains("create_only_policy")
+        || goal_lower.contains("create only `")
+        || goal_lower.contains("create only `.brownie/")
+    {
+        return BdkExecutionState::BlockerOrWrite;
+    }
+    if goal_lower.contains("read_budget_repair_policy")
+        || goal_lower.contains("workspace.read content is embedded below")
+    {
         return BdkExecutionState::BlockerOrWrite;
     }
     if !verification_recovery_diagnostics_summary.is_empty()
@@ -1663,6 +1711,12 @@ fn infer_bdk_execution_state(
             .any(|entry| entry == "<none>")
     {
         return BdkExecutionState::RepairPatch;
+    }
+    if matches!(phase_loop_state.as_deref(), Some("decompose_todo"))
+        && (goal_lower.contains("## selected todo\n\n- [ ] todo-decompose-")
+            || goal_lower.contains("route: todo-decomposition"))
+    {
+        return BdkExecutionState::DecomposeTodo;
     }
     if task_goal_looks_like_workspace_edit(&goal_lower) && completed_reads > 0 {
         return BdkExecutionState::ImplementPatch;
@@ -2031,6 +2085,126 @@ mod tests {
     }
 
     #[test]
+    fn prompt_builder_keeps_decompose_todo_after_decomposition_request_read() {
+        let context_window = ContextWindowSummary::empty();
+        let prompt = PromptBuilder::build(PromptBuildInput {
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            goal: "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- state: `decompose_todo`\n\n## Selected TODO\n\n- [ ] TODO-decompose-broad-todo-abc123: Decompose broad TODO `E-15e-release-contract-audit-phase-resync` into implementable leaf TODOs:\n  Route: todo-decomposition.\n  Source TODO: selected broad TODO.\n".into(),
+            mode_id: Some("implementer".into()),
+            mode_policy_summary: Some("Mode Policy:\nmode_id: implementer".into()),
+            mode_instruction_material: Some("Mode Instructions:\n<none>".into()),
+            permission_summary: vec![],
+            tool_plan_summary: vec![
+                "workspace.read: allowed".into(),
+                "workspace.write: allowed".into(),
+            ],
+            tool_intent_summary: vec![],
+            tool_execution_summary: vec![
+                "workspace.read: Completed bytes_read=42 truncated=false output_preview=\"bounded\""
+                    .into(),
+            ],
+            subtask_orchestration_summary: vec![],
+            verification_recovery_diagnostics_summary: vec![],
+            selected_index_context: None,
+            verification_recovery_context: None,
+            context_window: context_window.clone(),
+            context_budget: ContextBudgetSummary::unrequested(&context_window, None, usize::MAX),
+            ledger_summary: vec![],
+        });
+
+        assert!(prompt.messages[1]
+            .content
+            .contains("BDK Control Packet:\n- state: decompose_todo"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("new leaf TODOs replace the selected item"));
+    }
+
+    #[test]
+    fn prompt_builder_forbids_initial_read_for_phase_loop_create_only_leaf() {
+        let context_window = ContextWindowSummary::empty();
+        let prompt = PromptBuilder::build(PromptBuildInput {
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            goal: "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- state: `verify_or_repair`\n- create_only_policy: do not request `workspace.read` for the missing Create only target. Use `workspace.write` with a create-file operation or a patch that creates exactly the named file.\n\n## Selected TODO\n\n- [ ] E-15g-pr435-hygiene-evidence: Create only `.brownie/release-evidence/pr435-hygiene-evidence.json` to record the bounded PR #435 hygiene conclusion:\n  Route: release-ops.\n".into(),
+            mode_id: Some("implementer".into()),
+            mode_policy_summary: Some("Mode Policy:\nmode_id: implementer".into()),
+            mode_instruction_material: Some("Mode Instructions:\n<none>".into()),
+            permission_summary: vec![],
+            tool_plan_summary: vec![
+                "workspace.read: allowed".into(),
+                "workspace.write: allowed".into(),
+            ],
+            tool_intent_summary: vec![],
+            tool_execution_summary: vec![],
+            subtask_orchestration_summary: vec![],
+            verification_recovery_diagnostics_summary: vec![],
+            selected_index_context: None,
+            verification_recovery_context: None,
+            context_window: context_window.clone(),
+            context_budget: ContextBudgetSummary::unrequested(&context_window, None, usize::MAX),
+            ledger_summary: vec![],
+        });
+
+        assert!(prompt.messages[1]
+            .content
+            .contains("BDK Control Packet:\n- state: blocker_or_write"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("workspace.read is forbidden for the next output"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("workspace.write create_file"));
+        assert!(!prompt.messages[1]
+            .content
+            .contains("BDK Control Packet:\n- state: context_plan"));
+    }
+
+    #[test]
+    fn prompt_builder_preserves_todo_queue_repair_after_todo_read() {
+        let context_window = ContextWindowSummary::empty();
+        let prompt = PromptBuilder::build(PromptBuildInput {
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            goal: "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- state: `verify_or_repair`\n- repair_override_target: `.brownie/todo.md` is the only intended workspace.write target until `pnpm --workspace-root guard:todo-decomposition` passes.\n- todo_guard_repair_policy: repair `.brownie/todo.md` before any implementation work.\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n".into(),
+            mode_id: Some("implementer".into()),
+            mode_policy_summary: Some("Mode Policy:\nmode_id: implementer".into()),
+            mode_instruction_material: Some("Mode Instructions:\n<none>".into()),
+            permission_summary: vec![],
+            tool_plan_summary: vec![
+                "workspace.read: allowed".into(),
+                "workspace.write: allowed".into(),
+            ],
+            tool_intent_summary: vec![],
+            tool_execution_summary: vec![
+                "workspace.read: Completed bytes_read=16828 truncated=false output_preview=\"[workspace.read path=.brownie/todo.md]\""
+                    .into(),
+            ],
+            subtask_orchestration_summary: vec![],
+            verification_recovery_diagnostics_summary: vec![],
+            selected_index_context: None,
+            verification_recovery_context: None,
+            context_window: context_window.clone(),
+            context_budget: ContextBudgetSummary::unrequested(&context_window, None, usize::MAX),
+            ledger_summary: vec![],
+        });
+
+        assert!(prompt.messages[1]
+            .content
+            .contains("BDK Control Packet:\n- state: todo_queue_repair"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("prefer input `hunks:[{old_text,new_text,occurrence},...]`"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("for duplicate-only repair use only the exact duplicate block provided"));
+        assert!(prompt.messages[1].content.contains(
+            "do not invent TODO block text or include Queue protocol, Base Phase Loop Prompt"
+        ));
+    }
+
+    #[test]
     fn prompt_builder_stops_read_loop_after_duplicate_read_denial() {
         let context_window = ContextWindowSummary::empty();
         let prompt = PromptBuilder::build(PromptBuildInput {
@@ -2064,10 +2238,10 @@ mod tests {
             .contains("BDK Control Packet:\n- state: blocker_or_write"));
         assert!(prompt.messages[1]
             .content
-            .contains("do not request more workspace.read"));
+            .contains("workspace.read is forbidden for the next output"));
         assert!(prompt.messages[1]
             .content
-            .contains("workspace.write patch_file for the named target file"));
+            .contains("forbidden_next_tool=workspace.read"));
     }
 
     #[test]
@@ -2105,13 +2279,102 @@ mod tests {
             .contains("BDK Control Packet:\n- state: blocker_or_write"));
         assert!(prompt.messages[1]
             .content
-            .contains("do not request more workspace.read"));
+            .contains("workspace.read is forbidden for the next output"));
         assert!(prompt.messages[1]
             .content
             .contains("request git.status or git.diff with allowed input"));
         assert!(prompt.messages[1]
             .content
-            .contains("refine `.brownie/todo.md`"));
+            .contains("workspace.write patch_file to `.brownie/todo.md`"));
+    }
+
+    #[test]
+    fn prompt_builder_redirects_oversized_workspace_write_to_todo_decomposition() {
+        let context_window = ContextWindowSummary::empty();
+        let prompt = PromptBuilder::build(PromptBuildInput {
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            goal: "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- state: `verify_or_repair`\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n".into(),
+            mode_id: Some("implementer".into()),
+            mode_policy_summary: Some("Mode Policy:\nmode_id: implementer".into()),
+            mode_instruction_material: Some("Mode Instructions:\n<none>".into()),
+            permission_summary: vec![],
+            tool_plan_summary: vec![
+                "workspace.read: allowed".into(),
+                "workspace.write: allowed".into(),
+            ],
+            tool_intent_summary: vec![
+                "workspace.write: rejected code=input_too_large reason=input exceeds parser size limit.".into(),
+            ],
+            tool_execution_summary: vec![
+                "workspace.read: completed bytes_read=2000 truncated=false preview=\"const requiredSections = ['artifact_lifecycle', 'golden_journey_fixture', 'soak_test'];\"".into(),
+            ],
+            subtask_orchestration_summary: vec![],
+            verification_recovery_diagnostics_summary: vec![],
+            selected_index_context: None,
+            verification_recovery_context: None,
+            context_window: context_window.clone(),
+            context_budget: ContextBudgetSummary::unrequested(&context_window, None, usize::MAX),
+            ledger_summary: vec![],
+        });
+
+        assert!(prompt.messages[1]
+            .content
+            .contains("state: oversized_write_recovery"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("do not retry the oversized workspace.write"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("new_text must contain exactly one smaller unchecked leaf TODO"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("new_text must not contain the selected TODO first line"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("Source TODO:` referencing the selected TODO id"));
+        assert!(prompt.messages[1].content.contains("new unique TODO id"));
+    }
+
+    #[test]
+    fn prompt_builder_prioritizes_oversized_write_over_later_read_denial() {
+        let context_window = ContextWindowSummary::empty();
+        let prompt = PromptBuilder::build(PromptBuildInput {
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            goal: "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- state: `verify_or_repair`\n\n## Selected TODO\n\n- [ ] E-15d-soak-section-collector: Patch only `scripts/release-runtime-operational-evidence.mjs`.\n".into(),
+            mode_id: Some("implementer".into()),
+            mode_policy_summary: Some("Mode Policy:\nmode_id: implementer".into()),
+            mode_instruction_material: Some("Mode Instructions:\n<none>".into()),
+            permission_summary: vec![],
+            tool_plan_summary: vec![
+                "workspace.read: allowed".into(),
+                "workspace.write: allowed".into(),
+            ],
+            tool_intent_summary: vec![
+                "workspace.write: rejected code=input_too_large reason=input exceeds parser size limit.".into(),
+            ],
+            tool_execution_summary: vec![
+                "workspace.read: denied reason=Selected TODO says to patch only the target file.".into(),
+            ],
+            subtask_orchestration_summary: vec![],
+            verification_recovery_diagnostics_summary: vec![],
+            selected_index_context: None,
+            verification_recovery_context: None,
+            context_window: context_window.clone(),
+            context_budget: ContextBudgetSummary::unrequested(&context_window, None, usize::MAX),
+            ledger_summary: vec![],
+        });
+
+        assert!(prompt.messages[1]
+            .content
+            .contains("state: oversized_write_recovery"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("keeping the selected broad TODO pending is no progress"));
+        assert!(!prompt.messages[1]
+            .content
+            .contains("state: blocker_or_write"));
     }
 
     #[test]
@@ -2693,7 +2956,7 @@ mod tests {
             materialized.tool_intent_summary,
             vec![
                 "workspace.read: allowed",
-                "unknown.tool: rejected reason=Unknown tool id."
+                "unknown.tool: rejected code=<unknown> reason=Unknown tool id."
             ]
         );
     }

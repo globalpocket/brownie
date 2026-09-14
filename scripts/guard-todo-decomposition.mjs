@@ -148,20 +148,35 @@ function scopeLine(block) {
 
 function patchOnlyScopes(block) {
   const firstLine = scopeLine(block);
-  const match = firstLine.match(/Patch only\s+(.+?)(?::|$)/);
-  if (!match) {
-    return [];
-  }
-  return backtickedValues(match[1]);
+  return boundedScopeValuesAfterKeyword(firstLine, 'Patch only');
 }
 
 function createOnlyScopes(block) {
   const firstLine = scopeLine(block);
-  const match = firstLine.match(/Create only\s+(.+?)(?::|$)/);
-  if (!match) {
+  return boundedScopeValuesAfterKeyword(firstLine, 'Create only');
+}
+
+function boundedScopeValuesAfterKeyword(firstLine, keyword) {
+  const start = firstLine.indexOf(keyword);
+  if (start < 0) {
     return [];
   }
-  return backtickedValues(match[1]);
+  let rest = firstLine.slice(start + keyword.length).trimStart();
+  const scopes = [];
+  while (rest.startsWith('`')) {
+    const end = rest.indexOf('`', 1);
+    if (end < 0) {
+      break;
+    }
+    scopes.push(rest.slice(1, end));
+    rest = rest.slice(end + 1).trimStart();
+    const separator = rest.match(/^(?:,|and\b|&)\s*/);
+    if (!separator) {
+      break;
+    }
+    rest = rest.slice(separator[0].length).trimStart();
+  }
+  return scopes;
 }
 
 function boundedScopes(block) {
@@ -171,7 +186,7 @@ function boundedScopes(block) {
 function parentFromSource(block) {
   const line = sourceTodoLines(block)[0] ?? '';
   const source = line.slice('Source TODO:'.length).trim();
-  const id = source.split(':')[0]?.trim();
+  const id = source.split(':')[0]?.trim().replace(/[.,;]+$/u, '');
   return id || null;
 }
 
@@ -293,6 +308,9 @@ function validateLeafBlock(block, errors, options = {}) {
     errors.push(`${owner}: Patch only/Create only scope must name at most two concrete backticked paths.`);
   }
   const parent = parentFromSource(block);
+  if (parent === id) {
+    errors.push(`${owner}: Source TODO must reference the parent TODO, not the leaf itself.`);
+  }
   const prefix = parentPrefix(parent);
   if (prefix && !id.startsWith(`${prefix}-`)) {
     errors.push(`${owner}: TODO id must preserve parent prefix ${prefix}-.`);
@@ -433,7 +451,12 @@ export function validateTodoDecompositionText(text, options = {}) {
   const errors = [];
   const leafIds = [];
   const derivedBlocks = [];
+  const uncheckedIdCounts = new Map();
   for (const block of uncheckedTodoBlocks(text)) {
+    const uncheckedId = todoId(block);
+    if (uncheckedId) {
+      uncheckedIdCounts.set(uncheckedId, (uncheckedIdCounts.get(uncheckedId) ?? 0) + 1);
+    }
     if (isDecompositionDerived(block)) {
       derivedBlocks.push(block);
       validateLeafBlock(block, errors, options);
@@ -441,6 +464,11 @@ export function validateTodoDecompositionText(text, options = {}) {
       if (id) {
         leafIds.push(id);
       }
+    }
+  }
+  for (const [id, count] of uncheckedIdCounts.entries()) {
+    if (count > 1) {
+      errors.push(`${options.path ?? defaultTodoPath} ${id}: duplicate unchecked TODO id appears ${count} times.`);
     }
   }
   validateDependencies(text, derivedBlocks, errors, options);

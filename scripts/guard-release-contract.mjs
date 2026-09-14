@@ -99,6 +99,16 @@ function validateCommitTrace(trace, errors, contractPath) {
   }
 }
 
+function requireArtifactBindingTrace(trace, errors, contractPath, evidenceField) {
+  for (const field of ['implementation_commit', 'tested_commit', 'workflow_run_id', 'artifact_sha256']) {
+    requireValue(
+      isNonEmptyString(trace?.[field]),
+      errors,
+      `${contractPath} commit_trace.${field} must be non-empty when release_artifact_evidence.${evidenceField} claims implemented artifact evidence.`
+    );
+  }
+}
+
 function validateRuntimeReleaseContract(contract, options = {}) {
   const contractPath = options.contractPath ?? defaultContractPath;
   const packageJson = options.packageJson ?? {};
@@ -209,12 +219,16 @@ function validateRuntimeReleaseContract(contract, options = {}) {
   );
 
   const artifactEvidence = contract.release_artifact_evidence ?? {};
+  const implementedArtifactEvidenceStatuses = new Set(['implemented_sufficient', 'satisfied']);
   for (const field of ['artifacts', 'sha256sums', 'signature', 'sbom', 'provenance']) {
     const entry = artifactEvidence[field];
     requireValue(entry && typeof entry === 'object', errors, `${contractPath} release_artifact_evidence.${field} must be an object.`);
     if (entry && typeof entry === 'object') {
       requireValue(entry.status !== 'satisfied', errors, `${contractPath} release_artifact_evidence.${field} must not be satisfied before real artifacts exist.`);
       requireValue(entry.path === null || isNonEmptyString(entry.path), errors, `${contractPath} release_artifact_evidence.${field}.path must be null or non-empty.`);
+      if (implementedArtifactEvidenceStatuses.has(entry.status)) {
+        requireArtifactBindingTrace(contract.commit_trace, errors, contractPath, field);
+      }
     }
   }
 

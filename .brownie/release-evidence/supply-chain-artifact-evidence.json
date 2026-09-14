@@ -3,8 +3,8 @@
   "evidence_id": "brownie-supply-chain-artifact-evidence-v1",
   "phase": "RRP-8.4",
   "repository": "globalpocket/brownie",
-  "generated_at": "2026-09-09T07:39:37.317Z",
-  "source_commit": "7c1a362b4b076751605d1df19363e720e0c18a28",
+  "generated_at": "2026-09-13T09:09:10.672Z",
+  "source_commit": "9bcc7f2727c8ca576b533a9262540edc61bfc89b",
   "source_tree_dirty": true,
   "release_ready": false,
   "runtime_release_ready": false,
@@ -69,7 +69,7 @@
       "status": "satisfied",
       "release_blocking": true,
       "scanner": "brownie-high-confidence-secret-patterns-v1",
-      "scanned_tracked_file_count": 432,
+      "scanned_tracked_file_count": 493,
       "findings_count": 0,
       "findings": []
     },
@@ -77,7 +77,7 @@
       "status": "satisfied",
       "release_blocking": true,
       "path": ".brownie/release-evidence/brownie-runtime-sbom.json",
-      "sha256": "sha256:c4f2f7f883811efadc6de9439b7ed8648023a9e26219ea1418d4074c58bef9c6",
+      "sha256": "sha256:9af1c1e5051f97e3737d42894c0e95900d1abb67ba28dc45c6d2ce1aa114d836",
       "component_count": 221
     },
     "artifacts": {
@@ -249,7 +249,7 @@
       ]
     },
     "artifact_smoke": {
-      "status": "satisfied",
+      "status": "not_executed",
       "release_blocking": true,
       "smoke_targets": [
         ".brownie/release-evidence/artifacts/darwin-arm64/brownie",
@@ -260,8 +260,8 @@
       "smoke_results": [
         {
           "path": ".brownie/release-evidence/artifacts/darwin-arm64/brownie",
-          "status": "satisfied",
-          "passed": true,
+          "status": "not_executed",
+          "passed": false,
           "commands": [
             {
               "args": [
@@ -278,13 +278,21 @@
               "exit_code": 0,
               "passed": true
             }
+          ],
+          "e2e_steps": [],
+          "missing_e2e_steps": [
+            "base_mode_pack_load",
+            "minimal_task_run",
+            "ledger_generation",
+            "forced_stop_resume",
+            "stale_replay_rejection"
           ],
           "smoke_evidence_path": ".brownie/release-evidence/artifacts/darwin-arm64/smoke-evidence.json"
         },
         {
           "path": ".brownie/release-evidence/artifacts/linux-arm64/brownie",
-          "status": "satisfied",
-          "passed": true,
+          "status": "not_executed",
+          "passed": false,
           "commands": [
             {
               "args": [
@@ -301,13 +309,21 @@
               "exit_code": 0,
               "passed": true
             }
+          ],
+          "e2e_steps": [],
+          "missing_e2e_steps": [
+            "base_mode_pack_load",
+            "minimal_task_run",
+            "ledger_generation",
+            "forced_stop_resume",
+            "stale_replay_rejection"
           ],
           "smoke_evidence_path": ".brownie/release-evidence/artifacts/linux-arm64/smoke-evidence.json"
         },
         {
           "path": ".brownie/release-evidence/artifacts/linux-x64/brownie",
-          "status": "satisfied",
-          "passed": true,
+          "status": "not_executed",
+          "passed": false,
           "commands": [
             {
               "args": [
@@ -325,12 +341,20 @@
               "passed": true
             }
           ],
+          "e2e_steps": [],
+          "missing_e2e_steps": [
+            "base_mode_pack_load",
+            "minimal_task_run",
+            "ledger_generation",
+            "forced_stop_resume",
+            "stale_replay_rejection"
+          ],
           "smoke_evidence_path": ".brownie/release-evidence/artifacts/linux-x64/smoke-evidence.json"
         },
         {
           "path": ".brownie/release-evidence/artifacts/win32-x64/brownie.exe",
-          "status": "satisfied",
-          "passed": true,
+          "status": "not_executed",
+          "passed": false,
           "commands": [
             {
               "args": [
@@ -347,6 +371,14 @@
               "exit_code": 0,
               "passed": true
             }
+          ],
+          "e2e_steps": [],
+          "missing_e2e_steps": [
+            "base_mode_pack_load",
+            "minimal_task_run",
+            "ledger_generation",
+            "forced_stop_resume",
+            "stale_replay_rejection"
           ],
           "smoke_evidence_path": ".brownie/release-evidence/artifacts/win32-x64/smoke-evidence.json"
         }
@@ -356,15 +388,15 @@
       "status": "satisfied",
       "release_blocking": true,
       "path": ".brownie/release-evidence/SHA256SUMS",
-      "sha256": "sha256:ed9e851a67656eff0e6927e252ba07035e33468aa24bb7f4980b8c4b7a12b135",
+      "sha256": "sha256:ed3eb47d701832b67dde77c04ed6657fe7d5f5be41f2e66b27eb47365e276d95",
       "entries": [
         {
           "path": ".brownie/release-evidence/brownie-runtime-sbom.json",
-          "sha256": "sha256:c4f2f7f883811efadc6de9439b7ed8648023a9e26219ea1418d4074c58bef9c6"
+          "sha256": "sha256:9af1c1e5051f97e3737d42894c0e95900d1abb67ba28dc45c6d2ce1aa114d836"
         },
         {
           "path": ".brownie/release-evidence/brownie-runtime-provenance.json",
-          "sha256": "sha256:d34f60d972051118df845dec3b647cab00839c240c67bb23c09517d334d95185"
+          "sha256": "sha256:9c17642056d3672e69875fd4884a96e53776d8f52c5715adb7909dbf14660e35"
         },
         {
           "path": ".brownie/release-evidence/artifacts/darwin-arm64/brownie",
@@ -395,8 +427,11 @@
       "status": "satisfied",
       "release_blocking": true,
       "path": ".brownie/release-evidence/brownie-runtime-provenance.json",
-      "sha256": "sha256:d34f60d972051118df845dec3b647cab00839c240c67bb23c09517d334d95185"
+      "sha256": "sha256:9c17642056d3672e69875fd4884a96e53776d8f52c5715adb7909dbf14660e35"
     }
   },
-  "fail_closed_reasons": []
+  "fail_closed_reasons": [
+    "source_tree_dirty:true",
+    "artifact_smoke:not_executed"
+  ]
 }

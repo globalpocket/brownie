@@ -22,6 +22,13 @@ const requiredSections = [
 ];
 
 const requiredReleasePlatforms = ['linux-x64', 'darwin-arm64', 'win32-x64'];
+const requiredArtifactSmokeE2eStepIds = [
+  'base_mode_pack_load',
+  'minimal_task_run',
+  'ledger_generation',
+  'forced_stop_resume',
+  'stale_replay_rejection'
+];
 
 const secretPatterns = [
   {
@@ -291,11 +298,16 @@ function buildArtifactSmokeSection(repoRoot, artifacts) {
 
   const smokeResults = artifacts.map((artifact) => {
     if (artifact.smoke_evidence?.status) {
+      const e2eSteps = Array.isArray(artifact.smoke_evidence.e2e_steps) ? artifact.smoke_evidence.e2e_steps : [];
+      const missingE2eSteps = requiredArtifactSmokeE2eStepIds.filter((stepId) => !e2eSteps.includes(stepId));
+      const e2eSatisfied = artifact.smoke_evidence.status === 'satisfied' && missingE2eSteps.length === 0;
       return {
         path: artifact.path,
-        status: artifact.smoke_evidence.status,
-        passed: artifact.smoke_evidence.status === 'satisfied',
+        status: e2eSatisfied ? 'satisfied' : 'not_executed',
+        passed: e2eSatisfied,
         commands: Array.isArray(artifact.smoke_evidence.commands) ? artifact.smoke_evidence.commands : [],
+        e2e_steps: e2eSteps,
+        missing_e2e_steps: missingE2eSteps,
         smoke_evidence_path: artifact.smoke_evidence_path
       };
     }
@@ -312,11 +324,14 @@ function buildArtifactSmokeSection(repoRoot, artifacts) {
       smokeCommand(repoRoot, artifact.path, ['--version']),
       smokeCommand(repoRoot, artifact.path, ['help', 'run'])
     ];
+    const shallowCommandsPassed = commands.every((command) => command.passed);
     return {
       path: artifact.path,
-      status: commands.every((command) => command.passed) ? 'satisfied' : 'failed',
-      passed: commands.every((command) => command.passed),
-      commands
+      status: shallowCommandsPassed ? 'not_executed' : 'failed',
+      passed: false,
+      commands,
+      missing_e2e_steps: requiredArtifactSmokeE2eStepIds,
+      note: 'Built-in artifact smoke commands are bounded diagnostics only; per-target E2E smoke evidence is required before artifact_smoke can be satisfied.'
     };
   });
   return {
@@ -589,7 +604,7 @@ export function buildSupplyChainArtifactEvidence(options = {}) {
     }
   };
 
-  const failClosedReasons = [];
+  const failClosedReasons = treeStatus ? ['source_tree_dirty:true'] : [];
   for (const sectionId of requiredSections) {
     const section = sections[sectionId];
     if (!section || section.status !== 'satisfied') {
