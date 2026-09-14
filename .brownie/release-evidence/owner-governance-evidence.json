@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "evidence_id": "brownie-owner-governance-evidence-v1",
-  "generated_at": "2026-09-14T09:06:50.950Z",
+  "generated_at": "2026-09-14T18:32:45.539Z",
   "repository": "globalpocket/brownie",
-  "source_commit": "9bcc7f2727c8ca576b533a9262540edc61bfc89b",
+  "source_commit": "64c33dfbb6ca065eb521d73b386aeab2ead79296",
   "release_ready": false,
   "runtime_release_ready": false,
   "required_sections": [
@@ -45,8 +45,8 @@
       "workflow_run_id_present": true,
       "workflow_sha_present": true,
       "workflow_repository_present": true,
-      "workflow_run_id": "34744384836",
-      "workflow_head_sha": "9bcc7f2727c8ca576b533a9262540edc61bfc89b",
+      "workflow_run_id": "34877339692",
+      "workflow_head_sha": "64c33dfbb6ca065eb521d73b386aeab2ead79296",
       "workflow_conclusion": "success",
       "required_check_names": [
         "check",
@@ -72,12 +72,12 @@
       "note": "Runtime can verify checksum integrity locally, but owner must approve the release signing or formal integrity authority before Release Ready."
     },
     "independent_reviews": {
-      "status": "not_completed",
+      "status": "satisfied",
       "release_blocking": true,
       "owner_evidence": {
         "path": "docs/architecture/owner-independent-review-evidence.json",
         "exists": true,
-        "sha256": "sha256:9fa4cc2fc9c81ce65dc83631ecae7952dd0dc08a78d67b3ac37fe9921041b66e"
+        "sha256": "sha256:440d67780bb43cd803ee975931c4855dbc1b44ab5ba40a4f15632819330bee2e"
       },
       "required_review_ids": [
         "release_workflow",
@@ -87,16 +87,70 @@
         "signing_provenance",
         "release_ready_judgment"
       ],
-      "approved_review_count": 0,
-      "missing_review_ids": [
-        "release_workflow",
-        "permission_model",
-        "ledger_contract",
-        "mode_pack_trust_boundary",
-        "signing_provenance",
-        "release_ready_judgment"
+      "approved_review_count": 6,
+      "missing_review_ids": [],
+      "github_review_provenance": [
+        {
+          "required_review_id": "release_workflow",
+          "pull_request_number": 458,
+          "review_id": "PRR_kwDOTGOop88AAAABNgGjGg",
+          "reviewer": "globalpocket",
+          "pull_request_author": "brownie-agent",
+          "state": "APPROVED",
+          "commit_sha": "77a1818c643e7155d7df3a372cd0f2d2bb055aa7",
+          "submitted_at": "2026-09-14T17:52:04Z"
+        },
+        {
+          "required_review_id": "permission_model",
+          "pull_request_number": 458,
+          "review_id": "PRR_kwDOTGOop88AAAABNgGjGg",
+          "reviewer": "globalpocket",
+          "pull_request_author": "brownie-agent",
+          "state": "APPROVED",
+          "commit_sha": "77a1818c643e7155d7df3a372cd0f2d2bb055aa7",
+          "submitted_at": "2026-09-14T17:52:04Z"
+        },
+        {
+          "required_review_id": "ledger_contract",
+          "pull_request_number": 458,
+          "review_id": "PRR_kwDOTGOop88AAAABNgGjGg",
+          "reviewer": "globalpocket",
+          "pull_request_author": "brownie-agent",
+          "state": "APPROVED",
+          "commit_sha": "77a1818c643e7155d7df3a372cd0f2d2bb055aa7",
+          "submitted_at": "2026-09-14T17:52:04Z"
+        },
+        {
+          "required_review_id": "mode_pack_trust_boundary",
+          "pull_request_number": 458,
+          "review_id": "PRR_kwDOTGOop88AAAABNgGjGg",
+          "reviewer": "globalpocket",
+          "pull_request_author": "brownie-agent",
+          "state": "APPROVED",
+          "commit_sha": "77a1818c643e7155d7df3a372cd0f2d2bb055aa7",
+          "submitted_at": "2026-09-14T17:52:04Z"
+        },
+        {
+          "required_review_id": "signing_provenance",
+          "pull_request_number": 458,
+          "review_id": "PRR_kwDOTGOop88AAAABNgGjGg",
+          "reviewer": "globalpocket",
+          "pull_request_author": "brownie-agent",
+          "state": "APPROVED",
+          "commit_sha": "77a1818c643e7155d7df3a372cd0f2d2bb055aa7",
+          "submitted_at": "2026-09-14T17:52:04Z"
+        },
+        {
+          "required_review_id": "release_ready_judgment",
+          "pull_request_number": 458,
+          "review_id": "PRR_kwDOTGOop88AAAABNgGjGg",
+          "reviewer": "globalpocket",
+          "pull_request_author": "brownie-agent",
+          "state": "APPROVED",
+          "commit_sha": "77a1818c643e7155d7df3a372cd0f2d2bb055aa7",
+          "submitted_at": "2026-09-14T17:52:04Z"
+        }
       ],
-      "github_review_provenance": [],
       "github_review_verification_failures": []
     },
     "oss_license_publish_posture": {
@@ -111,7 +165,5 @@
       "note": "License and publish posture are owner decisions; Runtime automation only records whether the decision evidence exists."
     }
   },
-  "fail_closed_reasons": [
-    "independent_reviews:not_completed"
-  ]
+  "fail_closed_reasons": []
 }
