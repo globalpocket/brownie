@@ -16,6 +16,9 @@ TODO_QUEUE_STATE_FILE="$TODO_CLAIM_DIR/todo-queue-state.json"
 TODO_BLOCKED_FILE="$TODO_CLAIM_DIR/blocked.jsonl"
 TODO_REPAIR_FEEDBACK_FILE="$TODO_CLAIM_DIR/repair-feedback.json"
 PROGRESS_STATE_FILE="$STATE_DIR/progress-state.json"
+BDK_TRAJECTORY_DIR="$STATE_DIR/trajectories"
+BDK_TRAJECTORY_FILE="${PHASE_LOOP_BDK_TRAJECTORY_FILE:-"$STATE_DIR/bdk-trajectory.jsonl"}"
+BDK_HARNESS_FEEDBACK_FILE="$STATE_DIR/bdk-harness-feedback.json"
 LAUNCHD_LABEL="${PHASE_LOOP_LAUNCHD_LABEL:-globalpocket.brownie.phase-loop}"
 SCREEN_NAME="${PHASE_LOOP_SCREEN_NAME:-brownie-phase-loop}"
 
@@ -61,7 +64,7 @@ PHASE_LOOP_LLM_TOP_K_CODE="${PHASE_LOOP_LLM_TOP_K_CODE:-}"
 PHASE_LOOP_LLM_FAST_MAX_PROMPT_BYTES="${PHASE_LOOP_LLM_FAST_MAX_PROMPT_BYTES:-20000}"
 PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK="${PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK:-0}"
 
-mkdir -p "$RUN_DIR" "$LOG_DIR" "$TODO_CLAIM_DIR"
+mkdir -p "$RUN_DIR" "$LOG_DIR" "$TODO_CLAIM_DIR" "$BDK_TRAJECTORY_DIR"
 
 json_escape() {
   python3 -c 'import json,sys; print(json.dumps(sys.stdin.read())[1:-1])'
@@ -69,6 +72,132 @@ json_escape() {
 
 now_utc() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+write_bdk_trajectory_event() {
+  local run_stamp="$1"
+  local event_type="$2"
+  local payload_json="${3:-}"
+  if [ -z "$payload_json" ]; then
+    payload_json="{}"
+  fi
+  python3 - "$TODO_CLAIM_FILE" "$BDK_TRAJECTORY_FILE" "$BDK_TRAJECTORY_DIR/$run_stamp.jsonl" "$run_stamp" "$event_type" "$(now_utc)" "$payload_json" <<'PY'
+import json
+import os
+import pathlib
+import re
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+aggregate_path = pathlib.Path(sys.argv[2])
+run_path = pathlib.Path(sys.argv[3])
+run_id = sys.argv[4]
+event_type = sys.argv[5]
+timestamp = sys.argv[6]
+payload_raw = sys.argv[7]
+
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+except Exception:
+    sys.exit(0)
+
+claim_id = str(claim.get("claim_id") or "")
+selected_todo = str(claim.get("selected_todo") or "")
+if not claim_id or not selected_todo:
+    sys.exit(0)
+
+first_line = selected_todo.splitlines()[0] if selected_todo.splitlines() else selected_todo
+match = re.match(r"^\s*(?:[-*]|\d+[.)])\s+\[\s\]\s+([^:\s]+)", first_line)
+todo_id = match.group(1) if match else first_line.strip()[:80]
+if not todo_id:
+    sys.exit(0)
+
+try:
+    payload = json.loads(payload_raw)
+except Exception:
+    payload = {"message": payload_raw}
+if not isinstance(payload, dict):
+    payload = {"value": payload}
+
+record = {
+    "schema_version": 1,
+    "run_id": run_id,
+    "claim_id": claim_id,
+    "events": [
+        {
+            "type": event_type,
+            "at": timestamp,
+            "todo_id": todo_id,
+            "claim_id": claim_id,
+            "payload": payload,
+        }
+    ],
+}
+
+line = json.dumps(record, ensure_ascii=False, sort_keys=True)
+for path in (aggregate_path, run_path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(line)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+PY
+  case "$event_type" in
+    todo.completed|todo.replanned|todo.blocked)
+      evaluate_bdk_public_harness_feedback "$run_stamp" "$event_type" || true
+      ;;
+  esac
+}
+
+evaluate_bdk_public_harness_feedback() {
+  local run_stamp="$1"
+  local terminal_event="${2:-}"
+  local trajectory_path="$BDK_TRAJECTORY_DIR/$run_stamp.jsonl"
+  local output
+  if [ ! -f "$trajectory_path" ] || [ ! -f "$ROOT_DIR/scripts/bdk-public-harness-evaluate.mjs" ]; then
+    return 0
+  fi
+  output="$(
+    cd "$ROOT_DIR" || exit 70
+    node scripts/bdk-public-harness-evaluate.mjs --trajectory "$trajectory_path" --output "$BDK_HARNESS_FEEDBACK_FILE" 2>&1
+  )"
+  local status=$?
+  if [ "$status" -ne 0 ]; then
+    printf '%s bdk_harness_feedback_failed run=%s terminal_event=%s status=%s output=%s feedback=%s\n' "$(now_utc)" "$run_stamp" "$terminal_event" "$status" "$output" "$BDK_HARNESS_FEEDBACK_FILE" >> "$SUPERVISOR_LOG"
+  else
+    printf '%s bdk_harness_feedback_passed run=%s terminal_event=%s feedback=%s\n' "$(now_utc)" "$run_stamp" "$terminal_event" "$BDK_HARNESS_FEEDBACK_FILE" >> "$SUPERVISOR_LOG"
+  fi
+  return 0
+}
+
+write_bdk_trajectory_prompt_routing_event() {
+  local run_stamp="$1"
+  local effective_prompt="$2"
+  local meta_path="${effective_prompt%.prompt.md}.prompt.meta.json"
+  local payload_json
+  payload_json="$(
+    python3 - "$meta_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = {"source": "phase-loop", "prompt_meta": "missing"}
+try:
+    meta = json.loads(path.read_text(encoding="utf-8"))
+    payload = {
+        "source": "phase-loop",
+        "bdk_state": meta.get("bdk_state"),
+        "llm_route": meta.get("llm_route"),
+        "prompt_meta": path.name,
+    }
+except Exception:
+    pass
+print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+PY
+  )"
+  write_bdk_trajectory_event "$run_stamp" "workflow.routed" "$payload_json"
 }
 
 write_status() {
@@ -653,9 +782,9 @@ if not live:
     os.chmod(tmp, 0o600)
     os.replace(tmp, claim_path)
     raise SystemExit(0)
-if live == selected:
-    raise SystemExit(0)
 fingerprint = hashlib.sha256(todo_text.encode("utf-8")).hexdigest()
+if live == selected and claim.get("queue_fingerprint") == fingerprint:
+    raise SystemExit(0)
 generation = int(claim.get("queue_generation") or 1)
 try:
     state = json.loads(queue_state_path.read_text(encoding="utf-8"))
@@ -1211,6 +1340,7 @@ if not isinstance(selected, str) or not selected.strip():
 first_line = selected.splitlines()[0].strip()
 if not re.match(r"^- \[ \] [^:\s]+: (Patch only|Create only) `[^`]+`", first_line):
     raise SystemExit(2)
+selected_id = first_line.removeprefix("- [ ] ").split(":", 1)[0].strip().lower()
 if "Verification:" not in selected or "Verification: run " not in selected:
     raise SystemExit(2)
 try:
@@ -1222,11 +1352,179 @@ except Exception as error:
     print(json.dumps({"completed": False, "reason": f"todo_unreadable:{error}"}, sort_keys=True))
     raise SystemExit(1)
 
+selected_lower = selected.lower()
+if selected_id == "e-16a-artifact-source-local-producer-esm-helper-fix":
+    target = workspace_root / "scripts/release-local-artifact.mjs"
+    try:
+        target_text = target.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"target_unreadable:{error}"}, sort_keys=True))
+        raise SystemExit(1)
+    helper_region_start = target_text.find("function gitOutput(")
+    helper_region_end = target_text.find("function run(", helper_region_start)
+    helper_region = target_text[helper_region_start:helper_region_end] if helper_region_start >= 0 and helper_region_end > helper_region_start else ""
+    artifact_start = target_text.find("const artifactEvidence = {")
+    artifact_end = target_text.find("const smokeEvidence =", artifact_start)
+    artifact_section = target_text[artifact_start:artifact_end] if artifact_start >= 0 and artifact_end > artifact_start else ""
+    semantic_checks = {
+        "node_child_process_require_absent": "require('node:child_process')" not in target_text and 'require("node:child_process")' not in target_text,
+        "git_output_helper_present": "function gitOutput(repoRoot, args)" in target_text,
+        "helpers_use_spawn_sync": "spawnSync('git'" in helper_region,
+        "helpers_accept_repo_root": "function sha256SourceCommit(repoRoot)" in target_text and "function sha256CleanTree(repoRoot)" in target_text,
+        "call_sites_pass_repo_root": "sha256SourceCommit(repoRoot)" in target_text and "sha256CleanTree(repoRoot)" in target_text,
+        "artifact_source_fields_present": all(token in artifact_section for token in ("source_commit", "source_clean_tree", "source_identity")),
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
+        raise SystemExit(1)
+elif selected_id == "e-16a-clean-source-guard":
+    target = workspace_root / "scripts/guard-supply-chain-artifact-evidence.mjs"
+    evidence_path = workspace_root / ".brownie/release-evidence/supply-chain-artifact-evidence.json"
+    try:
+        target_text = target.read_text(encoding="utf-8")
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"semantic_noop_verification_unreadable:{error}"}, sort_keys=True))
+        raise SystemExit(1)
+    artifacts = evidence.get("sections", {}).get("artifacts", {})
+    semantic_checks = {
+        "guard_requires_source_commit": "artifact.source_commit" in target_text and ".source_commit must be sha256" in target_text,
+        "guard_requires_clean_tree": "artifact.source_clean_tree === 'clean'" in target_text,
+        "guard_requires_source_identity": "artifact.source_identity" in target_text and ".source_identity must be sha256" in target_text,
+        "evidence_fail_closed_for_missing_source_identity": artifacts.get("status") == "partial_source_identity_missing",
+        "evidence_fail_reason_present": "artifacts:partial_source_identity_missing" in evidence.get("fail_closed_reasons", []),
+        "missing_targets_recorded": isinstance(artifacts.get("missing_source_identity_targets"), list) and len(artifacts.get("missing_source_identity_targets")) > 0,
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
+        raise SystemExit(1)
+elif selected_id == "e-16a-clean-source-test":
+    target = workspace_root / "scripts/guard-supply-chain-artifact-evidence.test.mjs"
+    try:
+        target_text = target.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"semantic_noop_verification_unreadable:{error}"}, sort_keys=True))
+        raise SystemExit(1)
+    semantic_checks = {
+        "fail_closed_missing_source_identity_test_present": "accepts fail-closed artifacts when source identity is missing" in target_text,
+        "rejects_satisfied_missing_source_identity_test_present": "rejects satisfied artifacts without source identity binding" in target_text,
+        "accepts_clean_source_identity_test_present": "accepts satisfied artifacts with clean source identity binding" in target_text,
+        "partial_source_identity_status_covered": "partial_source_identity_missing" in target_text,
+        "source_identity_fields_covered": all(token in target_text for token in ("source_commit", "source_clean_tree", "source_identity")),
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
+        raise SystemExit(1)
+elif selected_id == "e-16b-artifact-smoke-collector":
+    target = workspace_root / "scripts/release-supply-chain-artifact-evidence.mjs"
+    try:
+        target_text = target.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"semantic_noop_verification_unreadable:{error}"}, sort_keys=True))
+        raise SystemExit(1)
+    smoke_start = target_text.find("function buildArtifactSmokeSection")
+    smoke_end = target_text.find("function readJsonIfExists", smoke_start)
+    smoke_section = target_text[smoke_start:smoke_end] if smoke_start >= 0 and smoke_end > smoke_start else ""
+    semantic_checks = {
+        "collector_reads_smoke_evidence_path": "smoke_evidence_path" in target_text,
+        "collector_reads_smoke_evidence_status": "artifact.smoke_evidence?.status" in target_text,
+        "collector_records_e2e_steps": "e2e_steps" in smoke_section and "missing_e2e_steps" in smoke_section,
+        "collector_avoids_raw_output_fields": "stdout" not in smoke_section and "stderr" not in smoke_section,
+        "no_unused_artifact_smoke_targets_table": "artifactSmokeTargets" not in target_text,
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
+        raise SystemExit(1)
+elif selected_id == "e-16b-artifact-smoke-test":
+    target = workspace_root / "scripts/guard-supply-chain-artifact-evidence.test.mjs"
+    try:
+        target_text = target.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"semantic_noop_verification_unreadable:{error}"}, sort_keys=True))
+        raise SystemExit(1)
+    semantic_checks = {
+        "rejects_missing_e2e_steps_test_present": "rejects satisfied artifact smoke without required E2E step evidence" in target_text,
+        "accepts_required_e2e_steps_test_present": "accepts satisfied artifact smoke with required E2E step evidence" in target_text,
+        "required_step_names_covered": all(step in target_text for step in ("base_mode_pack_load", "minimal_task_run", "ledger_generation", "forced_stop_resume", "stale_replay_rejection")),
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
+        raise SystemExit(1)
+elif selected_id == "e-16c-artifact-lifecycle-guard":
+    target = workspace_root / "scripts/guard-runtime-operational-evidence.mjs"
+    test_target = workspace_root / "scripts/guard-runtime-operational-evidence.test.mjs"
+    try:
+        target_text = target.read_text(encoding="utf-8")
+        test_text = test_target.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"semantic_noop_verification_unreadable:{error}"}, sort_keys=True))
+        raise SystemExit(1)
+    semantic_checks = {
+        "guard_iterates_artifact_lifecycle_results": "evidence.sections?.artifact_lifecycle?.lifecycle_results" in target_text,
+        "guard_requires_lifecycle_path": "lifecycle_results[${index}].path must be non-empty" in target_text,
+        "guard_validates_lifecycle_commands": "validateCommand(command, errors, `sections.artifact_lifecycle.lifecycle_results[${index}].commands" in target_text,
+        "guard_requires_satisfied_status": "result.status === 'satisfied'" in target_text,
+        "guard_requires_uninstalled": "result.uninstalled === true" in target_text,
+        "guard_requires_checksum_verified": "result.checksum_verified === true" in target_text,
+        "guard_rejects_raw_process_fields": "forbiddenRawProcessFieldNames" in target_text and "must not store raw process evidence" in target_text,
+        "tests_cover_failed_lifecycle_command": "rejects satisfied artifact lifecycle with failed command" in test_text,
+        "tests_cover_forbidden_local_and_raw_process": "rejects forbidden local and raw process evidence" in test_text,
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
+        raise SystemExit(1)
+elif selected_id == "e-16c-artifact-lifecycle-test":
+    target = workspace_root / "scripts/guard-runtime-operational-evidence.test.mjs"
+    try:
+        target_text = target.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"semantic_noop_verification_unreadable:{error}"}, sort_keys=True))
+        raise SystemExit(1)
+    semantic_checks = {
+        "valid_evidence_contains_lifecycle_results": "lifecycle_results" in target_text and "checksum_verified: true" in target_text and "uninstalled: true" in target_text,
+        "test_rejects_missing_fail_closed_reason": "requires fail-closed reasons for incomplete artifact lifecycle evidence" in target_text,
+        "test_accepts_incompatible_host_fail_closed": "accepts fail-closed artifact lifecycle when cross-platform artifacts are host-incompatible" in target_text,
+        "test_accepts_missing_manifest_fail_closed": "accepts fail-closed artifact lifecycle when local release target manifest is missing" in target_text,
+        "test_rejects_failed_lifecycle_command": "rejects satisfied artifact lifecycle with failed command" in target_text,
+        "test_rejects_forbidden_local_and_raw_process": "rejects forbidden local and raw process evidence" in target_text,
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
+        raise SystemExit(1)
+elif selected_id == "e-16d-stateful-soak-guard":
+    target = workspace_root / "scripts/guard-runtime-operational-evidence.mjs"
+    try:
+        target_text = target.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"semantic_noop_verification_unreadable:{error}"}, sort_keys=True))
+        raise SystemExit(1)
+    semantic_checks = {
+        "required_stateful_ids_present": all(step in target_text for step in ("task_state_transition", "ledger_workspace_consistency", "resume_replay_handling", "duplicate_side_effect_rejection", "process_loss_recovery", "finite_convergence")),
+        "satisfied_soak_requires_stateful_steps": "validateSatisfiedStatefulSoakSteps(soak.stateful_steps, errors)" in target_text,
+        "satisfied_soak_requires_each_step": "satisfied soak_test.stateful_steps must include ${stepId}" in target_text,
+        "satisfied_soak_requires_passed_true": "step?.passed === true" in target_text,
+        "satisfied_soak_requires_status_satisfied": "step?.status === 'satisfied'" in target_text,
+        "version_only_can_remain_fail_closed": "not_executed" in target_text and "allowedIncompleteStatuses" in target_text,
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
+        raise SystemExit(1)
+
 # Do not complete a still-pending implementation TODO just because its
 # verification command is already green. Many Brownie TODOs add coverage to
 # existing passing suites; completion must come from an actual queue removal or
 # a bounded implementation path, not from a pre-existing green check.
-raise SystemExit(2)
+if (
+    selected_id != "e-16a-artifact-source-local-producer-esm-helper-fix"
+    and selected_id != "e-16a-clean-source-guard"
+    and selected_id != "e-16a-clean-source-test"
+    and selected_id != "e-16b-artifact-smoke-collector"
+    and selected_id != "e-16b-artifact-smoke-test"
+    and selected_id != "e-16c-artifact-lifecycle-guard"
+    and selected_id != "e-16c-artifact-lifecycle-test"
+    and selected_id != "e-16d-stateful-soak-guard"
+):
+    raise SystemExit(2)
 
 verification_text = ""
 for line in selected.splitlines():
@@ -2093,6 +2391,8 @@ if not isinstance(selected, str) or not selected.strip():
     raise SystemExit(1)
 
 first_line = selected.splitlines()[0]
+selected_id_match = re.match(r"^\s*[-*]\s+\[\s*\]\s+([^:\s]+)", first_line)
+selected_id = selected_id_match.group(1).strip() if selected_id_match else ""
 try:
     if first_line not in todo_path.read_text(encoding="utf-8"):
         print(json.dumps({"completed": True, "reason": "selected_todo_already_removed"}, sort_keys=True))
@@ -2165,6 +2465,21 @@ def allowed_args(command):
     return None
 
 results = []
+if applied_path.endswith((".js", ".mjs", ".cjs")):
+    syntax_args = ["node", "--check", applied_path]
+    completed = subprocess.run(syntax_args, cwd=workspace_root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+    results.append({
+        "command": "node --check " + shlex.quote(applied_path),
+        "exit_code": completed.returncode,
+        "stdout_chars": len(completed.stdout),
+        "stderr_chars": len(completed.stderr),
+        "stdout_tail": completed.stdout[-2000:],
+        "stderr_tail": completed.stderr[-2000:],
+    })
+    if completed.returncode != 0:
+        print(json.dumps({"completed": False, "reason": "syntax_check_failed", "results": results}, sort_keys=True))
+        raise SystemExit(1)
+
 for command in commands:
     args = allowed_args(command)
     if args is None:
@@ -2199,6 +2514,53 @@ if "generated satisfied soak evidence" in selected_lower:
             "expected": "sections.soak_test.status=satisfied",
             "actual": soak_status,
             "results": results
+        }, sort_keys=True))
+        raise SystemExit(1)
+
+if "e-16a-artifact-source-local-producer" in selected_lower:
+    target_path = workspace_root / "scripts/release-local-artifact.mjs"
+    try:
+        target_text = target_path.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"semantic_completion_target_unreadable:{error}", "results": results}, sort_keys=True))
+        raise SystemExit(1)
+    artifact_start = target_text.find("const artifactEvidence = {")
+    artifact_end = target_text.find("const smokeEvidence =", artifact_start)
+    artifact_section = target_text[artifact_start:artifact_end] if artifact_start >= 0 and artifact_end > artifact_start else ""
+    source_tokens = ("source_commit", "sourceCommit", "source_clean_tree", "sourceCleanTree", "source_identity", "sourceIdentity")
+    if not artifact_section or not any(token in artifact_section for token in source_tokens):
+        print(json.dumps({
+            "completed": False,
+            "reason": "semantic_completion_not_satisfied",
+            "expected": "scripts/release-local-artifact.mjs artifactEvidence records source commit and clean-tree/source identity",
+            "actual": "artifactEvidence lacks source identity fields",
+            "results": results
+        }, sort_keys=True))
+        raise SystemExit(1)
+
+if selected_id == "E-16d-soak-build-transition-step":
+    target_path = workspace_root / "scripts/release-runtime-operational-evidence.mjs"
+    try:
+        target_text = target_path.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"semantic_completion_target_unreadable:{error}", "results": results}, sort_keys=True))
+        raise SystemExit(1)
+    section_start = target_text.find("function buildSoakSection(")
+    section_end = target_text.find("function writeJson(", section_start)
+    build_soak_section = target_text[section_start:section_end] if section_start >= 0 and section_end > section_start else ""
+    semantic_checks = {
+        "build_soak_section_present": bool(build_soak_section),
+        "records_stateful_steps": "stateful_steps" in build_soak_section or "statefulSteps" in build_soak_section,
+        "records_task_state_transition": "task_state_transition" in build_soak_section,
+        "does_not_target_fixture_debris": "soakEvidenceFixture" not in build_soak_section,
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({
+            "completed": False,
+            "reason": "semantic_completion_not_satisfied",
+            "expected": "buildSoakSection records a real task_state_transition stateful soak step instead of only listing it as missing or editing soakEvidenceFixture debris",
+            "actual": semantic_checks,
+            "results": results,
         }, sort_keys=True))
         raise SystemExit(1)
 
@@ -2289,6 +2651,200 @@ print(json.dumps({
 PY
   rm -f "$guard_stdout" "$guard_stderr"
   return 1
+}
+
+apply_valid_todo_patch_proposal_fallback() {
+  local run_stamp="$1"
+  local expected_run_id="${2:-}"
+  python3 - "$PHASE_LOOP_BROWNIE_STORE_ROOT" "$TODO_CLAIM_FILE" "$PHASE_LOOP_TODO" "$run_stamp" "$expected_run_id" <<'PY'
+import json
+import pathlib
+import sys
+
+store_root = pathlib.Path(sys.argv[1])
+claim_path = pathlib.Path(sys.argv[2])
+todo_path = pathlib.Path(sys.argv[3])
+run_stamp = sys.argv[4]
+expected_run_id = sys.argv[5]
+
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(json.dumps({"applied": False, "reason": f"claim_unreadable:{exc}"}, sort_keys=True))
+    sys.exit(2)
+
+selected = str(claim.get("selected_todo") or "")
+selected_first = selected.splitlines()[0] if selected.splitlines() else ""
+if not selected or not selected_first:
+    print(json.dumps({"applied": False, "reason": "selected_todo_missing"}, sort_keys=True))
+    sys.exit(2)
+
+try:
+    todo_text = todo_path.read_text(encoding="utf-8")
+except Exception as exc:
+    print(json.dumps({"applied": False, "reason": f"todo_unreadable:{exc}"}, sort_keys=True))
+    sys.exit(2)
+
+if selected_first not in todo_text:
+    print(json.dumps({"applied": False, "reason": "selected_todo_already_absent"}, sort_keys=True))
+    sys.exit(2)
+
+candidate = None
+runs_dir = store_root / "runs"
+for ledger in sorted(runs_dir.glob("*/ledger.jsonl"), key=lambda path: path.stat().st_mtime, reverse=True):
+    if expected_run_id and ledger.parent.name != expected_run_id:
+        continue
+    try:
+        lines = ledger.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        continue
+    for line in reversed(lines):
+        try:
+            event = json.loads(line)
+        except Exception:
+            continue
+        if event.get("kind") != "WorkspacePatchProposed":
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("validation_status") != "Valid":
+            continue
+        if payload.get("path") not in {".brownie/todo.md", "todo.md", str(todo_path)}:
+            continue
+        old_text = payload.get("patch_old_text")
+        new_text = payload.get("patch_new_text")
+        if not isinstance(old_text, str) or not isinstance(new_text, str):
+            continue
+        if selected_first not in old_text:
+            continue
+        if old_text not in todo_text:
+            continue
+        if selected_first in new_text:
+            continue
+        candidate = (ledger.parent.name, payload, old_text, new_text)
+        break
+    if candidate:
+        break
+
+if candidate is None:
+    print(json.dumps({"applied": False, "reason": "no_matching_valid_todo_patch_proposal"}, sort_keys=True))
+    sys.exit(2)
+
+run_id, payload, old_text, new_text = candidate
+updated = todo_text.replace(old_text, new_text, 1)
+if updated == todo_text:
+    print(json.dumps({"applied": False, "reason": "todo_replacement_noop", "run_id": run_id}, sort_keys=True))
+    sys.exit(2)
+
+tmp_path = todo_path.with_name(f"{todo_path.name}.{run_stamp}.proposal-apply.tmp")
+tmp_path.write_text(updated, encoding="utf-8")
+tmp_path.replace(todo_path)
+
+print(json.dumps({
+    "applied": True,
+    "operation": "valid_todo_patch_proposal_fallback",
+    "path": str(todo_path),
+    "proposal_id": payload.get("proposal_id"),
+    "source_run_id": run_id,
+    "selected_todo_first_line": selected_first,
+}, sort_keys=True))
+PY
+}
+
+apply_valid_todo_breakdown_patch_proposal_fallback() {
+  local run_stamp="$1"
+  local expected_run_id="${2:-}"
+  python3 - "$PHASE_LOOP_BROWNIE_STORE_ROOT" "$PHASE_LOOP_WORKSPACE_ROOT/.brownie/todo-breakdown.md" "$run_stamp" "$expected_run_id" <<'PY'
+import json
+import pathlib
+import sys
+
+store_root = pathlib.Path(sys.argv[1])
+breakdown_path = pathlib.Path(sys.argv[2])
+run_stamp = sys.argv[3]
+expected_run_id = sys.argv[4]
+
+try:
+    breakdown_text = breakdown_path.read_text(encoding="utf-8")
+except Exception as exc:
+    print(json.dumps({"applied": False, "reason": f"breakdown_unreadable:{exc}"}, sort_keys=True))
+    sys.exit(2)
+
+candidate = None
+runs_dir = store_root / "runs"
+for ledger in sorted(runs_dir.glob("*/ledger.jsonl"), key=lambda path: path.stat().st_mtime, reverse=True):
+    if expected_run_id and ledger.parent.name != expected_run_id:
+        continue
+    try:
+        lines = ledger.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        continue
+    for line in reversed(lines):
+        try:
+            event = json.loads(line)
+        except Exception:
+            continue
+        if event.get("kind") != "WorkspacePatchProposed":
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("validation_status") != "Valid":
+            continue
+        if payload.get("path") not in {".brownie/todo-breakdown.md", str(breakdown_path)}:
+            continue
+        hunks = payload.get("patch_hunks")
+        if not isinstance(hunks, list) or not hunks:
+            old_text = payload.get("patch_old_text")
+            new_text = payload.get("patch_new_text")
+            hunks = [{"old_text": old_text, "new_text": new_text}]
+        normalized = []
+        for hunk in hunks:
+            if not isinstance(hunk, dict):
+                normalized = []
+                break
+            old_text = hunk.get("old_text")
+            new_text = hunk.get("new_text")
+            if not isinstance(old_text, str) or not isinstance(new_text, str):
+                normalized = []
+                break
+            if old_text not in breakdown_text:
+                normalized = []
+                break
+            normalized.append((old_text, new_text))
+        if not normalized:
+            continue
+        candidate = (ledger.parent.name, payload, normalized)
+        break
+    if candidate:
+        break
+
+if candidate is None:
+    print(json.dumps({"applied": False, "reason": "no_matching_valid_todo_breakdown_patch_proposal"}, sort_keys=True))
+    sys.exit(2)
+
+run_id, payload, hunks = candidate
+updated = breakdown_text
+for old_text, new_text in hunks:
+    updated = updated.replace(old_text, new_text, 1)
+
+if updated == breakdown_text:
+    print(json.dumps({"applied": False, "reason": "breakdown_replacement_noop", "run_id": run_id}, sort_keys=True))
+    sys.exit(2)
+
+tmp_path = breakdown_path.with_name(f"{breakdown_path.name}.{run_stamp}.proposal-apply.tmp")
+tmp_path.write_text(updated, encoding="utf-8")
+tmp_path.replace(breakdown_path)
+
+print(json.dumps({
+    "applied": True,
+    "operation": "valid_todo_breakdown_patch_proposal_fallback",
+    "path": str(breakdown_path),
+    "proposal_id": payload.get("proposal_id"),
+    "source_run_id": run_id,
+}, sort_keys=True))
+PY
 }
 
 normalize_todo_decomposition_after_guard_failure() {
@@ -2910,6 +3466,31 @@ phase_loop_should_resume_active_claim() {
   if ! active_todo_claim_exists; then
     return 1
   fi
+  if verify_todo_fresh_for_runtime_start && python3 - "$PROGRESS_STATE_FILE" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        state = json.load(handle)
+except Exception:
+    sys.exit(1)
+
+projection = state.get("progress_projection")
+if not isinstance(projection, dict):
+    sys.exit(1)
+next_action = str(projection.get("next_action") or "")
+if next_action in {
+    "review_and_authorize_objective_proposal",
+    "apply_authorized_objective_proposal",
+    "verify_objective_apply",
+}:
+    sys.exit(0)
+sys.exit(1)
+PY
+  then
+    return 0
+  fi
   if python3 - "$TODO_CLAIM_FILE" <<'PY'
 import json
 import sys
@@ -2947,6 +3528,9 @@ PY
     then
       return 1
     fi
+  fi
+  if ! verify_todo_fresh_for_runtime_start; then
+    return 1
   fi
   if python3 - "$PROGRESS_STATE_FILE" <<'PY'
 import json
@@ -3522,7 +4106,7 @@ build_effective_prompt() {
     selected_todo="$(todo_first_pending_item)"
   fi
   meta_path="${output_path%.prompt.md}.prompt.meta.json"
-  if ! python3 - "$output_path" "$meta_path" "$TODO_CLAIM_FILE" "$TODO_REPAIR_FEEDBACK_FILE" "$PHASE_LOOP_TODO" "$PHASE_LOOP_PROMPT" "$selected_todo" "$PHASE_LOOP_PROMPT_MAX_BYTES" "$PHASE_LOOP_SELECTED_TODO_MAX_BYTES" "$PHASE_LOOP_TODO_SNAPSHOT_LINES" "$PHASE_LOOP_BASE_PROMPT_SNAPSHOT_LINES" "$PHASE_LOOP_PROMPT_RETENTION_COUNT" "$(now_utc)" <<'PY'
+  if ! python3 - "$output_path" "$meta_path" "$TODO_CLAIM_FILE" "$TODO_REPAIR_FEEDBACK_FILE" "$BDK_HARNESS_FEEDBACK_FILE" "$PHASE_LOOP_TODO" "$PHASE_LOOP_PROMPT" "$selected_todo" "$PHASE_LOOP_PROMPT_MAX_BYTES" "$PHASE_LOOP_SELECTED_TODO_MAX_BYTES" "$PHASE_LOOP_TODO_SNAPSHOT_LINES" "$PHASE_LOOP_BASE_PROMPT_SNAPSHOT_LINES" "$PHASE_LOOP_PROMPT_RETENTION_COUNT" "$(now_utc)" <<'PY'
 import hashlib
 import json
 import os
@@ -3534,15 +4118,16 @@ output_path = pathlib.Path(sys.argv[1])
 meta_path = pathlib.Path(sys.argv[2])
 claim_path = pathlib.Path(sys.argv[3])
 repair_feedback_path = pathlib.Path(sys.argv[4])
-todo_path = pathlib.Path(sys.argv[5])
-prompt_path = pathlib.Path(sys.argv[6])
-selected_todo = sys.argv[7]
-prompt_max_bytes = int(sys.argv[8])
-selected_todo_max_bytes = int(sys.argv[9])
-todo_snapshot_lines = int(sys.argv[10])
-base_prompt_snapshot_lines = int(sys.argv[11])
-retention_count = int(sys.argv[12])
-timestamp = sys.argv[13]
+harness_feedback_path = pathlib.Path(sys.argv[5])
+todo_path = pathlib.Path(sys.argv[6])
+prompt_path = pathlib.Path(sys.argv[7])
+selected_todo = sys.argv[8]
+prompt_max_bytes = int(sys.argv[9])
+selected_todo_max_bytes = int(sys.argv[10])
+todo_snapshot_lines = int(sys.argv[11])
+base_prompt_snapshot_lines = int(sys.argv[12])
+retention_count = int(sys.argv[13])
+timestamp = sys.argv[14]
 
 def read_text(path):
     with open(path, encoding="utf-8") as handle:
@@ -3590,8 +4175,10 @@ def infer_bdk_state(todo):
     return "implement"
 
 def infer_llm_route(state):
-    if state in ("documentation", "decompose_todo"):
-        return "fast"
+    if state in ("decompose_todo",):
+        return "deep"
+    if state in ("documentation",):
+        return "code"
     if state in ("release_engineering", "verify_or_repair"):
         return "code"
     return "code"
@@ -3711,6 +4298,45 @@ def extract_const_object_blocks(text, const_name):
         cursor = end
     return blocks
 
+def extract_function_block(text, function_name):
+    needle = f"function {function_name}("
+    start = text.find(needle)
+    if start < 0:
+        return None
+    brace_start = text.find("{", start)
+    if brace_start < 0:
+        return None
+    depth = 0
+    in_string = None
+    escaped = False
+    index = brace_start
+    end = -1
+    while index < len(text):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == in_string:
+                in_string = None
+        else:
+            if char in ("'", '"', "`"):
+                in_string = char
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    end = index + 1
+                    break
+        index += 1
+    if end < 0:
+        return None
+    if end < len(text) and text[end:end + 1] == "\n":
+        end += 1
+    return text[start:end]
+
 def duplicate_const_declarations(text, prefix):
     counts = {}
     for match in re.finditer(r"\bconst\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=", text):
@@ -3761,6 +4387,15 @@ if repair_feedback_path.exists() and claim:
     except Exception:
         repair_feedback = {}
 
+harness_feedback = {}
+if harness_feedback_path.exists() and claim:
+    try:
+        candidate = json.loads(harness_feedback_path.read_text(encoding="utf-8"))
+        if candidate.get("latest_claim_id") == claim.get("claim_id"):
+            harness_feedback = candidate
+    except Exception:
+        harness_feedback = {}
+
 if claim and selected_todo:
     try:
         workspace_root_for_guard = todo_path.parent.parent
@@ -3803,6 +4438,9 @@ if repair_feedback:
     else:
         bdk_state = "verify_or_repair"
 llm_route = infer_llm_route(bdk_state)
+if harness_feedback and harness_feedback.get("ok") is False:
+    bdk_state = "verify_or_repair"
+    llm_route = "code"
 context_hints = infer_context_hints(selected_todo)
 context_hint_lines = [f"- {hint}" for hint in context_hints] or ["- <none inferred; request exact bounded reads only>"]
 selected_first_line = selected_todo.splitlines()[0] if selected_todo.splitlines() else ""
@@ -3829,8 +4467,45 @@ leaf_has_read_preview_for_repair = bool(
     and isinstance(repair_feedback.get("verification"), dict)
     and repair_feedback.get("verification", {}).get("workspace_read_previews")
 )
+leaf_has_oversized_repair = bool(
+    isinstance(repair_feedback, dict)
+    and isinstance(repair_feedback.get("verification"), dict)
+    and (
+        "truncated" in str(repair_feedback.get("verification", {}).get("repair_hint", "")).lower()
+        or any(
+            isinstance(item, dict) and str(item.get("code", "")).lower() in ("missing_closing_fence", "input_too_large")
+            for item in repair_feedback.get("verification", {}).get("tool_intent_rejections", [])
+            if isinstance(repair_feedback.get("verification", {}).get("tool_intent_rejections", []), list)
+        )
+    )
+)
+selected_linux_helper_source_identity_repair = (
+    "E-16a-artifact-source-linux-producer-helper" in selected_todo
+    and selected_leaf_target_path == "scripts/release-linux-x64-docker-artifact.mjs"
+    and leaf_has_oversized_repair
+)
+selected_linux_fields_source_identity_repair = (
+    "E-16a-artifact-source-linux-producer-fields" in selected_todo
+    and selected_leaf_target_path == "scripts/release-linux-x64-docker-artifact.mjs"
+    and leaf_has_oversized_repair
+)
+selected_supply_chain_clean_source_guard_repair = (
+    "E-16a-clean-source-guard" in selected_todo
+    and selected_leaf_target_path == "scripts/guard-supply-chain-artifact-evidence.mjs"
+    and leaf_has_oversized_repair
+)
+selected_stateful_soak_oversized_repair = (
+    "E-16d-stateful-soak-collector" in selected_todo
+    and selected_leaf_target_path == "scripts/release-runtime-operational-evidence.mjs"
+    and leaf_has_oversized_repair
+)
+selected_stateful_soak_build_leaf = (
+    "E-16d-soak-build-transition-step" in selected_todo
+    and selected_leaf_target_path == "scripts/release-runtime-operational-evidence.mjs"
+)
 leaf_force_write_on_repair = bool(
     repair_feedback
+    and (not leaf_has_oversized_repair or selected_linux_helper_source_identity_repair or selected_linux_fields_source_identity_repair or selected_supply_chain_clean_source_guard_repair)
     and (
         leaf_has_read_preview_for_repair
         or (
@@ -3839,16 +4514,43 @@ leaf_force_write_on_repair = bool(
         )
     )
 )
+if leaf_has_oversized_repair and not (
+    selected_linux_helper_source_identity_repair
+    or selected_linux_fields_source_identity_repair
+    or selected_supply_chain_clean_source_guard_repair
+):
+    llm_route = "deep"
 if "Source TODO:" in selected_todo and re.search(r"^\s*[-*]\s+\[\s*\]\s+[^:\n]+:\s+Patch only\s+`", selected_todo):
     leaf_execution_policy_lines = [
-        "- leaf_execution_policy: this selected TODO is already a bounded derived leaf; do not split it again and do not patch `.brownie/todo.md`. Patch the named target file. If the target cannot be safely changed, fail closed in the final response instead of creating another TODO.",
-        "- leaf_no_refinement_policy: a bounded leaf with one Patch only target must not be converted into more child TODOs just because the target file is large.",
+        "- leaf_execution_policy: this selected TODO is already a bounded derived leaf; normally patch the named target file. If repair feedback shows the target patch is repeatedly oversized/truncated/missing its closing fence, patch `.brownie/todo.md` instead to replace this leaf with one smaller concrete follow-up leaf.",
+        "- leaf_no_refinement_policy: a bounded leaf with one Patch only target must not be converted into more child TODOs just because the target file is large, unless Previous Repair Feedback shows an oversized/truncated workspace.write or missing closing fence.",
     ]
     if leaf_force_write_on_repair:
         leaf_execution_policy_lines.append(
             f"- leaf_required_next_tool_policy: the next tool must be `workspace.write` for `{selected_leaf_target_path or '<selected Patch only target>'}` unless final-answer fail-closed is unavoidable; the prior repair context already contains the target read preview, so `workspace.read` and `.brownie/todo.md` writes are not progress for this repair turn."
         )
+    elif leaf_has_oversized_repair and not selected_linux_helper_source_identity_repair and not selected_linux_fields_source_identity_repair and not selected_supply_chain_clean_source_guard_repair:
+        leaf_execution_policy_lines.append(
+            f"- leaf_oversized_repair_next_tool_policy: the previous target-file patch was oversized or truncated. The next tool must be exactly one `workspace.write` patch_file for `.brownie/todo.md` that replaces the full selected TODO block `{selected_parent_id or '<selected leaf id>'}` with one smaller concrete follow-up leaf. The new leaf id must be different from `{selected_parent_id or '<selected leaf id>'}`, and `new_text` must not keep the selected TODO pending."
+        )
+        leaf_execution_policy_lines.append(
+            f"- leaf_oversized_repair_leaf_template: use a new id like `{selected_parent_id or 'E-16'}-small-step`; first line `- [ ] {selected_parent_id or 'E-16'}-small-step: Patch only `{selected_leaf_target_path or '<selected Patch only target>'}` to update one named helper or one named evidence field:` then `Route: implementation.`, `Source TODO: {selected_parent_id or '<selected leaf id>'}.`, `Depends on: <none>.`, one concrete completion condition, forbidden changes, and one bounded verification command."
+        )
+        if selected_stateful_soak_oversized_repair:
+            leaf_execution_policy_lines.append(
+                "- stateful_soak_leaf_target_policy: for E-16d, the smaller follow-up leaf must target the existing `buildSoakSection` function or one helper called from it. Do not target, create, rename, or copy any `soakEvidenceFixture*` constant; those fixture literals are stale failed-output debris and are not the implementation target."
+            )
+            leaf_execution_policy_lines.append(
+                "- stateful_soak_leaf_template: create one leaf such as `E-16d-stateful-soak-build-step-records`: Patch only `scripts/release-runtime-operational-evidence.mjs` to make `buildSoakSection` record one required stateful step id from `requiredStatefulSoakStepIds`; keep Verification to `pnpm --workspace-root guard:runtime-operational-evidence:test`."
+            )
     else:
+        if selected_stateful_soak_build_leaf:
+            leaf_execution_policy_lines.append(
+                "- stateful_soak_build_patch_policy: this E-16d leaf may patch only the existing `function buildSoakSection(repoRoot, iterations)` region. The next target-file `workspace.write` must not include `soakEvidenceFixture`, `soakEvidenceFixtureDuplicate`, `soakEvidenceFixtureDuplicate2`, or `soakEvidenceFixtureDuplicate3` in old_text or new_text, and must not invent `const buildSoakSection =`."
+            )
+            leaf_execution_policy_lines.append(
+                "- stateful_soak_build_small_hunk_policy: prefer a small patch around the `const missingStatefulSteps = [` block or the return object inside `buildSoakSection`; do not replace top-level fixture constants or copy fixture bodies."
+            )
         leaf_execution_policy_lines.append(
             f"- leaf_initial_read_policy: if the target contents are not already embedded in this prompt, the next tool may be exactly one `workspace.read` for `{selected_leaf_target_path or '<selected Patch only target>'}`; after that read, move to `workspace.write` for the same target."
         )
@@ -3993,6 +4695,17 @@ if repair_feedback:
             reason = str(rejection.get("reason", "")).replace("`<one existing path>`", "<placeholder existing path>").replace("`<one new path>`", "<placeholder new path>").replace("`<one-path>`", "<placeholder path>")
             tool_id = rejection.get("tool_id", "")
             repair_feedback_lines.append(f"- tool_intent_rejection_{index}: code={json.dumps(str(code), ensure_ascii=False)} tool_id={json.dumps(str(tool_id), ensure_ascii=False)} reason={json.dumps(str(reason)[-1200:], ensure_ascii=False)}")
+            if (
+                str(code).lower() == "input_too_large"
+                and selected_leaf_target_path == "scripts/release-local-artifact.mjs"
+                and "esm-helper-fix" not in selected_todo
+            ):
+                repair_feedback_lines.append("- release_local_artifact_input_too_large_policy: the previous workspace.write tried to replace too much of `scripts/release-local-artifact.mjs`. Retry with exactly one `workspace.write` patch_file request using only two small hunks: one hunk inserts sourceCommit/sourceCleanTree/sourceIdentity after `const smokeResults = ...;`, and one hunk adds `source_commit`, `source_clean_tree`, and `source_identity` inside `artifact:`. Do not include setup, buildPlan, parseArgs, smoke, or the whole buildLocalArtifact function in old_text/new_text.")
+                repair_feedback_lines.append("- release_local_artifact_small_hunk_1_old_text_json: \"  const smokeResults = [\\n    smoke(repoRoot, artifactPath, ['--version']),\\n    smoke(repoRoot, artifactPath, ['help', 'run'])\\n  ];\\n  const artifactEvidence = {\"")
+                repair_feedback_lines.append("- release_local_artifact_small_hunk_1_new_text_json: \"  const smokeResults = [\\n    smoke(repoRoot, artifactPath, ['--version']),\\n    smoke(repoRoot, artifactPath, ['help', 'run'])\\n  ];\\n  const sourceCommit = sha256SourceCommit();\\n  const sourceCleanTree = sha256CleanTree();\\n  const sourceIdentity = sha256String(`${sourceCommit}:${sourceCleanTree}`);\\n  const artifactEvidence = {\"")
+                repair_feedback_lines.append("- release_local_artifact_small_hunk_2_old_text_json: \"      path: artifactRelativePath,\\n      sha256: sha256File(artifactPath),\\n      bytes: fs.statSync(artifactPath).size,\\n      target\"")
+                repair_feedback_lines.append("- release_local_artifact_small_hunk_2_new_text_json: \"      path: artifactRelativePath,\\n      sha256: sha256File(artifactPath),\\n      bytes: fs.statSync(artifactPath).size,\\n      target,\\n      source_commit: sourceCommit,\\n      source_clean_tree: sourceCleanTree,\\n      source_identity: sourceIdentity\"")
+                repair_feedback_lines.append("- release_local_artifact_required_next_tool: exactly one fenced `brownie-tool-intent` JSON block with one `workspace.write` request to `scripts/release-local-artifact.mjs`; use `input.hunks` with the two exact hunk old_text/new_text values above.")
             if "Every TODO decomposition leaf must preserve the parent" in str(reason):
                 repair_feedback_lines.append(f"- todo_leaf_schema_repair_policy: the previous `.brownie/todo.md` write omitted required leaf fields. Retry with exactly one compact unchecked TODO leaf and include these separate lines: `Route:`, `Source TODO:`, `Depends on:`, `Completion condition:`, `Forbidden changes:`, and `Verification:`. `Source TODO:` must include the selected parent id `{selected_parent_id or '<selected-parent-id>'}`. Do not keep the selected TODO id or selected first line in `new_text`.")
                 repair_feedback_lines.append(f"- todo_leaf_exact_source_todo_policy: every generated leaf must include this exact line prefix: `Source TODO: {selected_parent_id or '<selected-parent-id>'}`.")
@@ -4016,8 +4729,34 @@ if repair_feedback:
         if isinstance(proposal, dict):
             validation_reason = str(proposal.get("validation_reason", ""))
             repair_feedback_lines.append(f"- invalid_patch_proposal_{index}: path={json.dumps(str(proposal.get('path', '')), ensure_ascii=False)} operation={json.dumps(str(proposal.get('operation', '')), ensure_ascii=False)} reason={json.dumps(validation_reason[-1200:], ensure_ascii=False)} preview={json.dumps(str(proposal.get('content_preview', ''))[-500:], ensure_ascii=False)}")
+            if (
+                selected_stateful_soak_build_leaf
+                and str(proposal.get("path", "")) == "scripts/release-runtime-operational-evidence.mjs"
+                and "new_text must differ from old_text" in validation_reason
+            ):
+                repair_feedback_lines.append("- stateful_soak_noop_patch_repair_policy: the previous E-16d patch was a no-op. Retry with exactly one small hunk that adds `statefulSteps` before the return object and adds `stateful_steps: statefulSteps` to the return object. Do not touch `soakEvidenceFixture*` constants.")
+                repair_feedback_lines.append("- stateful_soak_noop_patch_old_text_json: \"  const missingStatefulSteps = [\\n    'task_state_transition',\\n    'ledger_workspace_consistency',\\n    'resume_replay_handling',\\n    'duplicate_side_effect_rejection',\\n    'process_loss_recovery',\\n    'finite_convergence'\\n  ];\\n  return {\"")
+                repair_feedback_lines.append("- stateful_soak_noop_patch_new_text_json: \"  const statefulSteps = [\\n    { id: 'task_state_transition', status: failureCount === 0 ? 'satisfied' : 'failed', evidence_kind: 'bounded_cli_transition_proxy' }\\n  ];\\n  const missingStatefulSteps = [\\n    'task_state_transition',\\n    'ledger_workspace_consistency',\\n    'resume_replay_handling',\\n    'duplicate_side_effect_rejection',\\n    'process_loss_recovery',\\n    'finite_convergence'\\n  ].filter((step) => !statefulSteps.some((record) => record.id === step));\\n  return {\\n    stateful_steps: statefulSteps,\"")
+                repair_feedback_lines.append("- stateful_soak_noop_patch_required_next_tool: exactly one `workspace.write` to `scripts/release-runtime-operational-evidence.mjs` using the two JSON strings above as old_text/new_text; do not request `workspace.read` again.")
+            if (
+                selected_stateful_soak_build_leaf
+                and str(proposal.get("path", "")) == "scripts/release-runtime-operational-evidence.mjs"
+                and "old_text was not found" in validation_reason
+                and "task_state_transition" in str(verification)
+                and "Expected values to be strictly deep-equal" in str(verification)
+            ):
+                repair_feedback_lines.append("- stateful_soak_missing_list_test_repair_policy: the collector test still expects version-only soak to report `task_state_transition` as missing. Keep `stateful_steps`, but stop filtering `missingStatefulSteps`. Do not remove `task_state_transition` from the array.")
+                repair_feedback_lines.append("- stateful_soak_missing_list_old_text_json: \"  ].filter((step) => !statefulSteps.some((record) => record.id === step));\"")
+                repair_feedback_lines.append("- stateful_soak_missing_list_new_text_json: \"  ];\"")
+                repair_feedback_lines.append("- stateful_soak_missing_list_required_next_tool: exactly one `workspace.write` to `scripts/release-runtime-operational-evidence.mjs` using the old_text/new_text above; do not request `workspace.read` again.")
             if "old_text was not found" in validation_reason:
                 repair_feedback_lines.append("- invalid_patch_old_text_policy: never copy `[...previous workspace.read preview middle omitted by phase-loop...]` or any other truncation marker into `old_text`; `old_text` must be one exact contiguous string that exists in the current target. If only a truncated preview is available, patch a smaller visible head/tail snippet or fail closed instead of inventing omitted content.")
+                if str(proposal.get("path", "")) == "scripts/release-local-artifact.mjs":
+                    target_text = read_text(pathlib.Path("scripts/release-local-artifact.mjs"))
+                    sha256_file_block = extract_function_block(target_text, "sha256File")
+                    if sha256_file_block:
+                        repair_feedback_lines.append("- release_local_artifact_exact_sha256File_old_text_policy: if patching `sha256File`, use this exact complete function block as `old_text`; do not reformat it.")
+                        repair_feedback_lines.append(f"- release_local_artifact_sha256File_old_text_json: {json.dumps(sha256_file_block, ensure_ascii=False)}")
             if "appears more than once" in validation_reason:
                 repair_feedback_lines.append("- non_unique_hunk_repair_policy: the previous hunk old_text was not unique. Use a 2-3 line hunk that includes the selected TODO first line immediately before the `Source TODO:` line, and make `new_text` differ from `old_text` by changing only the `Source TODO:` line so it no longer starts with the leaf TODO id.")
                 if str(proposal.get("path", "")) == "scripts/release-runtime-operational-evidence.mjs" and "old_chars=29" in str(proposal.get("content_preview", "")):
@@ -4034,11 +4773,29 @@ if repair_feedback:
     missing_closing_fence = any(isinstance(item, dict) and str(item.get("code", "")).lower() == "missing_closing_fence" for item in (verification.get("tool_intent_rejections", []) if isinstance(verification.get("tool_intent_rejections"), list) else []))
     if missing_closing_fence:
         repair_feedback_lines.append("- truncated_write_repair_policy: the previous workspace.write JSON was too large and lost the closing fence; do not retry a large `new_text`. For `.brownie/todo.md`, emit exactly one compact replacement leaf under 900 characters, complete the JSON, and close the `brownie-tool-intent` fence. Do not copy the broad selected TODO body into `new_text`.")
+        repair_feedback_lines.append("- truncated_implementation_patch_policy: for implementation files, do not retry a large `old_text`/`new_text` block. Use one small complete syntactic hunk under about 1200 JSON characters. Do not patch unrelated large setup/parsing functions unless the selected TODO names them. If the safe hunk would be larger, patch `.brownie/todo.md` with one smaller follow-up TODO instead.")
+        if selected_linux_helper_source_identity_repair:
+            repair_feedback_lines.append("- linux_artifact_helper_exact_repair_policy: retry with exactly one fenced `brownie-tool-intent` JSON block containing one `workspace.write` patch_file request to `scripts/release-linux-x64-docker-artifact.mjs`; use the exact old_text/new_text below and do not include any other functions or TODO edits.")
+            repair_feedback_lines.append("- linux_artifact_helper_old_text_json: \"function sha256File(filePath) {\\n  return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')}`;\\n}\\n\"")
+            repair_feedback_lines.append("- linux_artifact_helper_new_text_json: \"function sha256File(filePath) {\\n  return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')}`;\\n}\\n\\nfunction sha256String(value) {\\n  return `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;\\n}\\n\\nfunction gitOutput(repoRoot, args) {\\n  const result = run('git', args, { cwd: repoRoot, timeoutMs: 30_000 });\\n  return result.passed ? result.stdout.trim() : '';\\n}\\n\\nfunction sha256SourceCommit(repoRoot) {\\n  const output = gitOutput(repoRoot, ['rev-parse', 'HEAD']);\\n  return output ? `sha256:${output}` : 'sha256:unknown';\\n}\\n\\nfunction sha256CleanTree(repoRoot) {\\n  const result = run('git', ['diff-index', '--quiet', 'HEAD', '--'], { cwd: repoRoot, timeoutMs: 30_000 });\\n  if (result.exit_code === 0) return 'clean';\\n  if (result.exit_code === 1) return 'dirty';\\n  return 'unknown';\\n}\\n\"")
+            repair_feedback_lines.append("- linux_artifact_helper_required_next_tool: exactly one `workspace.write` patch_file to `scripts/release-linux-x64-docker-artifact.mjs` using `old_text` equal to linux_artifact_helper_old_text_json and `new_text` equal to linux_artifact_helper_new_text_json.")
+        if selected_linux_fields_source_identity_repair:
+            repair_feedback_lines.append("- linux_artifact_fields_exact_repair_policy: retry with exactly one fenced `brownie-tool-intent` JSON block containing one `workspace.write` patch_file request to `scripts/release-linux-x64-docker-artifact.mjs`; use `input.hunks` with exactly the two old_text/new_text hunks below and do not include helper functions, build setup, smoke commands, or TODO edits.")
+            repair_feedback_lines.append("- linux_artifact_fields_hunk_1_old_text_json: \"  const smokePassed = smokeResults.every((entry) => entry.passed);\\n  const artifactEvidence = {\"")
+            repair_feedback_lines.append("- linux_artifact_fields_hunk_1_new_text_json: \"  const smokePassed = smokeResults.every((entry) => entry.passed);\\n  const sourceCommit = sha256SourceCommit(repoRoot);\\n  const sourceCleanTree = sha256CleanTree(repoRoot);\\n  const sourceIdentity = sha256String(`${sourceCommit}:${sourceCleanTree}`);\\n  const artifactEvidence = {\"")
+            repair_feedback_lines.append("- linux_artifact_fields_hunk_2_old_text_json: \"      path: artifactRelativePath,\\n      sha256: sha256File(artifactPath),\\n      bytes: fs.statSync(artifactPath).size,\\n      target\\n    },\"")
+            repair_feedback_lines.append("- linux_artifact_fields_hunk_2_new_text_json: \"      path: artifactRelativePath,\\n      sha256: sha256File(artifactPath),\\n      bytes: fs.statSync(artifactPath).size,\\n      target,\\n      source_commit: sourceCommit,\\n      source_clean_tree: sourceCleanTree,\\n      source_identity: sourceIdentity\\n    },\"")
+            repair_feedback_lines.append("- linux_artifact_fields_required_next_tool: exactly one `workspace.write` patch_file to `scripts/release-linux-x64-docker-artifact.mjs` using `input.hunks` with the two exact hunks above.")
+        if selected_supply_chain_clean_source_guard_repair:
+            repair_feedback_lines.append("- supply_chain_clean_source_guard_exact_repair_policy: retry with exactly one fenced `brownie-tool-intent` JSON block containing one `workspace.write` patch_file request to `scripts/guard-supply-chain-artifact-evidence.mjs`; use the exact old_text/new_text below and do not include helper functions, tests, or TODO edits.")
+            repair_feedback_lines.append("- supply_chain_clean_source_guard_old_text_json: \"      validateReferencedFile(repoRoot, artifact, errors, `sections.artifacts.artifacts[${index}]`);\\n      validateOptionalPath(repoRoot, artifact.artifact_evidence_path, errors, `sections.artifacts.artifacts[${index}].artifact_evidence_path`);\\n      validateOptionalPath(repoRoot, artifact.smoke_evidence_path, errors, `sections.artifacts.artifacts[${index}].smoke_evidence_path`);\"")
+            repair_feedback_lines.append("- supply_chain_clean_source_guard_new_text_json: \"      validateReferencedFile(repoRoot, artifact, errors, `sections.artifacts.artifacts[${index}]`);\\n      validateOptionalPath(repoRoot, artifact.artifact_evidence_path, errors, `sections.artifacts.artifacts[${index}].artifact_evidence_path`);\\n      validateOptionalPath(repoRoot, artifact.smoke_evidence_path, errors, `sections.artifacts.artifacts[${index}].smoke_evidence_path`);\\n      requireValue(hashPattern.test(artifact.source_commit), errors, `sections.artifacts.artifacts[${index}].source_commit must be sha256:<64 lowercase hex>.`);\\n      requireValue(artifact.source_clean_tree === 'clean', errors, `sections.artifacts.artifacts[${index}].source_clean_tree must be clean.`);\\n      requireValue(hashPattern.test(artifact.source_identity), errors, `sections.artifacts.artifacts[${index}].source_identity must be sha256:<64 lowercase hex>.`);\"")
+            repair_feedback_lines.append("- supply_chain_clean_source_guard_required_next_tool: exactly one `workspace.write` patch_file to `scripts/guard-supply-chain-artifact-evidence.mjs` using `old_text` equal to supply_chain_clean_source_guard_old_text_json and `new_text` equal to supply_chain_clean_source_guard_new_text_json.")
         if selected_decomposition_active:
             repair_feedback_lines.append("- todo_decomposition_single_leaf_repair_policy: generate exactly one new leaf TODO in this retry. Do not start a second leaf. Do not use the active decomposition id as the new leaf id. Use `Depends on: <none>.` unless a dependency is already present and definitely required.")
             repair_feedback_lines.append(f"- todo_decomposition_compact_hunks_policy: prefer `workspace.write` with `operation:\"patch_file\"` and multiple small `hunks`: one hunk removes the active decomposition TODO block `{selected_parent_id or '<selected-decomposition-id>'}`, and later hunks transform the broad source TODO `{selected_decomposition_source_id or '<selected-broad-source-id>'}` into one bounded leaf. Do not put the full queue in `old_text` or `new_text`.")
             repair_feedback_lines.append(f"- todo_decomposition_leaf_template: first line `- [ ] {selected_decomposition_source_id or 'E-15e'}-doc-sync-leaf: Patch only `docs/architecture/runtime-release-contract.json` to resynchronize one release contract field:` then `Route: release-ops.`, `Source TODO: {selected_parent_id or '<selected-decomposition-id>'}.`, `Depends on: <none>.`, one concrete completion condition, forbidden changes, and one bounded verification command.")
-        if "duplicate_block_to_remove_json" in "\n".join(repair_feedback_lines) or "soakEvidenceFixture" in str(verification):
+        if "duplicate_block_to_remove_json" in "\n".join(repair_feedback_lines):
             repair_feedback_lines.append("- duplicate_declaration_short_repair_policy: the previous duplicate-block removal was too large. Do not include the full block. Instead request one compact `workspace.write` patch_file hunk for `scripts/release-runtime-operational-evidence.mjs` with `old_text:\"const soakEvidenceFixture = {\"`, `new_text:\"const soakEvidenceFixtureDuplicate = {\"`, and `occurrence:2`. Repeat in a later loop if another duplicate declaration remains.")
         repair_feedback_lines.append("- truncated_todo_leaf_template_policy: if the target is `.brownie/todo.md`, use this shape only: an unchecked new id whose first line starts with Patch only followed by one real repository path in backticks, then separate Route, Source TODO, Depends on, Completion condition, Forbidden changes, and Verification lines.")
         repair_feedback_lines.append("- invalid_previous_patch_policy: any previous preview containing `## Queue protocol`, `## Base Phase Loop Prompt`, or unrelated headings inside `old_text` is a failed example; do not copy it.")
@@ -4293,6 +5050,9 @@ if todo_guard_failed:
                 verification_value = verification_match.group(1).strip() if verification_match else "inspect `.brownie/todo.md` and `.brownie/todo-breakdown.md` consistency."
                 dependency_anchor = "- E-15d-soak-section-collector: <none>"
                 verification_anchor = "- E-15d-soak-section-collector: `pnpm --workspace-root guard:runtime-operational-evidence:test`"
+                if leaf_id.startswith("E-16d-soak-build-transition-step"):
+                    dependency_anchor = "- E-16d-soak-build-transition-step: <none>"
+                    verification_anchor = "- E-16d-soak-build-transition-step: `pnpm --workspace-root guard:runtime-operational-evidence:test`"
                 if dependency_anchor in breakdown_text:
                     dependency_new = f"{dependency_anchor}\n- {leaf_id}: {depends_value}"
                     breakdown_sync_lines.extend([
@@ -4352,6 +5112,61 @@ if todo_guard_failed:
 read_batch_policy_line = "- read_batch_policy: if completed_workspace_reads is 0, request at most one relevant `workspace.read`; if completed_workspace_reads is 1 or more, do not request `workspace.read` again and request `workspace.write` or a concrete blocker TODO instead."
 if todo_guard_failed:
     read_batch_policy_line = "- read_batch_policy: TODO guard repair is active, so do not request `workspace.read`; request exactly one `workspace.write` repair using Focused TODO Queue Repair Context."
+elif leaf_has_oversized_repair and leaf_execution_policy_lines:
+    base_snapshot_for_prompt = "<omitted during oversized leaf repair to prevent prompt text from being copied into workspace.write old_text>"
+    exact_selected_block_json = json.dumps(selected_todo.rstrip(), ensure_ascii=False)
+    stateful_soak_extra_rules = []
+    if selected_stateful_soak_oversized_repair:
+        stateful_soak_extra_rules = [
+            "",
+            "E-16d stateful soak repair rules:",
+            "- The previous output targeted stale `soakEvidenceFixture*` constants and became oversized. Do not mention, target, create, rename, or copy `soakEvidenceFixture`, `soakEvidenceFixtureDuplicate`, `soakEvidenceFixtureDuplicate2`, or `soakEvidenceFixtureDuplicate3` in `new_text`.",
+            "- The replacement TODO must target `buildSoakSection` in `scripts/release-runtime-operational-evidence.mjs` or one helper called only from `buildSoakSection`.",
+            "- The replacement TODO must name exactly one required stateful behavior: task_state_transition, ledger_workspace_consistency, resume_replay_handling, duplicate_side_effect_rejection, process_loss_recovery, or finite_convergence.",
+            "- Use `Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.`",
+        ]
+    todo_snapshot_for_prompt = "\n".join([
+        "# Focused Oversized Leaf Repair Context",
+        "",
+        "The previous target-file patch was too large or truncated.",
+        "Patch `.brownie/todo.md` only, replacing the selected TODO with exactly one smaller unchecked follow-up leaf.",
+        "",
+        "Exact selected TODO block JSON to copy verbatim into `old_text`:",
+        exact_selected_block_json,
+        "",
+        "Required repair rules:",
+        "- `old_text` must be exactly the JSON string above after decoding, with no manually reconstructed lines.",
+        "- `new_text` must contain exactly one unchecked TODO leaf under 900 characters.",
+        f"- The new leaf id must be different from `{selected_parent_id or '<selected leaf id>'}`.",
+        f"- `Source TODO:` in the new leaf must be `{selected_parent_id or '<selected leaf id>'}`.",
+        f"- The first line must name exactly one concrete repository path in backticks, preferably `{selected_leaf_target_path or '<selected Patch only target>'}`.",
+        "- Do not copy the broad selected TODO first line into `new_text`.",
+        "- Do not patch implementation files in this repair turn.",
+        "- Do not include Queue protocol, Base Phase Loop Prompt, previous workspace read previews, or fixture bodies in old_text/new_text.",
+        *stateful_soak_extra_rules,
+    ])
+    read_batch_policy_line = "- read_batch_policy: oversized leaf repair is active, so do not request `workspace.read`; request exactly one `workspace.write` patch to `.brownie/todo.md` using Focused Oversized Leaf Repair Context."
+
+harness_feedback_lines = []
+if harness_feedback:
+    harness_feedback_lines = [
+        "",
+        "## Public Harness Feedback",
+        "",
+        "- harness_policy: the previous trajectory was evaluated through the public-harness adapter; use this feedback as controller evidence, not as a user request.",
+        f"- harness_ok: `{harness_feedback.get('ok')}`",
+        f"- harness_latest_run_id: `{harness_feedback.get('latest_run_id', '')}`",
+        f"- harness_latest_claim_id: `{harness_feedback.get('latest_claim_id', '')}`",
+        f"- harness_event_count: `{harness_feedback.get('event_count', '')}`",
+    ]
+    failures = harness_feedback.get("failures", [])
+    if isinstance(failures, list) and failures:
+        for index, failure in enumerate(failures[:3]):
+            if isinstance(failure, dict):
+                harness_feedback_lines.append(f"- harness_failure_{index}_class: `{failure.get('class', '')}`")
+                if failure.get("repair_hint"):
+                    harness_feedback_lines.append(f"- harness_failure_{index}_repair_hint: {json.dumps(str(failure.get('repair_hint', ''))[-1000:], ensure_ascii=False)}")
+        harness_feedback_lines.append("- harness_repair_policy: first repair the harness failure class without expanding the TODO scope. If the failure is only telemetry/sanitization, patch controller or harness code, not product feature files.")
 
 prompt = "\n".join([
     "# Brownie Phase Loop Effective Prompt",
@@ -4380,6 +5195,7 @@ prompt = "\n".join([
     "",
     "For this invocation, start from the first inferred context hint when it is relevant, but treat completed Tool Execution results as authoritative. Never copy a prior read request after a workspace.read result or read-budget denial; the next tool intent must move to `workspace.write` or a concrete blocker TODO.",
     *repair_feedback_lines,
+    *harness_feedback_lines,
     "",
     "## Active TODO Claim",
     "",
@@ -4486,8 +5302,8 @@ phase_loop_sampling_defaults_for_model() {
 apply_phase_loop_llm_route() {
   local prompt_path="$1"
   local meta_path route routed_model fast_model code_model deep_model prompt_bytes
-  local fast_max_tokens code_max_tokens
-  local fast_temperature code_temperature fast_top_p code_top_p fast_top_k code_top_k defaults
+  local fast_max_tokens code_max_tokens deep_max_tokens
+  local fast_temperature code_temperature deep_temperature fast_top_p code_top_p deep_top_p fast_top_k code_top_k deep_top_k defaults
   if [ "${PHASE_LOOP_LLM_ROUTING:-1}" != "1" ]; then
     return 0
   fi
@@ -4496,12 +5312,16 @@ apply_phase_loop_llm_route() {
   deep_model="${PHASE_LOOP_LLM_MODEL_DEEP:-${BROWNIE_LLM_MODEL_DEEP:-}}"
   fast_max_tokens="${PHASE_LOOP_LLM_MAX_TOKENS_FAST:-${BROWNIE_LLM_MAX_TOKENS_FAST:-}}"
   code_max_tokens="${PHASE_LOOP_LLM_MAX_TOKENS_CODE:-${BROWNIE_LLM_MAX_TOKENS_CODE:-}}"
+  deep_max_tokens="${PHASE_LOOP_LLM_MAX_TOKENS_DEEP:-${BROWNIE_LLM_MAX_TOKENS_DEEP:-}}"
   fast_temperature="${PHASE_LOOP_LLM_TEMPERATURE_FAST:-${BROWNIE_LLM_TEMPERATURE_FAST:-}}"
   code_temperature="${PHASE_LOOP_LLM_TEMPERATURE_CODE:-${BROWNIE_LLM_TEMPERATURE_CODE:-}}"
+  deep_temperature="${PHASE_LOOP_LLM_TEMPERATURE_DEEP:-${BROWNIE_LLM_TEMPERATURE_DEEP:-}}"
   fast_top_p="${PHASE_LOOP_LLM_TOP_P_FAST:-${BROWNIE_LLM_TOP_P_FAST:-}}"
   code_top_p="${PHASE_LOOP_LLM_TOP_P_CODE:-${BROWNIE_LLM_TOP_P_CODE:-}}"
+  deep_top_p="${PHASE_LOOP_LLM_TOP_P_DEEP:-${BROWNIE_LLM_TOP_P_DEEP:-}}"
   fast_top_k="${PHASE_LOOP_LLM_TOP_K_FAST:-${BROWNIE_LLM_TOP_K_FAST:-}}"
   code_top_k="${PHASE_LOOP_LLM_TOP_K_CODE:-${BROWNIE_LLM_TOP_K_CODE:-}}"
+  deep_top_k="${PHASE_LOOP_LLM_TOP_K_DEEP:-${BROWNIE_LLM_TOP_K_DEEP:-}}"
   if [ -n "$fast_model" ] && { [ -z "$fast_temperature" ] || [ -z "$fast_top_p" ] || [ -z "$fast_top_k" ]; }; then
     defaults="$(phase_loop_sampling_defaults_for_model fast "$fast_model")"
     set -- $defaults
@@ -4515,6 +5335,13 @@ apply_phase_loop_llm_route() {
     code_temperature="${code_temperature:-${1:-}}"
     code_top_p="${code_top_p:-${2:-}}"
     code_top_k="${code_top_k:-${3:-}}"
+  fi
+  if [ -n "$deep_model" ] && { [ -z "$deep_temperature" ] || [ -z "$deep_top_p" ] || [ -z "$deep_top_k" ]; }; then
+    defaults="$(phase_loop_sampling_defaults_for_model code "$deep_model")"
+    set -- $defaults
+    deep_temperature="${deep_temperature:-${1:-}}"
+    deep_top_p="${deep_top_p:-${2:-}}"
+    deep_top_k="${deep_top_k:-${3:-}}"
   fi
   if [ -n "$fast_model" ]; then
     export BROWNIE_LLM_MODEL_FAST="$fast_model"
@@ -4531,11 +5358,17 @@ apply_phase_loop_llm_route() {
   if [ -n "$code_max_tokens" ]; then
     export BROWNIE_LLM_MAX_TOKENS_CODE="$code_max_tokens"
   fi
+  if [ -n "$deep_max_tokens" ]; then
+    export BROWNIE_LLM_MAX_TOKENS_DEEP="$deep_max_tokens"
+  fi
   if [ -n "$fast_temperature" ]; then
     export BROWNIE_LLM_TEMPERATURE_FAST="$fast_temperature"
   fi
   if [ -n "$code_temperature" ]; then
     export BROWNIE_LLM_TEMPERATURE_CODE="$code_temperature"
+  fi
+  if [ -n "$deep_temperature" ]; then
+    export BROWNIE_LLM_TEMPERATURE_DEEP="$deep_temperature"
   fi
   if [ -n "$fast_top_p" ]; then
     export BROWNIE_LLM_TOP_P_FAST="$fast_top_p"
@@ -4543,11 +5376,17 @@ apply_phase_loop_llm_route() {
   if [ -n "$code_top_p" ]; then
     export BROWNIE_LLM_TOP_P_CODE="$code_top_p"
   fi
+  if [ -n "$deep_top_p" ]; then
+    export BROWNIE_LLM_TOP_P_DEEP="$deep_top_p"
+  fi
   if [ -n "$fast_top_k" ]; then
     export BROWNIE_LLM_TOP_K_FAST="$fast_top_k"
   fi
   if [ -n "$code_top_k" ]; then
     export BROWNIE_LLM_TOP_K_CODE="$code_top_k"
+  fi
+  if [ -n "$deep_top_k" ]; then
+    export BROWNIE_LLM_TOP_K_DEEP="$deep_top_k"
   fi
   meta_path="${prompt_path%.prompt.md}.prompt.meta.json"
   route="$(
@@ -4570,7 +5409,42 @@ except Exception:
     print(0)
 PY
   )"
-  if [ -n "$fast_model" ] && [ "${prompt_bytes:-0}" -gt "$PHASE_LOOP_LLM_FAST_MAX_PROMPT_BYTES" ]; then
+  if [ "$route" = "code" ] && [ -n "$code_model" ]; then
+    fast_model="$code_model"
+    fast_max_tokens="${code_max_tokens:-$fast_max_tokens}"
+    fast_temperature="${code_temperature:-$fast_temperature}"
+    fast_top_p="${code_top_p:-$fast_top_p}"
+    fast_top_k="${code_top_k:-$fast_top_k}"
+    export BROWNIE_LLM_MODEL_FAST="$fast_model"
+    [ -n "$fast_max_tokens" ] && export BROWNIE_LLM_MAX_TOKENS_FAST="$fast_max_tokens"
+    [ -n "$fast_temperature" ] && export BROWNIE_LLM_TEMPERATURE_FAST="$fast_temperature"
+    [ -n "$fast_top_p" ] && export BROWNIE_LLM_TOP_P_FAST="$fast_top_p"
+    [ -n "$fast_top_k" ] && export BROWNIE_LLM_TOP_K_FAST="$fast_top_k"
+  fi
+  if [ "$route" = "deep" ] && [ -n "$deep_model" ]; then
+    fast_model="$deep_model"
+    code_model="$deep_model"
+    fast_max_tokens="${deep_max_tokens:-$fast_max_tokens}"
+    code_max_tokens="${deep_max_tokens:-$code_max_tokens}"
+    fast_temperature="${deep_temperature:-$fast_temperature}"
+    code_temperature="${deep_temperature:-$code_temperature}"
+    fast_top_p="${deep_top_p:-$fast_top_p}"
+    code_top_p="${deep_top_p:-$code_top_p}"
+    fast_top_k="${deep_top_k:-$fast_top_k}"
+    code_top_k="${deep_top_k:-$code_top_k}"
+    export BROWNIE_LLM_MODEL_FAST="$fast_model"
+    export BROWNIE_LLM_MODEL_CODE="$code_model"
+    export BROWNIE_LLM_MODEL="$deep_model"
+    [ -n "$fast_max_tokens" ] && export BROWNIE_LLM_MAX_TOKENS_FAST="$fast_max_tokens"
+    [ -n "$code_max_tokens" ] && export BROWNIE_LLM_MAX_TOKENS_CODE="$code_max_tokens"
+    [ -n "$fast_temperature" ] && export BROWNIE_LLM_TEMPERATURE_FAST="$fast_temperature"
+    [ -n "$code_temperature" ] && export BROWNIE_LLM_TEMPERATURE_CODE="$code_temperature"
+    [ -n "$fast_top_p" ] && export BROWNIE_LLM_TOP_P_FAST="$fast_top_p"
+    [ -n "$code_top_p" ] && export BROWNIE_LLM_TOP_P_CODE="$code_top_p"
+    [ -n "$fast_top_k" ] && export BROWNIE_LLM_TOP_K_FAST="$fast_top_k"
+    [ -n "$code_top_k" ] && export BROWNIE_LLM_TOP_K_CODE="$code_top_k"
+  fi
+  if [ "$route" != "code" ] && [ -n "$fast_model" ] && [ "${prompt_bytes:-0}" -gt "$PHASE_LOOP_LLM_FAST_MAX_PROMPT_BYTES" ]; then
     printf '%s llm_route=%s fast_model_disabled=prompt_too_large prompt_bytes=%s fast_max_prompt_bytes=%s fast=%s\n' "$(now_utc)" "${route:-none}" "${prompt_bytes:-0}" "$PHASE_LOOP_LLM_FAST_MAX_PROMPT_BYTES" "$fast_model" >> "$SUPERVISOR_LOG"
     fast_model=""
     unset BROWNIE_LLM_MODEL_FAST
@@ -4579,7 +5453,7 @@ PY
     unset BROWNIE_LLM_TOP_K_FAST
   fi
   if [ -n "$fast_model" ] || [ -n "$code_model" ]; then
-    printf '%s llm_route=%s model_override=per-pass fast=%s code=%s max_tokens_fast=%s max_tokens_code=%s temperature_fast=%s temperature_code=%s top_p_fast=%s top_p_code=%s top_k_fast=%s top_k_code=%s\n' "$(now_utc)" "${route:-none}" "${fast_model:-<unchanged>}" "${code_model:-<unchanged>}" "${fast_max_tokens:-<unchanged>}" "${code_max_tokens:-<unchanged>}" "${fast_temperature:-<unchanged>}" "${code_temperature:-<unchanged>}" "${fast_top_p:-<unchanged>}" "${code_top_p:-<unchanged>}" "${fast_top_k:-<unchanged>}" "${code_top_k:-<unchanged>}" >> "$SUPERVISOR_LOG"
+    printf '%s llm_route=%s model_override=per-pass fast=%s code=%s deep=%s max_tokens_fast=%s max_tokens_code=%s max_tokens_deep=%s temperature_fast=%s temperature_code=%s temperature_deep=%s top_p_fast=%s top_p_code=%s top_p_deep=%s top_k_fast=%s top_k_code=%s top_k_deep=%s\n' "$(now_utc)" "${route:-none}" "${fast_model:-<unchanged>}" "${code_model:-<unchanged>}" "${deep_model:-<unchanged>}" "${fast_max_tokens:-<unchanged>}" "${code_max_tokens:-<unchanged>}" "${deep_max_tokens:-<unchanged>}" "${fast_temperature:-<unchanged>}" "${code_temperature:-<unchanged>}" "${deep_temperature:-<unchanged>}" "${fast_top_p:-<unchanged>}" "${code_top_p:-<unchanged>}" "${deep_top_p:-<unchanged>}" "${fast_top_k:-<unchanged>}" "${code_top_k:-<unchanged>}" "${deep_top_k:-<unchanged>}" >> "$SUPERVISOR_LOG"
     return 0
   fi
   case "$route" in
@@ -5064,8 +5938,10 @@ run_brownie_once() {
       return 75
     fi
   fi
+  write_bdk_trajectory_event "$run_stamp" "todo.claimed" '{"source":"phase-loop"}'
   if selected_todo_was_stably_blocked; then
     record_stably_blocked_todo_claim "$run_stamp"
+    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"stably_blocked"}'
     return 0
   fi
   if [ "$use_resume" -ne 1 ]; then
@@ -5076,8 +5952,14 @@ run_brownie_once() {
         write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
       fi
       write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+      write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"prompt_build_failed"}'
       return 74
     fi
+    write_bdk_trajectory_prompt_routing_event "$run_stamp" "$effective_prompt"
+    write_bdk_trajectory_event "$run_stamp" "skill.selected" '{"skill_id":"brownie.phase-loop.builtin","adapter":"bdk-agent-skills"}'
+  else
+    write_bdk_trajectory_event "$run_stamp" "workflow.routed" '{"source":"phase-loop","bdk_state":"resume","llm_route":"resume"}'
+    write_bdk_trajectory_event "$run_stamp" "skill.selected" '{"skill_id":"brownie.phase-loop.resume","adapter":"bdk-agent-skills"}'
   fi
   if [ "$CLAIM_CREATED_THIS_RUN" -eq 1 ] && [ "${PHASE_LOOP_TEST_MUTATE_TODO_AFTER_PROMPT:-}" = "1" ]; then
     printf '\n- [ ] PHASE_LOOP_TEST_MUTATED_TODO_AFTER_PROMPT\n' >> "$PHASE_LOOP_TODO"
@@ -5097,8 +5979,11 @@ run_brownie_once() {
         write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
       fi
       write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+      write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"prompt_rebuild_failed"}'
       return 74
     fi
+    write_bdk_trajectory_prompt_routing_event "$run_stamp" "$effective_prompt"
+    write_bdk_trajectory_event "$run_stamp" "skill.selected" '{"skill_id":"brownie.phase-loop.builtin","adapter":"bdk-agent-skills"}'
     if [ "$CLAIM_CREATED_THIS_RUN" -eq 1 ] && ! verify_todo_fresh_for_runtime_start; then
       detail="TODO queue changed again before Runtime start; refusing stale invocation."
       printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
@@ -5106,11 +5991,13 @@ run_brownie_once() {
         write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
       fi
       write_status "blocked" "$detail" "$run_stamp" "75" "${CONSECUTIVE_FAILURES:-0}"
+      write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"stale_todo_queue"}'
       return 75
     fi
   fi
   if selected_todo_was_stably_blocked; then
     record_stably_blocked_todo_claim "$run_stamp"
+    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"stably_blocked"}'
     return 0
   fi
   local pre_guard_decomposition_fallback_output pre_guard_decomposition_fallback_status
@@ -5125,12 +6012,15 @@ run_brownie_once() {
     detail="Applied deterministic fallback for stagnated TODO decomposition before invoking Brownie: $pre_guard_decomposition_fallback_output"
     write_status "last_run_succeeded" "$detail" "todo-decomposition-fallback-$run_stamp" "0" "0"
     printf '%s run=%s todo_decomposition_fallback=true phase=pre_guard result=%s\n' "$(now_utc)" "todo-decomposition-fallback-$run_stamp" "$pre_guard_decomposition_fallback_output" >> "$SUPERVISOR_LOG"
+    write_bdk_trajectory_event "$run_stamp" "tool.write_applied" '{"source":"deterministic_fallback","kind":"todo_decomposition"}'
+    write_bdk_trajectory_event "$run_stamp" "todo.completed" '{"completion":"todo_decomposition_fallback"}'
     phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after" || true
     return 0
   elif [ "$pre_guard_decomposition_fallback_status" -eq 1 ]; then
     detail="Stagnated TODO decomposition fallback was eligible but failed safely before invoking Brownie: $pre_guard_decomposition_fallback_output"
     printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
     write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"todo_decomposition_fallback_failed"}'
     return 74
   fi
   local pre_guard_multifile_split_output pre_guard_multifile_split_status
@@ -5145,12 +6035,15 @@ run_brownie_once() {
     detail="Applied deterministic fallback for stagnated multi-file leaf split before invoking Brownie: $pre_guard_multifile_split_output"
     write_status "last_run_succeeded" "$detail" "todo-leaf-split-$run_stamp" "0" "0"
     printf '%s run=%s todo_multifile_leaf_split=true phase=pre_guard result=%s\n' "$(now_utc)" "todo-leaf-split-$run_stamp" "$pre_guard_multifile_split_output" >> "$SUPERVISOR_LOG"
+    write_bdk_trajectory_event "$run_stamp" "tool.write_applied" '{"source":"deterministic_fallback","kind":"todo_leaf_split"}'
+    write_bdk_trajectory_event "$run_stamp" "todo.completed" '{"completion":"todo_leaf_split_fallback"}'
     phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after" || true
     return 0
   elif [ "$pre_guard_multifile_split_status" -eq 1 ]; then
     detail="Stagnated multi-file leaf split fallback was eligible but failed safely before invoking Brownie: $pre_guard_multifile_split_output"
     printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
     write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"todo_leaf_split_fallback_failed"}'
     return 74
   fi
   local pre_guard_runtime_readiness_fingerprint_output pre_guard_runtime_readiness_fingerprint_status
@@ -5164,12 +6057,14 @@ run_brownie_once() {
     detail="Applied deterministic runtime release readiness fingerprint fallback before invoking Brownie: $pre_guard_runtime_readiness_fingerprint_output"
     write_status "last_run_succeeded" "$detail" "runtime-readiness-fingerprint-$run_stamp" "0" "0"
     printf '%s run=%s runtime_readiness_fingerprint_fallback=true phase=pre_guard result=%s\n' "$(now_utc)" "runtime-readiness-fingerprint-$run_stamp" "$pre_guard_runtime_readiness_fingerprint_output" >> "$SUPERVISOR_LOG"
+    write_bdk_trajectory_event "$run_stamp" "tool.write_applied" '{"source":"deterministic_fallback","kind":"runtime_readiness_fingerprint"}'
     phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after" || true
     return 0
   elif [ "$pre_guard_runtime_readiness_fingerprint_status" -eq 1 ]; then
     detail="Runtime release readiness fingerprint fallback was eligible but failed safely before invoking Brownie: $pre_guard_runtime_readiness_fingerprint_output"
     printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
     write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"runtime_readiness_fingerprint_fallback_failed"}'
     return 74
   fi
   local pre_guard_runtime_readiness_verified_output pre_guard_runtime_readiness_verified_status
@@ -5185,12 +6080,15 @@ run_brownie_once() {
     detail="Selected runtime release readiness TODO verification passed; marked TODO completed before invoking Brownie: $pre_guard_runtime_readiness_verified_output"
     write_status "last_run_succeeded" "$detail" "runtime-readiness-verified-$run_stamp" "0" "0"
     printf '%s run=%s runtime_readiness_verified_completion=true phase=pre_guard result=%s\n' "$(now_utc)" "runtime-readiness-verified-$run_stamp" "$pre_guard_runtime_readiness_verified_output" >> "$SUPERVISOR_LOG"
+    write_bdk_trajectory_event "$run_stamp" "verification.run" '{"source":"deterministic_fallback","result":"passed"}'
+    write_bdk_trajectory_event "$run_stamp" "todo.completed" '{"completion":"runtime_readiness_verified"}'
     phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after" || true
     return 0
   elif [ "$pre_guard_runtime_readiness_verified_status" -eq 1 ]; then
     detail="Runtime release readiness verified completion fallback was eligible but failed safely before invoking Brownie: $pre_guard_runtime_readiness_verified_output"
     printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
     write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"runtime_readiness_verified_fallback_failed"}'
     return 74
   fi
   local pre_guard_verified_noop_output pre_guard_verified_noop_status
@@ -5206,11 +6104,14 @@ run_brownie_once() {
     detail="Selected bounded TODO verification already passed; marked TODO completed before invoking Brownie: $pre_guard_verified_noop_output"
     write_status "last_run_succeeded" "$detail" "todo-verified-noop-$run_stamp" "0" "0"
     printf '%s run=%s selected_todo_verified_noop=true phase=pre_guard result=%s\n' "$(now_utc)" "todo-verified-noop-$run_stamp" "$pre_guard_verified_noop_output" >> "$SUPERVISOR_LOG"
+    write_bdk_trajectory_event "$run_stamp" "verification.run" '{"source":"deterministic_fallback","result":"passed"}'
+    write_bdk_trajectory_event "$run_stamp" "todo.completed" '{"completion":"verified_noop"}'
     return 0
   elif [ "$pre_guard_verified_noop_status" -eq 1 ]; then
     detail="Selected TODO verified-noop fallback was eligible but failed safely before invoking Brownie: $pre_guard_verified_noop_output"
     printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
     write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"verified_noop_fallback_failed"}'
     return 74
   fi
   local pre_guard_exact_fast_path_output pre_guard_exact_fast_path_status
@@ -5225,12 +6126,15 @@ run_brownie_once() {
     detail="Applied deterministic exact-line TODO fast path before guard checks: $pre_guard_exact_fast_path_output"
     write_status "last_run_succeeded" "$detail" "exact-line-$run_stamp" "0" "0"
     printf '%s run=%s exact_line_fast_path=true phase=pre_guard result=%s\n' "$(now_utc)" "exact-line-$run_stamp" "$pre_guard_exact_fast_path_output" >> "$SUPERVISOR_LOG"
+    write_bdk_trajectory_event "$run_stamp" "tool.write_applied" '{"source":"deterministic_fallback","kind":"exact_line"}'
+    write_bdk_trajectory_event "$run_stamp" "todo.completed" '{"completion":"exact_line_fast_path"}'
     phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after" || true
     return 0
   elif [ "$pre_guard_exact_fast_path_status" -eq 1 ]; then
     detail="Exact-line TODO fast path was eligible but failed safely before guard checks: $pre_guard_exact_fast_path_output"
     printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
     write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"exact_line_fast_path_failed"}'
     return 74
   fi
   if ! (
@@ -5244,15 +6148,18 @@ run_brownie_once() {
       detail="TODO decomposition guard failure was normalized before invoking Brownie; continuing with the repaired leaf TODO. normalization=$pre_runtime_todo_normalization"
       printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
       write_status "last_run_succeeded" "$detail" "todo-normalize-$run_stamp" "0" "0"
+      write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"todo_decomposition_guard_normalized"}'
       return 0
     fi
   fi
   if selected_todo_is_explicit_blocker; then
     record_explicit_blocker_todo_claim "$run_stamp"
+    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"explicit_blocker"}'
     return 0
   fi
   if selected_todo_is_invalid_decomposition_leaf; then
     record_invalid_decomposition_leaf_claim "$run_stamp"
+    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"invalid_decomposition_leaf"}'
     return 0
   fi
   local exact_fast_path_output exact_fast_path_status
@@ -5267,12 +6174,15 @@ run_brownie_once() {
     detail="Applied deterministic exact-line TODO fast path without LLM generation: $exact_fast_path_output"
     write_status "last_run_succeeded" "$detail" "exact-line-$run_stamp" "0" "0"
     printf '%s run=%s exact_line_fast_path=true result=%s\n' "$(now_utc)" "exact-line-$run_stamp" "$exact_fast_path_output" >> "$SUPERVISOR_LOG"
+    write_bdk_trajectory_event "$run_stamp" "tool.write_applied" '{"source":"deterministic_fallback","kind":"exact_line"}'
+    write_bdk_trajectory_event "$run_stamp" "todo.completed" '{"completion":"exact_line_fast_path"}'
     phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after" || true
     return 0
   elif [ "$exact_fast_path_status" -eq 1 ]; then
     detail="Exact-line TODO fast path was eligible but failed safely: $exact_fast_path_output"
     printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
     write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"exact_line_fast_path_failed"}'
     return 74
   fi
   (
@@ -5334,6 +6244,7 @@ PY
     progress_classification="$(
       printf '%s' "$progress_summary" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("classification", ""))'
     )"
+    write_bdk_trajectory_event "$run_stamp" "progress.classified" "$progress_summary"
 
     local todo_decomposition_validation
     if ! todo_decomposition_validation="$(validate_todo_decomposition_after_runtime_apply "$stdout_log" 2>&1)"; then
@@ -5345,6 +6256,7 @@ PY
         detail="TODO decomposition guard failure was normalized deterministically; continuing with the repaired leaf TODO. normalization=$todo_decomposition_normalization stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
         write_status "last_run_succeeded" "$detail" "$run_id" "$exit_code" "0"
         printf '%s run=%s todo_decomposition_normalized=true normalization=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$todo_decomposition_normalization" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+        write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"todo_decomposition_normalized"}'
         return 0
       fi
       write_repair_feedback "$run_stamp" "$todo_decomposition_validation" "$stdout_log" "$stderr_log" || true
@@ -5352,6 +6264,7 @@ PY
       detail="Brownie patched the live TODO queue but TODO decomposition validation failed; recorded repair feedback. validation=$todo_decomposition_validation stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
       write_status "no_progress" "$detail" "$run_id" "76" "${CONSECUTIVE_FAILURES:-1}"
       printf '%s run=%s todo_decomposition_validation_failed=true validation=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$todo_decomposition_validation" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+      write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"todo_decomposition_validation_failed"}'
       return 76
     fi
 
@@ -5363,12 +6276,114 @@ PY
       detail="Brownie applied a workspace patch and selected TODO verification passed; marked TODO completed. verification=$verification_completion stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
       write_status "last_run_succeeded" "$detail" "$run_id" "$exit_code" "0"
       printf '%s run=%s objective_apply_verified=true verification=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$verification_completion" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+      write_bdk_trajectory_event "$run_stamp" "verification.run" "$verification_completion"
+      write_bdk_trajectory_event "$run_stamp" "todo.completed" '{"completion":"objective_apply_verified"}'
       phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after" || true
       return 0
     else
-      if printf '%s' "$verification_completion" | rg -q '"reason": ?"verification_failed"|"reason": ?"semantic_completion_not_satisfied"|"reason": ?"semantic_completion_evidence_unreadable"'; then
+      write_bdk_trajectory_event "$run_stamp" "verification.run" "$verification_completion"
+      if printf '%s' "$verification_completion" | rg -q '"reason": ?"verification_failed"|"reason": ?"syntax_check_failed"|"reason": ?"semantic_completion_not_satisfied"|"reason": ?"semantic_completion_evidence_unreadable"'; then
         write_repair_feedback "$run_stamp" "$verification_completion" "$stdout_log" "$stderr_log" || true
         printf '%s run=%s repair_feedback_recorded=true verification=%s\n' "$(now_utc)" "$run_id" "$verification_completion" >> "$SUPERVISOR_LOG"
+      fi
+    fi
+
+    local todo_breakdown_patch_proposal_apply_output todo_breakdown_patch_proposal_apply_status
+    todo_breakdown_patch_proposal_apply_output="$(apply_valid_todo_breakdown_patch_proposal_fallback "$run_stamp" "$run_id" 2>&1)"
+    todo_breakdown_patch_proposal_apply_status=$?
+    if [ "$todo_breakdown_patch_proposal_apply_status" -eq 0 ]; then
+      local todo_breakdown_patch_guard_output
+      if todo_breakdown_patch_guard_output="$(
+        cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+        pnpm --workspace-root guard:todo-decomposition 2>&1
+      )"; then
+        workspace_after="$(git_workspace_fingerprint)"
+        clear_repair_feedback
+        detail="Applied valid Brownie TODO breakdown proposal fallback and guard passed. apply=$todo_breakdown_patch_proposal_apply_output stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+        write_status "last_run_succeeded" "$detail" "$run_id" "$exit_code" "0"
+        printf '%s run=%s valid_todo_breakdown_patch_proposal_fallback=true apply=%s guard=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$todo_breakdown_patch_proposal_apply_output" "$todo_breakdown_patch_guard_output" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+        write_bdk_trajectory_event "$run_stamp" "tool.write_applied" '{"source":"todo_breakdown_patch_proposal_fallback"}'
+        write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"todo_breakdown_patch_proposal_applied"}'
+        phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after" || true
+        return 0
+      else
+        local todo_breakdown_patch_guard_feedback
+        todo_breakdown_patch_guard_feedback="$(
+          python3 - "$todo_breakdown_patch_guard_output" <<'PY'
+import json
+import sys
+
+combined = sys.argv[1]
+print(json.dumps({
+    "completed": False,
+    "reason": "todo_decomposition_guard_failed_after_todo_breakdown_apply",
+    "repair_hint": "The previous run patched `.brownie/todo-breakdown.md`, but `pnpm --workspace-root guard:todo-decomposition` still rejected the queue. Repair `.brownie/todo-breakdown.md` only using the exact missing derived leaf id and existing E-16 anchors.",
+    "results": [{
+        "command": "pnpm --workspace-root guard:todo-decomposition",
+        "exit_code": 1,
+        "stdout_tail": combined[-4000:],
+        "stderr_tail": combined[-4000:],
+    }],
+}, sort_keys=True))
+PY
+        )"
+        write_repair_feedback "$run_stamp" "$todo_breakdown_patch_guard_feedback" "$stdout_log" "$stderr_log" || true
+        detail="Applied valid Brownie TODO breakdown proposal fallback but TODO guard failed; recorded repair feedback. apply=$todo_breakdown_patch_proposal_apply_output guard=$todo_breakdown_patch_guard_output stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+        write_status "no_progress" "$detail" "$run_id" "76" "${CONSECUTIVE_FAILURES:-1}"
+        printf '%s run=%s valid_todo_breakdown_patch_proposal_fallback_guard_failed=true apply=%s guard=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$todo_breakdown_patch_proposal_apply_output" "$todo_breakdown_patch_guard_output" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+        write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"todo_breakdown_patch_proposal_guard_failed"}'
+        return 76
+      fi
+    fi
+
+    local todo_patch_proposal_apply_output todo_patch_proposal_apply_status
+    todo_patch_proposal_apply_output="$(apply_valid_todo_patch_proposal_fallback "$run_stamp" "$run_id" 2>&1)"
+    todo_patch_proposal_apply_status=$?
+    if [ "$todo_patch_proposal_apply_status" -eq 0 ]; then
+      local todo_patch_guard_output
+      if todo_patch_guard_output="$(
+        cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+        pnpm --workspace-root guard:todo-decomposition 2>&1
+      )"; then
+        workspace_after="$(git_workspace_fingerprint)"
+        clear_repair_feedback
+        write_todo_claim "$(claim_field claim_id)" "completed" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+        remove_completed_todo_claim_from_queue "$run_stamp" >> "$SUPERVISOR_LOG" || true
+        detail="Applied valid Brownie TODO refinement proposal fallback and guard passed; marked TODO claim completed. apply=$todo_patch_proposal_apply_output stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+        write_status "last_run_succeeded" "$detail" "$run_id" "$exit_code" "0"
+        printf '%s run=%s valid_todo_patch_proposal_fallback=true apply=%s guard=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$todo_patch_proposal_apply_output" "$todo_patch_guard_output" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+        write_bdk_trajectory_event "$run_stamp" "tool.write_applied" '{"source":"todo_patch_proposal_fallback"}'
+        write_bdk_trajectory_event "$run_stamp" "todo.completed" '{"completion":"todo_patch_proposal_fallback"}'
+        phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after" || true
+        return 0
+      else
+        local todo_patch_guard_feedback
+        todo_patch_guard_feedback="$(
+          python3 - "$todo_patch_guard_output" <<'PY'
+import json
+import sys
+
+combined = sys.argv[1]
+print(json.dumps({
+    "completed": False,
+    "reason": "todo_decomposition_guard_failed_after_todo_apply",
+    "repair_hint": "The previous run patched `.brownie/todo.md`, but `pnpm --workspace-root guard:todo-decomposition` rejected the queue. Repair the TODO/breakdown files only; if the failure says a derived leaf id is missing from `.brownie/todo-breakdown.md`, add that exact id to the dependency graph and verification ledger instead of changing implementation files.",
+    "results": [{
+        "command": "pnpm --workspace-root guard:todo-decomposition",
+        "exit_code": 1,
+        "stdout_tail": combined[-4000:],
+        "stderr_tail": combined[-4000:],
+    }],
+}, sort_keys=True))
+PY
+        )"
+        write_repair_feedback "$run_stamp" "$todo_patch_guard_feedback" "$stdout_log" "$stderr_log" || true
+        write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+        detail="Applied valid Brownie TODO refinement proposal fallback but TODO guard failed; recorded repair feedback. apply=$todo_patch_proposal_apply_output guard=$todo_patch_guard_output stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+        write_status "no_progress" "$detail" "$run_id" "76" "${CONSECUTIVE_FAILURES:-1}"
+        printf '%s run=%s valid_todo_patch_proposal_fallback_guard_failed=true apply=%s guard=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$todo_patch_proposal_apply_output" "$todo_patch_guard_output" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+        write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"todo_patch_proposal_guard_failed"}'
+        return 76
       fi
     fi
 
@@ -5395,6 +6410,7 @@ PY
       detail="Brownie refined the selected TODO into smaller queue items; marked TODO claim completed. stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
       write_status "last_run_succeeded" "$detail" "$run_id" "$exit_code" "0"
       printf '%s run=%s todo_refinement_completed=true progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+      write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"todo_refinement_completed"}'
       phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after" || true
       return 0
     fi
@@ -5462,6 +6478,7 @@ PY
       detail="Brownie run reached a blocked external-control boundary; recorded the blocked TODO and will continue with the next unblocked TODO. stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE blocked=$TODO_BLOCKED_FILE"
       write_status "blocked_todo_recorded" "$detail" "$run_id" "$exit_code" "${CONSECUTIVE_FAILURES:-0}"
       printf '%s run=%s exit=%s blocked_external_control_boundary_recorded=true progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$exit_code" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+      write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"external_control_boundary"}'
       return 0
     elif python3 - "$stdout_log" <<'PY'
 import json, sys
@@ -5489,6 +6506,7 @@ PY
       detail="Brownie run reached a blocked boundary; recorded the blocked TODO and will continue with the next unblocked TODO. stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE blocked=$TODO_BLOCKED_FILE"
       write_status "blocked_todo_recorded" "$detail" "$run_id" "$exit_code" "${CONSECUTIVE_FAILURES:-0}"
       printf '%s run=%s exit=%s blocked_todo_recorded=true progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$exit_code" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+      write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"runtime_blocked"}'
       return 0
     fi
 
@@ -5503,6 +6521,7 @@ PY
         detail="Brownie run exited successfully but repeated the same non-progress fingerprint; recovery=$recovery_hint stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
         write_status "no_progress" "$detail" "$run_id" "76" "${CONSECUTIVE_FAILURES:-1}"
         printf '%s run=%s exit=%s recovery=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$exit_code" "$recovery_hint" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+        write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"no_progress"}'
         return 76
         ;;
       non_progress_success)
@@ -5521,6 +6540,7 @@ PY
         if [ "$(status_field status 2>/dev/null || true)" != "pr_created" ]; then
           write_status "last_run_succeeded" "$detail" "$run_id" "$exit_code" 0
         fi
+        write_bdk_trajectory_event "$run_stamp" "tool.write_applied" '{"source":"runtime","kind":"workspace_progress"}'
         ;;
     esac
   else
@@ -5534,6 +6554,7 @@ PY
       printf '%s run=%s exit=%s repair_feedback_recorded=true process_failure_repair=true stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$exit_code" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
     elif active_todo_claim_exists; then
       write_todo_claim "$(claim_field claim_id)" "blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"runtime_failed"}'
     fi
     write_progress_state "$stdout_log" "$run_stamp" "$exit_code" "$workspace_before" "$workspace_after" "$head_commit" >/dev/null || true
     detail="Brownie run failed; stdout=$stdout_log stderr=$stderr_log"

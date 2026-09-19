@@ -196,6 +196,18 @@ export const requiredReleaseGateCommands = [
     args: ['--workspace-root', 'guard:brownie-work-product:test']
   },
   {
+    id: 'bdk_agent_skills_guard',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:bdk-agent-skills']
+  },
+  {
+    id: 'bdk_agent_skills_guard_test',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:bdk-agent-skills:test']
+  },
+  {
     id: 'phase_loop_todo_evaluator_test',
     category: 'brownie_release_guard',
     command: 'pnpm',
@@ -220,6 +232,18 @@ export const requiredReleaseGateCommands = [
     args: ['--workspace-root', 'guard:runtime-release-readiness']
   },
   {
+    id: 'release_evidence_semantic_consistency_guard',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:release-evidence-semantic-consistency']
+  },
+  {
+    id: 'release_evidence_semantic_consistency_guard_test',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:release-evidence-semantic-consistency:test']
+  },
+  {
     id: 'product_completion_guard',
     category: 'brownie_release_guard',
     command: 'pnpm',
@@ -230,6 +254,24 @@ export const requiredReleaseGateCommands = [
     category: 'brownie_release_guard',
     command: 'pnpm',
     args: ['--workspace-root', 'guard:phase-value']
+  },
+  {
+    id: 'bdk_public_harness_guard',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:bdk-public-harness']
+  },
+  {
+    id: 'bdk_public_harness_guard_test',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:bdk-public-harness:test']
+  },
+  {
+    id: 'bdk_public_harness_evaluator_test',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'bdk:harness:evaluate:test']
   },
   {
     id: 'durable_schema_migration_guard',

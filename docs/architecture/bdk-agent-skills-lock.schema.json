@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/globalpocket/brownie/docs/architecture/bdk-agent-skills-lock.schema.json",
+  "title": "Brownie BDK Agent Skills lockfile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "skills"],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "source",
+          "content_hash",
+          "permissions",
+          "review",
+          "policy"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._:-]{1,127}$"
+          },
+          "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "uri", "revision"],
+            "properties": {
+              "type": {
+                "enum": ["local", "git", "codex", "builtin"]
+              },
+              "uri": {
+                "type": "string",
+                "minLength": 1
+              },
+              "revision": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "content_hash": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "permissions": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["allowed_tools", "script_execution"],
+            "properties": {
+              "allowed_tools": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9._:-]+$"
+                },
+                "uniqueItems": true
+              },
+              "script_execution": {
+                "enum": ["forbidden", "review_required", "allowed"]
+              }
+            }
+          },
+          "review": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status"],
+            "properties": {
+              "status": {
+                "enum": ["approved", "pending", "rejected"]
+              },
+              "reviewer": {
+                "type": "string"
+              },
+              "reviewed_at": {
+                "type": "string"
+              }
+            }
+          },
+          "policy": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["brownie_policy_overrides_skill"],
+            "properties": {
+              "brownie_policy_overrides_skill": {
+                "const": true
+              },
+              "notes": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
