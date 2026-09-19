@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { validateReleaseEvidenceSemanticConsistency } from './guard-release-evidence-semantic-consistency.mjs';
+
 const contradictoryEvidenceFixtures = [
   {
     name: 'implemented evidence with null commits',
@@ -48,11 +50,13 @@ test('semantic consistency fixtures cover release evidence contradictions', () =
   );
 });
 
-test('each semantic consistency fixture has contract and evidence payloads', () => {
+test('production validator rejects each semantic consistency fixture', () => {
   for (const fixture of contradictoryEvidenceFixtures) {
-    assert.equal(typeof fixture.name, 'string');
-    assert.equal(typeof fixture.expectedReason, 'string');
-    assert.equal(typeof fixture.contract, 'object');
-    assert.equal(typeof fixture.evidence, 'object');
+    const result = validateReleaseEvidenceSemanticConsistency({
+      contract: fixture.contract,
+      evidence: fixture.evidence,
+    });
+    assert.equal(result.ok, false, fixture.name);
+    assert(result.reasons.includes(fixture.expectedReason), fixture.name);
   }
 });

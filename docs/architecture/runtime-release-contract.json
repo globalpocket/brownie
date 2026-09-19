@@ -399,6 +399,14 @@
         "command": "pnpm --workspace-root guard:brownie-work-product:test"
       },
       {
+        "id": "bdk_agent_skills_guard",
+        "command": "pnpm --workspace-root guard:bdk-agent-skills"
+      },
+      {
+        "id": "bdk_agent_skills_guard_test",
+        "command": "pnpm --workspace-root guard:bdk-agent-skills:test"
+      },
+      {
         "id": "phase_loop_todo_evaluator_test",
         "command": "pnpm --workspace-root phase-loop:todo-evaluator:test"
       },
@@ -415,12 +423,32 @@
         "command": "pnpm --workspace-root guard:runtime-release-readiness"
       },
       {
+        "id": "release_evidence_semantic_consistency_guard",
+        "command": "pnpm --workspace-root guard:release-evidence-semantic-consistency"
+      },
+      {
+        "id": "release_evidence_semantic_consistency_guard_test",
+        "command": "pnpm --workspace-root guard:release-evidence-semantic-consistency:test"
+      },
+      {
         "id": "product_completion_guard",
         "command": "pnpm --workspace-root guard:product-completion"
       },
       {
         "id": "phase_value_guard",
         "command": "pnpm --workspace-root guard:phase-value"
+      },
+      {
+        "id": "bdk_public_harness_guard",
+        "command": "pnpm --workspace-root guard:bdk-public-harness"
+      },
+      {
+        "id": "bdk_public_harness_guard_test",
+        "command": "pnpm --workspace-root guard:bdk-public-harness:test"
+      },
+      {
+        "id": "bdk_public_harness_evaluator_test",
+        "command": "pnpm --workspace-root bdk:harness:evaluate:test"
       },
       {
         "id": "durable_schema_migration_guard",

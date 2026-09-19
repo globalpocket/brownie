@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "skills": [
+    {
+      "id": "public.example",
+      "source": {
+        "type": "git",
+        "uri": "https://example.invalid/skills.git",
+        "revision": "0123456789abcdef"
+      },
+      "content_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "permissions": {
+        "allowed_tools": ["workspace.read"],
+        "script_execution": "allowed"
+      },
+      "review": {
+        "status": "pending"
+      },
+      "policy": {
+        "brownie_policy_overrides_skill": true
+      }
+    }
+  ]
+}
