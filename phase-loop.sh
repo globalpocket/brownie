@@ -4622,6 +4622,10 @@ This PR was created by the external phase-loop controller after Brownie produced
   return 0
 }
 
+phase_loop_pr_created() {
+  [ "$(status_field status 2>/dev/null || true)" = "pr_created" ]
+}
+
 write_todo_claim() {
   local claim_id="$1"
   local status="$2"
@@ -7498,6 +7502,10 @@ supervise() {
 
     if run_brownie_once; then
       CONSECUTIVE_FAILURES=0
+      if phase_loop_pr_created; then
+        printf '%s pr_created observed; stopping supervisor for review\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
+        exit 0
+      fi
       interruptible_sleep "$PHASE_LOOP_INTERVAL_SECONDS" || true
     else
       CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))

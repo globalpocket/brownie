@@ -974,6 +974,76 @@ message = subprocess.check_output(["git", "-C", workspace, "log", "-1", "--forma
 assert "create PR from tracked Brownie progress" in message, message
 PY
 
+state_pr_supervise="$(mktemp -d)"
+prompt_pr_supervise="$(mktemp)"
+todo_pr_supervise="$(mktemp)"
+workspace_pr_supervise="$(mktemp -d)"
+remote_pr_supervise="$(mktemp -d)"
+fake_supervise_bin_dir="$(mktemp -d)"
+git -C "$workspace_pr_supervise" init -b main >/dev/null
+printf 'base\n' > "$workspace_pr_supervise/README.md"
+git -C "$workspace_pr_supervise" add README.md
+git -C "$workspace_pr_supervise" -c user.name=Brownie -c user.email=brownie@example.invalid commit -m init >/dev/null
+git -C "$remote_pr_supervise" init --bare >/dev/null
+git -C "$workspace_pr_supervise" remote add origin "$remote_pr_supervise"
+git -C "$workspace_pr_supervise" push -u origin main >/dev/null
+git -C "$workspace_pr_supervise" switch -c brownie-agent/smoke-pr-supervise >/dev/null
+printf 'base prompt\n' > "$prompt_pr_supervise"
+printf -- '- [ ] B-01: create PR then stop supervisor\n' > "$todo_pr_supervise"
+cat > "$fake_supervise_bin_dir/pnpm" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod +x "$fake_supervise_bin_dir/pnpm"
+cat > "$fake_supervise_bin_dir/gh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+case "${1:-} ${2:-}" in
+  "api user")
+    printf 'brownie-agent\n'
+    ;;
+  "auth token")
+    printf 'fake-token\n'
+    ;;
+  "pr view")
+    exit 1
+    ;;
+  "pr create")
+    printf 'https://github.com/globalpocket/brownie/pull/9998\n'
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+SH
+chmod +x "$fake_supervise_bin_dir/gh"
+
+PATH="$fake_supervise_bin_dir:$PATH" \
+PHASE_LOOP_STATE_DIR="$state_pr_supervise" \
+PHASE_LOOP_PROMPT="$prompt_pr_supervise" \
+PHASE_LOOP_TODO="$todo_pr_supervise" \
+BROWNIE_BIN="$fake_brownie_tracked_workspace_change" \
+PHASE_LOOP_WORKSPACE_ROOT="$workspace_pr_supervise" \
+PHASE_LOOP_CREATE_PR_AFTER_PROGRESS=1 \
+PHASE_LOOP_INTERVAL_SECONDS=30 \
+"$PHASE_LOOP" supervise >/dev/null 2>/dev/null
+
+python3 - "$state_pr_supervise/status.json" "$state_pr_supervise/logs/supervisor.log" "$workspace_pr_supervise" <<'PY'
+import json
+import subprocess
+import sys
+
+status = json.load(open(sys.argv[1], encoding="utf-8"))
+supervisor_log = open(sys.argv[2], encoding="utf-8").read()
+workspace = sys.argv[3]
+assert status["status"] == "pr_created", status
+assert "pull/9998" in status["detail"], status
+assert "pr_created observed; stopping supervisor for review" in supervisor_log, supervisor_log
+head = subprocess.check_output(["git", "-C", workspace, "rev-parse", "HEAD"], text=True).strip()
+remote = subprocess.check_output(["git", "-C", workspace, "rev-parse", "origin/brownie-agent/smoke-pr-supervise"], text=True).strip()
+assert head == remote, (head, remote)
+PY
+
 state_truncated="$(mktemp -d)"
 prompt_truncated="$(mktemp)"
 todo_truncated="$(mktemp)"

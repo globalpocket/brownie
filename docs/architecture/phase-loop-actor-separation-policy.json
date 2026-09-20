@@ -12,14 +12,56 @@
   "review_branch_prefixes": [
     "codex/"
   ],
+  "workflow_responsibility": {
+    "brownie_phase_loop": {
+      "actor": "brownie-agent",
+      "owns": [
+        "read .brownie/todo.md and .brownie/todo-breakdown.md",
+        "select and claim one TODO",
+        "decompose broad TODOs into implementation leaves when needed",
+        "implement the selected TODO",
+        "run bounded verification",
+        "commit tracked workspace changes",
+        "push the implementation branch",
+        "create the pull request"
+      ],
+      "must_stop_after": "pull_request_created",
+      "must_not": [
+        "review its own pull request",
+        "approve its own pull request",
+        "merge pull requests",
+        "relax branch protection",
+        "use the globalpocket account for implementation, commit, push, or pull request creation"
+      ]
+    },
+    "codex_globalpocket": {
+      "actor": "globalpocket",
+      "owns": [
+        "review Brownie-created pull requests",
+        "request changes when CI, evidence, policy, or implementation is insufficient",
+        "approve pull requests when the review is satisfied and the repository policy allows approval",
+        "merge pull requests after required checks and review policy are satisfied",
+        "perform explicit temporary owner emergency branch-protection changes only when required and restore them immediately"
+      ],
+      "must_not": [
+        "perform Brownie TODO implementation work through the globalpocket account",
+        "create Brownie implementation branches, commits, pushes, or pull requests for ordinary TODO execution",
+        "count a globalpocket-authored implementation pull request as a brownie-agent implementation pull request"
+      ]
+    }
+  },
   "requirements": [
+    "Brownie owns the implementation lifecycle through pull request creation: TODO selection, decomposition, implementation, verification, commit, push, and PR creation must run as brownie-agent.",
+    "Codex/globalpocket owns only the review and merge lifecycle for Brownie-created pull requests: review, request changes, approval when allowed, and merge after required checks pass.",
     "Brownie Phase Loop replacement implementation work must push and create pull requests as brownie-agent, not globalpocket.",
     "Codex/globalpocket may review and merge Brownie Phase Loop implementation pull requests after required checks pass.",
     "Implementation preflight must fail closed when the authenticated GitHub actor is missing, unknown, globalpocket, or any actor other than brownie-agent.",
     "Review preflight must fail closed when the authenticated GitHub actor is missing, unknown, brownie-agent, or any actor other than globalpocket.",
+    "Merge preflight must fail closed when the authenticated GitHub actor is missing, unknown, brownie-agent, or any actor other than globalpocket.",
     "Private local state, VM disks, VM images, credentials, screenshots, and machine-local scratch files must live under .brownie/private/ so shared Brownie evidence under .brownie/release-evidence/ remains trackable."
   ],
   "forbidden_success_claims": [
+    "Do not treat a Codex/globalpocket commit, push, or pull request as Brownie phase-loop implementation work.",
     "Do not count a globalpocket-authored implementation pull request as an independently reviewed brownie-agent implementation PR.",
     "Do not relax branch protection to compensate for actor collapse except as an explicit temporary owner emergency action.",
     "Do not treat static review JSON as GitHub review provenance for a concrete implementation pull request."

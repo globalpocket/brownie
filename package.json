@@ -63,6 +63,7 @@
     "phase-loop:decomposition-adversarial-real-llm": "node scripts/phase-loop-decomposition-adversarial-real-llm.mjs",
     "phase-loop:implementation-preflight": "node scripts/phase-loop-actor-preflight.mjs --role implementation",
     "phase-loop:review-preflight": "node scripts/phase-loop-actor-preflight.mjs --role review",
+    "phase-loop:merge-preflight": "node scripts/phase-loop-actor-preflight.mjs --role merge",
     "install:cli": "node scripts/install-brownie-cli.mjs",
     "install:cli:test": "node --test scripts/install-brownie-cli.test.mjs",
     "diagnose:lan-llm": "node scripts/diagnose-lan-llm-latency.mjs",
