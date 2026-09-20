@@ -3,13 +3,15 @@ import assert from 'node:assert/strict';
 
 import { validateReleaseEvidenceSemanticConsistency } from './guard-release-evidence-semantic-consistency.mjs';
 
+const nullSourceCommitFixture = {
+  name: 'implemented evidence with null commits',
+  contract: { status: 'implemented_sufficient', implementation_commit: null, tested_commit: null },
+  evidence: { source_commit: null, source_tree_dirty: false },
+  expectedReason: 'missing_commit_binding',
+};
+
 const contradictoryEvidenceFixtures = [
-  {
-    name: 'implemented evidence with null commits',
-    contract: { status: 'implemented_sufficient', implementation_commit: null, tested_commit: null },
-    evidence: { source_commit: null, source_tree_dirty: false },
-    expectedReason: 'missing_commit_binding',
-  },
+  nullSourceCommitFixture,
   {
     name: 'artifact evidence from dirty source tree',
     contract: { status: 'implemented_sufficient', artifact_sha256: 'sha256:abc' },
@@ -35,6 +37,21 @@ const contradictoryEvidenceFixtures = [
     expectedReason: 'forbidden_confidential_evidence',
   },
 ];
+
+test('dirty source tree evidence rejects with dirty_source_tree', () => {
+  const result = validateReleaseEvidenceSemanticConsistency({
+    contract: { status: 'implemented_sufficient' },
+    evidence: { source_commit: 'abc123', source_tree_dirty: true },
+  });
+  assert.equal(result.ok, false);
+  assert(result.reasons.includes('dirty_source_tree'));
+});
+
+test('null source_commit rejects with missing_commit_binding', () => {
+  const result = validateReleaseEvidenceSemanticConsistency(nullSourceCommitFixture);
+  assert.equal(result.ok, false);
+  assert(result.reasons.includes('missing_commit_binding'));
+});
 
 test('semantic consistency fixtures cover release evidence contradictions', () => {
   assert.equal(contradictoryEvidenceFixtures.length, 5);

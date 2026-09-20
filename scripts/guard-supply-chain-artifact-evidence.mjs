@@ -29,6 +29,10 @@ const requiredArtifactSmokeE2eStepIds = [
   'forced_stop_resume',
   'stale_replay_rejection'
 ];
+
+function isArtifactSmokeStepId(stepId) {
+  return requiredArtifactSmokeE2eStepIds.includes(stepId);
+}
 const allowedIncompleteStatuses = new Set([
   'blocked_external',
   'failed',
@@ -36,6 +40,7 @@ const allowedIncompleteStatuses = new Set([
   'not_executed',
   'not_executed_missing_artifacts',
   'partial_cross_platform_missing',
+  'partial_source_identity_missing',
   'not_generated',
   'partial_no_release_artifacts',
   'partial_tooling_missing'
@@ -161,6 +166,9 @@ function validateEvidence(evidence, options = {}) {
       validateReferencedFile(repoRoot, artifact, errors, `sections.artifacts.artifacts[${index}]`);
       validateOptionalPath(repoRoot, artifact.artifact_evidence_path, errors, `sections.artifacts.artifacts[${index}].artifact_evidence_path`);
       validateOptionalPath(repoRoot, artifact.smoke_evidence_path, errors, `sections.artifacts.artifacts[${index}].smoke_evidence_path`);
+      requireValue(hashPattern.test(artifact.source_commit), errors, `sections.artifacts.artifacts[${index}].source_commit must be sha256:<64 lowercase hex>.`);
+      requireValue(artifact.source_clean_tree === 'clean', errors, `sections.artifacts.artifacts[${index}].source_clean_tree must be clean.`);
+      requireValue(hashPattern.test(artifact.source_identity), errors, `sections.artifacts.artifacts[${index}].source_identity must be sha256:<64 lowercase hex>.`);
     }
   }
 

@@ -59,6 +59,47 @@ function sha256File(filePath) {
   return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')}`;
 }
 
+function gitOutput(repoRoot, args) {
+  const result = spawnSync('git', args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    timeout: 15_000,
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
+function sha256SourceCommit(repoRoot) {
+  const output = gitOutput(repoRoot, ['rev-parse', 'HEAD']);
+  return output ? `sha256:${output}` : 'sha256:unknown';
+}
+
+function sha256CleanTree(repoRoot) {
+  const result = spawnSync('git', ['diff-index', '--quiet', 'HEAD', '--'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    timeout: 15_000,
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  if (result.status === 0) {
+    return 'sha256:clean-tree';
+  }
+  if (result.status === 1) {
+    return 'sha256:dirty-tree';
+  }
+  return 'sha256:unknown';
+}
+
+function sha256String(str) {
+  return `sha256:${crypto.createHash('sha256').update(str).digest('hex')}`;
+}
+
+function sha256FileWithSource(filePath, sourceCommit, sourceCleanTree) {
+  const artifactSha256 = sha256File(filePath);
+  const sourceIdentity = sha256String(`${sourceCommit}:${sourceCleanTree}`);
+  return `${artifactSha256} source:${sourceIdentity}`;
+}
+
 function run(repoRoot, command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: repoRoot,
@@ -188,6 +229,9 @@ export function buildLocalArtifact(options = {}) {
     smoke(repoRoot, artifactPath, ['--version']),
     smoke(repoRoot, artifactPath, ['help', 'run'])
   ];
+  const sourceCommit = sha256SourceCommit(repoRoot);
+  const sourceCleanTree = sha256CleanTree(repoRoot);
+  const sourceIdentity = sha256String(`${sourceCommit}:${sourceCleanTree}`);
   const artifactEvidence = {
     schema_version: 1,
     evidence_id: 'brownie-local-release-artifact-v1',
@@ -200,7 +244,10 @@ export function buildLocalArtifact(options = {}) {
       path: artifactRelativePath,
       sha256: sha256File(artifactPath),
       bytes: fs.statSync(artifactPath).size,
-      target
+      target,
+      source_commit: sourceCommit,
+      source_clean_tree: sourceCleanTree,
+      source_identity: sourceIdentity
     },
     build: {
       setup: setup

@@ -2862,6 +2862,48 @@ pub fn preflight_workspace_write_input(input: &Value) -> Result<(), &'static str
     preflight_workspace_write_input_with_limit(input, DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS)
 }
 
+fn text_has_repetitive_generation_collapse(text: &str) -> bool {
+    let mut repeated_line_run = 0usize;
+    let mut previous_line = "";
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        if line == previous_line && line.chars().count() >= 8 {
+            repeated_line_run += 1;
+            if repeated_line_run >= 4 {
+                return true;
+            }
+        } else {
+            repeated_line_run = 1;
+            previous_line = line;
+        }
+    }
+
+    let mut repeated_token_run = 0usize;
+    let mut previous_token = "";
+    for token in text
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'))
+        .filter(|token| token.len() >= 6)
+    {
+        if token == previous_token {
+            repeated_token_run += 1;
+            if repeated_token_run >= 8 {
+                return true;
+            }
+        } else {
+            repeated_token_run = 1;
+            previous_token = token;
+        }
+    }
+
+    false
+}
+
+fn preflight_workspace_write_text_semantics(text: &str) -> Result<(), &'static str> {
+    if text_has_repetitive_generation_collapse(text) {
+        return Err("workspace.write text appears to contain repetitive generation collapse.");
+    }
+    Ok(())
+}
+
 fn normalize_workspace_write_input(input: Value) -> Value {
     let Some(object) = input.as_object() else {
         return input;
@@ -3054,6 +3096,7 @@ pub fn preflight_workspace_write_input_with_limit(
                         "workspace.write input.hunks[].old_text must not be empty for patch_file.",
                     );
                 }
+                preflight_workspace_write_text_semantics(new_text)?;
                 if let Some(occurrence) = hunk.get("occurrence") {
                     let Some(raw) = occurrence.as_u64() else {
                         return Err(
@@ -3078,6 +3121,7 @@ pub fn preflight_workspace_write_input_with_limit(
             let Some(content) = object.get("content").and_then(|value| value.as_str()) else {
                 return Err("workspace.write input.content must be a string for patch_file.");
             };
+            preflight_workspace_write_text_semantics(content)?;
             workspace_write_unified_diff_content_to_hunks_with_limit(content, max_content_chars)?;
             return Ok(());
         } else {
@@ -3096,6 +3140,7 @@ pub fn preflight_workspace_write_input_with_limit(
             if old_text.is_empty() {
                 return Err("workspace.write input.old_text must not be empty for patch_file.");
             }
+            preflight_workspace_write_text_semantics(new_text)?;
             if old_text.chars().count() + new_text.chars().count() > max_content_chars {
                 return Err("workspace.write patch hunk exceeds parser length limit.");
             }
@@ -3111,6 +3156,7 @@ pub fn preflight_workspace_write_input_with_limit(
     if content.chars().count() > max_content_chars {
         return Err("workspace.write input.content exceeds parser length limit.");
     }
+    preflight_workspace_write_text_semantics(content)?;
     Ok(())
 }
 
@@ -5314,6 +5360,38 @@ mod tests {
         assert_eq!(parsed.requests.len(), 1);
         assert_eq!(parsed.requests[0].tool_id, "workspace.write");
         assert!(parsed.rejected.is_empty());
+    }
+
+    #[test]
+    fn parser_rejects_workspace_write_repetitive_generation_collapse() {
+        let collapsed_new_text = [
+            "const requiredArtifactSmokeE2eStepIds = [",
+            "  'base_mode_pack_load',",
+            "  'minimal_task_run',",
+            "  'ledger_generation',",
+            "  'forced_stop_resume',",
+            "  'stale_replay_rejection',",
+            "  'artifact_smoke',",
+            "  'artifact_smoke',",
+            "  'artifact_smoke',",
+            "  'artifact_smoke',",
+            "  'artifact_smoke',",
+            "  'artifact_smoke',",
+            "  'artifact_smoke',",
+            "  'artifact_smoke',",
+            "];",
+        ]
+        .join("\\n");
+        let assistant_content = format!(
+            "```brownie-tool-intent\n{{\"tool_requests\":[{{\"tool_id\":\"workspace.write\",\"reason\":\"Patch evidence guard.\",\"input\":{{\"path\":\"scripts/guard-supply-chain-artifact-evidence.mjs\",\"operation\":\"patch_file\",\"old_text\":\"const requiredArtifactSmokeE2eStepIds = [];\",\"new_text\":{}}}}}]}}\n```",
+            serde_json::to_string(&collapsed_new_text).expect("json string")
+        );
+        let parsed = ToolIntentParser::parse_assistant_content(&assistant_content);
+        assert!(parsed.requests.is_empty());
+        assert!(parsed.rejected.iter().any(|rejection| {
+            rejection.tool_id.as_deref() == Some("workspace.write")
+                && rejection.reason.contains("repetitive generation collapse")
+        }));
     }
 
     #[test]

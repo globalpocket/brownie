@@ -292,6 +292,15 @@ test('collector generated evidence contains no forbidden local or raw process de
   assert.deepEqual(validateRuntimeOperationalEvidence(evidence), []);
 });
 
+test('collector source does not contain raw fixture output payloads', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'scripts/release-runtime-operational-evidence.mjs'), 'utf8');
+  assert(!source.includes('const artifactLifecycleEvidence = {'));
+  assert(!source.includes('const soakEvidenceFixture = {'));
+  assert(!source.includes('actual_output:'));
+  assert(!source.includes("stdout: 'Runtime"));
+  assert(!source.includes("stderr: ''"));
+});
+
 test('accepts fail-closed delegated target command failures', () => {
   const evidence = validEvidence({
     fail_closed_reasons: ['artifact_lifecycle:failed']

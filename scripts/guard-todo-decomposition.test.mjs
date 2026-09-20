@@ -180,6 +180,78 @@ test('rejects broad leaf completion conditions', () => {
   assert(errors.some((error) => error.includes('Completion condition is too broad')), errors.join('\n'));
 });
 
+test('rejects TODO contract contradictions between verification and forbidden sections', () => {
+  const contradictory = `- [ ] E-16f-phase-final-judgment-sync-leaf-2-step1: Patch only \`docs/architecture/phase-value-manifest.json\` to update one owner review field.
+  Route: documentation.
+  Source TODO: E-16f-phase-final-judgment-sync-leaf-2.
+  Depends on: <none>.
+  Completion condition: one owner review field is updated with the current Product Ready blocker state.
+  Forbidden changes: do not modify phase_value_gate or guard_engine_change_review sections.
+  Verification: run \`pnpm --workspace-root guard:phase-value\`.`;
+  const errors = validateTodoDecompositionText(contradictory, {
+    packageScripts: new Set(['guard:phase-value'])
+  });
+
+  assert(errors.some((error) => error.includes('TODO contract contradiction')), errors.join('\n'));
+  assert(errors.some((error) => error.includes('phase_value_gate')), errors.join('\n'));
+  assert(errors.some((error) => error.includes('guard_engine_change_review')), errors.join('\n'));
+});
+
+test('rejects broad guard verification when leaf forbids all other fields', () => {
+  const contradictory = `- [ ] E-16f-phase-final-judgment-sync-title-only: Patch only \`docs/architecture/phase-value-manifest.json\` to confirm title field value.
+  Route: documentation.
+  Source TODO: E-16f-phase-final-judgment-sync.
+  Depends on: <none>.
+  Completion condition: title field equals the current phase title.
+  Forbidden changes: do not modify any other fields.
+  Verification: run \`pnpm --workspace-root guard:phase-value\`.`;
+  const errors = validateTodoDecompositionText(contradictory, {
+    packageScripts: new Set(['guard:phase-value'])
+  });
+
+  assert(errors.some((error) => error.includes('TODO contract contradiction')), errors.join('\n'));
+});
+
+test('rejects generated leaf id chains that keep appending suffixes', () => {
+  const chained = `- [ ] E-16f-phase-final-judgment-sync-leaf-2-step1-small-leaf2-patch1: Patch only \`docs/architecture/phase-value-manifest.json\` to update one release judgment field.
+  Route: documentation.
+  Source TODO: E-16f-phase-final-judgment-sync-leaf-2-step1-small-leaf2.
+  Depends on: <none>.
+  Completion condition: exactly one release judgment field is updated with the current fail-closed Product Ready blocker state.
+  Forbidden changes: do not claim public Release Ready and do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root guard:phase-value\`.`;
+  const errors = validateTodoDecompositionText(chained, {
+    packageScripts: new Set(['guard:phase-value'])
+  });
+
+  assert(errors.some((error) => error.includes('generated leaf id chain is too long')), errors.join('\n'));
+  assert(errors.some((error) => error.includes('Source TODO must reference the stable parent/root TODO')), errors.join('\n'));
+});
+
+test('rejects duplicate sibling leaves after normalizing generated suffixes', () => {
+  const duplicated = `- [ ] E-16f-phase-value-gate-contract-sync-leaf-2: Patch only \`docs/architecture/phase-value-manifest.json\` to add the \`phase_value_gate\` field.
+  Route: documentation.
+  Source TODO: E-16f-phase-value-gate-contract-sync.
+  Depends on: <none>.
+  Completion condition: phase_value_gate field is present and describes the current fail-closed Runtime evidence state.
+  Forbidden changes: do not claim public Release Ready and do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root guard:phase-value\`.
+
+- [ ] E-16f-phase-value-gate-contract-sync-leaf-3: Patch only \`docs/architecture/phase-value-manifest.json\` to add the \`phase_value_gate\` field.
+  Route: documentation.
+  Source TODO: E-16f-phase-value-gate-contract-sync-leaf-2.
+  Depends on: <none>.
+  Completion condition: phase_value_gate field is present and describes the current fail-closed Runtime evidence state.
+  Forbidden changes: do not claim public Release Ready and do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root guard:phase-value\`.`;
+  const errors = validateTodoDecompositionText(duplicated, {
+    packageScripts: new Set(['guard:phase-value'])
+  });
+
+  assert(errors.some((error) => error.includes('duplicate sibling leaf')), errors.join('\n'));
+  assert(errors.some((error) => error.includes('stable parent/root TODO')), errors.join('\n'));
+});
+
 test('rejects inspect-only verification for implementation leaves', () => {
   const inspectOnly = validLeaf.replace('Verification: run `pnpm --workspace-root guard:release-contract:test`.', 'Verification: inspect release evidence manually.');
   const errors = validateTodoDecompositionText(inspectOnly);
