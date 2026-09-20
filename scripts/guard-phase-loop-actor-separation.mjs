@@ -54,11 +54,78 @@ export function runPhaseLoopActorSeparationGuard(options = {}) {
   requireValue(policy.review_actor === 'globalpocket', errors, `${policyPath} review_actor must be globalpocket.`);
   requireValue(policy.merge_actor === 'globalpocket', errors, `${policyPath} merge_actor must be globalpocket.`);
   requireValue(policy.implementation_actor !== policy.review_actor, errors, `${policyPath} implementation_actor and review_actor must differ.`);
+  const responsibility = policy.workflow_responsibility ?? {};
+  const brownieResponsibility = responsibility.brownie_phase_loop ?? {};
+  const codexResponsibility = responsibility.codex_globalpocket ?? {};
+  requireValue(brownieResponsibility.actor === 'brownie-agent', errors, `${policyPath} workflow_responsibility.brownie_phase_loop.actor must be brownie-agent.`);
+  requireValue(codexResponsibility.actor === 'globalpocket', errors, `${policyPath} workflow_responsibility.codex_globalpocket.actor must be globalpocket.`);
+  for (const owner of [
+    'select and claim one TODO',
+    'decompose broad TODOs into implementation leaves when needed',
+    'implement the selected TODO',
+    'run bounded verification',
+    'commit tracked workspace changes',
+    'push the implementation branch',
+    'create the pull request'
+  ]) {
+    requireValue(
+      Array.isArray(brownieResponsibility.owns) && brownieResponsibility.owns.includes(owner),
+      errors,
+      `${policyPath} brownie_phase_loop must own ${owner}.`
+    );
+  }
+  requireValue(
+    brownieResponsibility.must_stop_after === 'pull_request_created',
+    errors,
+    `${policyPath} brownie_phase_loop.must_stop_after must be pull_request_created.`
+  );
+  for (const forbidden of [
+    'review its own pull request',
+    'approve its own pull request',
+    'merge pull requests',
+    'relax branch protection',
+    'use the globalpocket account for implementation, commit, push, or pull request creation'
+  ]) {
+    requireValue(
+      Array.isArray(brownieResponsibility.must_not) && brownieResponsibility.must_not.includes(forbidden),
+      errors,
+      `${policyPath} brownie_phase_loop.must_not must include ${forbidden}.`
+    );
+  }
+  for (const owner of [
+    'review Brownie-created pull requests',
+    'request changes when CI, evidence, policy, or implementation is insufficient',
+    'approve pull requests when the review is satisfied and the repository policy allows approval',
+    'merge pull requests after required checks and review policy are satisfied'
+  ]) {
+    requireValue(
+      Array.isArray(codexResponsibility.owns) && codexResponsibility.owns.includes(owner),
+      errors,
+      `${policyPath} codex_globalpocket must own ${owner}.`
+    );
+  }
+  for (const forbidden of [
+    'perform Brownie TODO implementation work through the globalpocket account',
+    'create Brownie implementation branches, commits, pushes, or pull requests for ordinary TODO execution',
+    'count a globalpocket-authored implementation pull request as a brownie-agent implementation pull request'
+  ]) {
+    requireValue(
+      Array.isArray(codexResponsibility.must_not) && codexResponsibility.must_not.includes(forbidden),
+      errors,
+      `${policyPath} codex_globalpocket.must_not must include ${forbidden}.`
+    );
+  }
   requireValue(
     Array.isArray(policy.forbidden_success_claims) &&
       policy.forbidden_success_claims.some((claim) => /static review JSON/i.test(claim)),
     errors,
     `${policyPath} must forbid static review JSON as concrete GitHub review provenance.`
+  );
+  requireValue(
+    Array.isArray(policy.forbidden_success_claims) &&
+      policy.forbidden_success_claims.some((claim) => /Codex\/globalpocket commit, push, or pull request/i.test(claim)),
+    errors,
+    `${policyPath} must forbid treating Codex/globalpocket implementation work as Brownie phase-loop implementation work.`
   );
   requireValue(
     Array.isArray(policy.requirements) &&
@@ -80,6 +147,7 @@ export function runPhaseLoopActorSeparationGuard(options = {}) {
 
   requireValue(packageJson.scripts?.['phase-loop:implementation-preflight'] === 'node scripts/phase-loop-actor-preflight.mjs --role implementation', errors, 'package.json must define phase-loop:implementation-preflight.');
   requireValue(packageJson.scripts?.['phase-loop:review-preflight'] === 'node scripts/phase-loop-actor-preflight.mjs --role review', errors, 'package.json must define phase-loop:review-preflight.');
+  requireValue(packageJson.scripts?.['phase-loop:merge-preflight'] === 'node scripts/phase-loop-actor-preflight.mjs --role merge', errors, 'package.json must define phase-loop:merge-preflight.');
   requireValue(packageJson.scripts?.['guard:phase-loop-actor-separation'] === 'node scripts/guard-phase-loop-actor-separation.mjs', errors, 'package.json must define guard:phase-loop-actor-separation.');
   requireValue(packageJson.scripts?.['guard:phase-loop-actor-separation:test'] === 'node --test scripts/guard-phase-loop-actor-separation.test.mjs', errors, 'package.json must define guard:phase-loop-actor-separation:test.');
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:phase-loop-actor-separation'), errors, 'VSIX check must invoke guard:phase-loop-actor-separation.');

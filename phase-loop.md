@@ -63,6 +63,31 @@ the current bounded invocation.
 Do not use repo-local `.brownie-control` as live authority. Repository files are
 implementation artifacts, tests, docs, or compatibility pointers only.
 
+## Actor Responsibility Boundary
+
+Brownie Phase Loop runs as the implementation actor `brownie-agent`.
+`brownie-agent` owns the implementation lifecycle only:
+
+1. read `.brownie/todo.md` and `.brownie/todo-breakdown.md`;
+2. select and claim one TODO;
+3. decompose broad TODOs into bounded implementation leaves when needed;
+4. implement the selected TODO;
+5. run bounded verification;
+6. commit tracked workspace changes;
+7. push the implementation branch; and
+8. create the pull request.
+
+After the pull request is created, Brownie must stop for review. Brownie must
+not review, approve, merge, or relax branch protection for its own pull request.
+Brownie must not use the `globalpocket` account for TODO implementation,
+commit, push, or pull request creation.
+
+Codex running as `globalpocket` owns the review and merge lifecycle for
+Brownie-created pull requests only: review the PR, request changes when needed,
+approve when policy allows it, and merge after required checks and review policy
+are satisfied. `globalpocket` must not be treated as the Brownie implementation
+actor for ordinary TODO execution.
+
 ## Final Goal
 
 Finite-converge Brownie Runtime to Product Ready.
