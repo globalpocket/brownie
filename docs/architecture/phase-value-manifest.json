@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "phase": "RRP-8.7",
-  "title": "Owner Governance Evidence Gate",
-  "date": "2026-09-09",
+  "title": "Owner Governance Evidence Gate - RRP-8.7",
+  "date": "2026-09-20",
   "current_milestone": "runtime-release-readiness-p0-p1-finite-closure",
   "milestone": "Brownie Runtime Release Readiness",
   "target_capability": "headless_autonomous_development",
@@ -73,6 +73,74 @@
       }
     ]
   },
+  "product_completion_gate": {
+    "required": true,
+    "accepted_capability": [
+      "Owner-governance and release-evidence blockers are represented as bounded, machine-checkable evidence contracts instead of prose-only residuals.",
+      "The Brownie loop can reject malformed TODO work items, repetitive workspace.write collapse, stale patch hunks, and incomplete release evidence before claiming progress."
+    ],
+    "behavior_evidence": [
+      "guard:todo-contract and guard:todo-decomposition tests validate bounded TODO inputs and decomposition behavior.",
+      "guard:tool-intent-contract tests validate tool-intent schema behavior for external harness alignment.",
+      "guard:runtime-operational-evidence and guard:supply-chain-artifact-evidence tests validate fail-closed release evidence behavior.",
+      "brownie-runtime tests validate protected-read recovery and concrete TODO decomposition behavior."
+    ],
+    "safety_boundary": [
+      "This phase does not declare Runtime Product Ready or Runtime Release Ready.",
+      "Incomplete artifact lifecycle, stateful soak, semantic consistency, and final release-document synchronization remain fail-closed.",
+      "External owner decisions and public-release approvals remain outside Runtime automation authority."
+    ],
+    "non_goals": [
+      "Creating release tags or publishing release assets.",
+      "Replacing owner-controlled GitHub settings or independent review with automation.",
+      "Claiming that E-16 release evidence is complete."
+    ],
+    "rejected_alternatives": [
+      "Treating PR or CI success alone as product-completion evidence.",
+      "Accepting broad parent TODOs without leaf-level execution contracts.",
+      "Recording raw local execution output as public release evidence."
+    ],
+    "technical_debt": [
+      "phase-loop.sh remains a large shell supervisor and should later be decomposed into queue, claim, lifecycle, evidence, PR, retry, and state modules.",
+      "E-16 release evidence still requires executable artifact lifecycle, stateful soak, semantic consistency, and document synchronization work."
+    ],
+    "next_capability_rationale": [
+      "The next capability is executable release-evidence closure: binding clean source identity to artifacts, running E2E artifact smoke, exercising lifecycle rollback, and replacing version-only soak with stateful soak.",
+      "Completing that evidence is required before Product Ready can be honestly claimed."
+    ],
+    "release_readiness_scope": {
+      "runtime_release_dod": [
+        "Clean source identity is bound to generated artifacts.",
+        "Cross-platform artifact E2E smoke validates Mode Pack load, minimal task execution, ledger generation, resume, and replay rejection.",
+        "Stateful soak exercises task transitions and ledger/workspace consistency."
+      ],
+      "runtime_boundary_contracts": [
+        "Runtime permissions remain authoritative over LLM instructions.",
+        "Mode Pack inputs remain external policy material compiled into runtime-enforced constraints.",
+        "Release evidence must be sanitized before it is stored in tracked files."
+      ],
+      "external_control_plane_responsibilities": [
+        "GitHub branch protection, required status checks, protected tags, and workflow permissions remain owner-controlled settings.",
+        "Independent release review remains an owner-governed process."
+      ],
+      "external_adapter_responsibilities": [
+        "Local VM and SSH release targets provide execution environments but are not themselves stored in the repository.",
+        "MCP account credentials and private GitHub CLI state remain under .brownie/private."
+      ],
+      "commercial_solution_readiness": [
+        "Hosted scheduling, billing, RBAC, Vault, and enterprise administration remain post-v0 responsibilities.",
+        "Public release posture remains blocked until executable release evidence and owner approval are complete."
+      ],
+      "external_responsibility_not_release_blocking": true
+    }
+  },
+  "behavior_evidence": [
+    "cargo test -p brownie-runtime --all-features validates Runtime behavior affected by loop recovery and TODO decomposition changes.",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings validates Rust implementation quality.",
+    "pnpm --workspace-root guard:todo-contract:test validates TODO contract fixtures.",
+    "pnpm --workspace-root guard:tool-intent-contract:test validates tool-intent contract fixtures.",
+    "pnpm --workspace-root release:gate -- --dry-run validates the release gate remains fail-closed."
+  ],
   "implementation_audit_classification": {
     "classification": "required_before_release_corrective",
     "status": "partial",
@@ -114,6 +182,13 @@
       "license, publish settings, tags, release assets, or signing infrastructure are changed by Runtime automation"
     ]
   },
+  "exit_criteria": [
+    "pnpm --workspace-root check passes with product-completion, release-readiness, release-contract, TODO decomposition, runtime module decomposition, and phase-value guards enabled.",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings passes.",
+    "cargo test -p brownie-runtime --all-features passes.",
+    "Release evidence remains fail-closed where executable artifact lifecycle, stateful soak, semantic consistency, or final release-document synchronization are incomplete.",
+    "Runtime Release Ready and Runtime Product Ready remain false."
+  ],
   "guard_engine_change_review": {
     "required": true,
     "strict_review_required": true,
@@ -126,163 +201,17 @@
       "docs/architecture/runtime-module-decomposition-assessment.json",
       "docs/architecture/runtime-release-contract.json",
       "docs/architecture/runtime-release-readiness-audit.json",
-      "extensions/brownie-vsix/package.json",
-      "scripts/guard-phase-value.mjs",
-      "scripts/guard-dependency-security-license-audit.test.mjs",
-      "scripts/guard-release-contract.mjs",
-      "scripts/guard-release-contract.test.mjs",
-      "scripts/guard-local-release-targets.mjs",
-      "scripts/bootstrap-release-vms.mjs",
-      "scripts/create-linux-release-vm.mjs",
-      "scripts/create-windows-release-vm.mjs",
-      "scripts/manage-release-vm-images.mjs",
-      "scripts/guard-owner-governance-evidence.mjs",
-      "scripts/guard-owner-governance-evidence.test.mjs",
-      "scripts/release-local-artifact.mjs",
-      "scripts/release-local-artifacts-all.mjs",
-      "scripts/release-owner-governance-evidence.mjs",
-      "scripts/release-integrity-verify.mjs",
-      "scripts/guard-runtime-release-readiness.mjs",
-      "scripts/guard-runtime-release-readiness.test.mjs",
-      "scripts/guard-durable-schema-migration.mjs",
-      "scripts/guard-durable-schema-migration.test.mjs",
-      "scripts/guard-supply-chain-artifact-evidence.mjs",
-      "scripts/guard-supply-chain-artifact-evidence.test.mjs",
-      "scripts/release-dependency-security-license-audit.mjs",
-      "scripts/release-dependency-security-license-audit.test.mjs",
       "scripts/release-supply-chain-artifact-evidence.mjs",
-      "scripts/release-gate.mjs",
-      "docs/architecture/local-release-targets.schema.json",
-      "docs/architecture/local-release-targets.example.json",
-      "docs/architecture/local-release-vm-bootstrap.md",
-      "docs/architecture/local-release-vm-images.md",
-      "docs/architecture/windows-release-vm-golden-image.md",
-      "docs/architecture/owner-oss-publication-decision.json",
-      "docs/architecture/owner-independent-review-evidence.json",
-      "LICENSE",
-      "SECURITY.md",
-      "ACCEPTABLE_USE.md",
-      "TRADEMARK.md",
-      "README.md",
-      "Cargo.toml"
+      "extensions/brownie-vsix/package.json",
+      "docs/architecture/runtime-release-evidence.json"
     ]
   },
-  "exit_criteria": [
-    "extensions/brownie-vsix/package.json check invokes pnpm --workspace-root release:gate -- --dry-run.",
-    "scripts/guard-release-contract.mjs rejects VSIX check paths that omit the release gate dry-run.",
-    "scripts/guard-runtime-release-readiness.mjs rejects VSIX check paths that omit the release gate dry-run.",
-    "pnpm --workspace-root release:gate -- --dry-run passes and lists the mandatory release gate command plan.",
-    "pnpm --filter brownie-vsix check passes with runtime_release_ready=false and release_ready=false."
-  ],
-  "behavior_evidence": [
-    "node --test scripts/guard-release-contract.test.mjs passes.",
-    "node --test scripts/guard-runtime-release-readiness.test.mjs passes.",
-    "pnpm --workspace-root guard:release-contract passes.",
-    "pnpm --workspace-root guard:runtime-release-readiness passes.",
-    "pnpm --workspace-root release:gate -- --dry-run passes.",
-    "pnpm --filter brownie-vsix check passes."
-  ],
-  "product_completion_gate": {
+  "runtime_release_ready": false,
+  "runtime_product_ready": false,
+  "runtime_release_evidence": {
     "required": true,
-    "product_completion_claim": false,
-    "blocker_removal": {
-      "allowed": true,
-      "blocker": "runtime-release-guard-ci",
-      "status": "partial_existing_ci_binding_closed"
-    },
-    "accepted_capability": [
-      "The existing CI-invoked VSIX check path exercises the release gate dry-run.",
-      "Release and readiness guards keep that dry-run binding mandatory.",
-      "Direct workflow hardening remains blocked by missing workflow-scope credentials.",
-      "Runtime Release Ready remains false until release evidence and owner-controlled settings are complete."
-    ],
-    "behavior_evidence": [
-      "node --test scripts/guard-release-contract.test.mjs validates fail-closed release gate dry-run binding checks.",
-      "node --test scripts/guard-runtime-release-readiness.test.mjs validates fail-closed existing CI path coverage.",
-      "pnpm --workspace-root guard:release-contract validates the live Runtime release contract and VSIX check binding.",
-      "pnpm --workspace-root guard:runtime-release-readiness validates the live audit and VSIX check binding.",
-      "pnpm --workspace-root release:gate -- --dry-run emits the mandatory release gate command plan."
-    ],
-    "safety_boundary": [
-      "Rust Runtime remains execution, admission, replay, permission, MCP, workspace mutation, durable state, protocol, and completion authority.",
-      "CLI and VSIX remain thin transport/projection clients and cannot grant Runtime authority.",
-      "GitHub workflow settings, branch protection, protected tags, signing authority, license choice, and publish posture remain owner-controlled; branch protection, protected tags, interim integrity authority, and Apache-2.0/manual publication posture have been explicitly provided and are machine-checked.",
-      "Raw prompt, provider output, file content, absolute/canonical path, secret, environment value, executable content, and process output are not persisted as release evidence."
-    ],
-    "non_goals": [
-      "Does not claim Runtime Release Ready.",
-      "Does not edit .github workflow files.",
-      "Does not generate or publish release tags, packages, signatures, or public release assets; license metadata may change only from explicit owner decision evidence.",
-      "Does not add hosted scheduler, daemon, durable queue, supervisor, SaaS control plane, customer RBAC, Vault, billing, BDK, Enterprise admin, generic shell, arbitrary process execution, or remote Git capability expansion."
-    ],
-    "rejected_alternatives": [
-      "Rejected editing .github/workflows/ci.yml because active GitHub credentials still lack workflow scope.",
-      "Rejected claiming runtime-release-guard-ci closed because release artifacts, audits, provenance, governance, and owner decisions remain incomplete.",
-      "Rejected a docs-only update because the existing CI-invoked check path must execute and guard the release gate dry-run."
-    ],
-    "technical_debt": [
-      "runtime-release-guard-ci remains open until cross-platform artifacts, cross-platform artifact smoke tests, direct workflow enforcement or stronger owner-approved CI enforcement, and release-artifact provenance are complete.",
-      "Branch protection, protected tags, remote CI provenance evidence, Apache-2.0/manual publication posture, interim owner-approved integrity authority, and owner-designated independent reviews are now machine-checked."
-    ],
-    "next_capability_rationale": [
-      "Continue with the next bounded runtime-release-guard-ci slice that can be completed without workflow scope or owner-only settings, or wait for workflow-scope credentials for direct workflow hardening."
-    ],
-    "release_readiness_scope": {
-      "runtime_release_dod": [
-        "Closed RRP-1 through RRP-7.2 and RRP-5.18 evidence remains in force and is not reimplemented.",
-        "RRP-8.7 and R-20 are now reflected in current release metadata: owner-governance evidence remains fail-closed, and repo-fixed historical ledger fixtures are wired into CI-reachable release checks without claiming Runtime Release Ready.",
-        "Missing cross-platform release artifacts, cross-platform smoke tests, artifact-bound checksums, signatures or integrity proof, provenance, workflow run enforcement, and tested commit remain release-blocking."
-      ],
-      "runtime_boundary_contracts": [
-        "No new RPC surface is added.",
-        "CLI and VSIX remain thin clients over Runtime-owned contracts."
-      ],
-      "external_control_plane_responsibilities": [
-        "External scheduling, durable queues, worker leases, hosted isolation, metrics, alerts, SLA, tenant administration, billing, and secret-provider operations remain outside local Runtime v0."
-      ],
-      "external_adapter_responsibilities": [
-        "Forge, pull request, review, notification, SIEM, OTel, language verifier, customer integration, and hosted MCP adapter responsibilities remain outside this phase."
-      ],
-      "commercial_solution_readiness": [
-        "Packaging publication, notarization, enterprise administration, operational runbooks, support, and commercial release decisions remain owner-controlled or later release work.",
-        "Cargo license is Apache-2.0 by owner decision; Cargo publish remains disabled until an explicit release publication approval."
-      ],
-      "external_responsibility_not_release_blocking": true
+    "answers": {
+      "release_evidence": "The release gate now includes owner-governance evidence generation and guard checks, and the existing CI-invoked VSIX check path requires the owner-governance guard."
     }
-  },
-  "technical_debt": [
-    {
-      "id": "runtime-release-guard-ci",
-      "responsibility_domain": "runtime",
-      "classification": "required_before_release",
-      "status": "partial",
-      "next_action": "Add actual vulnerability/license audits, cross-platform artifacts and smoke tests, governance evidence, and direct workflow or stronger owner-approved CI enforcement before Runtime Release Ready."
-    },
-    {
-      "id": "github_workflow_scope",
-      "responsibility_domain": "runtime",
-      "classification": "required_before_release",
-      "status": "blocked_external",
-      "next_action": "Owner must provide workflow-scope credentials for direct .github workflow gate closure."
-    },
-    {
-      "id": "oss_license_publish",
-      "responsibility_domain": "external_control_plane",
-      "classification": "post_v0",
-      "status": "owner_decision_recorded_manual_publication_gate",
-      "next_action": "Keep public publication manual until cross-platform artifacts, smoke tests, integrity evidence, and independent reviews are complete."
-    }
-  ],
-  "closeout_review": {
-    "status": "partial_required_before_release_current_metadata_resynchronized",
-    "runtime_release_ready": false,
-    "release_engineering_maturity_percent": 73,
-    "evidence": "E-01 resynchronizes current phase/release authority metadata to origin/main 4376c0a7412a40f328fb3ba64bca487bba35a80e after R-20, keeping Runtime Release Ready false while release evidence and owner-controlled residuals remain incomplete.",
-    "remaining_blockers": [
-      "runtime-release-guard-ci",
-      "cross-platform artifact and workflow enforcement evidence",
-      "supply-chain and release artifact evidence completion"
-    ]
-  },
-  "phase_title": "Owner Governance Evidence Gate"
+  }
 }

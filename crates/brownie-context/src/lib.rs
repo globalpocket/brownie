@@ -1615,7 +1615,7 @@ impl BdkExecutionState {
                 "request one smallest exact workspace.read/git inspection step; avoid overview files unless named by the TODO"
             }
             Self::ImplementPatch => {
-                "request exactly one workspace.write patch_file for the named target file using the shortest unique complete-line old_text/new_text copied from completed Tool Execution; if the needed old_text is not visible, patch `.brownie/todo.md` with a smaller context-bounded follow-up TODO; do not read again"
+                "workspace.read is forbidden for the next output because the target file was already read. Request exactly one tool request total: one bounded workspace.write patch_file for the named target file, and keep the entire fenced JSON under about 1200 characters. Use one hunk only; old_text must be exact complete lines copied from completed Tool Execution and must cover a complete syntactic region for the requested replacement. For JavaScript/TypeScript function changes, old_text must include the complete function body being replaced, not only the `function ... {` signature line. new_text must be the smallest complete syntactic replacement needed for this pass. Do not patch unrelated large setup/parsing functions unless the selected TODO names them. Do not emit unrelated helper blocks, multiple function additions, or multiple tool_requests in one response. If the change needs multiple hunks or multiple writes, patch one complete syntactic hunk only and leave the remaining work for a later loop. If the needed old_text is not visible or the complete hunk would exceed the fenced JSON budget, patch `.brownie/todo.md` with a smaller context-bounded follow-up TODO; do not request workspace.read to copy old_text again"
             }
             Self::RepairPatch => {
                 "request a bounded workspace.write repair to the target file that directly addresses the latest verification failure evidence. Do not patch `.brownie/todo.md` merely to avoid a concrete syntax/test failure after an implementation patch"
@@ -1630,7 +1630,7 @@ impl BdkExecutionState {
                 "request exactly one workspace.write patch_file to the live TODO queue (`.brownie/todo.md` unless the selected queue is legacy `todo.md`). old_text must be the full selected TODO block exactly as shown under `## Selected TODO`. new_text must contain only 1-2 short unchecked leaf TODOs under 1800 total characters. Each leaf must use this multi-line shape exactly: first line `- [ ] E-...: Patch only `path` ...:` or `- [ ] E-...: Blocker: ...`, then separate indented lines starting `Route:`, `Source TODO:`, `Depends on:`, `Completion condition:`, `Forbidden changes:`, and `Verification:`. Never copy the selected TODO first line, selected TODO id, `TODO-decompose-...`, or the broad source TODO title into new_text. Do not target any later TODO, do not keep the selected decomposition item pending, and do not use only the first line as old_text"
             }
             Self::BlockerOrWrite => {
-                "workspace.read is forbidden for the next output. Request exactly one workspace.write create_file/replace_file/patch_file for the named target file, or one workspace.write patch_file to `.brownie/todo.md` with exactly one short concrete follow-up/blocker TODO. If writing `.brownie/todo.md`, old_text must be the full selected TODO block shown in `## Selected TODO`, and new_text must be one unchecked leaf under 900 characters with separate `Route:`, `Source TODO:`, `Depends on:`, `Completion condition:`, `Forbidden changes:`, and `Verification:` lines; use a new unique TODO id and do not keep the selected TODO id or selected first line. If Git state is needed, request git.status or git.diff with allowed input. Do not request workspace.read again"
+                "workspace.read is forbidden for the next output. Prefer exactly one workspace.write create_file/replace_file/patch_file for the named target file. Only patch `.brownie/todo.md` when the target edit is genuinely impossible from the embedded context; that TODO patch must replace the selected TODO with exactly one short concrete follow-up/blocker TODO. If writing `.brownie/todo.md`, old_text must be the full selected TODO block shown in `## Selected TODO`, and new_text must be one unchecked leaf under 900 characters with a new unique TODO id, a different first line from the selected TODO, and separate `Route:`, `Source TODO:`, `Depends on:`, `Completion condition:`, `Forbidden changes:`, and `Verification:` lines. Never write `.brownie/todo.md` with new_text equal to old_text or keep the selected TODO id/first line. If Git state is needed, request git.status or git.diff with allowed input. Do not request workspace.read again"
             }
             Self::DirectAnswer => "answer directly without tool intent",
         }
@@ -1642,7 +1642,7 @@ impl BdkExecutionState {
                 "read one exact file first; move to implement_patch or a narrower follow-up instead of batching broad reads"
             }
             Self::ImplementPatch => {
-                "reuse completed read evidence; repeated read-only output is no progress"
+                "forbidden_next_tool=workspace.read; one_complete_syntactic_hunk_only; never replace only a function signature line with a multi-line function body; reuse completed read evidence; repeated read-only output, oversized JSON, or multi-hunk implementation output is no progress and must be replaced by one bounded workspace.write or one narrower TODO refinement"
             }
             Self::RepairPatch => {
                 "use the failure excerpt as the primary context; do not rediscover unrelated files and do not decompose TODOs when a concrete target-file verification failure is available"
@@ -1657,7 +1657,7 @@ impl BdkExecutionState {
                 "split the selected TODO shown in `## Selected TODO` only; new leaf TODOs replace the selected item. Repeating the selected TODO text, keeping `TODO-decompose-...`, jumping to a later queue item, or using partial old_text is no progress"
             }
             Self::BlockerOrWrite => {
-                "forbidden_next_tool=workspace.read; the previous read path was denied or already exhausted, so retrying workspace.read is no progress. If emitting a TODO refinement, one compact schema-complete leaf is progress; repeating the broad selected TODO, omitting Source TODO, or producing an unfinished fence is no progress"
+                "forbidden_next_tool=workspace.read; target-file workspace.write is preferred. If emitting a TODO refinement, one compact schema-complete leaf with a new id is progress; repeating the selected TODO unchanged, keeping the same id/first line, omitting Source TODO, or producing an unfinished fence is no progress"
             }
             Self::DirectAnswer => "keep the response concise",
         }
@@ -1998,7 +1998,19 @@ mod tests {
             .contains("completed_workspace_reads: 1"));
         assert!(prompt.messages[1]
             .content
-            .contains("using the shortest unique complete-line old_text/new_text"));
+            .contains("complete syntactic region"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("workspace.read is forbidden for the next output"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("forbidden_next_tool=workspace.read"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("one_complete_syntactic_hunk_only"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("not only the `function ... {` signature line"));
         assert!(prompt.messages[0]
             .content
             .contains("For patch_file after workspace.read, prefer old_text/new_text"));
@@ -2079,6 +2091,9 @@ mod tests {
         assert!(prompt.messages[1]
             .content
             .contains("patch `.brownie/todo.md` with a smaller context-bounded follow-up TODO"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("workspace.read is forbidden for the next output"));
         assert!(!prompt.messages[1]
             .content
             .contains("BDK Control Packet:\n- state: decompose_todo"));
@@ -2242,6 +2257,12 @@ mod tests {
         assert!(prompt.messages[1]
             .content
             .contains("forbidden_next_tool=workspace.read"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("Never write `.brownie/todo.md` with new_text equal to old_text"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("target-file workspace.write is preferred"));
     }
 
     #[test]
@@ -2283,9 +2304,9 @@ mod tests {
         assert!(prompt.messages[1]
             .content
             .contains("request git.status or git.diff with allowed input"));
-        assert!(prompt.messages[1]
-            .content
-            .contains("workspace.write patch_file to `.brownie/todo.md`"));
+        assert!(prompt.messages[1].content.contains(
+            "Only patch `.brownie/todo.md` when the target edit is genuinely impossible"
+        ));
     }
 
     #[test]

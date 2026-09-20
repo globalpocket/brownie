@@ -14785,6 +14785,21 @@ fn text_contains_trailing_whitespace(content: &str) -> bool {
         .any(|line| line.ends_with(' ') || line.ends_with('\t'))
 }
 
+fn patch_hunk_replaces_function_signature_without_body(hunk: &PatchTextHunk) -> bool {
+    let old_trimmed = hunk.old_text.trim();
+    if hunk.old_text.lines().count() != 1 {
+        return false;
+    }
+    if !(old_trimmed.starts_with("function ")
+        || old_trimmed.starts_with("export function ")
+        || old_trimmed.starts_with("async function ")
+        || old_trimmed.starts_with("export async function "))
+    {
+        return false;
+    }
+    old_trimmed.ends_with('{') && hunk.new_text.lines().count() > 1
+}
+
 fn build_workspace_patch_proposal_from_input(
     store: &BrownieStore,
     path: &str,
@@ -14890,6 +14905,15 @@ fn build_workspace_patch_proposal_from_input(
         {
             result.validation_status = "Invalid";
             result.validation_reason = Some("patch_file new_text contains trailing whitespace");
+            return result;
+        }
+        if hunks
+            .iter()
+            .any(patch_hunk_replaces_function_signature_without_body)
+        {
+            result.validation_status = "Invalid";
+            result.validation_reason =
+                Some("patch_file old_text must include the complete function body when replacing a function");
             return result;
         }
         let target = root.join(path);
@@ -46705,6 +46729,38 @@ modes:
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
             "alpha\nbeta\ngamma\n"
+        );
+    }
+
+    #[test]
+    fn patch_file_proposal_rejects_function_signature_only_replacement() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            temp.path().join("script.mjs"),
+            "function sha256File(filePath) {\n  return filePath;\n}\n",
+        )
+        .expect("write script");
+        let store = BrownieStore::new(temp.path());
+        let proposal = build_workspace_patch_proposal_from_input(
+            &store,
+            "script.mjs",
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &json!({
+                "old_text": "function sha256File(filePath) {",
+                "new_text": "function sha256File(filePath) {\n  const hash = filePath;\n  return hash;\n}"
+            }),
+        );
+
+        assert_eq!(proposal.validation_status, "Invalid");
+        assert_eq!(
+            proposal.validation_reason,
+            Some("patch_file old_text must include the complete function body when replacing a function")
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("script.mjs")).unwrap(),
+            "function sha256File(filePath) {\n  return filePath;\n}\n"
         );
     }
 

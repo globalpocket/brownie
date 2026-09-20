@@ -3433,13 +3433,24 @@ fn workspace_read_intent_runtime_rejection_reason(
     let workspace_read_path = input.get("path").and_then(Value::as_str);
     let todo_repair_read_allowed = workspace_read_path.is_some_and(is_todo_workspace_path)
         && selected_todo_allows_todo_md_edit(&record.goal);
+    let patch_only_paths = patch_only_paths_from_goal(&record.goal);
+    let leaf_target_repair_read_allowed =
+        task_goal_allows_leaf_target_repair_workspace_read(&record.goal)
+            && workspace_read_path.is_some_and(|requested| {
+                patch_only_paths
+                    .iter()
+                    .any(|target| requested == target.as_str())
+            });
     if task_goal_embeds_repair_workspace_read_preview(&record.goal) && !todo_repair_read_allowed {
         return Ok(Some(
             "Repair feedback already embeds previous workspace.read output_preview; workspace.read is not progress. Request workspace.write or record a concrete blocker TODO."
                 .to_string(),
         ));
     }
-    if task_goal_forbids_leaf_repair_workspace_read(&record.goal) && !todo_repair_read_allowed {
+    if task_goal_forbids_leaf_repair_workspace_read(&record.goal)
+        && !todo_repair_read_allowed
+        && !leaf_target_repair_read_allowed
+    {
         return Ok(Some(
             "Bounded leaf repair requires the next tool to be workspace.write for the selected target; workspace.read is not progress in this repair turn."
                 .to_string(),
@@ -3487,7 +3498,8 @@ fn selected_todo_requires_decomposition_only(goal: &str) -> bool {
     }
     if goal_lower.contains("- state: `decompose_todo`")
         || goal_lower.contains("- state: decompose_todo")
-        || ((goal_lower.contains("todo.md") || goal_lower.contains("todo queue"))
+        || (!goal_lower.contains("source todo:")
+            && (goal_lower.contains("todo.md") || goal_lower.contains("todo queue"))
             && (goal_lower.contains("decompos")
                 || goal_lower.contains("split")
                 || goal_lower.contains("細分化")
@@ -4114,6 +4126,12 @@ fn task_goal_forbids_leaf_repair_workspace_read(goal: &str) -> bool {
         || goal.contains("- leaf_retry_required_next_tool:")
 }
 
+fn task_goal_allows_leaf_target_repair_workspace_read(goal: &str) -> bool {
+    goal.contains("- leaf_target_read_missing_repair_policy:")
+        || goal.contains("- stale_read_preview_policy:")
+        || goal.contains("- leaf_retry_read_first_policy:")
+}
+
 fn workspace_read_rejection_reason_from_selected_todo(goal: &str, input: &Value) -> Option<String> {
     let requested_path = input.get("path").and_then(Value::as_str)?;
     if is_todo_workspace_path(requested_path) && selected_todo_allows_todo_md_edit(goal) {
@@ -4124,12 +4142,20 @@ fn workspace_read_rejection_reason_from_selected_todo(goal: &str, input: &Value)
             "Selected TODO says to create only `{only_path}`; workspace.read of `{requested_path}` is not progress. Request workspace.write create_file for the named target or write one concrete blocker TODO."
         ));
     }
-    if let Some(only_path) = patch_only_path_from_goal(goal) {
-        if requested_path != only_path {
-            return Some(format!(
-                "Selected TODO says to patch only `{only_path}`; reading `{requested_path}` is not progress. Use the existing target-file context and request workspace.write."
-            ));
-        }
+    let patch_only_paths = patch_only_paths_from_goal(goal);
+    if !patch_only_paths.is_empty()
+        && !patch_only_paths
+            .iter()
+            .any(|only_path| requested_path == only_path.as_str())
+    {
+        let only_paths = patch_only_paths
+            .iter()
+            .map(|path| format!("`{path}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Some(format!(
+            "Selected TODO says to patch only {only_paths}; reading `{requested_path}` is not progress. Use the existing target-file context and request workspace.write."
+        ));
     }
     if forbidden_read_paths_from_goal(goal)
         .iter()
@@ -4143,6 +4169,7 @@ fn workspace_read_rejection_reason_from_selected_todo(goal: &str, input: &Value)
 }
 
 fn create_only_path_from_goal(goal: &str) -> Option<String> {
+    let goal = selected_todo_section(goal);
     let marker = "Create only `";
     let start = goal.find(marker)? + marker.len();
     let end = goal[start..].find('`')? + start;
@@ -4150,15 +4177,24 @@ fn create_only_path_from_goal(goal: &str) -> Option<String> {
     (!path.is_empty()).then(|| path.to_string())
 }
 
-fn patch_only_path_from_goal(goal: &str) -> Option<String> {
+fn patch_only_paths_from_goal(goal: &str) -> Vec<String> {
+    let goal = selected_todo_section(goal);
+    let first_line = goal
+        .lines()
+        .find(|line| line.contains("Patch only `"))
+        .unwrap_or(goal);
     let marker = "Patch only `";
-    let start = goal.find(marker)? + marker.len();
-    let end = goal[start..].find('`')? + start;
-    let path = goal[start..end].trim();
-    (!path.is_empty()).then(|| path.to_string())
+    let Some(start) = first_line.find(marker) else {
+        return Vec::new();
+    };
+    backticked_values(&first_line[start..])
+        .into_iter()
+        .filter(|path| !path.trim().is_empty())
+        .collect()
 }
 
 fn forbidden_read_paths_from_goal(goal: &str) -> Vec<String> {
+    let goal = selected_todo_section(goal);
     let Some(start) = goal.find("Do not read") else {
         return Vec::new();
     };
@@ -4177,6 +4213,21 @@ fn forbidden_read_paths_from_goal(goal: &str) -> Vec<String> {
         rest = &after_open[close + 1..];
     }
     paths
+}
+
+fn selected_todo_section(goal: &str) -> &str {
+    let Some(marker_start) = goal.find("## Selected TODO") else {
+        return goal;
+    };
+    let selected = &goal[marker_start..];
+    if let Some(next_section) = selected.get("## Selected TODO".len()..).and_then(|tail| {
+        tail.find("\n## ")
+            .map(|index| "## Selected TODO".len() + index)
+    }) {
+        &selected[..next_section]
+    } else {
+        selected
+    }
 }
 
 fn append_approved_mcp_tool_execution(
@@ -7216,6 +7267,28 @@ mod mcp_approval_lock_tests {
     }
 
     #[test]
+    fn patch_only_todo_allows_each_multiple_target_workspace_read() {
+        let goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-16f-release-contract-audit-sync: Patch only `docs/architecture/runtime-release-contract.json` and `docs/architecture/runtime-release-readiness-audit.json` to reflect current executable evidence:\n  Route: documentation.\n";
+
+        assert!(workspace_read_rejection_reason_from_selected_todo(
+            goal,
+            &json!({"path": "docs/architecture/runtime-release-contract.json"})
+        )
+        .is_none());
+        assert!(workspace_read_rejection_reason_from_selected_todo(
+            goal,
+            &json!({"path": "docs/architecture/runtime-release-readiness-audit.json"})
+        )
+        .is_none());
+        assert!(workspace_read_rejection_reason_from_selected_todo(
+            goal,
+            &json!({"path": "docs/architecture/final-product-ready-judgment.md"})
+        )
+        .expect("unrelated read rejected")
+        .contains("runtime-release-contract.json"));
+    }
+
+    #[test]
     fn patch_only_todo_unrelated_workspace_read_is_denied_at_intent_gate() {
         let temp = tempfile::tempdir().expect("temp dir");
         let store = BrownieStore::new(temp.path());
@@ -7253,6 +7326,42 @@ mod mcp_approval_lock_tests {
 
         assert!(reason.contains("workspace.write for the selected target"));
         assert!(reason.contains("workspace.read is not progress"));
+    }
+
+    #[test]
+    fn patch_only_leaf_repair_allows_target_read_when_repair_preview_is_stale() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let store = BrownieStore::new(temp.path());
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- leaf_required_next_tool_policy: the next tool must be `workspace.write` for `scripts/guard-release-evidence-semantic-consistency.test.mjs` unless final-answer fail-closed is unavoidable.\n- leaf_target_read_missing_repair_policy: previous repair context did not contain a `workspace.read` preview for `scripts/guard-release-evidence-semantic-consistency.test.mjs`; the next tool may be exactly one `workspace.read` for `scripts/guard-release-evidence-semantic-consistency.test.mjs` before any `workspace.write`.\n- stale_read_preview_policy: previous workspace.read previews are not for `scripts/guard-release-evidence-semantic-consistency.test.mjs`.\n\n## Selected TODO\n\n- [ ] E-16e-semantic-consistency-guard-test-verify-step1b: Patch only `scripts/guard-release-evidence-semantic-consistency.test.mjs` to add one test.\n  Route: implementation.\n  Source TODO: E-16e-semantic-consistency-guard-test-verify-step1a.\n"
+            .to_string();
+
+        let reason = workspace_read_intent_runtime_rejection_reason(
+            &store,
+            &record,
+            &json!({"path": "scripts/guard-release-evidence-semantic-consistency.test.mjs"}),
+        )
+        .expect("intent rejection");
+
+        assert_eq!(reason, None);
+    }
+
+    #[test]
+    fn patch_only_target_is_extracted_from_selected_todo_not_queue_snapshot() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let store = BrownieStore::new(temp.path());
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- stale_read_preview_policy: previous workspace.read previews are not for `scripts/guard-release-evidence-semantic-consistency.test.mjs`.\n\n## Selected TODO\n\n- [ ] E-16e-semantic-consistency-guard-test-verify-step1b: Patch only `scripts/guard-release-evidence-semantic-consistency.test.mjs` to add one test.\n  Route: implementation.\n\n## TODO Queue Snapshot\n\n- [ ] E-16e-semantic-consistency-guard-wiring: Patch only `package.json` and `scripts/release-gate.mjs` to run semantic consistency validation.\n"
+            .to_string();
+
+        let reason = workspace_read_intent_runtime_rejection_reason(
+            &store,
+            &record,
+            &json!({"path": "scripts/guard-release-evidence-semantic-consistency.test.mjs"}),
+        )
+        .expect("intent rejection");
+
+        assert_eq!(reason, None);
     }
 
     #[test]
@@ -7694,6 +7803,24 @@ mod mcp_approval_lock_tests {
             reason,
             Some("TODO decomposition tasks may only patch the live TODO queue; do not edit implementation files in the decomposition pass.")
         );
+    }
+
+    #[test]
+    fn implementation_todo_with_decomposition_context_can_patch_target_file() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\nQueue policy: Brownie owns TODO decomposition and may split broad todo.md items.\n\n## BDK Execution Packet\n\n- state: `implement_patch`\n\n## Selected TODO\n\n- [ ] E-16a-artifact-source-local-producer: Patch only `scripts/release-local-artifact.mjs` to record artifact source identity at build time:\n  Route: implementation.\n  Source TODO: E-16a-artifact-source-identity.\n  Depends on: <none>.\n  Completion condition: local artifact evidence records source identity.\n  Forbidden changes: do not mark Runtime Release Ready.\n  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence`.\n".to_string();
+
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": "scripts/release-local-artifact.mjs",
+                "operation": "patch_file",
+                "old_text": "function sha256File(filePath) {",
+                "new_text": "function sha256File(filePath) {\n  const sourceIdentity = true;"
+            }),
+        );
+
+        assert!(reason.is_none());
     }
 
     #[test]

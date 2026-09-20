@@ -9,6 +9,7 @@ const __dirname = path.dirname(__filename);
 const defaultRepoRoot = path.resolve(__dirname, '..');
 const defaultOutPath = '.brownie/release-evidence/supply-chain-artifact-evidence.json';
 
+const hashPattern = /^sha256:[a-f0-9]{64}$/;
 const requiredSections = [
   'lockfile_fixed',
   'dependency_security_license_scan',
@@ -29,6 +30,13 @@ const requiredArtifactSmokeE2eStepIds = [
   'forced_stop_resume',
   'stale_replay_rejection'
 ];
+
+const artifactSourceIdentityPattern = /^artifact_source_identity: (clean|dirty|unknown)$/;
+
+function extractArtifactSourceIdentity(evidence) {
+  const match = evidence.match(artifactSourceIdentityPattern);
+  return match ? match[1] : 'unknown';
+}
 
 const secretPatterns = [
   {
@@ -490,6 +498,12 @@ export function buildSupplyChainArtifactEvidence(options = {}) {
   const artifactSmoke = buildArtifactSmokeSection(repoRoot, artifacts);
   const artifactTargets = new Set(artifacts.map((artifact) => artifact.target));
   const missingReleasePlatforms = requiredReleasePlatforms.filter((platform) => !artifactTargets.has(platform));
+  const artifactsMissingSourceIdentity = artifacts.filter(
+    (artifact) =>
+      !hashPattern.test(artifact.source_commit) ||
+      artifact.source_clean_tree !== 'clean' ||
+      !hashPattern.test(artifact.source_identity)
+  );
   if (artifactSmoke.status === 'satisfied' && missingReleasePlatforms.length > 0) {
     artifactSmoke.status = 'partial_cross_platform_missing';
     artifactSmoke.required_platforms = requiredReleasePlatforms;
@@ -559,13 +573,16 @@ export function buildSupplyChainArtifactEvidence(options = {}) {
       status:
         artifacts.length === 0
           ? 'not_generated'
-          : missingReleasePlatforms.length === 0
-            ? 'satisfied'
-            : 'partial_cross_platform_missing',
+          : missingReleasePlatforms.length > 0
+            ? 'partial_cross_platform_missing'
+            : artifactsMissingSourceIdentity.length > 0
+              ? 'partial_source_identity_missing'
+              : 'satisfied',
       release_blocking: true,
       required_platforms: requiredReleasePlatforms,
       present_platforms: [...artifactTargets].sort(),
       missing_platforms: missingReleasePlatforms,
+      missing_source_identity_targets: artifactsMissingSourceIdentity.map((artifact) => artifact.target),
       artifacts
     },
     artifact_smoke: artifactSmoke,

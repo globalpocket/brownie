@@ -1115,6 +1115,45 @@ assert claim["selected_todo"].startswith("- [ ] B-00: externally inserted"), cla
 assert claim["queue_fingerprint"] == queue_state["fingerprint"], (claim, queue_state)
 PY
 
+state_same_head_queue_growth="$(mktemp -d)"
+prompt_same_head_queue_growth="$(mktemp)"
+todo_same_head_queue_growth="$(mktemp)"
+printf 'base prompt\n' > "$prompt_same_head_queue_growth"
+printf -- '- [ ] B-01: stable first task\n' > "$todo_same_head_queue_growth"
+
+PHASE_LOOP_STATE_DIR="$state_same_head_queue_growth" \
+PHASE_LOOP_PROMPT="$prompt_same_head_queue_growth" \
+PHASE_LOOP_TODO="$todo_same_head_queue_growth" \
+BROWNIE_BIN="$fake_brownie_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+
+printf -- '- [ ] B-01: stable first task\n- [ ] B-02: appended follow-up task\n' > "$todo_same_head_queue_growth"
+
+PHASE_LOOP_STATE_DIR="$state_same_head_queue_growth" \
+PHASE_LOOP_PROMPT="$prompt_same_head_queue_growth" \
+PHASE_LOOP_TODO="$todo_same_head_queue_growth" \
+BROWNIE_BIN="$fake_brownie_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+
+python3 - "$state_same_head_queue_growth/todo-claims/current.json" "$state_same_head_queue_growth/todo-claims/todo-queue-state.json" "$todo_same_head_queue_growth" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+claim = json.load(open(sys.argv[1], encoding="utf-8"))
+queue_state = json.load(open(sys.argv[2], encoding="utf-8"))
+todo_text = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
+fingerprint = hashlib.sha256(todo_text.encode("utf-8")).hexdigest()
+assert claim["selected_todo"].startswith("- [ ] B-01: stable first task"), claim
+assert claim["queue_fingerprint"] == fingerprint, claim
+assert queue_state["fingerprint"] == fingerprint, queue_state
+assert claim["queue_generation"] == queue_state["generation"], (claim, queue_state)
+assert claim["queue_generation"] == 2, claim
+PY
+
 state_legacy="$(mktemp -d)"
 prompt_legacy="$(mktemp)"
 todo_legacy="$(mktemp)"
@@ -1450,7 +1489,10 @@ git -C "$repair_feedback_workspace" add package.json
 git -C "$repair_feedback_workspace" commit -m init >/dev/null
 printf 'base prompt\n' > "$repair_feedback_prompt"
 cat > "$repair_feedback_todo" <<'EOF'
-- [ ] E-other: keep queue non-empty while active claim is repaired.
+- [ ] E-repair: Patch only `scripts/release-runtime-operational-evidence.mjs` to generate satisfied soak evidence.
+  Route: implementation.
+  Completion condition: generated satisfied soak evidence has all required stateful steps from a bounded Runtime fixture, not version-only repetition.
+  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.
 EOF
 mkdir -p "$repair_feedback_state/todo-claims"
 cat > "$repair_feedback_state/progress-state.json" <<'EOF'

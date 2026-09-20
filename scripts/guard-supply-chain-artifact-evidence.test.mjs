@@ -254,3 +254,107 @@ test('rejects satisfied artifact smoke without required E2E step evidence', () =
   assert(errors.some((error) => error.includes('missing required E2E step forced_stop_resume')));
   assert(errors.some((error) => error.includes('missing required E2E step stale_replay_rejection')));
 });
+
+test('accepts satisfied artifact smoke with required E2E step evidence', () => {
+  const evidence = validEvidence();
+  evidence.fail_closed_reasons = evidence.fail_closed_reasons.filter(
+    (reason) => !reason.startsWith('artifact_smoke:')
+  );
+  evidence.sections.artifact_smoke = section('satisfied', {
+    smoke_results: [
+      {
+        target: 'darwin-arm64',
+        passed: true,
+        e2e_steps: [
+          'base_mode_pack_load',
+          'minimal_task_run',
+          'ledger_generation',
+          'forced_stop_resume',
+          'stale_replay_rejection'
+        ],
+        commands: [
+          { args: ['run', '--mode-pack', 'base'], exit_code: 0, passed: true },
+          { args: ['run', '--task', 'minimal'], exit_code: 0, passed: true }
+        ]
+      }
+    ]
+  });
+  assert.deepEqual(validate({ evidence }), []);
+});
+
+test('accepts fail-closed artifacts when source identity is missing', () => {
+  const repoRoot = tempRepo();
+  const artifactPath = 'target/release/brownie';
+  fs.mkdirSync(path.join(repoRoot, 'target/release'), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, artifactPath), 'artifact');
+  const evidence = validEvidence(repoRoot);
+  evidence.fail_closed_reasons = evidence.fail_closed_reasons.filter(
+    (reason) => !reason.startsWith('artifacts:')
+  );
+  evidence.fail_closed_reasons.push('artifacts:partial_source_identity_missing');
+  evidence.sections.artifacts = section('partial_source_identity_missing', {
+    required_platforms: ['darwin-arm64'],
+    present_platforms: ['darwin-arm64'],
+    missing_platforms: [],
+    missing_source_identity_targets: ['darwin-arm64'],
+    artifacts: [
+      {
+        path: artifactPath,
+        sha256: sha256File(path.join(repoRoot, artifactPath)),
+        bytes: fs.statSync(path.join(repoRoot, artifactPath)).size,
+        target: 'darwin-arm64'
+      }
+    ]
+  });
+  assert.deepEqual(validate({ evidence, repoRoot }), []);
+});
+
+test('rejects satisfied artifacts without source identity binding', () => {
+  const repoRoot = tempRepo();
+  const artifactPath = 'target/release/brownie';
+  fs.mkdirSync(path.join(repoRoot, 'target/release'), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, artifactPath), 'artifact');
+  const evidence = validEvidence(repoRoot);
+  evidence.fail_closed_reasons = evidence.fail_closed_reasons.filter(
+    (reason) => !reason.startsWith('artifacts:')
+  );
+  evidence.sections.artifacts = section('satisfied', {
+    artifacts: [
+      {
+        path: artifactPath,
+        sha256: sha256File(path.join(repoRoot, artifactPath)),
+        bytes: fs.statSync(path.join(repoRoot, artifactPath)).size,
+        target: 'darwin-arm64'
+      }
+    ]
+  });
+  const errors = validate({ evidence, repoRoot });
+  assert(errors.some((error) => error.includes('source_commit must be sha256')));
+  assert(errors.some((error) => error.includes('source_clean_tree must be clean')));
+  assert(errors.some((error) => error.includes('source_identity must be sha256')));
+});
+
+test('accepts satisfied artifacts with clean source identity binding', () => {
+  const repoRoot = tempRepo();
+  const artifactPath = 'target/release/brownie';
+  fs.mkdirSync(path.join(repoRoot, 'target/release'), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, artifactPath), 'artifact');
+  const evidence = validEvidence(repoRoot);
+  evidence.fail_closed_reasons = evidence.fail_closed_reasons.filter(
+    (reason) => !reason.startsWith('artifacts:')
+  );
+  evidence.sections.artifacts = section('satisfied', {
+    artifacts: [
+      {
+        path: artifactPath,
+        sha256: sha256File(path.join(repoRoot, artifactPath)),
+        bytes: fs.statSync(path.join(repoRoot, artifactPath)).size,
+        target: 'darwin-arm64',
+        source_commit: `sha256:${'a'.repeat(64)}`,
+        source_clean_tree: 'clean',
+        source_identity: `sha256:${'b'.repeat(64)}`
+      }
+    ]
+  });
+  assert.deepEqual(validate({ evidence, repoRoot }), []);
+});

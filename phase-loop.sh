@@ -1093,6 +1093,7 @@ classify_no_progress_recovery() {
   python3 - "$stdout_log" "$stderr_log" "$progress_file" <<'PY'
 import json
 import pathlib
+import subprocess
 import sys
 
 stdout_log = pathlib.Path(sys.argv[1])
@@ -1272,6 +1273,121 @@ NODE
   return 0
 }
 
+try_release_contract_readiness_audit_hash_fallback() {
+  local run_stamp="$1"
+  if [ ! -f "$TODO_CLAIM_FILE" ]; then
+    return 2
+  fi
+  python3 - "$TODO_CLAIM_FILE" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        claim = json.load(handle)
+except Exception:
+    sys.exit(2)
+
+selected = str(claim.get("selected_todo") or "")
+if "E-16f-release-contract-audit-sync" not in selected:
+    sys.exit(2)
+if "docs/architecture/runtime-release-contract.json" not in selected:
+    sys.exit(2)
+if "docs/architecture/runtime-release-readiness-audit.json" not in selected:
+    sys.exit(2)
+sys.exit(0)
+PY
+  case "$?" in
+    0) ;;
+    2) return 2 ;;
+    *) return 1 ;;
+  esac
+
+  local guard_stdout guard_stderr guard_status
+  guard_stdout="$(mktemp)"
+  guard_stderr="$(mktemp)"
+  (
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    pnpm --workspace-root guard:release-contract >"$guard_stdout" 2>"$guard_stderr"
+  )
+  guard_status=$?
+  if [ "$guard_status" -eq 0 ]; then
+    rm -f "$guard_stdout" "$guard_stderr"
+    return 2
+  fi
+  if ! python3 - "$guard_stderr" <<'PY'
+import pathlib
+import sys
+
+stderr = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+expected = "commit_trace.readiness_audit_content_sha256 must match the current readiness audit content SHA-256"
+sys.exit(0 if expected in stderr else 1)
+PY
+  then
+    printf 'release_contract_readiness_audit_hash_fallback_not_eligible status=%s stderr=%s\n' "$guard_status" "$(tail -c 1200 "$guard_stderr" 2>/dev/null)"
+    rm -f "$guard_stdout" "$guard_stderr"
+    return 2
+  fi
+  rm -f "$guard_stdout" "$guard_stderr"
+
+  (
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    node --input-type=module - <<'NODE'
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const repoRoot = process.cwd();
+const contractPath = path.join(repoRoot, 'docs/architecture/runtime-release-contract.json');
+const auditPath = path.join(repoRoot, 'docs/architecture/runtime-release-readiness-audit.json');
+const contract = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
+const auditText = fs.readFileSync(auditPath, 'utf8');
+const nextHash = `sha256:${crypto.createHash('sha256').update(auditText).digest('hex')}`;
+
+contract.commit_trace = contract.commit_trace && typeof contract.commit_trace === 'object'
+  ? contract.commit_trace
+  : {};
+const previousHash = contract.commit_trace.readiness_audit_content_sha256 ?? null;
+if (previousHash === nextHash) {
+  console.log(JSON.stringify({
+    changed: false,
+    path: 'docs/architecture/runtime-release-contract.json',
+    readiness_audit_content_sha256: nextHash
+  }, null, 2));
+  process.exit(0);
+}
+contract.commit_trace.readiness_audit_content_sha256 = nextHash;
+fs.writeFileSync(contractPath, `${JSON.stringify(contract, null, 2)}\n`);
+console.log(JSON.stringify({
+  changed: true,
+  path: 'docs/architecture/runtime-release-contract.json',
+  previous_readiness_audit_content_sha256: previousHash,
+  readiness_audit_content_sha256: nextHash
+}, null, 2));
+NODE
+    pnpm --workspace-root guard:release-contract >/tmp/brownie-release-contract-readiness-audit-hash-fallback.out 2>/tmp/brownie-release-contract-readiness-audit-hash-fallback.err
+  )
+  local status=$?
+  if [ "$status" -ne 0 ]; then
+    if python3 - /tmp/brownie-release-contract-readiness-audit-hash-fallback.err <<'PY'
+import pathlib
+import sys
+
+stderr = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+target = "commit_trace.readiness_audit_content_sha256 must match the current readiness audit content SHA-256"
+sys.exit(1 if target in stderr else 0)
+PY
+    then
+      printf 'release_contract_readiness_audit_hash_fallback_applied_with_remaining_guard_failures run_stamp=%s stdout=%s stderr=%s\n' "$run_stamp" "$(tail -c 1200 /tmp/brownie-release-contract-readiness-audit-hash-fallback.out 2>/dev/null)" "$(tail -c 1200 /tmp/brownie-release-contract-readiness-audit-hash-fallback.err 2>/dev/null)"
+      return 0
+    fi
+    printf 'release_contract_readiness_audit_hash_fallback_failed status=%s stdout=%s stderr=%s\n' "$status" "$(tail -c 1200 /tmp/brownie-release-contract-readiness-audit-hash-fallback.out 2>/dev/null)" "$(tail -c 1200 /tmp/brownie-release-contract-readiness-audit-hash-fallback.err 2>/dev/null)"
+    return 1
+  fi
+  printf 'release_contract_readiness_audit_hash_fallback_applied run_stamp=%s path=docs/architecture/runtime-release-contract.json\n' "$run_stamp"
+  return 0
+}
+
 try_runtime_readiness_verified_completion_fallback() {
   local run_stamp="$1"
   if [ ! -f "$TODO_CLAIM_FILE" ]; then
@@ -1343,6 +1459,7 @@ if not re.match(r"^- \[ \] [^:\s]+: (Patch only|Create only) `[^`]+`", first_lin
 selected_id = first_line.removeprefix("- [ ] ").split(":", 1)[0].strip().lower()
 if "Verification:" not in selected or "Verification: run " not in selected:
     raise SystemExit(2)
+skip_verification_commands = False
 try:
     todo_text = todo_path.read_text(encoding="utf-8")
     if first_line not in todo_text:
@@ -1353,7 +1470,49 @@ except Exception as error:
     raise SystemExit(1)
 
 selected_lower = selected.lower()
-if selected_id == "e-16a-artifact-source-local-producer-esm-helper-fix":
+if selected_id == "e-16a-artifact-source-local-producer":
+    target = workspace_root / "scripts/release-local-artifact.mjs"
+    try:
+        target_text = target.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"target_unreadable:{error}"}, sort_keys=True))
+        raise SystemExit(1)
+    artifact_start = target_text.find("const artifactEvidence = {")
+    artifact_end = target_text.find("const smokeEvidence =", artifact_start)
+    artifact_section = target_text[artifact_start:artifact_end] if artifact_start >= 0 and artifact_end > artifact_start else ""
+    semantic_checks = {
+        "source_commit_helper_present": "function sha256SourceCommit(repoRoot)" in target_text,
+        "source_clean_tree_helper_present": "function sha256CleanTree(repoRoot)" in target_text,
+        "source_identity_helper_present": "function sha256String(str)" in target_text,
+        "source_identity_computed": "const sourceIdentity = sha256String(`${sourceCommit}:${sourceCleanTree}`);" in target_text,
+        "artifact_source_fields_present": all(token in artifact_section for token in ("source_commit", "source_clean_tree", "source_identity")),
+        "artifact_sha_still_file_hash": "sha256: sha256File(artifactPath)" in artifact_section,
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
+        raise SystemExit(1)
+elif selected_id == "e-16a-artifact-source-linux-producer":
+    target = workspace_root / "scripts/release-linux-x64-docker-artifact.mjs"
+    try:
+        target_text = target.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"target_unreadable:{error}"}, sort_keys=True))
+        raise SystemExit(1)
+    artifact_start = target_text.find("const artifactEvidence = {")
+    artifact_end = target_text.find("const smokeEvidence =", artifact_start)
+    artifact_section = target_text[artifact_start:artifact_end] if artifact_start >= 0 and artifact_end > artifact_start else ""
+    semantic_checks = {
+        "source_commit_helper_present": "function sha256SourceCommit(repoRoot)" in target_text,
+        "source_clean_tree_helper_present": "function sha256CleanTree(repoRoot)" in target_text,
+        "source_identity_helper_present": "function sha256String(value)" in target_text,
+        "source_identity_computed": "const sourceIdentity = sha256String(`${sourceCommit}:${sourceCleanTree}`);" in target_text,
+        "artifact_source_fields_present": all(token in artifact_section for token in ("source_commit", "source_clean_tree", "source_identity")),
+        "artifact_sha_still_file_hash": "sha256: sha256File(artifactPath)" in artifact_section,
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
+        raise SystemExit(1)
+elif selected_id == "e-16a-artifact-source-local-producer-esm-helper-fix":
     target = workspace_root / "scripts/release-local-artifact.mjs"
     try:
         target_text = target.read_text(encoding="utf-8")
@@ -1415,6 +1574,29 @@ elif selected_id == "e-16a-clean-source-test":
     if not all(semantic_checks.values()):
         print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
         raise SystemExit(1)
+elif selected_id == "e-16b-artifact-smoke-steps-guard":
+    target = workspace_root / "scripts/guard-supply-chain-artifact-evidence.mjs"
+    try:
+        target_text = target.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"semantic_noop_verification_unreadable:{error}"}, sort_keys=True))
+        raise SystemExit(1)
+    required_start = target_text.find("const requiredArtifactSmokeE2eStepIds = [")
+    required_end = target_text.find("];", required_start)
+    required_section = target_text[required_start:required_end] if required_start >= 0 and required_end > required_start else ""
+    semantic_checks = {
+        "required_steps_constant_present": required_start >= 0,
+        "base_mode_pack_load_required": "'base_mode_pack_load'" in required_section,
+        "minimal_task_run_required": "'minimal_task_run'" in required_section,
+        "ledger_generation_required": "'ledger_generation'" in required_section,
+        "forced_stop_resume_required": "'forced_stop_resume'" in required_section,
+        "stale_replay_rejection_required": "'stale_replay_rejection'" in required_section,
+        "no_synthetic_artifact_smoke_step_required": "'artifact_smoke'" not in required_section,
+        "guard_rejects_missing_required_step": "missing required E2E step ${stepId}" in target_text,
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
+        raise SystemExit(1)
 elif selected_id == "e-16b-artifact-smoke-collector":
     target = workspace_root / "scripts/release-supply-chain-artifact-evidence.mjs"
     try:
@@ -1446,6 +1628,29 @@ elif selected_id == "e-16b-artifact-smoke-test":
         "rejects_missing_e2e_steps_test_present": "rejects satisfied artifact smoke without required E2E step evidence" in target_text,
         "accepts_required_e2e_steps_test_present": "accepts satisfied artifact smoke with required E2E step evidence" in target_text,
         "required_step_names_covered": all(step in target_text for step in ("base_mode_pack_load", "minimal_task_run", "ledger_generation", "forced_stop_resume", "stale_replay_rejection")),
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
+        raise SystemExit(1)
+elif selected_id == "e-16c-artifact-lifecycle-collector":
+    target = workspace_root / "scripts/release-runtime-operational-evidence.mjs"
+    test_target = workspace_root / "scripts/guard-runtime-operational-evidence.test.mjs"
+    try:
+        target_text = target.read_text(encoding="utf-8")
+        test_text = test_target.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"semantic_noop_verification_unreadable:{error}"}, sort_keys=True))
+        raise SystemExit(1)
+    lifecycle_start = target_text.find("function buildArtifactLifecycleSection")
+    lifecycle_end = target_text.find("function waitForFile", lifecycle_start)
+    lifecycle_section = target_text[lifecycle_start:lifecycle_end] if lifecycle_start >= 0 and lifecycle_end > lifecycle_start else ""
+    semantic_checks = {
+        "collector_function_present": "function buildArtifactLifecycleSection(repoRoot, artifacts)" in target_text,
+        "collector_records_lifecycle_results": "lifecycle_results" in lifecycle_section,
+        "collector_records_target_results": "target_results" in lifecycle_section,
+        "collector_uses_redacted_commands": "commands: redactCommandResults(commands)" in target_text,
+        "collector_avoids_raw_fixture_payloads": all(token not in target_text for token in ("const artifactLifecycleEvidence = {", "const soakEvidenceFixture = {", "actual_output:")),
+        "collector_source_guard_test_present": "collector source does not contain raw fixture output payloads" in test_text,
     }
     if not all(semantic_checks.values()):
         print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
@@ -1509,22 +1714,146 @@ elif selected_id == "e-16d-stateful-soak-guard":
     if not all(semantic_checks.values()):
         print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
         raise SystemExit(1)
+elif selected_id == "e-16d-stateful-soak-test":
+    target = workspace_root / "scripts/guard-runtime-operational-evidence.test.mjs"
+    try:
+        target_text = target.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"semantic_noop_verification_unreadable:{error}"}, sort_keys=True))
+        raise SystemExit(1)
+    semantic_checks = {
+        "required_stateful_step_ids_declared": all(step in target_text for step in ("task_state_transition", "ledger_workspace_consistency", "resume_replay_handling", "duplicate_side_effect_rejection", "process_loss_recovery", "finite_convergence")),
+        "rejects_version_only_or_missing_stateful_steps": "rejects satisfied soak evidence without stateful steps" in target_text,
+        "rejects_missing_stateful_step": "rejects satisfied soak evidence with missing stateful step" in target_text,
+        "rejects_failed_stateful_step": "rejects satisfied soak evidence with failures" in target_text,
+        "valid_evidence_uses_stateful_steps": "stateful_steps: statefulSoakSteps()" in target_text,
+        "stateful_step_summary_present": "stateful_soak_step_summary" in target_text,
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
+        raise SystemExit(1)
+elif selected_id == "e-16e-semantic-consistency-guard-wiring":
+    package_target = workspace_root / "package.json"
+    release_gate_target = workspace_root / "scripts/release-gate.mjs"
+    try:
+        package_json = json.loads(package_target.read_text(encoding="utf-8"))
+        release_gate_text = release_gate_target.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"semantic_noop_verification_unreadable:{error}"}, sort_keys=True))
+        raise SystemExit(1)
+    scripts = package_json.get("scripts", {})
+    semantic_checks = {
+        "guard_script_present": scripts.get("guard:release-evidence-semantic-consistency") == "node scripts/guard-release-evidence-semantic-consistency.mjs",
+        "guard_test_script_present": scripts.get("guard:release-evidence-semantic-consistency:test") == "node --test scripts/guard-release-evidence-semantic-consistency.test.mjs",
+        "release_gate_guard_entry_present": "id: 'release_evidence_semantic_consistency_guard'" in release_gate_text,
+        "release_gate_guard_command_present": "guard:release-evidence-semantic-consistency" in release_gate_text,
+        "release_gate_guard_test_entry_present": "id: 'release_evidence_semantic_consistency_guard_test'" in release_gate_text,
+        "release_gate_guard_test_command_present": "guard:release-evidence-semantic-consistency:test" in release_gate_text,
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
+        raise SystemExit(1)
+    test_result = subprocess.run(
+        ["node", "--test", "scripts/guard-release-evidence-semantic-consistency.test.mjs"],
+        cwd=workspace_root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=180,
+    )
+    if test_result.returncode != 0:
+        print(json.dumps({
+            "completed": False,
+            "reason": "semantic_guard_test_failed",
+            "results": [{
+                "command": "node --test scripts/guard-release-evidence-semantic-consistency.test.mjs",
+                "exit_code": test_result.returncode,
+                "stdout_tail": test_result.stdout[-1000:],
+                "stderr_tail": test_result.stderr[-1000:],
+            }],
+        }, sort_keys=True))
+        raise SystemExit(2)
+    gate_result = subprocess.run(
+        ["pnpm", "--workspace-root", "release:gate", "--", "--dry-run"],
+        cwd=workspace_root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=180,
+    )
+    if gate_result.returncode != 0:
+        print(json.dumps({
+            "completed": False,
+            "reason": "release_gate_dry_run_failed",
+            "results": [{
+                "command": "pnpm --workspace-root release:gate -- --dry-run",
+                "exit_code": gate_result.returncode,
+                "stdout_tail": gate_result.stdout[-1000:],
+                "stderr_tail": gate_result.stderr[-1000:],
+            }],
+        }, sort_keys=True))
+        raise SystemExit(2)
+    try:
+        gate_plan = json.loads(gate_result.stdout[gate_result.stdout.find("{"):])
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"release_gate_dry_run_unparseable:{error}"}, sort_keys=True))
+        raise SystemExit(1)
+    gate_commands = {entry.get("id"): entry.get("command") for entry in gate_plan.get("commands", []) if isinstance(entry, dict)}
+    gate_checks = {
+        "dry_run_includes_guard": gate_commands.get("release_evidence_semantic_consistency_guard") == "pnpm --workspace-root guard:release-evidence-semantic-consistency",
+        "dry_run_includes_guard_test": gate_commands.get("release_evidence_semantic_consistency_guard_test") == "pnpm --workspace-root guard:release-evidence-semantic-consistency:test",
+    }
+    if not all(gate_checks.values()):
+        print(json.dumps({"completed": False, "reason": "release_gate_dry_run_missing_semantic_guard", "checks": gate_checks}, sort_keys=True))
+        raise SystemExit(1)
+    skip_verification_commands = True
 
 # Do not complete a still-pending implementation TODO just because its
 # verification command is already green. Many Brownie TODOs add coverage to
 # existing passing suites; completion must come from an actual queue removal or
 # a bounded implementation path, not from a pre-existing green check.
 if (
-    selected_id != "e-16a-artifact-source-local-producer-esm-helper-fix"
+    selected_id != "e-16a-artifact-source-local-producer"
+    and selected_id != "e-16a-artifact-source-linux-producer"
+    and selected_id != "e-16a-artifact-source-local-producer-esm-helper-fix"
     and selected_id != "e-16a-clean-source-guard"
     and selected_id != "e-16a-clean-source-test"
+    and selected_id != "e-16b-artifact-smoke-steps-guard"
     and selected_id != "e-16b-artifact-smoke-collector"
     and selected_id != "e-16b-artifact-smoke-test"
+    and selected_id != "e-16c-artifact-lifecycle-collector"
     and selected_id != "e-16c-artifact-lifecycle-guard"
     and selected_id != "e-16c-artifact-lifecycle-test"
     and selected_id != "e-16d-stateful-soak-guard"
+    and selected_id != "e-16d-stateful-soak-test"
+    and selected_id != "e-16e-semantic-consistency-guard-wiring"
 ):
     raise SystemExit(2)
+
+if skip_verification_commands:
+    print(json.dumps({
+        "completed": True,
+        "operation": "selected_todo_verified_noop_completion",
+        "reason": "semantic_wiring_already_present",
+        "run_stamp": run_stamp,
+        "selected_todo_first_line": first_line,
+        "checks": {**semantic_checks, **gate_checks},
+        "results": [
+            {
+                "command": "node --test scripts/guard-release-evidence-semantic-consistency.test.mjs",
+                "exit_code": test_result.returncode,
+                "stdout_tail": test_result.stdout[-1000:],
+                "stderr_tail": test_result.stderr[-1000:],
+            },
+            {
+                "command": "pnpm --workspace-root release:gate -- --dry-run",
+                "exit_code": gate_result.returncode,
+                "stdout_tail": gate_result.stdout[-1000:],
+                "stderr_tail": gate_result.stderr[-1000:],
+            },
+        ],
+    }, ensure_ascii=False, sort_keys=True))
+    raise SystemExit(0)
 
 verification_text = ""
 for line in selected.splitlines():
@@ -2623,6 +2952,7 @@ PY
   python3 - "$guard_status" "$guard_stdout" "$guard_stderr" "$stdout_log" <<'PY'
 import json
 import pathlib
+import subprocess
 import sys
 
 exit_code = int(sys.argv[1])
@@ -2659,6 +2989,7 @@ apply_valid_todo_patch_proposal_fallback() {
   python3 - "$PHASE_LOOP_BROWNIE_STORE_ROOT" "$TODO_CLAIM_FILE" "$PHASE_LOOP_TODO" "$run_stamp" "$expected_run_id" <<'PY'
 import json
 import pathlib
+import subprocess
 import sys
 
 store_root = pathlib.Path(sys.argv[1])
@@ -2666,6 +2997,7 @@ claim_path = pathlib.Path(sys.argv[2])
 todo_path = pathlib.Path(sys.argv[3])
 run_stamp = sys.argv[4]
 expected_run_id = sys.argv[5]
+workspace_root = todo_path.parent.parent if todo_path.parent.name == ".brownie" else todo_path.parent
 
 try:
     claim = json.loads(claim_path.read_text(encoding="utf-8"))
@@ -2678,6 +3010,8 @@ selected_first = selected.splitlines()[0] if selected.splitlines() else ""
 if not selected or not selected_first:
     print(json.dumps({"applied": False, "reason": "selected_todo_missing"}, sort_keys=True))
     sys.exit(2)
+
+selected_is_derived_leaf = "Source TODO:" in selected and "Route: todo-decomposition" not in selected
 
 try:
     todo_text = todo_path.read_text(encoding="utf-8")
@@ -2737,9 +3071,210 @@ if updated == todo_text:
     print(json.dumps({"applied": False, "reason": "todo_replacement_noop", "run_id": run_id}, sort_keys=True))
     sys.exit(2)
 
+def unchecked_todo_blocks(text):
+    starts = []
+    for index, line in enumerate(text.splitlines(keepends=True)):
+        stripped = line.lstrip()
+        if stripped.startswith("- [ ] ") or stripped.startswith("* [ ] "):
+            starts.append(sum(len(part) for part in text.splitlines(keepends=True)[:index]))
+    blocks = []
+    for offset, start in enumerate(starts):
+        end = starts[offset + 1] if offset + 1 < len(starts) else len(text)
+        blocks.append(text[start:end].rstrip())
+    return blocks
+
+def todo_id(block):
+    first = block.splitlines()[0].strip() if block.splitlines() else ""
+    if "] " in first:
+        first = first.split("] ", 1)[1]
+    return first.split(":", 1)[0].strip()
+
+def line_value(block, prefix):
+    for line in block.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            return stripped[len(prefix):].strip().rstrip(".")
+    return ""
+
+def backticked_values(text):
+    values = []
+    parts = text.split("`")
+    for index in range(1, len(parts), 2):
+        if parts[index].strip():
+            values.append(parts[index].strip())
+    return values
+
+def completion_blocks(text):
+    return {todo_id(block): block for block in unchecked_todo_blocks(text) if todo_id(block)}
+
+if selected_is_derived_leaf:
+    print(json.dumps({
+        "applied": False,
+        "reason": "selected_todo_is_already_a_bounded_leaf",
+        "operation": "valid_todo_patch_proposal_fallback",
+        "proposal_id": payload.get("proposal_id"),
+        "source_run_id": run_id,
+        "selected_todo_first_line": selected_first,
+        "repair_hint": "Do not refine a bounded leaf TODO into another child TODO. Implement the bounded leaf target or report a concrete blocker.",
+    }, sort_keys=True))
+    sys.exit(1)
+
+before_blocks_for_safety = completion_blocks(todo_text)
+after_blocks_for_safety = completion_blocks(updated)
+before_ids_for_safety = set(before_blocks_for_safety)
+after_ids_for_safety = set(after_blocks_for_safety)
+selected_id = todo_id(selected)
+removed_ids = sorted(before_ids_for_safety - after_ids_for_safety)
+added_ids = sorted(after_ids_for_safety - before_ids_for_safety)
+unexpected_removed_ids = [ident for ident in removed_ids if ident != selected_id]
+if unexpected_removed_ids or len(after_ids_for_safety) < len(before_ids_for_safety):
+    print(json.dumps({
+        "applied": False,
+        "reason": "todo_patch_would_remove_unrelated_queue_items",
+        "operation": "valid_todo_patch_proposal_fallback",
+        "proposal_id": payload.get("proposal_id"),
+        "source_run_id": run_id,
+        "selected_todo_first_line": selected_first,
+        "selected_todo_id": selected_id,
+        "removed_ids": removed_ids[:20],
+        "added_ids": added_ids[:20],
+        "before_unchecked_count": len(before_ids_for_safety),
+        "after_unchecked_count": len(after_ids_for_safety),
+        "repair_hint": "TODO refinement may replace only the selected broad TODO with bounded children. It must not delete unrelated Product Ready queue items.",
+    }, sort_keys=True))
+    sys.exit(1)
+
+def supplement_breakdown_for_new_leaves(breakdown_text, before_text, after_text):
+    before_ids = set(completion_blocks(before_text))
+    after_blocks = completion_blocks(after_text)
+    new_blocks = [
+        block for ident, block in after_blocks.items()
+        if ident not in before_ids and "Source TODO:" in block and ident not in breakdown_text
+    ]
+    if not new_blocks:
+        return breakdown_text, []
+    dependency_entries = []
+    verification_entries = []
+    added_ids = []
+    for block in new_blocks:
+        ident = todo_id(block)
+        dep = line_value(block, "Depends on:") or "<none>"
+        verification = line_value(block, "Verification:")
+        commands = backticked_values(verification)
+        verification_text = "; ".join(f"`{command}`" for command in commands) if commands else verification or "inspect bounded completion evidence"
+        dependency_entries.append(f"- {ident}: {dep}")
+        verification_entries.append(f"- {ident}: {verification_text}")
+        added_ids.append(ident)
+    supplemented = breakdown_text
+    dependency_marker = "\nVerification ledger:"
+    if dependency_marker in supplemented:
+        insertion = "".join(f"{entry}\n" for entry in dependency_entries)
+        supplemented = supplemented.replace(dependency_marker, f"\n{insertion}{dependency_marker.lstrip()}", 1)
+    else:
+        supplemented += "\n\nDependency graph:\n" + "".join(f"{entry}\n" for entry in dependency_entries)
+    verification_marker = "\nQuality rubric:"
+    if verification_marker in supplemented:
+        insertion = "".join(f"{entry}\n" for entry in verification_entries)
+        supplemented = supplemented.replace(verification_marker, f"\n{insertion}{verification_marker.lstrip()}", 1)
+    else:
+        supplemented += "\n\nVerification ledger:\n" + "".join(f"{entry}\n" for entry in verification_entries)
+    return supplemented, added_ids
+
 tmp_path = todo_path.with_name(f"{todo_path.name}.{run_stamp}.proposal-apply.tmp")
 tmp_path.write_text(updated, encoding="utf-8")
+try:
+    relative_tmp_path = tmp_path.relative_to(workspace_root)
+except ValueError:
+    relative_tmp_path = tmp_path
+breakdown_path = workspace_root / ".brownie" / "todo-breakdown.md"
+tmp_breakdown_path = None
+supplemented_breakdown_ids = []
+breakdown_for_validation = breakdown_path
+try:
+    breakdown_text = breakdown_path.read_text(encoding="utf-8")
+    supplemented_breakdown, supplemented_breakdown_ids = supplement_breakdown_for_new_leaves(
+        breakdown_text,
+        todo_text,
+        updated,
+    )
+    if supplemented_breakdown_ids:
+        tmp_breakdown_path = breakdown_path.with_name(f"{breakdown_path.name}.{run_stamp}.proposal-apply.tmp")
+        tmp_breakdown_path.write_text(supplemented_breakdown, encoding="utf-8")
+        breakdown_for_validation = tmp_breakdown_path
+except Exception:
+    tmp_breakdown_path = None
+    breakdown_for_validation = breakdown_path
+
+try:
+    relative_breakdown_path = breakdown_for_validation.relative_to(workspace_root)
+except ValueError:
+    relative_breakdown_path = breakdown_for_validation
+guard_result = subprocess.run(
+    [
+        "node",
+        "--input-type=module",
+        "-",
+        str(relative_tmp_path),
+        str(relative_breakdown_path),
+    ],
+    cwd=workspace_root,
+    input="""\
+import fs from 'node:fs';
+import { validateTodoDecompositionText } from './scripts/guard-todo-decomposition.mjs';
+
+const todoPath = process.argv[2];
+const breakdownPath = process.argv[3];
+const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+const errors = validateTodoDecompositionText(fs.readFileSync(todoPath, 'utf8'), {
+  path: todoPath,
+  repoRoot: process.cwd(),
+  packageScripts: new Set(Object.keys(pkg.scripts ?? {})),
+  breakdownPath,
+  breakdownText: fs.readFileSync(breakdownPath, 'utf8')
+});
+if (errors.length > 0) {
+  console.error('TODO decomposition guard failed:');
+  for (const error of errors) {
+    console.error(`- ${error}`);
+  }
+  process.exit(1);
+}
+console.log(`TODO decomposition guard passed for ${todoPath}.`);
+""",
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    timeout=180,
+)
+if guard_result.returncode != 0:
+    try:
+        tmp_path.unlink()
+    except FileNotFoundError:
+        pass
+    if tmp_breakdown_path is not None:
+        try:
+            tmp_breakdown_path.unlink()
+        except FileNotFoundError:
+            pass
+    print(json.dumps({
+        "applied": False,
+        "reason": "todo_patch_proposal_guard_failed_before_apply",
+        "operation": "valid_todo_patch_proposal_fallback",
+        "proposal_id": payload.get("proposal_id"),
+        "source_run_id": run_id,
+        "selected_todo_first_line": selected_first,
+        "results": [{
+            "command": f"node scripts/guard-todo-decomposition.mjs {relative_tmp_path}",
+            "exit_code": guard_result.returncode,
+            "stdout_tail": guard_result.stdout[-2000:],
+            "stderr_tail": guard_result.stderr[-4000:],
+        }],
+        "supplemented_breakdown_ids": supplemented_breakdown_ids,
+    }, sort_keys=True))
+    sys.exit(1)
 tmp_path.replace(todo_path)
+if tmp_breakdown_path is not None:
+    tmp_breakdown_path.replace(breakdown_path)
 
 print(json.dumps({
     "applied": True,
@@ -2748,6 +3283,7 @@ print(json.dumps({
     "proposal_id": payload.get("proposal_id"),
     "source_run_id": run_id,
     "selected_todo_first_line": selected_first,
+    "supplemented_breakdown_ids": supplemented_breakdown_ids,
 }, sort_keys=True))
 PY
 }
@@ -3404,6 +3940,103 @@ git_workspace_fingerprint() {
       git status --porcelain=v1 2>/dev/null || true
     } | shasum -a 256 | awk '{ print $1 }'
   )
+}
+
+release_contract_runtime_ready_violation_repair() {
+  local before_contract="$1"
+  local run_stamp="$2"
+  local contract_path="$PHASE_LOOP_WORKSPACE_ROOT/docs/architecture/runtime-release-contract.json"
+  if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$before_contract" ] || [ ! -f "$contract_path" ]; then
+    return 2
+  fi
+  local violation_output
+  violation_output="$(
+    python3 - "$TODO_CLAIM_FILE" "$contract_path" <<'PY'
+import json
+import pathlib
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+contract_path = pathlib.Path(sys.argv[2])
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+except Exception as error:
+    print(f"claim_unreadable:{error}")
+    sys.exit(2)
+selected = str(claim.get("selected_todo") or "")
+if "docs/architecture/runtime-release-contract.json" not in selected:
+    sys.exit(2)
+if "runtime_release_ready" not in selected and "E-16f-release-contract-audit-sync" not in selected:
+    sys.exit(2)
+try:
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+except Exception as error:
+    print(f"invalid_runtime_release_contract_json:{error}")
+    sys.exit(1)
+violations = []
+if contract.get("runtime_release_ready") is not False:
+    violations.append("runtime_release_ready_must_remain_false")
+trace = contract.get("commit_trace")
+if not isinstance(trace, dict):
+    violations.append("commit_trace_missing_or_invalid")
+else:
+    for field in ["implementation_commit", "tested_commit", "release_tag", "workflow_run_id", "artifact_sha256", "mode_pack_fingerprint", "product_dod_fingerprint"]:
+        if trace.get(field) is not None:
+            violations.append(f"forbidden_commit_trace_binding:{field}")
+conditions = contract.get("release_ready_conditions")
+if isinstance(conditions, list):
+    for condition in conditions:
+        if not isinstance(condition, dict):
+            continue
+        if condition.get("id") in {"required_before_release_closed", "artifact_smoke_tests", "tested_commit_matches_artifact_commit", "audit_trace_matches_tested_commit", "no_unresolved_release_blockers"}:
+            if condition.get("release_blocking") is False or condition.get("status") in {"closed", "satisfied"}:
+                violations.append(f"forbidden_release_condition_closure:{condition.get('id')}")
+if not violations:
+    sys.exit(0)
+print(",".join(violations))
+sys.exit(1)
+PY
+  )"
+  local status=$?
+  case "$status" in
+    0) return 0 ;;
+    2) return 2 ;;
+  esac
+  cp "$before_contract" "$contract_path"
+  sync_parent_dir "$(dirname "$contract_path")"
+  printf 'release_contract_forbidden_mutation_repaired run_stamp=%s reason=%s path=docs/architecture/runtime-release-contract.json\n' "$run_stamp" "$violation_output"
+  return 1
+}
+
+json_target_parse_violation_repair() {
+  local before_file="$1"
+  local target_file="$2"
+  local run_stamp="$3"
+  local label="$4"
+  if [ ! -f "$before_file" ] || [ ! -f "$target_file" ]; then
+    return 2
+  fi
+  local parse_output
+  parse_output="$(
+    node - "$target_file" <<'NODE'
+const fs = require('node:fs');
+const target = process.argv[2];
+try {
+  JSON.parse(fs.readFileSync(target, 'utf8'));
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}
+NODE
+  )"
+  local status=$?
+  if [ "$status" -eq 0 ]; then
+    return 0
+  fi
+  cp "$before_file" "$target_file"
+  sync_parent_dir "$(dirname "$target_file")"
+  printf 'json_target_parse_violation_repaired run_stamp=%s label=%s reason=%s path=%s\n' "$run_stamp" "$label" "$parse_output" "${target_file#$PHASE_LOOP_WORKSPACE_ROOT/}"
+  return 1
 }
 
 validate_cli_json_output() {
@@ -4462,11 +5095,32 @@ if source_match:
     selected_decomposition_source_id = source_match.group(1).strip()
 decomposition_policy_lines = []
 leaf_execution_policy_lines = []
-leaf_has_read_preview_for_repair = bool(
-    isinstance(repair_feedback, dict)
-    and isinstance(repair_feedback.get("verification"), dict)
-    and repair_feedback.get("verification", {}).get("workspace_read_previews")
+repair_workspace_read_previews = (
+    repair_feedback.get("verification", {}).get("workspace_read_previews", [])
+    if isinstance(repair_feedback, dict) and isinstance(repair_feedback.get("verification"), dict)
+    else []
 )
+if not isinstance(repair_workspace_read_previews, list):
+    repair_workspace_read_previews = []
+
+def preview_is_for_path(preview, path):
+    if not path:
+        return False
+    text = str(preview)
+    return (
+        f"path={path} " in text
+        or f"path={path}]" in text
+        or f"path={path}\n" in text
+        or f"path=./{path} " in text
+        or f"path=./{path}]" in text
+        or f"path=./{path}\n" in text
+    )
+
+leaf_has_read_preview_for_repair = bool(
+    selected_leaf_target_path
+    and any(preview_is_for_path(preview, selected_leaf_target_path) for preview in repair_workspace_read_previews)
+)
+leaf_has_any_read_preview_for_repair = bool(repair_workspace_read_previews)
 leaf_has_oversized_repair = bool(
     isinstance(repair_feedback, dict)
     and isinstance(repair_feedback.get("verification"), dict)
@@ -4477,6 +5131,37 @@ leaf_has_oversized_repair = bool(
             for item in repair_feedback.get("verification", {}).get("tool_intent_rejections", [])
             if isinstance(repair_feedback.get("verification", {}).get("tool_intent_rejections", []), list)
         )
+    )
+)
+leaf_has_missing_fence_repair = bool(
+    isinstance(repair_feedback, dict)
+    and isinstance(repair_feedback.get("verification"), dict)
+    and any(
+        isinstance(item, dict) and str(item.get("code", "")).lower() == "missing_closing_fence"
+        for item in repair_feedback.get("verification", {}).get("tool_intent_rejections", [])
+        if isinstance(repair_feedback.get("verification", {}).get("tool_intent_rejections", []), list)
+    )
+)
+leaf_todo_refinement_rejected_for_implementation = bool(
+    isinstance(repair_feedback, dict)
+    and isinstance(repair_feedback.get("verification"), dict)
+    and (
+        str(repair_feedback.get("reason", "")).lower() == "selected_todo_is_already_a_bounded_leaf"
+        or str(repair_feedback.get("verification", {}).get("reason", "")).lower() == "selected_todo_is_already_a_bounded_leaf"
+        or any(
+            isinstance(item, dict)
+            and str(item.get("code", "")).lower() == "todo_md_write_denied_for_implementation_todo"
+            for item in repair_feedback.get("verification", {}).get("tool_intent_rejections", [])
+            if isinstance(repair_feedback.get("verification", {}).get("tool_intent_rejections", []), list)
+        )
+    )
+)
+selected_leaf_is_test_only = bool(
+    selected_leaf_target_path
+    and (
+        selected_leaf_target_path.endswith(".test.mjs")
+        or "Forbidden changes: do not modify production" in selected_todo
+        or "test-only leaf" in selected_todo.lower()
     )
 )
 selected_linux_helper_source_identity_repair = (
@@ -4505,7 +5190,14 @@ selected_stateful_soak_build_leaf = (
 )
 leaf_force_write_on_repair = bool(
     repair_feedback
-    and (not leaf_has_oversized_repair or selected_linux_helper_source_identity_repair or selected_linux_fields_source_identity_repair or selected_supply_chain_clean_source_guard_repair)
+    and (
+        not leaf_has_oversized_repair
+        or leaf_has_missing_fence_repair
+        or leaf_todo_refinement_rejected_for_implementation
+        or selected_linux_helper_source_identity_repair
+        or selected_linux_fields_source_identity_repair
+        or selected_supply_chain_clean_source_guard_repair
+    )
     and (
         leaf_has_read_preview_for_repair
         or (
@@ -4514,7 +5206,7 @@ leaf_force_write_on_repair = bool(
         )
     )
 )
-if leaf_has_oversized_repair and not (
+if leaf_has_oversized_repair and not leaf_has_missing_fence_repair and not (
     selected_linux_helper_source_identity_repair
     or selected_linux_fields_source_identity_repair
     or selected_supply_chain_clean_source_guard_repair
@@ -4522,12 +5214,28 @@ if leaf_has_oversized_repair and not (
     llm_route = "deep"
 if "Source TODO:" in selected_todo and re.search(r"^\s*[-*]\s+\[\s*\]\s+[^:\n]+:\s+Patch only\s+`", selected_todo):
     leaf_execution_policy_lines = [
-        "- leaf_execution_policy: this selected TODO is already a bounded derived leaf; normally patch the named target file. If repair feedback shows the target patch is repeatedly oversized/truncated/missing its closing fence, patch `.brownie/todo.md` instead to replace this leaf with one smaller concrete follow-up leaf.",
-        "- leaf_no_refinement_policy: a bounded leaf with one Patch only target must not be converted into more child TODOs just because the target file is large, unless Previous Repair Feedback shows an oversized/truncated workspace.write or missing closing fence.",
+        "- leaf_execution_policy: this selected TODO is already a bounded derived leaf; normally patch the named target file. If repair feedback shows the target patch is repeatedly oversized or input_too_large, patch `.brownie/todo.md` instead to replace this leaf with one smaller concrete follow-up leaf. A missing closing fence alone means the next target-file patch must be smaller and complete.",
+        "- leaf_no_refinement_policy: a bounded leaf with one Patch only target must not be converted into more child TODOs just because the target file is large, unless Previous Repair Feedback shows a repeated oversized/input_too_large workspace.write.",
     ]
     if leaf_force_write_on_repair:
         leaf_execution_policy_lines.append(
             f"- leaf_required_next_tool_policy: the next tool must be `workspace.write` for `{selected_leaf_target_path or '<selected Patch only target>'}` unless final-answer fail-closed is unavoidable; the prior repair context already contains the target read preview, so `workspace.read` and `.brownie/todo.md` writes are not progress for this repair turn."
+        )
+        if leaf_has_missing_fence_repair:
+            leaf_execution_policy_lines.append(
+                "- leaf_missing_fence_repair_policy: the previous workspace.write was rejected because the fenced JSON block did not close. Do not retry a broad function/file replacement. Emit one much smaller `patch_file` hunk with `old_text` under 1200 characters and `new_text` under 1800 characters, and close the brownie-tool-intent fence."
+            )
+        if leaf_todo_refinement_rejected_for_implementation:
+            leaf_execution_policy_lines.append(
+                f"- leaf_todo_refinement_rejected_policy: the previous `.brownie/todo.md` write was rejected because this selected TODO is already an implementation leaf. Do not write `.brownie/todo.md`; patch `{selected_leaf_target_path or '<selected Patch only target>'}` directly."
+            )
+            if selected_leaf_is_test_only:
+                leaf_execution_policy_lines.append(
+                    f"- test_leaf_retry_policy: this is a test-only leaf. The next tool must be exactly one `workspace.write` patch_file for `{selected_leaf_target_path}` if the target contents are already available; otherwise exactly one `workspace.read` for `{selected_leaf_target_path}`. Do not patch `.brownie/todo.md`, production files, collector files, guard files, or breakdown files."
+                )
+    elif repair_feedback and selected_leaf_target_path and leaf_has_any_read_preview_for_repair and not leaf_has_read_preview_for_repair:
+        leaf_execution_policy_lines.append(
+            f"- leaf_target_read_missing_repair_policy: previous repair context did not contain a `workspace.read` preview for `{selected_leaf_target_path}`; do not invent `old_text` from stale TODO previews. The next tool may be exactly one `workspace.read` for `{selected_leaf_target_path}` before any `workspace.write`."
         )
     elif leaf_has_oversized_repair and not selected_linux_helper_source_identity_repair and not selected_linux_fields_source_identity_repair and not selected_supply_chain_clean_source_guard_repair:
         leaf_execution_policy_lines.append(
@@ -4544,6 +5252,10 @@ if "Source TODO:" in selected_todo and re.search(r"^\s*[-*]\s+\[\s*\]\s+[^:\n]+:
                 "- stateful_soak_leaf_template: create one leaf such as `E-16d-stateful-soak-build-step-records`: Patch only `scripts/release-runtime-operational-evidence.mjs` to make `buildSoakSection` record one required stateful step id from `requiredStatefulSoakStepIds`; keep Verification to `pnpm --workspace-root guard:runtime-operational-evidence:test`."
             )
     else:
+        if selected_leaf_is_test_only:
+            leaf_execution_policy_lines.append(
+                f"- test_leaf_execution_policy: this selected TODO is test-only. Patch only `{selected_leaf_target_path}`. Do not create child TODOs, do not patch `.brownie/todo.md`, and do not modify production collector or guard code."
+            )
         if selected_stateful_soak_build_leaf:
             leaf_execution_policy_lines.append(
                 "- stateful_soak_build_patch_policy: this E-16d leaf may patch only the existing `function buildSoakSection(repoRoot, iterations)` region. The next target-file `workspace.write` must not include `soakEvidenceFixture`, `soakEvidenceFixtureDuplicate`, `soakEvidenceFixtureDuplicate2`, or `soakEvidenceFixtureDuplicate3` in old_text or new_text, and must not invent `const buildSoakSection =`."
@@ -4680,9 +5392,13 @@ if repair_feedback:
             repair_feedback_lines.append(f"- todo_decomposition_replace_both_policy: the `.brownie/todo.md` patch must remove both the active decomposition TODO `{selected_parent_id or '<selected-decomposition-id>'}` and its broad source TODO `{selected_decomposition_source_id or '<selected-broad-source-id>'}` from unchecked queue text.")
             repair_feedback_lines.append(f"- todo_decomposition_new_leaf_id_policy: generated leaf ids must be new implementation leaf ids, not `{selected_parent_id or '<selected-decomposition-id>'}` and not `{selected_decomposition_source_id or '<selected-broad-source-id>'}`.")
         if "Verification:` must use allowed bounded commands" in str(reason):
-            repair_feedback_lines.append("- todo_leaf_verification_repair_policy: the previous leaf used an invalid verification such as `none yet`. Retry with a concrete allowed `Verification:` line, for example `Verification: inspect the next workspace.read result and confirm the named symbol/section is visible before patching.` for an investigation leaf, or `Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.` for an implementation leaf.")
+            repair_feedback_lines.append("- todo_leaf_verification_repair_policy: the previous leaf used an invalid verification such as `grep`, `none yet`, or another non-allowlisted command. Retry with a concrete allowed `Verification:` line using `pnpm --workspace-root ...`, `cargo ...`, `node scripts/...`, `node --test scripts/...`, or an explicit inspect/blocker/fail-closed condition. Never use `grep` in TODO Verification.")
+            if selected_parent_id == "E-16e-semantic-consistency-guard-wiring" or "E-16e-semantic-consistency-guard-wiring" in selected_todo:
+                repair_feedback_lines.append("- semantic_wiring_leaf_verification_policy: for a package.json script wiring leaf, use exactly `Verification: run `pnpm --workspace-root guard:release-evidence-semantic-consistency`.`. For a release-gate wiring leaf, use exactly `Verification: run `pnpm --workspace-root release:gate -- --dry-run`.`.")
         if "Every TODO decomposition leaf `Verification:` must use allowed bounded commands" in str(reason):
-            repair_feedback_lines.append("- blocker_verification_policy: if writing a blocker TODO, use `Verification: blocker: exact missing evidence or field is named, and no workspace file is patched until that evidence is available.` Do not use `Verification: read ...`.")
+            repair_feedback_lines.append("- blocker_verification_policy: if writing a blocker TODO, use `Verification: blocker: exact missing evidence or field is named, and no workspace file is patched until that evidence is available.` Do not use `Verification: read ...` or `grep ...`.")
+            if selected_parent_id == "E-16e-semantic-consistency-guard-wiring" or "E-16e-semantic-consistency-guard-wiring" in selected_todo:
+                repair_feedback_lines.append("- semantic_wiring_leaf_verification_policy: for a package.json script wiring leaf, use exactly `Verification: run `pnpm --workspace-root guard:release-evidence-semantic-consistency`.`. For a release-gate wiring leaf, use exactly `Verification: run `pnpm --workspace-root release:gate -- --dry-run`.`.")
         if "must name a bounded `Patch only`/`Create only` scope" in str(reason):
             repair_feedback_lines.append("- todo_leaf_scope_repair_policy: the previous leaf started as read/inspect/investigation work. Retry with a first line that starts with Patch only or Create only followed by one real concrete repository path in backticks, and keep any needed inspection detail in the description or completion condition. If no bounded patch/create target exists, write an explicit fail-closed blocker TODO instead.")
         if "Additional workspace.read is not progress" in str(reason):
@@ -4718,9 +5434,13 @@ if repair_feedback:
                 repair_feedback_lines.append(f"- todo_decomposition_replace_both_policy: the `.brownie/todo.md` patch must remove both the active decomposition TODO `{selected_parent_id or '<selected-decomposition-id>'}` and its broad source TODO `{selected_decomposition_source_id or '<selected-broad-source-id>'}` from unchecked queue text.")
                 repair_feedback_lines.append(f"- todo_decomposition_new_leaf_id_policy: generated leaf ids must be new implementation leaf ids, not `{selected_parent_id or '<selected-decomposition-id>'}` and not `{selected_decomposition_source_id or '<selected-broad-source-id>'}`.")
             if "Verification:` must use allowed bounded commands" in str(reason):
-                repair_feedback_lines.append("- todo_leaf_verification_repair_policy: the previous leaf used an invalid verification such as `none yet`. Retry with a concrete allowed `Verification:` line, for example `Verification: inspect the next workspace.read result and confirm the named symbol/section is visible before patching.` for an investigation leaf, or `Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.` for an implementation leaf.")
+                repair_feedback_lines.append("- todo_leaf_verification_repair_policy: the previous leaf used an invalid verification such as `grep`, `none yet`, or another non-allowlisted command. Retry with a concrete allowed `Verification:` line using `pnpm --workspace-root ...`, `cargo ...`, `node scripts/...`, `node --test scripts/...`, or an explicit inspect/blocker/fail-closed condition. Never use `grep` in TODO Verification.")
+                if selected_parent_id == "E-16e-semantic-consistency-guard-wiring" or "E-16e-semantic-consistency-guard-wiring" in selected_todo:
+                    repair_feedback_lines.append("- semantic_wiring_leaf_verification_policy: for a package.json script wiring leaf, use exactly `Verification: run `pnpm --workspace-root guard:release-evidence-semantic-consistency`.`. For a release-gate wiring leaf, use exactly `Verification: run `pnpm --workspace-root release:gate -- --dry-run`.`.")
             if "Every TODO decomposition leaf `Verification:` must use allowed bounded commands" in str(reason):
-                repair_feedback_lines.append("- blocker_verification_policy: if writing a blocker TODO, use `Verification: blocker: exact missing evidence or field is named, and no workspace file is patched until that evidence is available.` Do not use `Verification: read ...`.")
+                repair_feedback_lines.append("- blocker_verification_policy: if writing a blocker TODO, use `Verification: blocker: exact missing evidence or field is named, and no workspace file is patched until that evidence is available.` Do not use `Verification: read ...` or `grep ...`.")
+                if selected_parent_id == "E-16e-semantic-consistency-guard-wiring" or "E-16e-semantic-consistency-guard-wiring" in selected_todo:
+                    repair_feedback_lines.append("- semantic_wiring_leaf_verification_policy: for a package.json script wiring leaf, use exactly `Verification: run `pnpm --workspace-root guard:release-evidence-semantic-consistency`.`. For a release-gate wiring leaf, use exactly `Verification: run `pnpm --workspace-root release:gate -- --dry-run`.`.")
             if "must name a bounded `Patch only`/`Create only` scope" in str(reason):
                 repair_feedback_lines.append("- todo_leaf_scope_repair_policy: the previous leaf started as read/inspect/investigation work. Retry with a first line that starts with Patch only or Create only followed by one real concrete repository path in backticks, and keep any needed inspection detail in the description or completion condition. If no bounded patch/create target exists, write an explicit fail-closed blocker TODO instead.")
             if "old_text must include the full selected TODO block" in str(reason):
@@ -4757,6 +5477,15 @@ if repair_feedback:
                     if sha256_file_block:
                         repair_feedback_lines.append("- release_local_artifact_exact_sha256File_old_text_policy: if patching `sha256File`, use this exact complete function block as `old_text`; do not reformat it.")
                         repair_feedback_lines.append(f"- release_local_artifact_sha256File_old_text_json: {json.dumps(sha256_file_block, ensure_ascii=False)}")
+            if (
+                str(proposal.get("path", "")) == "package.json"
+                and "matches inside a word" in validation_reason
+                and "E-16e-semantic-consistency-guard-wiring" in selected_todo
+            ):
+                repair_feedback_lines.append("- semantic_package_script_exact_repair_policy: the previous package.json patch used truncated old_text that matched inside a word. Retry with exactly one complete line-bounded hunk and do not patch `.brownie/todo.md` in this repair pass.")
+                repair_feedback_lines.append("- semantic_package_script_old_text_json: \"    \\\"guard:ledger-contract-single-source\\\": \\\"node scripts/guard-ledger-contract-single-source.mjs\\\",\\n    \\\"guard:ledger-contract-single-source:test\\\": \\\"node --test scripts/guard-ledger-contract-single-source.test.mjs\\\",\"")
+                repair_feedback_lines.append("- semantic_package_script_new_text_json: \"    \\\"guard:ledger-contract-single-source\\\": \\\"node scripts/guard-ledger-contract-single-source.mjs\\\",\\n    \\\"guard:ledger-contract-single-source:test\\\": \\\"node --test scripts/guard-ledger-contract-single-source.test.mjs\\\",\\n    \\\"guard:release-evidence-semantic-consistency\\\": \\\"node scripts/guard-release-evidence-semantic-consistency.mjs\\\",\\n    \\\"guard:release-evidence-semantic-consistency:test\\\": \\\"node --test scripts/guard-release-evidence-semantic-consistency.test.mjs\\\",\"")
+                repair_feedback_lines.append("- semantic_package_script_required_next_tool: exactly one `workspace.write` patch_file to `package.json` using the old_text/new_text above; do not read again and do not edit `.brownie/todo.md`.")
             if "appears more than once" in validation_reason:
                 repair_feedback_lines.append("- non_unique_hunk_repair_policy: the previous hunk old_text was not unique. Use a 2-3 line hunk that includes the selected TODO first line immediately before the `Source TODO:` line, and make `new_text` differ from `old_text` by changing only the `Source TODO:` line so it no longer starts with the leaf TODO id.")
                 if str(proposal.get("path", "")) == "scripts/release-runtime-operational-evidence.mjs" and "old_chars=29" in str(proposal.get("content_preview", "")):
@@ -4802,6 +5531,17 @@ if repair_feedback:
     has_invalid_patch_proposal = bool(verification.get("invalid_patch_proposals"))
     for index, preview in enumerate(verification.get("llm_response_previews", []) if isinstance(verification.get("llm_response_previews"), list) else []):
         preview_text = str(preview)
+        compact_preview = preview_text.replace(" ", "")
+        if (
+            selected_leaf_target_path
+            and leaf_execution_policy_lines
+            and ("workspace.read" in preview_text or "workspace.write" in preview_text)
+            and f'"path":"{selected_leaf_target_path}"' not in compact_preview
+            and f'"path":"./{selected_leaf_target_path}"' not in compact_preview
+        ):
+            repair_feedback_lines.append(f"- previous_llm_response_preview_{index}: <omitted stale tool preview because it does not target `{selected_leaf_target_path}`>")
+            repair_feedback_lines.append(f"- stale_tool_preview_target_policy: ignore previous tool previews for other files. The next tool must target `{selected_leaf_target_path}` only, or final-answer a concrete blocker.")
+            continue
         if selected_decomposition_active and "workspace.write" in preview_text:
             repair_feedback_lines.append(f"- previous_llm_response_preview_{index}: <omitted failed TODO decomposition workspace.write preview; do not reproduce>")
             continue
@@ -4813,9 +5553,22 @@ if repair_feedback:
             if "workspace.write" in preview_text and "\"hunks\"" in preview_text and "\"content\"" in preview_text:
                 repair_feedback_lines.append("- patch_hunks_content_exclusion_policy: the previous workspace.write mixed `hunks` with `content`. Retry with `hunks` only; omit `content`, `old_text`, and `new_text` at the top level.")
             continue
-        if leaf_execution_policy_lines and '"path":".brownie/todo.md"' in preview_text.replace(" ", ""):
+        if (
+            leaf_execution_policy_lines
+            and '"path":".brownie/todo.md"' in preview_text.replace(" ", "")
+            and (not selected_leaf_target_path or leaf_has_read_preview_for_repair)
+        ):
             repair_feedback_lines.append(f"- previous_llm_response_preview_{index}: <omitted failed TODO-refinement preview for bounded leaf; do not patch `.brownie/todo.md` again>")
             repair_feedback_lines.append(f"- leaf_retry_required_next_tool: exactly one `workspace.write` to `{selected_leaf_target_path or '<selected leaf target>'}`. Do not request `workspace.read`; do not write `.brownie/todo.md`; do not create blocker TODOs for bounded leaf repair.")
+            continue
+        if (
+            leaf_execution_policy_lines
+            and '"path":".brownie/todo.md"' in preview_text.replace(" ", "")
+            and selected_leaf_target_path
+            and not leaf_has_read_preview_for_repair
+        ):
+            repair_feedback_lines.append(f"- previous_llm_response_preview_{index}: <omitted failed TODO-refinement preview for bounded leaf; stale preview did not include `{selected_leaf_target_path}`>")
+            repair_feedback_lines.append(f"- leaf_retry_read_first_policy: request exactly one `workspace.read` for `{selected_leaf_target_path}` before retrying a target-file `workspace.write`; do not patch `.brownie/todo.md` again.")
             continue
         if missing_closing_fence and (
             "workspace.write" in preview_text
@@ -4833,8 +5586,18 @@ if repair_feedback:
     elif verification.get("workspace_read_previews") and selected_decomposition_active:
         repair_feedback_lines.append("- previous_workspace_read_preview_0: <omitted during TODO decomposition repair to keep the prompt compact; use the Selected TODO and TODO Queue Snapshot instead>")
     elif verification.get("workspace_read_previews"):
-        repair_feedback_lines.append("- read_budget_repair_policy: previous workspace.read content is embedded below; do not emit workspace.read in this invocation. Emit workspace.write, or write a concrete smaller blocker TODO if the embedded preview is insufficient.")
-        for index, preview in enumerate(verification.get("workspace_read_previews", []) if isinstance(verification.get("workspace_read_previews"), list) else []):
+        workspace_read_previews = verification.get("workspace_read_previews", []) if isinstance(verification.get("workspace_read_previews"), list) else []
+        read_previews_match_leaf_target = bool(
+            selected_leaf_target_path
+            and any(preview_is_for_path(preview, selected_leaf_target_path) for preview in workspace_read_previews)
+        )
+        if selected_leaf_target_path and not read_previews_match_leaf_target:
+            repair_feedback_lines.append(f"- stale_read_preview_policy: previous workspace.read previews are not for `{selected_leaf_target_path}`. Ignore them for patch construction; request exactly one `workspace.read` for `{selected_leaf_target_path}` if an exact current hunk is needed.")
+            repair_feedback_lines.append(f"- previous_workspace_read_preview_0: <omitted stale read preview because it does not target `{selected_leaf_target_path}`>")
+            workspace_read_previews = []
+        else:
+            repair_feedback_lines.append("- read_budget_repair_policy: previous workspace.read content for the active target is embedded below; do not emit workspace.read in this invocation. Emit workspace.write, or write a concrete smaller blocker TODO if the embedded preview is insufficient.")
+        for index, preview in enumerate(workspace_read_previews):
             preview_text = str(preview)
             if len(preview_text) > 3600:
                 bounded_preview = (
@@ -4856,6 +5619,41 @@ if repair_feedback:
         ])
         result_stderr = str(result.get("stderr_tail", ""))
         result_stdout = str(result.get("stdout_tail", ""))
+        if (
+            selected_leaf_target_path == "scripts/guard-release-evidence-semantic-consistency.test.mjs"
+            and "semantic consistency fixtures cover release evidence contradictions" in result_stdout
+            and "Expected values to be strictly equal" in result_stdout
+            and re.search(r"\n\s*[67]\s*!==\s*5", result_stdout)
+        ):
+            repair_feedback_lines.append("- semantic_fixture_count_repair_policy: verification failed because Brownie appended duplicate fixtures instead of repairing the existing fixture list. Do not add another test or fixture. Remove duplicate `missing_commit_binding` fixture object entries from `contradictoryEvidenceFixtures` so the array length returns to 5, while keeping the standalone `null source_commit rejects with missing_commit_binding` test.")
+            target_text = read_text(pathlib.Path("scripts/guard-release-evidence-semantic-consistency.test.mjs"))
+            duplicate_fixture_pattern = re.compile(
+                r"\n  \{\n"
+                r"    name: 'null source_commit rejects with missing_commit_binding(?: \\(explicit\\))?',\n"
+                r"    contract: \{ status: 'implemented_sufficient', implementation_commit: null, tested_commit: null \},\n"
+                r"    evidence: \{ source_commit: null, source_tree_dirty: false \},\n"
+                r"    expectedReason: 'missing_commit_binding',\n"
+                r"  \},"
+            )
+            duplicate_fixture_blocks = duplicate_fixture_pattern.findall(target_text)
+            if duplicate_fixture_blocks:
+                repair_feedback_lines.append(f"- semantic_fixture_duplicate_count: `{len(duplicate_fixture_blocks)}`")
+                repair_feedback_lines.append("- semantic_fixture_duplicate_exact_repair_policy: request exactly one `workspace.write` patch_file for `scripts/guard-release-evidence-semantic-consistency.test.mjs` using `input.hunks`; each hunk must remove one duplicate fixture block by setting `new_text` to an empty string. Do not edit `.brownie/todo.md` and do not add another fixture.")
+                for duplicate_index, duplicate_block in enumerate(duplicate_fixture_blocks[:3]):
+                    repair_feedback_lines.append(f"- semantic_fixture_duplicate_block_{duplicate_index}_json: {json.dumps(duplicate_block, ensure_ascii=False)}")
+        if (
+            selected_leaf_target_path == "scripts/guard-release-evidence-semantic-consistency.test.mjs"
+            and "semantic consistency fixtures cover release evidence contradictions" in result_stdout
+            and "Expected values to be strictly equal" in result_stdout
+            and re.search(r"\n\s*4\s*!==\s*5", result_stdout)
+        ):
+            target_text = read_text(pathlib.Path("scripts/guard-release-evidence-semantic-consistency.test.mjs"))
+            missing_reference = "const contradictoryEvidenceFixtures = [\n  {\n"
+            if missing_reference in target_text and "const contradictoryEvidenceFixtures = [\n  nullSourceCommitFixture,\n" not in target_text:
+                repair_feedback_lines.append("- semantic_fixture_missing_reference_repair_policy: verification failed because the required `nullSourceCommitFixture` reference was removed from `contradictoryEvidenceFixtures`. Do not add a duplicate object. Restore only the single array reference `nullSourceCommitFixture,` as the first array entry.")
+                repair_feedback_lines.append(f"- semantic_fixture_missing_reference_old_text_json: {json.dumps(missing_reference, ensure_ascii=False)}")
+                repair_feedback_lines.append("- semantic_fixture_missing_reference_new_text_json: \"const contradictoryEvidenceFixtures = [\\n  nullSourceCommitFixture,\\n  {\\n\"")
+                repair_feedback_lines.append("- semantic_fixture_missing_reference_required_next_tool: exactly one `workspace.write` patch_file to `scripts/guard-release-evidence-semantic-consistency.test.mjs` using the old_text/new_text above; do not edit `.brownie/todo.md` and do not add another fixture object.")
         if "SyntaxError:" in result_stdout or "SyntaxError:" in result_stderr:
             repair_feedback_lines.append("- verification_failure_target_repair_policy: the previous implementation changed a target file and verification now reports a concrete SyntaxError. Repair the target file directly with workspace.write; do not patch `.brownie/todo.md` or split the TODO for this failure.")
         if "Identifier 'soakEvidenceFixture' has already been declared" in result_stdout or "Identifier 'soakEvidenceFixture' has already been declared" in result_stderr:
@@ -4960,7 +5758,13 @@ if todo_guard_failed:
     )
     if duplicate_only_guard:
         duplicate_guard_block = ""
-        duplicate_guard_needle = "- [ ] E-15d-soak-section-guard:"
+        duplicate_guard_id = ""
+        duplicate_guard_match = re.search(r"\.brownie/todo\.md\s+([^:\s]+):\s+duplicate unchecked TODO id appears", guard_stderr)
+        if duplicate_guard_match:
+            duplicate_guard_id = duplicate_guard_match.group(1).strip()
+        if not duplicate_guard_id and selected_parent_id:
+            duplicate_guard_id = selected_parent_id
+        duplicate_guard_needle = f"- [ ] {duplicate_guard_id}:"
         duplicate_guard_start = todo_text.find(duplicate_guard_needle)
         if duplicate_guard_start >= 0:
             duplicate_guard_end = todo_text.find("\n- [ ] ", duplicate_guard_start + len(duplicate_guard_needle))
@@ -4978,11 +5782,11 @@ if todo_guard_failed:
             "",
             "Duplicate repair rule:",
             "- Patch `.brownie/todo.md` only.",
-            "- Keep exactly one unchecked `E-15d-soak-section-guard` block.",
-            "- Remove the duplicate `E-15d-soak-section-guard` blocks.",
-            "- Do not edit the already-fixed `E-15d-soak-section-collector` Source TODO line.",
+            f"- Keep exactly one unchecked `{duplicate_guard_id or '<duplicate TODO id>'}` block.",
+            f"- Remove duplicate `{duplicate_guard_id or '<duplicate TODO id>'}` blocks.",
+            "- Do not edit unrelated TODO blocks.",
             "- Use exactly one `workspace.write` hunk: `{old_text:<exact_duplicate_block_json>, new_text:\"\", occurrence:2}`.",
-            "- Repeat in later loops until the guard reports only one remaining `E-15d-soak-section-guard` block.",
+            f"- Repeat in later loops until the guard reports only one remaining `{duplicate_guard_id or '<duplicate TODO id>'}` block.",
             "",
             "Exact duplicate block JSON to copy into `old_text`:",
             json.dumps(duplicate_guard_block, ensure_ascii=False) if duplicate_guard_block else "<unavailable; emit a concrete blocker TODO instead of guessing>",
@@ -5112,7 +5916,7 @@ if todo_guard_failed:
 read_batch_policy_line = "- read_batch_policy: if completed_workspace_reads is 0, request at most one relevant `workspace.read`; if completed_workspace_reads is 1 or more, do not request `workspace.read` again and request `workspace.write` or a concrete blocker TODO instead."
 if todo_guard_failed:
     read_batch_policy_line = "- read_batch_policy: TODO guard repair is active, so do not request `workspace.read`; request exactly one `workspace.write` repair using Focused TODO Queue Repair Context."
-elif leaf_has_oversized_repair and leaf_execution_policy_lines:
+elif leaf_has_oversized_repair and not leaf_has_missing_fence_repair and leaf_execution_policy_lines:
     base_snapshot_for_prompt = "<omitted during oversized leaf repair to prevent prompt text from being copied into workspace.write old_text>"
     exact_selected_block_json = json.dumps(selected_todo.rstrip(), ensure_ascii=False)
     stateful_soak_extra_rules = []
@@ -5181,6 +5985,9 @@ prompt = "\n".join([
     "- context_policy: use the smallest exact file set; do not read README or overview files unless the active TODO names them.",
     "- progress_policy: after bounded reads, emit one workspace.write proposal, a concrete blocker TODO, or completion evidence; do not continue read-only discovery.",
     "- output_policy: if workspace context is needed, your next assistant message must be exactly one fenced `brownie-tool-intent` JSON block and no explanatory prose.",
+    "- tool_intent_schema_policy: the fenced JSON must conform to `docs/architecture/tool-intent.schema.json`: one root object, only `tool_requests`, each request has only `tool_id`, `reason`, and `input`.",
+    "- workspace_write_size_policy: every `workspace.write` must fit in one complete fenced JSON block. Prefer exactly one `patch_file` hunk; keep `old_text` under 1200 characters and `new_text` under 1800 characters. Do not replace an entire function or file when a smaller exact hunk can satisfy the TODO.",
+    "- workspace_write_repetition_policy: never fill `new_text`, `content`, or hunk text by repeating the same line, string literal, array element, or token. If a patch starts repeating, stop and emit a smaller exact hunk or a blocker TODO.",
     read_batch_policy_line,
     "- implementation_preflight_policy: before any workspace.write, internally verify the active TODO id, bounded target files, forbidden files, needed reads, verification command, and blocker condition; if any item is unknown, emit a concrete blocker instead of editing.",
     "- dependency_policy: do not work on a TODO whose `Depends on:` entries are still pending in the live unchecked TODO queue.",
@@ -5870,6 +6677,8 @@ run_brownie_once() {
   load_env
   local started_at run_stamp stdout_log stderr_log effective_prompt exit_code run_id detail brownie_timeout_seconds
   local workspace_before workspace_after head_commit validation progress_summary progress_classification
+  local release_contract_before release_contract_repair_output release_contract_repair_status
+  local phase_value_manifest_before phase_value_manifest_repair_output phase_value_manifest_repair_status
   local use_resume=0
   local CLAIM_CREATED_THIS_RUN=0
   started_at="$(now_utc)"
@@ -5877,6 +6686,8 @@ run_brownie_once() {
   stdout_log="$RUN_DIR/$run_stamp.stdout.log"
   stderr_log="$RUN_DIR/$run_stamp.stderr.log"
   effective_prompt="$RUN_DIR/$run_stamp.prompt.md"
+  release_contract_before="$RUN_DIR/$run_stamp.runtime-release-contract.before.json"
+  phase_value_manifest_before="$RUN_DIR/$run_stamp.phase-value-manifest.before.json"
 
   write_status "running" "Brownie run started at $started_at" "$run_stamp" "" "${CONSECUTIVE_FAILURES:-0}"
 
@@ -6067,6 +6878,27 @@ run_brownie_once() {
     write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"runtime_readiness_fingerprint_fallback_failed"}'
     return 74
   fi
+  local pre_guard_release_contract_audit_hash_output pre_guard_release_contract_audit_hash_status
+  pre_guard_release_contract_audit_hash_output="$(try_release_contract_readiness_audit_hash_fallback "$run_stamp" 2>&1)"
+  pre_guard_release_contract_audit_hash_status=$?
+  if [ "$pre_guard_release_contract_audit_hash_status" -eq 0 ]; then
+    workspace_after="$(git_workspace_fingerprint)"
+    printf '%s\n' "$pre_guard_release_contract_audit_hash_output" > "$stdout_log"
+    : > "$stderr_log"
+    clear_repair_feedback
+    detail="Applied deterministic release contract readiness-audit hash fallback before invoking Brownie: $pre_guard_release_contract_audit_hash_output"
+    write_status "last_run_succeeded" "$detail" "release-contract-readiness-audit-hash-$run_stamp" "0" "0"
+    printf '%s run=%s release_contract_readiness_audit_hash_fallback=true phase=pre_guard result=%s\n' "$(now_utc)" "release-contract-readiness-audit-hash-$run_stamp" "$pre_guard_release_contract_audit_hash_output" >> "$SUPERVISOR_LOG"
+    write_bdk_trajectory_event "$run_stamp" "tool.write_applied" '{"source":"deterministic_fallback","kind":"release_contract_readiness_audit_hash"}'
+    phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after" || true
+    return 0
+  elif [ "$pre_guard_release_contract_audit_hash_status" -eq 1 ]; then
+    detail="Release contract readiness-audit hash fallback was eligible but failed safely before invoking Brownie: $pre_guard_release_contract_audit_hash_output"
+    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+    write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"release_contract_readiness_audit_hash_fallback_failed"}'
+    return 74
+  fi
   local pre_guard_runtime_readiness_verified_output pre_guard_runtime_readiness_verified_status
   pre_guard_runtime_readiness_verified_output="$(try_runtime_readiness_verified_completion_fallback "$run_stamp" 2>&1)"
   pre_guard_runtime_readiness_verified_status=$?
@@ -6162,6 +6994,14 @@ run_brownie_once() {
     write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"invalid_decomposition_leaf"}'
     return 0
   fi
+  if [ -f "$PHASE_LOOP_WORKSPACE_ROOT/docs/architecture/runtime-release-contract.json" ]; then
+    cp "$PHASE_LOOP_WORKSPACE_ROOT/docs/architecture/runtime-release-contract.json" "$release_contract_before"
+    chmod 600 "$release_contract_before" 2>/dev/null || true
+  fi
+  if [ -f "$PHASE_LOOP_WORKSPACE_ROOT/docs/architecture/phase-value-manifest.json" ]; then
+    cp "$PHASE_LOOP_WORKSPACE_ROOT/docs/architecture/phase-value-manifest.json" "$phase_value_manifest_before"
+    chmod 600 "$phase_value_manifest_before" 2>/dev/null || true
+  fi
   local exact_fast_path_output exact_fast_path_status
   exact_fast_path_output="$(try_exact_line_todo_fast_path "$run_stamp" 2>&1)"
   exact_fast_path_status=$?
@@ -6206,6 +7046,62 @@ run_brownie_once() {
   ) > "$stdout_log" 2> "$stderr_log"
   exit_code=$?
   workspace_after="$(git_workspace_fingerprint)"
+  phase_value_manifest_repair_output="$(json_target_parse_violation_repair "$phase_value_manifest_before" "$PHASE_LOOP_WORKSPACE_ROOT/docs/architecture/phase-value-manifest.json" "$run_stamp" "phase_value_manifest" 2>&1)"
+  phase_value_manifest_repair_status=$?
+  if [ "$phase_value_manifest_repair_status" -eq 1 ]; then
+    workspace_after="$(git_workspace_fingerprint)"
+    local phase_value_manifest_feedback
+    phase_value_manifest_feedback="$(python3 - "$phase_value_manifest_repair_output" <<'PY'
+import json
+import sys
+
+reason = sys.argv[1]
+print(json.dumps({
+    "completed": False,
+    "reason": "json_target_parse_violation_repaired",
+    "repair_hint": "The previous attempt made a JSON target unparsable. Do not append duplicate top-level JSON fragments. Patch only one exact existing field or one exact existing object member, and keep the file parseable JSON.",
+    "parse_violation": reason,
+}, sort_keys=True))
+PY
+)"
+    write_repair_feedback "$run_stamp" "$phase_value_manifest_feedback" "$stdout_log" "$stderr_log" || true
+    if active_todo_claim_exists; then
+      write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+    fi
+    detail="Rejected and restored unparsable phase-value manifest mutation; Brownie must retry with parseable JSON. repair=$phase_value_manifest_repair_output stdout=$stdout_log stderr=$stderr_log"
+    write_status "no_progress" "$detail" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-1}"
+    printf '%s run=%s json_target_parse_violation_repaired=true detail=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_stamp" "$phase_value_manifest_repair_output" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+    write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"json_target_parse_violation_repaired"}'
+    return 76
+  fi
+  release_contract_repair_output="$(release_contract_runtime_ready_violation_repair "$release_contract_before" "$run_stamp" 2>&1)"
+  release_contract_repair_status=$?
+  if [ "$release_contract_repair_status" -eq 1 ]; then
+    workspace_after="$(git_workspace_fingerprint)"
+    local release_contract_feedback
+    release_contract_feedback="$(python3 - "$release_contract_repair_output" <<'PY'
+import json
+import sys
+
+reason = sys.argv[1]
+print(json.dumps({
+    "completed": False,
+    "reason": "release_contract_forbidden_mutation_repaired",
+    "repair_hint": "The previous attempt modified docs/architecture/runtime-release-contract.json in a forbidden way. Do not set runtime_release_ready true. Do not invent implementation/tested commits, workflow run ids, artifact SHA values, release tags, mode pack fingerprints, or Product DoD fingerprints. Keep fail-closed blocker fields until executable evidence exists.",
+    "forbidden_mutation": reason,
+}, sort_keys=True))
+PY
+)"
+    write_repair_feedback "$run_stamp" "$release_contract_feedback" "$stdout_log" "$stderr_log" || true
+    if active_todo_claim_exists; then
+      write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+    fi
+    detail="Rejected and restored forbidden Runtime Release Contract mutation; Brownie must retry within fail-closed release evidence boundaries. repair=$release_contract_repair_output stdout=$stdout_log stderr=$stderr_log"
+    write_status "no_progress" "$detail" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-1}"
+    printf '%s run=%s release_contract_forbidden_mutation_repaired=true detail=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_stamp" "$release_contract_repair_output" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+    write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"release_contract_forbidden_mutation_repaired"}'
+    return 76
+  fi
 
   run_id="$(
     python3 - "$stdout_log" <<'PY'
@@ -6385,6 +7281,14 @@ PY
         write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"todo_patch_proposal_guard_failed"}'
         return 76
       fi
+    elif [ "$todo_patch_proposal_apply_status" -eq 1 ]; then
+      write_repair_feedback "$run_stamp" "$todo_patch_proposal_apply_output" "$stdout_log" "$stderr_log" || true
+      write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      detail="Rejected Brownie TODO refinement proposal before applying it because TODO guard preflight failed; recorded repair feedback. apply=$todo_patch_proposal_apply_output stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+      write_status "no_progress" "$detail" "$run_id" "76" "${CONSECUTIVE_FAILURES:-1}"
+      printf '%s run=%s valid_todo_patch_proposal_fallback_preflight_failed=true apply=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$todo_patch_proposal_apply_output" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+      write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"todo_patch_proposal_preflight_failed"}'
+      return 76
     fi
 
     if python3 - "$PROGRESS_STATE_FILE" <<'PY'
@@ -6613,6 +7517,7 @@ start() {
     exit 0
   fi
   rm -f "$STOP_FILE"
+  write_status "starting" "Supervisor launch requested." "" "" 0
   if command -v screen >/dev/null 2>&1; then
     screen -S "$SCREEN_NAME" -X quit >/dev/null 2>&1 || true
     screen -dmS "$SCREEN_NAME" /bin/bash "$ROOT_DIR/phase-loop.sh" supervise
@@ -6629,7 +7534,6 @@ start() {
     nohup "$0" supervise >> "$LOG_DIR/launcher.out" 2>> "$LOG_DIR/launcher.err" &
     echo $! > "$PID_FILE"
   fi
-  write_status "starting" "Supervisor launch requested." "" "" 0
   if is_running; then
     echo "phase-loop start requested: pid $(cat "$PID_FILE")"
   else

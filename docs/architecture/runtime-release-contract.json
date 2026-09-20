@@ -11,7 +11,7 @@
     "baseline_percent": 58,
     "target_percent": 90,
     "current_percent": 88,
-    "scoring_basis": "Owner-governance independent reviews are now satisfied through verified PR #458 GitHub review provenance; runtime_release_ready remains false until executable supply-chain and runtime operational evidence bindings close."
+    "scoring_basis": "Owner-governance independent reviews satisfied through verified PR #458 GitHub review provenance; runtime_release_ready remains false until executable supply-chain and runtime operational evidence bindings close."
   },
   "commit_trace": {
     "audited_base_commit": "4376c0a7412a40f328fb3ba64bca487bba35a80e",
@@ -21,7 +21,7 @@
     "workflow_run_id": null,
     "artifact_sha256": null,
     "contract_registry_fingerprint": "sha256:4250fb47242f2bdc4ac26ce1d0cf8ecedbd27627eb9e3117acc82e3719eb934d",
-    "readiness_audit_content_sha256": "sha256:978ad330fa113e82dc9a35d1fbb4e5c760cd8505a9eebe4a83e69c3951085803",
+    "readiness_audit_content_sha256": "sha256:1cf652e9deef80a746a7ef33db7322d1c8bd31e836ba0f1cf58b4c096b9f3e4c",
     "mode_pack_fingerprint": null,
     "product_dod_fingerprint": null
   },

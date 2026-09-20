@@ -11,6 +11,28 @@ const defaultBreakdownPath = '.brownie/todo-breakdown.md';
 const maxLeafBlockChars = 1800;
 const maxLeafBlockLines = 12;
 const allowedRoutes = new Set(['implementation', 'documentation', 'release-ops', 'todo-decomposition']);
+const todoContractSectionNames = [
+  'phase_value_gate',
+  'review_value_gate',
+  'exit_criteria',
+  'guard_engine_change_review',
+  'commit_trace',
+  'release_ready_conditions',
+  'release_artifact_evidence',
+  'supply_chain_artifact_evidence',
+  'runtime_operational_evidence',
+  'owner_governance_evidence',
+  'local_release_gate',
+  'release_engineering_contract',
+  'runtime_release_ready',
+  'required_before_release',
+  'safety_readiness_evidence_invalidation'
+];
+const todoContractVerificationSectionRequirements = new Map([
+  ['pnpm --workspace-root guard:phase-value', ['phase_value_gate', 'review_value_gate', 'exit_criteria', 'guard_engine_change_review']],
+  ['pnpm --workspace-root guard:release-contract', ['commit_trace', 'release_ready_conditions', 'release_artifact_evidence', 'supply_chain_artifact_evidence', 'runtime_operational_evidence', 'owner_governance_evidence', 'local_release_gate']],
+  ['pnpm --workspace-root guard:runtime-release-readiness', ['release_engineering_contract', 'runtime_release_ready', 'required_before_release', 'safety_readiness_evidence_invalidation']]
+]);
 
 function readText(repoRoot, relativePath) {
   return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
@@ -266,6 +288,97 @@ function validateQuality(block, errors, options = {}) {
   }
 }
 
+function requiredSectionsForVerificationCommand(command) {
+  const exact = todoContractVerificationSectionRequirements.get(command);
+  if (exact) {
+    return exact;
+  }
+  if (command.startsWith('pnpm --workspace-root ')) {
+    const script = command.slice('pnpm --workspace-root '.length).trim().split(/\s+/u)[0];
+    return todoContractVerificationSectionRequirements.get(`pnpm --workspace-root ${script}`) ?? [];
+  }
+  return [];
+}
+
+function validateTodoContract(block, errors, options = {}) {
+  const id = todoId(block);
+  const owner = `${options.path ?? defaultTodoPath} ${id || '<missing-id>'}`;
+  const forbiddenText = forbiddenLines(block).join('\n').toLowerCase();
+  const forbiddenSections = forbiddenText.includes('any other fields') || forbiddenText.includes('other fields')
+    ? [...todoContractSectionNames]
+    : todoContractSectionNames.filter((section) => forbiddenText.includes(section.toLowerCase()));
+  if (forbiddenSections.length === 0) {
+    return;
+  }
+  for (const command of verificationCommandValues(block)) {
+    for (const section of requiredSectionsForVerificationCommand(command)) {
+      if (forbiddenSections.includes(section)) {
+        errors.push(`${owner}: TODO contract contradiction: Verification ${JSON.stringify(command)} requires section ${section}, but Forbidden changes forbids that section.`);
+      }
+    }
+  }
+}
+
+function generatedMarkerSegments(id) {
+  const segments = id.split('-').filter(Boolean);
+  const markers = [];
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    const next = segments[index + 1];
+    if (segment === 'leaf' && /^\d+$/u.test(next ?? '')) {
+      markers.push(`${segment}-${next}`);
+      index += 1;
+      continue;
+    }
+    if (/^leaf\d+$/u.test(segment) || /^step\d+$/u.test(segment) || /^patch\d+$/u.test(segment) || /^repair\d+$/u.test(segment)) {
+      markers.push(segment);
+      continue;
+    }
+    if (segment === 'small' || segment === 'verify') {
+      markers.push(segment);
+    }
+  }
+  return markers;
+}
+
+function rootGeneratedTodoId(id) {
+  const segments = id.split('-').filter(Boolean);
+  const root = [];
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    const next = segments[index + 1];
+    if (
+      (segment === 'leaf' && /^\d+$/u.test(next ?? '')) ||
+      /^leaf\d+$/u.test(segment) ||
+      /^step\d+$/u.test(segment) ||
+      /^patch\d+$/u.test(segment) ||
+      /^repair\d+$/u.test(segment) ||
+      segment === 'small' ||
+      segment === 'verify'
+    ) {
+      break;
+    }
+    root.push(segment);
+  }
+  return root.length > 0 ? root.join('-') : id;
+}
+
+function validateGeneratedLeafIdentity(block, errors, options = {}) {
+  const id = todoId(block);
+  const parent = parentFromSource(block);
+  const owner = `${options.path ?? defaultTodoPath} ${id || '<missing-id>'}`;
+  if (!id) {
+    return;
+  }
+  const markers = generatedMarkerSegments(id);
+  if (markers.length > 3 || id.length > 96) {
+    errors.push(`${owner}: generated leaf id chain is too long; collapse this into one bounded stable leaf TODO instead of appending ${markers.join(', ') || 'suffixes'}.`);
+  }
+  if (parent && generatedMarkerSegments(parent).length > 0 && rootGeneratedTodoId(parent) === rootGeneratedTodoId(id)) {
+    errors.push(`${owner}: Source TODO must reference the stable parent/root TODO ${rootGeneratedTodoId(id)}, not a generated sibling/descendant ${parent}.`);
+  }
+}
+
 function validateLeafBlock(block, errors, options = {}) {
   const id = todoId(block);
   const owner = `${options.path ?? defaultTodoPath} ${id || '<missing-id>'}`;
@@ -345,6 +458,8 @@ function validateLeafBlock(block, errors, options = {}) {
   if (route === 'implementation' && scopes.some((target) => target.startsWith('docs/'))) {
     errors.push(`${owner}: implementation leaves must not patch docs/ targets.`);
   }
+  validateTodoContract(block, errors, options);
+  validateGeneratedLeafIdentity(block, errors, options);
   validateQuality(block, errors, options);
 }
 
@@ -366,6 +481,51 @@ function validateDependencies(text, blocks, errors, options = {}) {
         errors.push(`${owner} ${id}: dependency ${dep} is not present in unchecked, checked, or breakdown-ledger state.`);
       }
     }
+  }
+}
+
+function normalizeForDuplicateLeafComparison(value) {
+  return value
+    .toLowerCase()
+    .replace(/`/g, '')
+    .replace(/\b(?:leaf-?\d+|step\d+|patch\d+|repair\d+|small|verify)\b/g, '')
+    .replace(/\bpart\d+\b/g, 'part')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function actionIntent(block) {
+  const firstLine = block.split('\n')[0]?.trim() ?? '';
+  const title = firstLine.replace(/^(?:[-*]|\d+[.)])\s+\[\s\]\s+/, '');
+  const colon = title.indexOf(':');
+  return colon >= 0 ? title.slice(colon + 1).trim() : title;
+}
+
+function validateDistinctSiblingLeaves(blocks, errors, options = {}) {
+  const signatures = new Map();
+  for (const block of blocks) {
+    const id = todoId(block);
+    const parent = parentFromSource(block);
+    const scopes = boundedScopes(block).join(',');
+    const intent = actionIntent(block);
+    const completion = completionLines(block).join(' ');
+    if (!id || !parent || !scopes || !completion || !intent) {
+      continue;
+    }
+    const signature = [
+      rootGeneratedTodoId(parent),
+      scopes,
+      normalizeForDuplicateLeafComparison(intent),
+      normalizeForDuplicateLeafComparison(completion)
+    ].join('\u0000');
+    const previous = signatures.get(signature);
+    if (previous) {
+      errors.push(
+        `${options.path ?? defaultTodoPath} ${id}: duplicate sibling leaf is not a real decomposition; it has the same parent, target scope, and completion condition as ${previous}.`
+      );
+      continue;
+    }
+    signatures.set(signature, id);
   }
 }
 
@@ -472,6 +632,7 @@ export function validateTodoDecompositionText(text, options = {}) {
     }
   }
   validateDependencies(text, derivedBlocks, errors, options);
+  validateDistinctSiblingLeaves(derivedBlocks, errors, options);
   if (options.breakdownText !== undefined) {
     validateBreakdownLedger(options.breakdownText, leafIds, errors, options);
   }

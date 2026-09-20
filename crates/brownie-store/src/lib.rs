@@ -777,10 +777,7 @@ impl BrownieStore {
         &self,
         checkpoint: &HeadlessModePackSelectedCandidateFetchCheckpoint,
     ) -> Result<()> {
-        let root = self
-            .workspace_root()
-            .join(WORKSPACE_STATE_DIR)
-            .join(HEADLESS_CONTINUATIONS_DIR);
+        let root = self.workspace_state_dir().join(HEADLESS_CONTINUATIONS_DIR);
         fs::create_dir_all(&root)
             .with_context(|| format!("failed to create {}", root.display()))?;
         let path =
@@ -820,10 +817,7 @@ impl BrownieStore {
         &self,
         checkpoint: &HeadlessModePackRegistryUpdateSelectionCheckpoint,
     ) -> Result<()> {
-        let root = self
-            .workspace_root()
-            .join(WORKSPACE_STATE_DIR)
-            .join(HEADLESS_CONTINUATIONS_DIR);
+        let root = self.workspace_state_dir().join(HEADLESS_CONTINUATIONS_DIR);
         fs::create_dir_all(&root)
             .with_context(|| format!("failed to create {}", root.display()))?;
         let path =
@@ -865,10 +859,7 @@ impl BrownieStore {
         &self,
         checkpoint: &HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint,
     ) -> Result<()> {
-        let root = self
-            .workspace_root()
-            .join(WORKSPACE_STATE_DIR)
-            .join(HEADLESS_CONTINUATIONS_DIR);
+        let root = self.workspace_state_dir().join(HEADLESS_CONTINUATIONS_DIR);
         fs::create_dir_all(&root)
             .with_context(|| format!("failed to create {}", root.display()))?;
         let path = self.headless_modepack_selected_candidate_provenance_verification_path(
@@ -912,10 +903,7 @@ impl BrownieStore {
         &self,
         checkpoint: &HeadlessModePackSelectedCandidateApprovalCheckpoint,
     ) -> Result<()> {
-        let root = self
-            .workspace_root()
-            .join(WORKSPACE_STATE_DIR)
-            .join(HEADLESS_CONTINUATIONS_DIR);
+        let root = self.workspace_state_dir().join(HEADLESS_CONTINUATIONS_DIR);
         fs::create_dir_all(&root)
             .with_context(|| format!("failed to create {}", root.display()))?;
         let path =
@@ -956,10 +944,7 @@ impl BrownieStore {
         &self,
         checkpoint: &HeadlessObjectiveProposalAuthorizationPreflightCheckpoint,
     ) -> Result<()> {
-        let root = self
-            .workspace_root()
-            .join(WORKSPACE_STATE_DIR)
-            .join(HEADLESS_CONTINUATIONS_DIR);
+        let root = self.workspace_state_dir().join(HEADLESS_CONTINUATIONS_DIR);
         fs::create_dir_all(&root)
             .with_context(|| format!("failed to create {}", root.display()))?;
         let path = self
@@ -1002,10 +987,7 @@ impl BrownieStore {
         &self,
         checkpoint: &HeadlessObjectiveProposalApplyCheckpoint,
     ) -> Result<()> {
-        let root = self
-            .workspace_root()
-            .join(WORKSPACE_STATE_DIR)
-            .join(HEADLESS_CONTINUATIONS_DIR);
+        let root = self.workspace_state_dir().join(HEADLESS_CONTINUATIONS_DIR);
         fs::create_dir_all(&root)
             .with_context(|| format!("failed to create {}", root.display()))?;
         let path = self.headless_objective_proposal_apply_path(&checkpoint.continuation_id);
@@ -1044,10 +1026,7 @@ impl BrownieStore {
         &self,
         checkpoint: &HeadlessObjectiveApplyVerificationCheckpoint,
     ) -> Result<()> {
-        let root = self
-            .workspace_root()
-            .join(WORKSPACE_STATE_DIR)
-            .join(HEADLESS_CONTINUATIONS_DIR);
+        let root = self.workspace_state_dir().join(HEADLESS_CONTINUATIONS_DIR);
         fs::create_dir_all(&root)
             .with_context(|| format!("failed to create {}", root.display()))?;
         let path = self.headless_objective_apply_verification_path(&checkpoint.continuation_id);
@@ -1086,10 +1065,7 @@ impl BrownieStore {
         &self,
         checkpoint: &HeadlessObjectiveCompletionAcceptanceCheckpoint,
     ) -> Result<()> {
-        let root = self
-            .workspace_root()
-            .join(WORKSPACE_STATE_DIR)
-            .join(HEADLESS_CONTINUATIONS_DIR);
+        let root = self.workspace_state_dir().join(HEADLESS_CONTINUATIONS_DIR);
         fs::create_dir_all(&root)
             .with_context(|| format!("failed to create {}", root.display()))?;
         let path = self.headless_objective_completion_acceptance_path(&checkpoint.continuation_id);
@@ -1128,10 +1104,7 @@ impl BrownieStore {
         &self,
         checkpoint: &HeadlessModePackSelectedCandidateReplacementCheckpoint,
     ) -> Result<()> {
-        let root = self
-            .workspace_root()
-            .join(WORKSPACE_STATE_DIR)
-            .join(HEADLESS_CONTINUATIONS_DIR);
+        let root = self.workspace_state_dir().join(HEADLESS_CONTINUATIONS_DIR);
         fs::create_dir_all(&root)
             .with_context(|| format!("failed to create {}", root.display()))?;
         let path =
@@ -1174,10 +1147,7 @@ impl BrownieStore {
         &self,
         checkpoint: &HeadlessModePackSelectedActiveRollbackCheckpoint,
     ) -> Result<()> {
-        let root = self
-            .workspace_root()
-            .join(WORKSPACE_STATE_DIR)
-            .join(HEADLESS_CONTINUATIONS_DIR);
+        let root = self.workspace_state_dir().join(HEADLESS_CONTINUATIONS_DIR);
         fs::create_dir_all(&root)
             .with_context(|| format!("failed to create {}", root.display()))?;
         let path =
@@ -1621,10 +1591,12 @@ impl BrownieStore {
         self.task_store.workspace_root()
     }
 
+    fn workspace_state_dir(&self) -> PathBuf {
+        self.task_store.workspace_state_dir()
+    }
+
     fn active_modepack_dir(&self) -> PathBuf {
-        self.workspace_root()
-            .join(WORKSPACE_STATE_DIR)
-            .join(MODEPACK_ACTIVE_DIR)
+        self.workspace_state_dir().join(MODEPACK_ACTIVE_DIR)
     }
 
     fn active_modepack_current_path(&self) -> PathBuf {
@@ -1658,9 +1630,7 @@ impl BrownieStore {
     }
 
     fn modepack_candidates_dir(&self) -> PathBuf {
-        self.workspace_root()
-            .join(WORKSPACE_STATE_DIR)
-            .join(MODEPACK_CANDIDATES_DIR)
+        self.workspace_state_dir().join(MODEPACK_CANDIDATES_DIR)
     }
 
     fn modepack_candidate_cache_path(&self, content_sha256: &str) -> PathBuf {
@@ -1687,15 +1657,13 @@ impl BrownieStore {
     }
 
     fn headless_modepack_selected_candidate_fetch_path(&self, continuation_id: &str) -> PathBuf {
-        self.workspace_root()
-            .join(WORKSPACE_STATE_DIR)
+        self.workspace_state_dir()
             .join(HEADLESS_CONTINUATIONS_DIR)
             .join(format!("modepack-selected-fetch-{continuation_id}.json"))
     }
 
     fn headless_modepack_registry_update_selection_path(&self, continuation_id: &str) -> PathBuf {
-        self.workspace_root()
-            .join(WORKSPACE_STATE_DIR)
+        self.workspace_state_dir()
             .join(HEADLESS_CONTINUATIONS_DIR)
             .join(format!(
                 "modepack-registry-update-selection-{continuation_id}.json"
@@ -1706,8 +1674,7 @@ impl BrownieStore {
         &self,
         continuation_id: &str,
     ) -> PathBuf {
-        self.workspace_root()
-            .join(WORKSPACE_STATE_DIR)
+        self.workspace_state_dir()
             .join(HEADLESS_CONTINUATIONS_DIR)
             .join(format!(
                 "modepack-selected-provenance-verification-{continuation_id}.json"
@@ -1715,8 +1682,7 @@ impl BrownieStore {
     }
 
     fn headless_modepack_selected_candidate_approval_path(&self, continuation_id: &str) -> PathBuf {
-        self.workspace_root()
-            .join(WORKSPACE_STATE_DIR)
+        self.workspace_state_dir()
             .join(HEADLESS_CONTINUATIONS_DIR)
             .join(format!(
                 "modepack-selected-candidate-approval-{continuation_id}.json"
@@ -1727,8 +1693,7 @@ impl BrownieStore {
         &self,
         continuation_id: &str,
     ) -> PathBuf {
-        self.workspace_root()
-            .join(WORKSPACE_STATE_DIR)
+        self.workspace_state_dir()
             .join(HEADLESS_CONTINUATIONS_DIR)
             .join(format!(
                 "objective-proposal-authorization-preflight-{continuation_id}.json"
@@ -1736,15 +1701,13 @@ impl BrownieStore {
     }
 
     fn headless_objective_proposal_apply_path(&self, continuation_id: &str) -> PathBuf {
-        self.workspace_root()
-            .join(WORKSPACE_STATE_DIR)
+        self.workspace_state_dir()
             .join(HEADLESS_CONTINUATIONS_DIR)
             .join(format!("objective-proposal-apply-{continuation_id}.json"))
     }
 
     fn headless_objective_apply_verification_path(&self, continuation_id: &str) -> PathBuf {
-        self.workspace_root()
-            .join(WORKSPACE_STATE_DIR)
+        self.workspace_state_dir()
             .join(HEADLESS_CONTINUATIONS_DIR)
             .join(format!(
                 "objective-apply-verification-{continuation_id}.json"
@@ -1752,8 +1715,7 @@ impl BrownieStore {
     }
 
     fn headless_objective_completion_acceptance_path(&self, continuation_id: &str) -> PathBuf {
-        self.workspace_root()
-            .join(WORKSPACE_STATE_DIR)
+        self.workspace_state_dir()
             .join(HEADLESS_CONTINUATIONS_DIR)
             .join(format!(
                 "objective-completion-acceptance-{continuation_id}.json"
@@ -1764,8 +1726,7 @@ impl BrownieStore {
         &self,
         continuation_id: &str,
     ) -> PathBuf {
-        self.workspace_root()
-            .join(WORKSPACE_STATE_DIR)
+        self.workspace_state_dir()
             .join(HEADLESS_CONTINUATIONS_DIR)
             .join(format!(
                 "modepack-selected-candidate-replacement-{continuation_id}.json"
@@ -1773,8 +1734,7 @@ impl BrownieStore {
     }
 
     fn headless_modepack_selected_active_rollback_path(&self, continuation_id: &str) -> PathBuf {
-        self.workspace_root()
-            .join(WORKSPACE_STATE_DIR)
+        self.workspace_state_dir()
             .join(HEADLESS_CONTINUATIONS_DIR)
             .join(format!(
                 "modepack-selected-active-rollback-{continuation_id}.json"

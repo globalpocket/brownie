@@ -87,6 +87,27 @@ function sha256File(filePath) {
   return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')}`;
 }
 
+function sha256String(value) {
+  return `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
+}
+
+function gitOutput(repoRoot, args) {
+  const result = run('git', args, { cwd: repoRoot, timeoutMs: 30_000 });
+  return result.passed ? result.stdout.trim() : '';
+}
+
+function sha256SourceCommit(repoRoot) {
+  const output = gitOutput(repoRoot, ['rev-parse', 'HEAD']);
+  return output ? `sha256:${output}` : 'sha256:unknown';
+}
+
+function sha256CleanTree(repoRoot) {
+  const result = run('git', ['diff-index', '--quiet', 'HEAD', '--'], { cwd: repoRoot, timeoutMs: 30_000 });
+  if (result.exit_code === 0) return 'clean';
+  if (result.exit_code === 1) return 'dirty';
+  return 'unknown';
+}
+
 function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
@@ -167,6 +188,9 @@ export function buildLinuxX64DockerArtifact(options = {}) {
     smoke(repoRoot, docker, platform, smokeImage, artifactRelativePath, ['help', 'run'])
   ];
   const smokePassed = smokeResults.every((entry) => entry.passed);
+  const sourceCommit = sha256SourceCommit(repoRoot);
+  const sourceCleanTree = sha256CleanTree(repoRoot);
+  const sourceIdentity = sha256String(`${sourceCommit}:${sourceCleanTree}`);
   const artifactEvidence = {
     schema_version: 1,
     evidence_id: 'brownie-linux-x64-docker-release-artifact-v1',
@@ -183,7 +207,10 @@ export function buildLinuxX64DockerArtifact(options = {}) {
       path: artifactRelativePath,
       sha256: sha256File(artifactPath),
       bytes: fs.statSync(artifactPath).size,
-      target
+      target,
+      source_commit: sourceCommit,
+      source_clean_tree: sourceCleanTree,
+      source_identity: sourceIdentity
     },
     build: {
       rust_target: rustTargetTriple,
