@@ -379,3 +379,55 @@ History:
 
 - 2026-09-21: Reopened the Product Ready Blocking Queue after the d5478db audit showed Runtime evidence incomplete but the queue empty, which would otherwise let the phase-loop stop prematurely.
 - 2026-09-21: Added E-17a-source-state-helper-exit-code-fix after live loop execution completed the helper leaf but used the nonexistent `exitCode` field instead of the existing `exit_code` result field.
+
+## E-18 release evidence follow-up queue
+
+Parent TODO: External 9e2239b Product Ready audit found the queue empty while release evidence blockers remained, VSIX package metadata contained duplicate top-level `scripts`, and executable release evidence remained stale or disconnected.
+
+Derived leaves:
+
+- E-18a-vsix-package-scripts-dedupe
+- E-18b-semantic-guard-ci-direct-step
+- E-18c-release-blocker-nonempty-todo-guard
+- E-18d-connect-artifact-source-identity-flow
+- E-18e-connect-artifact-lifecycle-flow
+- E-18f-connect-stateful-soak-flow
+- E-18g-regenerate-integrated-release-evidence
+- E-18h-bind-release-contract-to-current-evidence
+- E-18i-release-doc-authority-sync
+
+Dependency graph:
+
+- E-18a-vsix-package-scripts-dedupe: <none>
+- E-18b-semantic-guard-ci-direct-step: E-18a-vsix-package-scripts-dedupe
+- E-18c-release-blocker-nonempty-todo-guard: E-18b-semantic-guard-ci-direct-step
+- E-18d-connect-artifact-source-identity-flow: E-18c-release-blocker-nonempty-todo-guard
+- E-18e-connect-artifact-lifecycle-flow: E-18d-connect-artifact-source-identity-flow
+- E-18f-connect-stateful-soak-flow: E-18e-connect-artifact-lifecycle-flow
+- E-18g-regenerate-integrated-release-evidence: E-18f-connect-stateful-soak-flow
+- E-18h-bind-release-contract-to-current-evidence: E-18g-regenerate-integrated-release-evidence
+- E-18i-release-doc-authority-sync: E-18h-bind-release-contract-to-current-evidence
+
+Verification ledger:
+
+- E-18a-vsix-package-scripts-dedupe: `pnpm --workspace-root check`
+- E-18b-semantic-guard-ci-direct-step: `pnpm --workspace-root guard:release-evidence-semantic-consistency:test`; `pnpm --workspace-root guard:phase-value`
+- E-18c-release-blocker-nonempty-todo-guard: `pnpm --workspace-root guard:todo-decomposition:test`; `pnpm --workspace-root guard:todo-decomposition`
+- E-18d-connect-artifact-source-identity-flow: `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`; `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-18e-connect-artifact-lifecycle-flow: `pnpm --workspace-root guard:runtime-operational-evidence:test`; `pnpm --workspace-root guard:runtime-operational-evidence`
+- E-18f-connect-stateful-soak-flow: `pnpm --workspace-root guard:runtime-operational-evidence:test`; `pnpm --workspace-root guard:runtime-operational-evidence`
+- E-18g-regenerate-integrated-release-evidence: `pnpm --workspace-root release:supply-chain-artifact-evidence`; `pnpm --workspace-root release:runtime-operational-evidence`
+- E-18h-bind-release-contract-to-current-evidence: `pnpm --workspace-root guard:release-contract`; `pnpm --workspace-root guard:runtime-release-readiness`
+- E-18i-release-doc-authority-sync: `pnpm --workspace-root guard:phase-value`; `pnpm --workspace-root check`
+
+Quality rubric:
+
+- E-18 leaves must keep Product Ready and Runtime Release Ready false until executable evidence is complete.
+- Guard and CI wiring leaves must prove commands are reachable, not just present in a shadowed JSON object.
+- Evidence producer leaves must connect existing helpers to generated evidence instead of adding unused helper code.
+- Evidence regeneration leaves must use collectors and preserve sanitized fail-closed evidence.
+- Documentation leaves may only sync release authority after generated evidence and guards are connected.
+
+History:
+
+- 2026-09-21: Reopened Product Ready Blocking Queue after review of 9e2239b found `.brownie/todo.md` empty while Product Ready was false and release evidence blockers remained.

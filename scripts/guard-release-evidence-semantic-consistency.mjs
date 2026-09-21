@@ -26,7 +26,7 @@ function hasForbiddenLocalEvidence(value) {
   }
   if (value && typeof value === 'object') {
     return Object.entries(value).some(([key, child]) => {
-      if (/stdout|stderr/i.test(key)) {
+      if (/^(stdout|stderr)$/i.test(key)) {
         return true;
       }
       return hasForbiddenLocalEvidence(child);

@@ -240,7 +240,8 @@ export function buildLocalArtifact(options = {}) {
       throw new Error(`Smoke test failed: ${result.command}\n${tailText(result.stderr || result.stdout)}`);
     }
   }
-  const sourceCommit = sha256SourceCommit(repoRoot);
+  // sourceCommit already declared earlier; use existing value
+  // const sourceCommit = sha256SourceCommit(repoRoot);
   const sourceCleanTree = sha256CleanTree(repoRoot);
   const sourceIdentity = sha256String(`${sourceCommit}:${sourceCleanTree}`);
   const artifactEvidence = {

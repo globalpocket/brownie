@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "evidence_id": "brownie-runtime-operational-evidence-v1",
-  "generated_at": "2026-09-13T09:39:15.758Z",
+  "generated_at": "2026-09-21T14:27:24.633Z",
   "repository": "globalpocket/brownie",
   "release_ready": false,
   "runtime_release_ready": false,
@@ -38,7 +38,7 @@
                   "command_summary": {
                     "kind": "command_summary",
                     "word_count": 2,
-                    "sha256": "f72788915b5440907aa468efa2fa4c266c4854452da9141cadb139d627da4ad0"
+                    "sha256": "7cb67cca98e9536d10864b07e2cad88f62f034f8153f9a5af8ad9c56d180c3db"
                   },
                   "exit_code": 0,
                   "signal": null,
@@ -60,7 +60,7 @@
                   "command_summary": {
                     "kind": "command_summary",
                     "word_count": 3,
-                    "sha256": "50ec0a21c46afc4289dd8ae5d238529d53c5865d2a7d1c7e94f57f6088c881f9"
+                    "sha256": "f3735943fde90d5d6e1b9cc6e024f352358968b6830d0c33e16a6a919a6541a6"
                   },
                   "exit_code": 0,
                   "signal": null,
@@ -86,7 +86,7 @@
               "command_summary": {
                 "kind": "command_summary",
                 "word_count": 2,
-                "sha256": "f72788915b5440907aa468efa2fa4c266c4854452da9141cadb139d627da4ad0"
+                "sha256": "7cb67cca98e9536d10864b07e2cad88f62f034f8153f9a5af8ad9c56d180c3db"
               },
               "exit_code": 0,
               "signal": null,
@@ -108,7 +108,7 @@
               "command_summary": {
                 "kind": "command_summary",
                 "word_count": 3,
-                "sha256": "50ec0a21c46afc4289dd8ae5d238529d53c5865d2a7d1c7e94f57f6088c881f9"
+                "sha256": "f3735943fde90d5d6e1b9cc6e024f352358968b6830d0c33e16a6a919a6541a6"
               },
               "exit_code": 0,
               "signal": null,
@@ -246,7 +246,7 @@
               "command_summary": {
                 "kind": "command_summary",
                 "word_count": 2,
-                "sha256": "1d5739877103601ebae731981d28dfa692ccaaa7f2e86492c75a9a886f19f0c2"
+                "sha256": "afad02bcdb2b5a03dbffd1bfe5f05be8478043c6c68cbe164b5d773ae95e840a"
               },
               "exit_code": 0,
               "signal": null,
@@ -268,7 +268,7 @@
               "command_summary": {
                 "kind": "command_summary",
                 "word_count": 3,
-                "sha256": "8111e87da466596ce14d1f0084f833be07fbe5035f3da4e685fa53f4c907524f"
+                "sha256": "c1f8199abed65d399e8d6e4869126e3a0f6753f7b88728bab1b568653917e30d"
               },
               "exit_code": 0,
               "signal": null,
@@ -360,7 +360,7 @@
             "kind": "process_output_summary",
             "byte_length": 3165,
             "line_count": 1,
-            "sha256": "848922cea4937c7192dd72cb2f346214a731792343e0d3370e01024a50dceabb"
+            "sha256": "d03033a0a69d52bdbc6d11ff024b06b9f9e66e9f3215b244662351ea304d1209"
           },
           "stderr_summary": {
             "kind": "process_output_summary",
@@ -382,7 +382,7 @@
             "kind": "process_output_summary",
             "byte_length": 1589,
             "line_count": 1,
-            "sha256": "eb0eca8c22c161ffc8b24158e20160da23d81324389097b20d7c044395425839"
+            "sha256": "b11e886c3c2f848c579c8bdb1dd58d0113bbc400334d96e08cbbc7ed3e1abee7"
           },
           "stderr_summary": {
             "kind": "process_output_summary",
@@ -395,8 +395,28 @@
       "note": "This local fixture evidence checks the executable Golden Journey boundary by driving proposal preflight, apply, post-apply verification, workspace mutation, and completion through the Runtime CLI."
     },
     "soak_test": {
+      "stateful_steps": [
+        {
+          "id": "task_state_transition",
+          "status": "satisfied",
+          "evidence_kind": "bounded_cli_transition_proxy"
+        }
+      ],
       "status": "not_executed",
       "release_blocking": true,
+      "stateful_soak_config": {
+        "runCount": 100,
+        "evidence": {
+          "taskTransitions": true,
+          "ledgerConsistency": true,
+          "workspaceConsistency": true,
+          "resumeReplay": true,
+          "duplicateRejection": true,
+          "processLossRecovery": true,
+          "finiteConvergence": true
+        },
+        "storagePolicy": "aggregated_metrics_only"
+      },
       "seed": "brownie-runtime-operational-soak-v1",
       "iterations_requested": 100,
       "iterations_completed": 100,
@@ -406,7 +426,6 @@
       "ledger_workspace_consistency_status": "not_exercised_by_version_soak",
       "unrecoverable_run_count": 0,
       "missing_stateful_steps": [
-        "task_state_transition",
         "ledger_workspace_consistency",
         "resume_replay_handling",
         "duplicate_side_effect_rejection",

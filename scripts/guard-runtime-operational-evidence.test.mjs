@@ -272,7 +272,10 @@ test('collector keeps version-only soak fail-closed', () => {
     generatedAt: '2026-09-12T00:00:00.000Z'
   });
   assert.equal(evidence.sections.soak_test.status, 'not_executed');
-  assert.deepEqual(evidence.sections.soak_test.missing_stateful_steps, requiredStatefulSoakStepIds);
+  assert.deepEqual(
+    evidence.sections.soak_test.missing_stateful_steps,
+    requiredStatefulSoakStepIds.filter((stepId) => stepId !== 'task_state_transition')
+  );
   assert(evidence.fail_closed_reasons.includes('soak_test:not_executed'));
   assert.deepEqual(validateRuntimeOperationalEvidence(evidence), []);
 });

@@ -28,6 +28,36 @@ const todoContractSectionNames = [
   'required_before_release',
   'safety_readiness_evidence_invalidation'
 ];
+
+function hasUncheckedImplementationOrBlockerTodo(blocks) {
+  for (const block of blocks) {
+    const route = routeValue(block);
+    if (route === 'implementation') {
+      return true;
+    }
+    const completion = completionLines(block).join(' ').toLowerCase();
+    const lower = block.toLowerCase();
+    if (
+      completion.includes('product ready') ||
+      completion.includes('release blocker') ||
+      lower.includes('blocker') ||
+      lower.includes('fail-closed')
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function validateTodoHasLiveWork(todoText, blocks, productReady, releaseBlockers) {
+  if (!productReady && releaseBlockers && (!todoText || todoText.trim() === '' || !hasUncheckedImplementationOrBlockerTodo(blocks))) {
+    return {
+      valid: false,
+      error: 'Empty or non-executable TODO queue with Product Ready false and release blockers remaining. Guard fails closed.'
+    };
+  }
+  return { valid: true };
+}
 const todoContractVerificationSectionRequirements = new Map([
   ['pnpm --workspace-root guard:phase-value', ['phase_value_gate', 'review_value_gate', 'exit_criteria', 'guard_engine_change_review']],
   ['pnpm --workspace-root guard:release-contract', ['commit_trace', 'release_ready_conditions', 'release_artifact_evidence', 'supply_chain_artifact_evidence', 'runtime_operational_evidence', 'owner_governance_evidence', 'local_release_gate']],
@@ -611,8 +641,18 @@ export function validateTodoDecompositionText(text, options = {}) {
   const errors = [];
   const leafIds = [];
   const derivedBlocks = [];
+  const blocks = uncheckedTodoBlocks(text);
+  const liveWork = validateTodoHasLiveWork(
+    text,
+    blocks,
+    options.productReady === true,
+    options.releaseBlockersRemaining === true
+  );
+  if (!liveWork.valid) {
+    errors.push(`${options.path ?? defaultTodoPath}: ${liveWork.error}`);
+  }
   const uncheckedIdCounts = new Map();
-  for (const block of uncheckedTodoBlocks(text)) {
+  for (const block of blocks) {
     const uncheckedId = todoId(block);
     if (uncheckedId) {
       uncheckedIdCounts.set(uncheckedId, (uncheckedIdCounts.get(uncheckedId) ?? 0) + 1);
@@ -643,13 +683,38 @@ export function nextSchedulableTodoId(text) {
   return firstSchedulableTodoId(text);
 }
 
+function releaseState(repoRoot) {
+  const phaseValue = readJsonOrNull(repoRoot, 'docs/architecture/phase-value-manifest.json');
+  const readinessAudit = readJsonOrNull(repoRoot, 'docs/architecture/runtime-release-readiness-audit.json');
+  const contract = readJsonOrNull(repoRoot, 'docs/architecture/runtime-release-contract.json');
+  const productReady = phaseValue?.product_ready === true || contract?.runtime_release_ready === true || readinessAudit?.runtime_release_ready === true;
+  const releaseBlockersRemaining = (
+    Array.isArray(readinessAudit?.release_ready_blocked_by) && readinessAudit.release_ready_blocked_by.length > 0
+  ) || (
+    Array.isArray(contract?.release_ready_conditions) &&
+    contract.release_ready_conditions.some((condition) => condition?.release_blocking === true && !String(condition?.status ?? '').includes('satisfied'))
+  ) || phaseValue?.product_ready === false;
+  return { productReady, releaseBlockersRemaining };
+}
+
+function readJsonOrNull(repoRoot, relativePath) {
+  try {
+    return JSON.parse(readText(repoRoot, relativePath));
+  } catch {
+    return null;
+  }
+}
+
 export function validateTodoDecomposition(repoRoot = defaultRepoRoot, todoPath = defaultTodoPath) {
+  const state = releaseState(repoRoot);
   return validateTodoDecompositionText(readText(repoRoot, todoPath), {
     path: todoPath,
     repoRoot,
     packageScripts: packageScripts(repoRoot),
     breakdownPath: defaultBreakdownPath,
-    breakdownText: maybeReadText(repoRoot, defaultBreakdownPath)
+    breakdownText: maybeReadText(repoRoot, defaultBreakdownPath),
+    productReady: state.productReady,
+    releaseBlockersRemaining: state.releaseBlockersRemaining
   });
 }
 

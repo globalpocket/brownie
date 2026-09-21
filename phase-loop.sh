@@ -2727,6 +2727,139 @@ print(json.dumps({
 PY
 }
 
+try_stagnated_vsix_package_scripts_fallback() {
+  local run_stamp="$1"
+  if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$TODO_REPAIR_FEEDBACK_FILE" ] || [ ! -f "$PROGRESS_STATE_FILE" ]; then
+    return 2
+  fi
+  python3 - "$TODO_CLAIM_FILE" "$TODO_REPAIR_FEEDBACK_FILE" "$PROGRESS_STATE_FILE" "$PHASE_LOOP_WORKSPACE_ROOT/extensions/brownie-vsix/package.json" "$run_stamp" "$(now_utc)" <<'PY'
+import json
+import os
+import pathlib
+import re
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+feedback_path = pathlib.Path(sys.argv[2])
+progress_path = pathlib.Path(sys.argv[3])
+package_path = pathlib.Path(sys.argv[4])
+run_stamp = sys.argv[5]
+timestamp = sys.argv[6]
+
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+    feedback = json.loads(feedback_path.read_text(encoding="utf-8"))
+    progress = json.loads(progress_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(2)
+
+if feedback.get("claim_id") != claim.get("claim_id"):
+    raise SystemExit(2)
+selected = claim.get("selected_todo")
+if not isinstance(selected, str) or not selected.strip():
+    raise SystemExit(2)
+selected_first = selected.splitlines()[0] if selected.splitlines() else ""
+if not selected_first.startswith("- [ ] E-18a-vsix-package-scripts-dedupe:"):
+    raise SystemExit(2)
+if "extensions/brownie-vsix/package.json" not in selected:
+    raise SystemExit(2)
+if feedback.get("reason") != "runtime_terminal_failure":
+    raise SystemExit(2)
+if progress.get("classification") != "no_progress":
+    raise SystemExit(2)
+if int(progress.get("same_progress_count") or 0) < 2:
+    raise SystemExit(2)
+projection = progress.get("progress_projection")
+if not isinstance(projection, dict) or projection.get("claim_id") != claim.get("claim_id"):
+    raise SystemExit(2)
+
+text = package_path.read_text(encoding="utf-8")
+if text.count('"scripts"') < 2:
+    raise SystemExit(2)
+
+first_scripts = '''  "scripts": {
+    "guard:release-contract:test": "node scripts/guard-release-contract.mjs test",
+    "guard:release-evidence-semantic-consistency:test": "node scripts/guard-release-contract.mjs semantic-consistency"
+  },
+'''
+if first_scripts not in text:
+    raise SystemExit(1)
+updated = text.replace(first_scripts, "", 1)
+
+scripts_open = '''  "scripts": {
+    "build": "tsc -p .",
+'''
+scripts_open_replacement = '''  "scripts": {
+    "build": "tsc -p .",
+    "guard:release-contract:test": "pnpm --workspace-root guard:release-contract:test",
+    "guard:release-evidence-semantic-consistency": "pnpm --workspace-root guard:release-evidence-semantic-consistency",
+    "guard:release-evidence-semantic-consistency:test": "pnpm --workspace-root guard:release-evidence-semantic-consistency:test",
+'''
+if scripts_open not in updated:
+    raise SystemExit(1)
+updated = updated.replace(scripts_open, scripts_open_replacement, 1)
+
+guard_segment = "pnpm --workspace-root guard:release-evidence-semantic-consistency && pnpm --workspace-root guard:release-evidence-semantic-consistency:test"
+if guard_segment not in updated:
+    old_check_fragment = "pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root release:gate -- --dry-run"
+    new_check_fragment = "pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && " + guard_segment + " && pnpm --workspace-root release:gate -- --dry-run"
+    if old_check_fragment not in updated:
+        raise SystemExit(1)
+    updated = updated.replace(old_check_fragment, new_check_fragment, 1)
+
+try:
+    parsed = json.loads(updated)
+except Exception as error:
+    print(json.dumps({"applied": False, "reason": f"json_parse_failed:{error}"}, ensure_ascii=False, sort_keys=True))
+    raise SystemExit(1)
+scripts = parsed.get("scripts")
+if not isinstance(scripts, dict):
+    raise SystemExit(1)
+required_scripts = [
+    "build",
+    "check",
+    "test",
+    "guard:release-contract:test",
+    "guard:release-evidence-semantic-consistency",
+    "guard:release-evidence-semantic-consistency:test",
+]
+missing = [name for name in required_scripts if name not in scripts]
+if missing:
+    print(json.dumps({"applied": False, "reason": "missing_scripts", "missing": missing}, ensure_ascii=False, sort_keys=True))
+    raise SystemExit(1)
+if guard_segment not in str(scripts.get("check", "")):
+    print(json.dumps({"applied": False, "reason": "check_script_missing_semantic_guard"}, ensure_ascii=False, sort_keys=True))
+    raise SystemExit(1)
+if updated.count('"scripts"') != 1:
+    print(json.dumps({"applied": False, "reason": "duplicate_scripts_remaining", "count": updated.count('"scripts"')}, ensure_ascii=False, sort_keys=True))
+    raise SystemExit(1)
+
+tmp = package_path.with_name(f"{package_path.name}.{os.getpid()}.vsix-scripts-dedupe-{run_stamp}.tmp")
+with open(tmp, "w", encoding="utf-8") as handle:
+    handle.write(updated)
+    handle.flush()
+    os.fsync(handle.fileno())
+os.replace(tmp, package_path)
+try:
+    dir_fd = os.open(str(package_path.parent), os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+except Exception:
+    pass
+
+print(json.dumps({
+    "applied": True,
+    "applied_at": timestamp,
+    "operation": "stagnated_vsix_package_scripts_dedupe_fallback",
+    "path": "extensions/brownie-vsix/package.json",
+    "scripts_count": updated.count('"scripts"'),
+    "run_stamp": run_stamp,
+}, ensure_ascii=False, sort_keys=True))
+PY
+}
+
 complete_applied_todo_after_verification() {
   local stdout_log="$1"
   local run_stamp="$2"
@@ -2880,6 +3013,16 @@ def allowed_args(command):
     return None
 
 results = []
+def sanitized_process_tail(value):
+    text = value[-2000:] if isinstance(value, str) else str(value)[-2000:]
+    workspace_text = str(workspace_root)
+    if workspace_text:
+        text = text.replace(workspace_text, "<workspace>")
+    text = re.sub(r"/Users/[^\\s\"'`]+", "<local-path>", text)
+    text = re.sub(r"/home/[^\\s\"'`]+", "<local-path>", text)
+    text = re.sub(r"[A-Za-z]:\\\\Users\\\\[^\\s\"'`]+", "<local-path>", text)
+    return text
+
 if applied_path.endswith((".js", ".mjs", ".cjs")):
     syntax_args = ["node", "--check", applied_path]
     completed = subprocess.run(syntax_args, cwd=workspace_root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
@@ -2888,8 +3031,8 @@ if applied_path.endswith((".js", ".mjs", ".cjs")):
         "exit_code": completed.returncode,
         "stdout_chars": len(completed.stdout),
         "stderr_chars": len(completed.stderr),
-        "stdout_tail": completed.stdout[-2000:],
-        "stderr_tail": completed.stderr[-2000:],
+        "stdout_tail": sanitized_process_tail(completed.stdout),
+        "stderr_tail": sanitized_process_tail(completed.stderr),
     })
     if completed.returncode != 0:
         print(json.dumps({"completed": False, "reason": "syntax_check_failed", "results": results}, sort_keys=True))
@@ -2906,8 +3049,8 @@ for command in commands:
         "exit_code": completed.returncode,
         "stdout_chars": len(completed.stdout),
         "stderr_chars": len(completed.stderr),
-        "stdout_tail": completed.stdout[-2000:],
-        "stderr_tail": completed.stderr[-2000:],
+        "stdout_tail": sanitized_process_tail(completed.stdout),
+        "stderr_tail": sanitized_process_tail(completed.stderr),
     })
     if completed.returncode != 0:
         print(json.dumps({"completed": False, "reason": "verification_failed", "results": results}, sort_keys=True))
@@ -3800,6 +3943,109 @@ PY
   fi
 }
 
+clear_inconsistent_repair_feedback_for_active_claim() {
+  if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$TODO_REPAIR_FEEDBACK_FILE" ]; then
+    return 0
+  fi
+  local clear_reason tmp_reason
+  tmp_reason="$TODO_REPAIR_FEEDBACK_FILE.clear.$$.$RANDOM.tmp"
+  if python3 - "$TODO_CLAIM_FILE" "$TODO_REPAIR_FEEDBACK_FILE" "$PHASE_LOOP_WORKSPACE_ROOT" > "$tmp_reason" <<'PY'
+import json
+import pathlib
+import re
+import subprocess
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+feedback_path = pathlib.Path(sys.argv[2])
+workspace_root = pathlib.Path(sys.argv[3])
+
+def read_json(path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+claim = read_json(claim_path)
+feedback = read_json(feedback_path)
+claim_id = claim.get("claim_id")
+if not claim_id or feedback.get("claim_id") != claim_id:
+    print("clear:claim_mismatch")
+    raise SystemExit(0)
+
+selected = str(claim.get("selected_todo") or "")
+first_line = selected.splitlines()[0] if selected.splitlines() else ""
+route_match = re.search(r"(?im)^\s*Route:\s*([^.:\n]+)", selected)
+route = route_match.group(1).strip().lower() if route_match else ""
+scope_match = re.search(r"\b(?:Patch|Create) only\b(?P<scope>[^\n:]+)", first_line)
+targets = set()
+if scope_match:
+    for candidate in re.findall(r"`([^`\n]+)`", scope_match.group("scope")):
+        candidate = candidate.strip()
+        if candidate and not candidate.startswith("/") and ".." not in pathlib.PurePosixPath(candidate).parts:
+            targets.add(candidate)
+
+verification = feedback.get("verification") if isinstance(feedback.get("verification"), dict) else {}
+reason = str(feedback.get("reason") or verification.get("reason") or "")
+is_todo_repair = route == "todo-decomposition" or "TODO-decompose-" in first_line
+
+def is_todo_path(path):
+    return (
+        path in {".brownie/todo.md", "todo.md", ".brownie/todo-breakdown.md"}
+        or path.startswith(".brownie/todo")
+    )
+
+if not is_todo_repair and targets and any(not is_todo_path(target) for target in targets):
+    invalid_paths = [
+        str(item.get("path") or "")
+        for item in (verification.get("invalid_patch_proposals") or [])
+        if isinstance(item, dict)
+    ]
+    if invalid_paths and all(path and path not in targets for path in invalid_paths):
+        print("clear:invalid_patch_target_mismatch")
+        raise SystemExit(0)
+
+    if reason == "todo_decomposition_guard_failed_after_todo_apply" or verification.get("todo_guard_status") == "failed":
+        try:
+            guard = subprocess.run(
+                ["pnpm", "--workspace-root", "guard:todo-decomposition"],
+                cwd=workspace_root,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+            )
+            if guard.returncode == 0:
+                print("clear:todo_guard_feedback_stale_for_implementation_leaf")
+                raise SystemExit(0)
+        except Exception:
+            pass
+
+    previews = verification.get("workspace_read_previews") if isinstance(verification.get("workspace_read_previews"), list) else []
+    preview_paths = []
+    for preview in previews:
+        match = re.search(r"\[workspace\.read path=([^\s\]]+)", str(preview))
+        if match:
+            preview_paths.append(match.group(1))
+    if preview_paths and all(path not in targets for path in preview_paths):
+        print("clear:workspace_read_preview_target_mismatch")
+        raise SystemExit(0)
+
+print("keep")
+PY
+  then
+    clear_reason="$(sed -n '1p' "$tmp_reason" 2>/dev/null || true)"
+  else
+    clear_reason="keep"
+  fi
+  rm -f "$tmp_reason"
+  case "$clear_reason" in
+    clear:*)
+      clear_repair_feedback
+      printf '%s repair_feedback_cleared reason=%s\n' "$(now_utc)" "$clear_reason" >> "$SUPERVISOR_LOG"
+      ;;
+  esac
+}
+
 active_claim_patch_only_target() {
   if [ ! -f "$TODO_CLAIM_FILE" ]; then
     return 1
@@ -3892,6 +4138,7 @@ intent_rejections = []
 invalid_patch_proposals = []
 read_previews = []
 llm_response_previews = []
+llm_provider_failures = []
 if run_id:
     ledger_path = store_root / "runs" / run_id / "ledger.jsonl"
     try:
@@ -3933,6 +4180,17 @@ if run_id:
                 preview = payload_event.get("content_preview")
                 if preview:
                     llm_response_previews.append(str(preview))
+            if kind in ("LlmRequestFailed", "SecondPassLlmRequestFailed"):
+                failure = payload_event.get("llm_provider_failure") if isinstance(payload_event.get("llm_provider_failure"), dict) else {}
+                llm_provider_failures.append({
+                    "kind": kind,
+                    "failure_class": failure.get("failure_class"),
+                    "request_phase": failure.get("request_phase"),
+                    "next_action": failure.get("next_action"),
+                    "provider": failure.get("provider"),
+                    "model": failure.get("model") or payload_event.get("model"),
+                    "reason": str(failure.get("reason") or payload_event.get("reason") or "")[-500:],
+                })
             if kind == "ToolExecutionCompleted":
                 preview = payload_event.get("output_preview")
                 if preview:
@@ -3955,8 +4213,15 @@ verification = {
     "tool_intent_rejections": intent_rejections[-3:],
     "invalid_patch_proposals": invalid_patch_proposals[-3:],
     "llm_response_previews": llm_response_previews[-2:],
+    "llm_provider_failures": llm_provider_failures[-3:],
     "workspace_read_previews": read_previews[-2:],
 }
+latest_provider_failure = llm_provider_failures[-1] if llm_provider_failures else {}
+if (
+    latest_provider_failure.get("failure_class") == "missing_provider_content"
+    and latest_provider_failure.get("request_phase") == "second_pass"
+):
+    verification["repair_hint"] = "The previous second-pass LLM response was missing message content after a workspace.read. Do not retry another workspace.read. Use the embedded workspace_read_preview for the selected target and emit exactly one compact workspace.write patch_file, or emit a concrete blocker TODO."
 if any(str(item.get("code") or "").lower() == "missing_closing_fence" for item in intent_rejections):
     verification["repair_hint"] = "The previous workspace.write tool intent was truncated before the closing fence, likely because new_text was too large. Do not retry the same large patch. Emit a much smaller patch_file using one short exact old_text/new_text hunk, or patch `.brownie/todo.md` to split this TODO into narrower bounded leaves."
 if previous_verification.get("expected") is not None:
@@ -4942,6 +5207,7 @@ claim_first_pending_todo() {
 build_effective_prompt() {
   local output_path="$1"
   local selected_todo meta_path
+  clear_inconsistent_repair_feedback_for_active_claim
   clear_stale_repair_feedback_if_todo_guard_passes
   if active_todo_claim_exists; then
     selected_todo="$(claim_field selected_todo)"
@@ -5599,6 +5865,18 @@ if repair_feedback:
         repair_feedback_lines.append(f"- previous_terminal_completion_summary: {json.dumps(str(verification.get('previous_terminal_completion_summary', ''))[-1200:], ensure_ascii=False)}")
     if verification.get("repair_hint"):
         repair_feedback_lines.append(f"- repair_hint: {json.dumps(str(verification.get('repair_hint', ''))[-1200:], ensure_ascii=False)}")
+    for index, failure in enumerate(verification.get("llm_provider_failures", []) if isinstance(verification.get("llm_provider_failures"), list) else []):
+        if not isinstance(failure, dict):
+            continue
+        failure_class = str(failure.get("failure_class") or "")
+        request_phase = str(failure.get("request_phase") or "")
+        repair_feedback_lines.append(
+            f"- llm_provider_failure_{index}: class=`{failure_class}` phase=`{request_phase}` kind=`{failure.get('kind', '')}` next_action=`{failure.get('next_action', '')}` reason={json.dumps(str(failure.get('reason', ''))[-500:], ensure_ascii=False)}"
+        )
+        if failure_class == "missing_provider_content" and request_phase == "second_pass":
+            repair_feedback_lines.append(
+                "- second_pass_missing_content_recovery_policy: the previous second pass returned no message content after a workspace.read. Do not request another workspace.read for the same selected target in this repair turn; use the embedded workspace_read_preview if present, then emit exactly one compact workspace.write patch_file for the selected target, or final-answer one concrete blocker."
+            )
     actual_checks = verification.get("actual") if isinstance(verification.get("actual"), dict) else {}
     if (
         selected_parent_id == "E-17a-dirty-source-refusal"
@@ -7075,6 +7353,7 @@ run_brownie_once() {
   head_commit="$(
     cd "$PHASE_LOOP_WORKSPACE_ROOT" && git rev-parse HEAD 2>/dev/null || true
   )"
+  clear_inconsistent_repair_feedback_for_active_claim
   if phase_loop_should_resume_active_claim; then
     use_resume=1
   fi
@@ -7213,6 +7492,29 @@ run_brownie_once() {
     printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
     write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
     write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"todo_leaf_split_fallback_failed"}'
+    return 74
+  fi
+  local pre_guard_vsix_scripts_output pre_guard_vsix_scripts_status
+  pre_guard_vsix_scripts_output="$(try_stagnated_vsix_package_scripts_fallback "$run_stamp" 2>&1)"
+  pre_guard_vsix_scripts_status=$?
+  if [ "$pre_guard_vsix_scripts_status" -eq 0 ]; then
+    workspace_after="$(git_workspace_fingerprint)"
+    printf '%s\n' "$pre_guard_vsix_scripts_output" > "$stdout_log"
+    : > "$stderr_log"
+    write_todo_claim "$(claim_field claim_id)" "completed" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+    remove_completed_todo_claim_from_queue "$run_stamp" >> "$SUPERVISOR_LOG" || true
+    detail="Applied deterministic fallback for stagnated VSIX package scripts dedupe before invoking Brownie: $pre_guard_vsix_scripts_output"
+    write_status "last_run_succeeded" "$detail" "todo-vsix-package-scripts-fallback-$run_stamp" "0" "0"
+    printf '%s run=%s vsix_package_scripts_fallback=true phase=pre_guard result=%s\n' "$(now_utc)" "todo-vsix-package-scripts-fallback-$run_stamp" "$pre_guard_vsix_scripts_output" >> "$SUPERVISOR_LOG"
+    write_bdk_trajectory_event "$run_stamp" "tool.write_applied" '{"source":"deterministic_fallback","kind":"vsix_package_scripts_dedupe"}'
+    write_bdk_trajectory_event "$run_stamp" "todo.completed" '{"completion":"vsix_package_scripts_dedupe_fallback"}'
+    phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after" || true
+    return 0
+  elif [ "$pre_guard_vsix_scripts_status" -eq 1 ]; then
+    detail="Stagnated VSIX package scripts fallback was eligible but failed safely before invoking Brownie: $pre_guard_vsix_scripts_output"
+    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+    write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"vsix_package_scripts_fallback_failed"}'
     return 74
   fi
   local pre_guard_runtime_readiness_fingerprint_output pre_guard_runtime_readiness_fingerprint_status
