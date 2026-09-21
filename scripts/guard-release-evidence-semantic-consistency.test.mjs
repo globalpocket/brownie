@@ -77,3 +77,25 @@ test('production validator rejects each semantic consistency fixture', () => {
     assert(result.reasons.includes(fixture.expectedReason), fixture.name);
   }
 });
+
+test('semantic consistency allows summarized process output evidence', () => {
+  const result = validateReleaseEvidenceSemanticConsistency({
+    contract: {},
+    evidence: {
+      runtime_operational: {
+        sections: {
+          artifact_lifecycle: {
+            commands: [
+              {
+                stdout_summary: { kind: 'process_output_summary', byte_length: 12, line_count: 1, sha256: 'a'.repeat(64) },
+                stderr_summary: { kind: 'process_output_summary', byte_length: 0, line_count: 0, sha256: 'b'.repeat(64) }
+              }
+            ]
+          }
+        }
+      }
+    }
+  });
+
+  assert(!result.reasons.includes('forbidden_confidential_evidence'), result.reasons.join('\n'));
+});

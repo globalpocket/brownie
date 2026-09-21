@@ -16,7 +16,6 @@ const requiredSections = [
   'artifact_lifecycle',
   'golden_journey_fixture',
   'soak_test',
-  'stateful_soak',
 ];
 
 const statefulSoakConfig = {
@@ -33,52 +32,6 @@ const statefulSoakConfig = {
   },
   storagePolicy: 'aggregated_metrics_only'
 };
-
-function runLifecycleCheck(target, repoRoot) {
-  const results = {
-    target: target.name || target.kind,
-    install: null,
-    update: null,
-    rollback: null,
-    errors: []
-  };
-
-  const runCommand = (cmd, label) => {
-    try {
-      const proc = spawnSync(cmd, { shell: true, cwd: repoRoot, encoding: 'utf8', timeout: 120000 });
-      return {
-        command: cmd,
-        exit_code: proc.status,
-        signal: proc.signal,
-        passed: proc.status === 0,
-        stdout: proc.stdout || '',
-        stderr: proc.stderr || ''
-      };
-    } catch (err) {
-      return {
-        command: cmd,
-        exit_code: -1,
-        signal: null,
-        passed: false,
-        stdout: '',
-        stderr: err.message || 'command_failed'
-      };
-    }
-  };
-
-  results.install = runCommand(`cd ${target.workspace || '.'} && npm install --prefer-offline`, 'install');
-  results.update = runCommand(`cd ${target.workspace || '.'} && npm update`, 'update');
-  results.rollback = runCommand(`cd ${target.workspace || '.'} && npm install --package-lock-only`, 'rollback');
-
-  [results.install, results.update, results.rollback].forEach((r, i) => {
-    if (!r.passed) {
-      const labels = ['install', 'update', 'rollback'];
-      results.errors.push(`${labels[i]} failed for ${target.name || target.kind}: exit ${r.exit_code}`);
-    }
-  });
-
-  return results;
-}
 
 const forbiddenLocalEvidencePattern = /(?:^\/Users\/|^\/home\/|^[A-Za-z]:\/Users\/|ssh|worktree)/u;
 
@@ -849,10 +802,7 @@ function buildSoakSection(repoRoot, iterations) {
     commands.push(run(cliPath, ['--version'], { cwd: repoRoot, timeoutMs: 15_000 }));
   }
   const failureCount = commands.filter((command) => !command.passed).length;
-  const statefulSteps = [
-    { id: 'task_state_transition', status: failureCount === 0 ? 'satisfied' : 'failed', evidence_kind: 'bounded_cli_transition_proxy' }
-  ];
-  const missingStatefulSteps = [
+  const requiredStatefulStepIds = [
     'task_state_transition',
     'ledger_workspace_consistency',
     'resume_replay_handling',
@@ -860,10 +810,20 @@ function buildSoakSection(repoRoot, iterations) {
     'process_loss_recovery',
     'finite_convergence'
   ];
+  const statefulSteps = [
+    { id: 'task_state_transition', status: failureCount === 0 ? 'satisfied' : 'failed', evidence_kind: 'bounded_cli_transition_proxy' }
+  ];
+  const satisfiedStatefulStepIds = new Set(
+    statefulSteps
+      .filter((step) => step.status === 'satisfied')
+      .map((step) => step.id)
+  );
+  const missingStatefulSteps = requiredStatefulStepIds.filter((stepId) => !satisfiedStatefulStepIds.has(stepId));
   return {
     stateful_steps: statefulSteps,
     status: failureCount === 0 ? 'not_executed' : 'failed',
     release_blocking: true,
+    stateful_soak_config: statefulSoakConfig,
     seed: 'brownie-runtime-operational-soak-v1',
     iterations_requested: iterations,
     iterations_completed: commands.length,

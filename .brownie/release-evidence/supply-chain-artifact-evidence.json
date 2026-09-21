@@ -3,8 +3,8 @@
   "evidence_id": "brownie-supply-chain-artifact-evidence-v1",
   "phase": "RRP-8.4",
   "repository": "globalpocket/brownie",
-  "generated_at": "2026-09-15T14:26:41.641Z",
-  "source_commit": "d74bed9ff486796ca3998c708fa3b224ccbef226",
+  "generated_at": "2026-09-21T14:26:29.361Z",
+  "source_commit": "9e2239b809ce1a5627df417ec2e89c73074a21ee",
   "source_tree_dirty": true,
   "release_ready": false,
   "runtime_release_ready": false,
@@ -69,7 +69,7 @@
       "status": "satisfied",
       "release_blocking": true,
       "scanner": "brownie-high-confidence-secret-patterns-v1",
-      "scanned_tracked_file_count": 495,
+      "scanned_tracked_file_count": 519,
       "findings_count": 0,
       "findings": []
     },
@@ -77,7 +77,7 @@
       "status": "satisfied",
       "release_blocking": true,
       "path": ".brownie/release-evidence/brownie-runtime-sbom.json",
-      "sha256": "sha256:cf1502dce56c8ea3139dc0f09c8a77c445f324c94cd741e1572ea4ba4e8745a1",
+      "sha256": "sha256:ceb5ad62d2cb3e4e52134fad7c1bca5ef1c072fe2417e8b91800e47510ff12f4",
       "component_count": 221
     },
     "artifacts": {
@@ -394,15 +394,15 @@
       "status": "satisfied",
       "release_blocking": true,
       "path": ".brownie/release-evidence/SHA256SUMS",
-      "sha256": "sha256:101310e58425223f9b10a6cf69a74550c09975a25a49871da252eaa608343114",
+      "sha256": "sha256:0737d7b82d95cc8472f75676dc335299f26eb783b014dd8ad4187d77d7b29cfc",
       "entries": [
         {
           "path": ".brownie/release-evidence/brownie-runtime-sbom.json",
-          "sha256": "sha256:cf1502dce56c8ea3139dc0f09c8a77c445f324c94cd741e1572ea4ba4e8745a1"
+          "sha256": "sha256:ceb5ad62d2cb3e4e52134fad7c1bca5ef1c072fe2417e8b91800e47510ff12f4"
         },
         {
           "path": ".brownie/release-evidence/brownie-runtime-provenance.json",
-          "sha256": "sha256:88166baad1102b81a02d10723bb140b8cbca4863ffa3ae0d2d1f7ad647355aca"
+          "sha256": "sha256:8b7b51bbfa34f3f517b382a139c3597faf0c0257574730b80bd8c89fbc39c5f8"
         },
         {
           "path": ".brownie/release-evidence/artifacts/darwin-arm64/brownie",
@@ -433,7 +433,7 @@
       "status": "satisfied",
       "release_blocking": true,
       "path": ".brownie/release-evidence/brownie-runtime-provenance.json",
-      "sha256": "sha256:88166baad1102b81a02d10723bb140b8cbca4863ffa3ae0d2d1f7ad647355aca"
+      "sha256": "sha256:8b7b51bbfa34f3f517b382a139c3597faf0c0257574730b80bd8c89fbc39c5f8"
     }
   },
   "fail_closed_reasons": [

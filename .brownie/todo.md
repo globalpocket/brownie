@@ -91,3 +91,27 @@ Current synchronization note:
 ## Product Ready Blocking Queue
 
 ### P0/P1: Release engineering and evidence
+
+- [ ] E-18g-regenerate-integrated-release-evidence: Patch only `.brownie/release-evidence/supply-chain-artifact-evidence.json` and `.brownie/release-evidence/runtime-operational-evidence.json` after running the local evidence collectors from a clean current main:
+  Route: implementation.
+  Source TODO: external-review-2026-09-21-release-evidence-follow-up.
+  Depends on: E-18f-connect-stateful-soak-flow.
+  Completion condition: integrated evidence files reflect the current commit and no longer contradict the dependency audit, artifact source identity, artifact smoke, lifecycle, or stateful soak collector results.
+  Forbidden changes: do not hand-edit evidence into a satisfied state and do not store forbidden local paths or raw process output.
+  Verification: run `pnpm --workspace-root release:supply-chain-artifact-evidence` and `pnpm --workspace-root release:runtime-operational-evidence`.
+
+- [ ] E-18h-bind-release-contract-to-current-evidence: Patch only `docs/architecture/runtime-release-contract.json` and `docs/architecture/runtime-release-readiness-audit.json` to bind current tested commit, workflow run, artifact SHA, and evidence hashes after E-18 evidence regeneration:
+  Route: documentation.
+  Source TODO: external-review-2026-09-21-release-evidence-follow-up.
+  Depends on: E-18g-regenerate-integrated-release-evidence.
+  Completion condition: Release Contract and Readiness Audit no longer contain stale audited base, null tested commit, null workflow run, or mismatched evidence content hashes for generated evidence that is claimed as implemented.
+  Forbidden changes: do not claim Runtime Release Ready or Product Ready while artifact E2E, lifecycle, or stateful soak evidence remains fail-closed.
+  Verification: run `pnpm --workspace-root guard:release-contract` and `pnpm --workspace-root guard:runtime-release-readiness`.
+
+- [ ] E-18i-release-doc-authority-sync: Patch only `docs/architecture/phase-value-manifest.json` and `docs/architecture/final-product-ready-judgment.md` to synchronize phase title, release blocker authority, and Product Ready judgment after E-18 evidence work:
+  Route: documentation.
+  Source TODO: external-review-2026-09-21-release-evidence-follow-up.
+  Depends on: E-18h-bind-release-contract-to-current-evidence.
+  Completion condition: Phase manifest, Release Contract, Readiness Audit, and final judgment agree on current blocker authority and continue to state Product Ready is false until all release evidence closes.
+  Forbidden changes: do not declare Runtime Product Ready, Runtime Release Ready, or public Release Ready.
+  Verification: run `pnpm --workspace-root guard:phase-value` and `pnpm --workspace-root check`.

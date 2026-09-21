@@ -259,6 +259,34 @@ test('rejects inspect-only verification for implementation leaves', () => {
   assert(errors.some((error) => error.includes('implementation leaves need executable verification')), errors.join('\n'));
 });
 
+test('rejects empty TODO when Product Ready is false and release blockers remain', () => {
+  const errors = validateTodoDecompositionText('', {
+    productReady: false,
+    releaseBlockersRemaining: true
+  });
+
+  assert(errors.some((error) => error.includes('Empty or non-executable TODO queue')), errors.join('\n'));
+});
+
+test('rejects checked-only TODO when Product Ready is false and release blockers remain', () => {
+  const errors = validateTodoDecompositionText('- [x] E-18a: already done.\n', {
+    productReady: false,
+    releaseBlockersRemaining: true
+  });
+
+  assert(errors.some((error) => error.includes('Empty or non-executable TODO queue')), errors.join('\n'));
+});
+
+test('accepts implementation TODO when Product Ready is false and release blockers remain', () => {
+  const errors = validateTodoDecompositionText(validLeaf, {
+    productReady: false,
+    releaseBlockersRemaining: true,
+    packageScripts: new Set(['guard:release-contract:test'])
+  });
+
+  assert.deepEqual(errors, []);
+});
+
 test('selects first schedulable TODO after dependency blockers', () => {
   const text = `- [ ] E-15b-child: Patch only \`scripts/example.mjs\`:
   Route: implementation.
