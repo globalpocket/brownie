@@ -92,18 +92,18 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-18h-bind-release-contract-to-current-evidence: Patch only `docs/architecture/runtime-release-contract.json` and `docs/architecture/runtime-release-readiness-audit.json` to bind current tested commit, workflow run, artifact SHA, and evidence hashes after E-18 evidence regeneration:
-  Route: documentation.
-  Source TODO: external-review-2026-09-21-release-evidence-follow-up.
-  Depends on: E-18g-regenerate-integrated-release-evidence.
-  Completion condition: Release Contract and Readiness Audit no longer contain stale audited base, null tested commit, null workflow run, or mismatched evidence content hashes for generated evidence that is claimed as implemented.
-  Forbidden changes: do not claim Runtime Release Ready or Product Ready while artifact E2E, lifecycle, or stateful soak evidence remains fail-closed.
-  Verification: run `pnpm --workspace-root guard:release-contract` and `pnpm --workspace-root guard:runtime-release-readiness`.
+- [ ] E-19a-prevent-empty-queue-completion: Patch only `phase-loop.sh` so completed TODO removal is reverted when the resulting `.brownie/todo.md` fails the decomposition guard:
+  Route: implementation.
+  Source TODO: empty-queue-regression-follow-up-2026-09-22.
+  Depends on: E-18i-release-doc-authority-sync.
+  Completion condition: release blocker queues cannot become empty while Product Ready is false; attempted completion removal is reverted and the durable claim remains in_progress when the guard rejects the resulting queue.
+  Forbidden changes: do not weaken `scripts/guard-todo-decomposition.mjs`, do not declare Runtime Product Ready or Runtime Release Ready, and do not remove remaining release blocker TODOs.
+  Verification: run `pnpm --workspace-root phase-loop:claim-smoke`, `pnpm --workspace-root guard:todo-decomposition:test`, and `pnpm --workspace-root guard:todo-decomposition`.
 
-- [ ] E-18i-release-doc-authority-sync: Patch only `docs/architecture/phase-value-manifest.json` and `docs/architecture/final-product-ready-judgment.md` to synchronize phase title, release blocker authority, and Product Ready judgment after E-18 evidence work:
-  Route: documentation.
-  Source TODO: external-review-2026-09-21-release-evidence-follow-up.
-  Depends on: E-18h-bind-release-contract-to-current-evidence.
-  Completion condition: Phase manifest, Release Contract, Readiness Audit, and final judgment agree on current blocker authority and continue to state Product Ready is false until all release evidence closes.
-  Forbidden changes: do not declare Runtime Product Ready, Runtime Release Ready, or public Release Ready.
-  Verification: run `pnpm --workspace-root guard:phase-value` and `pnpm --workspace-root check`.
+- [ ] E-19b-refresh-owner-governance-evidence-after-stable-ci: Patch only `.brownie/release-evidence/owner-governance-evidence.json` after latest main CI is complete and stable, so owner governance evidence does not capture in-progress GitHub checks as failed release evidence:
+  Route: release-ops.
+  Source TODO: empty-queue-regression-follow-up-2026-09-22.
+  Depends on: E-19a-prevent-empty-queue-completion.
+  Completion condition: release blocker evidence remains fail-closed but owner governance evidence reflects a completed latest-main CI run instead of an in-progress workflow sample.
+  Forbidden changes: do not declare Runtime Product Ready, Runtime Release Ready, public Release Ready, or alter unrelated release evidence files.
+  Verification: inspect latest main CI completion and fail-closed owner governance evidence, then keep the blocker if GitHub checks are still pending or unavailable.

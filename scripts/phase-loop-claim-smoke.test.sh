@@ -4,6 +4,29 @@ set -eu
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PHASE_LOOP="$REPO_ROOT/phase-loop.sh"
 
+if ! command -v rg >/dev/null 2>&1; then
+  fallback_bin_dir="$(mktemp -d)"
+  cat > "$fallback_bin_dir/rg" <<'SH'
+#!/usr/bin/env bash
+set -eu
+quiet=0
+if [ "${1:-}" = "-q" ]; then
+  quiet=1
+  shift
+fi
+pattern="${1:?missing pattern}"
+shift
+if [ "$quiet" = "1" ]; then
+  grep -E -q -- "$pattern" "$@"
+else
+  grep -E -- "$pattern" "$@"
+fi
+SH
+  chmod +x "$fallback_bin_dir/rg"
+  PATH="$fallback_bin_dir:$PATH"
+  export PATH
+fi
+
 assert_contains() {
   local file="$1"
   local pattern="$2"
@@ -1488,6 +1511,64 @@ assert status["status"] == "last_run_succeeded", status
 assert "deterministic exact-line TODO fast path" in status["detail"], status
 assert claim["status"] == "completed", claim
 assert "E-exact" not in todo, todo
+assert "  fixture_path: fixtureRoot,\n  lifecycle_evidence: lifecycleEvidence,\n  commands," in target, target
+PY
+
+empty_queue_guard_workspace="$(mktemp -d)"
+git -C "$empty_queue_guard_workspace" init -b main >/dev/null
+git -C "$empty_queue_guard_workspace" config user.name Brownie
+git -C "$empty_queue_guard_workspace" config user.email brownie@example.invalid
+mkdir -p "$empty_queue_guard_workspace/.brownie" "$empty_queue_guard_workspace/docs/architecture" "$empty_queue_guard_workspace/scripts" "$empty_queue_guard_workspace/docs"
+cp "$REPO_ROOT/scripts/guard-todo-decomposition.mjs" "$empty_queue_guard_workspace/scripts/guard-todo-decomposition.mjs"
+printf '{"scripts":{}}\n' > "$empty_queue_guard_workspace/package.json"
+printf '{"product_ready":false}\n' > "$empty_queue_guard_workspace/docs/architecture/phase-value-manifest.json"
+cat > "$empty_queue_guard_workspace/docs/golden.js" <<'EOF'
+export const evidence = {
+  status: 'failed',
+  release_blocking: true,
+  fixture_path: fixtureRoot,
+  commands,
+};
+EOF
+git -C "$empty_queue_guard_workspace" add .
+git -C "$empty_queue_guard_workspace" commit -m init >/dev/null
+
+state_empty_queue_guard="$(mktemp -d)"
+prompt_empty_queue_guard="$(mktemp)"
+todo_empty_queue_guard="$empty_queue_guard_workspace/.brownie/todo.md"
+printf 'base prompt\n' > "$prompt_empty_queue_guard"
+cat > "$todo_empty_queue_guard" <<'EOF'
+- [ ] E-empty-queue-exact: Patch only `docs/golden.js`.
+  In the return object, add exactly one line
+  `  lifecycle_evidence: lifecycleEvidence,`
+  immediately after the exact line `  fixture_path: fixtureRoot,`. Do not edit
+  any other line.
+EOF
+
+set +e
+PHASE_LOOP_STATE_DIR="$state_empty_queue_guard" \
+PHASE_LOOP_PROMPT="$prompt_empty_queue_guard" \
+PHASE_LOOP_TODO="$todo_empty_queue_guard" \
+BROWNIE_BIN="$fake_brownie_should_not_run" \
+PHASE_LOOP_WORKSPACE_ROOT="$empty_queue_guard_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+empty_queue_guard_exit="$?"
+set -e
+test "$empty_queue_guard_exit" = "76"
+
+python3 - "$state_empty_queue_guard/todo-claims/current.json" "$todo_empty_queue_guard" "$state_empty_queue_guard/logs/supervisor.log" "$empty_queue_guard_workspace/docs/golden.js" <<'PY'
+import json
+import pathlib
+import sys
+
+claim = json.load(open(sys.argv[1], encoding="utf-8"))
+todo = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
+supervisor_log = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
+target = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8")
+assert claim["status"] == "in_progress", claim
+assert "E-empty-queue-exact" in todo, todo
+assert "completed_todo_removal_reverted=true" in supervisor_log, supervisor_log
+assert "Empty or non-executable TODO queue" in supervisor_log, supervisor_log
 assert "  fixture_path: fixtureRoot,\n  lifecycle_evidence: lifecycleEvidence,\n  commands," in target, target
 PY
 
