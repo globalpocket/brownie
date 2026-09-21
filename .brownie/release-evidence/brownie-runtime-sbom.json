@@ -1,9 +1,9 @@
 {
   "bomFormat": "BrownieReleaseEvidence",
   "specVersion": "1.0",
-  "serialNumber": "urn:uuid:081cfe63-8312-4d8c-a6c8-0549b2148621",
+  "serialNumber": "urn:uuid:62a80135-b99c-40ea-ac21-387431868eda",
   "metadata": {
-    "generated_at": "2026-09-21T14:26:29.361Z",
+    "generated_at": "2026-09-21T14:56:30.519Z",
     "component": {
       "type": "application",
       "name": "brownie-runtime",

@@ -416,7 +416,7 @@ Verification ledger:
 - E-18d-connect-artifact-source-identity-flow: `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`; `pnpm --workspace-root guard:supply-chain-artifact-evidence`
 - E-18e-connect-artifact-lifecycle-flow: `pnpm --workspace-root guard:runtime-operational-evidence:test`; `pnpm --workspace-root guard:runtime-operational-evidence`
 - E-18f-connect-stateful-soak-flow: `pnpm --workspace-root guard:runtime-operational-evidence:test`; `pnpm --workspace-root guard:runtime-operational-evidence`
-- E-18g-regenerate-integrated-release-evidence: `pnpm --workspace-root release:supply-chain-artifact-evidence`; `pnpm --workspace-root release:runtime-operational-evidence`
+- E-18g-regenerate-integrated-release-evidence: `pnpm --workspace-root release:supply-chain-artifact-evidence`; `pnpm --workspace-root release:runtime-operational-evidence:failclosed-ok`; `pnpm --workspace-root guard:supply-chain-artifact-evidence`; `pnpm --workspace-root guard:runtime-operational-evidence`
 - E-18h-bind-release-contract-to-current-evidence: `pnpm --workspace-root guard:release-contract`; `pnpm --workspace-root guard:runtime-release-readiness`
 - E-18i-release-doc-authority-sync: `pnpm --workspace-root guard:phase-value`; `pnpm --workspace-root check`
 

@@ -30,6 +30,7 @@ const requiredArtifactSmokeE2eStepIds = [
   'forced_stop_resume',
   'stale_replay_rejection'
 ];
+const generatedReleaseEvidencePrefix = '.brownie/release-evidence/';
 
 const artifactSourceIdentityPattern = /^artifact_source_identity: (clean|dirty|unknown)$/;
 
@@ -142,6 +143,41 @@ function gitValue(repoRoot, args) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore']
   }).stdout.trim();
+}
+
+function gitStatusLines(repoRoot) {
+  const status = gitValue(repoRoot, ['status', '--porcelain']);
+  if (!status) {
+    return [];
+  }
+  return status
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+}
+
+function statusPathFromPorcelainLine(line) {
+  const rawPath = (line[2] === ' ' ? line.slice(3) : line.slice(2)).trim();
+  const renameSeparator = ' -> ';
+  const pathPart = rawPath.includes(renameSeparator) ? rawPath.split(renameSeparator).pop() : rawPath;
+  if (!pathPart) {
+    return '';
+  }
+  if (pathPart.startsWith('"') && pathPart.endsWith('"')) {
+    try {
+      return JSON.parse(pathPart);
+    } catch {
+      return pathPart.slice(1, -1);
+    }
+  }
+  return pathPart;
+}
+
+function sourceTreeStatus(repoRoot) {
+  return gitStatusLines(repoRoot).filter((line) => {
+    const changedPath = normalizeRelativePath(statusPathFromPorcelainLine(line));
+    return !changedPath.startsWith(generatedReleaseEvidencePrefix);
+  });
 }
 
 function trackedFiles(repoRoot) {
@@ -493,14 +529,13 @@ export function buildSupplyChainArtifactEvidence(options = {}) {
       sha256: sha256File(repoPath(repoRoot, relativePath))
     }));
   const secretFindings = scanSecrets(repoRoot, files);
-  const sbom = buildSbom(repoRoot, generatedAt);
-  const sbomPath = normalizeRelativePath(path.join(outDir, 'brownie-runtime-sbom.json'));
-  writeJson(repoRoot, sbomPath, sbom);
-
   const artifacts = findReleaseArtifacts(repoRoot);
   const provenancePath = normalizeRelativePath(path.join(outDir, 'brownie-runtime-provenance.json'));
   const sourceCommit = gitValue(repoRoot, ['rev-parse', 'HEAD']);
-  const treeStatus = gitValue(repoRoot, ['status', '--porcelain']);
+  const treeStatus = sourceTreeStatus(repoRoot);
+  const sbom = buildSbom(repoRoot, generatedAt);
+  const sbomPath = normalizeRelativePath(path.join(outDir, 'brownie-runtime-sbom.json'));
+  writeJson(repoRoot, sbomPath, sbom);
   const dependencyEvidence = buildDependencyEvidence(repoRoot);
   const artifactSmoke = buildArtifactSmokeSection(repoRoot, artifacts);
   const artifactTargets = new Set(artifacts.map((artifact) => artifact.target));
@@ -523,7 +558,7 @@ export function buildSupplyChainArtifactEvidence(options = {}) {
     schema_version: 1,
     provenance_id: 'brownie-runtime-local-provenance-v1',
     source_commit: sourceCommit,
-    source_tree_dirty: Boolean(treeStatus),
+    source_tree_dirty: treeStatus.length > 0,
     workflow_run_id: process.env.GITHUB_RUN_ID ?? null,
     generated_at: generatedAt,
     sbom_path: sbomPath,
@@ -628,7 +663,7 @@ export function buildSupplyChainArtifactEvidence(options = {}) {
     }
   };
 
-  const failClosedReasons = treeStatus ? ['source_tree_dirty:true'] : [];
+  const failClosedReasons = treeStatus.length > 0 ? ['source_tree_dirty:true'] : [];
   for (const sectionId of requiredSections) {
     const section = sections[sectionId];
     if (!section || section.status !== 'satisfied') {
@@ -643,7 +678,7 @@ export function buildSupplyChainArtifactEvidence(options = {}) {
     repository: 'globalpocket/brownie',
     generated_at: generatedAt,
     source_commit: sourceCommit,
-    source_tree_dirty: Boolean(treeStatus),
+    source_tree_dirty: treeStatus.length > 0,
     release_ready: false,
     runtime_release_ready: false,
     required_sections: requiredSections,

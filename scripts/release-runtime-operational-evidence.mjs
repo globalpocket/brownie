@@ -237,7 +237,8 @@ function parseArgs(argv) {
   const options = {
     repoRoot: defaultRepoRoot,
     outPath: defaultOutPath,
-    iterations: Number.parseInt(process.env.BROWNIE_SOAK_ITERATIONS ?? '100', 10)
+    iterations: Number.parseInt(process.env.BROWNIE_SOAK_ITERATIONS ?? '100', 10),
+    allowFailClosed: false
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -249,6 +250,8 @@ function parseArgs(argv) {
       options.outPath = argv[++index] ?? '';
     } else if (arg === '--iterations') {
       options.iterations = Number.parseInt(argv[++index] ?? '', 10);
+    } else if (arg === '--allow-fail-closed') {
+      options.allowFailClosed = true;
     } else {
       throw new Error(`Unknown runtime operational evidence argument: ${arg}`);
     }
@@ -884,9 +887,10 @@ export function writeRuntimeOperationalEvidence(options = {}) {
 
 if (isMainModule()) {
   try {
-    const result = writeRuntimeOperationalEvidence(parseArgs(process.argv.slice(2)));
+    const options = parseArgs(process.argv.slice(2));
+    const result = writeRuntimeOperationalEvidence(options);
     process.stdout.write(`${JSON.stringify({ path: result.outPath, status: result.evidence.fail_closed_reasons.length === 0 ? 'satisfied' : 'failed', fail_closed_reasons: result.evidence.fail_closed_reasons }, null, 2)}\n`);
-    process.exit(result.evidence.fail_closed_reasons.length === 0 ? 0 : 1);
+    process.exit(result.evidence.fail_closed_reasons.length === 0 || options.allowFailClosed ? 0 : 1);
   } catch (error) {
     console.error(`Runtime operational evidence failed: ${error.message}`);
     process.exit(1);
