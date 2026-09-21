@@ -1807,6 +1807,63 @@ elif selected_id == "e-16e-semantic-consistency-guard-wiring":
         print(json.dumps({"completed": False, "reason": "release_gate_dry_run_missing_semantic_guard", "checks": gate_checks}, sort_keys=True))
         raise SystemExit(1)
     skip_verification_commands = True
+elif selected_id == "e-17a-artifact-runner-source-state-result":
+    target = workspace_root / "scripts/release-local-artifacts-all.mjs"
+    try:
+        target_text = target.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"semantic_noop_verification_unreadable:{error}"}, sort_keys=True))
+        raise SystemExit(1)
+    helper_start = target_text.find("function isSourceStateClean(")
+    helper_end = target_text.find("function posixQuote(", helper_start)
+    helper_section = target_text[helper_start:helper_end] if helper_start >= 0 and helper_end > helper_start else ""
+    function_start = target_text.find("export function runLocalReleaseArtifactsAll(")
+    function_end = target_text.find("\n}\n\nif (isMainModule())", function_start)
+    function_section = target_text[function_start:function_end] if function_start >= 0 and function_end > function_start else ""
+    results_index = function_section.find("const results =")
+    dirty_targets_index = function_section.find("targets: []")
+    dirty_return_index = function_section.rfind("return {", 0, dirty_targets_index) if dirty_targets_index >= 0 else -1
+    final_return_index = function_section.rfind("return {")
+    dirty_return_section = function_section[dirty_return_index:results_index] if dirty_return_index >= 0 and results_index > dirty_return_index else ""
+    final_return_section = function_section[final_return_index:] if final_return_index >= 0 else ""
+    semantic_checks = {
+        "helper_returns_object": bool(helper_section) and "return {" in helper_section and re.search(r"\bclean\s*[,:\n]", helper_section) is not None and "source_state:" in helper_section,
+        "helper_reads_exit_code": "result.exit_code === 0" in helper_section,
+        "branch_uses_clean_boolean": "if (!sourceState.clean)" in function_section,
+        "dirty_return_records_source_state": "source_state" in dirty_return_section and "sourceState.source_state" in dirty_return_section,
+        "success_return_records_source_state": "source_state" in final_return_section and "sourceState.source_state" in final_return_section,
+        "does_not_store_raw_output": "stdout" not in dirty_return_section and "stderr" not in dirty_return_section and "stdout" not in final_return_section and "stderr" not in final_return_section,
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
+        raise SystemExit(1)
+elif selected_id == "e-17g-phase-final-judgment-sync":
+    phase_manifest_path = workspace_root / "docs/architecture/phase-value-manifest.json"
+    final_judgment_path = workspace_root / "docs/architecture/final-product-ready-judgment.md"
+    try:
+        phase_manifest = json.loads(phase_manifest_path.read_text(encoding="utf-8"))
+        final_judgment = final_judgment_path.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"semantic_noop_verification_unreadable:{error}"}, sort_keys=True))
+        raise SystemExit(1)
+    forbidden_ready_claims = [
+        "Runtime Product Ready: reached",
+        "Runtime Release Ready: reached",
+        "public Release Ready",
+    ]
+    semantic_checks = {
+        "phase_owner_review_mechanically_closed": phase_manifest.get("owner_review_status") == "mechanically_closed",
+        "phase_product_ready_false": phase_manifest.get("product_ready") is False,
+        "phase_e17_release_evidence_blocker": "E-17 evidence" in str(phase_manifest.get("release_evidence_blocker", "")),
+        "phase_completion_blocks_product_ready": "Product Ready not reached" in str(phase_manifest.get("completion_condition", "")),
+        "final_owner_review_mechanically_closed": "Owner review is mechanically closed" in final_judgment or "Owner review: mechanically closed" in final_judgment,
+        "final_executable_release_evidence_blocker": "executable Release evidence remains" in final_judgment or "E-17 executable Release evidence" in final_judgment,
+        "final_product_ready_not_reached": "Runtime Product Ready: not reached" in final_judgment,
+        "final_no_forbidden_ready_claim": not any(claim in final_judgment for claim in forbidden_ready_claims),
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
+        raise SystemExit(1)
 
 # Do not complete a still-pending implementation TODO just because its
 # verification command is already green. Many Brownie TODOs add coverage to
@@ -1827,6 +1884,8 @@ if (
     and selected_id != "e-16d-stateful-soak-guard"
     and selected_id != "e-16d-stateful-soak-test"
     and selected_id != "e-16e-semantic-consistency-guard-wiring"
+    and selected_id != "e-17a-artifact-runner-source-state-result"
+    and selected_id != "e-17g-phase-final-judgment-sync"
 ):
     raise SystemExit(2)
 
@@ -2722,6 +2781,33 @@ if not isinstance(selected, str) or not selected.strip():
 first_line = selected.splitlines()[0]
 selected_id_match = re.match(r"^\s*[-*]\s+\[\s*\]\s+([^:\s]+)", first_line)
 selected_id = selected_id_match.group(1).strip() if selected_id_match else ""
+
+def normalized_repo_path(value):
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    candidate = pathlib.PurePosixPath(value.strip())
+    if candidate.is_absolute() or ".." in candidate.parts:
+        return ""
+    return str(candidate)
+
+scope_line_match = re.search(r"\b(?:Patch|Create) only\b(?P<scope>[^\n:]+)", first_line)
+allowed_objective_paths = []
+if scope_line_match:
+    for path_value in re.findall(r"`([^`\n]+)`", scope_line_match.group("scope")):
+        normalized = normalized_repo_path(path_value)
+        if normalized:
+            allowed_objective_paths.append(normalized)
+normalized_applied_path = normalized_repo_path(applied_path)
+if allowed_objective_paths and normalized_applied_path not in allowed_objective_paths:
+    print(json.dumps({
+        "completed": False,
+        "reason": "objective_apply_outside_selected_scope",
+        "expected": allowed_objective_paths,
+        "actual": normalized_applied_path or applied_path,
+        "repair_hint": "Discard or revert the out-of-scope workspace change, then implement only the selected TODO's Patch/Create only target.",
+    }, sort_keys=True))
+    raise SystemExit(1)
+
 try:
     if first_line not in todo_path.read_text(encoding="utf-8"):
         print(json.dumps({"completed": True, "reason": "selected_todo_already_removed"}, sort_keys=True))
@@ -2864,6 +2950,98 @@ if "e-16a-artifact-source-local-producer" in selected_lower:
             "expected": "scripts/release-local-artifact.mjs artifactEvidence records source commit and clean-tree/source identity",
             "actual": "artifactEvidence lacks source identity fields",
             "results": results
+        }, sort_keys=True))
+        raise SystemExit(1)
+
+if selected_id == "E-17a-source-state-helper-exit-code-fix":
+    target_path = workspace_root / "scripts/release-local-artifacts-all.mjs"
+    try:
+        target_text = target_path.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"semantic_completion_target_unreadable:{error}", "results": results}, sort_keys=True))
+        raise SystemExit(1)
+    helper_start = target_text.find("function isSourceStateClean(")
+    helper_end = target_text.find("function posixQuote(", helper_start)
+    helper_section = target_text[helper_start:helper_end] if helper_start >= 0 and helper_end > helper_start else ""
+    semantic_checks = {
+        "helper_present": bool(helper_section),
+        "helper_reads_exit_code": "result.exit_code === 0" in helper_section,
+        "helper_no_exitCode": "result.exitCode" not in helper_section,
+        "no_result_exitCode_fallback": "targetResult.exitCode ?? targetResult.exit_code" not in target_text,
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({
+            "completed": False,
+            "reason": "semantic_completion_not_satisfied",
+            "expected": "isSourceStateClean reads run() result field exit_code directly and no out-of-scope targetResult.exitCode fallback remains",
+            "actual": semantic_checks,
+            "results": results,
+        }, sort_keys=True))
+        raise SystemExit(1)
+
+if selected_id == "E-17a-dirty-source-refusal":
+    target_path = workspace_root / "scripts/release-local-artifacts-all.mjs"
+    try:
+        target_text = target_path.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"semantic_completion_target_unreadable:{error}", "results": results}, sort_keys=True))
+        raise SystemExit(1)
+    function_start = target_text.find("export function runLocalReleaseArtifactsAll(")
+    function_end = target_text.find("\n}\n\nif (isMainModule())", function_start)
+    function_section = target_text[function_start:function_end] if function_start >= 0 and function_end > function_start else ""
+    results_index = function_section.find("const results =")
+    source_state_index = function_section.find("isSourceStateClean(repoRoot)")
+    return_index = function_section.find("passed: false")
+    semantic_checks = {
+        "run_function_present": bool(function_section),
+        "checks_source_state_before_results": source_state_index >= 0 and results_index >= 0 and source_state_index < results_index,
+        "returns_fail_closed": return_index >= 0 and source_state_index >= 0 and return_index > source_state_index and return_index < results_index,
+        "does_not_use_raw_status_porcelain": "status', '--porcelain" not in target_text and 'status", "--porcelain' not in target_text,
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({
+            "completed": False,
+            "reason": "semantic_completion_not_satisfied",
+            "expected": "runLocalReleaseArtifactsAll checks isSourceStateClean(repoRoot) before target execution and returns a sanitized passed:false result without raw git status --porcelain helper",
+            "actual": semantic_checks,
+            "results": results,
+        }, sort_keys=True))
+        raise SystemExit(1)
+
+if selected_id == "E-17a-artifact-runner-source-state-result":
+    target_path = workspace_root / "scripts/release-local-artifacts-all.mjs"
+    try:
+        target_text = target_path.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"semantic_completion_target_unreadable:{error}", "results": results}, sort_keys=True))
+        raise SystemExit(1)
+    helper_start = target_text.find("function isSourceStateClean(")
+    helper_end = target_text.find("function posixQuote(", helper_start)
+    helper_section = target_text[helper_start:helper_end] if helper_start >= 0 and helper_end > helper_start else ""
+    function_start = target_text.find("export function runLocalReleaseArtifactsAll(")
+    function_end = target_text.find("\n}\n\nif (isMainModule())", function_start)
+    function_section = target_text[function_start:function_end] if function_start >= 0 and function_end > function_start else ""
+    results_index = function_section.find("const results =")
+    dirty_targets_index = function_section.find("targets: []")
+    dirty_return_index = function_section.rfind("return {", 0, dirty_targets_index) if dirty_targets_index >= 0 else -1
+    final_return_index = function_section.rfind("return {")
+    dirty_return_section = function_section[dirty_return_index:results_index] if dirty_return_index >= 0 and results_index > dirty_return_index else ""
+    final_return_section = function_section[final_return_index:] if final_return_index >= 0 else ""
+    semantic_checks = {
+        "helper_returns_object": bool(helper_section) and "return {" in helper_section and re.search(r"\bclean\s*[,:\n]", helper_section) is not None and "source_state:" in helper_section,
+        "helper_reads_exit_code": "result.exit_code === 0" in helper_section,
+        "branch_uses_clean_boolean": "if (!sourceState.clean)" in function_section,
+        "dirty_return_records_source_state": "source_state" in dirty_return_section and "sourceState.source_state" in dirty_return_section,
+        "success_return_records_source_state": "source_state" in final_return_section and "sourceState.source_state" in final_return_section,
+        "does_not_store_raw_output": "stdout" not in dirty_return_section and "stderr" not in dirty_return_section and "stdout" not in final_return_section and "stderr" not in final_return_section,
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({
+            "completed": False,
+            "reason": "semantic_completion_not_satisfied",
+            "expected": "isSourceStateClean returns a bounded object with clean/source_state and runLocalReleaseArtifactsAll records source_state in both dirty fail-closed and successful orchestration output without raw stdout/stderr",
+            "actual": semantic_checks,
+            "results": results,
         }, sort_keys=True))
         raise SystemExit(1)
 
@@ -3620,6 +3798,34 @@ PY
     clear_repair_feedback
     printf '%s todo_repair_feedback_cleared reason=todo_decomposition_guard_passed\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
   fi
+}
+
+active_claim_patch_only_target() {
+  if [ ! -f "$TODO_CLAIM_FILE" ]; then
+    return 1
+  fi
+  python3 - "$TODO_CLAIM_FILE" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+try:
+    claim = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+selected = claim.get("selected_todo")
+if not isinstance(selected, str):
+    raise SystemExit(1)
+first_line = selected.splitlines()[0] if selected.splitlines() else ""
+match = re.search(r"\b(?:Patch|Create) only\s+`([^`\n]+)`", first_line)
+if not match:
+    raise SystemExit(1)
+path = match.group(1).strip()
+if not path or path.startswith("/") or ".." in pathlib.PurePosixPath(path).parts:
+    raise SystemExit(1)
+print(path)
+PY
 }
 
 active_repair_feedback_matches_claim() {
@@ -5089,6 +5295,49 @@ selected_leaf_target_path = ""
 selected_leaf_target_match = re.search(r"^\s*[-*]\s+\[\s*\]\s+[^:\n]+:\s+(?:Patch only|Create only)\s+`([^`]+)`", selected_todo)
 if selected_leaf_target_match:
     selected_leaf_target_path = selected_leaf_target_match.group(1).strip()
+if repair_feedback and selected_leaf_target_path:
+    verification_for_stale_check = repair_feedback.get("verification") if isinstance(repair_feedback.get("verification"), dict) else {}
+    reason_for_stale_check = str(repair_feedback.get("reason") or verification_for_stale_check.get("reason") or "")
+    result_groups_for_stale_check = [
+        verification_for_stale_check.get("results"),
+        verification_for_stale_check.get("previous_results"),
+    ]
+    syntax_check_paths = []
+    for result_group in result_groups_for_stale_check:
+        if not isinstance(result_group, list):
+            continue
+        for result in result_group:
+            if not isinstance(result, dict):
+                continue
+            command = str(result.get("command") or "")
+            match = re.match(r"node\s+--check\s+(.+)$", command)
+            if match:
+                syntax_check_paths.append(match.group(1).strip().strip("'\""))
+    stale_repair_feedback = False
+    if syntax_check_paths:
+        if selected_leaf_target_path not in syntax_check_paths:
+            stale_repair_feedback = True
+        else:
+            try:
+                check = subprocess.run(
+                    ["node", "--check", selected_leaf_target_path],
+                    cwd=todo_path.parent.parent,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=30,
+                )
+                if check.returncode == 0:
+                    stale_repair_feedback = True
+            except Exception:
+                pass
+    if stale_repair_feedback:
+        repair_feedback = {}
+        bdk_state = infer_bdk_state(selected_todo)
+        llm_route = infer_llm_route(bdk_state)
+        if harness_feedback and harness_feedback.get("ok") is False:
+            bdk_state = "verify_or_repair"
+            llm_route = "code"
 selected_decomposition_active = (
     "TODO-decompose-" in selected_todo
     or "Route: todo-decomposition" in selected_todo
@@ -5220,6 +5469,7 @@ if "Source TODO:" in selected_todo and re.search(r"^\s*[-*]\s+\[\s*\]\s+[^:\n]+:
     leaf_execution_policy_lines = [
         "- leaf_execution_policy: this selected TODO is already a bounded derived leaf; normally patch the named target file. If repair feedback shows the target patch is repeatedly oversized or input_too_large, patch `.brownie/todo.md` instead to replace this leaf with one smaller concrete follow-up leaf. A missing closing fence alone means the next target-file patch must be smaller and complete.",
         "- leaf_no_refinement_policy: a bounded leaf with one Patch only target must not be converted into more child TODOs just because the target file is large, unless Previous Repair Feedback shows a repeated oversized/input_too_large workspace.write.",
+        "- leaf_todo_write_forbidden_policy: for a bounded Patch only leaf with no oversized/input_too_large repair feedback, `workspace.write` to `.brownie/todo.md` is not progress and must not be attempted. Use `workspace.read` for the target if needed, then `workspace.write` for the target path, or final-answer a concrete fail-closed blocker.",
     ]
     if leaf_force_write_on_repair:
         leaf_execution_policy_lines.append(
@@ -5349,6 +5599,100 @@ if repair_feedback:
         repair_feedback_lines.append(f"- previous_terminal_completion_summary: {json.dumps(str(verification.get('previous_terminal_completion_summary', ''))[-1200:], ensure_ascii=False)}")
     if verification.get("repair_hint"):
         repair_feedback_lines.append(f"- repair_hint: {json.dumps(str(verification.get('repair_hint', ''))[-1200:], ensure_ascii=False)}")
+    actual_checks = verification.get("actual") if isinstance(verification.get("actual"), dict) else {}
+    if (
+        selected_parent_id == "E-17a-dirty-source-refusal"
+        and selected_leaf_target_path == "scripts/release-local-artifacts-all.mjs"
+        and actual_checks.get("does_not_use_raw_status_porcelain") is False
+    ):
+        target_text = read_text(pathlib.Path("scripts/release-local-artifacts-all.mjs"))
+        dirty_helper_block = extract_function_block(target_text, "checkDirtySource")
+        if dirty_helper_block:
+            repair_feedback_lines.append("- semantic_predicate_failure: `does_not_use_raw_status_porcelain` is false because the target still contains a raw `git status --porcelain` helper.")
+            repair_feedback_lines.append("- semantic_repair_action: remove the unused `checkDirtySource` helper block only; keep `isSourceStateClean(repoRoot)` and the dirty fail-closed branch in `runLocalReleaseArtifactsAll()` unchanged.")
+            repair_feedback_lines.append("- semantic_repair_next_tool: emit exactly one `workspace.write` patch_file request to `scripts/release-local-artifacts-all.mjs`; do not request `workspace.read`, do not patch `.brownie/todo.md`, and do not edit any other file.")
+            repair_feedback_lines.append(f"- semantic_repair_old_text_json: {json.dumps(dirty_helper_block, ensure_ascii=False)}")
+            repair_feedback_lines.append("- semantic_repair_new_text_json: \"\"")
+    if (
+        selected_parent_id == "E-17a-artifact-runner-source-state-result"
+        and selected_leaf_target_path == "scripts/release-local-artifacts-all.mjs"
+    ):
+        target_text = read_text(pathlib.Path("scripts/release-local-artifacts-all.mjs"))
+        source_state_helper_block = extract_function_block(target_text, "isSourceStateClean")
+        dirty_return_old = """return {
+      manifest: manifestPath,
+      targets: [],
+      passed: false
+    };"""
+        dirty_return_new = """return {
+      manifest: manifestPath,
+      source_state: sourceState.source_state,
+      targets: [],
+      passed: false
+    };"""
+        success_return_old = """return {
+    manifest: fs.existsSync(resolveRepoRelative(repoRoot, manifestPath)) ? manifestPath : null,
+    targets: results,
+    passed: failedRequired.length === 0
+  };"""
+        success_return_new = """return {
+    manifest: fs.existsSync(resolveRepoRelative(repoRoot, manifestPath)) ? manifestPath : null,
+    source_state: sourceState.source_state,
+    targets: results,
+    passed: failedRequired.length === 0
+  };"""
+        source_state_helper_new = """function isSourceStateClean(repoRoot) {
+  const result = run('git', ['diff-index', '--quiet', 'HEAD', '--'], { cwd: repoRoot, timeoutMs: 30_000 });
+  const clean = result.exit_code === 0;
+  return {
+    clean,
+    source_state: clean ? 'clean' : 'dirty'
+  };
+}"""
+        needs_source_state_exact_repair = (
+            actual_checks.get("helper_returns_object") is False
+            or actual_checks.get("dirty_return_records_source_state") is False
+            or actual_checks.get("success_return_records_source_state") is False
+            or (
+                repair_feedback.get("reason") == "runtime_terminal_failure"
+                and (
+                    "return result.exit_code === 0 ? 'clean' : 'dirty';" in target_text
+                    or "source_state: sourceState.source_state" not in target_text
+                )
+            )
+        )
+        if source_state_helper_block and needs_source_state_exact_repair:
+            repair_hunks = []
+            if "return result.exit_code === 0 ? 'clean' : 'dirty';" in source_state_helper_block:
+                repair_hunks.append({
+                    "old_text": source_state_helper_block,
+                    "new_text": source_state_helper_new,
+                })
+            if dirty_return_old in target_text and dirty_return_new not in target_text:
+                repair_hunks.append({
+                    "old_text": dirty_return_old,
+                    "new_text": dirty_return_new,
+                })
+            if success_return_old in target_text and success_return_new not in target_text:
+                repair_hunks.append({
+                    "old_text": success_return_old,
+                    "new_text": success_return_new,
+                })
+            repair_patch_input = {
+                "path": "scripts/release-local-artifacts-all.mjs",
+                "operation": "patch_file",
+                "hunks": repair_hunks,
+            }
+            repair_feedback_lines.append("- semantic_predicate_failure: source-state metadata is inconsistent: `isSourceStateClean()` must return an object with `clean` and `source_state`, and orchestration output must record `source_state` on both dirty fail-closed and successful paths.")
+            repair_feedback_lines.append("- semantic_repair_action: patch only `scripts/release-local-artifacts-all.mjs`; do not patch `.brownie/todo.md`; do not change target command execution.")
+            repair_feedback_lines.append("- semantic_repair_next_tool: emit exactly one `workspace.write` request using `operation:\"patch_file\"` with the `hunks` array from `semantic_repair_patch_file_input_json`; do not use unified diff `content`, do not add already-applied hunks, do not request `workspace.read`, and do not patch `.brownie/todo.md`.")
+            repair_feedback_lines.append(f"- semantic_repair_patch_file_input_json: {json.dumps(repair_patch_input, ensure_ascii=False)}")
+            repair_feedback_lines.append(f"- semantic_repair_helper_old_text_json: {json.dumps(source_state_helper_block, ensure_ascii=False)}")
+            repair_feedback_lines.append(f"- semantic_repair_helper_new_text_json: {json.dumps(source_state_helper_new, ensure_ascii=False)}")
+            repair_feedback_lines.append(f"- semantic_repair_dirty_return_old_text_json: {json.dumps(dirty_return_old, ensure_ascii=False)}")
+            repair_feedback_lines.append(f"- semantic_repair_dirty_return_new_text_json: {json.dumps(dirty_return_new, ensure_ascii=False)}")
+            repair_feedback_lines.append(f"- semantic_repair_success_return_old_text_json: {json.dumps(success_return_old, ensure_ascii=False)}")
+            repair_feedback_lines.append(f"- semantic_repair_success_return_new_text_json: {json.dumps(success_return_new, ensure_ascii=False)}")
     previous_results = []
     for result_group in (verification.get("results", []), verification.get("previous_results", [])):
         if isinstance(result_group, list):
@@ -6683,6 +7027,7 @@ run_brownie_once() {
   local workspace_before workspace_after head_commit validation progress_summary progress_classification
   local release_contract_before release_contract_repair_output release_contract_repair_status
   local phase_value_manifest_before phase_value_manifest_repair_output phase_value_manifest_repair_status
+  local active_target_path active_target_snapshot active_target_syntax_output active_target_syntax_status
   local use_resume=0
   local CLAIM_CREATED_THIS_RUN=0
   started_at="$(now_utc)"
@@ -6743,7 +7088,7 @@ run_brownie_once() {
       detail="No implementable TODO remains; pending queue contains only explicit owner-controlled blocker TODOs. Phase-loop is stopped until owner/review evidence changes."
       printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
       write_status "blocked" "$detail" "owner-blockers-only-$run_stamp" "0" "${CONSECUTIVE_FAILURES:-0}"
-      return 0
+      return 65
     elif ensure_blocked_todo_decomposition_request && claim_first_pending_todo "$run_stamp"; then
       printf '%s blocked_todo_decomposition_request_created todo=%s breakdown=%s\n' "$(now_utc)" "$PHASE_LOOP_TODO" "$PHASE_LOOP_TODO_BREAKDOWN" >> "$SUPERVISOR_LOG"
     else
@@ -6814,6 +7159,15 @@ run_brownie_once() {
     record_stably_blocked_todo_claim "$run_stamp"
     write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"stably_blocked"}'
     return 0
+  fi
+  active_target_path="$(active_claim_patch_only_target 2>/dev/null || true)"
+  active_target_snapshot=""
+  if [ -n "$active_target_path" ] && [[ "$active_target_path" == *.mjs || "$active_target_path" == *.js ]]; then
+    if [ -f "$PHASE_LOOP_WORKSPACE_ROOT/$active_target_path" ]; then
+      active_target_snapshot="$RUN_DIR/$run_stamp.target.before"
+      cp "$PHASE_LOOP_WORKSPACE_ROOT/$active_target_path" "$active_target_snapshot"
+      chmod 600 "$active_target_snapshot" 2>/dev/null || true
+    fi
   fi
   local pre_guard_decomposition_fallback_output pre_guard_decomposition_fallback_status
   pre_guard_decomposition_fallback_output="$(try_stagnated_todo_decomposition_fallback "$run_stamp" 2>&1)"
@@ -7049,6 +7403,48 @@ run_brownie_once() {
     fi
   ) > "$stdout_log" 2> "$stderr_log"
   exit_code=$?
+  if [ -n "$active_target_path" ] && [ -n "$active_target_snapshot" ] && [ -f "$PHASE_LOOP_WORKSPACE_ROOT/$active_target_path" ]; then
+    active_target_syntax_output="$(
+      cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+      node --check "$active_target_path" 2>&1
+    )"
+    active_target_syntax_status=$?
+    if [ "$active_target_syntax_status" -ne 0 ]; then
+      cp "$active_target_snapshot" "$PHASE_LOOP_WORKSPACE_ROOT/$active_target_path"
+      workspace_after="$(git_workspace_fingerprint)"
+      local syntax_repair_feedback
+      syntax_repair_feedback="$(python3 - "$active_target_path" "$active_target_syntax_output" <<'PY'
+import json
+import sys
+
+target = sys.argv[1]
+syntax_output = sys.argv[2]
+print(json.dumps({
+    "completed": False,
+    "reason": "syntax_check_failed_target_restored",
+    "expected": f"{target} must pass node --check after workspace.write.",
+    "actual": syntax_output[-2000:],
+    "repair_hint": "The previous workspace.write produced invalid JavaScript. The supervisor restored the target file to its pre-run snapshot. Retry with a smaller exact patch that changes one complete function or one complete object literal. Do not append fragments after a closed function. Do not patch `.brownie/todo.md` for this syntax failure.",
+    "results": [{
+        "command": f"node --check {target}",
+        "exit_code": 1,
+        "stderr_tail": syntax_output[-2000:],
+        "stdout_tail": "",
+    }],
+}, sort_keys=True))
+PY
+)"
+      write_repair_feedback "$run_stamp" "$syntax_repair_feedback" "$stdout_log" "$stderr_log" || true
+      if active_todo_claim_exists; then
+        write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      fi
+      detail="Rejected syntax-breaking workspace mutation and restored $active_target_path from pre-run snapshot. syntax=$(printf '%s' "$active_target_syntax_output" | tail -c 1000) stdout=$stdout_log stderr=$stderr_log"
+      write_status "no_progress" "$detail" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-1}"
+      printf '%s run=%s syntax_breaking_target_restored=true target=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_stamp" "$active_target_path" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+      write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"syntax_breaking_target_restored"}'
+      return 76
+    fi
+  fi
   workspace_after="$(git_workspace_fingerprint)"
   phase_value_manifest_repair_output="$(json_target_parse_violation_repair "$phase_value_manifest_before" "$PHASE_LOOP_WORKSPACE_ROOT/docs/architecture/phase-value-manifest.json" "$run_stamp" "phase_value_manifest" 2>&1)"
   phase_value_manifest_repair_status=$?
@@ -7182,7 +7578,7 @@ PY
       return 0
     else
       write_bdk_trajectory_event "$run_stamp" "verification.run" "$verification_completion"
-      if printf '%s' "$verification_completion" | rg -q '"reason": ?"verification_failed"|"reason": ?"syntax_check_failed"|"reason": ?"semantic_completion_not_satisfied"|"reason": ?"semantic_completion_evidence_unreadable"'; then
+      if printf '%s' "$verification_completion" | rg -q '"reason": ?"verification_failed"|"reason": ?"syntax_check_failed"|"reason": ?"semantic_completion_not_satisfied"|"reason": ?"semantic_completion_evidence_unreadable"|"reason": ?"objective_apply_outside_selected_scope"'; then
         write_repair_feedback "$run_stamp" "$verification_completion" "$stdout_log" "$stderr_log" || true
         printf '%s run=%s repair_feedback_recorded=true verification=%s\n' "$(now_utc)" "$run_id" "$verification_completion" >> "$SUPERVISOR_LOG"
       fi
@@ -7508,6 +7904,11 @@ supervise() {
       fi
       interruptible_sleep "$PHASE_LOOP_INTERVAL_SECONDS" || true
     else
+      local run_status=$?
+      if [ "$run_status" -eq 65 ]; then
+        printf '%s owner_blockers_only observed; exiting supervisor\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
+        exit 0
+      fi
       CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
       backoff=$((PHASE_LOOP_FAILURE_BACKOFF_SECONDS * CONSECUTIVE_FAILURES))
       if [ "$backoff" -gt "$PHASE_LOOP_MAX_FAILURE_BACKOFF_SECONDS" ]; then

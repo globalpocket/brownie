@@ -2,7 +2,7 @@
   "schema_version": 1,
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
   "phase": "RRP-8.7",
-  "phase_title": "Owner Governance Evidence Gate",
+  "phase_title": "Release Evidence Gate",
   "repository": "globalpocket/brownie",
   "audited_main_commit": "4376c0a7412a40f328fb3ba64bca487bba35a80e",
   "runtime_release_ready": false,

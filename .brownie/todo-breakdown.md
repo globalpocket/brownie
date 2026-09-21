@@ -312,3 +312,70 @@ History:
 - 2026-09-15: Added E-16e/E-16f/E-16g after external review found the production semantic consistency guard, release document resync, and PR #435 hygiene closeout were still missing from the executable queue.
 - 2026-09-15: Added E-16a-artifact-source-local-producer-esm-helper-fix after real-operation testing found the completed local producer leaf had introduced `require` calls inside an ESM `.mjs` module.
 - 2026-09-19: Added BDK Agent Skills compatibility leaves after live phase-loop testing showed ad-hoc workflow branches were too narrow and should move toward public Agent Skills-compatible workflows wrapped by Brownie policy and guards.
+
+## E-17 executable release evidence queue
+
+Parent TODO: External d5478db Product Ready audit found `.brownie/todo.md` empty while executable Runtime Release evidence remained incomplete.
+
+Derived leaves:
+
+- E-17a-clean-source-state-helper
+- E-17a-source-state-helper-exit-code-fix
+- E-17a-dirty-source-refusal
+- E-17a-artifact-runner-source-state-result
+- E-17a-clean-artifact-source-binding
+- E-17b-e2e-artifact-smoke-runner
+- E-17c-artifact-lifecycle-runner
+- E-17d-stateful-soak-runner
+- E-17e-dependency-scan-failure-closure
+- E-17f-vsix-semantic-consistency-ci-binding
+- E-17g-release-contract-sync
+- E-17g-readiness-audit-sync
+- E-17g-phase-final-judgment-sync
+- E-17h-stale-pr-435-blocker
+
+Dependency graph:
+
+- E-17a-clean-source-state-helper: <none>
+- E-17a-source-state-helper-exit-code-fix: <none>
+- E-17a-dirty-source-refusal: E-17a-source-state-helper-exit-code-fix
+- E-17a-artifact-runner-source-state-result: E-17a-dirty-source-refusal
+- E-17a-clean-artifact-source-binding: E-17a-artifact-runner-source-state-result
+- E-17b-e2e-artifact-smoke-runner: E-17a-clean-artifact-source-binding
+- E-17c-artifact-lifecycle-runner: E-17b-e2e-artifact-smoke-runner
+- E-17d-stateful-soak-runner: E-17c-artifact-lifecycle-runner
+- E-17e-dependency-scan-failure-closure: E-17d-stateful-soak-runner
+- E-17f-vsix-semantic-consistency-ci-binding: E-17e-dependency-scan-failure-closure
+- E-17g-release-contract-sync: E-17f-vsix-semantic-consistency-ci-binding
+- E-17g-readiness-audit-sync: E-17g-release-contract-sync
+- E-17g-phase-final-judgment-sync: E-17g-readiness-audit-sync
+- E-17h-stale-pr-435-blocker: E-17g-phase-final-judgment-sync
+
+Verification ledger:
+
+- E-17a-clean-source-state-helper: `pnpm --workspace-root guard:local-release-targets`; `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`
+- E-17a-source-state-helper-exit-code-fix: `pnpm --workspace-root guard:local-release-targets`; `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`
+- E-17a-dirty-source-refusal: `pnpm --workspace-root guard:local-release-targets`; `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`
+- E-17a-artifact-runner-source-state-result: `pnpm --workspace-root guard:local-release-targets`; `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`
+- E-17a-clean-artifact-source-binding: `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`; `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-17b-e2e-artifact-smoke-runner: `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`; `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-17c-artifact-lifecycle-runner: `pnpm --workspace-root guard:runtime-operational-evidence:test`; `pnpm --workspace-root guard:runtime-operational-evidence`
+- E-17d-stateful-soak-runner: `pnpm --workspace-root guard:runtime-operational-evidence:test`; `pnpm --workspace-root guard:runtime-operational-evidence`
+- E-17e-dependency-scan-failure-closure: `pnpm --workspace-root release:dependency-security-license-audit:test`; `pnpm --workspace-root guard:dependency-security-license-audit`
+- E-17f-vsix-semantic-consistency-ci-binding: `pnpm --workspace-root guard:release-contract:test`; `pnpm --workspace-root guard:release-evidence-semantic-consistency:test`
+- E-17g-release-contract-sync: `pnpm --workspace-root guard:release-contract`
+- E-17g-readiness-audit-sync: `pnpm --workspace-root guard:runtime-release-readiness`
+- E-17g-phase-final-judgment-sync: `pnpm --workspace-root guard:phase-value`
+- E-17h-stale-pr-435-blocker: inspect GitHub PR #435 state and fail closed until globalpocket performs the closeout.
+
+Quality rubric:
+
+- E-17 leaves must repair executable evidence before extending BDK-only features.
+- Each implementation leaf must preserve sanitized evidence and fail-closed blockers rather than writing raw local paths or process output.
+- Documentation leaves may only sync the contract, audit, manifest, and final judgment after executable guard coverage exists.
+- PR #435 hygiene remains a release-ops blocker because the implementation actor must not review, close, approve, or merge pull requests.
+
+History:
+
+- 2026-09-21: Reopened the Product Ready Blocking Queue after the d5478db audit showed Runtime evidence incomplete but the queue empty, which would otherwise let the phase-loop stop prematurely.
+- 2026-09-21: Added E-17a-source-state-helper-exit-code-fix after live loop execution completed the helper leaf but used the nonexistent `exitCode` field instead of the existing `exit_code` result field.

@@ -47,6 +47,7 @@ function parseArgs(argv) {
   return options;
 }
 
+
 function readManifest(repoRoot, manifestPath) {
   const fullPath = resolveRepoRelative(repoRoot, manifestPath);
   if (!fs.existsSync(fullPath)) {
@@ -80,6 +81,14 @@ function run(command, args, options = {}) {
   };
 }
 
+function isSourceStateClean(repoRoot) {
+  const result = run('git', ['diff-index', '--quiet', 'HEAD', '--'], { cwd: repoRoot, timeoutMs: 30_000 });
+  const clean = result.exit_code === 0;
+  return {
+    clean,
+    source_state: clean ? 'clean' : 'dirty'
+  };
+}
 function posixQuote(value) {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -132,15 +141,30 @@ export function runLocalReleaseArtifactsAll(options = {}) {
     throw new Error(errors.join('\n'));
   }
 
-  const results = manifest.targets.map((target) => ({
-    target: target.id,
-    kind: target.kind,
-    required: target.required,
-    ...runTarget(repoRoot, target)
-  }));
+  const sourceState = isSourceStateClean(repoRoot);
+  if (!sourceState.clean) {
+    return {
+      manifest: manifestPath,
+      source_state: sourceState.source_state,
+      targets: [],
+      passed: false
+    };
+  }
+
+  const results = manifest.targets.map((target) => {
+    const targetResult = runTarget(repoRoot, target);
+    return {
+      target: target.id,
+      kind: target.kind,
+      required: target.required,
+      ...targetResult,
+      exit_code: targetResult.exit_code
+    };
+  });
   const failedRequired = results.filter((result) => result.required && !result.passed);
   return {
     manifest: fs.existsSync(resolveRepoRelative(repoRoot, manifestPath)) ? manifestPath : null,
+    source_state: sourceState.source_state,
     targets: results,
     passed: failedRequired.length === 0
   };

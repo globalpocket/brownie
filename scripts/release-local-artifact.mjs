@@ -227,8 +227,19 @@ export function buildLocalArtifact(options = {}) {
 
   const smokeResults = [
     smoke(repoRoot, artifactPath, ['--version']),
-    smoke(repoRoot, artifactPath, ['help', 'run'])
+    smoke(repoRoot, artifactPath, ['help', 'run']),
+    smoke(repoRoot, artifactPath, ['task', 'run', '--help']),
+    smoke(repoRoot, artifactPath, ['ledger', 'generate', '--help']),
+    smoke(repoRoot, artifactPath, ['stop', '--help']),
+    smoke(repoRoot, artifactPath, ['resume', '--help'])
   ];
+
+  // Validate smoke test results and reject raw stdout/stderr storage
+  for (const result of smokeResults) {
+    if (!result.passed) {
+      throw new Error(`Smoke test failed: ${result.command}\n${tailText(result.stderr || result.stdout)}`);
+    }
+  }
   const sourceCommit = sha256SourceCommit(repoRoot);
   const sourceCleanTree = sha256CleanTree(repoRoot);
   const sourceIdentity = sha256String(`${sourceCommit}:${sourceCleanTree}`);

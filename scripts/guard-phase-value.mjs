@@ -72,13 +72,82 @@ function normalizeRelativePath(relativePath) {
   return relativePath.split(path.sep).join('/').replace(/^\.\//, '');
 }
 
-function readJson(repoRoot, relativePath, errors) {
+function readJson(repoRoot, relativePath, errors, rawTextRef) {
   const filePath = path.join(repoRoot, relativePath);
   try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    const rawText = fs.readFileSync(filePath, 'utf8');
+    if (rawTextRef) {
+      rawTextRef.value = rawText;
+    }
+    return JSON.parse(rawText);
   } catch (error) {
     errors.push(`Failed to read JSON ${relativePath}: ${error.message}`);
     return {};
+  }
+}
+
+function readJsonString(jsonText, index) {
+  let result = '';
+  let cursor = index + 1;
+  while (cursor < jsonText.length) {
+    const character = jsonText[cursor];
+    if (character === '\\') {
+      result += character;
+      cursor += 2;
+      continue;
+    }
+    if (character === '"') {
+      return { value: result, end: cursor + 1 };
+    }
+    result += character;
+    cursor += 1;
+  }
+  return undefined;
+}
+
+function validateNoDuplicateTopLevelKeys(jsonText, manifestPath, errors) {
+  if (!isNonEmptyString(jsonText)) {
+    return;
+  }
+
+  const seenKeys = new Set();
+  const duplicateKeys = new Set();
+  let depth = 0;
+  let cursor = 0;
+
+  while (cursor < jsonText.length) {
+    const character = jsonText[cursor];
+    if (character === '"') {
+      const parsed = readJsonString(jsonText, cursor);
+      if (!parsed) {
+        return;
+      }
+
+      let lookahead = parsed.end;
+      while (/\s/.test(jsonText[lookahead] ?? '')) {
+        lookahead += 1;
+      }
+      if (depth === 1 && jsonText[lookahead] === ':') {
+        if (seenKeys.has(parsed.value)) {
+          duplicateKeys.add(parsed.value);
+        }
+        seenKeys.add(parsed.value);
+      }
+
+      cursor = parsed.end;
+      continue;
+    }
+
+    if (character === '{' || character === '[') {
+      depth += 1;
+    } else if (character === '}' || character === ']') {
+      depth -= 1;
+    }
+    cursor += 1;
+  }
+
+  for (const duplicateKey of duplicateKeys) {
+    errors.push(`${manifestPath} must not define duplicate top-level key ${duplicateKey}.`);
   }
 }
 
@@ -290,8 +359,11 @@ export function runPhaseValueGuard(options = {}) {
   const repoRoot = options.repoRoot ?? defaultRepoRoot;
   const manifestPath = options.manifestPath ?? process.env.BROWNIE_PHASE_VALUE_MANIFEST ?? defaultManifestPath;
   const errors = [];
-  const manifest = options.manifest ?? readJson(repoRoot, manifestPath, errors);
+  const rawTextRef = {};
+  const manifest = options.manifest ?? readJson(repoRoot, manifestPath, errors, rawTextRef);
+  const manifestRawText = options.manifestRawText ?? rawTextRef.value;
   const changedFiles = detectChangedFiles({ repoRoot, env: options.env, changedFiles: options.changedFiles });
+  validateNoDuplicateTopLevelKeys(manifestRawText, manifestPath, errors);
   errors.push(...validatePhaseValueManifest(manifest, { manifestPath, changedFiles }));
   return { errors, manifestPath, changedFiles };
 }
