@@ -38,6 +38,13 @@ function extractArtifactSourceIdentity(evidence) {
   return match ? match[1] : 'unknown';
 }
 
+function bindSourceIdentityToArtifact(artifact, sourceIdentity) {
+  if (!sourceIdentity || sourceIdentity === 'unknown') {
+    return { ...artifact, source_identity: 'unknown', source_binding_valid: false };
+  }
+  return { ...artifact, source_identity: sourceIdentity, source_binding_valid: true };
+}
+
 const secretPatterns = [
   {
     id: 'github_token',

@@ -203,26 +203,39 @@ export function writeDependencySecurityLicenseAudit(options = {}) {
   return { audit, outPath };
 }
 
+function redactSensitivePaths(value) {
+  if (typeof value === 'string') {
+    return value.replace(/(\/Users\/[^\/]+|\/home\/[^\/]+|C:\\Users\\[^\\]+)/g, '/home/user');
+  }
+  if (Array.isArray(value)) {
+    return value.map(redactSensitivePaths);
+  }
+  if (value && typeof value === 'object') {
+    const redacted = {};
+    for (const [key, val] of Object.entries(value)) {
+      redacted[key] = redactSensitivePaths(val);
+    }
+    return redacted;
+  }
+  return value;
+}
+
 if (isMainModule()) {
   try {
     const options = parseArgs(process.argv.slice(2));
     const result = writeDependencySecurityLicenseAudit(options);
-    process.stdout.write(
-      `${JSON.stringify(
-        {
-          path: result.outPath,
-          mandatory_gate_passed: result.audit.mandatory_gate_passed,
-          fail_closed_reasons: result.audit.fail_closed_reasons
-        },
-        null,
-        2
-      )}\n`
-    );
+    const output = {
+      path: result.outPath,
+      mandatory_gate_passed: result.audit.mandatory_gate_passed,
+      fail_closed_reasons: result.audit.fail_closed_reasons.map(redactSensitivePaths)
+    };
+    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
     if (result.audit.mandatory_gate_passed !== true) {
       process.exit(1);
     }
   } catch (error) {
-    console.error(`Dependency/security/license audit failed: ${error.message}`);
+    const redactedMessage = redactSensitivePaths(error.message);
+    console.error(`Dependency/security/license audit failed: ${redactedMessage}`);
     process.exit(1);
   }
 }

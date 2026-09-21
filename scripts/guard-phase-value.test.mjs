@@ -100,6 +100,31 @@ test('requires explicit review metadata when guard engine files change', () => {
   });
 });
 
+test('rejects duplicate top-level manifest keys before JSON last-key-wins semantics hide them', () => {
+  withTempRepo((repoRoot) => {
+    const manifest = validManifest({
+      guard_engine_change_review: {
+        required: true,
+        strict_review_required: true,
+        no_self_approval: true,
+        review_intent: 'Exercise stricter review for guard engine changes.',
+        changed_files: ['scripts/guard-phase-value.mjs']
+      }
+    });
+    const manifestText = JSON.stringify(manifest, null, 2).replace(
+      '  "phase": "X1.1",',
+      '  "phase": "X1.1",\n  "guard_engine_change_review": {"changed_files": ["scripts/guard-phase-value.mjs"]},'
+    );
+    writeFileSync(path.join(repoRoot, 'docs/architecture/phase-value-manifest.json'), `${manifestText}\n`);
+
+    const result = runPhaseValueGuard({
+      repoRoot,
+      changedFiles: ['scripts/guard-phase-value.mjs']
+    });
+    assert(result.errors.some((error) => error.includes('must not define duplicate top-level key guard_engine_change_review')));
+  });
+});
+
 test('treats control-plane authority guard changes as guard engine changes', () => {
   withTempRepo((repoRoot) => {
     writeManifest(repoRoot, validManifest());

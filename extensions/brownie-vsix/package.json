@@ -15,6 +15,10 @@
   "activationEvents": [
     "onStartupFinished"
   ],
+  "scripts": {
+    "guard:release-contract:test": "node scripts/guard-release-contract.mjs test",
+    "guard:release-evidence-semantic-consistency:test": "node scripts/guard-release-contract.mjs semantic-consistency"
+  },
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
