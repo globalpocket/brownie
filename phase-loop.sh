@@ -21,6 +21,8 @@ BDK_TRAJECTORY_FILE="${PHASE_LOOP_BDK_TRAJECTORY_FILE:-"$STATE_DIR/bdk-trajector
 BDK_HARNESS_FEEDBACK_FILE="$STATE_DIR/bdk-harness-feedback.json"
 LAUNCHD_LABEL="${PHASE_LOOP_LAUNCHD_LABEL:-globalpocket.brownie.phase-loop}"
 SCREEN_NAME="${PHASE_LOOP_SCREEN_NAME:-brownie-phase-loop}"
+PHASE_LOOP_COMPLETED_TODO_REMOVAL_REVERTED=0
+PHASE_LOOP_COMPLETED_TODO_REMOVAL_REVERTED_DETAIL=""
 
 BROWNIE_BIN="${BROWNIE_BIN:-"$ROOT_DIR/target/debug/brownie"}"
 PHASE_LOOP_DEFAULT_BROWNIE_BIN="$ROOT_DIR/target/debug/brownie"
@@ -206,6 +208,16 @@ write_status() {
   local run_id="${3:-}"
   local exit_code="${4:-}"
   local consecutive_failures="${5:-0}"
+  local force_status_exit_code=""
+  if [ "${PHASE_LOOP_COMPLETED_TODO_REMOVAL_REVERTED:-0}" = "1" ] && [ "$status" = "last_run_succeeded" ]; then
+    status="no_progress"
+    detail="Completed TODO removal was reverted because the resulting TODO queue failed guard validation; keeping the active claim in_progress. guard=${PHASE_LOOP_COMPLETED_TODO_REMOVAL_REVERTED_DETAIL:-unknown} previous_success_detail=$detail"
+    exit_code="76"
+    force_status_exit_code="76"
+    if [ "$consecutive_failures" = "0" ]; then
+      consecutive_failures="${CONSECUTIVE_FAILURES:-1}"
+    fi
+  fi
   local timestamp
   timestamp="$(now_utc)"
   local escaped_detail escaped_run escaped_prompt tmp_status
@@ -248,6 +260,9 @@ write_status() {
 }
 EOF
   mv "$tmp_status" "$STATUS_FILE"
+  if [ -n "$force_status_exit_code" ]; then
+    exit "$force_status_exit_code"
+  fi
 }
 
 sync_parent_dir() {
@@ -1029,6 +1044,9 @@ remove_completed_todo_claim_from_queue() {
   if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$PHASE_LOOP_TODO" ]; then
     return 0
   fi
+  local todo_backup todo_guard_path todo_guard_output
+  todo_backup="$(mktemp "${TMPDIR:-/tmp}/brownie-todo-before-complete.XXXXXX")"
+  cp "$PHASE_LOOP_TODO" "$todo_backup"
   python3 - "$TODO_CLAIM_FILE" "$PHASE_LOOP_TODO" "$run_stamp" "$(now_utc)" <<'PY'
 import json
 import os
@@ -1083,6 +1101,44 @@ print(json.dumps({
     "run_stamp": run_stamp,
     "selected_todo_first_line": first_line,
 }, ensure_ascii=False, sort_keys=True))
+PY
+  todo_guard_path="$(
+    python3 - "$PHASE_LOOP_WORKSPACE_ROOT" "$PHASE_LOOP_TODO" <<'PY'
+import pathlib
+import sys
+
+workspace = pathlib.Path(sys.argv[1]).resolve()
+todo = pathlib.Path(sys.argv[2]).resolve()
+try:
+    relative = todo.relative_to(workspace)
+except ValueError:
+    raise SystemExit(1)
+print(relative.as_posix())
+PY
+  )" || todo_guard_path=""
+  if [ -n "$todo_guard_path" ] && [ -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/guard-todo-decomposition.mjs" ]; then
+    if ! todo_guard_output="$(
+      cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+      node scripts/guard-todo-decomposition.mjs "$todo_guard_path" 2>&1
+    )"; then
+      cp "$todo_backup" "$PHASE_LOOP_TODO"
+      write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      PHASE_LOOP_COMPLETED_TODO_REMOVAL_REVERTED=1
+      PHASE_LOOP_COMPLETED_TODO_REMOVAL_REVERTED_DETAIL="$todo_guard_output"
+      printf '%s run=%s completed_todo_removal_reverted=true guard=%s\n' "$(now_utc)" "$run_stamp" "$todo_guard_output" >> "$SUPERVISOR_LOG"
+      python3 - "$todo_backup" <<'PY'
+import pathlib
+import sys
+pathlib.Path(sys.argv[1]).unlink(missing_ok=True)
+PY
+      return 76
+    fi
+    printf '%s run=%s completed_todo_removal_guard_passed=true guard=%s\n' "$(now_utc)" "$run_stamp" "$todo_guard_output" >> "$SUPERVISOR_LOG"
+  fi
+  python3 - "$todo_backup" <<'PY'
+import pathlib
+import sys
+pathlib.Path(sys.argv[1]).unlink(missing_ok=True)
 PY
 }
 

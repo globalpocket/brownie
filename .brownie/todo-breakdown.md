@@ -431,3 +431,32 @@ Quality rubric:
 History:
 
 - 2026-09-21: Reopened Product Ready Blocking Queue after review of 9e2239b found `.brownie/todo.md` empty while Product Ready was false and release evidence blockers remained.
+
+## E-19 empty queue completion guard follow-up
+
+Parent TODO: Empty queue regression follow-up after live phase-loop completed E-18h/E-18i, removed the last queue entries, and stopped while Runtime Product Ready was still false and release blockers remained.
+
+Derived leaves:
+
+- E-19a-prevent-empty-queue-completion
+- E-19b-refresh-owner-governance-evidence-after-stable-ci
+
+Dependency graph:
+
+- E-19a-prevent-empty-queue-completion: E-18i-release-doc-authority-sync
+- E-19b-refresh-owner-governance-evidence-after-stable-ci: E-19a-prevent-empty-queue-completion
+
+Verification ledger:
+
+- E-19a-prevent-empty-queue-completion: `pnpm --workspace-root phase-loop:claim-smoke`; `pnpm --workspace-root guard:todo-decomposition:test`; `pnpm --workspace-root guard:todo-decomposition`
+- E-19b-refresh-owner-governance-evidence-after-stable-ci: inspect latest main CI completion and fail-closed owner governance evidence; keep the blocker when GitHub checks are pending or unavailable.
+
+Quality rubric:
+
+- E-19a must prevent completion cleanup from producing a guard-invalid TODO queue instead of weakening the TODO guard.
+- E-19b must remain release-ops and must not use local implementation commands as its verification contract.
+- Both leaves must keep Runtime Product Ready and Runtime Release Ready false until executable release evidence is complete.
+
+History:
+
+- 2026-09-22: Added after the live loop stopped on an empty queue while Product Ready was still false, proving E-18c needed an enforcement point in completion cleanup as well as standalone guard coverage.

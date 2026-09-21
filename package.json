@@ -59,6 +59,7 @@
     "guard:tool-intent-contract": "node scripts/guard-tool-intent-contract.mjs",
     "guard:tool-intent-contract:test": "node --test scripts/guard-tool-intent-contract.test.mjs",
     "phase-loop:todo-evaluator:test": "node --test scripts/phase-loop-todo-evaluator.test.mjs",
+    "phase-loop:claim-smoke": "bash scripts/phase-loop-claim-smoke.test.sh",
     "phase-loop:binary-freshness": "./phase-loop.sh check-binary-freshness",
     "phase-loop:decomposition-adversarial-real-llm": "node scripts/phase-loop-decomposition-adversarial-real-llm.mjs",
     "phase-loop:implementation-preflight": "node scripts/phase-loop-actor-preflight.mjs --role implementation",

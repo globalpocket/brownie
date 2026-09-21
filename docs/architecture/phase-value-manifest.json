@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "phase": "RRP-8.7",
-  "title": "Owner Governance Evidence Gate - RRP-8.7",
+  "phase": "RRP-8.7-E-18",
+  "title": "Owner Governance Evidence Gate - RRP-8.7-E-18",
   "date": "2026-09-20",
   "current_milestone": "runtime-release-readiness-p0-p1-finite-closure",
   "milestone": "Brownie Runtime Release Readiness",
