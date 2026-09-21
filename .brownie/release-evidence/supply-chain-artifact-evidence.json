@@ -3,8 +3,8 @@
   "evidence_id": "brownie-supply-chain-artifact-evidence-v1",
   "phase": "RRP-8.4",
   "repository": "globalpocket/brownie",
-  "generated_at": "2026-09-21T14:56:30.519Z",
-  "source_commit": "12fdddf5d2cf38145181e66b076b5270fe1bdc9a",
+  "generated_at": "2026-09-21T15:06:49.790Z",
+  "source_commit": "dcb08afcf359e161ba7fba5cadf146cb0c43ea54",
   "source_tree_dirty": false,
   "release_ready": false,
   "runtime_release_ready": false,
@@ -77,7 +77,7 @@
       "status": "satisfied",
       "release_blocking": true,
       "path": ".brownie/release-evidence/brownie-runtime-sbom.json",
-      "sha256": "sha256:d4fedc536de4434c8739adf69191b9b6e5f21718b6cf8df7d200e01755bd7804",
+      "sha256": "sha256:fa12c7529f699ddb8c61b6a9187ec095297756e2a3fb9161ee5aaa8e00489060",
       "component_count": 221
     },
     "artifacts": {
@@ -394,15 +394,15 @@
       "status": "satisfied",
       "release_blocking": true,
       "path": ".brownie/release-evidence/SHA256SUMS",
-      "sha256": "sha256:8c7bb9c1ece7f9ff2968b223cc0026b058d1c9df6af81842984c7d7054b7a816",
+      "sha256": "sha256:ebdee78ba8ec58da1d59355dc3dfa80eec5d8a82f7a324b770de87845321a7b2",
       "entries": [
         {
           "path": ".brownie/release-evidence/brownie-runtime-sbom.json",
-          "sha256": "sha256:d4fedc536de4434c8739adf69191b9b6e5f21718b6cf8df7d200e01755bd7804"
+          "sha256": "sha256:fa12c7529f699ddb8c61b6a9187ec095297756e2a3fb9161ee5aaa8e00489060"
         },
         {
           "path": ".brownie/release-evidence/brownie-runtime-provenance.json",
-          "sha256": "sha256:c86487c7aadfa14c6aee20f63b712667e8ff9f2be2f9f6a16c39aeeceed0b17a"
+          "sha256": "sha256:c79515c8d2809fd41e2426c16ce9973d13fc5ce02e97b9dc20990005f50e3389"
         },
         {
           "path": ".brownie/release-evidence/artifacts/darwin-arm64/brownie",
@@ -433,7 +433,7 @@
       "status": "satisfied",
       "release_blocking": true,
       "path": ".brownie/release-evidence/brownie-runtime-provenance.json",
-      "sha256": "sha256:c86487c7aadfa14c6aee20f63b712667e8ff9f2be2f9f6a16c39aeeceed0b17a"
+      "sha256": "sha256:c79515c8d2809fd41e2426c16ce9973d13fc5ce02e97b9dc20990005f50e3389"
     }
   },
   "fail_closed_reasons": [
