@@ -98,7 +98,7 @@ Current synchronization note:
   Depends on: E-18f-connect-stateful-soak-flow.
   Completion condition: integrated evidence files reflect the current commit and no longer contradict the dependency audit, artifact source identity, artifact smoke, lifecycle, or stateful soak collector results.
   Forbidden changes: do not hand-edit evidence into a satisfied state and do not store forbidden local paths or raw process output.
-  Verification: run `pnpm --workspace-root release:supply-chain-artifact-evidence` and `pnpm --workspace-root release:runtime-operational-evidence`.
+  Verification: run `pnpm --workspace-root release:supply-chain-artifact-evidence`, `pnpm --workspace-root release:runtime-operational-evidence:failclosed-ok`, `pnpm --workspace-root guard:supply-chain-artifact-evidence`, and `pnpm --workspace-root guard:runtime-operational-evidence`.
 
 - [ ] E-18h-bind-release-contract-to-current-evidence: Patch only `docs/architecture/runtime-release-contract.json` and `docs/architecture/runtime-release-readiness-audit.json` to bind current tested commit, workflow run, artifact SHA, and evidence hashes after E-18 evidence regeneration:
   Route: documentation.
