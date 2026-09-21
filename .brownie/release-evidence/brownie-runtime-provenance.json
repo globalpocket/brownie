@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "provenance_id": "brownie-runtime-local-provenance-v1",
-  "source_commit": "12fdddf5d2cf38145181e66b076b5270fe1bdc9a",
+  "source_commit": "dcb08afcf359e161ba7fba5cadf146cb0c43ea54",
   "source_tree_dirty": false,
   "workflow_run_id": null,
-  "generated_at": "2026-09-21T14:56:30.519Z",
+  "generated_at": "2026-09-21T15:06:49.790Z",
   "sbom_path": ".brownie/release-evidence/brownie-runtime-sbom.json",
   "artifact_paths": [
     ".brownie/release-evidence/artifacts/darwin-arm64/brownie",

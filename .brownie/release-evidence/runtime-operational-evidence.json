@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "evidence_id": "brownie-runtime-operational-evidence-v1",
-  "generated_at": "2026-09-21T14:56:33.352Z",
+  "generated_at": "2026-09-21T15:06:52.652Z",
   "repository": "globalpocket/brownie",
   "release_ready": false,
   "runtime_release_ready": false,
@@ -38,7 +38,7 @@
                   "command_summary": {
                     "kind": "command_summary",
                     "word_count": 2,
-                    "sha256": "a0fc35d878cc9ddcecb2c8b510b1d2040999d9e25b5d012ec6fc83117b953346"
+                    "sha256": "fc8a9b989d8c81ced439ee543f90382a163b89df02fa7bf7ee8a86114cc94561"
                   },
                   "exit_code": 0,
                   "signal": null,
@@ -60,7 +60,7 @@
                   "command_summary": {
                     "kind": "command_summary",
                     "word_count": 3,
-                    "sha256": "407598e14d064c7a68dccc8b77cd3fa1ad6c04ff1520edfbfc495ec71d60e911"
+                    "sha256": "a73b9a067d051d6a46e89a9d3e159dab75690e5aa8d74e80c39bd4537d0292a1"
                   },
                   "exit_code": 0,
                   "signal": null,
@@ -86,7 +86,7 @@
               "command_summary": {
                 "kind": "command_summary",
                 "word_count": 2,
-                "sha256": "a0fc35d878cc9ddcecb2c8b510b1d2040999d9e25b5d012ec6fc83117b953346"
+                "sha256": "fc8a9b989d8c81ced439ee543f90382a163b89df02fa7bf7ee8a86114cc94561"
               },
               "exit_code": 0,
               "signal": null,
@@ -108,7 +108,7 @@
               "command_summary": {
                 "kind": "command_summary",
                 "word_count": 3,
-                "sha256": "407598e14d064c7a68dccc8b77cd3fa1ad6c04ff1520edfbfc495ec71d60e911"
+                "sha256": "a73b9a067d051d6a46e89a9d3e159dab75690e5aa8d74e80c39bd4537d0292a1"
               },
               "exit_code": 0,
               "signal": null,
@@ -246,7 +246,7 @@
               "command_summary": {
                 "kind": "command_summary",
                 "word_count": 2,
-                "sha256": "c6b22bf0c43a81cd3a551ca59bd5227e3a7062a545bf26024ee5044edfaf0bfb"
+                "sha256": "c50d6c6e333cb40b8b1e8f3dd73510a4493fe2d320ce32a95ab996b628c2e6d6"
               },
               "exit_code": 0,
               "signal": null,
@@ -268,7 +268,7 @@
               "command_summary": {
                 "kind": "command_summary",
                 "word_count": 3,
-                "sha256": "34ba3058f9a9ee393c2d59f94262e983c7a9a9b3c35b1bdf781a7f50ca4b6818"
+                "sha256": "0678e775edf8ac545c09a6a12d537b3deda13252dbeeb76c2a93b68912b917b6"
               },
               "exit_code": 0,
               "signal": null,
@@ -291,7 +291,7 @@
       ]
     },
     "golden_journey_fixture": {
-      "status": "satisfied",
+      "status": "failed",
       "release_blocking": true,
       "fixture_path": ".brownie/release-evidence/golden-journey-fixture",
       "lifecycle_evidence": {
@@ -299,7 +299,7 @@
         "proposal_preflight_observed": true,
         "apply_observed": true,
         "post_apply_verification_observed": true,
-        "workspace_mutation_observed": true,
+        "workspace_mutation_observed": false,
         "completion_observed": true
       },
       "commands": [
@@ -360,7 +360,7 @@
             "kind": "process_output_summary",
             "byte_length": 3165,
             "line_count": 1,
-            "sha256": "944b68d397944e3b5d7cb34c3eb399fd2395b29e0eba5ad6fa3a71ff410e627e"
+            "sha256": "d70615fc4f08e7acc361daf717fc8bee27174cdeb523d80dd8f620bafb466d69"
           },
           "stderr_summary": {
             "kind": "process_output_summary",
@@ -382,7 +382,7 @@
             "kind": "process_output_summary",
             "byte_length": 1589,
             "line_count": 1,
-            "sha256": "e3bbc8be2dff4b83b342a5f6c2f2aaca1dc88a941f5b345cb54fa216cb779269"
+            "sha256": "4e6739baf8f8d87b39379950a10c02725cfb73ac614609b51eac87cbcdceb8eb"
           },
           "stderr_summary": {
             "kind": "process_output_summary",
@@ -2639,6 +2639,7 @@
   },
   "fail_closed_reasons": [
     "artifact_lifecycle:failed",
+    "golden_journey_fixture:failed",
     "soak_test:not_executed"
   ]
 }
