@@ -92,14 +92,6 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-19a-prevent-empty-queue-completion: Patch only `phase-loop.sh` so completed TODO removal is reverted when the resulting `.brownie/todo.md` fails the decomposition guard:
-  Route: implementation.
-  Source TODO: empty-queue-regression-follow-up-2026-09-22.
-  Depends on: E-18i-release-doc-authority-sync.
-  Completion condition: release blocker queues cannot become empty while Product Ready is false; attempted completion removal is reverted and the durable claim remains in_progress when the guard rejects the resulting queue.
-  Forbidden changes: do not weaken `scripts/guard-todo-decomposition.mjs`, do not declare Runtime Product Ready or Runtime Release Ready, and do not remove remaining release blocker TODOs.
-  Verification: run `pnpm --workspace-root phase-loop:claim-smoke`, `pnpm --workspace-root guard:todo-decomposition:test`, and `pnpm --workspace-root guard:todo-decomposition`.
-
 - [ ] E-19b-refresh-owner-governance-evidence-after-stable-ci: Patch only `.brownie/release-evidence/owner-governance-evidence.json` after latest main CI is complete and stable, so owner governance evidence does not capture in-progress GitHub checks as failed release evidence:
   Route: release-ops.
   Source TODO: empty-queue-regression-follow-up-2026-09-22.
