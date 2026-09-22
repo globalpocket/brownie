@@ -2137,7 +2137,17 @@ for relative_path in sorted(allowed_paths):
             raise SystemExit(1)
         if remote_ci:
             missing = remote_ci.get("missing_or_failed_required_check_names")
-            if remote_ci.get("workflow_conclusion") == "success" and isinstance(missing, list) and missing:
+            workflow_conclusion = remote_ci.get("workflow_conclusion")
+            if workflow_conclusion != "success":
+                print(json.dumps({
+                    "completed": False,
+                    "reason": "remote_ci_not_complete",
+                    "path": relative_path,
+                    "workflow_conclusion": workflow_conclusion,
+                    "missing": missing,
+                }, sort_keys=True))
+                raise SystemExit(1)
+            if isinstance(missing, list) and missing:
                 print(json.dumps({"completed": False, "reason": "successful_ci_with_missing_checks", "path": relative_path, "missing": missing}, sort_keys=True))
                 raise SystemExit(1)
         json_summaries[relative_path] = {
