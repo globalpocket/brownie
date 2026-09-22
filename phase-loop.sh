@@ -1920,6 +1920,35 @@ elif selected_id == "e-17g-phase-final-judgment-sync":
     if not all(semantic_checks.values()):
         print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
         raise SystemExit(1)
+elif selected_id == "e-19a-prevent-empty-queue-completion":
+    phase_loop_path = workspace_root / "phase-loop.sh"
+    package_path = workspace_root / "package.json"
+    vsix_package_path = workspace_root / "extensions/brownie-vsix/package.json"
+    smoke_path = workspace_root / "scripts/phase-loop-claim-smoke.test.sh"
+    try:
+        phase_loop_text = phase_loop_path.read_text(encoding="utf-8")
+        package_json = json.loads(package_path.read_text(encoding="utf-8"))
+        vsix_package_json = json.loads(vsix_package_path.read_text(encoding="utf-8"))
+        smoke_text = smoke_path.read_text(encoding="utf-8")
+    except Exception as error:
+        print(json.dumps({"completed": False, "reason": f"semantic_noop_verification_unreadable:{error}"}, sort_keys=True))
+        raise SystemExit(1)
+    scripts = package_json.get("scripts", {})
+    vsix_check = str(vsix_package_json.get("scripts", {}).get("check", ""))
+    semantic_checks = {
+        "todo_removal_backup_present": "todo_backup=\"$(mktemp" in phase_loop_text and "cp \"$PHASE_LOOP_TODO\" \"$todo_backup\"" in phase_loop_text,
+        "todo_decomposition_guard_runs_after_completion_removal": "node scripts/guard-todo-decomposition.mjs \"$todo_guard_path\"" in phase_loop_text,
+        "todo_removal_reverts_live_queue": "completed_todo_removal_reverted=true" in phase_loop_text and "cp \"$todo_backup\" \"$PHASE_LOOP_TODO\"" in phase_loop_text,
+        "claim_restored_to_in_progress": "write_todo_claim \"$(claim_field claim_id)\" \"in_progress\"" in phase_loop_text,
+        "success_status_forced_to_no_progress": "PHASE_LOOP_COMPLETED_TODO_REMOVAL_REVERTED" in phase_loop_text and "status=\"no_progress\"" in phase_loop_text and "force_status_exit_code=\"76\"" in phase_loop_text,
+        "claim_smoke_package_script_present": scripts.get("phase-loop:claim-smoke") == "bash scripts/phase-loop-claim-smoke.test.sh",
+        "vsix_check_runs_claim_smoke": "pnpm --workspace-root phase-loop:claim-smoke" in vsix_check,
+        "smoke_covers_empty_queue_revert": "E-empty-queue-exact" in smoke_text and "completed_todo_removal_reverted=true" in smoke_text and "test \"$empty_queue_guard_exit\" = \"76\"" in smoke_text,
+        "smoke_has_rg_fallback_for_ci": "if ! command -v rg" in smoke_text and "grep -E" in smoke_text,
+    }
+    if not all(semantic_checks.values()):
+        print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
+        raise SystemExit(1)
 
 # Do not complete a still-pending implementation TODO just because its
 # verification command is already green. Many Brownie TODOs add coverage to
@@ -1942,6 +1971,7 @@ if (
     and selected_id != "e-16e-semantic-consistency-guard-wiring"
     and selected_id != "e-17a-artifact-runner-source-state-result"
     and selected_id != "e-17g-phase-final-judgment-sync"
+    and selected_id != "e-19a-prevent-empty-queue-completion"
 ):
     raise SystemExit(2)
 
