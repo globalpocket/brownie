@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "evidence_id": "brownie-owner-governance-evidence-v1",
-  "generated_at": "2026-09-22T01:39:37.677Z",
+  "generated_at": "2026-09-22T09:40:58.637Z",
   "repository": "globalpocket/brownie",
-  "source_commit": "f69c47f67a3f81ea8a153009f1199d669cce152d",
+  "source_commit": "3ddf7a27093738567283b41a21d343713fd96432",
   "release_ready": false,
   "runtime_release_ready": false,
   "required_sections": [
@@ -17,19 +17,18 @@
   ],
   "sections": {
     "branch_protection": {
-      "status": "satisfied",
+      "status": "github_api_unavailable",
       "release_blocking": true,
       "checked_via": "gh api branches/main/protection",
-      "required_pull_request_reviews_present": true,
-      "enforce_admins_enabled": true
+      "github_cli_available": true,
+      "github_cli_authorized": true
     },
     "required_status_checks": {
-      "status": "satisfied",
+      "status": "github_api_unavailable",
       "release_blocking": true,
       "checked_via": "gh api branches/main/protection",
-      "strict": true,
-      "required_context_count": 2,
-      "required_app_check_count": 2
+      "github_cli_available": true,
+      "github_cli_authorized": true
     },
     "protected_tag_policy": {
       "status": "satisfied",
@@ -45,8 +44,8 @@
       "workflow_run_id_present": true,
       "workflow_sha_present": true,
       "workflow_repository_present": true,
-      "workflow_run_id": "35633368431",
-      "workflow_head_sha": "f69c47f67a3f81ea8a153009f1199d669cce152d",
+      "workflow_run_id": "35710957045",
+      "workflow_head_sha": "3ddf7a27093738567283b41a21d343713fd96432",
       "workflow_conclusion": "success",
       "required_check_names": [
         "check",
@@ -165,5 +164,8 @@
       "note": "License and publish posture are owner decisions; Runtime automation only records whether the decision evidence exists."
     }
   },
-  "fail_closed_reasons": []
+  "fail_closed_reasons": [
+    "branch_protection:github_api_unavailable",
+    "required_status_checks:github_api_unavailable"
+  ]
 }
