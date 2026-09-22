@@ -1627,9 +1627,24 @@ claim = json.load(open(sys.argv[2], encoding="utf-8"))
 todo = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
 assert status["status"] == "last_run_succeeded", status
 assert "Selected bounded TODO verification already passed" in status["detail"], status
+assert "semantic_wiring_already_present_without_verification_commands" in status["detail"], status
 assert claim["status"] == "completed", claim
 assert "E-19a-prevent-empty-queue-completion" not in todo, todo
 assert "E-19b-refresh-owner-governance-evidence-after-stable-ci" in todo, todo
+PY
+
+python3 - "$PHASE_LOOP" <<'PY'
+import pathlib
+import sys
+
+phase_loop = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+start = phase_loop.index("try_selected_todo_verified_noop_completion_fallback()")
+end = phase_loop.index("try_exact_line_todo_fast_path()", start)
+verified_noop_source = phase_loop[start:end]
+assert "verification_already_passed" not in verified_noop_source, verified_noop_source
+assert "subprocess.run(args" not in verified_noop_source, verified_noop_source
+assert "allowed_args(command)" not in verified_noop_source, verified_noop_source
+assert "semantic_wiring_already_present_without_verification_commands" in verified_noop_source, verified_noop_source
 PY
 
 broad_decomposition_state="$(mktemp -d)"

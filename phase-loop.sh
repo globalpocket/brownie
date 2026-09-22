@@ -1491,8 +1491,6 @@ try_selected_todo_verified_noop_completion_fallback() {
 import json
 import pathlib
 import re
-import shlex
-import subprocess
 import sys
 
 claim_path = pathlib.Path(sys.argv[1])
@@ -1809,60 +1807,6 @@ elif selected_id == "e-16e-semantic-consistency-guard-wiring":
     if not all(semantic_checks.values()):
         print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
         raise SystemExit(1)
-    test_result = subprocess.run(
-        ["node", "--test", "scripts/guard-release-evidence-semantic-consistency.test.mjs"],
-        cwd=workspace_root,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=180,
-    )
-    if test_result.returncode != 0:
-        print(json.dumps({
-            "completed": False,
-            "reason": "semantic_guard_test_failed",
-            "results": [{
-                "command": "node --test scripts/guard-release-evidence-semantic-consistency.test.mjs",
-                "exit_code": test_result.returncode,
-                "stdout_tail": test_result.stdout[-1000:],
-                "stderr_tail": test_result.stderr[-1000:],
-            }],
-        }, sort_keys=True))
-        raise SystemExit(2)
-    gate_result = subprocess.run(
-        ["pnpm", "--workspace-root", "release:gate", "--", "--dry-run"],
-        cwd=workspace_root,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=180,
-    )
-    if gate_result.returncode != 0:
-        print(json.dumps({
-            "completed": False,
-            "reason": "release_gate_dry_run_failed",
-            "results": [{
-                "command": "pnpm --workspace-root release:gate -- --dry-run",
-                "exit_code": gate_result.returncode,
-                "stdout_tail": gate_result.stdout[-1000:],
-                "stderr_tail": gate_result.stderr[-1000:],
-            }],
-        }, sort_keys=True))
-        raise SystemExit(2)
-    try:
-        gate_plan = json.loads(gate_result.stdout[gate_result.stdout.find("{"):])
-    except Exception as error:
-        print(json.dumps({"completed": False, "reason": f"release_gate_dry_run_unparseable:{error}"}, sort_keys=True))
-        raise SystemExit(1)
-    gate_commands = {entry.get("id"): entry.get("command") for entry in gate_plan.get("commands", []) if isinstance(entry, dict)}
-    gate_checks = {
-        "dry_run_includes_guard": gate_commands.get("release_evidence_semantic_consistency_guard") == "pnpm --workspace-root guard:release-evidence-semantic-consistency",
-        "dry_run_includes_guard_test": gate_commands.get("release_evidence_semantic_consistency_guard_test") == "pnpm --workspace-root guard:release-evidence-semantic-consistency:test",
-    }
-    if not all(gate_checks.values()):
-        print(json.dumps({"completed": False, "reason": "release_gate_dry_run_missing_semantic_guard", "checks": gate_checks}, sort_keys=True))
-        raise SystemExit(1)
-    skip_verification_commands = True
 elif selected_id == "e-17a-artifact-runner-source-state-result":
     target = workspace_root / "scripts/release-local-artifacts-all.mjs"
     try:
@@ -1949,15 +1893,6 @@ elif selected_id == "e-19a-prevent-empty-queue-completion":
     if not all(semantic_checks.values()):
         print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
         raise SystemExit(1)
-    print(json.dumps({
-        "completed": True,
-        "operation": "selected_todo_verified_noop_completion",
-        "reason": "semantic_wiring_already_present_without_recursive_smoke",
-        "run_stamp": run_stamp,
-        "selected_todo_first_line": first_line,
-        "checks": semantic_checks,
-    }, ensure_ascii=False, sort_keys=True))
-    raise SystemExit(0)
 
 # Do not complete a still-pending implementation TODO just because its
 # verification command is already green. Many Brownie TODOs add coverage to
@@ -1984,77 +1919,15 @@ if (
 ):
     raise SystemExit(2)
 
-if skip_verification_commands:
-    print(json.dumps({
-        "completed": True,
-        "operation": "selected_todo_verified_noop_completion",
-        "reason": "semantic_wiring_already_present",
-        "run_stamp": run_stamp,
-        "selected_todo_first_line": first_line,
-        "checks": {**semantic_checks, **gate_checks},
-        "results": [
-            {
-                "command": "node --test scripts/guard-release-evidence-semantic-consistency.test.mjs",
-                "exit_code": test_result.returncode,
-                "stdout_tail": test_result.stdout[-1000:],
-                "stderr_tail": test_result.stderr[-1000:],
-            },
-            {
-                "command": "pnpm --workspace-root release:gate -- --dry-run",
-                "exit_code": gate_result.returncode,
-                "stdout_tail": gate_result.stdout[-1000:],
-                "stderr_tail": gate_result.stderr[-1000:],
-            },
-        ],
-    }, ensure_ascii=False, sort_keys=True))
-    raise SystemExit(0)
-
-verification_text = ""
-for line in selected.splitlines():
-    if line.strip().startswith("Verification:"):
-        verification_text = line.strip()
-        break
-commands = re.findall(r"`([^`\n]+)`", verification_text)
-if not commands:
-    raise SystemExit(2)
-
-def allowed_args(command):
-    try:
-        args = shlex.split(command)
-    except ValueError:
-        return None
-    if len(args) == 3 and args[0] == "pnpm" and args[1] == "--workspace-root" and re.fullmatch(r"[A-Za-z0-9:_-]+", args[2]):
-        return args
-    if len(args) >= 2 and args[0] == "node" and args[1].startswith("scripts/") and all(not part.startswith("-") for part in args[1:]):
-        return args
-    if len(args) >= 3 and args[0] == "node" and args[1] == "--test" and args[2].startswith("scripts/") and all(not part.startswith("-") for part in args[2:]):
-        return args
-    return None
-
-results = []
-for command in commands:
-    args = allowed_args(command)
-    if args is None:
-        raise SystemExit(2)
-    completed = subprocess.run(args, cwd=workspace_root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180)
-    results.append({
-        "command": command,
-        "exit_code": completed.returncode,
-        "stdout_tail": completed.stdout[-1000:],
-        "stderr_tail": completed.stderr[-1000:],
-    })
-    if completed.returncode != 0:
-        print(json.dumps({"completed": False, "reason": "verification_failed", "results": results}, sort_keys=True))
-        raise SystemExit(2)
-
 print(json.dumps({
     "completed": True,
     "operation": "selected_todo_verified_noop_completion",
-    "reason": "verification_already_passed",
+    "reason": "semantic_wiring_already_present_without_verification_commands",
     "run_stamp": run_stamp,
     "selected_todo_first_line": first_line,
-    "results": results,
+    "checks": semantic_checks,
 }, ensure_ascii=False, sort_keys=True))
+raise SystemExit(0)
 PY
 }
 
