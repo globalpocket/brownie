@@ -1647,6 +1647,87 @@ assert "allowed_args(command)" not in verified_noop_source, verified_noop_source
 assert "semantic_wiring_already_present_without_verification_commands" in verified_noop_source, verified_noop_source
 PY
 
+release_ops_workspace="$(mktemp -d)"
+mkdir -p "$release_ops_workspace/.brownie/release-evidence" "$release_ops_workspace/docs/architecture" "$release_ops_workspace/scripts"
+cp "$REPO_ROOT/phase-loop.sh" "$release_ops_workspace/phase-loop.sh"
+cp "$REPO_ROOT/scripts/guard-todo-decomposition.mjs" "$release_ops_workspace/scripts/guard-todo-decomposition.mjs"
+cp "$REPO_ROOT/scripts/phase-loop-todo-evaluator.mjs" "$release_ops_workspace/scripts/phase-loop-todo-evaluator.mjs"
+cp "$REPO_ROOT/scripts/phase-loop-release-ops-blocker.mjs" "$release_ops_workspace/scripts/phase-loop-release-ops-blocker.mjs"
+printf '{"scripts":{}}\n' > "$release_ops_workspace/package.json"
+printf '{"product_ready":false}\n' > "$release_ops_workspace/docs/architecture/phase-value-manifest.json"
+git -C "$release_ops_workspace" init -b main >/dev/null
+git -C "$release_ops_workspace" config user.name Brownie
+git -C "$release_ops_workspace" config user.email brownie@example.invalid
+cat > "$release_ops_workspace/.brownie/release-evidence/owner-governance-evidence.json" <<'EOF'
+{
+  "schema_version": 1,
+  "evidence_id": "brownie-owner-governance-evidence-v1",
+  "release_ready": false,
+  "runtime_release_ready": false,
+  "source_commit": "old",
+  "sections": {
+    "remote_ci_workflow_provenance": {
+      "workflow_head_sha": "old",
+      "workflow_conclusion": "success",
+      "missing_or_failed_required_check_names": []
+    }
+  }
+}
+EOF
+git -C "$release_ops_workspace" add .
+git -C "$release_ops_workspace" commit -m init >/dev/null
+release_ops_head="$(git -C "$release_ops_workspace" rev-parse HEAD)"
+python3 - "$release_ops_workspace/.brownie/release-evidence/owner-governance-evidence.json" "$release_ops_head" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+head = sys.argv[2]
+data = json.loads(path.read_text(encoding="utf-8"))
+data["source_commit"] = head
+data["sections"]["remote_ci_workflow_provenance"]["workflow_head_sha"] = head
+data["sections"]["remote_ci_workflow_provenance"]["last_verified_at"] = "2026-09-22T00:00:00Z"
+path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+PY
+
+release_ops_state="$(mktemp -d)"
+release_ops_prompt="$(mktemp)"
+printf 'base prompt\n' > "$release_ops_prompt"
+cat > "$release_ops_workspace/.brownie/todo.md" <<'EOF'
+- [ ] E-release-ops-refresh: Patch only `.brownie/release-evidence/owner-governance-evidence.json` after latest main CI is complete and stable:
+  Route: release-ops.
+  Source TODO: release-ops-smoke.
+  Depends on: <none>.
+  Completion condition: owner governance evidence reflects the completed current HEAD CI while release readiness remains fail-closed.
+  Forbidden changes: do not declare Runtime Product Ready, Runtime Release Ready, public Release Ready, or alter unrelated release evidence files.
+  Verification: inspect latest main CI completion and fail-closed owner governance evidence, then keep the blocker if release readiness remains unavailable.
+EOF
+
+PATH="$fake_verified_noop_bin_dir:$PATH" \
+PHASE_LOOP_STATE_DIR="$release_ops_state" \
+PHASE_LOOP_PROMPT="$release_ops_prompt" \
+PHASE_LOOP_TODO="$release_ops_workspace/.brownie/todo.md" \
+BROWNIE_BIN="$fake_brownie_should_not_run" \
+PHASE_LOOP_WORKSPACE_ROOT="$release_ops_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+
+python3 - "$release_ops_state/status.json" "$release_ops_state/todo-claims/current.json" "$release_ops_workspace/.brownie/todo.md" <<'PY'
+import json
+import pathlib
+import sys
+
+status = json.load(open(sys.argv[1], encoding="utf-8"))
+claim = json.load(open(sys.argv[2], encoding="utf-8"))
+todo = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
+assert status["status"] == "last_run_succeeded", status
+assert "release-ops evidence refresh" in status["detail"], status
+assert claim["status"] == "completed", claim
+assert "E-release-ops-refresh-remaining-blocker" in todo, todo
+assert "Patch only `.brownie/release-evidence/owner-governance-evidence.json`" not in todo, todo
+assert "Verification: blocker:" in todo, todo
+PY
+
 broad_decomposition_state="$(mktemp -d)"
 broad_decomposition_prompt="$(mktemp)"
 broad_decomposition_todo="$(mktemp)"
