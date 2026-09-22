@@ -1949,6 +1949,15 @@ elif selected_id == "e-19a-prevent-empty-queue-completion":
     if not all(semantic_checks.values()):
         print(json.dumps({"completed": False, "reason": "semantic_noop_verification_failed", "checks": semantic_checks}, sort_keys=True))
         raise SystemExit(1)
+    print(json.dumps({
+        "completed": True,
+        "operation": "selected_todo_verified_noop_completion",
+        "reason": "semantic_wiring_already_present_without_recursive_smoke",
+        "run_stamp": run_stamp,
+        "selected_todo_first_line": first_line,
+        "checks": semantic_checks,
+    }, ensure_ascii=False, sort_keys=True))
+    raise SystemExit(0)
 
 # Do not complete a still-pending implementation TODO just because its
 # verification command is already green. Many Brownie TODOs add coverage to

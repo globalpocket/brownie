@@ -1604,7 +1604,8 @@ fake_verified_noop_bin_dir="$(mktemp -d)"
 printf 'base prompt\n' > "$prompt_verified_noop_e19"
 cat > "$fake_verified_noop_bin_dir/pnpm" <<'SH'
 #!/usr/bin/env bash
-exit 0
+printf 'E-19 verified-noop must not invoke pnpm verification commands\n' >&2
+exit 91
 SH
 chmod +x "$fake_verified_noop_bin_dir/pnpm"
 
