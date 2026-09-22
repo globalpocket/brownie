@@ -92,10 +92,10 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-19b-refresh-owner-governance-evidence-after-stable-ci: Patch only `.brownie/release-evidence/owner-governance-evidence.json` after latest main CI is complete and stable, so owner governance evidence does not capture in-progress GitHub checks as failed release evidence:
+- [ ] E-19b-refresh-owner-governance-evidence-after-stable-ci-remaining-blocker: Blocker: release-ops evidence refresh completed, but Product Ready is still false and remaining release evidence blockers must stay explicit.
   Route: release-ops.
-  Source TODO: empty-queue-regression-follow-up-2026-09-22.
-  Depends on: E-19a-prevent-empty-queue-completion.
-  Completion condition: release blocker evidence remains fail-closed but owner governance evidence reflects a completed latest-main CI run instead of an in-progress workflow sample.
-  Forbidden changes: do not declare Runtime Product Ready, Runtime Release Ready, public Release Ready, or alter unrelated release evidence files.
-  Verification: inspect latest main CI completion and fail-closed owner governance evidence, then keep the blocker if GitHub checks are still pending or unavailable.
+  Depends on: <none>.
+  Completion condition: remaining release blocker evidence is explicitly identified and Product Ready is not inferred from an empty queue.
+  Forbidden changes: do not patch workspace files for this blocker; do not declare Runtime Product Ready, Runtime Release Ready, or public Release Ready.
+  Verification: blocker: release evidence remains fail-closed and no workspace file is patched until the next concrete executable evidence TODO is available.
+
