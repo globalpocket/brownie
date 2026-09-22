@@ -1121,6 +1121,28 @@ PY
       cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
       node scripts/guard-todo-decomposition.mjs "$todo_guard_path" 2>&1
     )"; then
+      local release_ops_blocker_output release_ops_blocker_guard_output
+      if [ -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/phase-loop-release-ops-blocker.mjs" ] && release_ops_blocker_output="$(
+        cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+        node scripts/phase-loop-release-ops-blocker.mjs "$TODO_CLAIM_FILE" "$todo_backup" "$PHASE_LOOP_TODO" "$run_stamp" "$(now_utc)"
+      )"; then
+        if release_ops_blocker_guard_output="$(
+          cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+          node scripts/guard-todo-decomposition.mjs "$todo_guard_path" 2>&1
+        )"; then
+          printf '%s run=%s completed_release_ops_replaced_with_blocker=true result=%s guard=%s\n' "$(now_utc)" "$run_stamp" "$release_ops_blocker_output" "$release_ops_blocker_guard_output" >> "$SUPERVISOR_LOG"
+          python3 - "$todo_backup" <<'PY'
+import pathlib
+import sys
+pathlib.Path(sys.argv[1]).unlink(missing_ok=True)
+PY
+          return 0
+        else
+          printf '%s run=%s completed_release_ops_blocker_guard_failed=true result=%s guard=%s\n' "$(now_utc)" "$run_stamp" "$release_ops_blocker_output" "$release_ops_blocker_guard_output" >> "$SUPERVISOR_LOG"
+        fi
+      else
+        printf '%s run=%s completed_release_ops_blocker_not_applied=true result=%s\n' "$(now_utc)" "$run_stamp" "${release_ops_blocker_output:-<no output>}" >> "$SUPERVISOR_LOG"
+      fi
       cp "$todo_backup" "$PHASE_LOOP_TODO"
       write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
       PHASE_LOOP_COMPLETED_TODO_REMOVAL_REVERTED=1
@@ -1928,6 +1950,164 @@ print(json.dumps({
     "checks": semantic_checks,
 }, ensure_ascii=False, sort_keys=True))
 raise SystemExit(0)
+PY
+}
+
+try_release_ops_evidence_refresh_completion_fallback() {
+  local run_stamp="$1"
+  if [ ! -f "$TODO_CLAIM_FILE" ]; then
+    return 2
+  fi
+  python3 - "$TODO_CLAIM_FILE" "$PHASE_LOOP_WORKSPACE_ROOT" "$run_stamp" <<'PY'
+import json
+import pathlib
+import re
+import subprocess
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+workspace_root = pathlib.Path(sys.argv[2])
+run_stamp = sys.argv[3]
+
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+except Exception as error:
+    print(json.dumps({"completed": False, "reason": f"claim_unreadable:{error}"}, sort_keys=True))
+    raise SystemExit(1)
+
+selected = claim.get("selected_todo")
+if not isinstance(selected, str) or not selected.strip():
+    raise SystemExit(2)
+first_line = selected.splitlines()[0].strip()
+if "Route: release-ops" not in selected:
+    raise SystemExit(2)
+if "Patch only `" not in first_line:
+    raise SystemExit(2)
+if "Verification: inspect " not in selected and "Verification: blocker:" not in selected and "fail-closed" not in selected.lower():
+    raise SystemExit(2)
+
+paths = re.findall(r"`([^`\n]+)`", first_line)
+if not paths:
+    raise SystemExit(2)
+allowed_paths = set(paths)
+if not all(path.startswith((".brownie/release-evidence/", "docs/architecture/")) for path in allowed_paths):
+    raise SystemExit(2)
+
+status = subprocess.run(
+    ["git", "status", "--short", "--", *sorted(allowed_paths)],
+    cwd=workspace_root,
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    timeout=30,
+)
+if status.returncode != 0:
+    print(json.dumps({"completed": False, "reason": "git_status_failed", "stderr_tail": status.stderr[-1000:]}, sort_keys=True))
+    raise SystemExit(1)
+changed_allowed = {
+    line[3:].strip()
+    for line in status.stdout.splitlines()
+    if len(line) >= 4 and line[:2].strip()
+}
+if not changed_allowed:
+    raise SystemExit(2)
+
+all_status = subprocess.run(
+    ["git", "status", "--short"],
+    cwd=workspace_root,
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    timeout=30,
+)
+if all_status.returncode != 0:
+    print(json.dumps({"completed": False, "reason": "git_status_all_failed", "stderr_tail": all_status.stderr[-1000:]}, sort_keys=True))
+    raise SystemExit(1)
+changed_all = {
+    line[3:].strip()
+    for line in all_status.stdout.splitlines()
+    if len(line) >= 4 and line[:2].strip()
+}
+todo_paths = {".brownie/todo.md", "todo.md"}
+unexpected = sorted(path for path in changed_all if path not in allowed_paths and path not in todo_paths)
+if unexpected:
+    print(json.dumps({"completed": False, "reason": "unexpected_workspace_changes", "unexpected": unexpected}, sort_keys=True))
+    raise SystemExit(1)
+
+head = subprocess.run(
+    ["git", "rev-parse", "HEAD"],
+    cwd=workspace_root,
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    timeout=30,
+)
+if head.returncode != 0:
+    print(json.dumps({"completed": False, "reason": "git_head_failed", "stderr_tail": head.stderr[-1000:]}, sort_keys=True))
+    raise SystemExit(1)
+head_sha = head.stdout.strip()
+
+semantic_checks = {
+    "only_allowed_release_ops_paths_changed": not unexpected and changed_allowed.issubset(allowed_paths),
+    "has_release_ops_diff": bool(changed_allowed),
+}
+json_summaries = {}
+for relative_path in sorted(allowed_paths):
+    target = workspace_root / relative_path
+    if not target.exists():
+        print(json.dumps({"completed": False, "reason": "target_missing", "path": relative_path}, sort_keys=True))
+        raise SystemExit(1)
+    if target.suffix == ".json":
+        try:
+            data = json.loads(target.read_text(encoding="utf-8"))
+        except Exception as error:
+            print(json.dumps({"completed": False, "reason": f"json_unreadable:{error}", "path": relative_path}, sort_keys=True))
+            raise SystemExit(1)
+        release_ready = data.get("release_ready")
+        runtime_release_ready = data.get("runtime_release_ready")
+        product_ready = data.get("product_ready")
+        if release_ready is True or runtime_release_ready is True or product_ready is True:
+            print(json.dumps({"completed": False, "reason": "release_ready_claim_forbidden", "path": relative_path}, sort_keys=True))
+            raise SystemExit(1)
+        sections = data.get("sections") if isinstance(data.get("sections"), dict) else {}
+        remote_ci = sections.get("remote_ci_workflow_provenance") if isinstance(sections.get("remote_ci_workflow_provenance"), dict) else {}
+        source_commit = data.get("source_commit")
+        workflow_head_sha = remote_ci.get("workflow_head_sha")
+        if (source_commit or workflow_head_sha) and head_sha not in {source_commit, workflow_head_sha}:
+            print(json.dumps({
+                "completed": False,
+                "reason": "evidence_not_bound_to_current_head",
+                "path": relative_path,
+                "head": head_sha,
+                "source_commit": source_commit,
+                "workflow_head_sha": workflow_head_sha,
+            }, sort_keys=True))
+            raise SystemExit(1)
+        if remote_ci:
+            missing = remote_ci.get("missing_or_failed_required_check_names")
+            if remote_ci.get("workflow_conclusion") == "success" and isinstance(missing, list) and missing:
+                print(json.dumps({"completed": False, "reason": "successful_ci_with_missing_checks", "path": relative_path, "missing": missing}, sort_keys=True))
+                raise SystemExit(1)
+        json_summaries[relative_path] = {
+            "release_ready": release_ready,
+            "runtime_release_ready": runtime_release_ready,
+            "product_ready": product_ready,
+            "source_commit": source_commit,
+            "workflow_head_sha": workflow_head_sha,
+            "workflow_conclusion": remote_ci.get("workflow_conclusion"),
+        }
+
+print(json.dumps({
+    "completed": True,
+    "operation": "release_ops_evidence_refresh_completion",
+    "reason": "bounded_release_ops_evidence_refresh_present",
+    "run_stamp": run_stamp,
+    "selected_todo_first_line": first_line,
+    "head": head_sha,
+    "changed_paths": sorted(changed_allowed),
+    "checks": semantic_checks,
+    "evidence": json_summaries,
+}, ensure_ascii=False, sort_keys=True))
 PY
 }
 
@@ -7572,6 +7752,29 @@ run_brownie_once() {
     printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
     write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
     write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"verified_noop_fallback_failed"}'
+    return 74
+  fi
+  local pre_guard_release_ops_output pre_guard_release_ops_status
+  pre_guard_release_ops_output="$(try_release_ops_evidence_refresh_completion_fallback "$run_stamp" 2>&1)"
+  pre_guard_release_ops_status=$?
+  if [ "$pre_guard_release_ops_status" -eq 0 ]; then
+    workspace_after="$(git_workspace_fingerprint)"
+    printf '%s\n' "$pre_guard_release_ops_output" > "$stdout_log"
+    : > "$stderr_log"
+    clear_repair_feedback
+    write_todo_claim "$(claim_field claim_id)" "completed" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+    remove_completed_todo_claim_from_queue "$run_stamp" >> "$SUPERVISOR_LOG" || true
+    detail="Selected release-ops evidence refresh is already bounded and safe; marked TODO completed before invoking Brownie: $pre_guard_release_ops_output"
+    write_status "last_run_succeeded" "$detail" "release-ops-evidence-refresh-$run_stamp" "0" "0"
+    printf '%s run=%s release_ops_evidence_refresh_completion=true phase=pre_guard result=%s\n' "$(now_utc)" "release-ops-evidence-refresh-$run_stamp" "$pre_guard_release_ops_output" >> "$SUPERVISOR_LOG"
+    write_bdk_trajectory_event "$run_stamp" "verification.run" '{"source":"deterministic_release_ops_fallback","result":"passed"}'
+    write_bdk_trajectory_event "$run_stamp" "todo.completed" '{"completion":"release_ops_evidence_refresh"}'
+    return 0
+  elif [ "$pre_guard_release_ops_status" -eq 1 ]; then
+    detail="Release-ops evidence refresh fallback was eligible but failed safely before invoking Brownie: $pre_guard_release_ops_output"
+    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+    write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"release_ops_evidence_refresh_fallback_failed"}'
     return 74
   fi
   local pre_guard_exact_fast_path_output pre_guard_exact_fast_path_status
