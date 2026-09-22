@@ -1572,6 +1572,65 @@ assert "Empty or non-executable TODO queue" in supervisor_log, supervisor_log
 assert "  fixture_path: fixtureRoot,\n  lifecycle_evidence: lifecycleEvidence,\n  commands," in target, target
 PY
 
+verified_noop_e19_workspace="$(mktemp -d)"
+git -C "$verified_noop_e19_workspace" init -b main >/dev/null
+git -C "$verified_noop_e19_workspace" config user.name Brownie
+git -C "$verified_noop_e19_workspace" config user.email brownie@example.invalid
+mkdir -p "$verified_noop_e19_workspace/.brownie" "$verified_noop_e19_workspace/docs/architecture" "$verified_noop_e19_workspace/scripts" "$verified_noop_e19_workspace/extensions/brownie-vsix"
+cp "$REPO_ROOT/phase-loop.sh" "$verified_noop_e19_workspace/phase-loop.sh"
+cp "$REPO_ROOT/package.json" "$verified_noop_e19_workspace/package.json"
+cp "$REPO_ROOT/extensions/brownie-vsix/package.json" "$verified_noop_e19_workspace/extensions/brownie-vsix/package.json"
+cp "$REPO_ROOT/scripts/phase-loop-claim-smoke.test.sh" "$verified_noop_e19_workspace/scripts/phase-loop-claim-smoke.test.sh"
+cp "$REPO_ROOT/scripts/guard-todo-decomposition.mjs" "$verified_noop_e19_workspace/scripts/guard-todo-decomposition.mjs"
+printf '{"product_ready":false}\n' > "$verified_noop_e19_workspace/docs/architecture/phase-value-manifest.json"
+cat > "$verified_noop_e19_workspace/.brownie/todo.md" <<'EOF'
+- [ ] E-19a-prevent-empty-queue-completion: Patch only `phase-loop.sh` so completed TODO removal is reverted when the resulting `.brownie/todo.md` fails the decomposition guard:
+  Route: implementation.
+  Source TODO: empty-queue-regression-follow-up-2026-09-22.
+  Depends on: <none>.
+  Completion condition: release blocker queues cannot become empty while Product Ready is false; attempted completion removal is reverted and the durable claim remains in_progress when the guard rejects the resulting queue.
+  Forbidden changes: do not weaken `scripts/guard-todo-decomposition.mjs`, do not declare Runtime Product Ready or Runtime Release Ready, and do not remove remaining release blocker TODOs.
+  Verification: run `pnpm --workspace-root phase-loop:claim-smoke`, `pnpm --workspace-root guard:todo-decomposition:test`, and `pnpm --workspace-root guard:todo-decomposition`.
+
+- [ ] E-19b-refresh-owner-governance-evidence-after-stable-ci: Blocker: release blocker evidence remains fail-closed until owner governance evidence reflects completed latest-main CI instead of pending checks.
+  Verification: inspect latest main CI completion and fail-closed owner governance evidence, then keep the blocker if GitHub checks are still pending or unavailable.
+EOF
+git -C "$verified_noop_e19_workspace" add .
+git -C "$verified_noop_e19_workspace" commit -m init >/dev/null
+
+state_verified_noop_e19="$(mktemp -d)"
+prompt_verified_noop_e19="$(mktemp)"
+fake_verified_noop_bin_dir="$(mktemp -d)"
+printf 'base prompt\n' > "$prompt_verified_noop_e19"
+cat > "$fake_verified_noop_bin_dir/pnpm" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod +x "$fake_verified_noop_bin_dir/pnpm"
+
+PATH="$fake_verified_noop_bin_dir:$PATH" \
+PHASE_LOOP_STATE_DIR="$state_verified_noop_e19" \
+PHASE_LOOP_PROMPT="$prompt_verified_noop_e19" \
+PHASE_LOOP_TODO="$verified_noop_e19_workspace/.brownie/todo.md" \
+BROWNIE_BIN="$fake_brownie_should_not_run" \
+PHASE_LOOP_WORKSPACE_ROOT="$verified_noop_e19_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+
+python3 - "$state_verified_noop_e19/status.json" "$state_verified_noop_e19/todo-claims/current.json" "$verified_noop_e19_workspace/.brownie/todo.md" <<'PY'
+import json
+import pathlib
+import sys
+
+status = json.load(open(sys.argv[1], encoding="utf-8"))
+claim = json.load(open(sys.argv[2], encoding="utf-8"))
+todo = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
+assert status["status"] == "last_run_succeeded", status
+assert "Selected bounded TODO verification already passed" in status["detail"], status
+assert claim["status"] == "completed", claim
+assert "E-19a-prevent-empty-queue-completion" not in todo, todo
+assert "E-19b-refresh-owner-governance-evidence-after-stable-ci" in todo, todo
+PY
+
 broad_decomposition_state="$(mktemp -d)"
 broad_decomposition_prompt="$(mktemp)"
 broad_decomposition_todo="$(mktemp)"
