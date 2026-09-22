@@ -2009,6 +2009,58 @@ changed_allowed = {
     for line in status.stdout.splitlines()
     if len(line) >= 4 and line[:2].strip()
 }
+collector_scripts_by_path = {
+    ".brownie/release-evidence/dependency-security-license-audit.json": "release:dependency-security-license-audit",
+    ".brownie/release-evidence/owner-governance-evidence.json": "release:owner-governance-evidence",
+    ".brownie/release-evidence/runtime-operational-evidence.json": "release:runtime-operational-evidence",
+    ".brownie/release-evidence/supply-chain-artifact-evidence.json": "release:supply-chain-artifact-evidence",
+}
+collector_runs = []
+if not changed_allowed:
+    scripts_to_run = []
+    for allowed_path in sorted(allowed_paths):
+        script = collector_scripts_by_path.get(allowed_path)
+        if script and script not in scripts_to_run:
+            scripts_to_run.append(script)
+    if scripts_to_run:
+        for script in scripts_to_run:
+            collector = subprocess.run(
+                ["pnpm", "--workspace-root", script],
+                cwd=workspace_root,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=180,
+            )
+            collector_runs.append({
+                "script": script,
+                "returncode": collector.returncode,
+                "stdout_tail": collector.stdout[-1000:],
+                "stderr_tail": collector.stderr[-1000:],
+            })
+            if collector.returncode != 0:
+                print(json.dumps({
+                    "completed": False,
+                    "reason": "release_ops_collector_failed",
+                    "collector_runs": collector_runs,
+                }, sort_keys=True))
+                raise SystemExit(1)
+        status = subprocess.run(
+            ["git", "status", "--short", "--", *sorted(allowed_paths)],
+            cwd=workspace_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+        )
+        if status.returncode != 0:
+            print(json.dumps({"completed": False, "reason": "git_status_after_collector_failed", "stderr_tail": status.stderr[-1000:]}, sort_keys=True))
+            raise SystemExit(1)
+        changed_allowed = {
+            line[3:].strip()
+            for line in status.stdout.splitlines()
+            if len(line) >= 4 and line[:2].strip()
+        }
 if not changed_allowed:
     raise SystemExit(2)
 
@@ -2105,6 +2157,7 @@ print(json.dumps({
     "selected_todo_first_line": first_line,
     "head": head_sha,
     "changed_paths": sorted(changed_allowed),
+    "collector_runs": collector_runs,
     "checks": semantic_checks,
     "evidence": json_summaries,
 }, ensure_ascii=False, sort_keys=True))
