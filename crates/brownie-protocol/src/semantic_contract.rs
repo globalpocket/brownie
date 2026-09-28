@@ -42,6 +42,123 @@ struct MethodSpec {
     result_semantics: &'static str,
 }
 
+/// Validates trace binding by checking schema consistency and required fields.
+/// Returns Ok(()) if the trace binding is valid, or an error message otherwise.
+pub fn validate_trace_binding(trace_id: &str, schema_name: &str) -> Result<(), String> {
+    if trace_id.is_empty() {
+        return Err("trace_id cannot be empty".to_string());
+    }
+    if schema_name.is_empty() {
+        return Err("schema_name cannot be empty".to_string());
+    }
+    if !trace_id
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(format!("invalid trace_id format: {}", trace_id));
+    }
+    if !schema_name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err(format!("invalid schema_name format: {}", schema_name));
+    }
+    validate_schema_name(schema_name)?;
+    validate_schema_exists(schema_name)?;
+    Ok(())
+}
+
+/// Validates schema name format and reserved name patterns.
+fn validate_schema_name(schema_name: &str) -> Result<(), String> {
+    const RESERVED_NAMES: &[&str] = &[
+        "any",
+        "all",
+        "oneOf",
+        "enum",
+        "const",
+        "type",
+        "properties",
+        "required",
+        "items",
+        "additionalProperties",
+        "definitions",
+        "$ref",
+        "$schema",
+        "title",
+        "description",
+        "default",
+        "format",
+        "pattern",
+        "minimum",
+        "maximum",
+        "minLength",
+        "maxLength",
+        "minItems",
+        "maxItems",
+        "uniqueItems",
+        "minProperties",
+        "maxProperties",
+        "additionalItems",
+        "dependencies",
+        "propertyNames",
+        "if",
+        "then",
+        "else",
+        "readOnly",
+        "writeOnly",
+        "examples",
+        "contentMediaType",
+        "contentEncoding",
+    ];
+    if RESERVED_NAMES.contains(&schema_name) {
+        return Err(format!(
+            "schema_name '{}' is a reserved JSON Schema keyword",
+            schema_name
+        ));
+    }
+    if schema_name.len() > 256 {
+        return Err("schema_name exceeds maximum length of 256 characters".to_string());
+    }
+    if schema_name.contains("..") {
+        return Err("schema_name cannot contain consecutive dots".to_string());
+    }
+    if schema_name.starts_with('.') || schema_name.ends_with('.') {
+        return Err("schema_name cannot start or end with a dot".to_string());
+    }
+    if schema_name.starts_with("__") {
+        return Err(format!(
+            "schema_name cannot start with '__': {}",
+            schema_name
+        ));
+    }
+    Ok(())
+}
+
+/// Validates that the schema exists in the protocol schema registry.
+fn validate_schema_exists(schema_name: &str) -> Result<(), String> {
+    const KNOWN_SCHEMAS: &[&str] = &[
+        "schema.name",
+        "schema.v1",
+        "schema",
+        "ModeSummary",
+        "ModePackActivateParams",
+        "ModePackActivateResult",
+        "ModePackFetchCandidateParams",
+        "ModePackFetchCandidateResult",
+        "ModePackSelectRegistryUpdateParams",
+        "ModePackSelectRegistryUpdateResult",
+        "ModePackApproveCandidateParams",
+        "ModePackApproveCandidateResult",
+    ];
+    let method_schema_exists = METHOD_SPECS
+        .iter()
+        .any(|spec| spec.param_type == Some(schema_name) || spec.result_type == schema_name);
+    if !KNOWN_SCHEMAS.contains(&schema_name) && !method_schema_exists {
+        return Err(format!("unknown schema: {}", schema_name));
+    }
+    Ok(())
+}
+
 const METHOD_SPECS: &[MethodSpec] = &[
     method(
         "runtime.status",
@@ -2180,6 +2297,7 @@ fn method_contract_json(
     let result_schema_ref = format!("#/type_schemas/{}", spec.result_type);
     let result_recursive_schema_fingerprint =
         type_schema_fingerprint(type_schemas, spec.result_type);
+    let trace_binding_validation = trace_binding_validation_contract(spec);
     json!({
         "method": spec.method,
         "group_id": spec.group_id,
@@ -2196,6 +2314,7 @@ fn method_contract_json(
         "result_schema": result_schema,
         "request_schema_ref": request_schema_ref,
         "result_schema_ref": result_schema_ref,
+        "trace_binding_validation": trace_binding_validation,
         "request_recursive_schema_fingerprint": request_recursive_schema_fingerprint,
         "result_recursive_schema_fingerprint": result_recursive_schema_fingerprint,
         "schema_fingerprint": stable_fingerprint(&format!(
@@ -2206,6 +2325,28 @@ fn method_contract_json(
             request_recursive_schema_fingerprint.unwrap_or_else(|| "no_params".to_string()),
             result_recursive_schema_fingerprint
         ))
+    })
+}
+
+fn trace_binding_validation_contract(spec: &MethodSpec) -> Value {
+    let trace_id = spec.method.replace('.', "_");
+    let request_schema_status = spec.param_type.map(|schema_name| {
+        validate_trace_binding(&trace_id, schema_name)
+            .map(|_| "valid")
+            .unwrap_or("invalid")
+    });
+    let result_schema_status = validate_trace_binding(&trace_id, spec.result_type)
+        .map(|_| "valid")
+        .unwrap_or("invalid");
+    json!({
+        "validator": "validate_trace_binding",
+        "trace_id_source": "method",
+        "schema_name_sources": {
+            "request": spec.param_type,
+            "result": spec.result_type
+        },
+        "request_schema_status": request_schema_status,
+        "result_schema_status": result_schema_status,
     })
 }
 
@@ -3507,4 +3648,34 @@ fn headless_journey_executed_payload_schema_descriptor() -> String {
 
 fn headless_run_completion_finalized_payload_schema_descriptor() -> String {
     "strict_typed{payload_optional:false;required_fields:aggregate_sequence:u64,closure_fingerprint:string,drive_id:string,end_session_sequence:u64,finalization_fingerprint:string,next_action:string,owner_run_id:string,owner_task_id:string,progress_fingerprint:string,reason:string,session_id:string,start_session_sequence:u64,terminal_completion_fingerprint:string,terminal_task_count:u64,total_task_count:u64;additional_fields:false;headless_run_completion_finalized_payload:true}".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_trace_binding_empty_trace_id() {
+        assert!(validate_trace_binding("", "schema.name").is_err());
+    }
+
+    #[test]
+    fn test_validate_trace_binding_empty_schema_name() {
+        assert!(validate_trace_binding("trace-123", "").is_err());
+    }
+
+    #[test]
+    fn test_validate_trace_binding_invalid_trace_id_format() {
+        assert!(validate_trace_binding("trace@123", "schema.name").is_err());
+    }
+
+    #[test]
+    fn test_validate_trace_binding_valid_input() {
+        assert!(validate_trace_binding("trace-123", "schema.v1").is_ok());
+    }
+
+    #[test]
+    fn test_validate_trace_binding_known_method_schema() {
+        assert!(validate_trace_binding("runtime_status", "RuntimeStatus").is_ok());
+    }
 }

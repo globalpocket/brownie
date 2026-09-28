@@ -18,6 +18,8 @@
     "guard:product-completion:test": "node --test scripts/guard-product-completion.test.mjs",
     "guard:release-contract": "node scripts/guard-release-contract.mjs",
     "guard:release-contract:test": "node --test scripts/guard-release-contract.test.mjs",
+    "guard:trace-binding": "node scripts/release-gate.mjs --validate-trace-binding --test-schema",
+    "guard:trace-binding:test": "node scripts/release-gate.mjs --validate-trace-binding --test-schema",
     "guard:dependency-security-license-audit": "node scripts/guard-dependency-security-license-audit.mjs",
     "guard:dependency-security-license-audit:test": "node --test scripts/guard-dependency-security-license-audit.test.mjs",
     "guard:supply-chain-artifact-evidence": "node scripts/guard-supply-chain-artifact-evidence.mjs",
@@ -30,6 +32,7 @@
     "guard:historical-ledger-fixtures:test": "node --test scripts/guard-historical-ledger-fixtures.test.mjs",
     "guard:protocol-event-canonization": "node scripts/guard-protocol-event-canonization.mjs",
     "guard:protocol-event-canonization:test": "node --test scripts/guard-protocol-event-canonization.test.mjs",
+    "guard:semantic-contract-trace-binding": "node scripts/guard-semantic-contract-trace-binding.mjs",
     "guard:platform-deadline-durability": "node scripts/guard-platform-deadline-durability.mjs",
     "guard:platform-deadline-durability:test": "node --test scripts/guard-platform-deadline-durability.test.mjs",
     "guard:runtime-module-decomposition": "node scripts/guard-runtime-module-decomposition.mjs",
@@ -52,8 +55,17 @@
     "guard:bdk-public-harness:test": "node --test scripts/guard-bdk-public-harness.test.mjs",
     "bdk:harness:evaluate": "node scripts/bdk-public-harness-evaluate.mjs",
     "bdk:harness:evaluate:test": "node --test scripts/bdk-public-harness-evaluate.test.mjs",
+    "guard:validator-schema-assumptions": "node scripts/guard-validator-schema-assumptions.mjs",
+    "guard:validator-schema-assumptions:test": "node --test scripts/guard-validator-schema-assumptions.test.mjs",
+    "repair:validator-schema-assumptions:test": "node --test scripts/repair-validator-schema-assumptions.test.mjs",
+    "guard:json-parse": "node scripts/guard-json-parse.mjs",
+    "guard:json-parse:test": "node --test scripts/guard-json-parse.test.mjs",
+    "guard:js-duplicate-exports": "node scripts/guard-js-duplicate-exports.mjs",
+    "guard:js-duplicate-exports:test": "node --test scripts/guard-js-duplicate-exports.test.mjs",
     "guard:todo-decomposition": "node scripts/guard-todo-decomposition.mjs",
     "guard:todo-decomposition:test": "node --test scripts/guard-todo-decomposition.test.mjs",
+    "repair:todo-decomposition": "node scripts/repair-todo-decomposition.mjs",
+    "repair:todo-decomposition:test": "node --test scripts/repair-todo-decomposition.test.mjs",
     "guard:todo-contract": "node scripts/guard-todo-contract.mjs",
     "guard:todo-contract:test": "node --test scripts/guard-todo-contract.test.mjs",
     "guard:tool-intent-contract": "node scripts/guard-tool-intent-contract.mjs",
@@ -93,5 +105,7 @@
     "test": "pnpm --filter brownie-vsix test"
   },
   "packageManager": "pnpm@9.0.0",
-  "devDependencies": {}
+  "devDependencies": {
+    "jsonc-parser": "^3.3.1"
+  }
 }

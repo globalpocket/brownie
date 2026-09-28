@@ -19,6 +19,39 @@ const requiredSections = [
   'provenance'
 ];
 
+test('requiredSections array is complete and non-empty', async (t) => {
+  assert.ok(requiredSections.length > 0, 'requiredSections must not be empty');
+  assert.ok(requiredSections.length === 9, 'expected exactly 9 required sections');
+  for (const section of requiredSections) {
+    assert.ok(typeof section === 'string' && section.length > 0, 'each section must be a non-empty string');
+  }
+});
+
+test('runSupplyChainArtifactEvidenceGuard handles null/undefined input', async (t) => {
+  const nullResult = await runSupplyChainArtifactEvidenceGuard(null);
+  assert.ok(nullResult !== undefined, 'guard should handle null input');
+  assert.ok(Array.isArray(nullResult.errors), 'guard should return structured errors for null input');
+  const undefinedResult = await runSupplyChainArtifactEvidenceGuard(undefined);
+  assert.ok(undefinedResult !== undefined, 'guard should handle undefined input');
+});
+
+test('runSupplyChainArtifactEvidenceGuard handles valid artifact evidence', async (t) => {
+  const validEvidence = {
+    lockfile_fixed: true,
+    dependency_security_license_scan: { status: 'pass' },
+    secret_scan: { status: 'pass' },
+    sbom: { format: 'spdx', items: [] },
+    artifacts: [{ name: 'test', hash: 'abc123' }],
+    artifact_smoke: { status: 'pass' },
+    checksums: { verified: true },
+    signature_or_integrity_proof: { valid: true },
+    provenance: { verified: true }
+  };
+  const result = await runSupplyChainArtifactEvidenceGuard(validEvidence);
+  assert.ok(result !== undefined, 'guard should return result for valid input');
+  assert.ok(Array.isArray(result.errors), 'result should have errors array');
+});
+
 function tempRepo() {
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-supply-chain-guard-'));
   fs.mkdirSync(path.join(repoRoot, '.brownie/release-evidence'), { recursive: true });
@@ -27,6 +60,13 @@ function tempRepo() {
   fs.writeFileSync(path.join(repoRoot, '.brownie/release-evidence/brownie-runtime-sbom.json'), '{}\n');
   fs.writeFileSync(path.join(repoRoot, '.brownie/release-evidence/brownie-runtime-provenance.json'), '{}\n');
   fs.writeFileSync(path.join(repoRoot, '.brownie/release-evidence/SHA256SUMS'), '0'.repeat(64) + '  file\n');
+  fs.writeFileSync(path.join(repoRoot, '.brownie/release-evidence/lockfile_fixed.json'), '{}\n');
+  fs.writeFileSync(path.join(repoRoot, '.brownie/release-evidence/dependency_security_license_scan.json'), '{}\n');
+  fs.writeFileSync(path.join(repoRoot, '.brownie/release-evidence/secret_scan.json'), '{}\n');
+  fs.writeFileSync(path.join(repoRoot, '.brownie/release-evidence/artifacts.json'), '{}\n');
+  fs.writeFileSync(path.join(repoRoot, '.brownie/release-evidence/artifact_smoke.json'), '{}\n');
+  fs.writeFileSync(path.join(repoRoot, '.brownie/release-evidence/checksums.json'), '{}\n');
+  fs.writeFileSync(path.join(repoRoot, '.brownie/release-evidence/signature_or_integrity_proof.json'), '{}\n');
   return repoRoot;
 }
 
@@ -66,6 +106,25 @@ function section(status = 'satisfied', extra = {}) {
     status,
     release_blocking: true,
     ...extra
+  };
+}
+
+function validArtifactSmokeResult(overrides = {}) {
+  return {
+    target: 'darwin-arm64',
+    passed: true,
+    e2e_steps: [
+      'base_mode_pack_load',
+      'minimal_task_run',
+      'ledger_generation',
+      'forced_stop_resume',
+      'stale_replay_rejection'
+    ],
+    commands: [
+      { args: ['run', '--mode-pack', 'base'], exit_code: 0, passed: true },
+      { args: ['run', '--task', 'minimal'], exit_code: 0, passed: true }
+    ],
+    ...overrides
   };
 }
 
@@ -172,6 +231,62 @@ test('rejects contract that omits repository-local supply-chain gate commands', 
   assert(errors.some((error) => error.includes('release:supply-chain-artifact-evidence')));
 });
 
+test('smoke: guard-supply-chain-artifact-evidence requires all requiredSections', () => {
+  const evidence = validEvidence();
+  for (const section of requiredSections) {
+    delete evidence.sections[section];
+    const errors = validate({ evidence });
+    assert(errors.some((error) => error.includes(section)), `should reject missing ${section}`);
+    evidence.sections[section] = validEvidence().sections[section];
+  }
+});
+
+test('smoke: guard rejects evidence missing required sections', () => {
+  const evidence = validEvidence();
+  for (const section of requiredSections) {
+    const incompleteEvidence = { ...evidence };
+    delete incompleteEvidence.sections[section];
+    const errors = validate({ evidence: incompleteEvidence });
+    assert.ok(errors.some((error) => error.includes(section)), `should reject missing ${section}`);
+  }
+});
+
+test('smoke: guard rejects evidence with invalid section paths', () => {
+  const evidence = validEvidence();
+  evidence.sections.sbom.path = '/absolute/path/sbom.json';
+  const errors = validate({ evidence });
+  assert.ok(errors.some((error) => error.includes('repository-relative')), 'should reject absolute paths');
+});
+
+test('smoke: guard rejects evidence missing fail_closed_reasons', () => {
+  const evidence = validEvidence();
+  evidence.fail_closed_reasons = undefined;
+  const errors = validate({ evidence });
+  assert.ok(errors.some((error) => error.includes('fail_closed_reasons')), 'should require fail_closed_reasons');
+});
+
+test('smoke: guard rejects evidence with empty fail_closed_reasons when sections invalid', () => {
+  const evidence = validEvidence();
+  evidence.fail_closed_reasons = [];
+  delete evidence.sections.sbom;
+  const errors = validate({ evidence });
+  assert.ok(errors.some((error) => error.includes('fail_closed_reasons must include')), 'should require fail_closed_reasons to include missing sections');
+});
+
+test('smoke: guard rejects evidence missing required sections', () => {
+  const evidence = validEvidence();
+  evidence.sections.sbom = null;
+  const errors = validate({ evidence });
+  assert(errors.some((error) => error.includes('sbom')));
+});
+
+test('smoke: guard rejects evidence with empty fail_closed_reasons when sections are satisfied', () => {
+  const evidence = validEvidence();
+  evidence.fail_closed_reasons = [];
+  const errors = validate({ evidence });
+  assert(errors.some((error) => error.includes('fail_closed_reasons')));
+});
+
 test('rejects satisfied dependency scan with failed tool result', () => {
   const evidence = validEvidence();
   evidence.fail_closed_reasons = evidence.fail_closed_reasons.filter(
@@ -188,7 +303,7 @@ test('rejects satisfied dependency scan with failed tool result', () => {
     ]
   });
   const errors = validate({ evidence });
-  assert(errors.some((error) => error.includes('dependency_security_license_scan.tools[0] must pass')));
+  assert(errors.some((error) => error.includes('dependency_security_license_scan.tools[0].passed must be true')));
 });
 
 test('accepts failed dependency scan only when it is fail-closed', () => {
@@ -204,6 +319,100 @@ test('accepts failed dependency scan only when it is fail-closed', () => {
     ]
   });
   assert.deepEqual(validate({ evidence }), []);
+});
+
+test('rejects artifact smoke evidence when artifact_smoke section is missing', () => {
+  const evidence = validEvidence();
+  delete evidence.sections.artifact_smoke;
+  const errors = validate({ evidence });
+  assert(errors.some((error) => error.includes('artifact_smoke')));
+});
+
+test('accepts artifact smoke evidence when artifact_smoke section is satisfied', () => {
+  const evidence = validEvidence();
+  evidence.fail_closed_reasons = evidence.fail_closed_reasons.filter(
+    (reason) => !reason.startsWith('artifact_smoke:')
+  );
+  evidence.sections.artifact_smoke = section('satisfied', {
+    smoke_results: [
+      validArtifactSmokeResult()
+    ]
+  });
+  assert.deepEqual(validate({ evidence }), []);
+});
+
+test('rejects missing dependency_security_license_scan section', () => {
+  const evidence = validEvidence();
+  delete evidence.sections.dependency_security_license_scan;
+  const errors = validate({ evidence });
+  assert(errors.some((error) => error.includes('dependency_security_license_scan')));
+});
+
+test('rejects dependency scan without required tools array', () => {
+  const evidence = validEvidence();
+  evidence.sections.dependency_security_license_scan = section('satisfied', {});
+  const errors = validate({ evidence });
+  assert(errors.some((error) => error.includes('dependency_security_license_scan.tools')));
+});
+
+test('accepts failed artifact smoke only when fail-closed', () => {
+  const evidence = validEvidence();
+  evidence.sections.artifact_smoke = section('failed', {
+    artifacts: [
+      { name: 'brownie-runtime', path: 'target/release/brownie', verified: false }
+    ]
+  });
+  assert.deepEqual(validate({ evidence }), []);
+});
+
+test('rejects missing artifact_smoke section', () => {
+  const evidence = validEvidence();
+  delete evidence.sections.artifact_smoke;
+  const errors = validate({ evidence });
+  assert(errors.some((error) => error.includes('artifact_smoke')));
+});
+
+test('validates dependency audit sync with required tool presence', () => {
+  const evidence = validEvidence();
+  evidence.sections.dependency_security_license_scan = section('satisfied', {
+    tools: [
+      {
+        id: 'cargo_audit',
+        available: true,
+        passed: true,
+        exit_code: 0
+      }
+    ]
+  });
+  assert.deepEqual(validate({ evidence }), []);
+});
+
+test('validates each dependency scan tool has required fields', () => {
+  const evidence = validEvidence();
+  evidence.sections.dependency_security_license_scan = section('satisfied', {
+    tools: [
+      {
+        id: 'cargo_audit',
+        available: true
+      }
+    ]
+  });
+  const errors = validate({ evidence });
+  assert(errors.some((error) => error.includes('tools[0].passed')));
+});
+
+test('validates each dependency scan tool has required passed field', () => {
+  const evidence = validEvidence();
+  evidence.sections.dependency_security_license_scan = section('satisfied', {
+    tools: [
+      {
+        id: 'cargo_audit',
+        available: true
+      }
+    ]
+  });
+  const errors = validate({ evidence });
+  assert(errors.some((error) => error.includes('tools[0].passed')));
 });
 
 test('rejects satisfied artifact smoke with failed command result', () => {

@@ -43,6 +43,17 @@ test('rejects missing terminal event in strict mode', () => {
   assert(result.failures.some((failure) => failure.class === 'terminal_event_missing'));
 });
 
+test('rejects actionable terminal events as repair-required outcomes', () => {
+  const result = evaluateBdkPublicHarnessTrajectory([
+    record('todo.claimed'),
+    record('workflow.routed'),
+    record('skill.selected'),
+    record('todo.replanned')
+  ]);
+  assert.equal(result.ok, false);
+  assert(result.failures.some((failure) => failure.class === 'actionable_terminal_event'));
+});
+
 test('rejects private paths in public harness payloads', () => {
   const result = evaluateBdkPublicHarnessTrajectory([
     record('todo.claimed'),

@@ -8,6 +8,7 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 
 const terminalEventTypes = new Set(['todo.completed', 'todo.replanned', 'todo.blocked']);
+const actionableTerminalEventTypes = new Set(['todo.replanned', 'todo.blocked']);
 const requiredPrefix = ['todo.claimed', 'workflow.routed', 'skill.selected'];
 const forbiddenPayloadPatterns = [
   { id: 'absolute_user_path', pattern: /\/Users\/|\/home\/|C:\/Users\//i },
@@ -164,6 +165,15 @@ export function evaluateBdkPublicHarnessTrajectory(records, { allowPartial = fal
         run_claim: key,
         actual: terminalEvents,
         repair_hint: 'A single claim/run trajectory must finish with one terminal event.'
+      });
+    }
+    const actionableTerminalEvents = terminalEvents.filter((type) => actionableTerminalEventTypes.has(type));
+    if (actionableTerminalEvents.length > 0) {
+      failures.push({
+        class: 'actionable_terminal_event',
+        run_claim: key,
+        actual: actionableTerminalEvents,
+        repair_hint: 'Treat todo.replanned and todo.blocked as repair-required outcomes. Feed their reason back into the next bounded run instead of considering the harness trajectory healthy.'
       });
     }
     for (const event of events) {

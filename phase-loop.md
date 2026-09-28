@@ -234,14 +234,30 @@ In `implementer` mode, do not request `subtask.spawn` or any tool that the Tool
 Plan marks as denied. Broad TODO decomposition is not a subtask spawn; express
 it as one bounded `workspace.write` patch to `todo.md`.
 
-For already bounded leaf TODOs such as `E-04a`, `E-04b`, `E-04c`, `E-07a`,
-`E-07b`, `E-07c`, `E-08a`, and `E-08b`, do not rewrite `todo.md` to restate or
-re-split the same TODO. Read the named implementation files and propose the
-smallest implementation patch instead. For `E-07a`, start with
+For already bounded leaf TODOs, do not rewrite `todo.md` to restate or re-split
+the same TODO. A bounded leaf is any unchecked item with a concrete `Patch only`
+or `Create only` scope, `Route:`, `Source TODO:`, `Depends on:`, `Completion
+condition:`, `Forbidden changes:`, and `Verification:`. If such a leaf fails,
+retry by repairing the named target file or report a concrete blocker; do not
+create child TODOs unless the supervisor repair feedback explicitly says the
+TODO contract itself is invalid. For historical examples such as `E-04a`,
+`E-04b`, `E-04c`, `E-07a`, `E-07b`, `E-07c`, `E-08a`, and `E-08b`, read the
+named implementation files and propose the smallest implementation patch
+instead. For `E-07a`, start with
 `scripts/release-gate.mjs`, `scripts/release-supply-chain-artifact-evidence.mjs`,
 `scripts/guard-supply-chain-artifact-evidence.mjs`, and `package.json`; the
 expected patch must make missing local supply-chain tools fail closed as
 blockers rather than successful release evidence.
+
+For JSON target files, keep the edit structurally small and parse-preserving.
+Patch one existing JSON object member or one adjacent field group at a time,
+then rely on the supervisor JSON parse guard and the selected TODO verification
+commands. Do not append a second top-level JSON document, do not synthesize broad
+schema sections that were not requested, and do not put blocker prose into fields
+that are supposed to hold real evidence values such as commits, workflow run
+ids, artifact hashes, or fingerprints. Keep missing evidence values as `null` or
+the existing pending sentinel when required, and add a separate status/blocker
+field to describe why the release remains fail-closed.
 
 When implementation requires editing an existing file, prefer a small
 `workspace.write` `patch_file` proposal over replacing the whole file. Use the

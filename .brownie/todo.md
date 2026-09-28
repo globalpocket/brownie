@@ -92,10 +92,30 @@ Current synchronization note:
 
 ### P0/P1: Release engineering and evidence
 
-- [ ] E-19b-refresh-owner-governance-evidence-after-stable-ci-remaining-blocker: Blocker: release-ops evidence refresh completed, but Product Ready is still false and remaining release evidence blockers must stay explicit.
+- [ ] E-19h-release-contract-trace-fields: Patch only `docs/architecture/runtime-release-contract.json` and `docs/architecture/runtime-release-readiness-audit.json` to keep trace binding evidence fail-closed until real values exist:
+  Route: documentation.
+  Source TODO: E-19h-release-contract-trace-binding.
+  Depends on: <none>.
+  Completion condition: Release Contract and readiness audit expose explicit blockers when current tested commit, workflow run id, or artifact SHA bindings are missing or pending.
+  Forbidden changes: do not replace missing values with invented placeholders, do not mark evidence implemented without generated evidence, and do not declare Runtime Release Ready.
+  Verification: run `pnpm --workspace-root guard:release-contract` and `pnpm --workspace-root guard:runtime-release-readiness`.
+
+- [ ] E-19i-generation-sync-semantic-guard: Patch only `scripts/guard-release-evidence-semantic-consistency.mjs`, `scripts/guard-release-evidence-semantic-consistency.test.mjs`, `docs/architecture/phase-value-manifest.json`, `docs/architecture/final-product-ready-judgment.md`, `docs/architecture/runtime-release-contract.json`, and `docs/architecture/runtime-release-readiness-audit.json` so E-19 generation labels, commit authority, audited base, final judgment, and release evidence blockers are synchronized or rejected.
+  Route: implementation.
+  Depends on: E-19h-release-contract-trace-fields.
+  Completion condition: semantic consistency rejects stale E-17/RRP-8.7-era judgments, stale audited base commits, and mismatched TODO/Phase/Contract/Audit generation labels when Product Ready remains false.
+  Forbidden changes: do not delete historical phase manifests, do not declare Product Ready, and do not weaken existing semantic consistency checks.
+  Verification: run `pnpm --workspace-root guard:release-evidence-semantic-consistency:test`, `pnpm --workspace-root guard:release-evidence-semantic-consistency`, and `pnpm --workspace-root guard:phase-value`.
+
+- [ ] E-19j-branch-protection-verification-plan: Patch only `docs/architecture/runtime-release-contract.json`, `docs/architecture/runtime-release-readiness-audit.json`, and `.brownie/todo.md` to keep branch protection and required status checks as explicit owner-verification blockers until a verified snapshot, GitHub CLI authority, or alternate review authority is available.
+  Route: documentation.
+  Depends on: E-19i-generation-sync-semantic-guard.
+  Completion condition: owner governance blockers distinguish “not configured” from “not verifiable by current GitHub App” and leave a concrete owner-action TODO instead of treating API 403 as success or failure.
+  Forbidden changes: do not claim branch protection is satisfied from inaccessible GitHub App responses, do not remove owner-controlled blockers, and do not declare Runtime Release Ready.
+  Verification: run `pnpm --workspace-root guard:release-contract`.
+- [ ] E-19k-remaining-release-evidence-blocker: Blocker: release evidence remains incomplete after E-19 TODO injection, and Product Ready must remain false until Golden Journey, artifact E2E, lifecycle, stateful soak, provenance binding, dependency audit sync, and owner-verifiable branch protection are closed.
   Route: release-ops.
   Depends on: <none>.
-  Completion condition: remaining release blocker evidence is explicitly identified and Product Ready is not inferred from an empty queue.
+  Completion condition: remaining release blocker evidence is explicitly identified and Product Ready is not inferred from a queue that only contains blockers.
   Forbidden changes: do not patch workspace files for this blocker; do not declare Runtime Product Ready, Runtime Release Ready, or public Release Ready.
   Verification: blocker: release evidence remains fail-closed and no workspace file is patched until the next concrete executable evidence TODO is available.
-

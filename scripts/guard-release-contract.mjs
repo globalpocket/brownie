@@ -45,6 +45,20 @@ function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function isVerifiedTraceValue(value) {
+  if (!isNonEmptyString(value)) {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return !(
+    normalized === 'pending-evidence-binding' ||
+    normalized === 'pending' ||
+    normalized === 'not_generated' ||
+    normalized === 'not-generated' ||
+    normalized.startsWith('blocker:')
+  );
+}
+
 function readJson(repoRoot, relativePath, errors) {
   try {
     return JSON.parse(fs.readFileSync(path.join(repoRoot, relativePath), 'utf8'));
@@ -102,9 +116,9 @@ function validateCommitTrace(trace, errors, contractPath) {
 function requireArtifactBindingTrace(trace, errors, contractPath, evidenceField) {
   for (const field of ['implementation_commit', 'tested_commit', 'workflow_run_id', 'artifact_sha256']) {
     requireValue(
-      isNonEmptyString(trace?.[field]),
+      isVerifiedTraceValue(trace?.[field]),
       errors,
-      `${contractPath} commit_trace.${field} must be non-empty when release_artifact_evidence.${evidenceField} claims implemented artifact evidence.`
+      `${contractPath} commit_trace.${field} must be a verified evidence value, not a pending/blocker placeholder, when release_artifact_evidence.${evidenceField} claims implemented artifact evidence.`
     );
   }
 }
@@ -176,6 +190,8 @@ function validateRuntimeReleaseContract(contract, options = {}) {
   requireValue(packageJson.scripts?.['guard:local-release-targets'] === 'node scripts/guard-local-release-targets.mjs', errors, `${defaultPackagePath} must define guard:local-release-targets.`);
   requireValue(packageJson.scripts?.['guard:release-contract'] === 'node scripts/guard-release-contract.mjs', errors, `${defaultPackagePath} must define guard:release-contract.`);
   requireValue(packageJson.scripts?.['guard:release-contract:test'] === 'node --test scripts/guard-release-contract.test.mjs', errors, `${defaultPackagePath} must define guard:release-contract:test.`);
+  requireValue(packageJson.scripts?.['guard:trace-binding'] === 'node scripts/release-gate.mjs --validate-trace-binding --test-schema', errors, `${defaultPackagePath} must define guard:trace-binding.`);
+  requireValue(packageJson.scripts?.['guard:trace-binding:test'] === 'node scripts/release-gate.mjs --validate-trace-binding --test-schema', errors, `${defaultPackagePath} must define guard:trace-binding:test.`);
   requireValue(packageJson.scripts?.['guard:dependency-security-license-audit'] === 'node scripts/guard-dependency-security-license-audit.mjs', errors, `${defaultPackagePath} must define guard:dependency-security-license-audit.`);
   requireValue(packageJson.scripts?.['guard:dependency-security-license-audit:test'] === 'node --test scripts/guard-dependency-security-license-audit.test.mjs', errors, `${defaultPackagePath} must define guard:dependency-security-license-audit:test.`);
   requireValue(packageJson.scripts?.['guard:supply-chain-artifact-evidence'] === 'node scripts/guard-supply-chain-artifact-evidence.mjs', errors, `${defaultPackagePath} must define guard:supply-chain-artifact-evidence.`);

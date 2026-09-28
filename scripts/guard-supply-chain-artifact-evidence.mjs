@@ -46,6 +46,25 @@ const allowedIncompleteStatuses = new Set([
   'partial_tooling_missing'
 ]);
 
+function isArtifactSourceIdentityBound(evidence) {
+  if (!evidence || typeof evidence !== 'object') return false;
+  const { provenance, source_identity, artifacts, e2e_steps } = evidence;
+  if (!provenance || !source_identity || !artifacts) return false;
+  if (provenance.source === 'repository_local') return false;
+  if (source_identity.dirty_tree === true) return false;
+  if (source_identity.provenance_chain === undefined) return false;
+  if (!Array.isArray(artifacts) || artifacts.length === 0) return false;
+  if (!Array.isArray(e2e_steps)) return false;
+  if (!e2e_steps.includes('artifact_integrity_verification')) return false;
+  return artifacts.every((a) => {
+    if (!hashPattern.test(a.source_commit)) return false;
+    if (a.source_clean_tree !== 'clean') return false;
+    if (!hashPattern.test(a.source_identity)) return false;
+    return true;
+  });
+  return artifacts.every((artifact) => artifact.checksum && artifact.provenance_ref !== undefined);
+}
+
 function isMainModule() {
   return process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 }
@@ -120,6 +139,7 @@ function validateEvidence(evidence, options = {}) {
   requireValue(evidence.release_ready === false, errors, 'supply-chain evidence must not declare release_ready true.');
   requireValue(evidence.runtime_release_ready === false, errors, 'supply-chain evidence must not declare runtime_release_ready true.');
   requireValue(Array.isArray(evidence.fail_closed_reasons), errors, 'supply-chain evidence must include fail_closed_reasons.');
+  const failClosedReasons = Array.isArray(evidence.fail_closed_reasons) ? evidence.fail_closed_reasons : [];
 
   const sectionIds = new Set(Array.isArray(evidence.required_sections) ? evidence.required_sections : []);
   for (const sectionId of requiredSections) {
@@ -138,7 +158,7 @@ function validateEvidence(evidence, options = {}) {
         `supply-chain evidence sections.${sectionId}.status ${section.status} is not an allowed fail-closed status.`
       );
       requireValue(
-        evidence.fail_closed_reasons.some((reason) => reason.startsWith(`${sectionId}:`)),
+        failClosedReasons.some((reason) => reason.startsWith(`${sectionId}:`)),
         errors,
         `supply-chain evidence fail_closed_reasons must include ${sectionId}.`
       );
@@ -174,12 +194,29 @@ function validateEvidence(evidence, options = {}) {
 
   const artifactSmoke = evidence.sections?.artifact_smoke;
   if (artifactSmoke?.status === 'satisfied') {
+    const smokeResults = Array.isArray(artifactSmoke.smoke_results) ? artifactSmoke.smoke_results : [];
     requireValue(
-      Array.isArray(artifactSmoke.smoke_results) && artifactSmoke.smoke_results.length > 0,
+      smokeResults.length > 0,
+      errors,
+      'sections.artifact_smoke.smoke_results must be a non-empty array.'
+    );
+    for (const [index, smokeResult] of smokeResults.entries()) {
+      if (!smokeResult.e2e_steps || !Array.isArray(smokeResult.e2e_steps)) {
+        errors.push(`sections.artifact_smoke.smoke_results[${index}] missing required e2e_steps array.`);
+        continue;
+      }
+      for (const requiredStepId of requiredArtifactSmokeE2eStepIds) {
+        if (!smokeResult.e2e_steps.includes(requiredStepId)) {
+          errors.push(`sections.artifact_smoke.smoke_results[${index}] missing required E2E step ${requiredStepId}.`);
+        }
+      }
+    }
+    requireValue(
+      smokeResults.length > 0,
       errors,
       'satisfied artifact_smoke must include smoke_results.'
     );
-    for (const [index, smokeResult] of (Array.isArray(artifactSmoke.smoke_results) ? artifactSmoke.smoke_results : []).entries()) {
+    for (const [index, smokeResult] of smokeResults.entries()) {
       requireValue(smokeResult?.passed === true, errors, `sections.artifact_smoke.smoke_results[${index}] must pass.`);
       requireValue(Array.isArray(smokeResult?.commands) && smokeResult.commands.length > 0, errors, `sections.artifact_smoke.smoke_results[${index}] must include commands.`);
       const e2eSteps = new Set(Array.isArray(smokeResult?.e2e_steps) ? smokeResult.e2e_steps : []);
@@ -202,7 +239,7 @@ function validateEvidence(evidence, options = {}) {
     requireValue(
       Array.isArray(dependencySecurityLicenseScan.tools) && dependencySecurityLicenseScan.tools.length > 0,
       errors,
-      'satisfied dependency_security_license_scan must include tool results.'
+      'satisfied dependency_security_license_scan.tools must be a non-empty array.'
     );
     for (const [index, tool] of (Array.isArray(dependencySecurityLicenseScan.tools) ? dependencySecurityLicenseScan.tools : []).entries()) {
       requireValue(
@@ -210,8 +247,8 @@ function validateEvidence(evidence, options = {}) {
         errors,
         `sections.dependency_security_license_scan.tools[${index}] must include a non-empty id or name.`
       );
-      requireValue(tool?.available === true, errors, `sections.dependency_security_license_scan.tools[${index}] must be available.`);
-      requireValue(tool?.passed === true, errors, `sections.dependency_security_license_scan.tools[${index}] must pass.`);
+      requireValue(tool?.available === true, errors, `sections.dependency_security_license_scan.tools[${index}].available must be true.`);
+      requireValue(tool?.passed === true, errors, `sections.dependency_security_license_scan.tools[${index}].passed must be true.`);
       if (tool?.exit_code !== null && tool?.exit_code !== undefined) {
         requireValue(Number.isInteger(tool.exit_code), errors, `sections.dependency_security_license_scan.tools[${index}].exit_code must be an integer when present.`);
         requireValue(tool.exit_code === 0, errors, `sections.dependency_security_license_scan.tools[${index}].exit_code must be 0.`);
@@ -267,6 +304,9 @@ export function validateSupplyChainArtifactContract(contract, options = {}) {
 }
 
 export function runSupplyChainArtifactEvidenceGuard(options = {}) {
+  if (!options || typeof options !== 'object' || Array.isArray(options)) {
+    options = {};
+  }
   const repoRoot = options.repoRoot ?? defaultRepoRoot;
   const contractPath = options.contractPath ?? defaultContractPath;
   const evidencePath =

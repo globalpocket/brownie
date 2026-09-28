@@ -3619,6 +3619,16 @@
       "result_semantics": "RuntimeStatus",
       "result_type": "RuntimeStatus",
       "schema_fingerprint": "shape-fnv1a64:9e5e3da35e773e39",
+      "trace_binding_validation": {
+        "request_schema_status": null,
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": null,
+          "result": "RuntimeStatus"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "no_params",
       "wire_transform": "no_params"
     },
@@ -3780,6 +3790,16 @@
       "result_semantics": "LlmStatusResult",
       "result_type": "LlmStatusResult",
       "schema_fingerprint": "shape-fnv1a64:b43cd9f528a8370e",
+      "trace_binding_validation": {
+        "request_schema_status": null,
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": null,
+          "result": "LlmStatusResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "no_params",
       "wire_transform": "no_params"
     },
@@ -3972,6 +3992,16 @@
       "result_semantics": "LlmHealthResult",
       "result_type": "LlmHealthResult",
       "schema_fingerprint": "shape-fnv1a64:67ca1cc01b00036c",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "LlmHealthParams",
+          "result": "LlmHealthResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -4051,6 +4081,16 @@
       "result_semantics": "RuntimeConfigGetResult",
       "result_type": "RuntimeConfigGetResult",
       "schema_fingerprint": "shape-fnv1a64:2d70c0d7a52805f2",
+      "trace_binding_validation": {
+        "request_schema_status": null,
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": null,
+          "result": "RuntimeConfigGetResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "no_params",
       "wire_transform": "no_params"
     },
@@ -4138,6 +4178,16 @@
       "result_semantics": "RuntimeDiagnosticsResult",
       "result_type": "RuntimeDiagnosticsResult",
       "schema_fingerprint": "shape-fnv1a64:caa5abdf88e7fc8d",
+      "trace_binding_validation": {
+        "request_schema_status": null,
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": null,
+          "result": "RuntimeDiagnosticsResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "no_params",
       "wire_transform": "no_params"
     },
@@ -4340,6 +4390,16 @@
       "result_semantics": "TaskStartResult",
       "result_type": "TaskStartResult",
       "schema_fingerprint": "shape-fnv1a64:e787bb017d91b0ad",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "TaskStartParams",
+          "result": "TaskStartResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "vsix_camel_case_to_rust_snake_case_for_optional_sources"
     },
@@ -4620,6 +4680,16 @@
       "result_semantics": "TaskRecord",
       "result_type": "TaskRecord",
       "schema_fingerprint": "shape-fnv1a64:f6285e043316531f",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "TaskGetParams",
+          "result": "TaskRecord"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -4796,6 +4866,16 @@
       "result_semantics": "TaskCancelResult",
       "result_type": "TaskCancelResult",
       "schema_fingerprint": "shape-fnv1a64:913e68ee61e2e23f",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "TaskCancelParams",
+          "result": "TaskCancelResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -5077,6 +5157,16 @@
       "result_semantics": "TaskRunResult",
       "result_type": "TaskRunResult",
       "schema_fingerprint": "shape-fnv1a64:7d2287af7037ac06",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "TaskRunParams",
+          "result": "TaskRunResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "cli_task_id_projection_or_identity"
     },
@@ -5172,6 +5262,16 @@
       "result_semantics": "TaskInspectResult",
       "result_type": "TaskInspectResult",
       "schema_fingerprint": "shape-fnv1a64:a6c6127fe8218b03",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "TaskInspectParams",
+          "result": "TaskInspectResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -5247,6 +5347,16 @@
       "result_semantics": "TaskListResult",
       "result_type": "TaskListResult",
       "schema_fingerprint": "shape-fnv1a64:2cd1440ae03a42a0",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "TaskListParams",
+          "result": "TaskListResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity_with_optional_bounds"
     },
@@ -6084,6 +6194,16 @@
       "result_semantics": "HeadlessContinueOnceResult",
       "result_type": "HeadlessContinueOnceResult",
       "schema_fingerprint": "shape-fnv1a64:89294f355fa877dd",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "HeadlessContinueOnceParams",
+          "result": "HeadlessContinueOnceResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -6495,6 +6615,16 @@
       "result_semantics": "HeadlessRunAdvanceResult",
       "result_type": "HeadlessRunAdvanceResult",
       "schema_fingerprint": "shape-fnv1a64:92cfbe0115ebe7f9",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "HeadlessRunAdvanceParams",
+          "result": "HeadlessRunAdvanceResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -7099,6 +7229,16 @@
       "result_semantics": "HeadlessRunDriveResult",
       "result_type": "HeadlessRunDriveResult",
       "schema_fingerprint": "shape-fnv1a64:e4b8496f88d22870",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "HeadlessRunDriveParams",
+          "result": "HeadlessRunDriveResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -7289,6 +7429,16 @@
       "result_semantics": "HeadlessRunRecoveryProbeResult",
       "result_type": "HeadlessRunRecoveryProbeResult",
       "schema_fingerprint": "shape-fnv1a64:653467798746cb47",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "HeadlessRunRecoveryProbeParams",
+          "result": "HeadlessRunRecoveryProbeResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -7338,6 +7488,16 @@
       "result_semantics": "ModeListResult",
       "result_type": "ModeListResult",
       "schema_fingerprint": "shape-fnv1a64:4e46b0677f90b656",
+      "trace_binding_validation": {
+        "request_schema_status": null,
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": null,
+          "result": "ModeListResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "no_params",
       "wire_transform": "no_params"
     },
@@ -7428,6 +7588,16 @@
       "result_semantics": "ModeSummary",
       "result_type": "ModeSummary",
       "schema_fingerprint": "shape-fnv1a64:862cc193f3f89926",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ModeGetParams",
+          "result": "ModeSummary"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -7509,6 +7679,16 @@
       "result_semantics": "ModePackActivateResult",
       "result_type": "ModePackActivateResult",
       "schema_fingerprint": "shape-fnv1a64:742945ed971f343f",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ModePackActivateParams",
+          "result": "ModePackActivateResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -7623,6 +7803,16 @@
       "result_semantics": "ModePackFetchCandidateResult",
       "result_type": "ModePackFetchCandidateResult",
       "schema_fingerprint": "shape-fnv1a64:3b0c46174eb6d55b",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ModePackFetchCandidateParams",
+          "result": "ModePackFetchCandidateResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -7823,6 +8013,16 @@
       "result_semantics": "ModePackSelectRegistryUpdateResult",
       "result_type": "ModePackSelectRegistryUpdateResult",
       "schema_fingerprint": "shape-fnv1a64:ae0325f3dc24c030",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ModePackSelectRegistryUpdateParams",
+          "result": "ModePackSelectRegistryUpdateResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -7983,6 +8183,16 @@
       "result_semantics": "ModePackApproveCandidateResult",
       "result_type": "ModePackApproveCandidateResult",
       "schema_fingerprint": "shape-fnv1a64:398fe76c8a6d78f7",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ModePackApproveCandidateParams",
+          "result": "ModePackApproveCandidateResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -8097,6 +8307,16 @@
       "result_semantics": "ModePackTrustSignerResult",
       "result_type": "ModePackTrustSignerResult",
       "schema_fingerprint": "shape-fnv1a64:8fcaa6fcd8de0c4c",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ModePackTrustSignerParams",
+          "result": "ModePackTrustSignerResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -8197,6 +8417,16 @@
       "result_semantics": "ModePackRevokeSignerResult",
       "result_type": "ModePackRevokeSignerResult",
       "schema_fingerprint": "shape-fnv1a64:3fa599f5ec55127a",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ModePackRevokeSignerParams",
+          "result": "ModePackRevokeSignerResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -8357,6 +8587,16 @@
       "result_semantics": "ModePackVerifyCandidateProvenanceResult",
       "result_type": "ModePackVerifyCandidateProvenanceResult",
       "schema_fingerprint": "shape-fnv1a64:c341243aa6da2c38",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ModePackVerifyCandidateProvenanceParams",
+          "result": "ModePackVerifyCandidateProvenanceResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -8632,6 +8872,16 @@
       "result_semantics": "ModePackReplaceActiveResult",
       "result_type": "ModePackReplaceActiveResult",
       "schema_fingerprint": "shape-fnv1a64:60b57f22e17a35a1",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ModePackReplaceActiveParams",
+          "result": "ModePackReplaceActiveResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -8751,6 +9001,16 @@
       "result_semantics": "ModePackRollbackActiveResult",
       "result_type": "ModePackRollbackActiveResult",
       "schema_fingerprint": "shape-fnv1a64:e358c3a0eb0ed65b",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ModePackRollbackActiveParams",
+          "result": "ModePackRollbackActiveResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -8850,6 +9110,16 @@
       "result_semantics": "PermissionCheckResult",
       "result_type": "PermissionCheckResult",
       "schema_fingerprint": "shape-fnv1a64:5cc37b70ac90125b",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "PermissionCheckParams",
+          "result": "PermissionCheckResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -8897,6 +9167,16 @@
       "result_semantics": "ToolListResult",
       "result_type": "ToolListResult",
       "schema_fingerprint": "shape-fnv1a64:fb56703365c79def",
+      "trace_binding_validation": {
+        "request_schema_status": null,
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": null,
+          "result": "ToolListResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "no_params",
       "wire_transform": "no_params"
     },
@@ -8986,6 +9266,16 @@
       "result_semantics": "ToolPlanResult",
       "result_type": "ToolPlanResult",
       "schema_fingerprint": "shape-fnv1a64:8db3cc32c37854c4",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ToolPlanParams",
+          "result": "ToolPlanResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -9099,6 +9389,16 @@
       "result_semantics": "ToolIntentParseResult",
       "result_type": "ToolIntentParseResult",
       "schema_fingerprint": "shape-fnv1a64:16cf10558932011e",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ToolIntentParseParams",
+          "result": "ToolIntentParseResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -9213,6 +9513,16 @@
       "result_semantics": "ToolExecuteResult",
       "result_type": "ToolExecuteResult",
       "schema_fingerprint": "shape-fnv1a64:d666f4391918b5ed",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ToolExecuteParams",
+          "result": "ToolExecuteResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -9343,6 +9653,16 @@
       "result_semantics": "McpToolApprovalApproveResult",
       "result_type": "McpToolApprovalApproveResult",
       "schema_fingerprint": "shape-fnv1a64:227cf1c146227f72",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "McpToolApprovalApproveParams",
+          "result": "McpToolApprovalApproveResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -9426,6 +9746,16 @@
       "result_semantics": "RunEventsResult",
       "result_type": "RunEventsResult",
       "schema_fingerprint": "shape-fnv1a64:c80fb361b592a2aa",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "RunEventsParams",
+          "result": "RunEventsResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -9489,6 +9819,16 @@
       "result_semantics": "RunInspectResult",
       "result_type": "RunInspectResult",
       "schema_fingerprint": "shape-fnv1a64:ce0a1e597d88f037",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "RunInspectParams",
+          "result": "RunInspectResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -9677,6 +10017,16 @@
       "result_semantics": "CodebaseIndexBuildResult",
       "result_type": "CodebaseIndexBuildResult",
       "schema_fingerprint": "shape-fnv1a64:b95c71d8405584c0",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "CodebaseIndexBuildParams",
+          "result": "CodebaseIndexBuildResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -9864,6 +10214,16 @@
       "result_semantics": "CodebaseIndexQueryResult",
       "result_type": "CodebaseIndexQueryResult",
       "schema_fingerprint": "shape-fnv1a64:f33371b59a0783b0",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "CodebaseIndexQueryParams",
+          "result": "CodebaseIndexQueryResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -9936,6 +10296,16 @@
       "result_semantics": "ProposalListResult",
       "result_type": "ProposalListResult",
       "schema_fingerprint": "shape-fnv1a64:306b9e550714e324",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ProposalListParams",
+          "result": "ProposalListResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -10010,6 +10380,16 @@
       "result_semantics": "ProposalInspectResult",
       "result_type": "ProposalInspectResult",
       "schema_fingerprint": "shape-fnv1a64:bd33fe4b093d1ce4",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ProposalInspectParams",
+          "result": "ProposalInspectResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -10106,6 +10486,16 @@
       "result_semantics": "ProposalApproveResult",
       "result_type": "ProposalApproveResult",
       "schema_fingerprint": "shape-fnv1a64:033bce089ca5a3f3",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ProposalApproveParams",
+          "result": "ProposalApproveResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -10193,6 +10583,16 @@
       "result_semantics": "ProposalRejectResult",
       "result_type": "ProposalRejectResult",
       "schema_fingerprint": "shape-fnv1a64:ac31484d6977b75c",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ProposalRejectParams",
+          "result": "ProposalRejectResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -10284,6 +10684,16 @@
       "result_semantics": "ProposalPreflightResult",
       "result_type": "ProposalPreflightResult",
       "schema_fingerprint": "shape-fnv1a64:b0213dc97f975a10",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ProposalPreflightParams",
+          "result": "ProposalPreflightResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -10366,6 +10776,16 @@
       "result_semantics": "ProposalReadinessResult",
       "result_type": "ProposalReadinessResult",
       "schema_fingerprint": "shape-fnv1a64:36fb2aa4f4b9bc1b",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ProposalReadinessParams",
+          "result": "ProposalReadinessResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -10448,6 +10868,16 @@
       "result_semantics": "ProposalApplyCapabilityResult",
       "result_type": "ProposalApplyCapabilityResult",
       "schema_fingerprint": "shape-fnv1a64:5376cf607629fd53",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ProposalApplyCapabilityParams",
+          "result": "ProposalApplyCapabilityResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -10530,6 +10960,16 @@
       "result_semantics": "ProposalApplyDryRunResult",
       "result_type": "ProposalApplyDryRunResult",
       "schema_fingerprint": "shape-fnv1a64:820230661cead521",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ProposalApplyDryRunParams",
+          "result": "ProposalApplyDryRunResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -10713,6 +11153,16 @@
       "result_semantics": "ProposalApplyResult",
       "result_type": "ProposalApplyResult",
       "schema_fingerprint": "shape-fnv1a64:eaae7fa98f2baca1",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ProposalApplyParams",
+          "result": "ProposalApplyResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity_or_transaction_projection"
     },
@@ -10795,6 +11245,16 @@
       "result_semantics": "ProposalApplyDryRunHistoryResult",
       "result_type": "ProposalApplyDryRunHistoryResult",
       "schema_fingerprint": "shape-fnv1a64:6c5e93a9e6bdf8bc",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ProposalApplyDryRunHistoryParams",
+          "result": "ProposalApplyDryRunHistoryResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -10877,6 +11337,16 @@
       "result_semantics": "ProposalAuditTrailResult",
       "result_type": "ProposalAuditTrailResult",
       "schema_fingerprint": "shape-fnv1a64:0381f0f1587cccdc",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ProposalAuditTrailParams",
+          "result": "ProposalAuditTrailResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -10959,6 +11429,16 @@
       "result_semantics": "ProposalReviewBundleResult",
       "result_type": "ProposalReviewBundleResult",
       "schema_fingerprint": "shape-fnv1a64:34bfb5d85ee8dd97",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ProposalReviewBundleParams",
+          "result": "ProposalReviewBundleResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -11041,6 +11521,16 @@
       "result_semantics": "ProposalReviewVerdictResult",
       "result_type": "ProposalReviewVerdictResult",
       "schema_fingerprint": "shape-fnv1a64:a68e396c4703cddb",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ProposalReviewVerdictParams",
+          "result": "ProposalReviewVerdictResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -11123,6 +11613,16 @@
       "result_semantics": "ProposalReviewReportResult",
       "result_type": "ProposalReviewReportResult",
       "schema_fingerprint": "shape-fnv1a64:81b384f03fe9bccc",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ProposalReviewReportParams",
+          "result": "ProposalReviewReportResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     },
@@ -11186,6 +11686,16 @@
       "result_semantics": "ProposalReviewQueueResult",
       "result_type": "ProposalReviewQueueResult",
       "schema_fingerprint": "shape-fnv1a64:ca672c9dda81bde8",
+      "trace_binding_validation": {
+        "request_schema_status": "valid",
+        "result_schema_status": "valid",
+        "schema_name_sources": {
+          "request": "ProposalReviewQueueParams",
+          "result": "ProposalReviewQueueResult"
+        },
+        "trace_id_source": "method",
+        "validator": "validate_trace_binding"
+      },
       "unknown_field_policy": "rust_deny_unknown_fields",
       "wire_transform": "identity"
     }

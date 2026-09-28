@@ -23,6 +23,33 @@ const requiredConditionIds = [
   'required_independent_reviews_complete'
 ];
 
+function pendingTraceContract(overrides = {}) {
+  return {
+    schema_version: 1,
+    contract_id: 'runtime-release-engineering-contract-v1',
+    phase: 'RRP-8.7',
+    owner: 'runtime',
+    runtime_release_ready: false,
+    commit_trace: {
+      audited_base_commit: '8016b67262f6e951fd834589637df475e03adb2b',
+      implementation_commit: null,
+      tested_commit: null,
+      release_tag: null,
+      workflow_run_id: null,
+      artifact_sha256: null,
+      contract_registry_fingerprint: 'sha256:contract',
+      readiness_audit_content_sha256: validAuditContentSha256,
+      mode_pack_fingerprint: null,
+      product_dod_fingerprint: null,
+      ...overrides.commit_trace
+    },
+    release_ready_conditions: requiredConditionIds.map((id) =>
+      condition(id, overrides.status || 'missing_evidence')
+    ),
+    ...overrides
+  };
+}
+
 function condition(id, status = 'missing_evidence') {
   return {
     id,
@@ -165,6 +192,8 @@ const validPackageJson = {
     'guard:local-release-targets': 'node scripts/guard-local-release-targets.mjs',
     'guard:release-contract': 'node scripts/guard-release-contract.mjs',
     'guard:release-contract:test': 'node --test scripts/guard-release-contract.test.mjs',
+    'guard:trace-binding': 'node scripts/release-gate.mjs --validate-trace-binding --test-schema',
+    'guard:trace-binding:test': 'node scripts/release-gate.mjs --validate-trace-binding --test-schema',
     'guard:dependency-security-license-audit': 'node scripts/guard-dependency-security-license-audit.mjs',
     'guard:dependency-security-license-audit:test':
       'node --test scripts/guard-dependency-security-license-audit.test.mjs',
@@ -252,6 +281,26 @@ test('rejects implemented artifact provenance evidence with null commit bindings
   assert(errors.some((error) => error.includes('commit_trace.artifact_sha256')));
 });
 
+test('rejects implemented artifact evidence with placeholder commit bindings', () => {
+  const contract = validContract({
+    commit_trace: {
+      implementation_commit: 'BLOCKER: no executable supply-chain evidence generated',
+      tested_commit: 'pending-evidence-binding',
+      workflow_run_id: 'not_generated',
+      artifact_sha256: 'pending'
+    },
+    release_artifact_evidence: {
+      ...validContract().release_artifact_evidence,
+      artifacts: { status: 'implemented_sufficient', path: '.brownie/release-evidence/artifacts.json' }
+    }
+  });
+  const errors = validate(contract);
+  assert(errors.some((error) => error.includes('commit_trace.implementation_commit must be a verified evidence value')));
+  assert(errors.some((error) => error.includes('commit_trace.tested_commit must be a verified evidence value')));
+  assert(errors.some((error) => error.includes('commit_trace.workflow_run_id must be a verified evidence value')));
+  assert(errors.some((error) => error.includes('commit_trace.artifact_sha256 must be a verified evidence value')));
+});
+
 test('rejects missing release gate package scripts', () => {
   const errors = validate(validContract(), { packageJson: { scripts: {} } });
   assert(errors.some((error) => error.includes('release:gate')));
@@ -268,6 +317,8 @@ test('rejects missing release gate package scripts', () => {
   assert(errors.some((error) => error.includes('guard:local-release-targets')));
   assert(errors.some((error) => error.includes('guard:release-contract')));
   assert(errors.some((error) => error.includes('guard:release-contract:test')));
+  assert(errors.some((error) => error.includes('guard:trace-binding')));
+  assert(errors.some((error) => error.includes('guard:trace-binding:test')));
   assert(errors.some((error) => error.includes('guard:dependency-security-license-audit')));
   assert(errors.some((error) => error.includes('guard:dependency-security-license-audit:test')));
   assert(errors.some((error) => error.includes('guard:supply-chain-artifact-evidence')));

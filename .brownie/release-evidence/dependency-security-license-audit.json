@@ -3,8 +3,8 @@
   "evidence_id": "brownie-dependency-security-license-audit-v1",
   "phase": "RRP-8.5",
   "repository": "globalpocket/brownie",
-  "generated_at": "2026-09-09T07:39:33.440Z",
-  "source_commit": "7c1a362b4b076751605d1df19363e720e0c18a28",
+  "generated_at": "2026-09-28T20:01:59.890Z",
+  "source_commit": "1a2d7c9c401c8aa8ef2e4601eecf49226fe3a825",
   "release_ready": false,
   "runtime_release_ready": false,
   "mandatory_gate_passed": true,
@@ -17,12 +17,12 @@
     {
       "path": "Cargo.lock",
       "present": true,
-      "sha256": "sha256:56f7a42f3588349afe6ee171e5bbf204010b8325f4f2b564292e0110a3dda1de"
+      "sha256": "sha256:15bb5e19c11fa1c2531fec7cef801bb8c7aec4def850cd2c24749c1d33d466b6"
     },
     {
       "path": "pnpm-lock.yaml",
       "present": true,
-      "sha256": "sha256:d5c341cf4b43df5f34a276f739edbe20ff1b1fff5a73f6557398869b3ae8df31"
+      "sha256": "sha256:5f6c6bdc83375eddb6d5595c68eb2cc320da5fbbd347dd6368916d99e733fee3"
     }
   ],
   "policy": {

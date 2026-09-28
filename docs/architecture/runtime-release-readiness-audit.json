@@ -3,6 +3,13 @@
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
   "phase": "RRP-8.7",
   "phase_title": "Release Evidence Gate",
+  "payload_schema_classification": {
+    "schema_version": 1,
+    "type": "runtime-release-readiness-audit",
+    "scope": "phase-loop-verification",
+    "authority": "origin-main-resynchronized",
+    "content_sha256": "sha256:c2a79ea781ccbb2b3653428047cd8fbbd7813ce361dab5f3a9004a4f9bf41fe7"
+  },
   "repository": "globalpocket/brownie",
   "audited_main_commit": "4376c0a7412a40f328fb3ba64bca487bba35a80e",
   "runtime_release_ready": false,
@@ -14,6 +21,37 @@
     "status": "partial",
     "phase": "RRP-8.7",
     "audited_base_commit": "4376c0a7412a40f328fb3ba64bca487bba35a80e",
+    "trace_binding_status": {
+      "status": "blocked_missing_executable_evidence",
+      "blocking_fields": [
+        "implementation_commit",
+        "tested_commit",
+        "workflow_run_id",
+        "artifact_sha256"
+      ],
+      "policy": "Runtime Release Ready remains false until current tested commit, workflow run id, and artifact SHA bindings are generated from executable evidence. Pending values must not be replaced with invented placeholders."
+    },
+    "trace_binding_schema": {
+      "schema_version": 1,
+      "fingerprint": "sha256:c2a79ea781ccbb2b3653428047cd8fbbd7813ce361dab5f3a9004a4f9bf41fe7",
+      "schema_definition": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "fingerprint"
+        ],
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        }
+      }
+    },
     "local_release_gate_script": "pnpm release:gate",
     "direct_workflow_gate_status": "blocked_external_workflow_scope_required",
     "runtime_release_ready_after_phase": false,
@@ -21,7 +59,32 @@
     "dependency_security_license_audit_status": "mandatory_local_gate_added_release_blocking_until_tools_execute_and_pass",
     "existing_ci_release_gate_binding_status": "release_gate_dry_run_required_by_existing_vsix_check_path_direct_workflow_scope_blocked",
     "owner_governance_evidence_status": "machine_checked_owner_controlled_residuals_satisfied_cross_platform_artifacts_held",
-    "metadata_resynchronization_status": "current_authority_resynchronized_to_origin_main_after_r20"
+    "metadata_resynchronization_status": "current_authority_resynchronized_to_origin_main_after_r20",
+    "trace_binding_fingerprint": "sha256:c2a79ea781ccbb2b3653428047cd8fbbd7813ce361dab5f3a9004a4f9bf41fe7"
+  },
+  "trace_binding_schema": {
+    "schema_version": 1,
+    "fingerprint": "sha256:c2a79ea781ccbb2b3653428047cd8fbbd7813ce361dab5f3a9004a4f9bf41fe7",
+    "binding_type": "release-contract",
+    "authority": "origin-main-resynchronized"
+  },
+  "ledger_event_kind": {
+    "schema_version": 1,
+    "description": "Enumeration of all valid LedgerEventKind values for audit schema validation",
+    "values": [
+      "ToolPlanApproved",
+      "PermissionChecked",
+      "AgentLoopStarted",
+      "PromptBuilt",
+      "LlmRequestCreated",
+      "ToolIntentParsed",
+      "ToolIntentPermissionChecked",
+      "ToolIntentApproved",
+      "ToolExecutionRequested",
+      "ToolExecutionPermissionChecked",
+      "ToolExecutionCompleted",
+      "LlmResponseReceived"
+    ]
   },
   "safety_readiness_evidence_invalidation": {
     "evidence_id": "runtime-safety-readiness-evidence-invalidation-v1",
@@ -124,7 +187,7 @@
       "scripts/guard-runtime-release-readiness.mjs",
       "scripts/rrp3-process-loss-recovery-e2e.mjs"
     ],
-    "tracked_fingerprint": "sha256:91f3bfe30b2593fe6ff61658eced9aef1210babb3a172446c58ea4456a0daba4",
+    "tracked_fingerprint": "sha256:b27cfd6cfa4b333df787f9acced1d2b31f8c453711b19b24d66a424bfa9edeef",
     "status": "implemented_sufficient"
   },
   "owner_decisions": [

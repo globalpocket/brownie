@@ -43,6 +43,22 @@ const requiredStatefulSoakStepIds = [
   'finite_convergence'
 ];
 
+function validateStatefulSoakSteps(evidence) {
+  if (!evidence || typeof evidence !== 'object') {
+    return { valid: false, missing: requiredStatefulSoakStepIds, reason: 'evidence is not an object' };
+  }
+  const soakSection = evidence.soak_test;
+  if (!soakSection || typeof soakSection !== 'object') {
+    return { valid: false, missing: requiredStatefulSoakStepIds, reason: 'soak_test section missing' };
+  }
+  const stepIds = soakSection.step_ids || [];
+  const missing = requiredStatefulSoakStepIds.filter((id) => !stepIds.includes(id));
+  if (missing.length > 0) {
+    return { valid: false, missing, reason: 'required stateful soak steps incomplete' };
+  }
+  return { valid: true, missing: [], reason: 'all stateful soak steps present' };
+}
+
 function validContract(overrides = {}) {
   return {
     local_release_gate: {

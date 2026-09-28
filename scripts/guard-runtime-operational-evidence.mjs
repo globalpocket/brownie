@@ -29,6 +29,20 @@ const allowedIncompleteStatuses = new Set([
 const forbiddenEvidenceStringPattern = /(?:\/Users\/|\/home\/|[A-Za-z]:\/Users\/|EncodedCommand|brownie-linux|worktree)/u;
 const forbiddenRawProcessFieldNames = new Set(['command', 'stdout', 'stderr']);
 
+function validateStatefulSoakSteps(evidence, errors) {
+  if (!evidence.soak_test || typeof evidence.soak_test !== 'object') {
+    errors.push('soak_test section is missing or invalid');
+    return;
+  }
+  const soakSteps = evidence.soak_test.steps || [];
+  const stepIds = new Set(soakSteps.map(s => s.id).filter(Boolean));
+  for (const requiredId of requiredStatefulSoakStepIds) {
+    if (!stepIds.has(requiredId)) {
+      errors.push(`Missing required stateful soak step: ${requiredId}`);
+    }
+  }
+}
+
 function isMainModule() {
   return process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 }

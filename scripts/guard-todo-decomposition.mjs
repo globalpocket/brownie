@@ -136,7 +136,7 @@ function dependenciesLines(block) {
 function parseDependsOn(block) {
   const line = dependenciesLines(block)[0] ?? '';
   const raw = line.slice('Depends on:'.length).trim().replace(/[.]$/, '');
-  if (!raw || raw === '<none>') {
+  if (!raw || raw === '<none>' || raw.toLowerCase() === 'none') {
     return [];
   }
   return raw
@@ -164,6 +164,19 @@ function packageScripts(repoRoot) {
 
 function verificationCommandValues(block) {
   return verificationLines(block).flatMap(backtickedValues);
+}
+
+function referencedVerificationPaths(command) {
+  const paths = [];
+  const nodeScript = command.match(/^node\s+(?:--test\s+)?(scripts\/[^\s]+)/u);
+  if (nodeScript) {
+    paths.push(nodeScript[1]);
+  }
+  return paths;
+}
+
+function blockCreatesPath(block, relativePath) {
+  return createOnlyScopes(block).includes(relativePath);
 }
 
 function isAllowedVerificationCommand(command) {
@@ -298,8 +311,31 @@ function validateQuality(block, errors, options = {}) {
   const verification = verificationLines(block).join(' ').toLowerCase();
   const forbidden = forbiddenLines(block).join(' ').toLowerCase();
   const scopes = boundedScopes(block);
+  const firstLine = scopeLine(block).toLowerCase();
+  const isDerived = isDecompositionDerived(block);
+  const analysisOnlyIntent = /:\s*(?:blocker:\s*)?(?:read|inspect|extract|summari[sz]e|confirm|investigate|review)\b/u.test(firstLine);
   if (route && !allowedRoutes.has(route)) {
     errors.push(`${owner}: Route must be one of ${[...allowedRoutes].join(', ')}.`);
+  }
+  if (
+    isDerived &&
+    analysisOnlyIntent &&
+    scopes.length === 0 &&
+    !completion.includes('patch') &&
+    !completion.includes('create') &&
+    !completion.includes('workspace') &&
+    !completion.includes('queue')
+  ) {
+    errors.push(`${owner}: analysis-only derived leaves are not executable TODOs; convert read/inspect/extract work into an implementation leaf with bounded Patch only/Create only scope or a concrete owner blocker.`);
+  }
+  if (
+    isDerived &&
+    route === 'todo-decomposition' &&
+    scopes.length === 0 &&
+    !firstLine.includes('patch only `.brownie/todo.md`') &&
+    !firstLine.includes('patch only `todo.md`')
+  ) {
+    errors.push(`${owner}: todo-decomposition derived leaves must patch the TODO queue/breakdown directly; read-only decomposition leaves cause no-progress loops.`);
   }
   if (/fix everything|every problem|make .*release ready immediately|全部|すべて/.test(completion)) {
     errors.push(`${owner}: Completion condition is too broad for a leaf TODO.`);
@@ -482,6 +518,22 @@ function validateLeafBlock(block, errors, options = {}) {
       }
     }
   }
+  const firstLine = scopeLine(block).toLowerCase();
+  const verificationCommands = verificationCommandValues(block);
+  const createsOrPatchesValidator = (
+    firstLine.includes('validator') ||
+    firstLine.includes('guard') ||
+    boundedScopes(block).some((target) => /(?:validate|validator|guard).*\.mjs$/u.test(target) || /(?:validate|validator|guard).*\.js$/u.test(target))
+  );
+  if (createsOrPatchesValidator && boundedScopes(block).some((target) => target.includes('validate-audit-schema'))) {
+    if (!verificationCommands.includes('pnpm --workspace-root guard:validator-schema-assumptions')) {
+      errors.push(`${owner}: validator/guard leaves for validate-audit-schema must verify actual target shape with pnpm --workspace-root guard:validator-schema-assumptions.`);
+    }
+    const completion = completionLines(block).join(' ').toLowerCase();
+    if (!completion.includes('actual') && !completion.includes('実') && !completion.includes('target shape')) {
+      errors.push(`${owner}: validator/guard leaves must state that completion reflects the actual target schema/shape, not an invented schema.`);
+    }
+  }
   if (route === 'documentation' && scopes.some((target) => !target.startsWith('docs/') && target !== '.brownie/todo.md')) {
     errors.push(`${owner}: documentation leaves may only patch docs/ targets or the TODO queue.`);
   }
@@ -507,8 +559,61 @@ function validateDependencies(text, blocks, errors, options = {}) {
       if (dep === id) {
         errors.push(`${owner} ${id}: TODO must not depend on itself.`);
       }
+      if (!uncheckedIds.has(dep) && !checkedIds.has(dep) && options.breakdownText && options.breakdownText.includes(dep)) {
+        errors.push(`${owner} ${id}: dependency ${dep} is present only in the breakdown ledger, not the live TODO queue; leaf TODOs must not depend on abstract/decomposed parent IDs because Runtime cannot schedule them.`);
+      }
       if (!uncheckedIds.has(dep) && !checkedIds.has(dep) && options.breakdownText && !options.breakdownText.includes(dep)) {
         errors.push(`${owner} ${id}: dependency ${dep} is not present in unchecked, checked, or breakdown-ledger state.`);
+      }
+    }
+  }
+}
+
+function validateVerificationPrerequisites(blocks, errors, options = {}) {
+  const repoRoot = options.repoRoot;
+  if (!repoRoot) {
+    return;
+  }
+  const creatorByPath = new Map();
+  for (const block of blocks) {
+    const id = todoId(block);
+    if (!id) {
+      continue;
+    }
+    for (const target of createOnlyScopes(block)) {
+      if (!creatorByPath.has(target)) {
+        creatorByPath.set(target, id);
+      }
+    }
+  }
+
+  for (const block of blocks) {
+    const id = todoId(block);
+    if (!id) {
+      continue;
+    }
+    const deps = new Set(parseDependsOn(block));
+    const owner = `${options.path ?? defaultTodoPath} ${id}`;
+    for (const command of verificationCommandValues(block)) {
+      for (const relativePath of referencedVerificationPaths(command)) {
+        if (fs.existsSync(path.join(repoRoot, relativePath))) {
+          continue;
+        }
+        if (blockCreatesPath(block, relativePath)) {
+          continue;
+        }
+        const creator = creatorByPath.get(relativePath);
+        if (creator && creator !== id && !deps.has(creator)) {
+          errors.push(
+            `${owner}: Verification command ${JSON.stringify(command)} references missing prerequisite ${relativePath}; queue contains creator TODO ${creator}, so this TODO must depend on ${creator} or use an existing bounded verification until ${relativePath} exists.`
+          );
+          continue;
+        }
+        if (!creator) {
+          errors.push(
+            `${owner}: Verification command ${JSON.stringify(command)} references missing script ${relativePath}. Verification commands must use an existing repository script, a package.json script, or a script created by this TODO/dependency; do not invent generic validators.`
+          );
+        }
       }
     }
   }
@@ -672,6 +777,7 @@ export function validateTodoDecompositionText(text, options = {}) {
     }
   }
   validateDependencies(text, derivedBlocks, errors, options);
+  validateVerificationPrerequisites(derivedBlocks, errors, options);
   validateDistinctSiblingLeaves(derivedBlocks, errors, options);
   if (options.breakdownText !== undefined) {
     validateBreakdownLedger(options.breakdownText, leafIds, errors, options);

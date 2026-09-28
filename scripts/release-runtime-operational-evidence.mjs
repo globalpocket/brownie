@@ -28,9 +28,22 @@ const statefulSoakConfig = {
     resumeReplay: true,
     duplicateRejection: true,
     processLossRecovery: true,
-    finiteConvergence: true
+    finiteConvergence: true,
+    statefulSoakSteps: true
   },
-  storagePolicy: 'aggregated_metrics_only'
+  storagePolicy: 'aggregated_metrics_only',
+  tempWorkspace: {
+    enabled: true,
+    freshStart: true,
+    mutationRequired: true,
+    beforeAfterVerification: true
+  },
+  requiredSteps: {
+    preSoakValidation: true,
+    stateTransitionRecording: true,
+    postSoakConsistencyCheck: true,
+    evidenceAggregation: true
+  }
 };
 
 const forbiddenLocalEvidencePattern = /(?:^\/Users\/|^\/home\/|^[A-Za-z]:\/Users\/|ssh|worktree)/u;

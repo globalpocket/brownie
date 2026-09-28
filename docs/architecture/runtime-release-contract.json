@@ -20,11 +20,21 @@
     "release_tag": "pending-evidence-binding",
     "workflow_run_id": "pending-evidence-binding",
     "artifact_sha256": "pending-evidence-binding",
+    "trace_binding_status": {
+      "status": "blocked_missing_executable_evidence",
+      "blocking_fields": [
+        "implementation_commit",
+        "tested_commit",
+        "workflow_run_id",
+        "artifact_sha256"
+      ],
+      "policy": "Trace identity fields must contain verified evidence values before runtime_release_ready can be true. Missing values remain pending/null; blocker prose belongs in this status object, not in evidence identity fields."
+    },
     "contract_registry_fingerprint": "sha256:4250fb47242f2bdc4ac26ce1d0cf8ecedbd27627eb9e3117acc82e3719eb934d",
-    "readiness_audit_content_sha256": "sha256:4ba87e9bde6221938206221328080b7f39fa458417ef5dd34591fc2b901b6ac8",
+    "readiness_audit_content_sha256": "sha256:11833237d9d908f2695f5ee8a77874dca7d56ec39178354b450ac0c9b6f972c4",
     "mode_pack_fingerprint": null,
     "product_dod_fingerprint": null,
-    "evidence_alignment_note": "Release trace fields remain null until executable supply-chain evidence (artifact build, workflow run, tested commit) is generated and bound by guard scripts. Contract maturity at 88% pending P0/P1 evidence closure."
+    "evidence_alignment_note": "Release trace fields remain pending until executable supply-chain evidence (artifact build, workflow run, tested commit) is generated and bound by guard scripts. Contract maturity at 88% pending P0/P1 evidence closure. Fail-closed: do not replace pending values with invented placeholders."
   },
   "release_ready_conditions": [
     {
@@ -314,6 +324,14 @@
       {
         "id": "release_contract_guard_test",
         "command": "pnpm --workspace-root guard:release-contract:test"
+      },
+      {
+        "id": "trace_binding_guard",
+        "command": "pnpm --workspace-root guard:trace-binding"
+      },
+      {
+        "id": "trace_binding_guard_test",
+        "command": "pnpm --workspace-root guard:trace-binding:test"
       },
       {
         "id": "dependency_security_license_audit",

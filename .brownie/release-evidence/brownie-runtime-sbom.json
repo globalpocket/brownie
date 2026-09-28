@@ -1,9 +1,9 @@
 {
   "bomFormat": "BrownieReleaseEvidence",
   "specVersion": "1.0",
-  "serialNumber": "urn:uuid:f8cdaa9d-62cb-4dd4-b0f3-eeef31da0f44",
+  "serialNumber": "urn:uuid:54f9395c-639e-4f0f-be91-c1150a1fb3fe",
   "metadata": {
-    "generated_at": "2026-09-21T15:06:49.790Z",
+    "generated_at": "2026-09-28T20:02:03.418Z",
     "component": {
       "type": "application",
       "name": "brownie-runtime",
@@ -700,7 +700,7 @@
     {
       "ecosystem": "cargo",
       "name": "rustls",
-      "version": "0.23.41",
+      "version": "0.23.45",
       "source": "registry+https://github.com/rust-lang/crates.io-index"
     },
     {
@@ -712,7 +712,7 @@
     {
       "ecosystem": "cargo",
       "name": "rustls-webpki",
-      "version": "0.103.13",
+      "version": "0.103.15",
       "source": "registry+https://github.com/rust-lang/crates.io-index"
     },
     {

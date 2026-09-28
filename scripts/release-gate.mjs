@@ -7,6 +7,81 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const defaultRepoRoot = path.resolve(__dirname, '..');
 
+export function validateTraceBindingSchema(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return { valid: false, error: 'Payload must be a non-null object' };
+  }
+  const { traceId, binding, schemaVersion } = payload;
+  if (typeof traceId !== 'string' || traceId.length === 0) {
+    return { valid: false, error: 'traceId must be a non-empty string' };
+  }
+  if (typeof binding !== 'string' || binding.length === 0) {
+    return { valid: false, error: 'binding must be a non-empty string' };
+  }
+  if (typeof schemaVersion !== 'string' || schemaVersion.length === 0) {
+    return { valid: false, error: 'schemaVersion must be a non-empty string' };
+  }
+  return { valid: true, traceId, binding, schemaVersion };
+}
+
+export function handleTraceBindingValidation(args) {
+  if (!args || typeof args !== 'object') {
+    return { valid: false, error: 'Args must be a non-null object' };
+  }
+  const { traceId, binding, schemaVersion, payload } = args;
+  const schemaResult = validateTraceBindingSchema({ traceId, binding, schemaVersion });
+  if (!schemaResult.valid) {
+    return { valid: false, error: schemaResult.error };
+  }
+  return { valid: true, traceId, binding, schemaVersion, payload };
+}
+
+export function runTraceBindingValidationCLI(args) {
+  const { traceId, binding, schemaVersion } = args;
+  const result = handleTraceBindingValidation({ traceId, binding, schemaVersion, payload: args });
+  console.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+export function validateTraceBindingPayload(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return { valid: false, error: 'Payload must be a non-null object' };
+  }
+  const { traceId, binding, schemaVersion } = payload;
+  if (typeof traceId !== 'string' || traceId.length === 0) {
+    return { valid: false, error: 'traceId must be a non-empty string' };
+  }
+  if (typeof binding !== 'string' || binding.length === 0) {
+    return { valid: false, error: 'binding must be a non-empty string' };
+  }
+  if (typeof schemaVersion !== 'string' || schemaVersion.length === 0) {
+    return { valid: false, error: 'schemaVersion must be a non-empty string' };
+  }
+  return { valid: true, traceId, binding, schemaVersion };
+}
+
+export function validateTraceBinding(args) {
+  const schemaResult = validateTraceBindingSchema(args);
+  if (!schemaResult.valid) {
+    return schemaResult;
+  }
+  return { valid: true, traceId: schemaResult.traceId, binding: schemaResult.binding, schemaVersion: schemaResult.schemaVersion };
+}
+
+export function parseTraceBindingPayload(payload) {
+  const validation = validateTraceBindingPayload(payload);
+  if (!validation.valid) {
+    return { parsed: false, error: validation.error };
+  }
+  return {
+    parsed: true,
+    traceId: validation.traceId,
+    binding: validation.binding,
+    schemaVersion: validation.schemaVersion,
+    payload: validation.payload
+  };
+}
+
 export const requiredReleaseGateCommands = [
   {
     id: 'rust_fmt',
@@ -67,6 +142,18 @@ export const requiredReleaseGateCommands = [
     category: 'brownie_release_guard',
     command: 'pnpm',
     args: ['--workspace-root', 'guard:release-contract:test']
+  },
+  {
+    id: 'trace_binding_guard',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:trace-binding']
+  },
+  {
+    id: 'trace_binding_guard_test',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:trace-binding:test']
   },
   {
     id: 'dependency_security_license_audit',
@@ -337,7 +424,10 @@ function parseArgs(argv) {
   const options = {
     dryRun: false,
     repoRoot: defaultRepoRoot,
-    evidencePath: null
+    evidencePath: null,
+    validateTraceBinding: false,
+    traceBindingPayload: null,
+    testSchema: false
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -349,11 +439,46 @@ function parseArgs(argv) {
       options.repoRoot = path.resolve(argv[++index] ?? '');
     } else if (arg === '--evidence') {
       options.evidencePath = path.resolve(argv[++index] ?? '');
+    } else if (arg === '--validate-trace-binding') {
+      options.validateTraceBinding = true;
+      const next = argv[index + 1];
+      if (next && !next.startsWith('--')) {
+        try {
+          options.traceBindingPayload = JSON.parse(next);
+        } catch (error) {
+          throw new Error(`Invalid --validate-trace-binding JSON payload: ${error.message}`);
+        }
+        index += 1;
+      }
+    } else if (arg === '--test-schema') {
+      options.testSchema = true;
     } else {
       throw new Error(`Unknown release-gate argument: ${arg}`);
     }
   }
   return options;
+}
+
+function runTraceBindingSchemaSelfTest() {
+  const valid = validateTraceBindingPayload({
+    traceId: 'trace-self-test',
+    binding: 'artifact',
+    schemaVersion: '1'
+  });
+  const invalid = validateTraceBindingPayload({
+    traceId: '',
+    binding: 'artifact',
+    schemaVersion: '1'
+  });
+  return {
+    valid:
+      valid.valid === true &&
+      invalid.valid === false &&
+      typeof invalid.error === 'string' &&
+      invalid.error.length > 0,
+    valid_case: valid,
+    invalid_case: invalid
+  };
 }
 
 function gitValue(repoRoot, args) {
@@ -453,6 +578,25 @@ export function runReleaseGate(options = {}) {
 if (isMainModule()) {
   try {
     const options = parseArgs(process.argv.slice(2));
+    if (options.validateTraceBinding) {
+      const payload = options.testSchema
+        ? {
+            traceId: 'trace-self-test',
+            binding: 'artifact',
+            schemaVersion: '1'
+          }
+        : options.traceBindingPayload;
+      if (!payload) {
+        throw new Error('--validate-trace-binding requires either a JSON payload or --test-schema.');
+      }
+      const result = options.testSchema ? runTraceBindingSchemaSelfTest() : validateTraceBindingPayload(payload);
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      if (result.valid !== true) {
+        process.exit(1);
+      }
+      process.exit(0);
+    }
+
     const evidence = options.dryRun
       ? buildReleaseGatePlan({ repoRoot: options.repoRoot })
       : runReleaseGate({ repoRoot: options.repoRoot });

@@ -22,6 +22,72 @@ const requiredSections = [
   'provenance'
 ];
 
+function validateSourceIdentity(evidence) {
+  const sourceIdentity = extractArtifactSourceIdentity(evidence);
+  if (sourceIdentity === 'unknown') {
+    return { valid: false, reason: 'source_identity_unknown' };
+  }
+  if (sourceIdentity === 'dirty') {
+    return { valid: false, reason: 'source_identity_dirty' };
+  }
+  if (!sourceIdentity || sourceIdentity === 'local-only') {
+    return { valid: false, reason: 'source_identity_not_proven' };
+  }
+  return { valid: true, sourceIdentity };
+}
+
+function validateSmokeEvidence(smokeEvidence) {
+  if (!smokeEvidence || !Array.isArray(smokeEvidence.steps)) {
+    return { valid: false, reason: 'smoke_evidence_missing_or_invalid' };
+  }
+  const stepIds = smokeEvidence.steps.map(s => s.stepId);
+  const missingSteps = requiredArtifactSmokeE2eStepIds.filter(id => !stepIds.includes(id));
+  if (missingSteps.length > 0) {
+    return { valid: false, reason: 'smoke_steps_missing', missingSteps };
+  }
+  const failedSteps = smokeEvidence.steps.filter(s => s.status === 'failed');
+  if (failedSteps.length > 0) {
+    return { valid: false, reason: 'smoke_steps_failed', failedSteps };
+  }
+  const passedSteps = smokeEvidence.steps.filter(s => s.status === 'passed');
+  if (passedSteps.length === 0) {
+    return { valid: false, reason: 'no_smoke_steps_passed' };
+  }
+  return { valid: true, passedCount: passedSteps.length, totalCount: smokeEvidence.steps.length };
+}
+
+function validateArtifactIntegrity(artifact, checksums) {
+  if (!artifact || !artifact.path || !artifact.checksum) {
+    return { valid: false, reason: 'artifact_missing_checksum' };
+  }
+  if (!checksums || !checksums[artifact.path]) {
+    return { valid: false, reason: 'checksum_missing_for_artifact' };
+  }
+  const expectedChecksum = artifact.checksum;
+  const actualChecksum = checksums[artifact.path];
+  if (expectedChecksum !== actualChecksum) {
+    return { valid: false, reason: 'checksum_mismatch', expectedChecksum, actualChecksum };
+  }
+  return { valid: true };
+}
+
+function validateDependencyAudit(evidence) {
+  if (!evidence || !evidence.dependency_security_license_scan) {
+    return { valid: false, reason: 'dependency_audit_missing' };
+  }
+  const scan = evidence.dependency_security_license_scan;
+  if (scan.vulnerabilities && scan.vulnerabilities.length > 0) {
+    const criticalOrHigh = scan.vulnerabilities.filter(v => v.severity === 'critical' || v.severity === 'high');
+    if (criticalOrHigh.length > 0) {
+      return { valid: false, reason: 'critical_or_high_vulnerabilities', count: criticalOrHigh.length };
+    }
+  }
+  if (scan.licenseViolations && scan.licenseViolations.length > 0) {
+    return { valid: false, reason: 'license_violations', count: scan.licenseViolations.length };
+  }
+  return { valid: true };
+}
+
 const requiredReleasePlatforms = ['linux-x64', 'darwin-arm64', 'win32-x64'];
 const requiredArtifactSmokeE2eStepIds = [
   'base_mode_pack_load',

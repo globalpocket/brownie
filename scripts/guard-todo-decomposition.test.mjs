@@ -108,6 +108,83 @@ test('rejects missing package scripts referenced by verification', () => {
   assert(errors.some((error) => error.includes('missing package script: guard:release-contract:test')), errors.join('\n'));
 });
 
+test('rejects TODO whose verification references a missing script created by a later TODO without dependency', () => {
+  const text = `- [ ] E-19h-2a-audit-schema-ledger-kind: Patch only \`docs/architecture/runtime-release-readiness-audit.json\` to add LedgerEventKind enum section with all event type values:
+  Route: todo-decomposition
+  Source TODO: E-19h-2-audit-schema-trace-binding
+  Depends on: <none>
+  Completion condition: LedgerEventKind enum is present in the audit schema and can be validated by the bounded schema validator.
+  Forbidden changes: do not modify implementation files, tests, or other schema sections.
+  Verification: run \`node scripts/validate-audit-schema.mjs docs/architecture/runtime-release-readiness-audit.json\`.
+
+- [ ] E-19h-3-schema-validation-script: Create only \`scripts/validate-audit-schema.mjs\` to implement JSON schema validator for runtime-release-readiness-audit.json:
+  Route: todo-decomposition
+  Source TODO: E-19h-1-release-contract-trace-schema
+  Depends on: <none>
+  Completion condition: validation script exists and validates LedgerEventKind enum, payload schema classification, and fingerprint fields.
+  Forbidden changes: do not modify existing scripts or implementation files.
+  Verification: run \`node scripts/validate-audit-schema.mjs docs/architecture/runtime-release-readiness-audit.json\`.`;
+
+  const repoRoot = fs.mkdtempSync('brownie-todo-prereq-');
+  try {
+    fs.mkdirSync(`${repoRoot}/docs/architecture`, { recursive: true });
+    fs.writeFileSync(`${repoRoot}/docs/architecture/runtime-release-readiness-audit.json`, '{}\n');
+    const errors = validateTodoDecompositionText(text, {
+      repoRoot,
+      packageScripts: new Set()
+    });
+    assert(errors.some((error) => error.includes('references missing prerequisite scripts/validate-audit-schema.mjs')), errors.join('\n'));
+    assert(errors.some((error) => error.includes('must depend on E-19h-3-schema-validation-script')), errors.join('\n'));
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('rejects TODO whose verification references an invented node script with no creator', () => {
+  const text = `- [ ] E-19h-01: Patch only \`docs/architecture/runtime-release-readiness-audit.json\` to add release contract trace binding schema:
+  Route: todo-decomposition
+  Source TODO: TODO-decompose-broad-todo-9430463ff3c2
+  Depends on: <none>
+  Completion condition: JSON schema for trace binding added with fingerprint field.
+  Forbidden changes: do not modify existing evidence entries or historical fixtures.
+  Verification: run \`node scripts/validate-json.js docs/architecture/runtime-release-readiness-audit.json\`.`;
+
+  const repoRoot = fs.mkdtempSync('brownie-todo-invented-verifier-');
+  try {
+    fs.mkdirSync(`${repoRoot}/docs/architecture`, { recursive: true });
+    fs.writeFileSync(`${repoRoot}/docs/architecture/runtime-release-readiness-audit.json`, '{}\n');
+    const errors = validateTodoDecompositionText(text, {
+      repoRoot,
+      packageScripts: new Set()
+    });
+    assert(errors.some((error) => error.includes('references missing script scripts/validate-json.js')), errors.join('\n'));
+    assert(errors.some((error) => error.includes('do not invent generic validators')), errors.join('\n'));
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('accepts missing verification script when the TODO creates that script itself', () => {
+  const text = `- [ ] E-19h-3-schema-validation-script: Create only \`scripts/validate-audit-schema.mjs\` to implement JSON schema validator for runtime-release-readiness-audit.json:
+  Route: todo-decomposition
+  Source TODO: E-19h-1-release-contract-trace-schema
+  Depends on: <none>
+  Completion condition: validation script exists and validates LedgerEventKind enum, payload schema classification, and fingerprint fields.
+  Forbidden changes: do not modify existing scripts or implementation files.
+  Verification: run \`node scripts/validate-audit-schema.mjs docs/architecture/runtime-release-readiness-audit.json\`.`;
+
+  const repoRoot = fs.mkdtempSync('brownie-todo-prereq-');
+  try {
+    const errors = validateTodoDecompositionText(text, {
+      repoRoot,
+      packageScripts: new Set()
+    });
+    assert(!errors.some((error) => error.includes('references missing prerequisite scripts/validate-audit-schema.mjs')), errors.join('\n'));
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test('rejects oversized leaf blocks', () => {
   const largeLeaf = validLeaf.replace(
     'Completion condition: the bounded patch is implemented and verified.',
@@ -166,6 +243,48 @@ test('rejects dependency cycles among derived leaves', () => {
   });
 
   assert(errors.some((error) => error.includes('dependencies must not contain cycles')), errors.join('\n'));
+});
+
+test('rejects dependencies that exist only as abstract breakdown ledger IDs', () => {
+  const abstractDependency = validLeaf.replace('Depends on: <none>.', 'Depends on: E-15b-abstract-parent.');
+  const errors = validateTodoDecompositionText(abstractDependency, {
+    breakdownText: `# TODO breakdown\n\nParent TODO: E-15b\n\nDependency graph:\n- E-15b-abstract-parent: none\n- E-15b-child: E-15b-abstract-parent\n\nVerification ledger:\n- E-15b-child: pending\n`,
+    packageScripts: new Set(['guard:release-contract:test'])
+  });
+
+  assert(errors.some((error) => error.includes('present only in the breakdown ledger')), errors.join('\n'));
+  assert(errors.some((error) => error.includes('abstract/decomposed parent IDs')), errors.join('\n'));
+});
+
+test('requires validate-audit-schema leaves to verify actual target shape', () => {
+  const validatorLeaf = `- [ ] E-19h-3-schema-validation-script: Patch only \`scripts/validate-audit-schema.mjs\` to implement JSON schema validator for runtime-release-readiness-audit.json:
+  Route: todo-decomposition
+  Source TODO: E-19h-1-release-contract-trace-schema
+  Depends on: <none>.
+  Completion condition: validation script created with LedgerEventKind enum check, payload schema classification validation, and fingerprint field verification.
+  Forbidden changes: do not modify existing scripts or implementation files.
+  Verification: run \`node scripts/validate-audit-schema.mjs docs/architecture/runtime-release-readiness-audit.json\`.`;
+  const errors = validateTodoDecompositionText(validatorLeaf, {
+    repoRoot: process.cwd(),
+    packageScripts: new Set(['guard:validator-schema-assumptions'])
+  });
+
+  assert(errors.some((error) => error.includes('guard:validator-schema-assumptions')), errors.join('\n'));
+  assert(errors.some((error) => error.includes('actual target schema/shape')), errors.join('\n'));
+});
+
+test('accepts validate-audit-schema leaves with actual-shape guard verification', () => {
+  const validatorLeaf = `- [ ] E-19h-3-schema-validation-script: Patch only \`scripts/validate-audit-schema.mjs\` to implement JSON schema validator for runtime-release-readiness-audit.json:
+  Route: todo-decomposition
+  Source TODO: E-19h-1-release-contract-trace-schema
+  Depends on: <none>.
+  Completion condition: validation script reflects the actual target shape with LedgerEventKind enum check, payload schema classification validation, and fingerprint field verification.
+  Forbidden changes: do not modify existing scripts or implementation files.
+  Verification: run \`node scripts/validate-audit-schema.mjs docs/architecture/runtime-release-readiness-audit.json\` and \`pnpm --workspace-root guard:validator-schema-assumptions\`.`;
+  assert.deepEqual(validateTodoDecompositionText(validatorLeaf, {
+    repoRoot: process.cwd(),
+    packageScripts: new Set(['guard:validator-schema-assumptions'])
+  }), []);
 });
 
 test('rejects broad leaf completion conditions', () => {
@@ -257,6 +376,20 @@ test('rejects inspect-only verification for implementation leaves', () => {
   const errors = validateTodoDecompositionText(inspectOnly);
 
   assert(errors.some((error) => error.includes('implementation leaves need executable verification')), errors.join('\n'));
+});
+
+test('rejects analysis-only derived decomposition leaves', () => {
+  const analysisOnly = `- [ ] E-19d-02-soak-read-entry: Blocker: Read \`.brownie/todo.md\` for \`E-19d-stateful-soak-required-steps\` entry.
+  Route: todo-decomposition.
+  Source TODO: E-19d-01-read-soak-source.
+  Depends on: <none>.
+  Completion condition: Entry text extracted with file path, symbols, and verification requirements.
+  Forbidden changes: No implementation files, no queue edits beyond this leaf.
+  Verification: inspect \`.brownie/todo.md\` for \`E-19d-stateful-soak-required-steps\`.`;
+  const errors = validateTodoDecompositionText(analysisOnly);
+
+  assert(errors.some((error) => error.includes('analysis-only derived leaves are not executable TODOs')), errors.join('\n'));
+  assert(errors.some((error) => error.includes('read-only decomposition leaves cause no-progress loops')), errors.join('\n'));
 });
 
 test('rejects empty TODO when Product Ready is false and release blockers remain', () => {

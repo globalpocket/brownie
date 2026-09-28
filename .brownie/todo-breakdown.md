@@ -100,6 +100,26 @@ Dependency graph:
 - E-16f-phase-value-gate-contract-sync-leaf-3: <none>
 - E-16f-phase-value-gate-contract-sync-leaf-4: <none>
 - E-16f-phase-value-gate-contract-sync-leaf-5: <none>
+- E-19d-01-read-soak-source: none
+- E-19d-02-soak-impl: E-19d-01-read-soak-source
+- E-19d-02-soak-read-entry: none
+- E-19d-03-soak-scope-extract: E-19d-02-soak-read-entry
+- E-19h-1-release-contract-trace-schema: none
+- E-19h-2-release-contract-trace-guard: E-19h-1-release-contract-trace-schema
+- E-19h-2-audit-schema-trace-binding: none
+- E-19h-3-schema-validation-script: E-19h-2-audit-schema-trace-binding
+- E-19h-2a-audit-schema-ledger-kind: none
+- E-19h-2b-audit-schema-payload-fingerprint: E-19h-2a-audit-schema-ledger-kind
+- E-19h-2b-audit-schema-payload-classification: <none>
+- E-19h-2b-audit-schema-fingerprint-fields: E-19h-2b-audit-schema-payload-classification
+- E-19h-2b-audit-schema-fingerprint-leaf-1: <none>
+- E-19h-2b-audit-schema-fingerprint-leaf-2: E-19h-2b-audit-schema-fingerprint-leaf-1
+- E-19h-2a-trace-schema-guard: <none>
+- E-19h-2b-trace-guard-wiring: E-19h-2a-trace-schema-guard
+- E-19h-01: none
+- E-19h-02: E-19h-01
+- E-19h-02a: <none>
+- E-19h-02b: E-19h-02a
 Verification ledger:
 
 - E-15a-redaction-collector-exact-pattern-line: `pnpm --workspace-root guard:runtime-operational-evidence:test`
@@ -173,6 +193,26 @@ Verification ledger:
 - E-16f-phase-value-gate-contract-sync-leaf-3: `pnpm --workspace-root guard:phase-value`
 - E-16f-phase-value-gate-contract-sync-leaf-4: `pnpm --workspace-root guard:phase-value`
 - E-16f-phase-value-gate-contract-sync-leaf-5: `pnpm --workspace-root guard:phase-value`
+- E-19d-01-read-soak-source: `.brownie/todo.md`; `E-19d-stateful-soak-required-steps`
+- E-19d-02-soak-impl: `cargo test --package brownie-soak --test soak_stateful -- --test-threads=1`
+- E-19d-02-soak-read-entry: `.brownie/todo.md`; `E-19d-stateful-soak-required-steps`
+- E-19d-03-soak-scope-extract: inspect extracted scope for concrete file paths and bounded verification commands
+- E-19h-1-release-contract-trace-schema: `node scripts/validate-audit-schema.mjs docs/architecture/runtime-release-readiness-audit.json`
+- E-19h-2-release-contract-trace-guard: `node scripts/release-gate.mjs --validate-trace-binding`
+- E-19h-2-audit-schema-trace-binding: `node scripts/validate-audit-schema.mjs docs/architecture/runtime-release-readiness-audit.json`
+- E-19h-3-schema-validation-script: `node scripts/validate-audit-schema.mjs docs/architecture/runtime-release-readiness-audit.json`
+- E-19h-2a-audit-schema-ledger-kind: `node scripts/validate-audit-schema.mjs docs/architecture/runtime-release-readiness-audit.json`
+- E-19h-2b-audit-schema-payload-fingerprint: `node scripts/validate-audit-schema.mjs docs/architecture/runtime-release-readiness-audit.json`
+- E-19h-2b-audit-schema-payload-classification: `node scripts/validate-audit-schema.mjs docs/architecture/runtime-release-readiness-audit.json`
+- E-19h-2b-audit-schema-fingerprint-fields: `node scripts/validate-audit-schema.mjs docs/architecture/runtime-release-readiness-audit.json`
+- E-19h-2b-audit-schema-fingerprint-leaf-1: `node scripts/validate-audit-schema.mjs docs/architecture/runtime-release-readiness-audit.json`
+- E-19h-2b-audit-schema-fingerprint-leaf-2: `node scripts/validate-audit-schema.mjs docs/architecture/runtime-release-readiness-audit.json`
+- E-19h-2a-trace-schema-guard: `node scripts/release-gate.mjs --validate-trace-binding --test-schema`
+- E-19h-2b-trace-guard-wiring: `node scripts/release-gate.mjs --validate-trace-binding`
+- E-19h-01: `node scripts/validate-json.js docs/architecture/runtime-release-readiness-audit.json`
+- E-19h-02: `cargo check --package brownie-protocol`
+- E-19h-02a: `cargo check --package brownie-protocol`
+- E-19h-02b: `cargo check --package brownie-protocol`; `cargo test --package brownie-protocol`
 Quality rubric:
 
 - Each leaf must be small enough for one bounded implementation pass.
@@ -460,3 +500,146 @@ Quality rubric:
 History:
 
 - 2026-09-22: Added after the live loop stopped on an empty queue while Product Ready was still false, proving E-18c needed an enforcement point in completion cleanup as well as standalone guard coverage.
+
+## TODO-decompose-broad-todo-59d4c4e4b228 deterministic scope split
+
+Parent TODO: E-19d-stateful-soak-required-steps
+
+Dependency graph:
+
+- E-19d-stateful-soak-required-steps-scope-1-release-runtime-operational-: <none>
+- E-19d-stateful-soak-required-steps-scope-2-guard-runtime-operational-ev: E-19d-stateful-soak-required-steps-scope-1-release-runtime-operational-
+- E-19d-stateful-soak-required-steps-scope-3-guard-runtime-operational-ev: E-19d-stateful-soak-required-steps-scope-2-guard-runtime-operational-ev
+
+Verification ledger:
+
+- E-19d-stateful-soak-required-steps-scope-1-release-runtime-operational-: run `pnpm --workspace-root guard:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`
+- E-19d-stateful-soak-required-steps-scope-2-guard-runtime-operational-ev: run `pnpm --workspace-root guard:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`
+- E-19d-stateful-soak-required-steps-scope-3-guard-runtime-operational-ev: run `pnpm --workspace-root guard:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`
+
+Quality rubric:
+
+- Derived leaves must be executable implementation/documentation leaves, not read-only planning leaves.
+- Each leaf owns one bounded target path from the parent TODO.
+
+History:
+
+- 2026-09-22T14:02:01Z: Applied deterministic broad TODO scope split after repeated no-progress decomposition for E-19d-stateful-soak-required-steps; removed the active decomposition request and parent broad TODO.
+
+## TODO-decompose-broad-todo-bb7a21bfd030 deterministic scope split
+
+Parent TODO: E-19e-dependency-audit-supply-chain-sync
+
+Dependency graph:
+
+- E-19e-dependency-audit-supply-chain-sync-scope-1-release-supply-chain-artifac: <none>
+- E-19e-dependency-audit-supply-chain-sync-scope-2-guard-supply-chain-artifact-: E-19e-dependency-audit-supply-chain-sync-scope-1-release-supply-chain-artifac
+- E-19e-dependency-audit-supply-chain-sync-scope-3-supply-chain-artifact-eviden: E-19e-dependency-audit-supply-chain-sync-scope-2-guard-supply-chain-artifact-
+
+Verification ledger:
+
+- E-19e-dependency-audit-supply-chain-sync-scope-1-release-supply-chain-artifac: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`, `pnpm --workspace-root guard:dependency-security-license-audit`, and `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-19e-dependency-audit-supply-chain-sync-scope-2-guard-supply-chain-artifact-: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`, `pnpm --workspace-root guard:dependency-security-license-audit`, and `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-19e-dependency-audit-supply-chain-sync-scope-3-supply-chain-artifact-eviden: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`, `pnpm --workspace-root guard:dependency-security-license-audit`, and `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+
+Quality rubric:
+
+- Derived leaves must be executable implementation/documentation leaves, not read-only planning leaves.
+- Each leaf owns one bounded target path from the parent TODO.
+
+History:
+
+- 2026-09-22T14:42:45Z: Applied deterministic broad TODO scope split after repeated no-progress decomposition for E-19e-dependency-audit-supply-chain-sync; removed the active decomposition request and parent broad TODO.
+
+## test leaf production guard synthesis 20260922T161524Z
+
+Parent TODO: E-19e-dependency-audit-supply-chain-sync
+
+Dependency graph:
+
+- E-19e-dependency-audit-supply-chain-sync-production-guard: E-19e-dependency-audit-supply-chain-sync-scope-1-release-supply-chain-artifac
+- E-19e-dependency-audit-supply-chain-sync-scope-2-guard-supply-chain-artifact-: E-19e-dependency-audit-supply-chain-sync-production-guard
+
+Verification ledger:
+
+- E-19e-dependency-audit-supply-chain-sync-production-guard: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`, `pnpm --workspace-root guard:dependency-security-license-audit`, and `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-19e-dependency-audit-supply-chain-sync-scope-2-guard-supply-chain-artifact-: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`, `pnpm --workspace-root guard:dependency-security-license-audit`, and `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+
+Quality rubric:
+
+- Test-only leaves that fail because production validation is missing must synthesize a production guard leaf instead of retrying the same test patch.
+- The original test leaf remains pending and depends on the synthesized production guard leaf.
+
+History:
+
+- 2026-09-22T16:15:25Z: Inserted production guard leaf `E-19e-dependency-audit-supply-chain-sync-production-guard` for `scripts/guard-supply-chain-artifact-evidence.mjs` after repeated no-progress on test-only leaf `E-19e-dependency-audit-supply-chain-sync-scope-2-guard-supply-chain-artifact-`.
+
+## TODO-decompose-broad-todo-ff9ccb880617 deterministic scope split
+
+Parent TODO: E-19f-artifact-source-identity-binding
+
+Dependency graph:
+
+- E-19f-artifact-source-identity-binding-scope-1-release-supply-chain-artifac: <none>
+- E-19f-artifact-source-identity-binding-scope-2-guard-supply-chain-artifact-: E-19f-artifact-source-identity-binding-scope-1-release-supply-chain-artifac
+- E-19f-artifact-source-identity-binding-scope-3-guard-supply-chain-artifact-: E-19f-artifact-source-identity-binding-scope-2-guard-supply-chain-artifact-
+
+Verification ledger:
+
+- E-19f-artifact-source-identity-binding-scope-1-release-supply-chain-artifac: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-19f-artifact-source-identity-binding-scope-2-guard-supply-chain-artifact-: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-19f-artifact-source-identity-binding-scope-3-guard-supply-chain-artifact-: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+
+Quality rubric:
+
+- Derived leaves must be executable implementation/documentation leaves, not read-only planning leaves.
+- Each leaf owns one bounded target path from the parent TODO.
+
+History:
+
+- 2026-09-22T18:31:54Z: Applied deterministic broad TODO scope split after repeated no-progress decomposition for E-19f-artifact-source-identity-binding; removed the active decomposition request and parent broad TODO.
+
+## TODO-decompose-broad-todo-3a23680b1d3f deterministic scope split
+
+Parent TODO: E-19g-artifact-e2e-smoke-contract
+
+Dependency graph:
+
+- E-19g-artifact-e2e-smoke-contract-scope-1-release-supply-chain-artifac: <none>
+- E-19g-artifact-e2e-smoke-contract-scope-2-guard-supply-chain-artifact-: E-19g-artifact-e2e-smoke-contract-scope-1-release-supply-chain-artifac
+- E-19g-artifact-e2e-smoke-contract-scope-3-guard-supply-chain-artifact-: E-19g-artifact-e2e-smoke-contract-scope-2-guard-supply-chain-artifact-
+
+Verification ledger:
+
+- E-19g-artifact-e2e-smoke-contract-scope-1-release-supply-chain-artifac: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-19g-artifact-e2e-smoke-contract-scope-2-guard-supply-chain-artifact-: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-19g-artifact-e2e-smoke-contract-scope-3-guard-supply-chain-artifact-: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+
+Quality rubric:
+
+- Derived leaves must be executable implementation/documentation leaves, not read-only planning leaves.
+- Each leaf owns one bounded target path from the parent TODO.
+
+History:
+
+- 2026-09-22T18:58:49Z: Applied deterministic broad TODO scope split after repeated no-progress decomposition for E-19g-artifact-e2e-smoke-contract; removed the active decomposition request and parent broad TODO.
+
+## TODO-decompose-broad-todo-9430463ff3c2
+
+Parent TODO: E-19h-release-contract-trace-binding
+
+Dependency graph:
+- E-19h-release-contract-trace-test: <none>
+- E-19h-release-contract-trace-fields: E-19h-release-contract-trace-test
+
+Verification ledger:
+- E-19h-release-contract-trace-test: run `pnpm --workspace-root guard:release-contract:test`.
+- E-19h-release-contract-trace-fields: run `pnpm --workspace-root guard:release-contract` and `pnpm --workspace-root guard:runtime-release-readiness`.
+
+Quality rubric:
+- E-19h-release-contract-trace-test: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-19h-release-contract-trace-fields: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+
+History:
+
+- 2026-09-28T12:36:15Z: Deterministically decomposed E-19h-release-contract-trace-binding during manual-20260928T123615Z; avoided LLM old_text patch anchors and resolved verification commands from existing package scripts.
