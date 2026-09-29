@@ -43,7 +43,7 @@ test('rejects removing selected TODO without completion record', () => {
   assert(result.errors.some((error) => error.code === 'selected_todo_removed_without_completion_record'));
 });
 
-test('allows selected removal and dependency rewrite after completion record', () => {
+test('allows selected removal and dependent TODO dependency rewrite after completion record', () => {
   const result = validatePhaseLoopProgressIntegrity({
     claim: { claim_id: 'claim-1', selected_todo: e20a },
     todoBefore: queue(e20a, e20b),
@@ -56,6 +56,40 @@ test('allows selected removal and dependency rewrite after completion record', (
   });
 
   assert.equal(result.valid, true, JSON.stringify(result.errors));
+});
+
+test('allows removing an unselected TODO only when prior completion evidence exists', () => {
+  const result = validatePhaseLoopProgressIntegrity({
+    claim: { claim_id: 'claim-2', selected_todo: e20b },
+    todoBefore: queue(e20a, e20b),
+    todoAfter: queue(e20b),
+    diffFiles: [
+      '.brownie/todo.md',
+      'scripts/release-runtime-operational-evidence.mjs'
+    ],
+    completionRecordExists: false,
+    completedTodoIds: ['E-20a-golden-journey-workspace-mutation']
+  });
+
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+});
+
+test('rejects selected TODO dependency rewrite even when prior dependency completed', () => {
+  const result = validatePhaseLoopProgressIntegrity({
+    claim: { claim_id: 'claim-2', selected_todo: e20b },
+    todoBefore: queue(e20a, e20b),
+    todoAfter: queue(e20b.replace('Depends on: E-20a-golden-journey-workspace-mutation.', 'Depends on: <none>.')),
+    diffFiles: [
+      '.brownie/todo.md',
+      'scripts/release-runtime-operational-evidence.mjs'
+    ],
+    completionRecordExists: false,
+    completedTodoIds: ['E-20a-golden-journey-workspace-mutation']
+  });
+
+  assert.equal(result.valid, false);
+  assert(!result.errors.some((error) => error.code === 'unselected_todo_removed'));
+  assert(result.errors.some((error) => error.code === 'selected_todo_contract_drift'));
 });
 
 test('rejects removing a TODO that is not the active claim', () => {

@@ -227,6 +227,36 @@ function completionRecordExists(repoRoot, claimId, runStamp) {
   return completionRecordPaths(repoRoot, claimId, runStamp).some((recordPath) => fs.existsSync(recordPath));
 }
 
+function completedTodoIds(repoRoot) {
+  const dir = path.join(repoRoot, '.brownie/private/phase-loop/todo-completions');
+  const ids = new Set();
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return ids;
+    }
+    throw error;
+  }
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) {
+      continue;
+    }
+    try {
+      const record = readJson(path.join(dir, entry.name));
+      if (typeof record.selected_todo_id === 'string' && record.selected_todo_id.trim()) {
+        ids.add(record.selected_todo_id.trim());
+      }
+    } catch {
+      // Ignore malformed completion records here. Other guards are responsible
+      // for validating record syntax; progress integrity should not grant
+      // completion credit from unreadable evidence.
+    }
+  }
+  return ids;
+}
+
 function isExplicitBlocker(block) {
   const lower = block.toLowerCase();
   return (
@@ -260,6 +290,7 @@ export function validatePhaseLoopProgressIntegrity(input) {
   const selectedRemoved = Boolean(selectedId) && !after.has(selectedId);
   const selectedStillPending = Boolean(selectedId) && after.has(selectedId);
   const recordExists = Boolean(input.completionRecordExists);
+  const completedIds = new Set(input.completedTodoIds ?? []);
   const routeCanEditTodoFreely = selectedRoute === 'todo-decomposition' || selectedId.startsWith('TODO-decompose-');
   const explicitBlocker = isExplicitBlocker(selected);
 
@@ -306,6 +337,9 @@ export function validatePhaseLoopProgressIntegrity(input) {
 
     for (const [id] of before.entries()) {
       if (id !== selectedId && !after.has(id)) {
+        if (completedIds.has(id)) {
+          continue;
+        }
         errors.push({
           code: 'unselected_todo_removed',
           message: 'A TODO other than the active claim was removed from the live queue.',
@@ -411,7 +445,8 @@ export function loadCliInput(args) {
     todoBefore,
     todoAfter,
     runStamp: args.runStamp,
-    completionRecordExists: completionRecordExists(repoRoot, claim.claim_id, args.runStamp)
+    completionRecordExists: completionRecordExists(repoRoot, claim.claim_id, args.runStamp),
+    completedTodoIds: completedTodoIds(repoRoot)
   };
 }
 
