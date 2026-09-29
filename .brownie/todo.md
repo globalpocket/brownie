@@ -56,6 +56,10 @@ Current synchronization note:
   confidentiality, cross-platform E2E, and semantic guard blockers. Runtime
   Product Ready remains false until those evidence blockers and independent
   owner reviews close.
+- PR #477 kept unresolved Release blockers fail-closed. The d3ab6a0 follow-up
+  audit confirmed that Product Ready still needs executable Release evidence,
+  not more guard-only closure. E-20 reopens the queue as bounded executable
+  Release evidence work ahead of the residual E-19k blocker.
 - Runtime Product Ready is not reached.
 
 ## Queue protocol
@@ -91,6 +95,62 @@ Current synchronization note:
 ## Product Ready Blocking Queue
 
 ### P0/P1: Release engineering and evidence
+
+- [ ] E-20a-golden-journey-workspace-mutation: Patch only `scripts/release-runtime-operational-evidence.mjs` and `scripts/guard-runtime-operational-evidence.test.mjs`: make the Golden Journey evidence run in a fresh temporary workspace and require an observed workspace mutation instead of reusing/resetting a state that leaves `workspace_mutation_observed:false`.
+  Route: implementation.
+  Depends on: <none>.
+  Completion condition: generated runtime operational evidence records `golden_journey_fixture.status=satisfied` only when the fixture actually mutates the temporary workspace and the regression test rejects the previous false/no-mutation case.
+  Forbidden changes: do not edit unrelated evidence files by hand, do not mark Runtime/Product Ready, and do not weaken Golden Journey required steps.
+  Verification: run `pnpm --workspace-root release:runtime-operational-evidence:test`, `pnpm --workspace-root release:runtime-operational-evidence:failclosed-ok`, and `pnpm --workspace-root guard:runtime-operational-evidence`.
+
+- [ ] E-20b-stateful-soak-real-workload: Patch only `scripts/release-runtime-operational-evidence.mjs` and `scripts/guard-runtime-operational-evidence.test.mjs`: replace version-only soak acceptance with a bounded stateful Runtime fixture that exercises ledger/workspace consistency, resume/replay, duplicate side-effect rejection, process-loss recovery, and finite convergence.
+  Route: implementation.
+  Depends on: E-20a-golden-journey-workspace-mutation.
+  Completion condition: generated runtime operational evidence records `soak_test.status=satisfied` only when all required stateful durability steps pass; version-only repetition remains diagnostic but cannot satisfy soak evidence.
+  Forbidden changes: do not reduce iteration requirements by assertion only, do not mark Runtime/Product Ready, and do not bypass required durability checks with placeholders.
+  Verification: run `pnpm --workspace-root release:runtime-operational-evidence:test`, `pnpm --workspace-root release:runtime-operational-evidence:failclosed-ok`, and `pnpm --workspace-root guard:runtime-operational-evidence`.
+
+- [ ] E-20c-artifact-e2e-source-identity: Patch only `scripts/release-supply-chain-artifact-evidence.mjs` and `scripts/guard-supply-chain-artifact-evidence.test.mjs`: require artifact smoke evidence to bind every artifact to the tested clean source commit and include Base Mode Pack load, minimal task run, ledger generation, forced stop/resume, and stale/replay rejection.
+  Route: implementation.
+  Depends on: E-20b-stateful-soak-real-workload.
+  Completion condition: supply-chain artifact evidence fails closed when artifact source identity is dirty/stale or when artifact smoke lacks any required Runtime E2E step.
+  Forbidden changes: do not accept `--version` or help-only smoke as E2E evidence, do not invent artifact hashes, and do not mark Runtime/Product Ready.
+  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`, `pnpm --workspace-root release:supply-chain-artifact-evidence`, and `pnpm --workspace-root guard:supply-chain-artifact-evidence`.
+
+- [ ] E-20d-cross-platform-lifecycle-evidence: Patch only `scripts/release-runtime-operational-evidence.mjs` and `scripts/guard-runtime-operational-evidence.test.mjs`: keep lifecycle evidence fail-closed until macOS, Linux x64, Linux ARM64, and Windows x64 artifact install/update/rollback evidence is present or each missing target has explicit owner-controlled external-environment blocking evidence.
+  Route: implementation.
+  Depends on: E-20c-artifact-e2e-source-identity.
+  Completion condition: runtime operational evidence distinguishes satisfied lifecycle evidence from explicit external-environment blockers and cannot treat macOS-only lifecycle as all-target Release evidence.
+  Forbidden changes: do not fake Linux or Windows execution, do not remove target requirements, and do not mark Runtime/Product Ready.
+  Verification: run `pnpm --workspace-root release:runtime-operational-evidence:test`, `pnpm --workspace-root release:runtime-operational-evidence:failclosed-ok`, and `pnpm --workspace-root guard:runtime-operational-evidence`.
+
+- [ ] E-20e-release-contract-trace-nullability: Patch only `docs/architecture/runtime-release-contract.json` and `scripts/guard-release-contract.test.mjs`: replace `pending-evidence-binding` commit/workflow/artifact placeholders with `null` and require explanatory state to live under `trace_binding_status`.
+  Route: documentation.
+  Depends on: E-20d-cross-platform-lifecycle-evidence.
+  Completion condition: Release Contract uses null for unknown trace values while `trace_binding_status` carries the fail-closed reason, and tests reject invented placeholder values in trace fields.
+  Forbidden changes: do not change unrelated contract sections, do not mark implemented/satisfied conditions, and do not remove release blockers.
+  Verification: run `pnpm --workspace-root guard:release-contract:test` and `pnpm --workspace-root guard:release-contract`.
+
+- [ ] E-20f-release-generation-sync: Patch only `docs/architecture/phase-value-manifest.json` and `docs/architecture/runtime-release-readiness-audit.json`: synchronize the live Release generation to E-20/E-19k, latest main authority, and executable evidence blockers without declaring Product Ready.
+  Route: documentation.
+  Depends on: E-20e-release-contract-trace-nullability.
+  Completion condition: Phase manifest and readiness audit name the same live blocker generation and current fail-closed Release evidence requirements, with stale E-17/E-18 closeout language removed.
+  Forbidden changes: do not edit runtime code, do not mark Product Ready or Runtime Release Ready, and do not erase historical evidence entries.
+  Verification: run `pnpm --workspace-root guard:phase-value`, `pnpm --workspace-root guard:runtime-release-readiness`, and `pnpm --workspace-root guard:release-evidence-semantic-consistency`.
+
+- [ ] E-20g-final-judgment-sync: Patch only `docs/architecture/final-product-ready-judgment.json` and `scripts/guard-release-evidence-semantic-consistency.test.mjs`: require Final Judgment generation/status to match the live TODO/phase/audit blocker generation and reject stale E-17/E-18 Product Ready narratives.
+  Route: documentation.
+  Depends on: E-20f-release-generation-sync.
+  Completion condition: semantic consistency tests fail when Final Judgment names an obsolete blocker generation while TODO, Phase manifest, or Readiness Audit name a newer Release blocker.
+  Forbidden changes: do not mark Product Ready, do not remove owner-review history, and do not weaken semantic consistency failures.
+  Verification: run `pnpm --workspace-root guard:release-evidence-semantic-consistency:test` and `pnpm --workspace-root guard:release-evidence-semantic-consistency`.
+
+- [ ] E-20h-release-guard-ci-direct-wiring: Patch only `package.json` and `extensions/brownie-vsix/package.json`: wire Release-critical guard commands directly into CI-reached check paths instead of relying only on `release:gate --dry-run` enumeration.
+  Route: implementation.
+  Depends on: E-20g-final-judgment-sync.
+  Completion condition: root and VSIX check paths directly invoke Release-critical semantic/trace/JSON/duplicate-export/schema guard commands that must pass in CI, while dry-run release gate remains an inventory aid.
+  Forbidden changes: do not remove existing check commands, do not create duplicate JSON keys, and do not bypass root workspace verification.
+  Verification: run `pnpm --workspace-root check`, `pnpm --dir extensions/brownie-vsix check`, and `pnpm --workspace-root guard:release-contract`.
 
 
 
