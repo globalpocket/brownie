@@ -4823,6 +4823,7 @@ PY
   python3 - "$guard_status" "$guard_stdout" "$guard_stderr" "$stdout_log" <<'PY'
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -4898,6 +4899,14 @@ if not selected or not selected_first:
     sys.exit(2)
 
 selected_is_derived_leaf = "Source TODO:" in selected and "Route: todo-decomposition" not in selected
+selected_route = ""
+for line in selected.splitlines():
+    stripped = line.strip()
+    if stripped.startswith("Route:"):
+        selected_route = stripped.split(":", 1)[1].strip().rstrip(".").lower()
+        break
+selected_id_for_route = selected_first.split("] ", 1)[1].split(":", 1)[0].strip() if "] " in selected_first else selected_first.split(":", 1)[0].strip()
+selected_is_decomposition_route = selected_route == "todo-decomposition" or selected_id_for_route.startswith("TODO-decompose-")
 
 try:
     todo_text = todo_path.read_text(encoding="utf-8")
@@ -4952,6 +4961,36 @@ if candidate is None:
     sys.exit(2)
 
 run_id, payload, old_text, new_text = candidate
+if selected_route in {"implementation", "documentation"} and not selected_is_decomposition_route and not selected_is_derived_leaf:
+    print(json.dumps({
+        "applied": False,
+        "reason": "todo_refinement_requires_todo_decomposition_route",
+        "operation": "valid_todo_patch_proposal_fallback",
+        "proposal_id": payload.get("proposal_id"),
+        "source_run_id": run_id,
+        "selected_route": selected_route,
+        "selected_todo_first_line": selected_first,
+        "repair_hint": (
+            "Do not replace or remove an implementation/documentation TODO with child TODOs. "
+            "For implementation/documentation routes, patch the bounded target files and run verification; "
+            "only Route: todo-decomposition may replace a parent TODO with decomposition leaves."
+        ),
+        "semantic_repair_policy": {
+            "mode": "selected_target_implementation_required",
+            "must_not_complete_by_todo_refinement_only": True,
+            "allowed_next_actions": [
+                "patch the selected TODO bounded target files",
+                "run the selected TODO verification commands",
+                "report a concrete blocker if the selected bounded target cannot be implemented"
+            ],
+            "forbidden_next_actions": [
+                "remove the selected implementation/documentation TODO by replacing it with child TODOs",
+                "mark the selected TODO complete when only .brownie/todo.md or .brownie/todo-breakdown.md changed",
+                "rewrite dependencies to avoid the selected implementation target"
+            ],
+        },
+    }, sort_keys=True))
+    sys.exit(1)
 updated = todo_text.replace(old_text, new_text, 1)
 if updated == todo_text:
     print(json.dumps({"applied": False, "reason": "todo_replacement_noop", "run_id": run_id}, sort_keys=True))

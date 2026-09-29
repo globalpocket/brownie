@@ -1916,4 +1916,15 @@ assert "semantic_completion_not_satisfied" in prompt, prompt
 assert "sections.soak_test.status=satisfied" in prompt, prompt
 PY
 
+python3 - "$PHASE_LOOP" <<'PY'
+import pathlib
+import sys
+
+phase_loop = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+assert "todo_refinement_requires_todo_decomposition_route" in phase_loop, phase_loop
+assert "only Route: todo-decomposition may replace a parent TODO with decomposition leaves" in phase_loop, phase_loop
+assert "must_not_complete_by_todo_refinement_only" in phase_loop, phase_loop
+assert "selected_target_implementation_required" in phase_loop, phase_loop
+PY
+
 echo "phase-loop claim smoke passed"
