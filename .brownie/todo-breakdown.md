@@ -643,3 +643,46 @@ Quality rubric:
 History:
 
 - 2026-09-28T12:36:15Z: Deterministically decomposed E-19h-release-contract-trace-binding during manual-20260928T123615Z; avoided LLM old_text patch anchors and resolved verification commands from existing package scripts.
+
+## TODO-decompose-broad-todo-8c2d1506b8da
+
+Parent TODO: E-19i-generation-sync-semantic-guard
+
+Dependency graph:
+- E-19i-generation-sync-semantic-guard-leaf-a: <none>
+- E-19i-generation-sync-semantic-guard-leaf-b: E-19i-generation-sync-semantic-guard-leaf-a
+- E-19i-generation-sync-semantic-guard-leaf-c: E-19i-generation-sync-semantic-guard-leaf-b
+
+Verification ledger:
+- E-19i-generation-sync-semantic-guard-leaf-a: run `pnpm --workspace-root guard:release-evidence-semantic-consistency:test` and `pnpm --workspace-root guard:release-evidence-semantic-consistency`.
+- E-19i-generation-sync-semantic-guard-leaf-b: run `pnpm --workspace-root guard:phase-value`.
+- E-19i-generation-sync-semantic-guard-leaf-c: run `pnpm --workspace-root guard:release-contract` and `pnpm --workspace-root guard:runtime-release-readiness`.
+
+Quality rubric:
+- E-19i-generation-sync-semantic-guard-leaf-a: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-19i-generation-sync-semantic-guard-leaf-b: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-19i-generation-sync-semantic-guard-leaf-c: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+
+History:
+
+- 2026-09-28T20:29:56Z: Deterministically decomposed E-19i-generation-sync-semantic-guard during 20260928T202954Z; avoided LLM old_text patch anchors and resolved verification commands from existing package scripts.
+
+## TODO-decompose-broad-todo-0a6c3f9f95eb
+
+Parent TODO: E-19j-branch-protection-verification-plan
+
+Dependency graph:
+- E-19j-branch-protection-verification-plan-leaf-a: <none>
+- E-19j-branch-protection-verification-plan-leaf-b: E-19j-branch-protection-verification-plan-leaf-a
+
+Verification ledger:
+- E-19j-branch-protection-verification-plan-leaf-a: run `pnpm --workspace-root guard:release-contract` and `pnpm --workspace-root guard:runtime-release-readiness`.
+- E-19j-branch-protection-verification-plan-leaf-b: run `pnpm --workspace-root guard:todo-decomposition`.
+
+Quality rubric:
+- E-19j-branch-protection-verification-plan-leaf-a: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-19j-branch-protection-verification-plan-leaf-b: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+
+History:
+
+- 2026-09-28T21:12:46Z: Deterministically decomposed E-19j-branch-protection-verification-plan during 20260928T211244Z; avoided LLM old_text patch anchors and resolved verification commands from existing package scripts.

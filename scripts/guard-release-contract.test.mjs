@@ -301,6 +301,21 @@ test('rejects implemented artifact evidence with placeholder commit bindings', (
   assert(errors.some((error) => error.includes('commit_trace.artifact_sha256 must be a verified evidence value')));
 });
 
+test('rejects no unresolved blockers claim while readiness audit still lists release blockers', () => {
+  const contract = validContract({
+    release_ready_conditions: requiredConditionIds.map((id) =>
+      condition(
+        id,
+        id === 'no_unresolved_release_blockers' ? 'implemented_sufficient' : 'missing_evidence'
+      )
+    )
+  });
+  const errors = validate(contract, {
+    audit: validAudit({ release_blockers: ['release-evidence-executable-bindings'] })
+  });
+  assert(errors.some((error) => error.includes('no_unresolved_release_blockers must remain blocked')));
+});
+
 test('rejects missing release gate package scripts', () => {
   const errors = validate(validContract(), { packageJson: { scripts: {} } });
   assert(errors.some((error) => error.includes('release:gate')));

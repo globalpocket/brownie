@@ -160,6 +160,15 @@ function validateRuntimeReleaseContract(contract, options = {}) {
     errors,
     `${contractPath} must not mark every release condition satisfied while runtime_release_ready is false.`
   );
+  const readinessReleaseBlockers = Array.isArray(audit.release_blockers) ? audit.release_blockers : [];
+  const unresolvedBlockerCondition = conditionById.get('no_unresolved_release_blockers');
+  if (readinessReleaseBlockers.length > 0 && unresolvedBlockerCondition) {
+    requireValue(
+      !['implemented_sufficient', 'satisfied'].includes(unresolvedBlockerCondition.status),
+      errors,
+      `${contractPath} no_unresolved_release_blockers must remain blocked while ${defaultAuditPath} release_blockers is non-empty.`
+    );
+  }
 
   const phasePlan = Array.isArray(contract.finite_phase_plan) ? contract.finite_phase_plan : [];
   const phaseById = new Map(phasePlan.map((phase) => [phase?.id, phase]));

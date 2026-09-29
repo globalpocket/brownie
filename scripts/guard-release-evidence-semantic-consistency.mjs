@@ -19,7 +19,7 @@ function addReason(reasons, reason) {
 
 function hasForbiddenLocalEvidence(value) {
   if (typeof value === 'string') {
-    return /\/Users\/|\/home\/|C:\/Users\/|EncodedCommand|raw stdout|raw stderr/i.test(value);
+    return /\/Users\/|\/home\/|C:\\Users\\|EncodedCommand|raw stdout|raw stderr/i.test(value);
   }
   if (Array.isArray(value)) {
     return value.some(hasForbiddenLocalEvidence);
