@@ -1062,6 +1062,24 @@ remove_completed_todo_claim_from_queue() {
   if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$PHASE_LOOP_TODO" ]; then
     return 0
   fi
+  if [ -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/phase-loop-progress-integrity.mjs" ]; then
+    local completion_record_output
+    if ! completion_record_output="$(
+      cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+      node scripts/phase-loop-progress-integrity.mjs \
+        --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
+        --claim "$TODO_CLAIM_FILE" \
+        --todo "$PHASE_LOOP_TODO" \
+        --run-stamp "$run_stamp" \
+        --write-record 2>&1
+    )"; then
+      PHASE_LOOP_COMPLETED_TODO_REMOVAL_REVERTED=1
+      PHASE_LOOP_COMPLETED_TODO_REMOVAL_REVERTED_DETAIL="$completion_record_output"
+      printf '%s run=%s completed_todo_removal_refused=true guard=%s\n' "$(now_utc)" "$run_stamp" "$completion_record_output" >> "$SUPERVISOR_LOG"
+      return 76
+    fi
+    printf '%s run=%s todo_completion_record_written=true result=%s\n' "$(now_utc)" "$run_stamp" "$completion_record_output" >> "$SUPERVISOR_LOG"
+  fi
   local todo_backup todo_guard_path todo_guard_output
   todo_backup="$(mktemp "${TMPDIR:-/tmp}/brownie-todo-before-complete.XXXXXX")"
   cp "$PHASE_LOOP_TODO" "$todo_backup"
@@ -4834,6 +4852,21 @@ print(json.dumps({
 PY
   rm -f "$guard_stdout" "$guard_stderr"
   return 1
+}
+
+validate_phase_loop_progress_integrity_after_runtime_apply() {
+  local run_stamp="$1"
+  if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/phase-loop-progress-integrity.mjs" ]; then
+    return 0
+  fi
+  (
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    node scripts/phase-loop-progress-integrity.mjs \
+      --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
+      --claim "$TODO_CLAIM_FILE" \
+      --todo "$PHASE_LOOP_TODO" \
+      --run-stamp "$run_stamp"
+  )
 }
 
 apply_valid_todo_patch_proposal_fallback() {
@@ -10311,6 +10344,18 @@ PY
       printf '%s' "$progress_summary" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("classification", ""))'
     )"
     write_bdk_trajectory_event "$run_stamp" "progress.classified" "$progress_summary"
+
+    local progress_integrity_validation
+    if ! progress_integrity_validation="$(validate_phase_loop_progress_integrity_after_runtime_apply "$run_stamp" 2>&1)"; then
+      write_repair_feedback "$run_stamp" "$progress_integrity_validation" "$stdout_log" "$stderr_log" || true
+      write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      detail="Brownie workspace/TODO progress failed active-claim integrity validation; recorded repair feedback and kept the TODO in progress. validation=$progress_integrity_validation stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+      write_status "no_progress" "$detail" "$run_id" "76" "${CONSECUTIVE_FAILURES:-1}"
+      printf '%s run=%s progress_integrity_validation_failed=true validation=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$progress_integrity_validation" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+      write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"progress_integrity_validation_failed"}'
+      return 76
+    fi
+    write_bdk_trajectory_event "$run_stamp" "verification.run" "$progress_integrity_validation"
 
     local todo_decomposition_validation
     if ! todo_decomposition_validation="$(validate_todo_decomposition_after_runtime_apply "$stdout_log" 2>&1)"; then
