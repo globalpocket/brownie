@@ -7745,6 +7745,9 @@ todo_snapshot_lines = int(sys.argv[11])
 base_prompt_snapshot_lines = int(sys.argv[12])
 retention_count = int(sys.argv[13])
 timestamp = sys.argv[14]
+workspace_root_path = pathlib.Path(os.environ.get("PHASE_LOOP_WORKSPACE_ROOT") or (
+    todo_path.parent.parent if todo_path.parent.name == ".brownie" else todo_path.parent
+))
 
 def read_text(path):
     with open(path, encoding="utf-8") as handle:
@@ -8015,7 +8018,7 @@ if harness_feedback_path.exists() and claim:
 
 if claim and selected_todo:
     try:
-        workspace_root_for_guard = todo_path.parent.parent
+        workspace_root_for_guard = workspace_root_path
         guard = subprocess.run(
             ["pnpm", "--workspace-root", "guard:todo-decomposition"],
             cwd=workspace_root_for_guard,
@@ -8078,6 +8081,63 @@ selected_leaf_target_path = ""
 selected_leaf_target_match = re.search(r"^\s*[-*]\s+\[\s*\]\s+[^:\n]+:\s+(?:Patch only|Create only)\s+`([^`]+)`", selected_todo)
 if selected_leaf_target_match:
     selected_leaf_target_path = selected_leaf_target_match.group(1).strip()
+if claim and selected_todo:
+    try:
+        workspace_root_for_guard = workspace_root_path
+        live_guard = subprocess.run(
+            ["pnpm", "--workspace-root", "guard:todo-decomposition"],
+            cwd=workspace_root_for_guard,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+        )
+        if live_guard.returncode != 0:
+            repair_feedback = {
+                "claim_id": claim.get("claim_id"),
+                "reason": "todo_decomposition_guard_failed_after_todo_apply",
+                "run_stamp": claim.get("run_stamp", ""),
+                "schema_version": 1,
+                "verification": {
+                    "completed": False,
+                    "reason": "todo_decomposition_guard_failed_after_todo_apply",
+                    "repair_hint": "Live TODO decomposition guard preflight failed. Repair the live TODO/breakdown files before implementation; stale selected-target repair feedback must not override this.",
+                    "results": [{
+                        "command": "pnpm --workspace-root guard:todo-decomposition",
+                        "exit_code": live_guard.returncode,
+                        "stdout_tail": live_guard.stdout[-2000:],
+                        "stderr_tail": live_guard.stderr[-2000:],
+                    }],
+                },
+            }
+            bdk_state = "todo_queue_repair"
+            llm_route = "code"
+    except Exception:
+        if (
+            selected_leaf_target_path
+            and selected_first_line
+            and "Patch only" in selected_first_line
+            and not (workspace_root_path / selected_leaf_target_path).exists()
+        ):
+            repair_feedback = {
+                "claim_id": claim.get("claim_id"),
+                "reason": "todo_decomposition_guard_failed_after_todo_apply",
+                "run_stamp": claim.get("run_stamp", ""),
+                "schema_version": 1,
+                "verification": {
+                    "completed": False,
+                    "reason": "todo_decomposition_guard_failed_after_todo_apply",
+                    "repair_hint": "Live TODO target preflight failed: the selected Patch only target does not exist. Repair `.brownie/todo.md`; do not read or patch the missing target file.",
+                    "results": [{
+                        "command": "pnpm --workspace-root guard:todo-decomposition",
+                        "exit_code": 1,
+                        "stdout_tail": "",
+                        "stderr_tail": f"TODO decomposition guard failed:\n- .brownie/todo.md {selected_parent_id or '<selected-todo>'}: Patch only target does not exist: {selected_leaf_target_path}. Use Create only for new files.",
+                    }],
+                },
+            }
+            bdk_state = "todo_queue_repair"
+            llm_route = "code"
 selected_leaf_adjacent_test_path = ""
 if selected_leaf_target_path and selected_leaf_target_path.endswith(".mjs") and not selected_leaf_target_path.endswith(".test.mjs"):
     adjacent_candidate = selected_leaf_target_path[:-4] + ".test.mjs"
@@ -8109,7 +8169,7 @@ if repair_feedback and selected_leaf_target_path:
             try:
                 check = subprocess.run(
                     ["node", "--check", selected_leaf_target_path],
-                    cwd=todo_path.parent.parent,
+                    cwd=workspace_root_path,
                     text=True,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,

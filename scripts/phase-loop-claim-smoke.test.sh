@@ -619,6 +619,8 @@ assert_contains "$decomposition_prompt_file" 'let the guard request the breakdow
 state_decomposition_leaf="$(mktemp -d)"
 prompt_decomposition_leaf="$(mktemp)"
 todo_decomposition_leaf="$(mktemp)"
+mkdir -p "$test_workspace/scripts"
+printf 'export const evidence = {};\n' > "$test_workspace/scripts/release-supply-chain-artifact-evidence.mjs"
 printf 'base prompt\n' > "$prompt_decomposition_leaf"
 printf -- '- [ ] E-15b-provenance-collector-a: Patch only `scripts/release-supply-chain-artifact-evidence.mjs` to record one clean current source commit:\n  Route: implementation.\n  Source TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:\n  Depends on: <none>.\n  Completion condition: the bounded collector path records source commit evidence.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`.\n' > "$todo_decomposition_leaf"
 
@@ -1874,8 +1876,11 @@ repair_feedback_argv="$repair_feedback_state/fake-brownie.argv"
 git -C "$repair_feedback_workspace" init -b main >/dev/null
 git -C "$repair_feedback_workspace" config user.name Brownie
 git -C "$repair_feedback_workspace" config user.email brownie@example.invalid
+mkdir -p "$repair_feedback_workspace/scripts"
 touch "$repair_feedback_workspace/package.json"
+printf 'export const operationalEvidence = {};\n' > "$repair_feedback_workspace/scripts/release-runtime-operational-evidence.mjs"
 git -C "$repair_feedback_workspace" add package.json
+git -C "$repair_feedback_workspace" add scripts/release-runtime-operational-evidence.mjs
 git -C "$repair_feedback_workspace" commit -m init >/dev/null
 printf 'base prompt\n' > "$repair_feedback_prompt"
 cat > "$repair_feedback_todo" <<'EOF'
@@ -2013,6 +2018,8 @@ assert "deterministic_no_eligible_multitarget_split" in phase_loop, phase_loop
 assert "split_multitarget_or_force_bounded_workspace_write" in phase_loop, phase_loop
 assert "TODO guard failure takes precedence over public-harness actionable-terminal feedback" in phase_loop, phase_loop
 assert "harness_actionable_terminal_policy: suppressed because TODO queue repair is active" in phase_loop, phase_loop
+assert "Live TODO decomposition guard preflight failed" in phase_loop, phase_loop
+assert "stale selected-target repair feedback must not override this" in phase_loop, phase_loop
 PY
 
 echo "phase-loop claim smoke passed"
