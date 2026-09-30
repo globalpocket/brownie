@@ -53,6 +53,8 @@ assert_contains "$PHASE_LOOP" "baseline_todo_text"
 assert_contains "$PHASE_LOOP" "objective_apply_stalled"
 assert_contains "$PHASE_LOOP" "TODO queue repair is a mutually-exclusive controller state"
 assert_contains "$PHASE_LOOP" "leaf_execution_policy_lines = \\[\\]"
+assert_contains "$PHASE_LOOP" "todo_contract_repair_before_bounded_leaf"
+assert_contains "$PHASE_LOOP" "must_preserve_todo_guard_priority"
 assert_not_contains "$PHASE_LOOP" "breakdown_only_dependency_pruned"
 
 test_workspace="$(mktemp -d)"

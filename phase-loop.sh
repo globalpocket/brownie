@@ -5498,6 +5498,48 @@ def completion_blocks(text):
     return {todo_id(block): block for block in unchecked_todo_blocks(text) if todo_id(block)}
 
 if selected_is_derived_leaf:
+    guard = subprocess.run(
+        ["pnpm", "--workspace-root", "guard:todo-decomposition"],
+        cwd=workspace_root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=30,
+    )
+    if guard.returncode != 0:
+        print(json.dumps({
+            "applied": False,
+            "reason": "todo_decomposition_guard_failed_after_todo_apply",
+            "operation": "valid_todo_patch_proposal_fallback",
+            "proposal_id": payload.get("proposal_id"),
+            "source_run_id": run_id,
+            "selected_todo_first_line": selected_first,
+            "repair_hint": (
+                "The live TODO queue fails `pnpm --workspace-root guard:todo-decomposition`, so TODO contract repair takes precedence over bounded-leaf implementation. "
+                "Repair `.brownie/todo.md` or `.brownie/todo-breakdown.md` until the guard passes; do not read or patch the selected product target while the TODO guard is failing."
+            ),
+            "results": [{
+                "command": "pnpm --workspace-root guard:todo-decomposition",
+                "exit_code": guard.returncode,
+                "stdout_tail": guard.stdout[-4000:],
+                "stderr_tail": guard.stderr[-4000:],
+            }],
+            "semantic_repair_policy": {
+                "mode": "todo_contract_repair_before_bounded_leaf",
+                "must_preserve_todo_guard_priority": True,
+                "allowed_next_actions": [
+                    "patch .brownie/todo.md to fix invalid Patch/Create target paths",
+                    "patch .brownie/todo.md to replace breakdown-only dependencies with live dependencies or <none>",
+                    "patch .brownie/todo-breakdown.md only when the guard explicitly reports missing derived leaf ledger entries",
+                ],
+                "forbidden_next_actions": [
+                    "rewrite the selected bounded leaf into more child leaves while the TODO guard is failing",
+                    "read or patch the selected product target while its TODO contract is invalid",
+                    "overwrite this TODO guard failure with selected_todo_is_already_a_bounded_leaf",
+                ],
+            },
+        }, sort_keys=True))
+        sys.exit(1)
     first_line = selected_first
     patch_targets = re.findall(r"`([^`\n]+)`", first_line)
     json_targets = [target for target in patch_targets if target.endswith((".json", ".jsonc"))]
