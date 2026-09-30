@@ -1248,7 +1248,7 @@ elif "patch only target does not exist" in combined or "missing package script" 
     action = "rerun_decomposition_with_existing_targets_and_valid_verification"
 elif "no_eligible_task" in combined or "no actionable" in combined:
     label = "no_actionable_runtime_task"
-    action = "close_or_decompose_external_todo_queue"
+    action = "split_multitarget_or_force_bounded_workspace_write"
 elif "tool intent" in combined and "workspace.write" not in combined:
     label = "read_only_tool_intent_loop"
     action = "force_workspace_write_or_blocker_after_one_read"
@@ -3844,6 +3844,301 @@ print(json.dumps({
 PY
 }
 
+try_no_eligible_multitarget_leaf_split_fallback() {
+  local run_stamp="$1"
+  if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$TODO_REPAIR_FEEDBACK_FILE" ] || [ ! -f "$PROGRESS_STATE_FILE" ]; then
+    return 2
+  fi
+  python3 - "$TODO_CLAIM_FILE" "$TODO_REPAIR_FEEDBACK_FILE" "$PROGRESS_STATE_FILE" "$PHASE_LOOP_TODO" "$PHASE_LOOP_TODO_BREAKDOWN" "$PHASE_LOOP_WORKSPACE_ROOT" "$run_stamp" "$(now_utc)" <<'PY'
+import json
+import os
+import pathlib
+import re
+import subprocess
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+feedback_path = pathlib.Path(sys.argv[2])
+progress_path = pathlib.Path(sys.argv[3])
+todo_path = pathlib.Path(sys.argv[4])
+breakdown_path = pathlib.Path(sys.argv[5])
+workspace = pathlib.Path(sys.argv[6])
+run_stamp = sys.argv[7]
+timestamp = sys.argv[8]
+
+def read_json(path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+def line_value(block, label, default=""):
+    prefix = f"{label}:"
+    for line in block.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            return stripped[len(prefix):].strip().rstrip(".")
+    return default
+
+def todo_id_from_first_line(first_line):
+    match = re.match(r"^\s*[-*]\s+\[\s\]\s+([^:\s]+)", first_line)
+    return match.group(1).strip() if match else ""
+
+def safe_leaf_id(parent_id, index):
+    base = f"{parent_id}-target-{index:02d}"
+    if len(base) <= 96:
+        return base
+    suffix = f"-target-{index:02d}"
+    return f"{parent_id[:96-len(suffix)].rstrip('-')}{suffix}"
+
+def target_route(original_route, target):
+    route = original_route if original_route in {"implementation", "documentation", "release-ops", "todo-decomposition"} else "implementation"
+    if target == ".brownie/todo.md" or target == "todo.md":
+        return "todo-decomposition" if route == "todo-decomposition" else "documentation"
+    if target.startswith("docs/"):
+        return "documentation"
+    if route in {"documentation", "release-ops"}:
+        return "implementation"
+    return route
+
+claim = read_json(claim_path)
+feedback = read_json(feedback_path)
+progress = read_json(progress_path)
+if feedback.get("claim_id") != claim.get("claim_id"):
+    raise SystemExit(2)
+selected = claim.get("selected_todo")
+if not isinstance(selected, str) or not selected.strip():
+    raise SystemExit(2)
+selected_first = selected.splitlines()[0] if selected.splitlines() else ""
+selected_id = todo_id_from_first_line(selected_first)
+if not selected_id:
+    raise SystemExit(2)
+if "Route: todo-decomposition" in selected:
+    raise SystemExit(2)
+if progress.get("classification") != "no_progress":
+    raise SystemExit(2)
+
+verification_feedback = feedback.get("verification") if isinstance(feedback.get("verification"), dict) else {}
+combined = " ".join(
+    str(value)
+    for value in [
+        feedback.get("reason"),
+        verification_feedback.get("reason"),
+        verification_feedback.get("runtime_status"),
+        verification_feedback.get("completion_closure_status"),
+        verification_feedback.get("stop_reason"),
+        verification_feedback.get("repair_hint"),
+        verification_feedback.get("no_eligible_task_recovery"),
+    ]
+)
+if "no_eligible_task" not in combined and "split_multitarget_leaf" not in combined:
+    raise SystemExit(2)
+
+scope_match = re.search(r"\b(?P<operation>Patch|Create) only\b(?P<scope>[^\n:]+)", selected_first)
+if not scope_match:
+    raise SystemExit(2)
+operation = scope_match.group("operation")
+targets = [target.strip() for target in re.findall(r"`([^`\n]+)`", scope_match.group("scope")) if target.strip()]
+if len(targets) <= 1:
+    raise SystemExit(2)
+if len(set(targets)) != len(targets):
+    print(json.dumps({
+        "applied": False,
+        "eligible": True,
+        "operation": "no_eligible_multitarget_leaf_split_fallback",
+        "reason": "duplicate_targets",
+        "targets": targets,
+    }, ensure_ascii=False, sort_keys=True))
+    raise SystemExit(1)
+
+try:
+    todo_text = todo_path.read_text(encoding="utf-8")
+except Exception:
+    raise SystemExit(2)
+if selected not in todo_text:
+    raise SystemExit(2)
+try:
+    breakdown_text = breakdown_path.read_text(encoding="utf-8")
+except FileNotFoundError:
+    breakdown_text = "# Brownie TODO breakdown\n"
+
+original_route = line_value(selected, "Route", "implementation").lower()
+original_depends = line_value(selected, "Depends on", "<none>") or "<none>"
+original_completion = line_value(selected, "Completion condition", "the selected target is updated consistently with the parent TODO")
+original_forbidden = line_value(selected, "Forbidden changes", "do not edit unrelated files")
+original_verification = line_value(selected, "Verification", "")
+source_line = line_value(selected, "Source TODO", selected_id)
+
+if not original_verification:
+    print(json.dumps({
+        "applied": False,
+        "eligible": True,
+        "operation": "no_eligible_multitarget_leaf_split_fallback",
+        "reason": "missing_verification",
+        "selected_todo_id": selected_id,
+    }, ensure_ascii=False, sort_keys=True))
+    raise SystemExit(1)
+
+checked_selected = re.sub(r"^(\s*[-*]\s+)\[\s\]", r"\1[x]", selected, count=1)
+if checked_selected == selected:
+    raise SystemExit(2)
+
+leaf_blocks = []
+leaf_ids = []
+for index, target in enumerate(targets, start=1):
+    leaf_id = safe_leaf_id(selected_id, index)
+    leaf_ids.append(leaf_id)
+    depends = original_depends if index == 1 else leaf_ids[index - 2]
+    if not depends:
+        depends = "<none>"
+    sibling_targets = ", ".join(f"`{candidate}`" for candidate in targets if candidate != target)
+    forbidden = (
+        f"{original_forbidden}; do not edit unrelated files"
+        + (f" or sibling split targets {sibling_targets}" if sibling_targets else "")
+    )
+    completion = (
+        f"{operation} only `{target}` so this slice satisfies the parent TODO intent: "
+        f"{original_completion[:240]}"
+    )
+    leaf_blocks.append("\n".join([
+        f"- [ ] {leaf_id}: {operation} only `{target}` to complete one bounded slice of {selected_id}:",
+        f"  Route: {target_route(original_route, target)}.",
+        f"  Source TODO: {selected_id}.",
+        f"  Depends on: {depends}.",
+        f"  Completion condition: {completion}.",
+        f"  Forbidden changes: {forbidden}.",
+        f"  Verification: {original_verification}.",
+    ]))
+
+replacement = checked_selected + "\n\n" + "\n\n".join(leaf_blocks)
+updated_todo = todo_text.replace(selected, replacement, 1)
+updated_todo = re.sub(r"\n{3,}", "\n\n", updated_todo).rstrip() + "\n"
+if selected_first in updated_todo:
+    print(json.dumps({
+        "applied": False,
+        "eligible": True,
+        "operation": "no_eligible_multitarget_leaf_split_fallback",
+        "reason": "selected_unchecked_parent_still_pending",
+        "selected_todo_id": selected_id,
+    }, ensure_ascii=False, sort_keys=True))
+    raise SystemExit(1)
+
+section_title = f"## {selected_id} no-eligible multi-target split"
+if section_title not in breakdown_text:
+    dependency_lines = "\n".join(
+        f"- {leaf_id}: {original_depends if idx == 0 else leaf_ids[idx - 1]}"
+        for idx, leaf_id in enumerate(leaf_ids)
+    )
+    verification_lines = "\n".join(f"- {leaf_id}: `{original_verification}`" for leaf_id in leaf_ids)
+    target_lines = "\n".join(f"- {leaf_id}: `{target}`" for leaf_id, target in zip(leaf_ids, targets))
+    breakdown_text = breakdown_text.rstrip() + f"""
+
+{section_title}
+
+Parent TODO: {selected_id}: {selected_first}
+Parent source: {source_line}
+
+Targets:
+
+{target_lines}
+
+Dependency graph:
+
+{dependency_lines}
+
+Verification ledger:
+
+{verification_lines}
+
+History:
+
+- {timestamp}: Applied deterministic no_eligible_task fallback during run {run_stamp}; the checked parent remains in the queue so existing downstream dependencies still have a durable dependency anchor, and the implementation work moves to ordered single-target leaves.
+""" + "\n"
+
+for path, content, suffix in (
+    (todo_path, updated_todo, "no-eligible-multitarget-todo"),
+    (breakdown_path, breakdown_text, "no-eligible-multitarget-breakdown"),
+):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{suffix}-{run_stamp}.tmp")
+    with open(tmp, "w", encoding="utf-8") as handle:
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, path)
+    try:
+        dir_fd = os.open(str(path.parent), os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except Exception:
+        pass
+
+guard_path = None
+try:
+    guard_path = todo_path.resolve().relative_to(workspace.resolve()).as_posix()
+except Exception:
+    guard_path = None
+if guard_path and (workspace / "scripts/guard-todo-decomposition.mjs").exists():
+    guard = subprocess.run(
+        ["node", "scripts/guard-todo-decomposition.mjs", guard_path],
+        cwd=workspace,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=30,
+    )
+    if guard.returncode != 0:
+        print(json.dumps({
+            "applied": False,
+            "eligible": True,
+            "operation": "no_eligible_multitarget_leaf_split_fallback",
+            "reason": "todo_decomposition_guard_failed",
+            "stdout_tail": guard.stdout[-4000:],
+            "stderr_tail": guard.stderr[-4000:],
+        }, ensure_ascii=False, sort_keys=True))
+        raise SystemExit(1)
+
+claim_id = str(claim.get("claim_id") or f"run-{run_stamp}")
+completion_dir = workspace / ".brownie/private/phase-loop/todo-completions"
+completion_dir.mkdir(parents=True, exist_ok=True)
+record = {
+    "schema_version": 1,
+    "claim_id": claim_id,
+    "run_stamp": run_stamp,
+    "selected_todo_id": selected_id,
+    "selected_todo_first_line": selected_first,
+    "changed_files": [".brownie/todo.md", ".brownie/todo-breakdown.md"],
+    "workspace_changed_files": [".brownie/todo.md", ".brownie/todo-breakdown.md"],
+    "selected_scopes": targets,
+    "completion_record_reason": "deterministic_no_eligible_multitarget_split",
+    "generated_leaf_ids": leaf_ids,
+    "written_at": timestamp,
+}
+for name in {claim_id, run_stamp}:
+    record_path = completion_dir / f"{name}.json"
+    with open(record_path, "w", encoding="utf-8") as handle:
+        json.dump(record, handle, ensure_ascii=False, sort_keys=True, indent=2)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(record_path, 0o600)
+
+print(json.dumps({
+    "applied": True,
+    "applied_at": timestamp,
+    "operation": "no_eligible_multitarget_leaf_split_fallback",
+    "path": str(todo_path),
+    "breakdown_path": str(breakdown_path),
+    "checked_parent": selected_id,
+    "leaf_ids": leaf_ids,
+    "targets": targets,
+    "run_stamp": run_stamp,
+}, ensure_ascii=False, sort_keys=True))
+PY
+}
+
 try_stagnated_vsix_package_scripts_fallback() {
   local run_stamp="$1"
   if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$TODO_REPAIR_FEEDBACK_FILE" ] || [ ! -f "$PROGRESS_STATE_FILE" ]; then
@@ -6025,6 +6320,15 @@ patch_targets = re.findall(r"`([^`\n]+)`", scope_match.group("scope")) if scope_
 json_targets = [target for target in patch_targets if target.endswith((".json", ".jsonc"))]
 if not read_previews and isinstance(previous_verification.get("workspace_read_previews"), list):
     read_previews = [str(item) for item in previous_verification.get("workspace_read_previews", [])]
+no_eligible_runtime_status = any(
+    "no_eligible_task" in str(value)
+    for value in (
+        payload.get("status"),
+        payload.get("completion_closure_status"),
+        payload.get("stop_reason"),
+        payload.get("stop_class"),
+    )
+)
 verification = {
     "completed": False,
     "reason": "runtime_terminal_failure",
@@ -6040,6 +6344,21 @@ verification = {
     "llm_provider_failures": llm_provider_failures[-3:],
     "workspace_read_previews": read_previews[-2:],
 }
+if no_eligible_runtime_status and len(patch_targets) > 1:
+    verification["repair_hint"] = (
+        "Runtime reported no_eligible_task for a TODO whose first line names multiple Patch/Create targets. "
+        "Treat this as an over-broad leaf contract: split the active TODO into ordered single-target bounded leaves before retrying implementation."
+    )
+    verification["no_eligible_task_recovery"] = {
+        "mode": "split_multitarget_leaf",
+        "selected_patch_targets": patch_targets,
+        "required_next_action": "replace the active multi-target TODO with single-target leaf TODOs, or emit one valid workspace.write for exactly one selected target if the TODO is already single-target",
+        "forbidden_next_actions": [
+            "retry another read-only pass",
+            "mark the TODO complete without changing/verifying every selected target",
+            "invent a new verification command",
+        ],
+    }
 latest_provider_failure = llm_provider_failures[-1] if llm_provider_failures else {}
 if (
     latest_provider_failure.get("failure_class") == "missing_provider_content"
@@ -6048,24 +6367,27 @@ if (
     verification["repair_hint"] = "The previous second-pass LLM response was missing message content after a workspace.read. Do not retry another workspace.read. Use the embedded workspace_read_preview for the selected target and emit exactly one compact workspace.write patch_file, or emit a concrete blocker TODO."
 if any(str(item.get("code") or "").lower() == "missing_closing_fence" for item in intent_rejections):
     verification["repair_hint"] = "The previous workspace.write tool intent was truncated before the closing fence, likely because new_text was too large. Do not retry the same large patch. Emit a much smaller patch_file using one short exact old_text/new_text hunk, or patch `.brownie/todo.md` to split this TODO into narrower bounded leaves."
-if "Source TODO:" in selected and "Route: todo-decomposition" not in selected and patch_targets:
+if "Route: todo-decomposition" not in selected and patch_targets:
     verification["repair_hint"] = (
-        "The selected TODO is already a bounded leaf. Do not rewrite `.brownie/todo.md` to re-split or restate it. "
-        "Repair only the selected Patch/Create target file(s), or report a concrete blocker if the completion condition is impossible. "
+        "The selected TODO is a bounded Patch/Create leaf. "
+        + ("It names multiple targets; split it into ordered single-target leaves if Runtime cannot produce a valid workspace.write for all targets. " if len(patch_targets) > 1 else "Do not rewrite `.brownie/todo.md` to re-split or restate it. ")
+        + "Repair only the selected Patch/Create target file(s), or report a concrete blocker if the completion condition is impossible. "
         "Preserve the selected TODO intent and forbidden changes."
     )
     verification["semantic_repair_policy"] = {
-        "mode": "bounded_leaf_target_repair",
+        "mode": "bounded_multitarget_leaf_repair" if len(patch_targets) > 1 else "bounded_leaf_target_repair",
         "selected_patch_targets": patch_targets,
         "json_target_repair": bool(json_targets),
+        "split_when_no_eligible_task": len(patch_targets) > 1,
         "must_preserve_selected_todo_intent": True,
         "must_not_only_make_checks_green": True,
         "allowed_next_actions": [
             "patch the selected target file with one small complete semantic edit",
+            "split the active multi-target leaf into ordered single-target leaves when no_eligible_task repeats",
             "report a concrete blocker if the selected leaf is impossible",
         ],
         "forbidden_next_actions": [
-            "rewrite .brownie/todo.md to create child TODOs for this bounded leaf",
+            "rewrite .brownie/todo.md to create child TODOs for a single-target bounded leaf",
             "delete validation or guards merely to pass a check",
             "modify unrelated files",
             "mark the TODO complete while verification fails",
@@ -9828,6 +10150,33 @@ PY
     printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
     write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
     write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"todo_decomposition_fallback_failed"}'
+    return 74
+  fi
+  local pre_guard_no_eligible_multitarget_output pre_guard_no_eligible_multitarget_status
+  pre_guard_no_eligible_multitarget_output="$(try_no_eligible_multitarget_leaf_split_fallback "$run_stamp" 2>&1)"
+  pre_guard_no_eligible_multitarget_status=$?
+  if [ "$pre_guard_no_eligible_multitarget_status" -eq 0 ]; then
+    workspace_after="$(git_workspace_fingerprint)"
+    printf '%s\n' "$pre_guard_no_eligible_multitarget_output" > "$stdout_log"
+    : > "$stderr_log"
+    clear_repair_feedback
+    write_todo_claim "$(claim_field claim_id)" "completed" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+    if [ -f "$TODO_CLAIM_FILE" ]; then
+      mv "$TODO_CLAIM_FILE" "$TODO_CLAIM_DIR/completed-no-eligible-multitarget-split-$run_stamp.json"
+      sync_parent_dir "$TODO_CLAIM_DIR"
+    fi
+    detail="Applied deterministic fallback for no_eligible_task multi-target leaf split before invoking Brownie: $pre_guard_no_eligible_multitarget_output"
+    write_status "last_run_succeeded" "$detail" "todo-no-eligible-multitarget-split-$run_stamp" "0" "0"
+    printf '%s run=%s no_eligible_multitarget_leaf_split=true phase=pre_guard result=%s\n' "$(now_utc)" "todo-no-eligible-multitarget-split-$run_stamp" "$pre_guard_no_eligible_multitarget_output" >> "$SUPERVISOR_LOG"
+    write_bdk_trajectory_event "$run_stamp" "tool.write_applied" '{"source":"deterministic_fallback","kind":"no_eligible_multitarget_leaf_split"}'
+    write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"no_eligible_multitarget_leaf_split"}'
+    phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after" || true
+    return 0
+  elif [ "$pre_guard_no_eligible_multitarget_status" -eq 1 ]; then
+    detail="No-eligible multi-target leaf split fallback was eligible but failed safely before invoking Brownie: $pre_guard_no_eligible_multitarget_output"
+    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+    write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
+    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"no_eligible_multitarget_leaf_split_failed"}'
     return 74
   fi
   local pre_guard_multifile_split_output pre_guard_multifile_split_status

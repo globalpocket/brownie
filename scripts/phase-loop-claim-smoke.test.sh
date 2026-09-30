@@ -1790,6 +1790,80 @@ assert "decomposition_policy: this invocation is TODO decomposition only" in pro
 assert "replace the active decomposition request and its broad source TODO" in prompt, prompt
 PY
 
+no_eligible_split_state="$(mktemp -d)"
+no_eligible_split_prompt="$(mktemp)"
+no_eligible_split_workspace="$(mktemp -d)"
+git -C "$no_eligible_split_workspace" init -b main >/dev/null
+git -C "$no_eligible_split_workspace" config user.name Brownie
+git -C "$no_eligible_split_workspace" config user.email brownie@example.invalid
+mkdir -p "$no_eligible_split_workspace/.brownie" "$no_eligible_split_workspace/docs" "$no_eligible_split_workspace/scripts"
+printf '{"scripts":{"check":"node --check scripts/b.mjs"}}\n' > "$no_eligible_split_workspace/package.json"
+printf 'status: pending\n' > "$no_eligible_split_workspace/docs/a.md"
+printf 'export const ok = true;\n' > "$no_eligible_split_workspace/scripts/b.mjs"
+printf 'base prompt\n' > "$no_eligible_split_prompt"
+cat > "$no_eligible_split_workspace/.brownie/todo.md" <<'EOF'
+- [ ] E-20g-final-judgment-sync: Patch only `docs/a.md`, `scripts/b.mjs` to synchronize final judgment and guard coverage:
+  Route: implementation.
+  Source TODO: E-20.
+  Depends on: E-20f.
+  Completion condition: final judgment and guard coverage are synchronized without claiming Product Ready prematurely.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run `pnpm --workspace-root check`.
+
+- [ ] E-20h-next: Patch only `scripts/next.mjs`:
+  Route: implementation.
+  Source TODO: E-20.
+  Depends on: E-20g-final-judgment-sync.
+  Completion condition: the next step runs only after the final-judgment synchronization anchor is closed.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run `pnpm --workspace-root check`.
+EOF
+printf '# Breakdown\n' > "$no_eligible_split_workspace/.brownie/todo-breakdown.md"
+git -C "$no_eligible_split_workspace" add .
+git -C "$no_eligible_split_workspace" commit -m init >/dev/null
+
+PHASE_LOOP_STATE_DIR="$no_eligible_split_state" \
+PHASE_LOOP_PROMPT="$no_eligible_split_prompt" \
+PHASE_LOOP_TODO="$no_eligible_split_workspace/.brownie/todo.md" \
+PHASE_LOOP_TODO_BREAKDOWN="$no_eligible_split_workspace/.brownie/todo-breakdown.md" \
+PHASE_LOOP_WORKSPACE_ROOT="$no_eligible_split_workspace" \
+PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
+BROWNIE_BIN="$fake_brownie_terminal_no_eligible" \
+"$PHASE_LOOP" run-once >/dev/null || true
+
+PHASE_LOOP_STATE_DIR="$no_eligible_split_state" \
+PHASE_LOOP_PROMPT="$no_eligible_split_prompt" \
+PHASE_LOOP_TODO="$no_eligible_split_workspace/.brownie/todo.md" \
+PHASE_LOOP_TODO_BREAKDOWN="$no_eligible_split_workspace/.brownie/todo-breakdown.md" \
+PHASE_LOOP_WORKSPACE_ROOT="$no_eligible_split_workspace" \
+PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
+BROWNIE_BIN="$fake_brownie_terminal_no_eligible" \
+"$PHASE_LOOP" run-once >/dev/null
+
+python3 - "$no_eligible_split_workspace/.brownie/todo.md" "$no_eligible_split_workspace/.brownie/todo-breakdown.md" "$no_eligible_split_state/status.json" "$no_eligible_split_workspace/.brownie/private/phase-loop/todo-completions" <<'PY'
+import json
+import pathlib
+import sys
+
+todo = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+breakdown = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
+status = json.loads(pathlib.Path(sys.argv[3]).read_text(encoding="utf-8"))
+completion_dir = pathlib.Path(sys.argv[4])
+records = list(completion_dir.glob("*.json"))
+assert "- [x] E-20g-final-judgment-sync:" in todo, todo
+assert "- [ ] E-20g-final-judgment-sync-target-01: Patch only `docs/a.md`" in todo, todo
+assert "- [ ] E-20g-final-judgment-sync-target-02: Patch only `scripts/b.mjs`" in todo, todo
+assert "Source TODO: E-20g-final-judgment-sync." in todo, todo
+assert "Depends on: E-20g-final-judgment-sync-target-01." in todo, todo
+assert "Depends on: E-20g-final-judgment-sync." in todo, todo
+assert "E-20g-final-judgment-sync no-eligible multi-target split" in breakdown, breakdown
+assert status["status"] == "last_run_succeeded", status
+assert "no_eligible_task multi-target leaf split" in status["detail"], status
+assert records, "missing completion record"
+record_text = "\n".join(path.read_text(encoding="utf-8") for path in records)
+assert "deterministic_no_eligible_multitarget_split" in record_text, record_text
+PY
+
 repair_feedback_state="$(mktemp -d)"
 repair_feedback_prompt="$(mktemp)"
 repair_feedback_todo="$(mktemp)"
@@ -1932,6 +2006,9 @@ assert "todo_refinement_requires_todo_decomposition_route" in phase_loop, phase_
 assert "only Route: todo-decomposition may replace a parent TODO with decomposition leaves" in phase_loop, phase_loop
 assert "must_not_complete_by_todo_refinement_only" in phase_loop, phase_loop
 assert "selected_target_implementation_required" in phase_loop, phase_loop
+assert "try_no_eligible_multitarget_leaf_split_fallback" in phase_loop, phase_loop
+assert "deterministic_no_eligible_multitarget_split" in phase_loop, phase_loop
+assert "split_multitarget_or_force_bounded_workspace_write" in phase_loop, phase_loop
 PY
 
 echo "phase-loop claim smoke passed"
