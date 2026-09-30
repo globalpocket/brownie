@@ -1840,7 +1840,7 @@ PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
 BROWNIE_BIN="$fake_brownie_terminal_no_eligible" \
 "$PHASE_LOOP" run-once >/dev/null
 
-python3 - "$no_eligible_split_workspace/.brownie/todo.md" "$no_eligible_split_workspace/.brownie/todo-breakdown.md" "$no_eligible_split_state/status.json" "$no_eligible_split_workspace/.brownie/private/phase-loop/todo-completions" <<'PY'
+python3 - "$no_eligible_split_workspace/.brownie/todo.md" "$no_eligible_split_workspace/.brownie/todo-breakdown.md" "$no_eligible_split_state/status.json" "$no_eligible_split_workspace/.brownie/private/phase-loop/todo-replans" <<'PY'
 import json
 import pathlib
 import sys
@@ -1848,8 +1848,8 @@ import sys
 todo = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 breakdown = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 status = json.loads(pathlib.Path(sys.argv[3]).read_text(encoding="utf-8"))
-completion_dir = pathlib.Path(sys.argv[4])
-records = list(completion_dir.glob("*.json"))
+replan_dir = pathlib.Path(sys.argv[4])
+records = list(replan_dir.glob("*.json"))
 assert "- [x] E-20g-final-judgment-sync:" in todo, todo
 assert "- [ ] E-20g-final-judgment-sync-target-01: Patch only `docs/a.md`" in todo, todo
 assert "- [ ] E-20g-final-judgment-sync-target-02: Patch only `scripts/b.mjs`" in todo, todo
@@ -1859,9 +1859,11 @@ assert "Depends on: E-20g-final-judgment-sync." in todo, todo
 assert "E-20g-final-judgment-sync no-eligible multi-target split" in breakdown, breakdown
 assert status["status"] == "last_run_succeeded", status
 assert "no_eligible_task multi-target leaf split" in status["detail"], status
-assert records, "missing completion record"
+assert records, "missing replan record"
 record_text = "\n".join(path.read_text(encoding="utf-8") for path in records)
 assert "deterministic_no_eligible_multitarget_split" in record_text, record_text
+assert '"record_type": "todo_replan"' in record_text, record_text
+assert '"parent_status": "superseded_by_children"' in record_text, record_text
 PY
 
 repair_feedback_state="$(mktemp -d)"

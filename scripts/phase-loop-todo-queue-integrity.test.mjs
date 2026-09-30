@@ -60,7 +60,72 @@ test('rejects removing a TODO without completion evidence', () => {
   });
 
   assert.equal(result.valid, false);
-  assert(result.errors.some((error) => error.code === 'todo_removed_without_completion_record' && error.todo_id === 'E-20a-golden-journey-workspace-mutation'));
+  assert(result.errors.some((error) => error.code === 'todo_removed_without_completion_or_replan_record' && error.todo_id === 'E-20a-golden-journey-workspace-mutation'));
+});
+
+test('allows replacing a parent TODO with live child leaves when durable replan evidence exists', () => {
+  const childA = `- [ ] E-20a-golden-journey-workspace-mutation-target-01: Patch only \`scripts/release-runtime-operational-evidence.mjs\`:
+  Route: implementation.
+  Source TODO: E-20a-golden-journey-workspace-mutation.
+  Depends on: <none>.
+  Completion condition: first split child updates runtime operational evidence collector.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root check\`.`;
+  const childB = `- [ ] E-20a-golden-journey-workspace-mutation-target-02: Patch only \`scripts/guard-runtime-operational-evidence.test.mjs\`:
+  Route: implementation.
+  Source TODO: E-20a-golden-journey-workspace-mutation.
+  Depends on: E-20a-golden-journey-workspace-mutation-target-01.
+  Completion condition: second split child updates runtime operational evidence tests.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root check\`.`;
+  const result = validateTodoQueueIntegrity({
+    todoBefore: queue(e20a, e20b),
+    todoAfter: queue(childA, childB, e20b),
+    completedTodoIds: [],
+    todoReplanRecords: [{
+      record_type: 'todo_replan',
+      operation: 'split_parent_into_children',
+      parent_status: 'superseded_by_children',
+      parent_todo_id: 'E-20a-golden-journey-workspace-mutation',
+      generated_child_ids: [
+        'E-20a-golden-journey-workspace-mutation-target-01',
+        'E-20a-golden-journey-workspace-mutation-target-02'
+      ]
+    }]
+  });
+
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+  assert.deepEqual(result.replanned_todo_ids, ['E-20a-golden-journey-workspace-mutation']);
+});
+
+test('rejects parent replacement when replan children are missing or not linked to the parent', () => {
+  const child = `- [ ] E-20a-golden-journey-workspace-mutation-target-01: Patch only \`scripts/release-runtime-operational-evidence.mjs\`:
+  Route: implementation.
+  Source TODO: E-20-not-the-parent.
+  Depends on: <none>.
+  Completion condition: first split child updates runtime operational evidence collector.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root check\`.`;
+  const result = validateTodoQueueIntegrity({
+    todoBefore: queue(e20a, e20b),
+    todoAfter: queue(child, e20b),
+    completedTodoIds: [],
+    todoReplanRecords: [{
+      record_type: 'todo_replan',
+      operation: 'split_parent_into_children',
+      parent_status: 'superseded_by_children',
+      parent_todo_id: 'E-20a-golden-journey-workspace-mutation',
+      generated_child_ids: [
+        'E-20a-golden-journey-workspace-mutation-target-01',
+        'E-20a-golden-journey-workspace-mutation-target-02'
+      ]
+    }]
+  });
+
+  assert.equal(result.valid, false);
+  const error = result.errors.find((item) => item.todo_id === 'E-20a-golden-journey-workspace-mutation');
+  assert.equal(error.code, 'todo_removed_without_completion_or_replan_record');
+  assert.equal(error.replan_rejection.reason, 'generated_children_not_live_or_not_linked_to_parent');
 });
 
 test('rejects changing verification and completion contract on a surviving TODO', () => {
@@ -127,4 +192,51 @@ test('CLI rejects dirty queue contract drift against HEAD', () => {
       stdio: ['ignore', 'pipe', 'pipe']
     });
   }, /todo_contract_drift/);
+});
+
+test('CLI accepts parent TODO superseded by children when durable replan record exists', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-todo-replan-integrity-'));
+  fs.mkdirSync(path.join(tmp, '.brownie/private/phase-loop/todo-replans'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, '.brownie/todo.md'), queue(e20a, e20b));
+  execFileSync('git', ['init', '-b', 'main'], { cwd: tmp, stdio: 'ignore' });
+  execFileSync('git', ['add', '.brownie/todo.md'], { cwd: tmp, stdio: 'ignore' });
+  execFileSync('git', ['-c', 'user.name=Brownie', '-c', 'user.email=brownie@example.invalid', 'commit', '-m', 'todo baseline'], { cwd: tmp, stdio: 'ignore' });
+  const childA = `- [ ] E-20a-golden-journey-workspace-mutation-target-01: Patch only \`scripts/release-runtime-operational-evidence.mjs\`:
+  Route: implementation.
+  Source TODO: E-20a-golden-journey-workspace-mutation.
+  Depends on: <none>.
+  Completion condition: first split child updates runtime operational evidence collector.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root check\`.`;
+  const childB = `- [ ] E-20a-golden-journey-workspace-mutation-target-02: Patch only \`scripts/guard-runtime-operational-evidence.test.mjs\`:
+  Route: implementation.
+  Source TODO: E-20a-golden-journey-workspace-mutation.
+  Depends on: E-20a-golden-journey-workspace-mutation-target-01.
+  Completion condition: second split child updates runtime operational evidence tests.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root check\`.`;
+  fs.writeFileSync(path.join(tmp, '.brownie/todo.md'), queue(childA, childB, e20b));
+  fs.writeFileSync(
+    path.join(tmp, '.brownie/private/phase-loop/todo-replans/e20a.json'),
+    `${JSON.stringify({
+      schema_version: 1,
+      record_type: 'todo_replan',
+      operation: 'split_parent_into_children',
+      parent_status: 'superseded_by_children',
+      parent_todo_id: 'E-20a-golden-journey-workspace-mutation',
+      generated_child_ids: [
+        'E-20a-golden-journey-workspace-mutation-target-01',
+        'E-20a-golden-journey-workspace-mutation-target-02'
+      ]
+    }, null, 2)}\n`
+  );
+
+  const output = execFileSync('node', [path.resolve('scripts/phase-loop-todo-queue-integrity.mjs'), '--repo', tmp, '--todo', '.brownie/todo.md'], {
+    cwd: path.resolve('.'),
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  const result = JSON.parse(output);
+  assert.equal(result.valid, true, output);
+  assert.deepEqual(result.replanned_todo_ids, ['E-20a-golden-journey-workspace-mutation']);
 });

@@ -93,6 +93,11 @@ function lineValue(block, label) {
   return line ? line.slice(prefix.length).trim().replace(/[.]$/, '') : '';
 }
 
+function sourceTodoId(block) {
+  const source = lineValue(block, 'Source TODO');
+  return source.split(':')[0]?.trim().replace(/[.,;]+$/u, '') ?? '';
+}
+
 function boundedScopeValues(first, keyword) {
   const start = first.indexOf(keyword);
   if (start < 0) {
@@ -186,25 +191,124 @@ function completedTodoIds(repoRoot) {
   return ids;
 }
 
-export function validateTodoQueueIntegrity({ todoBefore, todoAfter, completedTodoIds: completedIdsInput = [] }) {
+function todoReplanRecords(repoRoot) {
+  const dir = path.join(repoRoot, '.brownie/private/phase-loop/todo-replans');
+  const records = [];
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return records;
+    }
+    throw error;
+  }
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) {
+      continue;
+    }
+    try {
+      const record = JSON.parse(fs.readFileSync(path.join(dir, entry.name), 'utf8'));
+      if (
+        record?.record_type === 'todo_replan' &&
+        record?.operation === 'split_parent_into_children' &&
+        typeof record.parent_todo_id === 'string' &&
+        Array.isArray(record.generated_child_ids)
+      ) {
+        records.push(record);
+      }
+    } catch {
+      // Ignore malformed replan records. They must not grant permission to
+      // remove or supersede a TODO.
+    }
+  }
+  return records;
+}
+
+function replanRecordsByParent(records) {
+  const map = new Map();
+  for (const record of records ?? []) {
+    const parent = typeof record.parent_todo_id === 'string' ? record.parent_todo_id.trim() : '';
+    const children = Array.isArray(record.generated_child_ids)
+      ? record.generated_child_ids.map((child) => String(child).trim()).filter(Boolean)
+      : [];
+    if (!parent || children.length === 0) {
+      continue;
+    }
+    if (!map.has(parent)) {
+      map.set(parent, []);
+    }
+    map.get(parent).push({ ...record, parent_todo_id: parent, generated_child_ids: children });
+  }
+  return map;
+}
+
+function validReplanForRemovedParent(record, after) {
+  if (record.parent_status !== 'superseded_by_children') {
+    return {
+      valid: false,
+      reason: 'parent_status_must_be_superseded_by_children'
+    };
+  }
+  const children = record.generated_child_ids;
+  if (new Set(children).size !== children.length) {
+    return {
+      valid: false,
+      reason: 'generated_child_ids_must_be_unique'
+    };
+  }
+  const missing = [];
+  const wrongSource = [];
+  for (const child of children) {
+    const block = after.get(child);
+    if (!block) {
+      missing.push(child);
+      continue;
+    }
+    if (sourceTodoId(block) !== record.parent_todo_id) {
+      wrongSource.push(child);
+    }
+  }
+  if (missing.length > 0 || wrongSource.length > 0) {
+    return {
+      valid: false,
+      reason: 'generated_children_not_live_or_not_linked_to_parent',
+      missing_child_ids: missing,
+      wrong_source_child_ids: wrongSource
+    };
+  }
+  return { valid: true };
+}
+
+export function validateTodoQueueIntegrity({ todoBefore, todoAfter, completedTodoIds: completedIdsInput = [], todoReplanRecords: todoReplanRecordsInput = [] }) {
   const errors = [];
   const warnings = [];
   const before = blockMap(todoBefore ?? '');
   const after = blockMap(todoAfter ?? '');
   const completedIds = new Set(completedIdsInput);
+  const replanByParent = replanRecordsByParent(todoReplanRecordsInput);
   const removedTodoIds = [];
   const changedTodoIds = [];
   const addedTodoIds = [];
+  const replannedTodoIds = [];
 
   for (const [id, beforeBlock] of before.entries()) {
     const afterBlock = after.get(id);
     if (!afterBlock) {
       removedTodoIds.push(id);
       if (!completedIds.has(id)) {
+        const replans = replanByParent.get(id) ?? [];
+        const acceptedReplan = replans.find((record) => validReplanForRemovedParent(record, after).valid);
+        if (acceptedReplan) {
+          replannedTodoIds.push(id);
+          continue;
+        }
+        const rejectedReplan = replans.map((record) => validReplanForRemovedParent(record, after)).find((result) => !result.valid);
         errors.push({
-          code: 'todo_removed_without_completion_record',
-          message: 'A TODO was removed from the queue without durable completion evidence.',
-          todo_id: id
+          code: 'todo_removed_without_completion_or_replan_record',
+          message: 'A TODO was removed from the queue without durable completion or replan evidence.',
+          todo_id: id,
+          replan_rejection: rejectedReplan
         });
       }
       continue;
@@ -243,6 +347,7 @@ export function validateTodoQueueIntegrity({ todoBefore, todoAfter, completedTod
     removed_todo_ids: removedTodoIds,
     changed_todo_ids: changedTodoIds,
     added_todo_ids: addedTodoIds,
+    replanned_todo_ids: replannedTodoIds,
     completed_todo_ids: [...completedIds].sort()
   };
 }
@@ -258,7 +363,8 @@ export function loadCliInput(args) {
     todoRelative,
     todoBefore,
     todoAfter,
-    completedTodoIds: [...completedTodoIds(repoRoot)]
+    completedTodoIds: [...completedTodoIds(repoRoot)],
+    todoReplanRecords: todoReplanRecords(repoRoot)
   };
 }
 

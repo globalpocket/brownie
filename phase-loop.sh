@@ -4101,23 +4101,27 @@ if guard_path and (workspace / "scripts/guard-todo-decomposition.mjs").exists():
         raise SystemExit(1)
 
 claim_id = str(claim.get("claim_id") or f"run-{run_stamp}")
-completion_dir = workspace / ".brownie/private/phase-loop/todo-completions"
-completion_dir.mkdir(parents=True, exist_ok=True)
+replan_dir = workspace / ".brownie/private/phase-loop/todo-replans"
+replan_dir.mkdir(parents=True, exist_ok=True)
 record = {
     "schema_version": 1,
+    "record_type": "todo_replan",
+    "operation": "split_parent_into_children",
     "claim_id": claim_id,
     "run_stamp": run_stamp,
-    "selected_todo_id": selected_id,
-    "selected_todo_first_line": selected_first,
+    "parent_todo_id": selected_id,
+    "parent_todo_first_line": selected_first,
+    "parent_status": "superseded_by_children",
     "changed_files": [".brownie/todo.md", ".brownie/todo-breakdown.md"],
     "workspace_changed_files": [".brownie/todo.md", ".brownie/todo-breakdown.md"],
     "selected_scopes": targets,
-    "completion_record_reason": "deterministic_no_eligible_multitarget_split",
+    "replan_record_reason": "deterministic_no_eligible_multitarget_split",
     "generated_leaf_ids": leaf_ids,
+    "generated_child_ids": leaf_ids,
     "written_at": timestamp,
 }
 for name in {claim_id, run_stamp}:
-    record_path = completion_dir / f"{name}.json"
+    record_path = replan_dir / f"{name}.json"
     with open(record_path, "w", encoding="utf-8") as handle:
         json.dump(record, handle, ensure_ascii=False, sort_keys=True, indent=2)
         handle.write("\n")
@@ -5156,7 +5160,142 @@ validate_phase_loop_progress_integrity_after_runtime_apply() {
   )
 }
 
+try_reconstruct_missing_todo_replan_records() {
+  local run_stamp="$1"
+  local validation_json="$2"
+  if [ ! -f "$PHASE_LOOP_TODO" ]; then
+    return 2
+  fi
+  python3 - "$PHASE_LOOP_WORKSPACE_ROOT" "$PHASE_LOOP_TODO" "$validation_json" "$run_stamp" "$(now_utc)" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import re
+import subprocess
+import sys
+
+workspace = pathlib.Path(sys.argv[1])
+todo_path = pathlib.Path(sys.argv[2])
+validation_text = sys.argv[3]
+run_stamp = sys.argv[4]
+timestamp = sys.argv[5]
+
+def unchecked_blocks(text):
+    starts = [match.start() for match in re.finditer(r"^(?:[-*]|\d+[.)])\s+\[\s\]\s+", text or "", re.M)]
+    return [
+        (text[start:(starts[index + 1] if index + 1 < len(starts) else len(text))]).rstrip()
+        for index, start in enumerate(starts)
+    ]
+
+def checked_blocks(text):
+    starts = [match.start() for match in re.finditer(r"^(?:[-*]|\d+[.)])\s+\[[xX]\]\s+", text or "", re.M)]
+    return [
+        (text[start:(starts[index + 1] if index + 1 < len(starts) else len(text))]).rstrip()
+        for index, start in enumerate(starts)
+    ]
+
+def todo_id(block):
+    first = block.splitlines()[0].strip() if block.splitlines() else ""
+    title = re.sub(r"^(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+", "", first)
+    return title.split(":", 1)[0].strip()
+
+def line_value(block, label):
+    prefix = f"{label}:"
+    for line in block.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            return stripped[len(prefix):].strip().rstrip(".")
+    return ""
+
+def source_todo_id(block):
+    return line_value(block, "Source TODO").split(":", 1)[0].strip().rstrip(".,;")
+
+try:
+    validation = json.loads(validation_text)
+except Exception:
+    raise SystemExit(2)
+
+errors = validation.get("errors") if isinstance(validation.get("errors"), list) else []
+removed_ids = [
+    str(error.get("todo_id") or "").strip()
+    for error in errors
+    if isinstance(error, dict)
+    and error.get("code") in ("todo_removed_without_completion_or_replan_record", "todo_removed_without_completion_record")
+    and str(error.get("todo_id") or "").strip()
+]
+if not removed_ids:
+    raise SystemExit(2)
+
+try:
+    todo_text = todo_path.read_text(encoding="utf-8")
+except Exception:
+    raise SystemExit(2)
+
+unchecked = {todo_id(block): block for block in unchecked_blocks(todo_text) if todo_id(block)}
+checked = {todo_id(block): block for block in checked_blocks(todo_text) if todo_id(block)}
+replan_dir = workspace / ".brownie/private/phase-loop/todo-replans"
+replan_dir.mkdir(parents=True, exist_ok=True)
+written = []
+for parent_id in removed_ids:
+    if parent_id in unchecked:
+        continue
+    checked_parent = checked.get(parent_id)
+    if not checked_parent:
+        continue
+    child_ids = [
+        child_id
+        for child_id, block in unchecked.items()
+        if source_todo_id(block) == parent_id
+    ]
+    if not child_ids:
+        continue
+    digest = hashlib.sha256((parent_id + "\n" + "\n".join(child_ids)).encode("utf-8")).hexdigest()[:16]
+    record = {
+        "schema_version": 1,
+        "record_type": "todo_replan",
+        "operation": "split_parent_into_children",
+        "run_stamp": run_stamp,
+        "parent_todo_id": parent_id,
+        "parent_todo_first_line": checked_parent.splitlines()[0] if checked_parent.splitlines() else "",
+        "parent_status": "superseded_by_children",
+        "generated_child_ids": child_ids,
+        "replan_record_reason": "reconstructed_missing_replan_record_after_queue_integrity_failure",
+        "written_at": timestamp,
+    }
+    record_path = replan_dir / f"{parent_id}-{digest}.json"
+    with open(record_path, "w", encoding="utf-8") as handle:
+        json.dump(record, handle, ensure_ascii=False, sort_keys=True, indent=2)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(record_path, 0o600)
+    written.append(str(record_path.relative_to(workspace)))
+
+if not written:
+    raise SystemExit(2)
+
+try:
+    dir_fd = os.open(str(replan_dir), os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+except Exception:
+    pass
+
+print(json.dumps({
+    "applied": True,
+    "operation": "reconstruct_missing_todo_replan_records",
+    "records": written,
+    "removed_todo_ids": removed_ids,
+    "run_stamp": run_stamp,
+}, ensure_ascii=False, sort_keys=True))
+PY
+}
+
 validate_todo_queue_integrity_before_claim() {
+  local run_stamp="${1:-unknown}"
   PHASE_LOOP_TODO_QUEUE_INTEGRITY_FAILED=0
   PHASE_LOOP_TODO_QUEUE_INTEGRITY_DETAIL=""
   if [ ! -f "$PHASE_LOOP_TODO" ] || [ ! -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/phase-loop-todo-queue-integrity.mjs" ]; then
@@ -5169,6 +5308,20 @@ validate_todo_queue_integrity_before_claim() {
       --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
       --todo "$PHASE_LOOP_TODO" 2>&1
   )"; then
+    local replan_repair_output revalidation_output
+    if replan_repair_output="$(try_reconstruct_missing_todo_replan_records "$run_stamp" "$validation_output" 2>&1)"; then
+      printf '%s todo_replan_record_reconstructed_before_claim=true result=%s\n' "$(now_utc)" "$replan_repair_output" >> "$SUPERVISOR_LOG"
+      if revalidation_output="$(
+        cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+        node scripts/phase-loop-todo-queue-integrity.mjs \
+          --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
+          --todo "$PHASE_LOOP_TODO" 2>&1
+      )"; then
+        printf '%s todo_queue_integrity_valid_after_replan_reconstruction=true result=%s\n' "$(now_utc)" "$revalidation_output" >> "$SUPERVISOR_LOG"
+        return 0
+      fi
+      validation_output="$revalidation_output"
+    fi
     PHASE_LOOP_TODO_QUEUE_INTEGRITY_FAILED=1
     PHASE_LOOP_TODO_QUEUE_INTEGRITY_DETAIL="$validation_output"
     printf '%s todo_queue_integrity_failed_before_claim=true result=%s\n' "$(now_utc)" "$validation_output" >> "$SUPERVISOR_LOG"
@@ -7495,7 +7648,7 @@ PY
 claim_first_pending_todo() {
   local run_stamp="$1"
   local selected_todo queue_fingerprint queue_generation queue_state selected_hash claim_id claim_retry_suffix reread_fingerprint attempt
-  if ! validate_todo_queue_integrity_before_claim; then
+  if ! validate_todo_queue_integrity_before_claim "$run_stamp"; then
     return 76
   fi
   if active_todo_claim_exists; then
