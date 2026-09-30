@@ -1246,6 +1246,9 @@ elif "selected_todo_is_already_a_bounded_leaf" in combined:
 elif "patch only target does not exist" in combined or "missing package script" in combined:
     label = "invalid_decomposition_leaf"
     action = "rerun_decomposition_with_existing_targets_and_valid_verification"
+elif "objective_apply_stalled" in combined or "objective_apply_pending" in combined:
+    label = "objective_apply_stalled"
+    action = "apply_authorized_objective_proposal_or_emit_apply_blocker"
 elif "no_eligible_task" in combined or "no actionable" in combined:
     label = "no_actionable_runtime_task"
     action = "split_multitarget_or_force_bounded_workspace_write"
@@ -7243,6 +7246,11 @@ if no_actionable_after_apply and not applied:
 progress_projection["completed_by_no_actionable_after_apply"] = no_actionable_after_apply
 progress_projection["semantic_completion_required"] = semantic_completion_required
 progress_projection["blocked_by_terminal_task_failure"] = terminal_failed
+objective_apply_pending = (
+    progress_projection["next_action"] == "apply_authorized_objective_proposal"
+    and text(payload.get("objective_proposal_preflight_status")) == "authorized_preflight_ready"
+)
+progress_projection["objective_apply_pending"] = objective_apply_pending
 completed = bool(payload.get("completed")) or bool(automation.get("completed")) or no_actionable_after_apply
 if todo_md_only_apply or selected_first_line_still_pending:
     applied = False
@@ -7297,6 +7305,18 @@ fingerprint = "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 previous_fingerprint = previous.get("last_progress_fingerprint")
 previous_count = int(previous.get("same_progress_count", 0) or 0)
 same_count = previous_count + 1 if previous_fingerprint == fingerprint else 1
+objective_apply_stalled = (
+    objective_apply_pending
+    and same_count >= threshold
+    and not workspace_changed
+    and not completed
+    and not accepted
+    and not finalized
+    and not applied
+)
+if objective_apply_stalled:
+    continuation_required = False
+progress_projection["objective_apply_stalled"] = objective_apply_stalled
 no_progress = exit_code == 0 and not meaningful_progress
 stagnated = no_progress and not continuation_required and same_count >= threshold
 classification = (
@@ -8646,12 +8666,18 @@ if repair_feedback:
     if todo_guard_failed:
         bdk_state = "todo_queue_repair"
         llm_route = "code"
+        # TODO queue repair is a mutually-exclusive controller state. Do not
+        # keep normal bounded-leaf execution/read policies in the prompt and
+        # then rely on later "override" text to cancel them; that produces
+        # contradictory prompts and lets stale target-file guidance win.
+        leaf_execution_policy_lines = []
+        context_hint_lines = ["- .brownie/todo.md"]
         repair_override_lines.extend([
             "- repair_override: current invocation is TODO queue repair, not selected implementation-file work.",
             "- repair_override_target: `.brownie/todo.md` is the intended workspace.write target until `pnpm --workspace-root guard:todo-decomposition` passes, except missing derived leaf id repairs may patch `.brownie/todo-breakdown.md` only.",
             "- repair_override_read_policy: do not read the selected implementation file while the TODO queue guard is failing. If Focused TODO Queue Repair Context provides `exact_block_json` or duplicate block JSON, do not read `.brownie/todo.md`; use that exact text as `old_text`. Read `.brownie/todo.md` only when no exact repair block is provided.",
             "- repair_override_next_tool_policy: when Focused TODO Queue Repair Context provides `exact_block_json`, the next tool must be `workspace.write`; `workspace.read` is forbidden for this repair turn.",
-            "- repair_override_patch_size_policy: the TODO repair patch must be a short exact hunk around the corrupt E-15d unchecked task blocks only; never include `## Queue protocol`, `## Base Phase Loop Prompt`, or unrelated headings in old_text/new_text.",
+            "- repair_override_patch_size_policy: the TODO repair patch must be a short exact hunk around the invalid unchecked task block only; never include `## Queue protocol`, `## Base Phase Loop Prompt`, or unrelated headings in old_text/new_text.",
             "- repair_override_hunks_policy: prefer `workspace.write` input `{path, operation:\"patch_file\", hunks:[{old_text,new_text,occurrence}, ...]}`. For self-source repair, use tiny complete-line hunks. For duplicate-only repair, use the exact duplicate block provided in Focused TODO Queue Repair Context as `old_text`, set `new_text` to an empty string, and set `occurrence` to 2. Do not invent or summarize TODO block text.",
             "- repair_override_occurrence_policy: use `occurrence` only for duplicate-only guard failures. For invalid leaf block replacement, omit `occurrence` and replace the exact provided block once.",
         ])
@@ -11540,6 +11566,9 @@ try:
     same_count = int(progress.get("same_progress_count") or 0)
 except Exception:
     same_count = 0
+projection = progress.get("progress_projection")
+if isinstance(projection, dict) and projection.get("objective_apply_stalled") is True:
+    sys.exit(1)
 sys.exit(0 if same_count >= 3 else 1)
 PY
         then

@@ -50,6 +50,9 @@ assert_contains "$PHASE_LOOP" "todo_queue_integrity_failed_before_claim"
 assert_contains "$PHASE_LOOP" "PHASE_LOOP_TODO_QUEUE_INTEGRITY_FAILED"
 assert_contains "$PHASE_LOOP" "baseline_diff_files"
 assert_contains "$PHASE_LOOP" "baseline_todo_text"
+assert_contains "$PHASE_LOOP" "objective_apply_stalled"
+assert_contains "$PHASE_LOOP" "TODO queue repair is a mutually-exclusive controller state"
+assert_contains "$PHASE_LOOP" "leaf_execution_policy_lines = \\[\\]"
 assert_not_contains "$PHASE_LOOP" "breakdown_only_dependency_pruned"
 
 test_workspace="$(mktemp -d)"
@@ -326,6 +329,55 @@ cat <<'JSON'
 JSON
 SH
 chmod +x "$fake_brownie_terminal_no_eligible"
+fake_brownie_objective_apply_pending="$(mktemp)"
+cat > "$fake_brownie_objective_apply_pending" <<'SH'
+#!/usr/bin/env bash
+set -eu
+cat <<'JSON'
+{
+  "command": "run",
+  "ok": true,
+  "run": {
+    "automation": {
+      "schema_version": 1,
+      "status": "continuation_required",
+      "controller_action": "resume",
+      "stop_class": "continuation_required",
+      "stop_reason": "objective_proposal_candidate_ready",
+      "completed": false,
+      "blocked": false,
+      "retryable": true,
+      "terminal_failure": false,
+      "task_id": "task-objective-apply",
+      "run_id": "run-objective-apply",
+      "journey_id": "journey-objective-apply",
+      "next_action": "apply_authorized_objective_proposal",
+      "next_invocation": {"command": "resume", "arguments": []}
+    },
+    "status": "no_eligible_task",
+    "session_id": "session-objective-apply",
+    "drive_id": "drive-objective-apply",
+    "task_id": "task-objective-apply",
+    "run_id": "run-objective-apply",
+    "journey_id": "journey-objective-apply",
+    "completion_closure_status": "routed_explicit_action",
+    "next_action": "apply_authorized_objective_proposal",
+    "completed": false,
+    "blocked": false,
+    "retryable": true,
+    "terminal_failure": false,
+    "controller_action": "resume",
+    "stop_class": "continuation_required",
+    "stop_reason": "objective_proposal_candidate_ready",
+    "objective_proposal_preflight_status": "authorized_preflight_ready",
+    "objective_proposal_preflight_operation": "patch_file",
+    "objective_proposal_preflight_next_action": "apply_authorized_objective_proposal",
+    "next_invocation": {"command": "resume", "arguments": []}
+  }
+}
+JSON
+SH
+chmod +x "$fake_brownie_objective_apply_pending"
 fake_brownie_tracked_workspace_change="$(mktemp)"
 cat > "$fake_brownie_tracked_workspace_change" <<'SH'
 #!/usr/bin/env bash
@@ -563,6 +615,56 @@ assert progress["classification"] == "no_progress", progress
 assert progress["meaningful_progress"] is False, progress
 assert progress["progress_projection"]["blocked_by_terminal_task_failure"] is True, progress
 assert progress["workspace_changed"] is False, progress
+assert claim["status"] == "in_progress", claim
+assert feedback["claim_id"] == claim["claim_id"], feedback
+assert feedback["reason"] == "runtime_terminal_failure", feedback
+PY
+
+state_objective_apply_stalled="$(mktemp -d)"
+prompt_objective_apply_stalled="$(mktemp)"
+todo_objective_apply_stalled="$(mktemp)"
+printf 'base prompt\n' > "$prompt_objective_apply_stalled"
+printf -- '- [ ] E-99-objective-apply: Patch only `README.md` to exercise objective apply stall recovery.\n' > "$todo_objective_apply_stalled"
+
+PHASE_LOOP_STATE_DIR="$state_objective_apply_stalled" \
+PHASE_LOOP_PROMPT="$prompt_objective_apply_stalled" \
+PHASE_LOOP_TODO="$todo_objective_apply_stalled" \
+BROWNIE_BIN="$fake_brownie_objective_apply_pending" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+
+PHASE_LOOP_STATE_DIR="$state_objective_apply_stalled" \
+PHASE_LOOP_PROMPT="$prompt_objective_apply_stalled" \
+PHASE_LOOP_TODO="$todo_objective_apply_stalled" \
+BROWNIE_BIN="$fake_brownie_objective_apply_pending" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+
+set +e
+PHASE_LOOP_STATE_DIR="$state_objective_apply_stalled" \
+PHASE_LOOP_PROMPT="$prompt_objective_apply_stalled" \
+PHASE_LOOP_TODO="$todo_objective_apply_stalled" \
+BROWNIE_BIN="$fake_brownie_objective_apply_pending" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+"$PHASE_LOOP" run-once >/dev/null
+objective_apply_stalled_exit="$?"
+set -e
+test "$objective_apply_stalled_exit" = "76"
+python3 - "$state_objective_apply_stalled/status.json" "$state_objective_apply_stalled/progress-state.json" "$state_objective_apply_stalled/todo-claims/current.json" "$state_objective_apply_stalled/todo-claims/repair-feedback.json" <<'PY'
+import json
+import sys
+
+status = json.load(open(sys.argv[1], encoding="utf-8"))
+progress = json.load(open(sys.argv[2], encoding="utf-8"))
+claim = json.load(open(sys.argv[3], encoding="utf-8"))
+feedback = json.load(open(sys.argv[4], encoding="utf-8"))
+projection = progress["progress_projection"]
+assert status["status"] == "no_progress", status
+assert "objective_apply_stalled" in status["detail"], status
+assert progress["classification"] == "no_progress", progress
+assert progress["same_progress_count"] == 3, progress
+assert projection["objective_apply_pending"] is True, projection
+assert projection["objective_apply_stalled"] is True, projection
 assert claim["status"] == "in_progress", claim
 assert feedback["claim_id"] == claim["claim_id"], feedback
 assert feedback["reason"] == "runtime_terminal_failure", feedback
