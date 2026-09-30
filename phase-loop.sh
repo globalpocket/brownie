@@ -1121,15 +1121,7 @@ while end < len(text) and text[end] == "\n":
 replacement = text[:index] + text[end:]
 if index > 0 and not text[:index].endswith("\n\n") and replacement[index:index + 1] not in ("", "\n"):
     replacement = text[:index] + "\n" + text[end:]
-if selected_id:
-    def rewrite_depends(match):
-        prefix = match.group(1)
-        raw = match.group(2).strip().rstrip(".")
-        deps = [entry.strip() for entry in raw.split(",") if entry.strip() and entry.strip() not in ("<none>", "none")]
-        deps = [entry for entry in deps if entry != selected_id]
-        return f"{prefix}{', '.join(deps) if deps else '<none>'}."
-    replacement = re.sub(r"(?m)^(\s*Depends on:\s*)([^\n]+)$", rewrite_depends, replacement)
-    replacement = re.sub(r"\n{3,}", "\n\n", replacement).rstrip() + "\n"
+replacement = re.sub(r"\n{3,}", "\n\n", replacement).rstrip() + "\n"
 tmp_path = todo_path.with_name(f"{todo_path.name}.{os.getpid()}.completed-{run_stamp}.tmp")
 with open(tmp_path, "w", encoding="utf-8") as handle:
     handle.write(replacement)
@@ -1147,7 +1139,6 @@ except Exception:
 print(json.dumps({
     "removed_at": timestamp,
     "run_stamp": run_stamp,
-    "removed_dependency_id": selected_id,
     "selected_todo_first_line": first_line,
 }, ensure_ascii=False, sort_keys=True))
 PY
@@ -4870,6 +4861,28 @@ validate_phase_loop_progress_integrity_after_runtime_apply() {
   )
 }
 
+validate_todo_queue_integrity_before_claim() {
+  PHASE_LOOP_TODO_QUEUE_INTEGRITY_FAILED=0
+  PHASE_LOOP_TODO_QUEUE_INTEGRITY_DETAIL=""
+  if [ ! -f "$PHASE_LOOP_TODO" ] || [ ! -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/phase-loop-todo-queue-integrity.mjs" ]; then
+    return 0
+  fi
+  local validation_output
+  if ! validation_output="$(
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    node scripts/phase-loop-todo-queue-integrity.mjs \
+      --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
+      --todo "$PHASE_LOOP_TODO" 2>&1
+  )"; then
+    PHASE_LOOP_TODO_QUEUE_INTEGRITY_FAILED=1
+    PHASE_LOOP_TODO_QUEUE_INTEGRITY_DETAIL="$validation_output"
+    printf '%s todo_queue_integrity_failed_before_claim=true result=%s\n' "$(now_utc)" "$validation_output" >> "$SUPERVISOR_LOG"
+    return 76
+  fi
+  printf '%s todo_queue_integrity_valid_before_claim=true result=%s\n' "$(now_utc)" "$validation_output" >> "$SUPERVISOR_LOG"
+  return 0
+}
+
 apply_valid_todo_patch_proposal_fallback() {
   local run_stamp="$1"
   local expected_run_id="${2:-}"
@@ -5426,10 +5439,6 @@ def depends_values(block):
             return [entry.strip() for entry in value.split(",") if entry.strip()]
     return []
 
-def replace_dependencies(block, dependencies):
-    replacement = "Depends on: <none>." if not dependencies else f"Depends on: {', '.join(dependencies)}."
-    return replace_line(block, "Depends on:", replacement)
-
 def add_dependency(block, dependency):
     deps = depends_values(block)
     if dependency in deps:
@@ -5498,18 +5507,6 @@ for start, end, block in unchecked_blocks(before):
                 "todo_id": block_id,
                 "normalization": "runtime_release_contract_documentation_verification",
             })
-    deps = depends_values(normalized)
-    if deps:
-        live_deps = [dep for dep in deps if dep in live_ids]
-        if live_deps != deps:
-            normalized, dependency_pruned = replace_dependencies(normalized, live_deps)
-            changed = changed or dependency_pruned
-            if dependency_pruned:
-                notes.append({
-                    "todo_id": block_id,
-                    "normalization": "breakdown_only_dependency_pruned",
-                    "removed_dependencies": [dep for dep in deps if dep not in live_ids],
-                })
     for command in verification_commands(block):
         for relative_path in referenced_verification_paths(command):
             if (workspace / relative_path).exists():
@@ -7104,6 +7101,9 @@ PY
 claim_first_pending_todo() {
   local run_stamp="$1"
   local selected_todo queue_fingerprint queue_generation queue_state selected_hash claim_id claim_retry_suffix reread_fingerprint attempt
+  if ! validate_todo_queue_integrity_before_claim; then
+    return 76
+  fi
   if active_todo_claim_exists; then
     CLAIM_CREATED_THIS_RUN=0
     refresh_active_todo_claim_from_live_queue "$run_stamp"
@@ -9519,7 +9519,13 @@ PY
     fi
   fi
   if ! claim_first_pending_todo "$run_stamp"; then
-    if todo_queue_only_explicit_blockers; then
+    if [ "${PHASE_LOOP_TODO_QUEUE_INTEGRITY_FAILED:-0}" = "1" ]; then
+      detail="TODO queue integrity failed before claim; refusing to select work from a queue whose protected TODO contracts drifted. Inspect the guard output, restore unintended TODO contract changes, then rerun phase-loop."
+      printf '%s %s\n%s\n' "$(now_utc)" "$detail" "${PHASE_LOOP_TODO_QUEUE_INTEGRITY_DETAIL:-}" >> "$SUPERVISOR_LOG"
+      write_status "no_progress" "$detail" "todo-queue-integrity-$run_stamp" "76" "${CONSECUTIVE_FAILURES:-0}"
+      write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"todo_queue_integrity_failed_before_claim"}'
+      return 76
+    elif todo_queue_only_explicit_blockers; then
       detail="No implementable TODO remains; pending queue contains only explicit owner-controlled blocker TODOs. Phase-loop is stopped until owner/review evidence changes."
       printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
       write_status "blocked" "$detail" "owner-blockers-only-$run_stamp" "0" "${CONSECUTIVE_FAILURES:-0}"

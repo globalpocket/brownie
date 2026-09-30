@@ -45,6 +45,11 @@ assert_not_contains() {
   fi
 }
 
+assert_contains "$PHASE_LOOP" "phase-loop-todo-queue-integrity\\.mjs"
+assert_contains "$PHASE_LOOP" "todo_queue_integrity_failed_before_claim"
+assert_contains "$PHASE_LOOP" "PHASE_LOOP_TODO_QUEUE_INTEGRITY_FAILED"
+assert_not_contains "$PHASE_LOOP" "breakdown_only_dependency_pruned"
+
 test_workspace="$(mktemp -d)"
 git -C "$test_workspace" init -b main >/dev/null
 git -C "$test_workspace" -c user.name=Brownie -c user.email=brownie@example.invalid commit --allow-empty -m init >/dev/null
