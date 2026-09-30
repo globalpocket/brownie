@@ -47,6 +47,8 @@
     "guard:brownie-private-state:test": "node --test scripts/guard-brownie-private-state.test.mjs",
     "guard:phase-loop-actor-separation": "node scripts/guard-phase-loop-actor-separation.mjs",
     "guard:phase-loop-actor-separation:test": "node --test scripts/guard-phase-loop-actor-separation.test.mjs",
+    "guard:phase-loop-embedded-python": "node scripts/guard-phase-loop-embedded-python.mjs",
+    "guard:phase-loop-embedded-python:test": "node --test scripts/guard-phase-loop-embedded-python.test.mjs",
     "guard:brownie-work-product": "node scripts/guard-brownie-work-product.mjs",
     "guard:brownie-work-product:test": "node --test scripts/guard-brownie-work-product.test.mjs",
     "guard:bdk-agent-skills": "node scripts/guard-bdk-agent-skills.mjs",

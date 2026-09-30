@@ -271,6 +271,18 @@ export const requiredReleaseGateCommands = [
     args: ['--workspace-root', 'guard:phase-loop-actor-separation:test']
   },
   {
+    id: 'phase_loop_embedded_python_guard',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:phase-loop-embedded-python']
+  },
+  {
+    id: 'phase_loop_embedded_python_guard_test',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'guard:phase-loop-embedded-python:test']
+  },
+  {
     id: 'brownie_work_product_guard',
     category: 'brownie_release_guard',
     command: 'pnpm',

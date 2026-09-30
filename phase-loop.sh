@@ -5337,6 +5337,7 @@ apply_valid_todo_patch_proposal_fallback() {
   python3 - "$PHASE_LOOP_BROWNIE_STORE_ROOT" "$TODO_CLAIM_FILE" "$PHASE_LOOP_TODO" "$run_stamp" "$expected_run_id" <<'PY'
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -6054,6 +6055,7 @@ write_repair_feedback() {
 import json
 import os
 import pathlib
+import re
 import sys
 
 out_path = pathlib.Path(sys.argv[1])
@@ -6627,6 +6629,7 @@ write_process_failure_repair_feedback() {
 import json
 import os
 import pathlib
+import re
 import sys
 
 out_path = pathlib.Path(sys.argv[1])
