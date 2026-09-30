@@ -199,18 +199,6 @@ function contractDrift(before, after) {
   return drifts;
 }
 
-function dependsOnlyRemovedSelected(before, after, selectedId) {
-  const beforeDeps = dependsValue(before)
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry && entry !== '<none>' && entry !== 'none');
-  const afterDeps = dependsValue(after)
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry && entry !== '<none>' && entry !== 'none');
-  return beforeDeps.filter((entry) => entry !== selectedId).join(',') === afterDeps.join(',');
-}
-
 function isTodoPath(file) {
   return file === 'todo.md' || file === '.brownie/todo.md';
 }
@@ -367,13 +355,7 @@ export function validatePhaseLoopProgressIntegrity(input) {
       }
       const afterBlock = after.get(id);
       const drift = contractDrift(beforeBlock, afterBlock);
-      const allowedDependencyRewrite =
-        selectedRemoved &&
-        recordExists &&
-        drift.length === 1 &&
-        drift[0] === 'depends_on' &&
-        dependsOnlyRemovedSelected(beforeBlock, afterBlock, selectedId);
-      if (drift.length > 0 && !allowedDependencyRewrite) {
+      if (drift.length > 0) {
         errors.push({
           code: 'unselected_todo_contract_drift',
           message: 'A TODO other than the active claim had protected contract fields changed.',

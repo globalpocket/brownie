@@ -43,7 +43,22 @@ test('rejects removing selected TODO without completion record', () => {
   assert(result.errors.some((error) => error.code === 'selected_todo_removed_without_completion_record'));
 });
 
-test('allows selected removal and dependent TODO dependency rewrite after completion record', () => {
+test('allows selected removal after completion record without rewriting dependent TODO contract', () => {
+  const result = validatePhaseLoopProgressIntegrity({
+    claim: { claim_id: 'claim-1', selected_todo: e20a },
+    todoBefore: queue(e20a, e20b),
+    todoAfter: queue(e20b),
+    diffFiles: [
+      '.brownie/todo.md',
+      'scripts/release-runtime-operational-evidence.mjs'
+    ],
+    completionRecordExists: true
+  });
+
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+});
+
+test('rejects dependent TODO dependency rewrite even after selected TODO completion record', () => {
   const result = validatePhaseLoopProgressIntegrity({
     claim: { claim_id: 'claim-1', selected_todo: e20a },
     todoBefore: queue(e20a, e20b),
@@ -55,7 +70,8 @@ test('allows selected removal and dependent TODO dependency rewrite after comple
     completionRecordExists: true
   });
 
-  assert.equal(result.valid, true, JSON.stringify(result.errors));
+  assert.equal(result.valid, false);
+  assert(result.errors.some((error) => error.code === 'unselected_todo_contract_drift'));
 });
 
 test('allows removing an unselected TODO only when prior completion evidence exists', () => {
