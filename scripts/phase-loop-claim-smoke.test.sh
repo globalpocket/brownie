@@ -2011,6 +2011,8 @@ assert "selected_target_implementation_required" in phase_loop, phase_loop
 assert "try_no_eligible_multitarget_leaf_split_fallback" in phase_loop, phase_loop
 assert "deterministic_no_eligible_multitarget_split" in phase_loop, phase_loop
 assert "split_multitarget_or_force_bounded_workspace_write" in phase_loop, phase_loop
+assert "TODO guard failure takes precedence over public-harness actionable-terminal feedback" in phase_loop, phase_loop
+assert "harness_actionable_terminal_policy: suppressed because TODO queue repair is active" in phase_loop, phase_loop
 PY
 
 echo "phase-loop claim smoke passed"

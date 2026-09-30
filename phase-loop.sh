@@ -9210,8 +9210,13 @@ if harness_feedback:
                 harness_feedback_lines.append(f"- harness_failure_{index}_class: `{failure.get('class', '')}`")
                 if failure.get("repair_hint"):
                     harness_feedback_lines.append(f"- harness_failure_{index}_repair_hint: {json.dumps(str(failure.get('repair_hint', ''))[-1000:], ensure_ascii=False)}")
-        harness_feedback_lines.append("- harness_repair_policy: first repair the harness failure class without expanding the TODO scope. If the failure is only telemetry/sanitization, patch controller or harness code, not product feature files.")
-        if harness_has_terminal_repair_required and selected_leaf_target_path:
+        if todo_guard_failed:
+            harness_feedback_lines.append("- harness_repair_policy: TODO guard failure takes precedence over public-harness actionable-terminal feedback. Repair the live TODO contract first; do not read or patch the selected product target until `pnpm --workspace-root guard:todo-decomposition` passes.")
+            if harness_has_terminal_repair_required and selected_leaf_target_path:
+                harness_feedback_lines.append("- harness_actionable_terminal_policy: suppressed because TODO queue repair is active; the selected target path may be stale, nonexistent, or unschedulable until the TODO guard passes.")
+        else:
+            harness_feedback_lines.append("- harness_repair_policy: first repair the harness failure class without expanding the TODO scope. If the failure is only telemetry/sanitization, patch controller or harness code, not product feature files.")
+        if harness_has_terminal_repair_required and selected_leaf_target_path and not todo_guard_failed:
             actionable_read_target = selected_leaf_adjacent_test_path or selected_leaf_target_path
             if semantic_repair_requires_exact_write:
                 harness_feedback_lines.append("- harness_actionable_terminal_policy: semantic exact repair is available, so do not recover more read context; apply `semantic_repair_patch_file_input_json` with one `workspace.write`.")
