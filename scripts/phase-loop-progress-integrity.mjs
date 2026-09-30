@@ -62,6 +62,17 @@ function gitDiffFiles(repoRoot) {
     .filter(Boolean);
 }
 
+function normalizeFileList(files) {
+  return [...new Set((Array.isArray(files) ? files : [])
+    .map((entry) => String(entry).trim())
+    .filter(Boolean))].sort();
+}
+
+function subtractFileList(files, baselineFiles) {
+  const baseline = new Set(normalizeFileList(baselineFiles));
+  return normalizeFileList(files).filter((file) => !baseline.has(file));
+}
+
 function gitHeadText(repoRoot, relativePath) {
   try {
     return git(repoRoot, ['show', `HEAD:${relativePath}`]);
@@ -265,10 +276,15 @@ export function validatePhaseLoopProgressIntegrity(input) {
   const selectedId = todoId(selected);
   const selectedRoute = routeValue(selected);
   const selectedScopes = boundedScopes(selected);
-  const diffFiles = Array.isArray(input.diffFiles) ? input.diffFiles : [];
-  const changedTodo = diffFiles.some(isTodoPath);
-  const nonTodoDiffFiles = diffFiles.filter((file) => !isTodoPath(file));
-  const allowedTargetChanged = selectedScopes.some((scope) => diffFiles.includes(scope));
+  const diffFiles = normalizeFileList(input.diffFiles);
+  const baselineDiffFiles = normalizeFileList(input.baselineDiffFiles ?? claim.baseline_diff_files);
+  const claimChangedFiles = baselineDiffFiles.length > 0 ? subtractFileList(diffFiles, baselineDiffFiles) : diffFiles;
+  const changedTodo = claimChangedFiles.some(isTodoPath) || Boolean((input.todoBefore ?? '') !== (input.todoAfter ?? ''));
+  const nonTodoClaimChangedFiles = claimChangedFiles.filter((file) => !isTodoPath(file));
+  const changedSelectedScopes = selectedScopes.filter((scope) => claimChangedFiles.includes(scope));
+  const missingSelectedScopes = selectedScopes.filter((scope) => !claimChangedFiles.includes(scope));
+  const allowedTargetChanged = changedSelectedScopes.length > 0;
+  const allSelectedTargetsChanged = selectedScopes.length === 0 || missingSelectedScopes.length === 0;
   const beforeText = input.todoBefore ?? '';
   const afterText = input.todoAfter ?? '';
   const before = blockMap(beforeText);
@@ -292,7 +308,7 @@ export function validatePhaseLoopProgressIntegrity(input) {
   if (
     selectedRoute &&
     ['implementation', 'documentation'].includes(selectedRoute) &&
-    nonTodoDiffFiles.length > 0 &&
+    nonTodoClaimChangedFiles.length > 0 &&
     selectedScopes.length > 0 &&
     !allowedTargetChanged
   ) {
@@ -301,7 +317,9 @@ export function validatePhaseLoopProgressIntegrity(input) {
       message: 'Workspace changed, but none of the selected TODO Patch only/Create only targets changed.',
       selected_todo_id: selectedId,
       selected_scopes: selectedScopes,
-      changed_files: diffFiles
+      changed_files: diffFiles,
+      claim_changed_files: claimChangedFiles,
+      baseline_diff_files: baselineDiffFiles
     });
   }
 
@@ -319,7 +337,9 @@ export function validatePhaseLoopProgressIntegrity(input) {
         message: 'Selected TODO was removed, but none of its bounded target files changed.',
         selected_todo_id: selectedId,
         selected_scopes: selectedScopes,
-        changed_files: diffFiles
+        changed_files: diffFiles,
+        claim_changed_files: claimChangedFiles,
+        baseline_diff_files: baselineDiffFiles
       });
     }
 
@@ -383,7 +403,12 @@ export function validatePhaseLoopProgressIntegrity(input) {
     selected_route: selectedRoute,
     selected_scopes: selectedScopes,
     changed_files: diffFiles,
+    baseline_diff_files: baselineDiffFiles,
+    claim_changed_files: claimChangedFiles,
     selected_target_changed: allowedTargetChanged,
+    selected_targets_changed: changedSelectedScopes,
+    selected_all_targets_changed: allSelectedTargetsChanged,
+    missing_selected_scopes: missingSelectedScopes,
     selected_todo_removed: selectedRemoved,
     completion_record_present: recordExists
   };
@@ -399,9 +424,14 @@ function writeCompletionRecord(repoRoot, claim, runStamp, validation) {
     run_stamp: runStamp,
     selected_todo_id: validation.selected_todo_id,
     selected_todo_first_line: String(claim.selected_todo ?? '').split('\n')[0] ?? '',
-    changed_files: validation.changed_files,
+    changed_files: validation.claim_changed_files,
+    workspace_changed_files: validation.changed_files,
+    baseline_diff_files: validation.baseline_diff_files,
     selected_scopes: validation.selected_scopes,
     selected_target_changed: validation.selected_target_changed,
+    selected_targets_changed: validation.selected_targets_changed,
+    selected_all_targets_changed: validation.selected_all_targets_changed,
+    missing_selected_scopes: validation.missing_selected_scopes,
     completion_record_reason: validation.selected_route === 'todo-decomposition' ? 'todo_decomposition' : 'verified_before_todo_removal',
     written_at: new Date().toISOString()
   };
@@ -419,11 +449,14 @@ export function loadCliInput(args) {
   const claim = readJson(claimPath);
   const diffFiles = gitDiffFiles(repoRoot);
   const todoAfter = maybeReadText(todoPath) ?? '';
-  const todoBefore = gitHeadText(repoRoot, todoRelative) ?? todoAfter;
+  const todoBefore = typeof claim.baseline_todo_text === 'string'
+    ? claim.baseline_todo_text
+    : gitHeadText(repoRoot, todoRelative) ?? todoAfter;
   return {
     repoRoot,
     claim,
     diffFiles,
+    baselineDiffFiles: normalizeFileList(claim.baseline_diff_files),
     todoBefore,
     todoAfter,
     runStamp: args.runStamp,
@@ -452,6 +485,26 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
             {
               code: 'completion_record_target_not_changed',
               message: 'Refusing to write a TODO completion record because none of the selected bounded target files changed.'
+            }
+          ]
+        };
+      }
+      if (
+        ['implementation', 'documentation'].includes(validation.selected_route) &&
+        validation.selected_scopes.length > 1 &&
+        !validation.selected_all_targets_changed
+      ) {
+        validation = {
+          ...validation,
+          valid: false,
+          errors: [
+            ...validation.errors,
+            {
+              code: 'completion_record_missing_selected_targets',
+              message: 'Refusing to write a TODO completion record because not all selected Patch only/Create only target files changed during this claim.',
+              selected_scopes: validation.selected_scopes,
+              missing_selected_scopes: validation.missing_selected_scopes,
+              claim_changed_files: validation.claim_changed_files
             }
           ]
         };

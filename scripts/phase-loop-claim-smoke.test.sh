@@ -48,6 +48,8 @@ assert_not_contains() {
 assert_contains "$PHASE_LOOP" "phase-loop-todo-queue-integrity\\.mjs"
 assert_contains "$PHASE_LOOP" "todo_queue_integrity_failed_before_claim"
 assert_contains "$PHASE_LOOP" "PHASE_LOOP_TODO_QUEUE_INTEGRITY_FAILED"
+assert_contains "$PHASE_LOOP" "baseline_diff_files"
+assert_contains "$PHASE_LOOP" "baseline_todo_text"
 assert_not_contains "$PHASE_LOOP" "breakdown_only_dependency_pruned"
 
 test_workspace="$(mktemp -d)"

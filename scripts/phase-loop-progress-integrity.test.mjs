@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import { validatePhaseLoopProgressIntegrity } from './phase-loop-progress-integrity.mjs';
 
@@ -155,4 +159,105 @@ test('rejects workspace changes that do not touch selected bounded targets', () 
 
   assert.equal(result.valid, false);
   assert(result.errors.some((error) => error.code === 'selected_target_not_changed'));
+});
+
+test('uses claim delta so prior dirty files do not count as selected TODO progress', () => {
+  const priorDirtyFiles = [
+    '.brownie/release-evidence/runtime-operational-evidence.json',
+    'scripts/release-runtime-operational-evidence.mjs'
+  ];
+  const result = validatePhaseLoopProgressIntegrity({
+    claim: {
+      claim_id: 'claim-1',
+      selected_todo: e20g,
+      baseline_diff_files: priorDirtyFiles
+    },
+    todoBefore: queue(e20g),
+    todoAfter: queue(e20g),
+    diffFiles: [
+      ...priorDirtyFiles,
+      'scripts/release-supply-chain-artifact-evidence.mjs'
+    ],
+    completionRecordExists: false
+  });
+
+  assert.equal(result.valid, false);
+  assert.deepEqual(result.claim_changed_files, ['scripts/release-supply-chain-artifact-evidence.mjs']);
+  assert(result.errors.some((error) => error.code === 'selected_target_not_changed'));
+});
+
+test('does not treat pre-existing dirty files as selected_target_not_changed for a no-change retry', () => {
+  const priorDirtyFiles = [
+    '.brownie/release-evidence/runtime-operational-evidence.json',
+    'scripts/release-runtime-operational-evidence.mjs'
+  ];
+  const result = validatePhaseLoopProgressIntegrity({
+    claim: {
+      claim_id: 'claim-1',
+      selected_todo: e20g,
+      baseline_diff_files: priorDirtyFiles
+    },
+    todoBefore: queue(e20g),
+    todoAfter: queue(e20g),
+    diffFiles: priorDirtyFiles,
+    completionRecordExists: false
+  });
+
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+  assert.deepEqual(result.claim_changed_files, []);
+});
+
+test('reports missing selected target files for multi-target TODOs', () => {
+  const result = validatePhaseLoopProgressIntegrity({
+    claim: { claim_id: 'claim-1', selected_todo: e20a },
+    todoBefore: queue(e20a),
+    todoAfter: queue(e20a),
+    diffFiles: [
+      'scripts/release-runtime-operational-evidence.mjs'
+    ],
+    completionRecordExists: false
+  });
+
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+  assert.equal(result.selected_target_changed, true);
+  assert.equal(result.selected_all_targets_changed, false);
+  assert.deepEqual(result.missing_selected_scopes, ['scripts/guard-runtime-operational-evidence.test.mjs']);
+});
+
+test('CLI write-record refuses completion when not all selected target files changed', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-progress-integrity-'));
+  fs.mkdirSync(path.join(tmp, '.brownie/private/phase-loop/todo-claims'), { recursive: true });
+  fs.mkdirSync(path.join(tmp, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, '.brownie/todo.md'), queue(e20a));
+  fs.writeFileSync(path.join(tmp, 'scripts/release-runtime-operational-evidence.mjs'), 'export const before = true;\n');
+  fs.writeFileSync(path.join(tmp, 'scripts/guard-runtime-operational-evidence.test.mjs'), 'import test from "node:test";\n');
+  execFileSync('git', ['init', '-b', 'main'], { cwd: tmp, stdio: 'ignore' });
+  execFileSync('git', ['add', '.'], { cwd: tmp, stdio: 'ignore' });
+  execFileSync('git', ['-c', 'user.name=Brownie', '-c', 'user.email=brownie@example.invalid', 'commit', '-m', 'baseline'], { cwd: tmp, stdio: 'ignore' });
+  fs.writeFileSync(
+    path.join(tmp, '.brownie/private/phase-loop/todo-claims/current.json'),
+    `${JSON.stringify({
+      schema_version: 1,
+      claim_id: 'claim-1',
+      selected_todo: e20a,
+      baseline_diff_files: [],
+      baseline_todo_text: queue(e20a)
+    }, null, 2)}\n`
+  );
+  fs.writeFileSync(path.join(tmp, 'scripts/release-runtime-operational-evidence.mjs'), 'export const after = true;\n');
+
+  assert.throws(() => {
+    execFileSync('node', [
+      path.resolve('scripts/phase-loop-progress-integrity.mjs'),
+      '--repo', tmp,
+      '--claim', '.brownie/private/phase-loop/todo-claims/current.json',
+      '--todo', '.brownie/todo.md',
+      '--run-stamp', 'test-run',
+      '--write-record'
+    ], {
+      cwd: path.resolve('.'),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+  }, /completion_record_missing_selected_targets/);
 });

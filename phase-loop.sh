@@ -5661,6 +5661,44 @@ elif verification.get("reason") == "binary_freshness_auto_rebuild_failed":
         "Repair the source compilation failure first, preserving the selected TODO's implementation intent, so Brownie binaries can be rebuilt."
     )
 
+verification_errors = verification.get("errors") if isinstance(verification.get("errors"), list) else []
+verification_error_codes = {
+    str(error.get("code"))
+    for error in verification_errors
+    if isinstance(error, dict) and error.get("code")
+}
+if "selected_target_not_changed" in verification_error_codes:
+    semantic_repair_policy["failure_class"] = "selected_todo_target_not_changed"
+    semantic_repair_policy["repair_objective"] = (
+        "Repair only the currently selected TODO by editing at least one of its Patch only/Create only target files. "
+        "Do not continue editing files from earlier TODOs merely because they are still dirty in the workspace."
+    )
+    semantic_repair_policy["selected_target_recovery"] = {
+        "selected_scopes": verification.get("selected_scopes", []),
+        "claim_changed_files": verification.get("claim_changed_files", []),
+        "baseline_diff_files": verification.get("baseline_diff_files", []),
+        "instructions": [
+            "Treat baseline_diff_files as pre-existing dirty work from earlier claims, not as progress for this selected TODO.",
+            "Make a minimal semantic patch to one or more selected_scopes.",
+            "If the selected TODO is no longer valid, update `.brownie/todo.md` with a corrected bounded TODO instead of changing unrelated files.",
+        ],
+    }
+elif "completion_record_missing_selected_targets" in verification_error_codes:
+    semantic_repair_policy["failure_class"] = "selected_todo_incomplete_target_coverage"
+    semantic_repair_policy["repair_objective"] = (
+        "Complete the selected TODO across all Patch only/Create only target files, preserving the selected TODO's intent."
+    )
+    semantic_repair_policy["selected_target_recovery"] = {
+        "selected_scopes": verification.get("selected_scopes", []),
+        "missing_selected_scopes": verification.get("missing_selected_scopes", []),
+        "claim_changed_files": verification.get("claim_changed_files", []),
+        "instructions": [
+            "Patch the missing selected scopes with meaningful changes required by the selected TODO.",
+            "Do not create placeholder edits solely to satisfy file coverage.",
+            "Run the selected TODO verification after repairing the missing target coverage.",
+        ],
+    }
+
 feedback = {
     "schema_version": 1,
     "claim_id": claim.get("claim_id"),
@@ -7038,16 +7076,18 @@ write_todo_claim() {
   local timestamp tmp_claim
   timestamp="$(now_utc)"
   tmp_claim="$TODO_CLAIM_FILE.$$.$RANDOM.tmp"
-  python3 - "$tmp_claim" "$claim_id" "$status" "$selected_todo" "$queue_fingerprint" "$queue_generation" "$PHASE_LOOP_TODO" "$run_stamp" "$timestamp" <<'PY'
+  python3 - "$tmp_claim" "$claim_id" "$status" "$selected_todo" "$queue_fingerprint" "$queue_generation" "$PHASE_LOOP_TODO" "$run_stamp" "$PHASE_LOOP_WORKSPACE_ROOT" "$timestamp" <<'PY'
 import json
 import os
 import pathlib
+import subprocess
 import sys
 
 path = pathlib.Path(sys.argv[1])
 claim_id = sys.argv[2]
 status = sys.argv[3]
-timestamp = sys.argv[9]
+workspace = pathlib.Path(sys.argv[9])
+timestamp = sys.argv[10]
 current_path = path.with_name("current.json")
 claim = {}
 queue_generation = None
@@ -7064,6 +7104,35 @@ if current_path.exists():
     except Exception:
         claim = {}
 if not claim:
+    baseline_diff_files = []
+    baseline_commit = ""
+    baseline_todo_text = ""
+    try:
+        baseline_commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=workspace,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        baseline_commit = ""
+    try:
+        baseline_diff_files = [
+            line.strip()
+            for line in subprocess.check_output(
+                ["git", "diff", "--name-only", "HEAD", "--"],
+                cwd=workspace,
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).splitlines()
+            if line.strip()
+        ]
+    except Exception:
+        baseline_diff_files = []
+    try:
+        baseline_todo_text = pathlib.Path(sys.argv[7]).read_text(encoding="utf-8")
+    except Exception:
+        baseline_todo_text = ""
     claim = {
         "schema_version": 1,
         "claim_id": claim_id,
@@ -7071,6 +7140,9 @@ if not claim:
         "queue_fingerprint": sys.argv[5],
         "queue_generation": queue_generation or 1,
         "todo_path": sys.argv[7],
+        "baseline_commit": baseline_commit,
+        "baseline_diff_files": baseline_diff_files,
+        "baseline_todo_text": baseline_todo_text,
         "created_at": timestamp,
         "status_history": [],
     }
