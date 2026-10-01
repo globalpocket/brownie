@@ -110,14 +110,6 @@ Current synchronization note:
   Forbidden changes: do not remove existing check commands, do not create duplicate JSON keys, and do not bypass root workspace verification.
   Verification: run `pnpm --workspace-root guard:release-contract` and `pnpm --workspace-root guard:trace-binding`.
 
-- [ ] E-20h-release-guard-ci-direct-wiring-target-02: Patch only `extensions/brownie-vsix/package.json` to complete one bounded slice of E-20h-release-guard-ci-direct-wiring:
-  Route: implementation.
-  Source TODO: E-20h-release-guard-ci-direct-wiring.
-  Depends on: <none>.
-  Completion condition: Patch only `extensions/brownie-vsix/package.json` so this slice satisfies the parent TODO intent: root and VSIX check paths directly invoke Release-critical semantic/trace/JSON/duplicate-export/schema guard commands that must pass in CI, while dry-run release gate remains an inventory aid.
-  Forbidden changes: do not remove existing check commands, do not create duplicate JSON keys, and do not bypass root workspace verification; do not edit unrelated files or sibling split targets `package.json`.
-  Verification: run `pnpm --workspace-root guard:release-contract` and `pnpm --workspace-root guard:trace-binding`.
-
 - [ ] E-19k-remaining-release-evidence-blocker: Blocker: release evidence remains incomplete after E-19 TODO injection, and Product Ready must remain false until Golden Journey, artifact E2E, lifecycle, stateful soak, provenance binding, dependency audit sync, and owner-verifiable branch protection are closed.
   Route: release-ops.
   Depends on: <none>.
