@@ -59,19 +59,105 @@ function uncheckedTodoBlocks(text) {
   });
 }
 
+function checkedTodoBlocks(text) {
+  const starts = [];
+  const pattern = /^(?:[-*]|\d+[.)])\s+\[[xX]\]\s+/gm;
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    starts.push(match.index);
+  }
+  return starts.map((start, index) => {
+    const end = index + 1 < starts.length ? starts[index + 1] : text.length;
+    return text.slice(start, end).trimEnd();
+  });
+}
+
 function todoId(block) {
   const firstLine = block.split('\n')[0]?.trim() ?? '';
-  return firstLine.replace(/^(?:[-*]|\d+[.)])\s+\[\s\]\s+/, '').split(':')[0]?.trim() ?? '';
+  return firstLine.replace(/^(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+/, '').split(':')[0]?.trim() ?? '';
 }
 
 function firstLine(block) {
   return block.split('\n')[0]?.trim() ?? '';
 }
 
+function parseDependsOn(block) {
+  for (const line of block.split('\n')) {
+    const stripped = line.trim();
+    if (!stripped.startsWith('Depends on:')) {
+      continue;
+    }
+    const raw = stripped.slice('Depends on:'.length).trim().replace(/[.]$/u, '');
+    if (!raw || raw === '<none>' || raw.toLowerCase() === 'none') {
+      return [];
+    }
+    return raw.split(',').map((entry) => entry.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function patchOnlyScopes(block) {
+  const first = firstLine(block);
+  const start = first.indexOf('Patch only');
+  if (start < 0) {
+    return [];
+  }
+  const rest = first.slice(start + 'Patch only'.length);
+  return [...rest.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+}
+
 function extractBacktickedPaths(text) {
   return [...text.matchAll(/`([^`]+)`/g)]
     .map((match) => match[1])
     .filter((value) => value.includes('/') || value.startsWith('.brownie/'));
+}
+
+function replaceBacktickedPath(text, from, to) {
+  return text.split(`\`${from}\``).join(`\`${to}\``);
+}
+
+function replaceDependsOn(block, dependencies) {
+  const replacement = dependencies.length > 0
+    ? `Depends on: ${dependencies.join(', ')}.`
+    : 'Depends on: <none>.';
+  const lines = block.split('\n');
+  let changed = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!lines[index].trim().startsWith('Depends on:')) {
+      continue;
+    }
+    const indent = lines[index].slice(0, lines[index].length - lines[index].trimStart().length);
+    if (lines[index].trim() !== replacement) {
+      lines[index] = `${indent}${replacement}`;
+      changed = true;
+    }
+    break;
+  }
+  return { block: lines.join('\n'), changed };
+}
+
+function existingIds(todoText) {
+  return new Set([...uncheckedTodoBlocks(todoText), ...checkedTodoBlocks(todoText)].map(todoId).filter(Boolean));
+}
+
+function inferExistingPatchTarget(missingTarget) {
+  if (existingFile(missingTarget)) {
+    return missingTarget;
+  }
+  const parsed = path.parse(missingTarget);
+  const candidates = [];
+  if (parsed.ext) {
+    for (const extension of ['.md', '.json', '.jsonc', '.mjs', '.js', '.rs']) {
+      if (extension !== parsed.ext) {
+        candidates.push(path.join(parsed.dir, `${parsed.name}${extension}`));
+      }
+    }
+  }
+  const existingCandidates = candidates.filter((candidate) => existingFile(candidate));
+  if (existingCandidates.length === 1) {
+    return existingCandidates[0];
+  }
+  return null;
 }
 
 function existingFile(relativePath) {
@@ -222,6 +308,102 @@ function replaceFirst(text, needle, replacement) {
   return text.slice(0, index) + replacement + text.slice(index + needle.length);
 }
 
+function repairSelectedLeafTodoContract({ claim, todoText, breakdownText, todoPath, breakdownPath }) {
+  const selected = claim.selected_todo;
+  if (typeof selected !== 'string') {
+    return { applied: false, eligible: false, reason: 'selected_todo_missing' };
+  }
+  const selectedId = todoId(selected);
+  if (!selectedId || selected.includes('TODO-decompose-broad-todo-') || selected.includes('Route: todo-decomposition')) {
+    return { applied: false, eligible: false, reason: 'selected_todo_is_not_repairable_leaf' };
+  }
+  const blocks = uncheckedTodoBlocks(todoText);
+  const selectedBlock = blocks.find((block) => todoId(block) === selectedId);
+  if (!selectedBlock) {
+    return { applied: false, eligible: false, reason: 'selected_leaf_missing_from_todo', selectedId };
+  }
+
+  let normalizedBlock = selectedBlock;
+  const notes = [];
+
+  for (const target of patchOnlyScopes(selectedBlock)) {
+    if (existingFile(target)) {
+      continue;
+    }
+    const replacement = inferExistingPatchTarget(target);
+    if (!replacement || replacement === target) {
+      continue;
+    }
+    normalizedBlock = replaceBacktickedPath(normalizedBlock, target, replacement);
+    breakdownText = replaceBacktickedPath(breakdownText, target, replacement);
+    notes.push({
+      normalization: 'missing_patch_only_target_replaced_with_existing_peer',
+      from: target,
+      to: replacement
+    });
+  }
+
+  const ids = existingIds(todoText);
+  const dependencies = parseDependsOn(normalizedBlock);
+  const liveDependencies = dependencies.filter((dependency) => ids.has(dependency));
+  const removedDependencies = dependencies.filter((dependency) => !ids.has(dependency));
+  if (removedDependencies.length > 0) {
+    const replaced = replaceDependsOn(normalizedBlock, liveDependencies);
+    normalizedBlock = replaced.block;
+    if (replaced.changed) {
+      notes.push({
+        normalization: 'removed_non_live_leaf_dependencies',
+        removed: removedDependencies
+      });
+      for (const removed of removedDependencies) {
+        const graphPattern = new RegExp(`(^-\\s+${selectedId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:\\s*)${removed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s*$)`, 'mu');
+        breakdownText = breakdownText.replace(graphPattern, `$1<none>$2`);
+      }
+    }
+  }
+
+  if (notes.length === 0 || normalizedBlock === selectedBlock) {
+    return { applied: false, eligible: false, reason: 'selected_leaf_no_deterministic_repair', selectedId };
+  }
+
+  let updatedTodo = replaceFirst(todoText, selectedBlock, normalizedBlock);
+  if (updatedTodo === null) {
+    return { applied: false, eligible: true, reason: 'selected_leaf_not_found_by_exact_slice', selectedId };
+  }
+  updatedTodo = updatedTodo.replace(/\n{3,}/gu, '\n\n').trimEnd() + '\n';
+
+  const validationErrors = validateTodoDecompositionText(updatedTodo, {
+    path: todoPath,
+    repoRoot,
+    packageScripts: packageScripts(),
+    breakdownPath,
+    breakdownText,
+    productReady: false,
+    releaseBlockersRemaining: true
+  });
+  if (validationErrors.length > 0) {
+    return {
+      applied: false,
+      eligible: true,
+      reason: 'repaired_leaf_todo_failed_guard',
+      selectedId,
+      validationErrors,
+      normalizations: notes
+    };
+  }
+
+  writeAtomic(todoPath, updatedTodo);
+  writeAtomic(breakdownPath, breakdownText);
+  return {
+    applied: true,
+    operation: 'deterministic_leaf_todo_contract_repair',
+    selectedId,
+    todoPath,
+    breakdownPath,
+    normalizations: notes
+  };
+}
+
 function upsertBreakdownSection({ breakdownText, decompositionId, sourceId, leaves, runStamp }) {
   const sectionHeader = `## ${decompositionId}`;
   const graph = leaves.map((leaf) => `- ${leaf.id}: ${leaf.depends}`).join('\n');
@@ -261,6 +443,12 @@ export function repairTodoDecomposition({
 } = {}) {
   const claim = readJson(claimPath);
   const selected = claim.selected_todo;
+  const todoText = readText(todoPath);
+  const breakdownText = fs.existsSync(path.resolve(repoRoot, breakdownPath)) ? readText(breakdownPath) : '# TODO breakdown\n';
+  const leafRepair = repairSelectedLeafTodoContract({ claim, todoText, breakdownText, todoPath, breakdownPath });
+  if (leafRepair.applied || leafRepair.eligible) {
+    return leafRepair;
+  }
   if (typeof selected !== 'string' || !selected.includes('TODO-decompose-broad-todo-') || !selected.includes('Route: todo-decomposition')) {
     return { applied: false, eligible: false, reason: 'selected_todo_is_not_broad_decomposition' };
   }
@@ -270,8 +458,6 @@ export function repairTodoDecomposition({
     return { applied: false, eligible: false, reason: 'missing_source_todo_id' };
   }
   const sourceId = sourceMatch[1];
-  const todoText = readText(todoPath);
-  const breakdownText = fs.existsSync(path.resolve(repoRoot, breakdownPath)) ? readText(breakdownPath) : '# TODO breakdown\n';
   const blocks = uncheckedTodoBlocks(todoText);
   const selectedBlock = blocks.find((block) => todoId(block) === decompositionId);
   const sourceBlock = blocks.find((block) => todoId(block) === sourceId);

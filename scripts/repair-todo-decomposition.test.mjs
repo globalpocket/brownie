@@ -19,6 +19,8 @@ function makeTempRepo() {
       'guard:release-contract:test': 'node --test scripts/guard-release-contract.test.mjs',
       'guard:runtime-release-readiness': 'node scripts/guard-runtime-release-readiness.mjs',
       'guard:phase-value': 'node scripts/guard-phase-value.mjs',
+      'guard:release-evidence-semantic-consistency': 'node scripts/guard-release-evidence-semantic-consistency.mjs',
+      'guard:release-evidence-semantic-consistency:test': 'node --test scripts/guard-release-evidence-semantic-consistency.test.mjs',
       'guard:todo-decomposition': 'node scripts/guard-todo-decomposition.mjs'
     }
   }, null, 2));
@@ -26,8 +28,11 @@ function makeTempRepo() {
     'docs/architecture/runtime-release-contract.json',
     'docs/architecture/runtime-release-readiness-audit.json',
     'docs/architecture/phase-value-manifest.json',
+    'docs/architecture/final-product-ready-judgment.md',
     'scripts/guard-release-contract.test.mjs',
     'scripts/guard-release-contract.mjs',
+    'scripts/guard-release-evidence-semantic-consistency.mjs',
+    'scripts/guard-release-evidence-semantic-consistency.test.mjs',
     'scripts/guard-runtime-release-readiness.mjs',
     'scripts/guard-phase-value.mjs'
   ]) {
@@ -142,6 +147,84 @@ test('falls back to explicit blocker leaf when broad TODO has no bounded target 
     assert(todoText.includes('E-22a-no-target-blocker'), todoText);
     assert(todoText.includes('Route: release-ops.'), todoText);
     assert(todoText.includes('Verification: blocker:'), todoText);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('repairs selected leaf with missing Patch only peer target and breakdown-only dependency', () => {
+  const root = makeTempRepo();
+  try {
+    const selected = `- [ ] E-20g-final-judgment-sync-target-01: Patch only \`docs/architecture/final-product-ready-judgment.json\` to complete one bounded slice of E-20g-final-judgment-sync:
+  Route: documentation.
+  Source TODO: E-20g-final-judgment-sync.
+  Depends on: E-20f-release-generation-sync.
+  Completion condition: Patch only \`docs/architecture/final-product-ready-judgment.json\` so this slice satisfies the parent TODO intent: semantic consistency tests fail when Final Judgment names an obsolete blocker generation while TODO, Phase manifest, or Readiness Audit name a newer Release blocker.
+  Forbidden changes: do not mark Product Ready, do not remove owner-review history, and do not weaken semantic consistency failures; do not edit unrelated files or sibling split targets \`scripts/guard-release-evidence-semantic-consistency.test.mjs\`.
+  Verification: run \`pnpm --workspace-root guard:release-evidence-semantic-consistency:test\` and \`pnpm --workspace-root guard:release-evidence-semantic-consistency\`.`;
+    const sibling = `- [ ] E-20g-final-judgment-sync-target-02: Patch only \`scripts/guard-release-evidence-semantic-consistency.test.mjs\` to complete one bounded slice of E-20g-final-judgment-sync:
+  Route: implementation.
+  Source TODO: E-20g-final-judgment-sync.
+  Depends on: E-20g-final-judgment-sync-target-01.
+  Completion condition: Patch only \`scripts/guard-release-evidence-semantic-consistency.test.mjs\` so this slice satisfies the parent TODO intent.
+  Forbidden changes: do not mark Product Ready, do not remove owner-review history, and do not edit unrelated files or sibling split targets \`docs/architecture/final-product-ready-judgment.json\`.
+  Verification: run \`pnpm --workspace-root guard:release-evidence-semantic-consistency:test\`.`;
+    fs.writeFileSync(path.join(root, '.brownie/todo.md'), `# Brownie TODO Queue\n\n## Product Ready Blocking Queue\n\n- [x] E-20g-final-judgment-sync: Patch only \`docs/architecture/final-product-ready-judgment.json\` and \`scripts/guard-release-evidence-semantic-consistency.test.mjs\`: require Final Judgment generation/status to match the live TODO/phase/audit blocker generation.\n\n${selected}\n\n${sibling}\n`);
+    fs.writeFileSync(path.join(root, '.brownie/todo-breakdown.md'), [
+      '# TODO breakdown',
+      '',
+      '## TODO-decompose-e20g',
+      '',
+      'Parent TODO: E-20g-final-judgment-sync',
+      '',
+      'Dependency graph:',
+      '- E-20g-final-judgment-sync-target-01: E-20f-release-generation-sync',
+      '- E-20g-final-judgment-sync-target-02: E-20g-final-judgment-sync-target-01',
+      '',
+      'Verification ledger:',
+      '- E-20g-final-judgment-sync-target-01: run `pnpm --workspace-root guard:release-evidence-semantic-consistency:test` and `pnpm --workspace-root guard:release-evidence-semantic-consistency`',
+      '- E-20g-final-judgment-sync-target-02: run `pnpm --workspace-root guard:release-evidence-semantic-consistency:test`',
+      '',
+      'Quality rubric:',
+      '- E-20g-final-judgment-sync-target-01: bounded target scope.',
+      '- E-20g-final-judgment-sync-target-02: bounded target scope.',
+      ''
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, '.brownie/private/phase-loop/todo-claims/current.json'), JSON.stringify({
+      schema_version: 1,
+      claim_id: 'claim-test',
+      selected_todo: selected
+    }, null, 2));
+
+    const result = runRepair(root);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const todoText = fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8');
+    const breakdownText = fs.readFileSync(path.join(root, '.brownie/todo-breakdown.md'), 'utf8');
+    const repairedSelected = todoText.slice(
+      todoText.indexOf('- [ ] E-20g-final-judgment-sync-target-01:'),
+      todoText.indexOf('- [ ] E-20g-final-judgment-sync-target-02:')
+    );
+    assert(!repairedSelected.includes('docs/architecture/final-product-ready-judgment.json'), repairedSelected);
+    assert(repairedSelected.includes('docs/architecture/final-product-ready-judgment.md'), repairedSelected);
+    assert(repairedSelected.includes('Depends on: <none>.'), repairedSelected);
+    assert(breakdownText.includes('- E-20g-final-judgment-sync-target-01: <none>'), breakdownText);
+    assert.deepEqual(validateTodoDecompositionText(todoText, {
+      path: '.brownie/todo.md',
+      repoRoot: root,
+      packageScripts: new Set([
+        'guard:release-contract',
+        'guard:release-contract:test',
+        'guard:runtime-release-readiness',
+        'guard:phase-value',
+        'guard:release-evidence-semantic-consistency',
+        'guard:release-evidence-semantic-consistency:test',
+        'guard:todo-decomposition'
+      ]),
+      breakdownPath: '.brownie/todo-breakdown.md',
+      breakdownText,
+      productReady: false,
+      releaseBlockersRemaining: true
+    }), []);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
