@@ -27,6 +27,14 @@ const e20g = `- [ ] E-20g-final-judgment-sync: Patch only \`docs/architecture/fi
   Forbidden changes: do not mark Product Ready, do not remove owner-review history, and do not weaken semantic consistency failures.
   Verification: run \`pnpm --workspace-root guard:release-evidence-semantic-consistency:test\`.`;
 
+const e20gLeaf = `- [ ] E-20g-final-judgment-sync-target-01: Patch only \`docs/architecture/final-product-ready-judgment.md\` to complete one bounded slice of E-20g-final-judgment-sync.
+  Route: documentation.
+  Source TODO: E-20g-final-judgment-sync.
+  Depends on: <none>.
+  Completion condition: Final Judgment names the current Release blocker generation.
+  Forbidden changes: do not mark Product Ready, do not remove owner-review history, and do not weaken semantic consistency failures.
+  Verification: run \`pnpm --workspace-root guard:release-evidence-semantic-consistency:test\`.`;
+
 function queue(...blocks) {
   return `# Brownie TODO Queue\n\n## Product Ready Blocking Queue\n\n${blocks.join('\n\n')}\n`;
 }
@@ -205,6 +213,47 @@ test('does not treat pre-existing dirty files as selected_target_not_changed for
 
   assert.equal(result.valid, true, JSON.stringify(result.errors));
   assert.deepEqual(result.claim_changed_files, []);
+});
+
+test('CLI write-record allows selected targets that were already dirty at claim baseline', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-progress-integrity-baseline-dirty-'));
+  fs.mkdirSync(path.join(tmp, '.brownie/private/phase-loop/todo-claims'), { recursive: true });
+  fs.mkdirSync(path.join(tmp, 'docs/architecture'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, '.brownie/todo.md'), queue(e20gLeaf));
+  fs.writeFileSync(path.join(tmp, 'docs/architecture/final-product-ready-judgment.md'), 'blocker: old\n');
+  execFileSync('git', ['init', '-b', 'main'], { cwd: tmp, stdio: 'ignore' });
+  execFileSync('git', ['add', '.'], { cwd: tmp, stdio: 'ignore' });
+  execFileSync('git', ['-c', 'user.name=Brownie', '-c', 'user.email=brownie@example.invalid', 'commit', '-m', 'baseline'], { cwd: tmp, stdio: 'ignore' });
+  fs.writeFileSync(path.join(tmp, 'docs/architecture/final-product-ready-judgment.md'), 'blocker: E-20\n');
+  fs.writeFileSync(
+    path.join(tmp, '.brownie/private/phase-loop/todo-claims/current.json'),
+    `${JSON.stringify({
+      schema_version: 1,
+      claim_id: 'claim-baseline-dirty',
+      selected_todo: e20gLeaf,
+      baseline_diff_files: ['docs/architecture/final-product-ready-judgment.md'],
+      baseline_todo_text: queue(e20gLeaf)
+    }, null, 2)}\n`
+  );
+
+  const output = execFileSync('node', [
+    path.resolve('scripts/phase-loop-progress-integrity.mjs'),
+    '--repo', tmp,
+    '--claim', '.brownie/private/phase-loop/todo-claims/current.json',
+    '--todo', '.brownie/todo.md',
+    '--run-stamp', 'test-run',
+    '--write-record'
+  ], {
+    cwd: path.resolve('.'),
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  const result = JSON.parse(output);
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+  assert.equal(result.selected_target_changed, false);
+  assert.equal(result.selected_target_dirty_at_baseline, true);
+  assert.deepEqual(result.selected_targets_dirty_at_baseline, ['docs/architecture/final-product-ready-judgment.md']);
+  assert.equal(result.completion_record_present, true);
 });
 
 test('reports missing selected target files for multi-target TODOs', () => {

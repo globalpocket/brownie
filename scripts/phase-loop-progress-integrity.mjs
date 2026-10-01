@@ -283,8 +283,11 @@ export function validatePhaseLoopProgressIntegrity(input) {
   const nonTodoClaimChangedFiles = claimChangedFiles.filter((file) => !isTodoPath(file));
   const changedSelectedScopes = selectedScopes.filter((scope) => claimChangedFiles.includes(scope));
   const missingSelectedScopes = selectedScopes.filter((scope) => !claimChangedFiles.includes(scope));
+  const baselineDirtySelectedScopes = selectedScopes.filter((scope) => baselineDiffFiles.includes(scope) && diffFiles.includes(scope));
   const allowedTargetChanged = changedSelectedScopes.length > 0;
+  const selectedTargetDirtyAtBaseline = baselineDirtySelectedScopes.length > 0;
   const allSelectedTargetsChanged = selectedScopes.length === 0 || missingSelectedScopes.length === 0;
+  const allSelectedTargetsDirtyAtBaseline = selectedScopes.length > 0 && baselineDirtySelectedScopes.length === selectedScopes.length;
   const beforeText = input.todoBefore ?? '';
   const afterText = input.todoAfter ?? '';
   const before = blockMap(beforeText);
@@ -406,8 +409,11 @@ export function validatePhaseLoopProgressIntegrity(input) {
     baseline_diff_files: baselineDiffFiles,
     claim_changed_files: claimChangedFiles,
     selected_target_changed: allowedTargetChanged,
+    selected_target_dirty_at_baseline: selectedTargetDirtyAtBaseline,
+    selected_targets_dirty_at_baseline: baselineDirtySelectedScopes,
     selected_targets_changed: changedSelectedScopes,
     selected_all_targets_changed: allSelectedTargetsChanged,
+    selected_all_targets_dirty_at_baseline: allSelectedTargetsDirtyAtBaseline,
     missing_selected_scopes: missingSelectedScopes,
     selected_todo_removed: selectedRemoved,
     completion_record_present: recordExists
@@ -429,8 +435,11 @@ function writeCompletionRecord(repoRoot, claim, runStamp, validation) {
     baseline_diff_files: validation.baseline_diff_files,
     selected_scopes: validation.selected_scopes,
     selected_target_changed: validation.selected_target_changed,
+    selected_target_dirty_at_baseline: validation.selected_target_dirty_at_baseline,
+    selected_targets_dirty_at_baseline: validation.selected_targets_dirty_at_baseline,
     selected_targets_changed: validation.selected_targets_changed,
     selected_all_targets_changed: validation.selected_all_targets_changed,
+    selected_all_targets_dirty_at_baseline: validation.selected_all_targets_dirty_at_baseline,
     missing_selected_scopes: validation.missing_selected_scopes,
     completion_record_reason: validation.selected_route === 'todo-decomposition' ? 'todo_decomposition' : 'verified_before_todo_removal',
     written_at: new Date().toISOString()
@@ -475,7 +484,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
       if (
         ['implementation', 'documentation'].includes(validation.selected_route) &&
         validation.selected_scopes.length > 0 &&
-        !validation.selected_target_changed
+        !validation.selected_target_changed &&
+        !validation.selected_target_dirty_at_baseline
       ) {
         validation = {
           ...validation,
@@ -492,7 +502,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
       if (
         ['implementation', 'documentation'].includes(validation.selected_route) &&
         validation.selected_scopes.length > 1 &&
-        !validation.selected_all_targets_changed
+        !validation.selected_all_targets_changed &&
+        !validation.selected_all_targets_dirty_at_baseline
       ) {
         validation = {
           ...validation,

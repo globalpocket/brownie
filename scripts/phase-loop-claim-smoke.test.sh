@@ -58,6 +58,8 @@ assert_contains "$PHASE_LOOP" "TODO queue repair is a mutually-exclusive control
 assert_contains "$PHASE_LOOP" "leaf_execution_policy_lines = \\[\\]"
 assert_contains "$PHASE_LOOP" "todo_contract_repair_before_bounded_leaf"
 assert_contains "$PHASE_LOOP" "must_preserve_todo_guard_priority"
+assert_contains "$PHASE_LOOP" "selected_todo_dirty_baseline_verified_completion"
+assert_contains "$PHASE_LOOP" "selected_targets_already_dirty_and_verification_passed"
 assert_not_contains "$PHASE_LOOP" "breakdown_only_dependency_pruned"
 
 test_workspace="$(mktemp -d)"
@@ -1761,8 +1763,9 @@ start = phase_loop.index("try_selected_todo_verified_noop_completion_fallback()"
 end = phase_loop.index("try_exact_line_todo_fast_path()", start)
 verified_noop_source = phase_loop[start:end]
 assert "verification_already_passed" not in verified_noop_source, verified_noop_source
-assert "subprocess.run(args" not in verified_noop_source, verified_noop_source
-assert "allowed_args(command)" not in verified_noop_source, verified_noop_source
+assert "selected_todo_dirty_baseline_verified_completion" in verified_noop_source, verified_noop_source
+assert "selected_scopes_dirty_at_baseline" in verified_noop_source, verified_noop_source
+assert "dirty_baseline_verification_command_not_allowed" in verified_noop_source, verified_noop_source
 assert "semantic_wiring_already_present_without_verification_commands" in verified_noop_source, verified_noop_source
 PY
 

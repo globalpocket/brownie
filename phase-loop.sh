@@ -978,6 +978,7 @@ selected_todo_is_invalid_decomposition_leaf() {
 import json
 import pathlib
 import re
+import shlex
 import subprocess
 import sys
 
@@ -1028,6 +1029,7 @@ selected_todo_was_stably_blocked() {
 import json
 import pathlib
 import re
+import shlex
 import subprocess
 import sys
 
@@ -1626,6 +1628,115 @@ selected_lower = selected.lower()
 
 def run_semantic_noop_check(command_args):
     return subprocess.run(command_args, cwd=workspace_root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180)
+
+def normalized_repo_path(value):
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    candidate = pathlib.PurePosixPath(value.strip())
+    if candidate.is_absolute() or ".." in candidate.parts:
+        return ""
+    return str(candidate)
+
+def allowed_args(command):
+    try:
+        args = shlex.split(command)
+    except ValueError:
+        return None
+    if len(args) == 3 and args[0] == "pnpm" and args[1] == "--workspace-root" and re.fullmatch(r"[A-Za-z0-9:_-]+", args[2]):
+        return args
+    if len(args) >= 2 and args[0] == "node" and args[1].startswith("scripts/") and all(not part.startswith("-") for part in args[1:]):
+        return args
+    if len(args) >= 3 and args[0] == "node" and args[1] == "--test" and args[2].startswith("scripts/") and all(not part.startswith("-") for part in args[2:]):
+        return args
+    if len(args) >= 2 and args[0] == "cargo" and args[1] in {"fmt", "check", "test"} and all(not re.search(r"[;&|`$<>]", part) for part in args):
+        return args
+    return None
+
+def sanitized_process_tail(value):
+    text = value[-2000:] if isinstance(value, str) else str(value)[-2000:]
+    workspace_text = str(workspace_root)
+    if workspace_text:
+        text = text.replace(workspace_text, "<workspace>")
+    text = re.sub(r"/Users/[^\s\"'`]+", "<local-path>", text)
+    text = re.sub(r"/home/[^\s\"'`]+", "<local-path>", text)
+    text = re.sub(r"[A-Za-z]:\\Users\\[^\s\"'`]+", "<local-path>", text)
+    return text
+
+scope_line_match = re.search(r"\b(?:Patch|Create) only\b(?P<scope>[^\n:]+)", first_line)
+selected_scopes = []
+if scope_line_match:
+    for path_value in re.findall(r"`([^`\n]+)`", scope_line_match.group("scope")):
+        normalized = normalized_repo_path(path_value)
+        if normalized:
+            selected_scopes.append(normalized)
+baseline_diff_files = {normalized_repo_path(value) for value in claim.get("baseline_diff_files", [])}
+baseline_diff_files.discard("")
+try:
+    current_diff_files = {
+        normalized_repo_path(line)
+        for line in subprocess.check_output(["git", "diff", "--name-only", "HEAD", "--"], cwd=workspace_root, text=True).splitlines()
+    }
+    current_diff_files.discard("")
+except Exception as error:
+    print(json.dumps({"completed": False, "reason": f"git_diff_unreadable:{error}"}, sort_keys=True))
+    raise SystemExit(1)
+selected_scopes_dirty_at_baseline = [
+    scope
+    for scope in selected_scopes
+    if scope in baseline_diff_files and scope in current_diff_files
+]
+if selected_scopes and len(selected_scopes_dirty_at_baseline) == len(selected_scopes):
+    verification_text = ""
+    for line in selected.splitlines():
+        if line.strip().startswith("Verification:"):
+            verification_text = line
+            break
+    commands = re.findall(r"`([^`\n]+)`", verification_text)
+    if not commands:
+        print(json.dumps({"completed": False, "reason": "dirty_baseline_missing_verification_commands"}, sort_keys=True))
+        raise SystemExit(1)
+    results = []
+    for scope in selected_scopes:
+        if scope.endswith((".js", ".mjs", ".cjs")):
+            completed = run_semantic_noop_check(["node", "--check", scope])
+            results.append({
+                "command": "node --check " + shlex.quote(scope),
+                "exit_code": completed.returncode,
+                "stdout_chars": len(completed.stdout),
+                "stderr_chars": len(completed.stderr),
+                "stdout_tail": sanitized_process_tail(completed.stdout),
+                "stderr_tail": sanitized_process_tail(completed.stderr),
+            })
+            if completed.returncode != 0:
+                print(json.dumps({"completed": False, "reason": "dirty_baseline_syntax_check_failed", "results": results}, sort_keys=True))
+                raise SystemExit(1)
+    for command in commands:
+        args = allowed_args(command)
+        if args is None:
+            print(json.dumps({"completed": False, "reason": "dirty_baseline_verification_command_not_allowed", "command": command}, sort_keys=True))
+            raise SystemExit(1)
+        completed = run_semantic_noop_check(args)
+        results.append({
+            "command": command,
+            "exit_code": completed.returncode,
+            "stdout_chars": len(completed.stdout),
+            "stderr_chars": len(completed.stderr),
+            "stdout_tail": sanitized_process_tail(completed.stdout),
+            "stderr_tail": sanitized_process_tail(completed.stderr),
+        })
+        if completed.returncode != 0:
+            print(json.dumps({"completed": False, "reason": "dirty_baseline_verification_failed", "results": results}, sort_keys=True))
+            raise SystemExit(1)
+    print(json.dumps({
+        "completed": True,
+        "operation": "selected_todo_dirty_baseline_verified_completion",
+        "reason": "selected_targets_already_dirty_and_verification_passed",
+        "run_stamp": run_stamp,
+        "selected_todo_first_line": first_line,
+        "selected_scopes_dirty_at_baseline": selected_scopes_dirty_at_baseline,
+        "results": results,
+    }, ensure_ascii=False, sort_keys=True))
+    raise SystemExit(0)
 
 if selected_id == "e-16a-artifact-source-local-producer":
     target = workspace_root / "scripts/release-local-artifact.mjs"
