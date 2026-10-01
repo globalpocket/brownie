@@ -1591,6 +1591,7 @@ try_selected_todo_verified_noop_completion_fallback() {
 import json
 import pathlib
 import re
+import shlex
 import subprocess
 import sys
 
