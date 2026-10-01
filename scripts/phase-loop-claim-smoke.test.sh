@@ -1399,13 +1399,16 @@ BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 "$PHASE_LOOP" run-once >/dev/null
 
-python3 - "$state_legacy/todo-claims/current.json" <<'PY'
+python3 - "$state_legacy/todo-claims/current.json" "$todo_legacy" <<'PY'
 import json
+import pathlib
 import sys
 
 claim = json.load(open(sys.argv[1], encoding="utf-8"))
+todo_text = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 assert claim["claim_id"] == "todo-legacy-claim", claim
-assert claim["queue_generation"] == 1, claim
+assert claim["queue_generation"] == 2, claim
+assert claim["baseline_todo_text"] == todo_text, claim
 assert claim["status"] == "in_progress", claim
 PY
 

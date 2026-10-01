@@ -815,7 +815,9 @@ if not live:
     os.replace(tmp, claim_path)
     raise SystemExit(0)
 fingerprint = hashlib.sha256(todo_text.encode("utf-8")).hexdigest()
-if live == selected and claim.get("queue_fingerprint") == fingerprint:
+baseline_todo_text = claim.get("baseline_todo_text")
+baseline_matches_live_todo = isinstance(baseline_todo_text, str) and baseline_todo_text == todo_text
+if live == selected and claim.get("queue_fingerprint") == fingerprint and baseline_matches_live_todo:
     raise SystemExit(0)
 generation = int(claim.get("queue_generation") or 1)
 try:
