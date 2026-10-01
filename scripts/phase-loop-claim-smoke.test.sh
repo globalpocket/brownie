@@ -50,6 +50,9 @@ assert_contains "$PHASE_LOOP" "todo_queue_integrity_failed_before_claim"
 assert_contains "$PHASE_LOOP" "PHASE_LOOP_TODO_QUEUE_INTEGRITY_FAILED"
 assert_contains "$PHASE_LOOP" "baseline_diff_files"
 assert_contains "$PHASE_LOOP" "baseline_todo_text"
+assert_contains "$PHASE_LOOP" 'claim\["baseline_todo_text"\] = todo_text'
+assert_contains "$PHASE_LOOP" 'claim\["baseline_diff_files"\] = baseline_diff_files'
+assert_contains "$PHASE_LOOP" 'refreshed_selected_todo_from_live_queue'
 assert_contains "$PHASE_LOOP" "objective_apply_stalled"
 assert_contains "$PHASE_LOOP" "TODO queue repair is a mutually-exclusive controller state"
 assert_contains "$PHASE_LOOP" "leaf_execution_policy_lines = \\[\\]"

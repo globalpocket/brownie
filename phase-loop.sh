@@ -730,12 +730,13 @@ refresh_active_todo_claim_from_live_queue() {
   if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$PHASE_LOOP_TODO" ]; then
     return 0
   fi
-  python3 - "$TODO_CLAIM_FILE" "$PHASE_LOOP_TODO" "$TODO_QUEUE_STATE_FILE" "$TODO_REPAIR_FEEDBACK_FILE" "$run_stamp" "$(now_utc)" <<'PY'
+  python3 - "$TODO_CLAIM_FILE" "$PHASE_LOOP_TODO" "$TODO_QUEUE_STATE_FILE" "$TODO_REPAIR_FEEDBACK_FILE" "$run_stamp" "$(now_utc)" "$PHASE_LOOP_WORKSPACE_ROOT" <<'PY'
 import hashlib
 import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 
 claim_path = pathlib.Path(sys.argv[1])
@@ -744,6 +745,7 @@ queue_state_path = pathlib.Path(sys.argv[3])
 repair_feedback_path = pathlib.Path(sys.argv[4])
 run_stamp = sys.argv[5]
 timestamp = sys.argv[6]
+workspace = pathlib.Path(sys.argv[7])
 
 def todo_id(block):
     first = block.splitlines()[0] if block.splitlines() else ""
@@ -822,9 +824,34 @@ try:
         generation = int(state.get("generation") or generation) + 1
 except Exception:
     generation = generation + 1
+try:
+    baseline_diff_files = [
+        line.strip()
+        for line in subprocess.check_output(
+            ["git", "diff", "--name-only", "HEAD", "--"],
+            cwd=workspace,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).splitlines()
+        if line.strip()
+    ]
+except Exception:
+    baseline_diff_files = claim.get("baseline_diff_files") if isinstance(claim.get("baseline_diff_files"), list) else []
+try:
+    baseline_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=workspace,
+        text=True,
+        stderr=subprocess.DEVNULL,
+    ).strip()
+except Exception:
+    baseline_commit = str(claim.get("baseline_commit") or "")
 claim["selected_todo"] = live
 claim["queue_fingerprint"] = fingerprint
 claim["queue_generation"] = generation
+claim["baseline_commit"] = baseline_commit
+claim["baseline_diff_files"] = baseline_diff_files
+claim["baseline_todo_text"] = todo_text
 claim["run_stamp"] = run_stamp
 claim["updated_at"] = timestamp
 claim.setdefault("status_history", []).append({
