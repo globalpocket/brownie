@@ -103,14 +103,6 @@ Current synchronization note:
   Forbidden changes: do not mark Product Ready, do not remove owner-review history, and do not weaken semantic consistency failures.
   Verification: run `pnpm --workspace-root guard:release-evidence-semantic-consistency:test` and `pnpm --workspace-root guard:release-evidence-semantic-consistency`.
 
-- [ ] E-20g-final-judgment-sync-target-02: Patch only `scripts/guard-release-evidence-semantic-consistency.test.mjs` to complete one bounded slice of E-20g-final-judgment-sync:
-  Route: implementation.
-  Source TODO: E-20g-final-judgment-sync.
-  Depends on: <none>.
-  Completion condition: Patch only `scripts/guard-release-evidence-semantic-consistency.test.mjs` so this slice satisfies the parent TODO intent: semantic consistency tests fail when Final Judgment names an obsolete blocker generation while TODO, Phase manifest, or Readiness Audit name a newer Release blocker.
-  Forbidden changes: do not mark Product Ready, do not remove owner-review history, and do not weaken semantic consistency failures; do not edit unrelated files or sibling split targets `docs/architecture/final-product-ready-judgment.json`.
-  Verification: run `pnpm --workspace-root guard:release-evidence-semantic-consistency:test` and `pnpm --workspace-root guard:release-evidence-semantic-consistency`.
-
 - [ ] E-20h-release-guard-ci-direct-wiring: Patch only `package.json` and `extensions/brownie-vsix/package.json`: wire Release-critical guard commands directly into CI-reached check paths instead of relying only on `release:gate --dry-run` enumeration.
   Route: implementation.
   Depends on: E-20g-final-judgment-sync.
