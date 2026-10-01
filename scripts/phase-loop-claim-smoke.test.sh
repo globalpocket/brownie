@@ -60,6 +60,7 @@ assert_contains "$PHASE_LOOP" "todo_contract_repair_before_bounded_leaf"
 assert_contains "$PHASE_LOOP" "must_preserve_todo_guard_priority"
 assert_contains "$PHASE_LOOP" "selected_todo_dirty_baseline_verified_completion"
 assert_contains "$PHASE_LOOP" "selected_targets_already_dirty_and_verification_passed"
+assert_contains "$PHASE_LOOP" "pruned_completed_dependency_lines"
 assert_not_contains "$PHASE_LOOP" "breakdown_only_dependency_pruned"
 
 test_workspace="$(mktemp -d)"

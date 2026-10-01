@@ -1153,6 +1153,31 @@ replacement = text[:index] + text[end:]
 if index > 0 and not text[:index].endswith("\n\n") and replacement[index:index + 1] not in ("", "\n"):
     replacement = text[:index] + "\n" + text[end:]
 replacement = re.sub(r"\n{3,}", "\n\n", replacement).rstrip() + "\n"
+pruned_dependency_lines = []
+if selected_id:
+    def prune_completed_dependency(match):
+        prefix = match.group("prefix")
+        value = match.group("value").strip()
+        trailing = match.group("trailing") or ""
+        if not value or value == "<none>":
+            return match.group(0)
+        dependencies = [
+            dependency.strip()
+            for dependency in re.split(r"\s*,\s*", value)
+            if dependency.strip()
+        ]
+        if selected_id not in dependencies:
+            return match.group(0)
+        remaining = [dependency for dependency in dependencies if dependency != selected_id]
+        new_value = ", ".join(remaining) if remaining else "<none>"
+        pruned_dependency_lines.append({"from": value, "to": new_value})
+        return f"{prefix}{new_value}{trailing}"
+
+    replacement = re.sub(
+        r"(?m)^(?P<prefix>\s*Depends on:\s*)(?P<value>[^\n.]*?)(?P<trailing>\.?)$",
+        prune_completed_dependency,
+        replacement,
+    )
 tmp_path = todo_path.with_name(f"{todo_path.name}.{os.getpid()}.completed-{run_stamp}.tmp")
 with open(tmp_path, "w", encoding="utf-8") as handle:
     handle.write(replacement)
@@ -1171,6 +1196,7 @@ print(json.dumps({
     "removed_at": timestamp,
     "run_stamp": run_stamp,
     "selected_todo_first_line": first_line,
+    "pruned_completed_dependency_lines": pruned_dependency_lines,
 }, ensure_ascii=False, sort_keys=True))
 PY
   todo_guard_path="$(
