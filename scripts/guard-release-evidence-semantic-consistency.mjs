@@ -91,6 +91,18 @@ export function validateReleaseEvidenceSemanticConsistency({ contract = {}, evid
     addReason(reasons, 'forbidden_confidential_evidence');
   }
 
+  const contractBlockerGeneration = contract.blocker_generation ?? contract.release_blocker_generation;
+  const finalJudgmentBlockerGeneration = evidence.final_judgment_blocker_generation ?? evidence.finalJudgmentBlockerGeneration;
+  const todoBlockerGeneration = evidence.todo_blocker_generation ?? evidence.todoBlockerGeneration ?? contractBlockerGeneration;
+  if (
+    implemented &&
+    finalJudgmentBlockerGeneration !== undefined &&
+    todoBlockerGeneration !== undefined &&
+    String(finalJudgmentBlockerGeneration) !== String(todoBlockerGeneration)
+  ) {
+    addReason(reasons, 'blocker_generation_mismatch');
+  }
+
   return {
     ok: reasons.length === 0,
     reasons

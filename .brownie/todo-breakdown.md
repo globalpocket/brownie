@@ -686,3 +686,28 @@ Quality rubric:
 History:
 
 - 2026-09-28T21:12:46Z: Deterministically decomposed E-19j-branch-protection-verification-plan during 20260928T211244Z; avoided LLM old_text patch anchors and resolved verification commands from existing package scripts.
+
+## E-20g-final-judgment-sync no-eligible multi-target split
+
+Parent TODO: E-20g-final-judgment-sync: - [ ] E-20g-final-judgment-sync: Patch only `docs/architecture/final-product-ready-judgment.md` and `scripts/guard-release-evidence-semantic-consistency.test.mjs`: require Final Judgment generation/status to match the live TODO/phase/audit blocker generation and reject stale E-17/E-18 Product Ready narratives.
+Parent source: E-20g-final-judgment-sync
+
+Targets:
+
+- E-20g-final-judgment-sync-target-01: `docs/architecture/final-product-ready-judgment.md`
+- E-20g-final-judgment-sync-target-02: `scripts/guard-release-evidence-semantic-consistency.test.mjs`
+
+Dependency graph:
+
+- E-20g-final-judgment-sync-target-01: <none>
+- E-20g-final-judgment-sync-target-02: E-20g-final-judgment-sync-target-01
+
+Verification ledger:
+
+- E-20g-final-judgment-sync-target-01: `run `pnpm --workspace-root guard:release-evidence-semantic-consistency:test` and `pnpm --workspace-root guard:release-evidence-semantic-consistency``
+- E-20g-final-judgment-sync-target-02: `run `pnpm --workspace-root guard:release-evidence-semantic-consistency:test` and `pnpm --workspace-root guard:release-evidence-semantic-consistency``
+
+History:
+
+- 2026-09-30T06:47:43Z: Applied deterministic no_eligible_task fallback during run 20260930T064742Z; the checked parent remains in the queue so existing downstream dependencies still have a durable dependency anchor, and the implementation work moves to ordered single-target leaves.
+

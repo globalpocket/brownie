@@ -29,7 +29,17 @@ const statefulSoakConfig = {
     duplicateRejection: true,
     processLossRecovery: true,
     finiteConvergence: true,
-    statefulSoakSteps: true
+    statefulSoakSteps: true,
+    workspaceMutationVerification: true
+  },
+  platformLifecycleEvidence: {
+    requiredTargets: ['macos-x64', 'linux-x64', 'linux-arm64', 'windows-x64'],
+    evidencePerTarget: {
+      install: false,
+      update: false,
+      rollback: false
+    },
+    blockerPolicy: 'explicit_owner_controlled'
   },
   storagePolicy: 'aggregated_metrics_only',
   tempWorkspace: {
@@ -43,7 +53,32 @@ const statefulSoakConfig = {
     stateTransitionRecording: true,
     postSoakConsistencyCheck: true,
     evidenceAggregation: true
+  },
+  acceptancePolicy: {
+    versionOnlyRepetition: 'diagnostic_only',
+    requireAllDurabilitySteps: true,
+    failOnMissingEvidence: true,
+    statusSatisfiedCondition: 'all_required_durability_steps_passed'
   }
+};
+
+const soakAcceptanceValidator = (evidence) => {
+  if (!evidence || typeof evidence !== 'object') return { satisfied: false, reason: 'missing_evidence' };
+  const required = statefulSoakConfig.requiredSteps;
+  const checks = [
+    { name: 'preSoakValidation', pass: !!evidence.preSoakValidation },
+    { name: 'stateTransitionRecording', pass: !!evidence.stateTransitionRecording },
+    { name: 'postSoakConsistencyCheck', pass: !!evidence.postSoakConsistencyCheck },
+    { name: 'evidenceAggregation', pass: !!evidence.evidenceAggregation },
+    { name: 'ledgerConsistency', pass: !!evidence.ledgerConsistency },
+    { name: 'workspaceConsistency', pass: !!evidence.workspaceConsistency },
+    { name: 'resumeReplay', pass: !!evidence.resumeReplay },
+    { name: 'duplicateRejection', pass: !!evidence.duplicateRejection },
+    { name: 'processLossRecovery', pass: !!evidence.processLossRecovery },
+    { name: 'finiteConvergence', pass: !!evidence.finiteConvergence }
+  ];
+  const allPassed = checks.every(c => c.pass);
+  return { satisfied: allPassed, reason: allPassed ? 'all_durability_steps_passed' : 'missing_required_step', checks };
 };
 
 const forbiddenLocalEvidencePattern = /(?:^\/Users\/|^\/home\/|^[A-Za-z]:\/Users\/|ssh|worktree)/u;

@@ -817,15 +817,6 @@ if not live:
 fingerprint = hashlib.sha256(todo_text.encode("utf-8")).hexdigest()
 baseline_todo_text = claim.get("baseline_todo_text")
 baseline_matches_live_todo = isinstance(baseline_todo_text, str) and baseline_todo_text == todo_text
-if live == selected and claim.get("queue_fingerprint") == fingerprint and baseline_matches_live_todo:
-    raise SystemExit(0)
-generation = int(claim.get("queue_generation") or 1)
-try:
-    state = json.loads(queue_state_path.read_text(encoding="utf-8"))
-    if state.get("fingerprint") != fingerprint:
-        generation = int(state.get("generation") or generation) + 1
-except Exception:
-    generation = generation + 1
 try:
     baseline_diff_files = [
         line.strip()
@@ -839,6 +830,22 @@ try:
     ]
 except Exception:
     baseline_diff_files = claim.get("baseline_diff_files") if isinstance(claim.get("baseline_diff_files"), list) else []
+claim_baseline_diff_files = claim.get("baseline_diff_files") if isinstance(claim.get("baseline_diff_files"), list) else []
+baseline_diff_matches_live_workspace = sorted(str(item) for item in claim_baseline_diff_files) == sorted(str(item) for item in baseline_diff_files)
+if (
+    live == selected
+    and claim.get("queue_fingerprint") == fingerprint
+    and baseline_matches_live_todo
+    and baseline_diff_matches_live_workspace
+):
+    raise SystemExit(0)
+generation = int(claim.get("queue_generation") or 1)
+try:
+    state = json.loads(queue_state_path.read_text(encoding="utf-8"))
+    if state.get("fingerprint") != fingerprint:
+        generation = int(state.get("generation") or generation) + 1
+except Exception:
+    generation = generation + 1
 try:
     baseline_commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"],

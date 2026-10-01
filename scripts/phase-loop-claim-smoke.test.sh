@@ -52,6 +52,7 @@ assert_contains "$PHASE_LOOP" "baseline_diff_files"
 assert_contains "$PHASE_LOOP" "baseline_todo_text"
 assert_contains "$PHASE_LOOP" 'claim\["baseline_todo_text"\] = todo_text'
 assert_contains "$PHASE_LOOP" 'claim\["baseline_diff_files"\] = baseline_diff_files'
+assert_contains "$PHASE_LOOP" "baseline_diff_matches_live_workspace"
 assert_contains "$PHASE_LOOP" 'refreshed_selected_todo_from_live_queue'
 assert_contains "$PHASE_LOOP" "objective_apply_stalled"
 assert_contains "$PHASE_LOOP" "TODO queue repair is a mutually-exclusive controller state"

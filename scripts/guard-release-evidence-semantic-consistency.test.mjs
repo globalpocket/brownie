@@ -10,8 +10,15 @@ const nullSourceCommitFixture = {
   expectedReason: 'missing_commit_binding',
 };
 
+const blockerGenerationMismatchFixture = {
+  name: 'blocker generation mismatch',
+  contract: { status: 'implemented_sufficient', blocker_generation: 2 },
+  evidence: { final_judgment_blocker_generation: 1, todo_blocker_generation: 2 },
+  expectedReason: 'blocker_generation_mismatch',
+};
+
 const contradictoryEvidenceFixtures = [
-  nullSourceCommitFixture,
+  blockerGenerationMismatchFixture,
   {
     name: 'artifact evidence from dirty source tree',
     contract: { status: 'implemented_sufficient', artifact_sha256: 'sha256:abc' },
@@ -47,6 +54,15 @@ test('dirty source tree evidence rejects with dirty_source_tree', () => {
   assert(result.reasons.includes('dirty_source_tree'));
 });
 
+test('blocker generation mismatch rejects with blocker_generation_mismatch', () => {
+  const result = validateReleaseEvidenceSemanticConsistency({
+    contract: { status: 'implemented_sufficient', blocker_generation: 'E-20g' },
+    evidence: { final_judgment_blocker_generation: 'E-19k', todo_blocker_generation: 'E-20g' },
+  });
+  assert.equal(result.ok, false);
+  assert(result.reasons.includes('blocker_generation_mismatch'));
+});
+
 test('null source_commit rejects with missing_commit_binding', () => {
   const result = validateReleaseEvidenceSemanticConsistency(nullSourceCommitFixture);
   assert.equal(result.ok, false);
@@ -58,7 +74,7 @@ test('semantic consistency fixtures cover release evidence contradictions', () =
   assert.deepEqual(
     contradictoryEvidenceFixtures.map((fixture) => fixture.expectedReason),
     [
-      'missing_commit_binding',
+      'blocker_generation_mismatch',
       'dirty_source_tree',
       'shallow_smoke',
       'version_only_soak',

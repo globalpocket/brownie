@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "evidence_id": "brownie-runtime-operational-evidence-v1",
-  "generated_at": "2026-09-21T15:06:52.652Z",
+  "generated_at": "2026-09-30T02:25:00.020Z",
   "repository": "globalpocket/brownie",
   "release_ready": false,
   "runtime_release_ready": false,
@@ -38,7 +38,7 @@
                   "command_summary": {
                     "kind": "command_summary",
                     "word_count": 2,
-                    "sha256": "fc8a9b989d8c81ced439ee543f90382a163b89df02fa7bf7ee8a86114cc94561"
+                    "sha256": "f95823437748f5bcf5c8664222bcbe26762e8083a59f4499c52c8db39fa75b09"
                   },
                   "exit_code": 0,
                   "signal": null,
@@ -60,7 +60,7 @@
                   "command_summary": {
                     "kind": "command_summary",
                     "word_count": 3,
-                    "sha256": "a73b9a067d051d6a46e89a9d3e159dab75690e5aa8d74e80c39bd4537d0292a1"
+                    "sha256": "3cd67e07a4b69d9922d99417f9c200a072c5a265bf7ab8761c7e725daad57bd0"
                   },
                   "exit_code": 0,
                   "signal": null,
@@ -86,7 +86,7 @@
               "command_summary": {
                 "kind": "command_summary",
                 "word_count": 2,
-                "sha256": "fc8a9b989d8c81ced439ee543f90382a163b89df02fa7bf7ee8a86114cc94561"
+                "sha256": "f95823437748f5bcf5c8664222bcbe26762e8083a59f4499c52c8db39fa75b09"
               },
               "exit_code": 0,
               "signal": null,
@@ -108,7 +108,7 @@
               "command_summary": {
                 "kind": "command_summary",
                 "word_count": 3,
-                "sha256": "a73b9a067d051d6a46e89a9d3e159dab75690e5aa8d74e80c39bd4537d0292a1"
+                "sha256": "3cd67e07a4b69d9922d99417f9c200a072c5a265bf7ab8761c7e725daad57bd0"
               },
               "exit_code": 0,
               "signal": null,
@@ -246,7 +246,7 @@
               "command_summary": {
                 "kind": "command_summary",
                 "word_count": 2,
-                "sha256": "c50d6c6e333cb40b8b1e8f3dd73510a4493fe2d320ce32a95ab996b628c2e6d6"
+                "sha256": "08e2b8c589b784477dcbe6284c93e308023c05662c8e104d3941f5967bc070b4"
               },
               "exit_code": 0,
               "signal": null,
@@ -268,7 +268,7 @@
               "command_summary": {
                 "kind": "command_summary",
                 "word_count": 3,
-                "sha256": "0678e775edf8ac545c09a6a12d537b3deda13252dbeeb76c2a93b68912b917b6"
+                "sha256": "c72d58a48dbc2f55125f5b420fe3e215b96f3320e89c15a7b1b0549ea12ab2a3"
               },
               "exit_code": 0,
               "signal": null,
@@ -360,7 +360,7 @@
             "kind": "process_output_summary",
             "byte_length": 3165,
             "line_count": 1,
-            "sha256": "d70615fc4f08e7acc361daf717fc8bee27174cdeb523d80dd8f620bafb466d69"
+            "sha256": "7e318549a0b58e025577926a37a28eb820bf1e4d804f0ed9d33249970ab27bb8"
           },
           "stderr_summary": {
             "kind": "process_output_summary",
@@ -382,7 +382,7 @@
             "kind": "process_output_summary",
             "byte_length": 1589,
             "line_count": 1,
-            "sha256": "4e6739baf8f8d87b39379950a10c02725cfb73ac614609b51eac87cbcdceb8eb"
+            "sha256": "689d7ddf84696be38ea5a001e19af657fca11d0b335b95dfff83a068b2e29a93"
           },
           "stderr_summary": {
             "kind": "process_output_summary",
@@ -413,9 +413,43 @@
           "resumeReplay": true,
           "duplicateRejection": true,
           "processLossRecovery": true,
-          "finiteConvergence": true
+          "finiteConvergence": true,
+          "statefulSoakSteps": true,
+          "workspaceMutationVerification": true
         },
-        "storagePolicy": "aggregated_metrics_only"
+        "platformLifecycleEvidence": {
+          "requiredTargets": [
+            "macos-x64",
+            "linux-x64",
+            "linux-arm64",
+            "windows-x64"
+          ],
+          "evidencePerTarget": {
+            "install": false,
+            "update": false,
+            "rollback": false
+          },
+          "blockerPolicy": "explicit_owner_controlled"
+        },
+        "storagePolicy": "aggregated_metrics_only",
+        "tempWorkspace": {
+          "enabled": true,
+          "freshStart": true,
+          "mutationRequired": true,
+          "beforeAfterVerification": true
+        },
+        "requiredSteps": {
+          "preSoakValidation": true,
+          "stateTransitionRecording": true,
+          "postSoakConsistencyCheck": true,
+          "evidenceAggregation": true
+        },
+        "acceptancePolicy": {
+          "versionOnlyRepetition": "diagnostic_only",
+          "requireAllDurabilitySteps": true,
+          "failOnMissingEvidence": true,
+          "statusSatisfiedCondition": "all_required_durability_steps_passed"
+        }
       },
       "seed": "brownie-runtime-operational-soak-v1",
       "iterations_requested": 100,

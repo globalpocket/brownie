@@ -4,7 +4,7 @@
 
 - `runtime_release_ready`: false
 - `release_engineering_maturity`: executable-evidence-blocked
-- `contract-level_fail_closed_blockers`: E-17 executable Release evidence
+- `contract-level_fail_closed_blockers`: E-20 executable Release evidence
 
 ## Evidence
 

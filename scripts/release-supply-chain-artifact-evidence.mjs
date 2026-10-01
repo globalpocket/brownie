@@ -36,6 +36,21 @@ function validateSourceIdentity(evidence) {
   return { valid: true, sourceIdentity };
 }
 
+function validateSourceCommitBinding(evidence) {
+  const sourceCommit = evidence?.sourceCommit;
+  if (!sourceCommit || typeof sourceCommit !== 'string') {
+    return { valid: false, reason: 'source_commit_missing' };
+  }
+  if (!/^[a-f0-9]{40}$/.test(sourceCommit)) {
+    return { valid: false, reason: 'source_commit_invalid_format' };
+  }
+  const artifactCommit = evidence?.artifacts?.[0]?.sourceCommit;
+  if (artifactCommit && artifactCommit !== sourceCommit) {
+    return { valid: false, reason: 'source_commit_mismatch' };
+  }
+  return { valid: true, sourceCommit };
+}
+
 function validateSmokeEvidence(smokeEvidence) {
   if (!smokeEvidence || !Array.isArray(smokeEvidence.steps)) {
     return { valid: false, reason: 'smoke_evidence_missing_or_invalid' };

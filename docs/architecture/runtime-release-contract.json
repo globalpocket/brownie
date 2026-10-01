@@ -15,11 +15,11 @@
   },
   "commit_trace": {
     "audited_base_commit": "4376c0a7412a40f328fb3ba64bca487bba35a80e",
-    "implementation_commit": "pending-evidence-binding",
-    "tested_commit": "pending-evidence-binding",
-    "release_tag": "pending-evidence-binding",
-    "workflow_run_id": "pending-evidence-binding",
-    "artifact_sha256": "pending-evidence-binding",
+    "implementation_commit": null,
+    "tested_commit": null,
+    "release_tag": null,
+    "workflow_run_id": null,
+    "artifact_sha256": null,
     "trace_binding_status": {
       "status": "blocked_missing_executable_evidence",
       "blocking_fields": [
