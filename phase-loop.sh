@@ -1661,7 +1661,14 @@ except Exception as error:
 selected_lower = selected.lower()
 
 def run_semantic_noop_check(command_args):
-    return subprocess.run(command_args, cwd=workspace_root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180)
+    try:
+        return subprocess.run(command_args, cwd=workspace_root, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180)
+    except subprocess.TimeoutExpired as error:
+        stdout = error.stdout.decode("utf-8", errors="replace") if isinstance(error.stdout, bytes) else (error.stdout or "")
+        stderr = error.stderr.decode("utf-8", errors="replace") if isinstance(error.stderr, bytes) else (error.stderr or "")
+        timeout_note = f"command timed out after {error.timeout} seconds"
+        stderr = (stderr + "\n" + timeout_note).strip()
+        return subprocess.CompletedProcess(command_args, 124, stdout=stdout, stderr=stderr)
 
 def normalized_repo_path(value):
     if not isinstance(value, str) or not value.strip():

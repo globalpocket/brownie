@@ -711,3 +711,27 @@ History:
 
 - 2026-09-30T06:47:43Z: Applied deterministic no_eligible_task fallback during run 20260930T064742Z; the checked parent remains in the queue so existing downstream dependencies still have a durable dependency anchor, and the implementation work moves to ordered single-target leaves.
 
+## E-20h-release-guard-ci-direct-wiring no-eligible multi-target split
+
+Parent TODO: E-20h-release-guard-ci-direct-wiring: - [ ] E-20h-release-guard-ci-direct-wiring: Patch only `package.json` and `extensions/brownie-vsix/package.json`: wire Release-critical guard commands directly into CI-reached check paths instead of relying only on `release:gate --dry-run` enumeration.
+Parent source: E-20h-release-guard-ci-direct-wiring
+
+Targets:
+
+- E-20h-release-guard-ci-direct-wiring-target-01: `package.json`
+- E-20h-release-guard-ci-direct-wiring-target-02: `extensions/brownie-vsix/package.json`
+
+Dependency graph:
+
+- E-20h-release-guard-ci-direct-wiring-target-01: E-20g-final-judgment-sync
+- E-20h-release-guard-ci-direct-wiring-target-02: <none>
+
+Verification ledger:
+
+- E-20h-release-guard-ci-direct-wiring-target-01: `run `pnpm --workspace-root guard:release-contract` and `pnpm --workspace-root guard:trace-binding``
+- E-20h-release-guard-ci-direct-wiring-target-02: `run `pnpm --workspace-root guard:release-contract` and `pnpm --workspace-root guard:trace-binding``
+
+History:
+
+- 2026-10-01T06:34:24Z: Applied deterministic no_eligible_task fallback during run 20261001T063422Z; the checked parent remains in the queue so existing downstream dependencies still have a durable dependency anchor, and the implementation work moves to ordered single-target leaves.
+

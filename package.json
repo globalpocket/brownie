@@ -6,7 +6,7 @@
   "description": "Brownie Code-OSS extension and Rust runtime workspace.",
   "scripts": {
     "build": "pnpm --filter brownie-vsix build",
-    "check": "pnpm --filter brownie-vsix check",
+    "check": "pnpm --filter brownie-vsix check && pnpm guard:release-contract && pnpm guard:trace-binding",
     "guard:control-plane-authority": "node scripts/guard-control-plane-authority.mjs",
     "guard:control-plane-authority:test": "node --test scripts/guard-control-plane-authority.test.mjs",
     "guard:diagnostics": "node scripts/guard-diagnostics-api.mjs",
