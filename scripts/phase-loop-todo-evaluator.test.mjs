@@ -73,6 +73,58 @@ test('ignores blocked first lines from stale queue fingerprints', () => {
   assert(selected.startsWith('- [ ] E-15-parent:'), selected);
 });
 
+test('does not permanently suppress stable parent TODOs after current-queue blocked records', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-todo-evaluator-'));
+  const blocked = path.join(dir, 'blocked.jsonl');
+  const queue = `- [ ] E-22b-release-artifact-provenance-binding: Patch only \`scripts/release-supply-chain-artifact-evidence.mjs\` and \`scripts/guard-supply-chain-artifact-evidence.test.mjs\`:
+  Route: implementation.
+  Source TODO: 2026-10-04 review.
+  Depends on: <none>.
+  Completion condition: Supply-chain artifact evidence is bound to CI commit, workflow run, artifact SHA, platform, architecture, and clean source identity.
+  Forbidden changes: do not invent artifact hashes and do not declare Product Ready.
+  Verification: run \`pnpm --workspace-root guard:supply-chain-artifact-evidence:test\`.`;
+  fs.writeFileSync(blocked, `${JSON.stringify({
+    controller_fingerprint: 'old-controller',
+    queue_fingerprint: createHash('sha256').update(queue).digest('hex'),
+    selected_todo_sha256: createHash('sha256').update(queue).digest('hex'),
+    selected_todo_first_line: queue.split('\n')[0]
+  })}\n`);
+
+  const selected = selectFirstSchedulableTodo(queue, { blockedPath: blocked, controllerFingerprint: 'new-controller' });
+
+  assert(selected.startsWith('- [ ] E-22b-release-artifact-provenance-binding:'), selected);
+});
+
+test('suppresses stable parent TODOs already blocked by the current controller', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-todo-evaluator-'));
+  const blocked = path.join(dir, 'blocked.jsonl');
+  const queue = `- [ ] E-22b-release-artifact-provenance-binding: Patch only \`scripts/release-supply-chain-artifact-evidence.mjs\` and \`scripts/guard-supply-chain-artifact-evidence.test.mjs\`:
+  Route: implementation.
+  Source TODO: 2026-10-04 review.
+  Depends on: <none>.
+  Completion condition: Supply-chain artifact evidence is bound to CI commit, workflow run, artifact SHA, platform, architecture, and clean source identity.
+  Forbidden changes: do not invent artifact hashes and do not declare Product Ready.
+  Verification: run \`pnpm --workspace-root guard:supply-chain-artifact-evidence:test\`.
+- [ ] E-22c-next: Patch only \`scripts/release-runtime-operational-evidence.mjs\`:
+  Route: implementation.
+  Source TODO: 2026-10-04 review.
+  Depends on: <none>.
+  Completion condition: next work remains schedulable after the parent is blocked by the current controller.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root guard:runtime-operational-evidence:test\`.`;
+  const firstBlock = queue.split('\n- [ ] E-22c-next:')[0];
+  fs.writeFileSync(blocked, `${JSON.stringify({
+    controller_fingerprint: 'current-controller',
+    queue_fingerprint: createHash('sha256').update(queue).digest('hex'),
+    selected_todo_sha256: createHash('sha256').update(firstBlock).digest('hex'),
+    selected_todo_first_line: firstBlock.split('\n')[0]
+  })}\n`);
+
+  const selected = selectFirstSchedulableTodo(queue, { blockedPath: blocked, controllerFingerprint: 'current-controller' });
+
+  assert(selected.startsWith('- [ ] E-22c-next:'), selected);
+});
+
 test('skips previously blocked generated leaf ids across queue fingerprints', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-todo-evaluator-'));
   const blocked = path.join(dir, 'blocked.jsonl');

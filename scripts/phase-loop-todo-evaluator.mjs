@@ -30,6 +30,17 @@ function isDerivedLeaf(block) {
   return block.split('\n').some((line) => line.trim().startsWith('Source TODO:'));
 }
 
+function sourceTodoId(block) {
+  const line = block
+    .split('\n')
+    .map((entry) => entry.trim())
+    .find((entry) => entry.startsWith('Source TODO:'));
+  if (!line) {
+    return '';
+  }
+  return line.slice('Source TODO:'.length).trim().split(':')[0]?.trim().replace(/[.,;]+$/u, '') ?? '';
+}
+
 function dependsOn(block) {
   for (const line of block.split('\n')) {
     const trimmed = line.trim();
@@ -182,12 +193,21 @@ export function needsTodoDecomposition(block) {
   return { needs_decomposition: false, reason: 'small_unscoped_todo' };
 }
 
-function readBlockedClaims(blockedPath, queueFingerprint) {
+function readBlockedClaims(blockedPath, queueFingerprint, controllerFingerprint = '') {
   if (!blockedPath || !fs.existsSync(blockedPath)) {
-    return { hashes: new Set(), firstLines: new Set(), stableIds: new Set(), stablePrefixes: new Set() };
+    return {
+      hashes: new Set(),
+      firstLines: new Set(),
+      currentControllerHashes: new Set(),
+      currentControllerFirstLines: new Set(),
+      stableIds: new Set(),
+      stablePrefixes: new Set()
+    };
   }
   const hashes = new Set();
   const firstLines = new Set();
+  const currentControllerHashes = new Set();
+  const currentControllerFirstLines = new Set();
   const stableIds = new Set();
   const stablePrefixes = new Set();
   for (const line of fs.readFileSync(blockedPath, 'utf8').split('\n')) {
@@ -198,9 +218,15 @@ function readBlockedClaims(blockedPath, queueFingerprint) {
       const record = JSON.parse(line);
       if (record.queue_fingerprint === queueFingerprint && typeof record.selected_todo_sha256 === 'string') {
         hashes.add(record.selected_todo_sha256);
+        if (controllerFingerprint && record.controller_fingerprint === controllerFingerprint) {
+          currentControllerHashes.add(record.selected_todo_sha256);
+        }
       }
       if (record.queue_fingerprint === queueFingerprint && typeof record.selected_todo_first_line === 'string' && record.selected_todo_first_line) {
         firstLines.add(record.selected_todo_first_line);
+        if (controllerFingerprint && record.controller_fingerprint === controllerFingerprint) {
+          currentControllerFirstLines.add(record.selected_todo_first_line);
+        }
       }
       if (typeof record.selected_todo_first_line === 'string' && record.selected_todo_first_line) {
         const blockedId = todoId(record.selected_todo_first_line);
@@ -225,13 +251,13 @@ function readBlockedClaims(blockedPath, queueFingerprint) {
       // Ignore corrupt historical blocked entries; the phase-loop guard remains fail-closed elsewhere.
     }
   }
-  return { hashes, firstLines, stableIds, stablePrefixes };
+  return { hashes, firstLines, currentControllerHashes, currentControllerFirstLines, stableIds, stablePrefixes };
 }
 
 export function selectFirstSchedulableTodo(text, options = {}) {
   const blocks = uncheckedTodoBlocks(text);
   const queueFingerprint = sha256Text(text);
-  const blocked = readBlockedClaims(options.blockedPath, queueFingerprint);
+  const blocked = readBlockedClaims(options.blockedPath, queueFingerprint, options.controllerFingerprint ?? '');
   const uncheckedIds = new Set(blocks.map(todoId).filter(Boolean));
   const blockedQueueDecompositionQueued = blocks.some((block) => todoId(block).startsWith('TODO-decompose-blocked-queue-'));
   let fallbackParentForRedecomposition = '';
@@ -276,7 +302,12 @@ export function selectFirstSchedulableTodo(text, options = {}) {
       dependencyBlockedIds.add(id);
       continue;
     }
-    if (!blocked.hashes.has(blockHash) && !blocked.firstLines.has(firstLine)) {
+    const blockedInCurrentQueue = blocked.hashes.has(blockHash) || blocked.firstLines.has(firstLine);
+    const blockedByCurrentController = blocked.currentControllerHashes.has(blockHash) || blocked.currentControllerFirstLines.has(firstLine);
+    const sourceId = sourceTodoId(block);
+    const sourceIsGeneratedParent = Boolean(productPrefix(sourceId));
+    const canRetryAfterControllerRepair = blockedInCurrentQueue && !blockedByCurrentController && !isExplicitBlockerTodo(block) && !sourceIsGeneratedParent && !id.includes('-leaf');
+    if (!blockedInCurrentQueue || canRetryAfterControllerRepair) {
       return block;
     }
     dependencyBlockedIds.add(id);
@@ -308,6 +339,9 @@ function parseArgs(argv) {
     } else if (key === '--blocked') {
       args.blocked = value;
       index += 1;
+    } else if (key === '--controller-fingerprint') {
+      args.controllerFingerprint = value;
+      index += 1;
     } else if (key === '--json') {
       args.json = true;
     }
@@ -323,7 +357,7 @@ if (isMainModule()) {
   const args = parseArgs(process.argv);
   const todoPath = args.todo ? path.resolve(defaultRepoRoot, args.todo) : path.join(defaultRepoRoot, '.brownie/todo.md');
   const text = fs.readFileSync(todoPath, 'utf8');
-  const result = evaluateTodoQueue(text, { blockedPath: args.blocked });
+  const result = evaluateTodoQueue(text, { blockedPath: args.blocked, controllerFingerprint: args.controllerFingerprint });
   if (args.mode === 'score' || args.mode === 'needs-decomposition' || args.json) {
     console.log(JSON.stringify(result, null, 2));
   } else {

@@ -408,7 +408,14 @@ todo_first_pending_item() {
   if [ ! -f "$PHASE_LOOP_TODO" ]; then
     return 0
   fi
-  node "$ROOT_DIR/scripts/phase-loop-todo-evaluator.mjs" select --todo "$PHASE_LOOP_TODO" --blocked "$TODO_BLOCKED_FILE"
+  node "$ROOT_DIR/scripts/phase-loop-todo-evaluator.mjs" select --todo "$PHASE_LOOP_TODO" --blocked "$TODO_BLOCKED_FILE" --controller-fingerprint "$(phase_loop_controller_fingerprint)"
+}
+
+phase_loop_controller_fingerprint() {
+  (
+    cd "$ROOT_DIR" || exit 70
+    shasum -a 256 phase-loop.sh scripts/phase-loop-todo-evaluator.mjs 2>/dev/null | shasum -a 256 | awk '{ print $1 }'
+  )
 }
 
 todo_first_raw_pending_item() {
@@ -1269,7 +1276,7 @@ record_blocked_todo_claim() {
   if [ ! -f "$TODO_CLAIM_FILE" ]; then
     return 0
   fi
-  python3 - "$TODO_CLAIM_FILE" "$TODO_BLOCKED_FILE" "$run_stamp" "$(now_utc)" <<'PY'
+  python3 - "$TODO_CLAIM_FILE" "$TODO_BLOCKED_FILE" "$run_stamp" "$(now_utc)" "$(phase_loop_controller_fingerprint)" <<'PY'
 import hashlib
 import json
 import os
@@ -1281,6 +1288,7 @@ claim_path = pathlib.Path(sys.argv[1])
 blocked_path = pathlib.Path(sys.argv[2])
 run_stamp = sys.argv[3]
 timestamp = sys.argv[4]
+controller_fingerprint = sys.argv[5]
 try:
     claim = json.loads(claim_path.read_text(encoding="utf-8"))
 except Exception:
@@ -1297,6 +1305,7 @@ record = {
     "queue_fingerprint": claim.get("queue_fingerprint", ""),
     "selected_todo_sha256": hashlib.sha256(selected.encode("utf-8")).hexdigest(),
     "selected_todo_first_line": selected.splitlines()[0] if selected.splitlines() else "",
+    "controller_fingerprint": controller_fingerprint,
 }
 blocked_path.parent.mkdir(parents=True, exist_ok=True)
 with open(blocked_path, "a", encoding="utf-8") as handle:
@@ -1399,7 +1408,7 @@ selected_todo_was_stably_blocked() {
   if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$TODO_BLOCKED_FILE" ]; then
     return 1
   fi
-  python3 - "$TODO_CLAIM_FILE" "$TODO_BLOCKED_FILE" <<'PY'
+  python3 - "$TODO_CLAIM_FILE" "$TODO_BLOCKED_FILE" "$(phase_loop_controller_fingerprint)" <<'PY'
 import json
 import pathlib
 import re
@@ -1409,10 +1418,22 @@ import sys
 
 claim_path = pathlib.Path(sys.argv[1])
 blocked_path = pathlib.Path(sys.argv[2])
+controller_fingerprint = sys.argv[3]
 
 def todo_id(first_line):
     match = re.match(r"^[ \t]*[-*][ \t]+\[[ \t]*\][ \t]+([^:\s]+)", first_line)
     return match.group(1).strip() if match else ""
+
+def product_prefix(value):
+    match = re.match(r"^([A-Z]+-\d+[a-z]?)", value or "")
+    return match.group(1) if match else ""
+
+def source_todo_id(block):
+    for line in block.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Source TODO:"):
+            return stripped[len("Source TODO:"):].strip().split(":", 1)[0].strip().rstrip(".,;")
+    return ""
 
 try:
     claim = json.loads(claim_path.read_text(encoding="utf-8"))
@@ -1425,8 +1446,10 @@ selected_first = selected.splitlines()[0] if selected.splitlines() else ""
 selected_id = todo_id(selected_first)
 if not selected_id:
     raise SystemExit(1)
+source_id = source_todo_id(selected)
+source_is_generated_parent = bool(product_prefix(source_id))
 stable_candidate = (
-    "Source TODO:" in selected
+    source_is_generated_parent
     or "-leaf" in selected_id
     or "-doc-sync-leaf" in selected_id
     or "Blocker:" in selected_first
@@ -1446,6 +1469,8 @@ for line in lines:
         continue
     blocked_first = str(record.get("selected_todo_first_line") or "")
     if todo_id(blocked_first) == selected_id:
+        if record.get("controller_fingerprint") != controller_fingerprint:
+            continue
         raise SystemExit(0)
 raise SystemExit(1)
 PY

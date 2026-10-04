@@ -734,7 +734,7 @@ prompt_all_blocked="$(mktemp)"
 todo_all_blocked="$(mktemp)"
 todo_breakdown_all_blocked="$(mktemp)"
 printf 'base prompt\n' > "$prompt_all_blocked"
-printf -- '- [ ] R-09: blocked boundary task\n' > "$todo_all_blocked"
+printf -- '- [ ] E-22b-generated-leaf: Patch only `scripts/release-supply-chain-artifact-evidence.mjs` to bind one artifact evidence field:\n  Route: implementation.\n  Source TODO: E-22b.\n  Depends on: <none>.\n  Completion condition: the bounded generated leaf either updates its scoped evidence field or is redecomposed after blocking.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`.\n' > "$todo_all_blocked"
 
 PHASE_LOOP_STATE_DIR="$state_all_blocked" \
 PHASE_LOOP_PROMPT="$prompt_all_blocked" \
@@ -802,7 +802,7 @@ prompt_blocked_decomposition="$(mktemp)"
 todo_blocked_decomposition="$(mktemp)"
 todo_breakdown_blocked_decomposition="$(mktemp)"
 printf 'base prompt\n' > "$prompt_blocked_decomposition"
-printf -- '- [ ] R-09: blocked boundary task\n' > "$todo_blocked_decomposition"
+printf -- '- [ ] E-22b-generated-leaf: Patch only `scripts/release-supply-chain-artifact-evidence.mjs` to bind one artifact evidence field:\n  Route: implementation.\n  Source TODO: E-22b.\n  Depends on: <none>.\n  Completion condition: the bounded generated leaf either updates its scoped evidence field or is redecomposed after blocking.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`.\n' > "$todo_blocked_decomposition"
 
 PHASE_LOOP_STATE_DIR="$state_blocked_decomposition" \
 PHASE_LOOP_PROMPT="$prompt_blocked_decomposition" \
