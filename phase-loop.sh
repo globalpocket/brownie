@@ -1550,11 +1550,22 @@ PY
         --run-stamp "$run_stamp" \
         --write-record 2>&1
     )"; then
-      write_repair_feedback "$run_stamp" "$completion_record_output" "" "" || true
-      write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      if printf '%s' "$completion_record_output" | python3 -c 'import json,sys
+try:
+    payload=json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+codes={str(error.get("code")) for error in payload.get("errors", []) if isinstance(error, dict) and error.get("code")}
+sys.exit(0 if codes & {"completion_record_missing_selected_targets","completion_record_target_not_changed","selected_target_not_changed"} else 1)
+'; then
+        write_repair_feedback "$run_stamp" "$completion_record_output" "" "" || true
+        write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+        printf '%s run=%s completed_todo_removal_refused=true repair_feedback_recorded=true guard=%s\n' "$(now_utc)" "$run_stamp" "$completion_record_output" >> "$SUPERVISOR_LOG"
+      else
+        printf '%s run=%s completed_todo_removal_refused=true repair_feedback_skipped_for_non_actionable_guard=true guard=%s\n' "$(now_utc)" "$run_stamp" "$completion_record_output" >> "$SUPERVISOR_LOG"
+      fi
       PHASE_LOOP_COMPLETED_TODO_REMOVAL_REVERTED=1
       PHASE_LOOP_COMPLETED_TODO_REMOVAL_REVERTED_DETAIL="$completion_record_output"
-      printf '%s run=%s completed_todo_removal_refused=true repair_feedback_recorded=true guard=%s\n' "$(now_utc)" "$run_stamp" "$completion_record_output" >> "$SUPERVISOR_LOG"
       return 76
     fi
     printf '%s run=%s todo_completion_record_written=true result=%s\n' "$(now_utc)" "$run_stamp" "$completion_record_output" >> "$SUPERVISOR_LOG"
