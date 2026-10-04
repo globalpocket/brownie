@@ -7082,12 +7082,20 @@ def read_json(path):
 claim = read_json(claim_path)
 feedback = read_json(feedback_path)
 claim_id = claim.get("claim_id")
-if not claim_id or feedback.get("claim_id") != claim_id:
+selected = str(claim.get("selected_todo") or "")
+selected_first_line = selected.splitlines()[0] if selected.splitlines() else ""
+feedback_first_line = str(feedback.get("selected_todo_first_line") or "")
+if not claim_id:
+    print("clear:claim_mismatch")
+    raise SystemExit(0)
+if feedback.get("claim_id") != claim_id:
+    if selected_first_line and feedback_first_line == selected_first_line:
+        print("keep")
+        raise SystemExit(0)
     print("clear:claim_mismatch")
     raise SystemExit(0)
 
-selected = str(claim.get("selected_todo") or "")
-first_line = selected.splitlines()[0] if selected.splitlines() else ""
+first_line = selected_first_line
 route_match = re.search(r"(?im)^\s*Route:\s*([^.:\n]+)", selected)
 route = route_match.group(1).strip().lower() if route_match else ""
 scope_match = re.search(r"\b(?:Patch|Create) only\b(?P<scope>[^\n:]+)", first_line)
@@ -7204,7 +7212,14 @@ except Exception:
     sys.exit(1)
 
 claim_id = claim.get("claim_id")
-sys.exit(0 if claim_id and feedback.get("claim_id") == claim_id else 1)
+selected = str(claim.get("selected_todo") or "")
+selected_first_line = selected.splitlines()[0] if selected.splitlines() else ""
+feedback_first_line = str(feedback.get("selected_todo_first_line") or "")
+if claim_id and feedback.get("claim_id") == claim_id:
+    sys.exit(0)
+if selected_first_line and feedback_first_line == selected_first_line:
+    sys.exit(0)
+sys.exit(1)
 PY
 }
 
@@ -8914,7 +8929,12 @@ repair_feedback = {}
 if repair_feedback_path.exists() and claim:
     try:
         candidate = json.loads(repair_feedback_path.read_text(encoding="utf-8"))
-        if candidate.get("claim_id") == claim.get("claim_id"):
+        candidate_first_line = str(candidate.get("selected_todo_first_line") or "")
+        selected_first_line_for_feedback = selected_todo.splitlines()[0] if selected_todo.splitlines() else ""
+        if (
+            candidate.get("claim_id") == claim.get("claim_id")
+            or (selected_first_line_for_feedback and candidate_first_line == selected_first_line_for_feedback)
+        ):
             repair_feedback = candidate
     except Exception:
         repair_feedback = {}
