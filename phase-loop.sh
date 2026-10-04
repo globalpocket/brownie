@@ -12804,6 +12804,12 @@ supervise() {
         printf '%s owner_blockers_only observed; exiting supervisor\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
         exit 0
       fi
+      if [ "$run_status" -eq 76 ] && active_todo_claim_exists && active_repair_feedback_matches_claim; then
+        CONSECUTIVE_FAILURES=0
+        printf '%s repair_feedback_retry_scheduled run_status=%s\n' "$(now_utc)" "$run_status" >> "$SUPERVISOR_LOG"
+        interruptible_sleep "$PHASE_LOOP_INTERVAL_SECONDS" || true
+        continue
+      fi
       CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
       backoff=$((PHASE_LOOP_FAILURE_BACKOFF_SECONDS * CONSECUTIVE_FAILURES))
       if [ "$backoff" -gt "$PHASE_LOOP_MAX_FAILURE_BACKOFF_SECONDS" ]; then
