@@ -601,7 +601,8 @@ assert progress_state["classification"] == "non_progress_success", progress_stat
 assert progress_state["meaningful_progress"] is False, progress_state
 assert progress_state["progress_projection"]["closure"] == "budget_exhausted", progress_state
 assert progress_state["progress_projection"]["next_action"] == "inspect_progress_overview", progress_state
-assert prompt_meta["selected_todo_complete"] is True, prompt_meta
+assert prompt_meta["selected_todo_complete"] is False, prompt_meta
+assert prompt_meta["selected_todo_completion_reason"] == "selected_todo_still_unchecked", prompt_meta
 assert prompt_meta["context_hints"][:2] == [
     "scripts/release-runtime-operational-evidence.mjs",
     "docs/architecture/local-release-targets.example.json",
@@ -1269,7 +1270,8 @@ import sys
 meta = json.load(open(sys.argv[1], encoding="utf-8"))
 assert meta["todo_snapshot_truncated"] is True, meta
 assert meta["base_prompt_snapshot_truncated"] is True, meta
-assert meta["selected_todo_complete"] is True, meta
+assert meta["selected_todo_complete"] is False, meta
+assert meta["selected_todo_completion_reason"] == "selected_todo_still_unchecked", meta
 PY
 
 state_retention="$(mktemp -d)"

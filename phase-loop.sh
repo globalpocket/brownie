@@ -8741,6 +8741,34 @@ def infer_context_hints(todo):
             deduped.append(hint)
     return deduped[:6]
 
+def todo_block_id(block):
+    first = block.splitlines()[0].strip() if block.splitlines() else ""
+    title = re.sub(r"^(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+", "", first)
+    return title.split(":", 1)[0].strip()
+
+def todo_blocks_by_checkbox(text, checked):
+    marker = r"[xX]" if checked else r"\s"
+    starts = [
+        match.start()
+        for match in re.finditer(rf"^(?:[-*]|\d+[.)])\s+\[{marker}\]\s+", text or "", re.M)
+    ]
+    return [
+        (text[start:(starts[index + 1] if index + 1 < len(starts) else len(text))]).rstrip()
+        for index, start in enumerate(starts)
+    ]
+
+def selected_todo_completion_state(selected, live_todo_text):
+    selected_id = todo_block_id(selected)
+    if not selected_id:
+        return False, "unknown_selected_todo_id"
+    for block in todo_blocks_by_checkbox(live_todo_text, checked=False):
+        if todo_block_id(block) == selected_id:
+            return False, "selected_todo_still_unchecked"
+    for block in todo_blocks_by_checkbox(live_todo_text, checked=True):
+        if todo_block_id(block) == selected_id:
+            return True, "selected_todo_checked"
+    return True, "selected_todo_absent_from_live_queue"
+
 def extract_const_object_blocks(text, const_name):
     blocks = []
     needle = f"const {const_name} = "
@@ -10228,6 +10256,7 @@ with open(output_path, "w", encoding="utf-8") as handle:
     os.fsync(handle.fileno())
 os.chmod(output_path, 0o600)
 
+selected_todo_complete, selected_todo_completion_reason = selected_todo_completion_state(selected_todo, todo_text)
 metadata = {
     "schema_version": 1,
     "created_at": timestamp,
@@ -10237,7 +10266,8 @@ metadata = {
     "prompt_max_bytes": prompt_max_bytes,
     "selected_todo_bytes": len(selected_todo.encode("utf-8")),
     "selected_todo_sha256": sha256_text(selected_todo),
-    "selected_todo_complete": True,
+    "selected_todo_complete": selected_todo_complete,
+    "selected_todo_completion_reason": selected_todo_completion_reason,
     "bdk_state": bdk_state,
     "llm_route": llm_route,
     "context_hints": context_hints,
