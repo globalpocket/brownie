@@ -1550,9 +1550,11 @@ PY
         --run-stamp "$run_stamp" \
         --write-record 2>&1
     )"; then
+      write_repair_feedback "$run_stamp" "$completion_record_output" "" "" || true
+      write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
       PHASE_LOOP_COMPLETED_TODO_REMOVAL_REVERTED=1
       PHASE_LOOP_COMPLETED_TODO_REMOVAL_REVERTED_DETAIL="$completion_record_output"
-      printf '%s run=%s completed_todo_removal_refused=true guard=%s\n' "$(now_utc)" "$run_stamp" "$completion_record_output" >> "$SUPERVISOR_LOG"
+      printf '%s run=%s completed_todo_removal_refused=true repair_feedback_recorded=true guard=%s\n' "$(now_utc)" "$run_stamp" "$completion_record_output" >> "$SUPERVISOR_LOG"
       return 76
     fi
     printf '%s run=%s todo_completion_record_written=true result=%s\n' "$(now_utc)" "$run_stamp" "$completion_record_output" >> "$SUPERVISOR_LOG"
