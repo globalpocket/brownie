@@ -1422,3 +1422,37 @@ Verification ledger:
 History:
 
 - 2026-10-04T01:01:18Z: Applied deterministic no_eligible_task fallback during run 20261004T010116Z; the checked parent remains in the queue so existing downstream dependencies still have a durable dependency anchor, and the implementation work moves to ordered single-target leaves.
+
+## E-22 Runtime release artifact evidence binding
+
+Parent TODO: 2026-10-04 review: Release Workflow success must be tied to Runtime artifacts, executable evidence, and Release Contract trace binding.
+
+Dependency graph:
+
+- E-22a-runtime-release-workflow-artifacts: <none>
+- E-22b-release-artifact-provenance-binding: E-22a-runtime-release-workflow-artifacts
+- E-22c-runtime-artifact-e2e-evidence: E-22b-release-artifact-provenance-binding
+- E-22d-runtime-stateful-soak-evidence: E-22c-runtime-artifact-e2e-evidence
+- E-22e-release-contract-trace-binding-guard: E-22d-runtime-stateful-soak-evidence
+- E-22f-release-contract-audit-doc-sync: E-22e-release-contract-trace-binding-guard
+- E-22g-final-judgment-manifest-doc-sync: E-22f-release-contract-audit-doc-sync
+
+Verification ledger:
+
+- E-22a-runtime-release-workflow-artifacts: `pnpm --workspace-root check`
+- E-22b-release-artifact-provenance-binding: `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-22c-runtime-artifact-e2e-evidence: `pnpm --workspace-root release:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`
+- E-22d-runtime-stateful-soak-evidence: `pnpm --workspace-root release:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`
+- E-22e-release-contract-trace-binding-guard: `pnpm --workspace-root guard:release-contract:test` and `pnpm --workspace-root guard:release-contract`
+- E-22f-release-contract-audit-doc-sync: `pnpm --workspace-root guard:release-contract` and `pnpm --workspace-root guard:runtime-release-readiness`
+- E-22g-final-judgment-manifest-doc-sync: `pnpm --workspace-root guard:phase-value`, `pnpm --workspace-root guard:release-contract`, and `pnpm --workspace-root guard:runtime-release-readiness`
+
+Quality rubric:
+
+- E-22 leaves must keep Runtime Product Ready false until executable evidence passes.
+- E-22 leaves must not require Enterprise/customer production deployment credentials.
+- E-22 leaves must bind workflow success to actual Runtime artifacts, artifact hashes, clean source identity, and evidence trace fields instead of documenting success by assertion.
+
+History:
+
+- 2026-10-04T13:40:00Z: Added from external review of main 3c5e622; existing owner-only E-20i blocker was not sufficient because Brownie-owned executable Release evidence work remains.
