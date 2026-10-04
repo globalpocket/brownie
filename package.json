@@ -80,6 +80,7 @@
     "phase-loop:supervisor-diagnose": "node scripts/phase-loop-supervisor-diagnose.mjs --write",
     "phase-loop:supervisor-diagnose:test": "node --test scripts/phase-loop-supervisor-diagnose.test.mjs",
     "phase-loop:supervisor-control": "node scripts/phase-loop-supervisor-control.mjs --repair",
+    "phase-loop:supervisor-control:test": "node --test scripts/phase-loop-supervisor-control.test.mjs",
     "phase-loop:claim-smoke": "bash scripts/phase-loop-claim-smoke.test.sh",
     "phase-loop:binary-freshness": "./phase-loop.sh check-binary-freshness",
     "phase-loop:decomposition-adversarial-real-llm": "node scripts/phase-loop-decomposition-adversarial-real-llm.mjs",

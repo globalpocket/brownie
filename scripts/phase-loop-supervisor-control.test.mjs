@@ -17,12 +17,12 @@ const runtimeEvidenceTodo = `- [ ] E-21c-runtime-operational-evidence-impl-2-tar
   Forbidden changes: do not remove assertions or weaken the guard/test contract.
   Verification: run \`pnpm --workspace-root release:runtime-operational-evidence:test\`.`;
 
-const ownerBlockerTodo = `- [ ] E-20i-release-ops-blocker: Blocker: External release engineering ownership required for CI/CD pipeline configuration and production deployment credentials.
+const ownerBlockerTodo = `- [ ] E-20i-runtime-release-ops-blocker: Blocker: Owner-controlled Runtime Release Ops authority is required for clean CI build, artifact upload/provenance, and GitHub Release publication.
   Route: blocker.
-  Source TODO: E-20i-release-ops-blockers.
+  Source TODO: E-20i-runtime-release-ops-blockers.
   Depends on: <none>.
-  Completion condition: release engineering team provides deployment credentials.
-  Forbidden changes: do not implement or create external credentials.
+  Completion condition: release engineering owner provides or documents the Runtime Release Ops authority needed for clean CI builds, artifact upload/provenance binding, and GitHub Release publication. Customer or Enterprise production deployment credentials are explicitly out of Runtime Product Ready scope and must not block the OSS Runtime release.
+  Forbidden changes: do not attempt to configure external CI/CD, create credentials, publish a GitHub Release, or request customer/Enterprise production deployment credentials.
   Verification: inspect/blocker/fail-closed.`;
 
 function makeRepo() {
@@ -244,13 +244,13 @@ ${ownerBlockerTodo}
   fs.writeFileSync(path.join(repo, '.brownie/todo-breakdown.md'), `# breakdown
 
 Dependency graph:
-- E-20i-release-ops-blocker: <none>
+- E-20i-runtime-release-ops-blocker: <none>
 
 Verification ledger:
-- E-20i-release-ops-blocker: inspect/blocker/fail-closed
+- E-20i-runtime-release-ops-blocker: inspect/blocker/fail-closed
 
 Quality rubric:
-- E-20i-release-ops-blocker: explicit owner blocker
+- E-20i-runtime-release-ops-blocker: explicit owner blocker
 `);
   execFileSync('git', ['add', '.brownie/todo.md', '.brownie/todo-breakdown.md'], { cwd: repo });
   execFileSync('git', ['commit', '-m', 'todo preamble fixture'], { cwd: repo, stdio: 'ignore' });
@@ -270,7 +270,7 @@ Quality rubric:
   assert.match(todo, /# Brownie TODO Queue/u);
   assert.match(todo, /Operator note that must be preserved/u);
   assert.match(todo, /E-21c-completed-context/u);
-  assert.match(todo, /E-20i-release-ops-blocker/u);
+  assert.match(todo, /E-20i-runtime-release-ops-blocker/u);
 });
 
 test('removes live child TODOs whose source parent is already checked complete', () => {
@@ -297,9 +297,9 @@ test('removes live child TODOs whose source parent is already checked complete',
   Completion condition: dependent child should not remain live after parent completion.
   Forbidden changes: do not weaken guards/tests.
   Verification: run \`pnpm --workspace-root release:runtime-operational-evidence:test\`.`;
-  const ownerBlocker = `- [ ] E-20i-release-ops-blocker: Blocker: External release engineering ownership required.
+  const ownerBlocker = `- [ ] E-20i-runtime-release-ops-blocker: Blocker: External release engineering ownership required.
   Route: blocker.
-  Source TODO: E-20i-release-ops-blockers.
+  Source TODO: E-20i-runtime-release-ops-blockers.
   Depends on: <none>.
   Completion condition: owner provides evidence.
   Forbidden changes: do not invent credentials.
@@ -310,17 +310,17 @@ test('removes live child TODOs whose source parent is already checked complete',
 Parent TODO: E-21c-owner-governance-reproducibility-impl-7
 
 Dependency graph:
-- E-20i-release-ops-blocker: <none>
+- E-20i-runtime-release-ops-blocker: <none>
 - E-21c-owner-governance-reproducibility-impl-7-target-01: <none>
 - E-21c-owner-governance-reproducibility-impl-7-target-02: E-21c-owner-governance-reproducibility-impl-7-target-01
 
 Verification ledger:
-- E-20i-release-ops-blocker: inspect/blocker/fail-closed
+- E-20i-runtime-release-ops-blocker: inspect/blocker/fail-closed
 - E-21c-owner-governance-reproducibility-impl-7-target-01: run \`pnpm --workspace-root release:runtime-operational-evidence:test\`
 - E-21c-owner-governance-reproducibility-impl-7-target-02: run \`pnpm --workspace-root release:runtime-operational-evidence:test\`
 
 Quality rubric:
-- E-20i-release-ops-blocker: explicit owner blocker
+- E-20i-runtime-release-ops-blocker: explicit owner blocker
 - E-21c-owner-governance-reproducibility-impl-7-target-01: bounded child
 - E-21c-owner-governance-reproducibility-impl-7-target-02: bounded child
 `);
@@ -347,7 +347,7 @@ Quality rubric:
   );
   assert.doesNotMatch(todo, /E-21c-owner-governance-reproducibility-impl-7-target-01/u);
   assert.doesNotMatch(todo, /E-21c-owner-governance-reproducibility-impl-7-target-02/u);
-  assert.match(todo, /E-20i-release-ops-blocker/u);
+  assert.match(todo, /E-20i-runtime-release-ops-blocker/u);
   assert.equal(result.repair.post_repair_validation.ok, true, JSON.stringify(result, null, 2));
 });
 
@@ -357,16 +357,16 @@ test('does not restart phase-loop when only owner blockers remain but dirty deli
   fs.writeFileSync(path.join(repo, '.brownie/todo.md'), `${ownerBlockerTodo}\n`);
   fs.writeFileSync(path.join(repo, '.brownie/todo-breakdown.md'), `# breakdown
 
-Parent TODO: E-20i-release-ops-blocker
+Parent TODO: E-20i-runtime-release-ops-blocker
 
 Dependency graph:
-- E-20i-release-ops-blocker: <none>
+- E-20i-runtime-release-ops-blocker: <none>
 
 Verification ledger:
-- E-20i-release-ops-blocker: inspect/blocker/fail-closed
+- E-20i-runtime-release-ops-blocker: inspect/blocker/fail-closed
 
 Quality rubric:
-- E-20i-release-ops-blocker: explicit owner blocker
+- E-20i-runtime-release-ops-blocker: explicit owner blocker
 `);
   execFileSync('git', ['add', '.brownie/todo.md', '.brownie/todo-breakdown.md'], { cwd: repo });
   execFileSync('git', ['commit', '-m', 'owner blocker fixture'], { cwd: repo, stdio: 'ignore' });

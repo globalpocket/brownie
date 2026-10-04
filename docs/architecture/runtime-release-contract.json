@@ -444,6 +444,14 @@
         "command": "pnpm --workspace-root phase-loop:todo-evaluator:test"
       },
       {
+        "id": "phase_loop_supervisor_diagnose_test",
+        "command": "pnpm --workspace-root phase-loop:supervisor-diagnose:test"
+      },
+      {
+        "id": "phase_loop_supervisor_control_test",
+        "command": "pnpm --workspace-root phase-loop:supervisor-control:test"
+      },
+      {
         "id": "todo_decomposition_guard",
         "command": "pnpm --workspace-root guard:todo-decomposition"
       },

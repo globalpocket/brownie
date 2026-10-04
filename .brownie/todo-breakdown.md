@@ -1052,15 +1052,15 @@ Parent TODO: E-20i-release-ops-blockers-6ffca1beb681
 
 Dependency graph:
 - E-20h-release-evidence-script: <none>
-- E-20i-release-ops-blocker: <none>
+- E-20i-runtime-release-ops-blocker: <none>
 
 Verification ledger:
 - E-20h-release-evidence-script: `pnpm --workspace-root guard:release-gate`
-- E-20i-release-ops-blocker: inspect/blocker/fail-closed owner-provided release ops environment configuration.
+- E-20i-runtime-release-ops-blocker: inspect/blocker/fail-closed owner-provided Runtime Release Ops environment configuration.
 
 Quality rubric:
 - E-20h-release-evidence-script: bounded implementation leaf with existing package-script verification.
-- E-20i-release-ops-blocker: explicit blocker, not an implementation route.
+- E-20i-runtime-release-ops-blocker: explicit Runtime Release Ops blocker, not an implementation route; customer/Enterprise production deployment credentials are out of Runtime Product Ready scope.
 
 History:
 - 2026-10-02T10:16:40Z: Recorded Brownie-generated release-ops decomposition leaves after repairing route and verification contract drift.
@@ -1114,7 +1114,7 @@ Dependency graph:
 - E-21c-provenance-binding-impl-6: E-21c-runtime-operational-evidence-impl-5
 - E-21c-owner-governance-reproducibility-impl-7: E-21c-provenance-binding-impl-6
 - E-21c-document-generation-sync-impl-8: E-21c-owner-governance-reproducibility-impl-7
-- E-20i-release-ops-blocker: <none>
+- E-20i-runtime-release-ops-blocker: <none>
 
 Verification ledger:
 - E-21c-clean-release-workspace-impl-1: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`.
@@ -1125,7 +1125,7 @@ Verification ledger:
 - E-21c-provenance-binding-impl-6: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`.
 - E-21c-owner-governance-reproducibility-impl-7: run `pnpm --workspace-root release:owner-governance-evidence:test` and `pnpm --workspace-root guard:owner-governance-evidence`.
 - E-21c-document-generation-sync-impl-8: run `pnpm --workspace-root guard:release-evidence-semantic-consistency:test` and `pnpm --workspace-root guard:release-evidence-semantic-consistency`.
-- E-20i-release-ops-blocker: inspect/blocker/fail-closed until release engineering team provides evidence of pipeline access or documented requirements.
+- E-20i-runtime-release-ops-blocker: inspect/blocker/fail-closed until Release Ops owner provides evidence of clean CI build, artifact upload/provenance binding, and GitHub Release publication authority.
 
 Quality rubric:
 - E-21c-clean-release-workspace-impl-1: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
@@ -1136,7 +1136,7 @@ Quality rubric:
 - E-21c-provenance-binding-impl-6: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
 - E-21c-owner-governance-reproducibility-impl-7: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
 - E-21c-document-generation-sync-impl-8: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
-- E-20i-release-ops-blocker: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-20i-runtime-release-ops-blocker: explicit Runtime Release Ops blocker; Enterprise/customer deployment credentials are non-Runtime and must not be required for OSS Runtime release readiness.
 
 History:
 

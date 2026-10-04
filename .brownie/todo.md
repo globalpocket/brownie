@@ -1,10 +1,10 @@
-- [ ] E-20i-release-ops-blocker: Blocker: External release engineering ownership required for CI/CD pipeline configuration and production deployment credentials.
+- [ ] E-20i-runtime-release-ops-blocker: Blocker: Owner-controlled Runtime Release Ops environment is required for clean CI build, artifact upload/provenance, and GitHub Release publication.
   Route: blocker.
-  Source TODO: E-20i-release-ops-blockers-1c5120ce46c2.
+  Source TODO: E-20i-release-ops-blocker.
   Depends on: <none>.
-  Completion condition: Release engineering team provides CI/CD pipeline access and deployment credentials or documents owner-controlled requirements.
-  Forbidden changes: do not attempt to configure external CI/CD or create deployment credentials.
-  Verification: inspect/blocker/fail-closed until release engineering team provides evidence of pipeline access or documented requirements.
+  Completion condition: Release engineering owner provides or documents the Runtime Release Ops authority needed for clean CI builds, artifact upload/provenance binding, and GitHub Release publication. Customer or Enterprise production deployment credentials are explicitly out of Runtime Product Ready scope and must not block the OSS Runtime release.
+  Forbidden changes: do not attempt to configure external CI/CD, create credentials, publish a GitHub Release, or request customer/Enterprise production deployment credentials.
+  Verification: inspect/blocker/fail-closed until Release Ops owner provides evidence of clean CI/artifact/provenance/publication authority or documents the remaining owner-controlled Runtime Release requirement.
 
 - [x] E-21c-clean-release-workspace-impl-1: Patch only `scripts/release-supply-chain-artifact-evidence.mjs` and `scripts/guard-supply-chain-artifact-evidence.test.mjs` to replace Brownie-owned blocker E-21c-release-ops-todo-split-clean-release-workspace with executable Release evidence handling:
   Route: implementation.

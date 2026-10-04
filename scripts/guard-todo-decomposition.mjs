@@ -351,6 +351,24 @@ function validateQuality(block, errors, options = {}) {
   if (route === 'release-ops' && verificationCommandValues(block).length > 0) {
     errors.push(`${owner}: release-ops leaves should use bounded inspect/blocker/fail-closed verification instead of local implementation commands.`);
   }
+  if (route === 'blocker' || route === 'release-ops') {
+    const credentialRequirementLine = block
+      .toLowerCase()
+      .split(/[\n.;]+/u)
+      .map((line) => line.trim())
+      .find((line) => {
+        if (!/(?:customer|enterprise|production)?\s*deployment\s+credentials/u.test(line)) {
+          return false;
+        }
+        if (line.includes('forbidden changes:') || line.includes('do not ')) {
+          return false;
+        }
+        return /\b(?:access|configuration|configure|configured|need|needed|needs|provide|provided|provides|required|requires|require)\b/u.test(line);
+      });
+    if (credentialRequirementLine) {
+      errors.push(`${owner}: Runtime Release blockers must not require customer/Enterprise production deployment credentials; split Enterprise deployment out of Runtime Product Ready scope.`);
+    }
+  }
   if (scopes.length > 0 && forbidden.includes('unrelated files') === false && forbidden.includes('do not ') === false) {
     errors.push(`${owner}: Forbidden changes must explicitly constrain unrelated edits.`);
   }

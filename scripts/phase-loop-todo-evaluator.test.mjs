@@ -249,13 +249,13 @@ test('unblocked explicit blocker is not selected over schedulable implementation
 });
 
 test('route blocker TODOs are explicit blockers and are not selected over implementation work', () => {
-  const queue = `- [ ] E-20i-release-ops-blocker: Blocker: External release engineering ownership required for CI/CD pipeline configuration and production deployment credentials.
+  const queue = `- [ ] E-20i-runtime-release-ops-blocker: Blocker: Owner-controlled Runtime Release Ops authority is required for clean CI build, artifact upload/provenance, and GitHub Release publication.
   Route: blocker.
   Source TODO: TODO-decompose-release-ops-blockers.
   Depends on: <none>.
-  Completion condition: Release engineering team provides CI/CD pipeline access and deployment credentials or documents owner-controlled requirements.
-  Forbidden changes: do not attempt to configure external CI/CD or create deployment credentials.
-  Verification: inspect/blocker/fail-closed until release engineering team provides evidence of pipeline access or documented requirements.
+  Completion condition: Release engineering owner provides or documents the Runtime Release Ops authority needed for clean CI builds, artifact upload/provenance binding, and GitHub Release publication. Customer or Enterprise production deployment credentials are explicitly out of Runtime Product Ready scope and must not block the OSS Runtime release.
+  Forbidden changes: do not attempt to configure external CI/CD, create credentials, publish a GitHub Release, or request customer/Enterprise production deployment credentials.
+  Verification: inspect/blocker/fail-closed until Release Ops owner provides evidence of clean CI/artifact/provenance/publication authority or documents the remaining owner-controlled Runtime Release requirement.
 
 - [ ] E-20h-release-evidence-script: Patch only \`scripts/release-gate.mjs\` to add deterministic release evidence checks:
   Route: implementation.
@@ -279,13 +279,13 @@ test('distinguishes Brownie-owned release-ops blockers from external authority b
   Completion condition: Release Ops has a concrete fail-closed evidence item for Golden Journey evidence, and Product Ready remains false until that evidence is produced and bound to the current release commit.
   Forbidden changes: do not patch implementation files for this Release Ops blocker, do not invent evidence values, and do not declare Runtime Product Ready.
   Verification: blocker: Release Ops evidence remains fail-closed until this item is replaced by generated evidence or by a bounded implementation TODO with existing verification.`;
-  const externalAuthority = `- [ ] E-20i-release-ops-blocker: Blocker: External release engineering ownership required for CI/CD pipeline configuration and production deployment credentials.
+  const externalAuthority = `- [ ] E-20i-runtime-release-ops-blocker: Blocker: Owner-controlled Runtime Release Ops authority is required for clean CI build, artifact upload/provenance, and GitHub Release publication.
   Route: release-ops.
   Source TODO: TODO-decompose-release-ops-blockers.
   Depends on: <none>.
-  Completion condition: Owner provides CI/CD pipeline access and deployment credentials or documents owner-controlled requirements.
-  Forbidden changes: do not attempt to configure external CI/CD or create deployment credentials.
-  Verification: inspect/blocker/fail-closed until release engineering team provides evidence of pipeline access or documented requirements.`;
+  Completion condition: Release engineering owner provides or documents the Runtime Release Ops authority needed for clean CI builds, artifact upload/provenance binding, and GitHub Release publication. Customer or Enterprise production deployment credentials are explicitly out of Runtime Product Ready scope and must not block the OSS Runtime release.
+  Forbidden changes: do not attempt to configure external CI/CD, create credentials, publish a GitHub Release, or request customer/Enterprise production deployment credentials.
+  Verification: inspect/blocker/fail-closed until Release Ops owner provides evidence of clean CI/artifact/provenance/publication authority or documents the remaining owner-controlled Runtime Release requirement.`;
 
   assert.equal(isExplicitBlockerTodo(brownieOwned), true);
   assert.equal(isBrownieOwnedBlockerTodo(brownieOwned), true);

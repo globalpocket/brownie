@@ -106,6 +106,11 @@ export function isBrownieOwnedBlockerTodo(block) {
   const lower = block.toLowerCase();
   const externalAuthoritySignals = [
     'external release engineering ownership',
+    'owner-controlled runtime release ops',
+    'runtime release ops authority',
+    'github release publication',
+    'artifact upload/provenance',
+    'release ops owner',
     'deployment credentials',
     'production deployment credentials',
     'provided by repository owner',

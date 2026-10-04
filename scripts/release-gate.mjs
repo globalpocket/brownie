@@ -333,6 +333,18 @@ export const requiredReleaseGateCommands = [
     args: ['--workspace-root', 'phase-loop:todo-evaluator:test']
   },
   {
+    id: 'phase_loop_supervisor_diagnose_test',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'phase-loop:supervisor-diagnose:test']
+  },
+  {
+    id: 'phase_loop_supervisor_control_test',
+    category: 'brownie_release_guard',
+    command: 'pnpm',
+    args: ['--workspace-root', 'phase-loop:supervisor-control:test']
+  },
+  {
     id: 'todo_decomposition_guard',
     category: 'brownie_release_guard',
     command: 'pnpm',

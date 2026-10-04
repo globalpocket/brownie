@@ -548,13 +548,13 @@ test('selects first schedulable TODO after dependency blockers', () => {
 });
 
 test('accepts explicit blocker route and skips it for schedulable implementation work', () => {
-  const text = `- [ ] E-20i-release-ops-blocker: Blocker: External release engineering ownership required for CI/CD pipeline configuration and production deployment credentials.
+  const text = `- [ ] E-20i-runtime-release-ops-blocker: Blocker: Owner-controlled Runtime Release Ops authority is required for clean CI build, artifact upload/provenance, and GitHub Release publication.
   Route: blocker.
   Source TODO: TODO-decompose-release-ops-blockers.
   Depends on: <none>.
-  Completion condition: Release engineering team provides CI/CD pipeline access and deployment credentials or documents owner-controlled requirements.
-  Forbidden changes: do not attempt to configure external CI/CD or create deployment credentials.
-  Verification: inspect/blocker/fail-closed until release engineering team provides evidence of pipeline access or documented requirements.
+  Completion condition: Release engineering owner provides or documents the Runtime Release Ops authority needed for clean CI builds, artifact upload/provenance binding, and GitHub Release publication. Customer or Enterprise production deployment credentials are explicitly out of Runtime Product Ready scope and must not block the OSS Runtime release.
+  Forbidden changes: do not attempt to configure external CI/CD, create credentials, publish a GitHub Release, or request customer/Enterprise production deployment credentials.
+  Verification: inspect/blocker/fail-closed until Release Ops owner provides evidence of clean CI/artifact/provenance/publication authority or documents the remaining owner-controlled Runtime Release requirement.
 - [ ] E-20h-release-evidence-script: Patch only \`scripts/release-gate.mjs\` to add deterministic release evidence checks:
   Route: implementation.
   Source TODO: TODO-decompose-release-ops-blockers.
@@ -567,16 +567,44 @@ test('accepts explicit blocker route and skips it for schedulable implementation
     packageScripts: new Set(['guard:release-gate']),
     breakdownText: `Parent TODO: TODO-decompose-release-ops-blockers
 Dependency graph:
-- E-20i-release-ops-blocker: <none>
+- E-20i-runtime-release-ops-blocker: <none>
 - E-20h-release-evidence-script: <none>
 Verification ledger:
-- E-20i-release-ops-blocker: inspect/blocker/fail-closed
+- E-20i-runtime-release-ops-blocker: inspect/blocker/fail-closed
 - E-20h-release-evidence-script: \`pnpm --workspace-root guard:release-gate\`
 Quality rubric:
-- E-20i-release-ops-blocker: explicit external blocker not runnable by the worker.
+- E-20i-runtime-release-ops-blocker: explicit external blocker not runnable by the worker.
 - E-20h-release-evidence-script: bounded implementation leaf.`
   }), []);
   assert.equal(nextSchedulableTodoId(text), 'E-20h-release-evidence-script');
+});
+
+test('rejects Runtime Release blockers that require Enterprise deployment credentials as release criteria', () => {
+  const text = `- [ ] E-20i-runtime-release-ops-blocker: Blocker: External release engineering ownership required for CI/CD pipeline configuration and production deployment credentials.
+  Route: blocker.
+  Source TODO: TODO-decompose-release-ops-blockers.
+  Depends on: <none>.
+  Completion condition: Release engineering team provides CI/CD pipeline access and deployment credentials or documents owner-controlled requirements.
+  Forbidden changes: do not attempt to configure external CI/CD or create deployment credentials.
+  Verification: inspect/blocker/fail-closed until release engineering team provides evidence of pipeline access or documented requirements.`;
+
+  const errors = validateTodoDecompositionText(text);
+
+  assert(errors.some((error) => error.includes('Runtime Release blockers must not require customer/Enterprise production deployment credentials')), errors.join('\n'));
+});
+
+test('rejects contradictory deployment credential requirements even with non-blocking disclaimer', () => {
+  const text = `- [ ] E-20i-runtime-release-ops-blocker: Blocker: Owner-controlled Runtime Release Ops environment is required for clean CI build, artifact upload/provenance, and GitHub Release publication.
+  Route: blocker.
+  Source TODO: E-20i-release-ops-blocker.
+  Depends on: <none>.
+  Completion condition: Production deployment credentials are required for Runtime Product Ready; however they must not block the OSS Runtime release.
+  Forbidden changes: do not attempt to configure external CI/CD, create credentials, publish a GitHub Release, or request customer/Enterprise production deployment credentials.
+  Verification: inspect/blocker/fail-closed until Release Ops owner provides evidence of clean CI/artifact/provenance/publication authority or documents the remaining owner-controlled Runtime Release requirement.`;
+
+  const errors = validateTodoDecompositionText(text);
+
+  assert(errors.some((error) => error.includes('Runtime Release blockers must not require customer/Enterprise production deployment credentials')), errors.join('\n'));
 });
 
 test('adversarial decomposition fixtures fail for the expected reason', () => {

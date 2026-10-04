@@ -189,6 +189,8 @@ const validPackageJson = {
     'release:integrity-verify': 'node scripts/release-integrity-verify.mjs',
     'release:owner-governance-evidence': 'node scripts/release-owner-governance-evidence.mjs',
     'release:owner-governance-evidence:test': 'node --test scripts/release-owner-governance-evidence.test.mjs',
+    'phase-loop:supervisor-diagnose:test': 'node --test scripts/phase-loop-supervisor-diagnose.test.mjs',
+    'phase-loop:supervisor-control:test': 'node --test scripts/phase-loop-supervisor-control.test.mjs',
     'guard:local-release-targets': 'node scripts/guard-local-release-targets.mjs',
     'guard:release-contract': 'node scripts/guard-release-contract.mjs',
     'guard:release-contract:test': 'node --test scripts/guard-release-contract.test.mjs',
@@ -214,7 +216,7 @@ const validPackageJson = {
 
 const validVsixPackageJson = {
   scripts: {
-    check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root release:gate -- --dry-run && pnpm --workspace-root release:dependency-security-license-audit:test && pnpm --workspace-root guard:dependency-security-license-audit && pnpm --workspace-root guard:dependency-security-license-audit:test && pnpm --workspace-root guard:local-release-targets && pnpm --workspace-root guard:supply-chain-artifact-evidence && pnpm --workspace-root guard:supply-chain-artifact-evidence:test && pnpm --workspace-root guard:runtime-operational-evidence && pnpm --workspace-root guard:runtime-operational-evidence:test && pnpm --workspace-root guard:modepack-distribution-trust && pnpm --workspace-root guard:modepack-distribution-trust:test && pnpm --workspace-root guard:ledger-contract-single-source && pnpm --workspace-root guard:ledger-contract-single-source:test && pnpm --workspace-root guard:historical-ledger-fixtures && pnpm --workspace-root guard:historical-ledger-fixtures:test && pnpm --workspace-root guard:owner-governance-evidence && pnpm --workspace-root guard:owner-governance-evidence:test && pnpm --workspace-root release:owner-governance-evidence:test'
+    check: 'pnpm --workspace-root guard:release-contract && pnpm --workspace-root guard:release-contract:test && pnpm --workspace-root release:gate -- --dry-run && pnpm --workspace-root release:dependency-security-license-audit:test && pnpm --workspace-root guard:dependency-security-license-audit && pnpm --workspace-root guard:dependency-security-license-audit:test && pnpm --workspace-root guard:local-release-targets && pnpm --workspace-root guard:supply-chain-artifact-evidence && pnpm --workspace-root guard:supply-chain-artifact-evidence:test && pnpm --workspace-root guard:runtime-operational-evidence && pnpm --workspace-root guard:runtime-operational-evidence:test && pnpm --workspace-root guard:modepack-distribution-trust && pnpm --workspace-root guard:modepack-distribution-trust:test && pnpm --workspace-root guard:ledger-contract-single-source && pnpm --workspace-root guard:ledger-contract-single-source:test && pnpm --workspace-root guard:historical-ledger-fixtures && pnpm --workspace-root guard:historical-ledger-fixtures:test && pnpm --workspace-root guard:owner-governance-evidence && pnpm --workspace-root guard:owner-governance-evidence:test && pnpm --workspace-root release:owner-governance-evidence:test && pnpm --workspace-root phase-loop:supervisor-diagnose:test && pnpm --workspace-root phase-loop:supervisor-control:test'
   }
 };
 
@@ -294,6 +296,8 @@ test('rejects missing release gate package scripts', () => {
   assert(errors.some((error) => error.includes('release:vm-image')));
   assert(errors.some((error) => error.includes('release:supply-chain-artifact-evidence')));
   assert(errors.some((error) => error.includes('release:runtime-operational-evidence')));
+  assert(errors.some((error) => error.includes('phase-loop:supervisor-diagnose:test')));
+  assert(errors.some((error) => error.includes('phase-loop:supervisor-control:test')));
   assert(errors.some((error) => error.includes('guard:local-release-targets')));
   assert(errors.some((error) => error.includes('guard:release-contract')));
   assert(errors.some((error) => error.includes('guard:release-contract:test')));
@@ -350,6 +354,18 @@ test('rejects VSIX check path that omits Mode Pack distribution trust guard', ()
     }
   });
   assert(errors.some((error) => error.includes('guard:modepack-distribution-trust')));
+});
+
+test('rejects VSIX check path that omits phase-loop supervisor tests', () => {
+  const errors = validate(validContract(), {
+    vsixPackageJson: {
+      scripts: {
+        check: validVsixPackageJson.scripts.check.replace(' && pnpm --workspace-root phase-loop:supervisor-diagnose:test && pnpm --workspace-root phase-loop:supervisor-control:test', '')
+      }
+    }
+  });
+  assert(errors.some((error) => error.includes('phase-loop:supervisor-diagnose:test')));
+  assert(errors.some((error) => error.includes('phase-loop:supervisor-control:test')));
 });
 
 test('rejects missing supply-chain evidence contract section', () => {
