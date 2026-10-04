@@ -62,6 +62,20 @@ const canonicalRequiredReviewIds = [
   'release_ready_judgment'
 ];
 
+function generateReproducibilityEvidence(evidencePath) {
+  const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+  const timestamp = new Date().toISOString();
+  const hash = crypto.createHash('sha256').update(JSON.stringify(evidence)).digest('hex');
+  return {
+    evidencePath,
+    timestamp,
+    contentHash: hash,
+    sections: evidence.sections || requiredSections,
+    operationalDocuments: evidence.operationalDocuments || requiredOperationalDocuments,
+    reviews: evidence.reviews || canonicalRequiredReviewIds
+  };
+}
+
 const allowedIncompleteStatuses = new Set([
   'gh_auth_unavailable',
   'gh_unavailable',

@@ -51,6 +51,17 @@ function validateSourceCommitBinding(evidence) {
   return { valid: true, sourceCommit };
 }
 
+function validateSourceCheckoutClean(evidence) {
+  const checkoutState = evidence?.sourceCheckoutState;
+  if (!checkoutState || typeof checkoutState !== 'string') {
+    return { valid: false, reason: 'source_checkout_state_missing' };
+  }
+  if (checkoutState !== 'clean') {
+    return { valid: false, reason: 'source_checkout_not_clean', checkoutState };
+  }
+  return { valid: true, checkoutState };
+}
+
 function validateSmokeEvidence(smokeEvidence) {
   if (!smokeEvidence || !Array.isArray(smokeEvidence.steps)) {
     return { valid: false, reason: 'smoke_evidence_missing_or_invalid' };

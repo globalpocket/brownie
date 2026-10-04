@@ -98,6 +98,163 @@ test('allows replacing a parent TODO with live child leaves when durable replan 
   assert.deepEqual(result.replanned_todo_ids, ['E-20a-golden-journey-workspace-mutation']);
 });
 
+test('allows replacing a residual blocker with children from an explicit replacement source TODO', () => {
+  const residual = `- [ ] E-19k-remaining-release-evidence-blocker: Blocker: release evidence remains incomplete.
+  Route: release-ops.
+  Depends on: <none>.
+  Completion condition: remaining release blocker evidence stays fail-closed until concrete evidence leaves exist.
+  Forbidden changes: do not patch workspace files for this blocker.
+  Verification: blocker: release evidence remains fail-closed.`;
+  const childA = `- [ ] E-21c-release-ops-todo-split-clean-release-workspace: Blocker: clean Release workspace evidence exists:
+  Route: release-ops.
+  Source TODO: E-21c-release-ops-todo-split.
+  Depends on: <none>.
+  Completion condition: Release Ops has a fail-closed evidence item for clean workspace source identity.
+  Forbidden changes: do not patch implementation files for this Release Ops blocker.
+  Verification: blocker: Release Ops evidence remains fail-closed.`;
+  const childB = `- [ ] E-21c-release-ops-todo-split-document-generation-sync: Blocker: Release documents are synchronized:
+  Route: release-ops.
+  Source TODO: E-21c-release-ops-todo-split.
+  Depends on: E-21c-release-ops-todo-split-clean-release-workspace.
+  Completion condition: Release Ops has a fail-closed evidence item for document generation synchronization.
+  Forbidden changes: do not patch implementation files for this Release Ops blocker.
+  Verification: blocker: Release Ops evidence remains fail-closed.`;
+  const result = validateTodoQueueIntegrity({
+    todoBefore: queue(residual),
+    todoAfter: queue(childA, childB),
+    completedTodoIds: [],
+    todoReplanRecords: [{
+      record_type: 'todo_replan',
+      operation: 'split_parent_into_children',
+      parent_status: 'superseded_by_children',
+      parent_todo_id: 'E-19k-remaining-release-evidence-blocker',
+      replacement_source_todo_id: 'E-21c-release-ops-todo-split',
+      generated_child_ids: [
+        'E-21c-release-ops-todo-split-clean-release-workspace',
+        'E-21c-release-ops-todo-split-document-generation-sync'
+      ]
+    }]
+  });
+
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+  assert.deepEqual(result.replanned_todo_ids, ['E-19k-remaining-release-evidence-blocker']);
+});
+
+test('allows transitive replan chains when intermediate children were split again', () => {
+  const residual = `- [ ] E-19k-remaining-release-evidence-blocker: Blocker: release evidence remains incomplete.
+  Route: release-ops.
+  Depends on: <none>.
+  Completion condition: remaining release blocker evidence stays fail-closed until concrete evidence leaves exist.
+  Forbidden changes: do not patch workspace files for this blocker.
+  Verification: blocker: release evidence remains fail-closed.`;
+  const targetA = `- [ ] E-21c-clean-release-workspace-impl-1-target-01: Patch only \`scripts/release-supply-chain-artifact-evidence.mjs\` to complete one bounded slice:
+  Route: implementation.
+  Source TODO: E-21c-clean-release-workspace-impl-1.
+  Depends on: <none>.
+  Completion condition: first split child updates supply-chain evidence collector.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root guard:supply-chain-artifact-evidence:test\`.`;
+  const targetB = `- [ ] E-21c-clean-release-workspace-impl-1-target-02: Patch only \`scripts/guard-supply-chain-artifact-evidence.test.mjs\` to complete one bounded slice:
+  Route: implementation.
+  Source TODO: E-21c-clean-release-workspace-impl-1.
+  Depends on: E-21c-clean-release-workspace-impl-1-target-01.
+  Completion condition: second split child updates supply-chain evidence tests.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root guard:supply-chain-artifact-evidence:test\`.`;
+  const sibling = `- [ ] E-21c-runtime-operational-evidence-impl-2: Patch only \`scripts/release-runtime-operational-evidence.mjs\`:
+  Route: implementation.
+  Source TODO: TODO-refine-brownie-owned-blockers-abc123.
+  Depends on: E-21c-clean-release-workspace-impl-1.
+  Completion condition: runtime operational evidence is fail-closed.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root guard:runtime-operational-evidence:test\`.`;
+  const result = validateTodoQueueIntegrity({
+    todoBefore: queue(residual),
+    todoAfter: queue(targetA, targetB, sibling),
+    completedTodoIds: [],
+    todoReplanRecords: [
+      {
+        record_type: 'todo_replan',
+        operation: 'split_parent_into_children',
+        parent_status: 'superseded_by_children',
+        parent_todo_id: 'E-19k-remaining-release-evidence-blocker',
+        replacement_source_todo_id: 'TODO-refine-brownie-owned-blockers-abc123',
+        generated_child_ids: [
+          'E-21c-clean-release-workspace-impl-1',
+          'E-21c-runtime-operational-evidence-impl-2'
+        ]
+      },
+      {
+        record_type: 'todo_replan',
+        operation: 'split_parent_into_children',
+        parent_status: 'superseded_by_children',
+        parent_todo_id: 'E-21c-clean-release-workspace-impl-1',
+        generated_child_ids: [
+          'E-21c-clean-release-workspace-impl-1-target-01',
+          'E-21c-clean-release-workspace-impl-1-target-02'
+        ]
+      }
+    ]
+  });
+
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+  assert.deepEqual(result.replanned_todo_ids, ['E-19k-remaining-release-evidence-blocker']);
+});
+
+test('allows transitive replan chains when a grandchild is already completed', () => {
+  const residual = `- [ ] E-19k-remaining-release-evidence-blocker: Blocker: release evidence remains incomplete.
+  Route: release-ops.
+  Depends on: <none>.
+  Completion condition: remaining release blocker evidence stays fail-closed until concrete evidence leaves exist.
+  Forbidden changes: do not patch workspace files for this blocker.
+  Verification: blocker: release evidence remains fail-closed.`;
+  const targetB = `- [ ] E-21c-clean-release-workspace-impl-1-target-02: Patch only \`scripts/guard-supply-chain-artifact-evidence.test.mjs\` to complete one bounded slice:
+  Route: implementation.
+  Source TODO: E-21c-clean-release-workspace-impl-1.
+  Depends on: <none>.
+  Completion condition: second split child updates supply-chain evidence tests.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root guard:supply-chain-artifact-evidence:test\`.`;
+  const sibling = `- [ ] E-21c-runtime-operational-evidence-impl-2: Patch only \`scripts/release-runtime-operational-evidence.mjs\`:
+  Route: implementation.
+  Source TODO: TODO-refine-brownie-owned-blockers-abc123.
+  Depends on: E-21c-clean-release-workspace-impl-1.
+  Completion condition: runtime operational evidence is fail-closed.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root guard:runtime-operational-evidence:test\`.`;
+  const result = validateTodoQueueIntegrity({
+    todoBefore: queue(residual),
+    todoAfter: queue(targetB, sibling),
+    completedTodoIds: ['E-21c-clean-release-workspace-impl-1-target-01'],
+    todoReplanRecords: [
+      {
+        record_type: 'todo_replan',
+        operation: 'split_parent_into_children',
+        parent_status: 'superseded_by_children',
+        parent_todo_id: 'E-19k-remaining-release-evidence-blocker',
+        replacement_source_todo_id: 'TODO-refine-brownie-owned-blockers-abc123',
+        generated_child_ids: [
+          'E-21c-clean-release-workspace-impl-1',
+          'E-21c-runtime-operational-evidence-impl-2'
+        ]
+      },
+      {
+        record_type: 'todo_replan',
+        operation: 'split_parent_into_children',
+        parent_status: 'superseded_by_children',
+        parent_todo_id: 'E-21c-clean-release-workspace-impl-1',
+        generated_child_ids: [
+          'E-21c-clean-release-workspace-impl-1-target-01',
+          'E-21c-clean-release-workspace-impl-1-target-02'
+        ]
+      }
+    ]
+  });
+
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+  assert.deepEqual(result.replanned_todo_ids, ['E-19k-remaining-release-evidence-blocker']);
+});
+
 test('rejects parent replacement when replan children are missing or not linked to the parent', () => {
   const child = `- [ ] E-20a-golden-journey-workspace-mutation-target-01: Patch only \`scripts/release-runtime-operational-evidence.mjs\`:
   Route: implementation.
@@ -153,6 +310,20 @@ test('allows adding a new TODO without changing existing TODO contracts', () => 
 
   assert.equal(result.valid, true, JSON.stringify(result.errors));
   assert.deepEqual(result.added_todo_ids, ['E-20b-stateful-soak-real-workload']);
+});
+
+test('rejects completed TODO reappearing as an unchecked live queue item', () => {
+  const result = validateTodoQueueIntegrity({
+    todoBefore: queue(e20a),
+    todoAfter: queue(e20a, e20b),
+    completedTodoIds: ['E-20a-golden-journey-workspace-mutation']
+  });
+
+  assert.equal(result.valid, false);
+  assert(result.errors.some((error) => (
+    error.code === 'completed_todo_reappeared_in_live_queue' &&
+    error.todo_id === 'E-20a-golden-journey-workspace-mutation'
+  )), JSON.stringify(result.errors));
 });
 
 test('rejects dependency pruning across a three-item queue', () => {

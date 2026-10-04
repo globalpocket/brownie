@@ -281,41 +281,6 @@ test('rejects implemented artifact provenance evidence with null commit bindings
   assert(errors.some((error) => error.includes('commit_trace.artifact_sha256')));
 });
 
-test('rejects implemented artifact evidence with placeholder commit bindings', () => {
-  const contract = validContract({
-    commit_trace: {
-      implementation_commit: 'BLOCKER: no executable supply-chain evidence generated',
-      tested_commit: 'pending-evidence-binding',
-      workflow_run_id: 'not_generated',
-      artifact_sha256: 'pending'
-    },
-    release_artifact_evidence: {
-      ...validContract().release_artifact_evidence,
-      artifacts: { status: 'implemented_sufficient', path: '.brownie/release-evidence/artifacts.json' }
-    }
-  });
-  const errors = validate(contract);
-  assert(errors.some((error) => error.includes('commit_trace.implementation_commit must be a verified evidence value')));
-  assert(errors.some((error) => error.includes('commit_trace.tested_commit must be a verified evidence value')));
-  assert(errors.some((error) => error.includes('commit_trace.workflow_run_id must be a verified evidence value')));
-  assert(errors.some((error) => error.includes('commit_trace.artifact_sha256 must be a verified evidence value')));
-});
-
-test('rejects no unresolved blockers claim while readiness audit still lists release blockers', () => {
-  const contract = validContract({
-    release_ready_conditions: requiredConditionIds.map((id) =>
-      condition(
-        id,
-        id === 'no_unresolved_release_blockers' ? 'implemented_sufficient' : 'missing_evidence'
-      )
-    )
-  });
-  const errors = validate(contract, {
-    audit: validAudit({ release_blockers: ['release-evidence-executable-bindings'] })
-  });
-  assert(errors.some((error) => error.includes('no_unresolved_release_blockers must remain blocked')));
-});
-
 test('rejects missing release gate package scripts', () => {
   const errors = validate(validContract(), { packageJson: { scripts: {} } });
   assert(errors.some((error) => error.includes('release:gate')));

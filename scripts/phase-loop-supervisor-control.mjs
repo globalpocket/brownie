@@ -1,0 +1,1558 @@
+#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { diagnosePhaseLoop } from './phase-loop-supervisor-diagnose.mjs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const defaultRepoRoot = path.resolve(__dirname, '..');
+
+function parseArgs(argv) {
+  const args = {
+    repo: defaultRepoRoot,
+    write: true,
+    repair: true,
+    start: false
+  };
+  for (let index = 2; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === '--') {
+      continue;
+    } else if (arg === '--repo') {
+      args.repo = path.resolve(argv[++index]);
+    } else if (arg === '--write') {
+      args.write = true;
+    } else if (arg === '--no-write') {
+      args.write = false;
+    } else if (arg === '--repair') {
+      args.repair = true;
+    } else if (arg === '--no-repair') {
+      args.repair = false;
+    } else if (arg === '--start') {
+      args.start = true;
+    } else if (arg === '--no-start') {
+      args.start = false;
+    } else {
+      throw new Error(`Unknown argument: ${arg}`);
+    }
+  }
+  return args;
+}
+
+function issueCodes(diagnostic) {
+  return new Set((diagnostic.issues ?? []).map((issue) => issue.code));
+}
+
+function runJsonCommand(repoRoot, command, args, env = {}) {
+  const stdout = execFileSync(command, args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      ...env
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  try {
+    return JSON.parse(stdout);
+  } catch {
+    return { raw_stdout: stdout };
+  }
+}
+
+function runTextCommand(repoRoot, command, args) {
+  return execFileSync(command, args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+}
+
+function runTodoQueueIntegrity(repoRoot) {
+  return runJsonCommand(repoRoot, process.execPath, [
+    'scripts/phase-loop-todo-queue-integrity.mjs',
+    '--repo',
+    repoRoot,
+    '--todo',
+    '.brownie/todo.md'
+  ]);
+}
+
+function maybeRepairTodoContract(repoRoot, diagnostic) {
+  const codes = issueCodes(diagnostic);
+  if (!codes.has('todo_contract_invalid')) {
+    return { attempted: false, reason: 'todo_contract_valid_or_not_reported' };
+  }
+  try {
+    const result = runJsonCommand(repoRoot, process.execPath, [
+      'scripts/repair-todo-decomposition.mjs',
+      '--claim',
+      path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/current.json'),
+      '--todo',
+      '.brownie/todo.md',
+      '--breakdown',
+      '.brownie/todo-breakdown.md',
+      '--run-stamp',
+      new Date().toISOString().replace(/[-:]/gu, '').replace(/\.\d{3}Z$/u, 'Z')
+    ], {
+      BROWNIE_REPAIR_TODO_REPO_ROOT: repoRoot
+    });
+    return { attempted: true, ok: Boolean(result.applied), result };
+  } catch (error) {
+    return {
+      attempted: true,
+      ok: false,
+      error: error?.message ?? String(error),
+      stdout: error?.stdout?.toString?.() ?? undefined,
+      stderr: error?.stderr?.toString?.() ?? undefined
+    };
+  }
+}
+
+function maybeRepairTodoQueueIntegrity(repoRoot, diagnostic) {
+  const codes = issueCodes(diagnostic);
+  const detail = String(diagnostic.phase_loop?.detail ?? '');
+  if (!codes.has('todo_queue_integrity_invalid') && !detail.includes('TODO queue integrity failed before claim')) {
+    return { attempted: false, reason: 'todo_queue_integrity_valid_or_not_reported' };
+  }
+
+  const steps = [];
+  try {
+    steps.push({
+      step: 'initial_queue_integrity_check',
+      ok: true,
+      result: runTodoQueueIntegrity(repoRoot)
+    });
+    return { attempted: true, ok: true, reason: 'queue_integrity_already_valid', steps };
+  } catch (initialError) {
+    steps.push({
+      step: 'initial_queue_integrity_check',
+      ok: false,
+      error: initialError?.message ?? String(initialError),
+      stdout: initialError?.stdout?.toString?.() ?? undefined,
+      stderr: initialError?.stderr?.toString?.() ?? undefined
+    });
+  }
+
+  const claimPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/current.json');
+  try {
+    const repairResult = runJsonCommand(repoRoot, process.execPath, [
+      'scripts/repair-todo-decomposition.mjs',
+      '--claim',
+      claimPath,
+      '--todo',
+      '.brownie/todo.md',
+      '--breakdown',
+      '.brownie/todo-breakdown.md',
+      '--run-stamp',
+      new Date().toISOString().replace(/[-:]/gu, '').replace(/\.\d{3}Z$/u, 'Z')
+    ], {
+      BROWNIE_REPAIR_TODO_REPO_ROOT: repoRoot
+    });
+    steps.push({ step: 'deterministic_todo_repair', ok: Boolean(repairResult.applied), result: repairResult });
+  } catch (repairError) {
+    steps.push({
+      step: 'deterministic_todo_repair',
+      ok: false,
+      error: repairError?.message ?? String(repairError),
+      stdout: repairError?.stdout?.toString?.() ?? undefined,
+      stderr: repairError?.stderr?.toString?.() ?? undefined
+    });
+  }
+
+  try {
+    steps.push({
+      step: 'queue_integrity_recheck',
+      ok: true,
+      result: runTodoQueueIntegrity(repoRoot)
+    });
+    return { attempted: true, ok: true, steps };
+  } catch (recheckError) {
+    steps.push({
+      step: 'queue_integrity_recheck',
+      ok: false,
+      error: recheckError?.message ?? String(recheckError),
+      stdout: recheckError?.stdout?.toString?.() ?? undefined,
+      stderr: recheckError?.stderr?.toString?.() ?? undefined
+    });
+    return { attempted: true, ok: false, steps };
+  }
+}
+
+function readJsonOrNull(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function todoFirstLine(block) {
+  return typeof block === 'string' ? block.split('\n')[0]?.trim() ?? null : null;
+}
+
+function todoIdFromFirstLine(firstLine) {
+  if (typeof firstLine !== 'string') {
+    return null;
+  }
+  return firstLine
+    .replace(/^(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+/u, '')
+    .split(':')[0]
+    ?.trim() || null;
+}
+
+function liveUncheckedTodoIds(todoText) {
+  const ids = new Set();
+  const pattern = /^(?:[-*]|\d+[.)])\s+\[\s\]\s+([^:\n]+):/gm;
+  let match;
+  while ((match = pattern.exec(todoText)) !== null) {
+    const id = match[1]?.trim();
+    if (id) {
+      ids.add(id);
+    }
+  }
+  return ids;
+}
+
+function completedTodoIds(todoText) {
+  const ids = new Set();
+  const pattern = /^(?:[-*]|\d+[.)])\s+\[[xX]\]\s+([^:\n]+):/gm;
+  let match;
+  while ((match = pattern.exec(todoText)) !== null) {
+    const id = match[1]?.trim();
+    if (id) {
+      ids.add(id);
+    }
+  }
+  return ids;
+}
+
+function durableCompletedTodoIds(repoRoot) {
+  const dir = path.join(repoRoot, '.brownie/private/phase-loop/todo-completions');
+  const ids = new Set();
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return ids;
+    }
+    throw error;
+  }
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) {
+      continue;
+    }
+    try {
+      const record = JSON.parse(fs.readFileSync(path.join(dir, entry.name), 'utf8'));
+      const id = typeof record.selected_todo_id === 'string' ? record.selected_todo_id.trim() : '';
+      if (id) {
+        ids.add(id);
+      }
+    } catch {
+      // Malformed completion evidence is ignored here; the queue-integrity
+      // guard will fail closed when it cannot parse durable state.
+    }
+  }
+  return ids;
+}
+
+function writeSupervisorCompletionRecord(repoRoot, todoId, reason, extra = {}) {
+  const id = typeof todoId === 'string' ? todoId.trim() : '';
+  if (!id) {
+    return null;
+  }
+  const dir = path.join(repoRoot, '.brownie/private/phase-loop/todo-completions');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const record = {
+    schema_version: 1,
+    record_type: 'phase_loop_supervisor_completion',
+    selected_todo_id: id,
+    reason,
+    completed_at: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z'),
+    ...extra
+  };
+  const fileName = `supervisor-${id.replace(/[^0-9A-Za-z_.-]+/gu, '-')}-${crypto
+    .createHash('sha256')
+    .update(JSON.stringify(record))
+    .digest('hex')
+    .slice(0, 12)}.json`;
+  const filePath = path.join(dir, fileName);
+  fs.writeFileSync(filePath, `${JSON.stringify(record, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  fsyncFileAndParent(filePath);
+  return path.relative(repoRoot, filePath);
+}
+
+function durableBlockedTodoIds(repoRoot) {
+  const ids = new Set();
+  const blockedPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/blocked.jsonl');
+  for (const record of readJsonl(blockedPath)) {
+    const explicitId = typeof record.todo_id === 'string' ? record.todo_id.trim() : '';
+    if (explicitId) {
+      ids.add(explicitId);
+      continue;
+    }
+    const firstLineId = todoIdFromFirstLine(record?.selected_todo_first_line);
+    if (firstLineId) {
+      ids.add(firstLineId);
+    }
+  }
+  return ids;
+}
+
+function selectedTodoBlock(diagnostic) {
+  return diagnostic.verification_failure?.selected_todo?.first_line
+    ?? diagnostic.invalid_patch?.selected_todo?.first_line
+    ?? diagnostic.apply_rejection?.selected_todo?.first_line
+    ?? diagnostic.progress?.selected_todo?.first_line
+    ?? null;
+}
+
+function diagnosticFailureKind(diagnostic) {
+  const codes = issueCodes(diagnostic);
+  if (codes.has('invalid_workspace_write_patch_repeated')) {
+    return 'invalid_patch';
+  }
+  if (codes.has('semantic_verification_repair_stalled')) {
+    return 'semantic_verification_stalled';
+  }
+  if (codes.has('verification_failure_requires_semantic_repair')) {
+    return 'semantic_verification_failure';
+  }
+  if (codes.has('bounded_leaf_refinement_rejected')) {
+    return 'bounded_leaf_apply_rejection';
+  }
+  if (codes.has('stale_no_progress_projection_during_running_loop')) {
+    return 'stale_no_progress_projection';
+  }
+  if (codes.has('no_progress_observed') || diagnostic.phase_loop?.status === 'no_progress') {
+    return 'no_progress';
+  }
+  return null;
+}
+
+function stableEventId(event) {
+  const key = JSON.stringify({
+    todo_id: event.todo_id,
+    kind: event.kind,
+    status_run_id: event.status_run_id,
+    progress_run_stamp: event.progress_run_stamp,
+    claim_id: event.claim_id
+  });
+  return `sha256:${crypto.createHash('sha256').update(key).digest('hex')}`;
+}
+
+function readJsonl(filePath) {
+  let text = '';
+  try {
+    text = fs.readFileSync(filePath, 'utf8');
+  } catch {
+    return [];
+  }
+  return text
+    .split(/\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function appendFailureLedgerEvent(repoRoot, diagnostic) {
+  const kind = diagnosticFailureKind(diagnostic);
+  const firstLine = selectedTodoBlock(diagnostic);
+  const todoId = todoIdFromFirstLine(firstLine);
+  if (!kind || !todoId) {
+    return {
+      attempted: false,
+      reason: 'no_actionable_failure_event'
+    };
+  }
+  const ledgerPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/failure-ledger.jsonl');
+  const claimId = diagnostic.verification_failure?.claim_id
+    ?? diagnostic.invalid_patch?.claim_id
+    ?? diagnostic.apply_rejection?.claim_id
+    ?? diagnostic.progress?.progress_projection?.claim_id
+    ?? null;
+  const event = {
+    schema_version: 1,
+    record_type: 'phase_loop_failure_event',
+    observed_at: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z'),
+    todo_id: todoId,
+    selected_todo_first_line: firstLine,
+    kind,
+    status: diagnostic.phase_loop?.status ?? null,
+    status_run_id: diagnostic.phase_loop?.run_id ?? null,
+    progress_classification: diagnostic.progress?.classification ?? null,
+    progress_run_stamp: diagnostic.progress?.run_stamp ?? null,
+    same_progress_count: Number(diagnostic.progress?.same_progress_count ?? 0),
+    claim_id: claimId,
+    issue_codes: [...issueCodes(diagnostic)].sort()
+  };
+  event.event_id = stableEventId(event);
+  const existing = readJsonl(ledgerPath);
+  if (existing.some((entry) => entry?.event_id === event.event_id)) {
+    return {
+      attempted: true,
+      ok: true,
+      appended: false,
+      reason: 'duplicate_failure_event',
+      path: path.relative(repoRoot, ledgerPath),
+      event
+    };
+  }
+  try {
+    fs.mkdirSync(path.dirname(ledgerPath), { recursive: true, mode: 0o700 });
+    fs.appendFileSync(ledgerPath, `${JSON.stringify(event)}\n`, { encoding: 'utf8', mode: 0o600 });
+    fsyncFileAndParent(ledgerPath);
+    return {
+      attempted: true,
+      ok: true,
+      appended: true,
+      path: path.relative(repoRoot, ledgerPath),
+      event
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      ok: false,
+      error: error?.message ?? String(error),
+      event
+    };
+  }
+}
+
+function failureLedgerSummary(repoRoot, diagnostic, currentEventResult) {
+  const firstLine = selectedTodoBlock(diagnostic);
+  const todoId = todoIdFromFirstLine(firstLine);
+  if (!todoId) {
+    return {
+      todo_id: null,
+      recent_events: [],
+      counts: {},
+      should_replan: false,
+      replan_reason: 'no_selected_todo'
+    };
+  }
+  const ledgerPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/failure-ledger.jsonl');
+  const ledger = readJsonl(ledgerPath);
+  const events = [
+    ...ledger,
+    currentEventResult?.event && !ledger.some((entry) => entry?.event_id === currentEventResult.event.event_id)
+      ? currentEventResult.event
+      : null
+  ].filter(Boolean);
+  const sameTodoEvents = events
+    .filter((entry) => entry?.todo_id === todoId)
+    .slice(-12);
+  const counts = sameTodoEvents.reduce((acc, entry) => {
+    acc[entry.kind] = (acc[entry.kind] ?? 0) + 1;
+    return acc;
+  }, {});
+  const progressSameCount = Number(diagnostic.progress?.same_progress_count ?? 0);
+  const codes = issueCodes(diagnostic);
+  const invalidPatchWithRepeatedNoProgress = codes.has('invalid_workspace_write_patch_repeated') && progressSameCount >= 2;
+  const semanticFailureWithRepeatedNoProgress = codes.has('verification_failure_requires_semantic_repair') && progressSameCount >= 2;
+  const invalidPatchThenNoProgress = (counts.invalid_patch ?? 0) >= 1 && (counts.no_progress ?? 0) >= 1;
+  const shouldReplan = (
+    progressSameCount >= 3 ||
+    invalidPatchWithRepeatedNoProgress ||
+    semanticFailureWithRepeatedNoProgress ||
+    invalidPatchThenNoProgress ||
+    (counts.invalid_patch ?? 0) >= 2 ||
+    (counts.semantic_verification_failure ?? 0) >= 2 ||
+    (counts.semantic_verification_stalled ?? 0) >= 1 ||
+    (counts.bounded_leaf_apply_rejection ?? 0) >= 1 ||
+    codes.has('semantic_verification_repair_stalled')
+  );
+  let replanReason = 'threshold_not_met';
+  if (shouldReplan) {
+    if (progressSameCount >= 3) {
+      replanReason = 'same_todo_no_progress_threshold';
+    } else if (invalidPatchWithRepeatedNoProgress) {
+      replanReason = 'invalid_patch_with_repeated_no_progress';
+    } else if (semanticFailureWithRepeatedNoProgress) {
+      replanReason = 'semantic_failure_with_repeated_no_progress';
+    } else if (invalidPatchThenNoProgress) {
+      replanReason = 'invalid_patch_followed_by_no_progress';
+    } else if ((counts.invalid_patch ?? 0) >= 2) {
+      replanReason = 'same_todo_invalid_patch_threshold';
+    } else if ((counts.semantic_verification_failure ?? 0) >= 2 || (counts.semantic_verification_stalled ?? 0) >= 1) {
+      replanReason = 'same_todo_semantic_verification_threshold';
+    } else {
+      replanReason = 'same_todo_apply_rejection_threshold';
+    }
+  }
+  return {
+    todo_id: todoId,
+    selected_todo_first_line: firstLine,
+    recent_events: sameTodoEvents.map((entry) => ({
+      event_id: entry.event_id,
+      kind: entry.kind,
+      status_run_id: entry.status_run_id,
+      progress_run_stamp: entry.progress_run_stamp,
+      same_progress_count: entry.same_progress_count,
+      observed_at: entry.observed_at
+    })),
+    counts,
+    should_replan: shouldReplan,
+    replan_reason: replanReason,
+    ledger_path: path.relative(repoRoot, ledgerPath)
+  };
+}
+
+function fsyncFileAndParent(filePath) {
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    try {
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    // Best-effort durability only; the diagnostic file itself is recoverable.
+  }
+  try {
+    const fd = fs.openSync(path.dirname(filePath), 'r');
+    try {
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    // Some platforms do not allow directory fsync.
+  }
+}
+
+function todoBlocks(todoText) {
+  const pattern = /^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ \t]\][ \t]+/gmu;
+  const matches = [...todoText.matchAll(pattern)];
+  return matches.map((match, index) => {
+    const start = match.index ?? 0;
+    const end = index + 1 < matches.length ? matches[index + 1].index ?? todoText.length : todoText.length;
+    const block = todoText.slice(start, end).trimEnd();
+    return {
+      block,
+      first_line: todoFirstLine(block),
+      sha256: crypto.createHash('sha256').update(block).digest('hex')
+    };
+  });
+}
+
+function appendStalledTodoBlockedRecord(repoRoot, diagnostic, ledgerSummary) {
+  if (!ledgerSummary?.should_replan) {
+    return { attempted: false, reason: 'failure_ledger_threshold_not_met' };
+  }
+  const todoPath = path.join(repoRoot, '.brownie/todo.md');
+  const blockedPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/blocked.jsonl');
+  const claimPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/current.json');
+  const claim = readJsonOrNull(claimPath);
+  const selectedTodo = claim?.selected_todo ?? selectedTodoBlock(diagnostic);
+  const firstLine = todoFirstLine(selectedTodo) ?? ledgerSummary.selected_todo_first_line;
+  if (!firstLine || !fs.existsSync(todoPath)) {
+    return { attempted: true, ok: false, reason: 'selected_todo_or_todo_missing' };
+  }
+  const todoText = fs.readFileSync(todoPath, 'utf8');
+  const block = todoBlocks(todoText).find((candidate) => candidate.first_line === firstLine);
+  const selectedBlock = block?.block ?? selectedTodo ?? firstLine;
+  const queueMaterial = todoBlocks(todoText)
+    .filter((candidate) => !candidate.first_line?.includes('TODO-decompose-blocked-queue-'))
+    .map((candidate) => candidate.block)
+    .join('\n\n');
+  const queueFingerprint = crypto.createHash('sha256').update(queueMaterial).digest('hex');
+  const selectedHash = crypto.createHash('sha256').update(selectedBlock).digest('hex');
+  const existing = fs.existsSync(blockedPath) ? readJsonl(blockedPath) : [];
+  const alreadyRecorded = existing.some((record) => (
+    record?.selected_todo_first_line === firstLine ||
+    record?.selected_todo_sha256 === selectedHash ||
+    record?.todo_id === ledgerSummary.todo_id
+  ));
+  if (alreadyRecorded) {
+    return { attempted: true, ok: true, changed: false, reason: 'stalled_todo_already_blocked' };
+  }
+  const record = {
+    schema_version: 1,
+    blocked_at: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z'),
+    blocked_by: 'phase-loop-supervisor-control',
+    block_reason: 'stalled_leaf_contract_replan',
+    run_stamp: diagnostic.progress?.run_stamp ?? diagnostic.phase_loop?.run_id ?? '',
+    status_run_id: diagnostic.phase_loop?.run_id ?? '',
+    claim_id: claim?.claim_id ?? diagnostic.verification_failure?.claim_id ?? diagnostic.invalid_patch?.claim_id ?? '',
+    queue_generation: claim?.queue_generation ?? null,
+    queue_fingerprint: queueFingerprint,
+    todo_id: ledgerSummary.todo_id,
+    selected_todo_sha256: selectedHash,
+    selected_todo_first_line: firstLine
+  };
+  fs.mkdirSync(path.dirname(blockedPath), { recursive: true, mode: 0o700 });
+  fs.appendFileSync(blockedPath, `${JSON.stringify(record, Object.keys(record).sort())}\n`, { encoding: 'utf8', mode: 0o600 });
+  fsyncFileAndParent(blockedPath);
+  return {
+    attempted: true,
+    ok: true,
+    changed: true,
+    path: path.relative(repoRoot, blockedPath),
+    todo_id: ledgerSummary.todo_id
+  };
+}
+
+function ensureStalledTodoDecompositionRequest(repoRoot, diagnostic, ledgerSummary) {
+  if (!ledgerSummary?.should_replan) {
+    return { attempted: false, reason: 'failure_ledger_threshold_not_met' };
+  }
+  const todoPath = path.join(repoRoot, '.brownie/todo.md');
+  const breakdownPath = path.join(repoRoot, '.brownie/todo-breakdown.md');
+  if (!fs.existsSync(todoPath)) {
+    return { attempted: true, ok: false, reason: 'todo_missing' };
+  }
+  const todoText = fs.readFileSync(todoPath, 'utf8');
+  const selectedFirstLine = ledgerSummary.selected_todo_first_line ?? todoFirstLine(selectedTodoBlock(diagnostic));
+  const selectedId = ledgerSummary.todo_id;
+  if (!selectedFirstLine || !selectedId) {
+    return { attempted: true, ok: false, reason: 'selected_todo_missing' };
+  }
+  const uncheckedIds = liveUncheckedTodoIds(todoText);
+  const checkedIds = completedTodoIds(todoText);
+  if (checkedIds.has(selectedId)) {
+    return {
+      attempted: false,
+      reason: 'selected_todo_already_completed',
+      todo_id: selectedId
+    };
+  }
+  if (!uncheckedIds.has(selectedId)) {
+    return {
+      attempted: false,
+      reason: 'selected_todo_not_live_in_queue',
+      todo_id: selectedId
+    };
+  }
+  const requestPrefix = selectedId.split('-').slice(0, 2).join('-') || 'TODO';
+  const requestId = `${requestPrefix}-replan-stalled-leaf-${crypto.createHash('sha256').update(selectedFirstLine).digest('hex').slice(0, 12)}`;
+  if (todoText.includes(requestId)) {
+    return { attempted: true, ok: true, changed: false, reason: 'decomposition_request_already_present', todo_id: requestId };
+  }
+  const relativeBreakdown = path.relative(repoRoot, breakdownPath);
+  const item = `- [ ] ${requestId}: Patch only \`.brownie/todo.md\` and \`.brownie/todo-breakdown.md\` to replan stalled Brownie TODO leaf into implementable child TODOs:
+  Route: todo-decomposition.
+  Source TODO: ${selectedId}.
+  Depends on: <none>.
+  Completion condition: Patch \`.brownie/todo.md\` and \`${relativeBreakdown}\` so stalled TODO \`${selectedId}\` is replaced or superseded by implementable child leaves that preserve the parent intent, exact patch targets, existing verification commands, and ledger coverage.
+  Failure evidence: ${ledgerSummary.replan_reason}; same_progress_count=${diagnostic.progress?.same_progress_count ?? 0}.
+  Forbidden changes: do not implement the release-evidence fix here, do not weaken guards/tests, do not invent evidence values, and do not declare Runtime Product Ready.
+  Verification: run \`pnpm --workspace-root guard:todo-decomposition\` and \`pnpm --workspace-root phase-loop:todo-queue-integrity\`.
+
+`;
+  const queueHeading = '### P0/P1: Release engineering and evidence';
+  const insertIndex = todoText.indexOf(queueHeading);
+  const nextTodoText = insertIndex >= 0
+    ? `${todoText.slice(0, insertIndex + queueHeading.length)}\n\n${item}${todoText.slice(insertIndex + queueHeading.length).replace(/^\n+/u, '\n')}`
+    : `${todoText.trimEnd()}\n\n${item}`;
+  fs.writeFileSync(todoPath, nextTodoText, { encoding: 'utf8', mode: 0o600 });
+  fsyncFileAndParent(todoPath);
+  if (fs.existsSync(breakdownPath)) {
+    const breakdownText = fs.readFileSync(breakdownPath, 'utf8');
+    if (!breakdownText.includes(requestId)) {
+      const section = `
+## TODO-repair-${requestId}
+
+Parent TODO: ${selectedId}
+
+Dependency graph:
+- ${requestId}: <none>
+
+Verification ledger:
+- ${requestId}: run \`pnpm --workspace-root guard:todo-decomposition\` and \`pnpm --workspace-root phase-loop:todo-queue-integrity\`.
+
+Quality rubric:
+- ${requestId}: replace the stalled leaf with implementable child TODOs while preserving parent intent, exact patch targets, existing verification commands, and fail-closed release evidence semantics.
+
+History:
+
+- ${new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z')}: Supervisor detected repeated ${ledgerSummary.replan_reason} on ${selectedId} and promoted Brownie-owned TODO replan instead of retrying the same single-target leaf.
+`;
+      fs.writeFileSync(breakdownPath, `${breakdownText.trimEnd()}\n\n${section.trimStart()}`, { encoding: 'utf8', mode: 0o600 });
+      fsyncFileAndParent(breakdownPath);
+    }
+  }
+  return {
+    attempted: true,
+    ok: true,
+    changed: true,
+    path: path.relative(repoRoot, todoPath),
+    todo_id: requestId,
+    supersedes_todo_id: selectedId
+  };
+}
+
+function validateJsonFile(repoRoot, relativePath) {
+  const absolutePath = path.join(repoRoot, relativePath);
+  JSON.parse(fs.readFileSync(absolutePath, 'utf8'));
+}
+
+function validateJsonlFile(repoRoot, relativePath) {
+  const absolutePath = path.join(repoRoot, relativePath);
+  const lines = fs.readFileSync(absolutePath, 'utf8').split('\n').filter((line) => line.trim());
+  for (const line of lines) {
+    JSON.parse(line);
+  }
+}
+
+function runValidationStep(repoRoot, step) {
+  try {
+    if (step.kind === 'json') {
+      validateJsonFile(repoRoot, step.path);
+      return { ...step, ok: true };
+    }
+    if (step.kind === 'jsonl') {
+      validateJsonlFile(repoRoot, step.path);
+      return { ...step, ok: true };
+    }
+    const stdout = execFileSync(step.command, step.args, {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    return { ...step, ok: true, stdout_tail: stdout.slice(-4000) };
+  } catch (error) {
+    return {
+      ...step,
+      ok: false,
+      error: error?.message ?? String(error),
+      stdout_tail: error?.stdout?.toString?.().slice(-4000) ?? '',
+      stderr_tail: error?.stderr?.toString?.().slice(-4000) ?? ''
+    };
+  }
+}
+
+function postRepairValidation(repoRoot, repairs, diagnostic) {
+  const repairValues = Object.values(repairs).filter((repair) => repair && typeof repair === 'object');
+  const changedPaths = new Set(
+    repairValues
+      .filter((repair) => repair.ok && (repair.changed || repair.path))
+      .flatMap((repair) => [
+        repair.path,
+        ...(Array.isArray(repair.paths) ? repair.paths : [])
+      ])
+      .filter(Boolean)
+  );
+  const steps = [];
+  const codes = issueCodes(diagnostic);
+  const mustValidateTodo = (
+    changedPaths.has('.brownie/todo.md') ||
+    changedPaths.has('.brownie/todo-breakdown.md') ||
+    codes.has('todo_contract_invalid')
+  );
+  if (mustValidateTodo) {
+    steps.push({
+      kind: 'command',
+      name: 'guard-todo-decomposition',
+      command: process.execPath,
+      args: ['scripts/guard-todo-decomposition.mjs']
+    });
+    steps.push({
+      kind: 'command',
+      name: 'phase-loop-todo-queue-integrity',
+      command: process.execPath,
+      args: ['scripts/phase-loop-todo-queue-integrity.mjs']
+    });
+  }
+  if (changedPaths.has('.brownie/private/phase-loop/todo-claims/repair-feedback.json')) {
+    steps.push({
+      kind: 'json',
+      name: 'repair-feedback-json-parse',
+      path: '.brownie/private/phase-loop/todo-claims/repair-feedback.json'
+    });
+  }
+  if (changedPaths.has('.brownie/private/phase-loop/todo-claims/blocked.jsonl')) {
+    steps.push({
+      kind: 'jsonl',
+      name: 'blocked-jsonl-parse',
+      path: '.brownie/private/phase-loop/todo-claims/blocked.jsonl'
+    });
+  }
+  if (changedPaths.has('.brownie/private/phase-loop/todo-claims/failure-ledger.jsonl')) {
+    steps.push({
+      kind: 'jsonl',
+      name: 'failure-ledger-jsonl-parse',
+      path: '.brownie/private/phase-loop/todo-claims/failure-ledger.jsonl'
+    });
+  }
+  if (steps.length === 0) {
+    return { attempted: false, reason: 'no_generated_repair_artifacts' };
+  }
+  const results = steps.map((step) => runValidationStep(repoRoot, step));
+  const ok = results.every((result) => result.ok);
+  return {
+    attempted: true,
+    ok,
+    steps: results,
+    failed_steps: results.filter((result) => !result.ok).map((result) => result.name)
+  };
+}
+
+function todoIdFromBlock(block) {
+  return todoIdFromFirstLine(todoFirstLine(block));
+}
+
+function sourceTodoFromBlock(block) {
+  const match = String(block ?? '').match(/^\s*Source TODO:\s*(.+?)\s*$/mu);
+  return match?.[1]?.trim()?.replace(/[.:;,]+$/u, '') ?? null;
+}
+
+function isStalledLeafReplanId(todoId) {
+  return typeof todoId === 'string' && /-replan-stalled-leaf-[a-f0-9]{12}$/u.test(todoId);
+}
+
+function removeTodoBlocksById(todoText, idsToRemove) {
+  const blocks = todoBlocks(todoText);
+  if (blocks.length === 0 || idsToRemove.size === 0) {
+    return { text: todoText, removed: [] };
+  }
+  const removed = [];
+  const kept = [];
+  for (const block of blocks) {
+    const id = todoIdFromBlock(block.block);
+    if (id && idsToRemove.has(id)) {
+      removed.push(id);
+      continue;
+    }
+    kept.push(block.block);
+  }
+  let text = kept.join('\n\n').trimEnd();
+  text = text ? `${text}\n` : '';
+  return { text, removed };
+}
+
+function pruneDependsOn(todoText, idsToRemove) {
+  if (idsToRemove.size === 0) {
+    return { text: todoText, changed: false, pruned: [] };
+  }
+  const pruned = [];
+  const text = todoText.replace(
+    /^(?<prefix>\s*Depends on:\s*)(?<value>[^\n.]*?)(?<trailing>\.?)$/gmu,
+    (line, prefix, value, trailing = '') => {
+      const raw = String(value ?? '').trim();
+      if (!raw || raw === '<none>') {
+        return line;
+      }
+      const dependencies = raw.split(/\s*,\s*/u).map((entry) => entry.trim()).filter(Boolean);
+      const remaining = dependencies.filter((dependency) => !idsToRemove.has(dependency));
+      if (remaining.length === dependencies.length) {
+        return line;
+      }
+      const nextValue = remaining.length > 0 ? remaining.join(', ') : '<none>';
+      pruned.push({ from: raw, to: nextValue });
+      return `${prefix}${nextValue}${trailing}`;
+    }
+  );
+  return { text, changed: pruned.length > 0, pruned };
+}
+
+function removeBreakdownRepairSections(breakdownText, idsToRemove) {
+  let text = breakdownText;
+  const removed = [];
+  for (const id of idsToRemove) {
+    const escaped = id.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+    const pattern = new RegExp(`\\n*## TODO-repair-${escaped}\\n[\\s\\S]*?(?=\\n## |\\n?$)`, 'u');
+    if (pattern.test(text)) {
+      text = text.replace(pattern, '\n');
+      removed.push(id);
+    }
+  }
+  return {
+    text: `${text.trimEnd()}\n`,
+    removed
+  };
+}
+
+function maybeRepairNonLiveTodoResidue(repoRoot, diagnostic) {
+  const todoPath = path.join(repoRoot, '.brownie/todo.md');
+  const breakdownPath = path.join(repoRoot, '.brownie/todo-breakdown.md');
+  if (!fs.existsSync(todoPath)) {
+    return { attempted: false, reason: 'todo_missing' };
+  }
+  const todoText = fs.readFileSync(todoPath, 'utf8');
+  const completedIds = new Set([
+    ...durableCompletedTodoIds(repoRoot),
+    ...completedTodoIds(todoText)
+  ]);
+  const blockedIds = durableBlockedTodoIds(repoRoot);
+  const uncheckedIds = liveUncheckedTodoIds(todoText);
+  const idsToRemove = new Set();
+  const reasons = [];
+  const completionRecords = [];
+
+  for (const id of uncheckedIds) {
+    if (completedIds.has(id)) {
+      idsToRemove.add(id);
+      reasons.push({ todo_id: id, reason: 'durable_completion_reappeared_in_live_queue' });
+    }
+  }
+
+  for (const block of todoBlocks(todoText)) {
+    const id = todoIdFromBlock(block.block);
+    if (!id || !uncheckedIds.has(id)) {
+      continue;
+    }
+    const sourceId = sourceTodoFromBlock(block.block);
+    if (sourceId && completedIds.has(sourceId)) {
+      idsToRemove.add(id);
+      const completionRecord = writeSupervisorCompletionRecord(
+        repoRoot,
+        id,
+        'source_parent_completed',
+        { source_todo_id: sourceId }
+      );
+      if (completionRecord) {
+        completionRecords.push(completionRecord);
+      }
+      reasons.push({
+        todo_id: id,
+        source_todo_id: sourceId,
+        reason: 'live_child_source_todo_completed'
+      });
+    }
+  }
+
+  for (const block of todoBlocks(todoText)) {
+    const id = todoIdFromBlock(block.block);
+    if (!isStalledLeafReplanId(id)) {
+      continue;
+    }
+    const sourceId = sourceTodoFromBlock(block.block);
+    const sourceIsLive = sourceId ? uncheckedIds.has(sourceId) : false;
+    const sourceIsCompleted = sourceId ? completedIds.has(sourceId) : false;
+    const sourceIsBlocked = sourceId ? blockedIds.has(sourceId) : false;
+    if (!sourceId || !sourceIsLive || sourceIsCompleted || sourceIsBlocked) {
+      idsToRemove.add(id);
+      reasons.push({
+        todo_id: id,
+        source_todo_id: sourceId,
+        reason: sourceIsCompleted
+          ? 'stalled_replan_source_completed'
+          : sourceIsBlocked
+            ? 'stalled_replan_source_blocked'
+            : 'stalled_replan_source_not_live'
+      });
+    }
+  }
+
+  if (idsToRemove.size === 0) {
+    return { attempted: false, reason: 'no_non_live_todo_residue_detected' };
+  }
+
+  const removedBlocks = removeTodoBlocksById(todoText, idsToRemove);
+  const prunedDepends = pruneDependsOn(removedBlocks.text, idsToRemove);
+  fs.writeFileSync(todoPath, prunedDepends.text, { encoding: 'utf8', mode: 0o600 });
+  fsyncFileAndParent(todoPath);
+
+  let breakdownRemoved = [];
+  if (fs.existsSync(breakdownPath)) {
+    const breakdownText = fs.readFileSync(breakdownPath, 'utf8');
+    const nextBreakdown = removeBreakdownRepairSections(breakdownText, idsToRemove);
+    if (nextBreakdown.removed.length > 0) {
+      fs.writeFileSync(breakdownPath, nextBreakdown.text, { encoding: 'utf8', mode: 0o600 });
+      fsyncFileAndParent(breakdownPath);
+      breakdownRemoved = nextBreakdown.removed;
+    }
+  }
+
+  return {
+    attempted: true,
+    ok: true,
+    changed: true,
+    paths: ['.brownie/todo.md', ...(breakdownRemoved.length > 0 ? ['.brownie/todo-breakdown.md'] : [])],
+    removed_todo_ids: removedBlocks.removed,
+    completion_records: completionRecords,
+    pruned_dependency_lines: prunedDepends.pruned,
+    removed_breakdown_sections: breakdownRemoved,
+    reasons
+  };
+}
+
+function maybeArchiveStaleActiveClaim(repoRoot, diagnostic) {
+  const codes = issueCodes(diagnostic);
+  if (!codes.has('active_claim_not_selected_by_live_queue')) {
+    return { attempted: false, reason: 'active_claim_matches_live_queue_or_not_reported' };
+  }
+  const claimPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/current.json');
+  const claim = readJsonOrNull(claimPath);
+  if (!claim) {
+    return { attempted: true, ok: false, reason: 'claim_missing_or_invalid' };
+  }
+  const stamp = new Date().toISOString().replace(/[-:]/gu, '').replace(/\.\d{3}Z$/u, 'Z');
+  const archivePath = path.join(
+    repoRoot,
+    '.brownie/private/phase-loop/todo-claims',
+    `stale-current-${stamp}.json`
+  );
+  const archived = {
+    ...claim,
+    archived_at: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z'),
+    archived_by: 'phase-loop-supervisor-control',
+    archive_reason: 'active_claim_not_selected_by_live_queue',
+    evaluator_selected_todo_id: diagnostic.todo?.evaluator?.selected_todo_id ?? null
+  };
+  try {
+    fs.writeFileSync(archivePath, `${JSON.stringify(archived, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    fs.rmSync(claimPath, { force: true });
+    fsyncFileAndParent(archivePath);
+    return {
+      attempted: true,
+      ok: true,
+      changed: true,
+      path: path.relative(repoRoot, archivePath),
+      removed_path: path.relative(repoRoot, claimPath),
+      archived_claim_id: claim.claim_id ?? null
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      ok: false,
+      error: error?.message ?? String(error)
+    };
+  }
+}
+
+function parentPrefixFromTodoId(parentId) {
+  if (typeof parentId !== 'string' || !/^E-\d+/u.test(parentId) || !parentId.includes('-')) {
+    return null;
+  }
+  return parentId.split('-').slice(0, 2).join('-');
+}
+
+function replaceAllLiteral(text, from, to) {
+  return text.split(from).join(to);
+}
+
+function maybeRepairDerivedTodoPrefixAndLedger(repoRoot, diagnostic) {
+  const codes = issueCodes(diagnostic);
+  const errorText = (diagnostic.issues ?? [])
+    .flatMap((issue) => Array.isArray(issue.errors) ? issue.errors : [])
+    .join('\n');
+  if (!codes.has('todo_contract_invalid') || !errorText.includes('TODO id must preserve parent prefix')) {
+    return { attempted: false, reason: 'no_derived_todo_prefix_violation' };
+  }
+  const todoPath = path.join(repoRoot, '.brownie/todo.md');
+  const breakdownPath = path.join(repoRoot, '.brownie/todo-breakdown.md');
+  if (!fs.existsSync(todoPath)) {
+    return { attempted: true, ok: false, reason: 'todo_missing' };
+  }
+  let todoText = fs.readFileSync(todoPath, 'utf8');
+  let breakdownText = fs.existsSync(breakdownPath) ? fs.readFileSync(breakdownPath, 'utf8') : '';
+  const mappings = [];
+  for (const candidate of todoBlocks(todoText)) {
+    const id = todoIdFromBlock(candidate.block);
+    const parent = sourceTodoFromBlock(candidate.block);
+    const prefix = parentPrefixFromTodoId(parent);
+    if (!id || !parent || !prefix || id.startsWith(`${prefix}-`)) {
+      continue;
+    }
+    const suffix = id.replace(/^[A-Za-z0-9]+-[A-Za-z0-9]+-/u, '');
+    const nextId = `${prefix}-${suffix}`;
+    if (nextId === id) {
+      continue;
+    }
+    mappings.push({ from: id, to: nextId, parent });
+  }
+  if (mappings.length === 0) {
+    return { attempted: true, ok: false, reason: 'no_repairable_prefix_mapping' };
+  }
+  for (const mapping of mappings) {
+    todoText = replaceAllLiteral(todoText, mapping.from, mapping.to);
+    breakdownText = replaceAllLiteral(breakdownText, mapping.from, mapping.to);
+  }
+  for (const mapping of mappings) {
+    if (!breakdownText.includes(mapping.to)) {
+      const section = `
+## TODO-repair-${mapping.to}
+
+Parent TODO: ${mapping.parent}
+
+Dependency graph:
+- ${mapping.to}: <none>
+
+Verification ledger:
+- ${mapping.to}: run \`pnpm --workspace-root guard:todo-decomposition\` and \`pnpm --workspace-root phase-loop:todo-queue-integrity\`.
+
+Quality rubric:
+- ${mapping.to}: derived TODO id preserves parent prefix, has bounded patch scope, and keeps the TODO queue/breakdown ledger consistent.
+
+History:
+
+- ${new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z')}: Supervisor repaired generated TODO id prefix from ${mapping.from} to ${mapping.to} after TODO decomposition guard rejected the live queue.
+`;
+      breakdownText = `${breakdownText.trimEnd()}\n\n${section.trimStart()}`;
+    }
+  }
+  fs.writeFileSync(todoPath, todoText, { encoding: 'utf8', mode: 0o600 });
+  fs.writeFileSync(breakdownPath, `${breakdownText.trimEnd()}\n`, { encoding: 'utf8', mode: 0o600 });
+  fsyncFileAndParent(todoPath);
+  fsyncFileAndParent(breakdownPath);
+  return {
+    attempted: true,
+    ok: true,
+    changed: true,
+    paths: ['.brownie/todo.md', '.brownie/todo-breakdown.md'],
+    mappings
+  };
+}
+
+function maybeWriteTodoContractReplanFeedback(repoRoot, diagnostic, ledgerSummary) {
+  if (!ledgerSummary?.should_replan) {
+    return {
+      attempted: false,
+      reason: ledgerSummary?.replan_reason ?? 'failure_ledger_threshold_not_met',
+      ledger_summary: ledgerSummary
+    };
+  }
+  const claimPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/current.json');
+  const feedbackPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/repair-feedback.json');
+  const claim = readJsonOrNull(claimPath);
+  const selectedTodo = claim?.selected_todo ?? selectedTodoBlock(diagnostic);
+  const selectedRoute = diagnostic.progress?.selected_todo?.route ?? null;
+  const selectedId = ledgerSummary.todo_id ?? todoIdFromFirstLine(todoFirstLine(selectedTodo));
+  if (selectedRoute === 'todo-decomposition' && String(selectedId ?? '').includes('replan-stalled-leaf')) {
+    return {
+      attempted: false,
+      reason: 'recursive_todo_decomposition_replan_suppressed',
+      ledger_summary: ledgerSummary
+    };
+  }
+  const feedback = {
+    schema_version: 1,
+    kind: 'phase_loop_todo_contract_replan_feedback',
+    generated_at: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z'),
+    completed: false,
+    reason: 'supervisor_repeated_leaf_failure_requires_todo_contract_replan',
+    selected_todo: selectedTodo,
+    selected_todo_first_line: todoFirstLine(selectedTodo) ?? ledgerSummary.selected_todo_first_line ?? null,
+    failure_ledger_summary: ledgerSummary,
+    repair_hint: [
+      'The same selected leaf has repeatedly failed without meaningful progress.',
+      'Do not repeat the same workspace.write patch and do not keep trying to satisfy an impossible single-target contract.',
+      'First decide whether the selected TODO is too narrow for its verification and completion condition.',
+      'If the allowed patch target cannot satisfy the failed verification semantically, patch .brownie/todo.md and .brownie/todo-breakdown.md to replace this leaf with implementable child leaves that preserve the parent intent.',
+      'Use separate implementation and test/evidence leaves when production code and tests must both change.',
+      'Do not weaken guards/tests, do not invent release evidence values, and do not declare Runtime Product Ready.'
+    ].join(' '),
+    semantic_repair_policy: {
+      mode: 'stalled_leaf_contract_replan',
+      must_preserve_parent_intent: true,
+      must_not_only_make_checks_green: true,
+      must_not_weaken_guards_or_tests: true,
+      must_not_repeat_failed_patch_or_same_leaf_attempt: true,
+      allowed_next_actions: [
+        'inspect selected TODO contract and failed verification',
+        'patch .brownie/todo.md and .brownie/todo-breakdown.md to replace the selected leaf when its target scope is insufficient',
+        'create implementable child leaves with explicit patch targets, dependencies, and existing verification commands',
+        'emit one concrete fail-closed blocker only if the parent work is genuinely blocked by external state'
+      ],
+      forbidden_next_actions: [
+        'repeat the same invalid patch old_text',
+        'retry the same single-target leaf without changing target scope',
+        'delete the selected TODO without a replacement or passing verification',
+        'weaken the failing verification',
+        'modify unrelated files to create apparent progress'
+      ]
+    },
+    generated_by: 'phase-loop-supervisor-control'
+  };
+  try {
+    fs.mkdirSync(path.dirname(feedbackPath), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(feedbackPath, `${JSON.stringify(feedback, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    fsyncFileAndParent(feedbackPath);
+    return {
+      attempted: true,
+      ok: true,
+      path: path.relative(repoRoot, feedbackPath),
+      ledger_summary: ledgerSummary
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      ok: false,
+      error: error?.message ?? String(error),
+      ledger_summary: ledgerSummary
+    };
+  }
+}
+
+function maybeWriteSemanticVerificationRepairFeedback(repoRoot, diagnostic) {
+  const codes = issueCodes(diagnostic);
+  if (!codes.has('verification_failure_requires_semantic_repair')) {
+    return { attempted: false, reason: 'semantic_verification_failure_not_reported' };
+  }
+  const stalled = codes.has('semantic_verification_repair_stalled') || codes.has('stale_no_progress_projection_during_running_loop');
+  const claimPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/current.json');
+  const feedbackPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/repair-feedback.json');
+  const claim = readJsonOrNull(claimPath);
+  const selectedTodo = claim?.selected_todo ?? diagnostic.verification_failure?.selected_todo?.first_line ?? null;
+  const feedback = {
+    schema_version: 1,
+    kind: 'phase_loop_semantic_verification_repair_feedback',
+    generated_at: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z'),
+    completed: false,
+    reason: 'supervisor_semantic_verification_failure',
+    selected_todo: selectedTodo,
+    selected_todo_first_line: todoFirstLine(selectedTodo) ?? diagnostic.verification_failure?.selected_todo?.first_line ?? null,
+    verification_failure: diagnostic.verification_failure,
+    repair_hint: [
+      'The selected TODO reached verification but the verification command failed.',
+      'Repair the selected target semantically: keep the TODO intent, keep the guard/test strength, and rerun the exact failed command.',
+      stalled
+        ? 'This semantic repair is now stalled; if the selected single-target TODO cannot satisfy the verification without forbidden files, patch .brownie/todo.md to replace it with a corrected implementable leaf or a concrete fail-closed blocker.'
+        : 'Do not mark the TODO complete by deleting or weakening checks; make the implementation/evidence match the contract.'
+    ].join(' '),
+    semantic_repair_policy: {
+      mode: stalled ? 'stalled_semantic_verification_replan_or_repair' : 'bounded_selected_target_semantic_repair',
+      must_preserve_selected_todo_intent: true,
+      must_not_only_make_checks_green: true,
+      must_not_weaken_guards_or_tests: true,
+      must_rerun_failed_command: true,
+      allowed_next_actions: [
+        'inspect_selected_todo',
+        'inspect_failed_command_stdout_stderr',
+        'inspect_patch_targets',
+        'repair_selected_patch_targets',
+        'rerun_exact_failed_command',
+        ...(stalled ? [
+          'patch .brownie/todo.md to replace the selected leaf when its target scope is insufficient',
+          'emit a concrete fail-closed blocker when the selected TODO is impossible'
+        ] : [])
+      ],
+      forbidden_next_actions: [
+        'delete_or_skip_failed_test',
+        'weaken_guard_contract',
+        'remove_selected_todo_without_passing_verification',
+        'modify_unrelated_files_to_create_progress',
+        ...(stalled ? [
+          'repeat the same semantic repair without changing target scope or TODO contract'
+        ] : [])
+      ],
+      stalled
+    },
+    generated_by: 'phase-loop-supervisor-control'
+  };
+  try {
+    fs.mkdirSync(path.dirname(feedbackPath), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(feedbackPath, `${JSON.stringify(feedback, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    fsyncFileAndParent(feedbackPath);
+    return {
+      attempted: true,
+      ok: true,
+      path: path.relative(repoRoot, feedbackPath)
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      ok: false,
+      error: error?.message ?? String(error)
+    };
+  }
+}
+
+function maybeWriteBoundedLeafApplyRejectionFeedback(repoRoot, diagnostic) {
+  const codes = issueCodes(diagnostic);
+  if (!codes.has('bounded_leaf_refinement_rejected')) {
+    return { attempted: false, reason: 'bounded_leaf_refinement_rejection_not_reported' };
+  }
+  const claimPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/current.json');
+  const feedbackPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/repair-feedback.json');
+  const claim = readJsonOrNull(claimPath);
+  const applyRejection = diagnostic.apply_rejection ?? {};
+  const selectedTodo = claim?.selected_todo ?? applyRejection?.selected_todo?.first_line ?? null;
+  const patchTargets = Array.isArray(applyRejection?.selected_todo?.patch_targets)
+    ? applyRejection.selected_todo.patch_targets
+    : [];
+  const feedback = {
+    schema_version: 1,
+    kind: 'phase_loop_bounded_leaf_apply_rejection_repair_feedback',
+    generated_at: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z'),
+    completed: false,
+    reason: 'supervisor_bounded_leaf_refinement_rejected',
+    selected_todo: selectedTodo,
+    selected_todo_first_line: todoFirstLine(selectedTodo) ?? applyRejection?.selected_todo?.first_line ?? null,
+    apply_rejection: applyRejection,
+    repair_hint: [
+      'The selected TODO is already a bounded leaf.',
+      'Do not rewrite .brownie/todo.md, do not split the TODO again, and do not restate the same TODO.',
+      'Emit one compact workspace.write patch_file for the selected target, or report one concrete blocker if the target cannot satisfy the completion condition.'
+    ].join(' '),
+    semantic_repair_policy: {
+      mode: 'force_bounded_leaf_target_patch',
+      selected_patch_targets: patchTargets,
+      must_preserve_selected_todo_intent: true,
+      must_not_refine_bounded_leaf_todo: true,
+      must_not_only_make_checks_green: true,
+      allowed_next_actions: [
+        'emit exactly one compact workspace.write patch_file for one selected target',
+        'report one concrete blocker if the selected target cannot satisfy the completion condition'
+      ],
+      forbidden_next_actions: [
+        'rewrite .brownie/todo.md',
+        'split bounded leaf again',
+        'remove selected TODO without passing verification',
+        'repeat the rejected TODO refinement proposal',
+        'modify unrelated files'
+      ]
+    },
+    generated_by: 'phase-loop-supervisor-control'
+  };
+  try {
+    fs.mkdirSync(path.dirname(feedbackPath), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(feedbackPath, `${JSON.stringify(feedback, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    fsyncFileAndParent(feedbackPath);
+    return {
+      attempted: true,
+      ok: true,
+      path: path.relative(repoRoot, feedbackPath)
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      ok: false,
+      error: error?.message ?? String(error)
+    };
+  }
+}
+
+function maybeWriteInvalidPatchRepairFeedback(repoRoot, diagnostic) {
+  const codes = issueCodes(diagnostic);
+  if (!codes.has('invalid_workspace_write_patch_repeated')) {
+    return { attempted: false, reason: 'invalid_patch_not_reported' };
+  }
+  const claimPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/current.json');
+  const feedbackPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/repair-feedback.json');
+  const claim = readJsonOrNull(claimPath);
+  const invalidPatch = diagnostic.invalid_patch ?? {};
+  const selectedTodo = claim?.selected_todo ?? invalidPatch?.selected_todo?.first_line ?? null;
+  const patchTargets = Array.isArray(invalidPatch?.selected_todo?.patch_targets)
+    ? invalidPatch.selected_todo.patch_targets
+    : [];
+  const feedback = {
+    schema_version: 1,
+    kind: 'phase_loop_invalid_patch_repair_feedback',
+    generated_at: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z'),
+    completed: false,
+    reason: 'supervisor_invalid_workspace_write_patch',
+    selected_todo: selectedTodo,
+    selected_todo_first_line: todoFirstLine(selectedTodo) ?? invalidPatch?.selected_todo?.first_line ?? null,
+    invalid_patch: invalidPatch,
+    repair_hint: [
+      'The previous workspace.write patch_file did not apply because old_text was not found in the current target.',
+      'Do not repeat the same old_text and do not copy stale previews.',
+      'If exact current context is missing, request exactly one bounded workspace.read for the selected target; otherwise emit one smaller workspace.write patch_file hunk whose old_text exists now.',
+      'Patch .brownie/todo.md only if the selected TODO contract is impossible.'
+    ].join(' '),
+    semantic_repair_policy: {
+      mode: 'invalid_patch_exact_context_repair',
+      selected_patch_targets: patchTargets,
+      must_preserve_selected_todo_intent: true,
+      must_not_repeat_invalid_patch: true,
+      must_not_only_make_checks_green: true,
+      allowed_next_actions: [
+        'request exactly one bounded workspace.read for the selected target if exact current context is missing',
+        'emit exactly one smaller workspace.write patch_file hunk whose old_text exists in the current target',
+        'patch .brownie/todo.md only if the selected TODO contract is impossible',
+        'report one concrete blocker if the selected target cannot satisfy the completion condition'
+      ],
+      forbidden_next_actions: [
+        'repeat the same invalid old_text',
+        'copy old_text from stale llm_response_previews',
+        'write .brownie/todo.md to avoid a repairable target patch',
+        'modify unrelated files',
+        'remove selected TODO without passing verification'
+      ]
+    },
+    generated_by: 'phase-loop-supervisor-control'
+  };
+  try {
+    fs.mkdirSync(path.dirname(feedbackPath), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(feedbackPath, `${JSON.stringify(feedback, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    fsyncFileAndParent(feedbackPath);
+    return {
+      attempted: true,
+      ok: true,
+      path: path.relative(repoRoot, feedbackPath)
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      ok: false,
+      error: error?.message ?? String(error)
+    };
+  }
+}
+
+function maybeStartPhaseLoop(repoRoot, enabled, diagnostic) {
+  if (!enabled) {
+    return { attempted: false, reason: 'start_not_requested' };
+  }
+  if (issueCodes(diagnostic).has('delivery_required')) {
+    return {
+      attempted: false,
+      reason: 'delivery_required_not_starting',
+      next_action: 'verify_commit_push_pr_review_merge'
+    };
+  }
+  const status = diagnostic.phase_loop?.status;
+  if (diagnostic.summary?.healthy && (status === 'running' || status === 'last_run_succeeded')) {
+    return { attempted: false, reason: 'phase_loop_already_healthy' };
+  }
+  try {
+    const stdout = runTextCommand(repoRoot, './phase-loop.sh', ['start']);
+    return { attempted: true, ok: true, stdout };
+  } catch (error) {
+    return {
+      attempted: true,
+      ok: false,
+      error: error?.message ?? String(error),
+      stdout: error?.stdout?.toString?.() ?? undefined,
+      stderr: error?.stderr?.toString?.() ?? undefined
+    };
+  }
+}
+
+export function controlPhaseLoop(options = {}) {
+  const repoRoot = path.resolve(options.repoRoot ?? defaultRepoRoot);
+  const initial = diagnosePhaseLoop({ repoRoot, write: options.write !== false });
+  const failureLedger = options.repair === false
+    ? { attempted: false, reason: 'repair_disabled' }
+    : appendFailureLedgerEvent(repoRoot, initial);
+  const ledgerSummary = failureLedgerSummary(repoRoot, initial, failureLedger);
+  const queueIntegrityRepair = options.repair === false
+    ? { attempted: false, reason: 'repair_disabled' }
+    : maybeRepairTodoQueueIntegrity(repoRoot, initial);
+  const afterQueueIntegrityRepair = queueIntegrityRepair.attempted && queueIntegrityRepair.ok
+    ? diagnosePhaseLoop({ repoRoot, write: options.write !== false })
+    : initial;
+  const todoContractRepair = options.repair === false
+    ? { attempted: false, reason: 'repair_disabled' }
+    : maybeRepairTodoContract(repoRoot, afterQueueIntegrityRepair);
+  const afterTodoContractRepair = todoContractRepair.attempted && todoContractRepair.ok
+    ? diagnosePhaseLoop({ repoRoot, write: options.write !== false })
+    : afterQueueIntegrityRepair;
+  const derivedTodoPrefixRepair = options.repair === false
+    ? { attempted: false, reason: 'repair_disabled' }
+    : maybeRepairDerivedTodoPrefixAndLedger(repoRoot, afterTodoContractRepair);
+  const afterRepair = derivedTodoPrefixRepair.attempted && derivedTodoPrefixRepair.ok
+    ? diagnosePhaseLoop({ repoRoot, write: options.write !== false })
+    : afterTodoContractRepair;
+  const nonLiveTodoResidueRepair = options.repair === false
+    ? { attempted: false, reason: 'repair_disabled' }
+    : maybeRepairNonLiveTodoResidue(repoRoot, afterRepair);
+  const afterResidueRepair = nonLiveTodoResidueRepair.attempted && nonLiveTodoResidueRepair.ok
+    ? diagnosePhaseLoop({ repoRoot, write: options.write !== false })
+    : afterRepair;
+  const staleActiveClaimRepair = options.repair === false
+    ? { attempted: false, reason: 'repair_disabled' }
+    : maybeArchiveStaleActiveClaim(repoRoot, afterResidueRepair);
+  const afterClaimRepair = staleActiveClaimRepair.attempted && staleActiveClaimRepair.ok
+    ? diagnosePhaseLoop({ repoRoot, write: options.write !== false })
+    : afterResidueRepair;
+  const todoContractReplanRepair = options.repair === false
+    ? { attempted: false, reason: 'repair_disabled' }
+    : maybeWriteTodoContractReplanFeedback(repoRoot, afterClaimRepair, ledgerSummary);
+  const stalledTodoBlocked = options.repair === false
+    ? { attempted: false, reason: 'repair_disabled' }
+    : todoContractReplanRepair.attempted && todoContractReplanRepair.ok
+      ? appendStalledTodoBlockedRecord(repoRoot, afterClaimRepair, ledgerSummary)
+      : { attempted: false, reason: 'todo_contract_replan_not_active' };
+  const stalledTodoDecomposition = options.repair === false
+    ? { attempted: false, reason: 'repair_disabled' }
+    : todoContractReplanRepair.attempted && todoContractReplanRepair.ok && stalledTodoBlocked.changed === true
+      ? ensureStalledTodoDecompositionRequest(repoRoot, afterClaimRepair, ledgerSummary)
+      : {
+          attempted: false,
+          reason: todoContractReplanRepair.attempted && todoContractReplanRepair.ok
+            ? 'stalled_todo_already_blocked_or_not_recorded'
+            : 'todo_contract_replan_not_active'
+        };
+  const semanticVerificationRepair = options.repair === false
+    ? { attempted: false, reason: 'repair_disabled' }
+    : todoContractReplanRepair.attempted && todoContractReplanRepair.ok
+      ? { attempted: false, reason: 'todo_contract_replan_feedback_takes_precedence' }
+      : maybeWriteSemanticVerificationRepairFeedback(repoRoot, afterRepair);
+  const invalidPatchRepair = options.repair === false
+    ? { attempted: false, reason: 'repair_disabled' }
+    : todoContractReplanRepair.attempted && todoContractReplanRepair.ok
+      ? { attempted: false, reason: 'todo_contract_replan_feedback_takes_precedence' }
+      : maybeWriteInvalidPatchRepairFeedback(repoRoot, afterClaimRepair);
+  const boundedLeafApplyRejectionRepair = options.repair === false
+    ? { attempted: false, reason: 'repair_disabled' }
+    : todoContractReplanRepair.attempted && todoContractReplanRepair.ok
+      ? { attempted: false, reason: 'todo_contract_replan_feedback_takes_precedence' }
+      : maybeWriteBoundedLeafApplyRejectionFeedback(repoRoot, afterClaimRepair);
+  const repairResults = {
+    failure_ledger: failureLedger,
+    todo_queue_integrity: queueIntegrityRepair,
+    todo_contract: todoContractRepair,
+    derived_todo_prefix_ledger: derivedTodoPrefixRepair,
+    todo_contract_replan: todoContractReplanRepair,
+    stalled_todo_blocked: stalledTodoBlocked,
+    stalled_todo_decomposition: stalledTodoDecomposition,
+    non_live_todo_residue: nonLiveTodoResidueRepair,
+    stale_active_claim: staleActiveClaimRepair,
+    semantic_verification: semanticVerificationRepair,
+    invalid_patch: invalidPatchRepair,
+    bounded_leaf_apply_rejection: boundedLeafApplyRejectionRepair
+  };
+  const postRepair = options.repair === false
+    ? { attempted: false, reason: 'repair_disabled' }
+    : postRepairValidation(repoRoot, repairResults, afterClaimRepair);
+  const start = postRepair.attempted && !postRepair.ok
+    ? { attempted: false, reason: 'post_repair_validation_failed', validation: postRepair }
+    : maybeStartPhaseLoop(repoRoot, Boolean(options.start), afterClaimRepair);
+  const final = start.attempted && start.ok
+    ? diagnosePhaseLoop({ repoRoot, write: options.write !== false })
+    : afterClaimRepair;
+  return {
+    schema_version: 1,
+    control_kind: 'brownie_phase_loop_supervisor_control',
+    generated_at: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z'),
+    repo_root: repoRoot,
+    initial_summary: initial.summary,
+    repair: {
+      failure_ledger: failureLedger,
+      failure_ledger_summary: ledgerSummary,
+      todo_queue_integrity: queueIntegrityRepair,
+      todo_contract: todoContractRepair,
+      derived_todo_prefix_ledger: derivedTodoPrefixRepair,
+      todo_contract_replan: todoContractReplanRepair,
+      stalled_todo_blocked: stalledTodoBlocked,
+      stalled_todo_decomposition: stalledTodoDecomposition,
+      non_live_todo_residue: nonLiveTodoResidueRepair,
+      stale_active_claim: staleActiveClaimRepair,
+      semantic_verification: semanticVerificationRepair,
+      invalid_patch: invalidPatchRepair,
+      bounded_leaf_apply_rejection: boundedLeafApplyRejectionRepair,
+      post_repair_validation: postRepair
+    },
+    start,
+    final_summary: final.summary,
+    final_phase_loop: final.phase_loop,
+    final_issues: final.issues
+  };
+}
+
+if (process.argv[1] === __filename) {
+  const args = parseArgs(process.argv);
+  const result = controlPhaseLoop({
+    repoRoot: args.repo,
+    write: args.write,
+    repair: args.repair,
+    start: args.start
+  });
+  console.log(JSON.stringify(result, null, 2));
+  process.exit(result.final_summary.healthy ? 0 : 1);
+}

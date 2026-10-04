@@ -81,8 +81,62 @@ export function isExplicitBlockerTodo(block) {
     lower.includes('forbidden changes: do not patch') ||
     lower.includes('no workspace file is patched') ||
     lower.includes('do not implement') ||
-    lower.includes('owner-controlled');
-  return namesBlocker && forbidsImplementation && ['documentation', 'release-ops', 'release-judgment/resync', ''].includes(route);
+    lower.includes('owner-controlled') ||
+    (
+      lower.includes('forbidden changes:') &&
+      lower.includes('do not invent evidence values') &&
+      (
+        lower.includes('do not declare product ready') ||
+        lower.includes('do not declare runtime product ready') ||
+        lower.includes('or declare product ready') ||
+        lower.includes('or declare runtime product ready')
+      )
+    );
+  return namesBlocker && forbidsImplementation && ['documentation', 'release-ops', 'release-judgment/resync', 'blocker', ''].includes(route);
+}
+
+export function isBrownieOwnedBlockerTodo(block) {
+  if (!isExplicitBlockerTodo(block)) {
+    return false;
+  }
+  const route = routeValue(block);
+  if (route !== 'release-ops') {
+    return false;
+  }
+  const lower = block.toLowerCase();
+  const externalAuthoritySignals = [
+    'external release engineering ownership',
+    'deployment credentials',
+    'production deployment credentials',
+    'provided by repository owner',
+    'owner provides',
+    'human review',
+    'independent human review',
+    'purchase',
+    'license key',
+    'password',
+    'token'
+  ];
+  if (externalAuthoritySignals.some((signal) => lower.includes(signal))) {
+    return false;
+  }
+  const brownieOwnedSignals = [
+    'evidence',
+    'collector',
+    'guard',
+    'harness',
+    'workspace setup',
+    'source checkout',
+    'artifact',
+    'golden journey',
+    'stateful soak',
+    'provenance',
+    'document generation',
+    'reproducible',
+    'release contract',
+    'readiness audit'
+  ];
+  return brownieOwnedSignals.some((signal) => lower.includes(signal));
 }
 
 export function needsTodoDecomposition(block) {
@@ -200,6 +254,10 @@ export function selectFirstSchedulableTodo(text, options = {}) {
       continue;
     }
     if (!isDerivedLeaf(block) && prefix && derivedPrefixes.has(prefix)) {
+      continue;
+    }
+    if (isExplicitBlockerTodo(block)) {
+      dependencyBlockedIds.add(id);
       continue;
     }
     const deps = dependsOn(block);

@@ -208,6 +208,8 @@
       "docs/architecture/runtime-module-decomposition-assessment.json",
       "docs/architecture/runtime-release-contract.json",
       "docs/architecture/runtime-release-readiness-audit.json",
+      "scripts/guard-owner-governance-evidence.mjs",
+      "scripts/guard-owner-governance-evidence.test.mjs",
       "scripts/guard-phase-value.mjs",
       "scripts/guard-phase-value.test.mjs",
       "scripts/guard-release-contract.mjs",

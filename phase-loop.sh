@@ -20,6 +20,7 @@ BDK_TRAJECTORY_DIR="$STATE_DIR/trajectories"
 KNOWN_GOOD_DIR="$STATE_DIR/known-good-targets"
 BDK_TRAJECTORY_FILE="${PHASE_LOOP_BDK_TRAJECTORY_FILE:-"$STATE_DIR/bdk-trajectory.jsonl"}"
 BDK_HARNESS_FEEDBACK_FILE="$STATE_DIR/bdk-harness-feedback.json"
+LLM_PROVIDER_FAILURE_MEMORY_FILE="$STATE_DIR/llm-provider-failures.jsonl"
 LAUNCHD_LABEL="${PHASE_LOOP_LAUNCHD_LABEL:-globalpocket.brownie.phase-loop}"
 SCREEN_NAME="${PHASE_LOOP_SCREEN_NAME:-brownie-phase-loop}"
 PHASE_LOOP_COMPLETED_TODO_REMOVAL_REVERTED=0
@@ -86,6 +87,7 @@ write_bdk_trajectory_event() {
   fi
   python3 - "$TODO_CLAIM_FILE" "$BDK_TRAJECTORY_FILE" "$BDK_TRAJECTORY_DIR/$run_stamp.jsonl" "$run_stamp" "$event_type" "$(now_utc)" "$payload_json" <<'PY'
 import json
+import hashlib
 import os
 import pathlib
 import re
@@ -409,6 +411,128 @@ todo_first_pending_item() {
   node "$ROOT_DIR/scripts/phase-loop-todo-evaluator.mjs" select --todo "$PHASE_LOOP_TODO" --blocked "$TODO_BLOCKED_FILE"
 }
 
+todo_first_raw_pending_item() {
+  if [ ! -f "$PHASE_LOOP_TODO" ]; then
+    return 0
+  fi
+  node --input-type=module - "$PHASE_LOOP_TODO" "$ROOT_DIR/scripts/guard-todo-decomposition.mjs" <<'NODE'
+import fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
+
+const todoPath = process.argv[2];
+const guardPath = process.argv[3];
+const { uncheckedTodoBlocks } = await import(pathToFileURL(guardPath).href);
+let text = '';
+try {
+  text = fs.readFileSync(todoPath, 'utf8');
+} catch {
+  process.exit(0);
+}
+const [first] = uncheckedTodoBlocks(text);
+if (first) {
+  process.stdout.write(first);
+}
+NODE
+}
+
+todo_first_raw_pending_is_explicit_blocker() {
+  if [ ! -f "$PHASE_LOOP_TODO" ]; then
+    return 1
+  fi
+  local selected
+  selected="$(todo_first_raw_pending_item 2>/dev/null || true)"
+  if [ -z "$selected" ]; then
+    return 1
+  fi
+  PHASE_LOOP_SELECTED_TODO="$selected" node --input-type=module - "$ROOT_DIR/scripts/phase-loop-todo-evaluator.mjs" <<'NODE'
+import { pathToFileURL } from 'node:url';
+
+const evaluatorPath = process.argv[2];
+const selected = process.env.PHASE_LOOP_SELECTED_TODO ?? '';
+const { isExplicitBlockerTodo } = await import(pathToFileURL(evaluatorPath).href);
+process.exit(isExplicitBlockerTodo(selected) ? 0 : 1);
+NODE
+}
+
+todo_first_raw_pending_is_recorded_blocked() {
+  if [ ! -f "$PHASE_LOOP_TODO" ] || [ ! -f "$TODO_BLOCKED_FILE" ]; then
+    return 1
+  fi
+PHASE_LOOP_RAW_TODO="$(todo_first_raw_pending_item 2>/dev/null || true)" python3 - "$TODO_BLOCKED_FILE" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import re
+import sys
+
+selected = os.environ.get("PHASE_LOOP_RAW_TODO", "")
+if not selected.strip():
+    raise SystemExit(1)
+first = selected.splitlines()[0].strip() if selected.splitlines() else ""
+match = re.match(r"^[ \t]*(?:[-*]|[0-9]+[.)])[ \t]+\[[ \t]*\][ \t]+([^:\s]+)", first)
+todo_id = match.group(1).strip() if match else ""
+selected_sha256 = hashlib.sha256(selected.encode("utf-8")).hexdigest()
+blocked_path = pathlib.Path(sys.argv[1])
+try:
+    lines = blocked_path.read_text(encoding="utf-8").splitlines()
+except Exception:
+    raise SystemExit(1)
+for line in lines:
+    try:
+        record = json.loads(line)
+    except Exception:
+        continue
+    blocked_selected = str(record.get("selected_todo") or "")
+    blocked_first = str(record.get("selected_todo_first_line") or "")
+    blocked_sha256 = str(record.get("selected_todo_sha256") or "")
+    blocked_id = str(record.get("todo_id") or record.get("selected_todo_id") or "")
+    if (
+        blocked_selected == selected
+        or blocked_first == first
+        or blocked_sha256 == selected_sha256
+        or (todo_id and blocked_id == todo_id)
+    ):
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+claim_first_raw_pending_todo() {
+  local run_stamp="$1"
+  local selected_todo queue_state queue_generation queue_fingerprint selected_hash claim_id
+  selected_todo="$(todo_first_raw_pending_item 2>/dev/null || true)"
+  if [ -z "$selected_todo" ]; then
+    return 1
+  fi
+  queue_state="$(refresh_todo_queue_state)"
+  queue_generation="$(printf '%s' "$queue_state" | awk '{ print $1 }')"
+  queue_fingerprint="$(printf '%s' "$queue_state" | awk '{ print $2 }')"
+  selected_hash="$(printf '%s' "$selected_todo" | shasum -a 256 | awk '{ print substr($1, 1, 12) }')"
+  claim_id="todo-g${queue_generation}-${selected_hash}"
+  CLAIM_CREATED_THIS_RUN=1
+  write_todo_claim "$claim_id" "in_progress" "$selected_todo" "$queue_fingerprint" "$queue_generation" "$run_stamp"
+}
+
+todo_selected_pending_is_explicit_blocker() {
+  if [ ! -f "$PHASE_LOOP_TODO" ]; then
+    return 1
+  fi
+  local selected
+  selected="$(todo_first_pending_item 2>/dev/null || true)"
+  if [ -z "$selected" ]; then
+    return 1
+  fi
+  PHASE_LOOP_SELECTED_TODO="$selected" node --input-type=module - "$ROOT_DIR/scripts/phase-loop-todo-evaluator.mjs" <<'NODE'
+import { pathToFileURL } from 'node:url';
+
+const evaluatorPath = process.argv[2];
+const selected = process.env.PHASE_LOOP_SELECTED_TODO ?? '';
+const { isExplicitBlockerTodo } = await import(pathToFileURL(evaluatorPath).href);
+process.exit(isExplicitBlockerTodo(selected) ? 0 : 1);
+NODE
+}
+
 todo_queue_only_explicit_blockers() {
   if [ ! -f "$PHASE_LOOP_TODO" ]; then
     return 1
@@ -439,6 +563,245 @@ if (baseBlocks.length === 0) {
 }
 process.exit(baseBlocks.every((block) => isExplicitBlockerTodo(block)) ? 0 : 1);
 NODE
+}
+
+todo_queue_has_release_ops_blockers() {
+  if [ ! -f "$PHASE_LOOP_TODO" ]; then
+    return 1
+  fi
+  node --input-type=module - "$PHASE_LOOP_TODO" "$ROOT_DIR/scripts/guard-todo-decomposition.mjs" <<'NODE'
+import fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
+
+const todoPath = process.argv[2];
+const guardPath = process.argv[3];
+const { uncheckedTodoBlocks } = await import(pathToFileURL(guardPath).href);
+
+let text = '';
+try {
+  text = fs.readFileSync(todoPath, 'utf8');
+} catch {
+  process.exit(1);
+}
+
+const releaseOpsBlockers = uncheckedTodoBlocks(text).filter((block) => {
+  const lower = block.toLowerCase();
+  const firstLine = block.split('\n')[0]?.trim() ?? '';
+  return (
+    !firstLine.includes('TODO-decompose-release-ops-blockers-') &&
+    block.includes('Route: release-ops') &&
+    (firstLine.toLowerCase().includes('blocker:') || lower.includes('verification: blocker:'))
+  );
+});
+
+process.exit(releaseOpsBlockers.length > 0 ? 0 : 1);
+NODE
+}
+
+todo_queue_has_brownie_owned_blockers() {
+  if [ ! -f "$PHASE_LOOP_TODO" ]; then
+    return 1
+  fi
+  node --input-type=module - "$PHASE_LOOP_TODO" "$ROOT_DIR/scripts/phase-loop-todo-evaluator.mjs" "$ROOT_DIR/scripts/guard-todo-decomposition.mjs" <<'NODE'
+import fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
+
+const todoPath = process.argv[2];
+const evaluatorPath = process.argv[3];
+const guardPath = process.argv[4];
+const { isBrownieOwnedBlockerTodo } = await import(pathToFileURL(evaluatorPath).href);
+const { uncheckedTodoBlocks } = await import(pathToFileURL(guardPath).href);
+
+let text = '';
+try {
+  text = fs.readFileSync(todoPath, 'utf8');
+} catch {
+  process.exit(1);
+}
+
+const ownedBlockers = uncheckedTodoBlocks(text).filter((block) => {
+  const firstLine = block.split('\n')[0]?.trim() ?? '';
+  return !firstLine.includes('TODO-refine-brownie-owned-blockers-') && isBrownieOwnedBlockerTodo(block);
+});
+
+process.exit(ownedBlockers.length > 0 ? 0 : 1);
+NODE
+}
+
+ensure_brownie_owned_blocker_refinement_request() {
+  if [ ! -f "$PHASE_LOOP_TODO" ]; then
+    return 1
+  fi
+  node --input-type=module - "$PHASE_LOOP_TODO" "$PHASE_LOOP_TODO_BREAKDOWN" "$ROOT_DIR/scripts/phase-loop-todo-evaluator.mjs" "$ROOT_DIR/scripts/guard-todo-decomposition.mjs" "$(now_utc)" <<'NODE'
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+import { pathToFileURL } from 'node:url';
+
+const todoPath = process.argv[2];
+const breakdownPath = process.argv[3];
+const evaluatorPath = process.argv[4];
+const guardPath = process.argv[5];
+const timestamp = process.argv[6];
+const { isBrownieOwnedBlockerTodo } = await import(pathToFileURL(evaluatorPath).href);
+const { uncheckedTodoBlocks } = await import(pathToFileURL(guardPath).href);
+
+let todo = '';
+let breakdown = '';
+try {
+  todo = fs.readFileSync(todoPath, 'utf8');
+} catch {
+  process.exit(1);
+}
+try {
+  breakdown = fs.readFileSync(breakdownPath, 'utf8');
+} catch {
+  breakdown = '';
+}
+
+const blocks = uncheckedTodoBlocks(todo).filter((block) => {
+  const firstLine = block.split('\n')[0]?.trim() ?? '';
+  return !firstLine.includes('TODO-refine-brownie-owned-blockers-') && isBrownieOwnedBlockerTodo(block);
+});
+if (blocks.length === 0) {
+  process.exit(1);
+}
+
+const material = blocks.join('\n\n');
+const queueHash = crypto.createHash('sha256').update(material).digest('hex');
+const refinementId = `TODO-refine-brownie-owned-blockers-${queueHash.slice(0, 12)}`;
+if (
+  todo.includes(`- [ ] ${refinementId}:`) ||
+  todo.includes(`Queue hash: \`${queueHash}\``) ||
+  breakdown.includes(`Parent TODO: ${refinementId}`)
+) {
+  process.exit(1);
+}
+
+const item = [
+  `- [ ] ${refinementId}: Patch only \`.brownie/todo.md\` and \`.brownie/todo-breakdown.md\` to refine Brownie-owned blocker TODOs into executable implementation/documentation leaves:`,
+  '  Route: todo-decomposition.',
+  `  Queue hash: \`${queueHash}\`.`,
+  '  Depends on: <none>.',
+  '  Completion condition: Brownie-owned blockers are replaced by bounded implementation or documentation TODOs with exact target files and existing verification commands, while true external authority blockers remain explicit blockers.',
+  '  Forbidden changes: do not patch implementation files in this refinement pass, do not invent evidence values, do not weaken fail-closed release gates, and do not declare Runtime Product Ready.',
+  '  Verification: run `pnpm --workspace-root guard:todo-decomposition` and `pnpm --workspace-root phase-loop:todo-queue-integrity`.',
+  '  Brownie must classify each blocker as Brownie-owned or external-authority. Evidence collectors, guards, harnesses, clean workspace setup, artifact smoke/lifecycle, Golden Journey, stateful soak, provenance binding, and document synchronization are Brownie-owned unless they require credentials or owner-only external systems.',
+  '  Replace Brownie-owned blockers with concrete Patch only/Create only leaves using existing scripts/docs and existing package scripts. Preserve external credentials, human review, or owner-only deployment requirements as explicit blocker TODOs.',
+  `  Generated at \`${timestamp}\`.`
+].join('\n');
+
+const updated = `${todo.trimEnd()}\n\n${item}\n`;
+const tmp = `${todoPath}.${process.pid}.brownie-owned-blocker-refine.tmp`;
+fs.writeFileSync(tmp, updated, { encoding: 'utf8', mode: 0o600 });
+fs.renameSync(tmp, todoPath);
+console.log(refinementId);
+NODE
+}
+
+ensure_release_ops_blocker_decomposition_request() {
+  if [ ! -f "$PHASE_LOOP_TODO" ]; then
+    return 1
+  fi
+  python3 - "$PHASE_LOOP_TODO" "$PHASE_LOOP_TODO_BREAKDOWN" "$(now_utc)" <<'PY'
+import hashlib
+import os
+import pathlib
+import re
+import sys
+
+todo_path = pathlib.Path(sys.argv[1])
+breakdown_path = pathlib.Path(sys.argv[2])
+timestamp = sys.argv[3]
+
+todo = todo_path.read_text(encoding="utf-8")
+try:
+    breakdown = breakdown_path.read_text(encoding="utf-8")
+except Exception:
+    breakdown = ""
+pattern = re.compile(r"^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ \t]\][ \t]+", re.M)
+matches = list(pattern.finditer(todo))
+if not matches:
+    raise SystemExit(1)
+
+blocks = []
+for index, match in enumerate(matches):
+    end = matches[index + 1].start() if index + 1 < len(matches) else len(todo)
+    block = todo[match.start():end].rstrip("\n")
+    first_line = block.splitlines()[0].strip() if block.splitlines() else ""
+    lower = block.lower()
+    if (
+        "TODO-decompose-release-ops-blockers-" not in first_line
+        and "Route: release-ops" in block
+        and ("blocker:" in first_line.lower() or "verification: blocker:" in lower)
+    ):
+        blocks.append(block)
+
+if not blocks:
+    raise SystemExit(1)
+
+material = "\n\n".join(blocks)
+queue_hash = hashlib.sha256(material.encode("utf-8")).hexdigest()
+decompose_id = f"TODO-decompose-release-ops-blockers-{queue_hash[:12]}"
+base_decompose_id = decompose_id
+if (
+    f"Queue hash: `{queue_hash}`" in todo
+    or f"Queue hash: `{queue_hash}`" in breakdown
+    or f"Parent TODO: {base_decompose_id}" in breakdown
+    or f"## TODO-repair-{base_decompose_id}" in breakdown
+):
+    raise SystemExit(1)
+unchecked_decompose = re.search(
+    rf"^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ \t]\][ \t]+{re.escape(decompose_id)}:",
+    todo,
+    re.M,
+)
+if unchecked_decompose:
+    raise SystemExit(1)
+if decompose_id in todo:
+    suffix = 2
+    while decompose_id in todo:
+        decompose_id = f"{base_decompose_id}-r{suffix}"
+        suffix += 1
+if f"Parent TODO: {decompose_id}" in breakdown or f"## TODO-repair-{decompose_id}" in breakdown:
+    raise SystemExit(1)
+
+try:
+    relative_breakdown = breakdown_path.relative_to(todo_path.parent.parent)
+except Exception:
+    relative_breakdown = breakdown_path
+
+item = f"""- [ ] {decompose_id}: Patch only `.brownie/todo.md` and `.brownie/todo-breakdown.md` to convert release-ops blocker TODOs into implementable Brownie-owned leaf TODOs:
+  Route: todo-decomposition.
+  Queue hash: `{queue_hash}`.
+  Depends on: <none>.
+  Completion condition: The release-ops blocker TODOs are replaced by bounded implementation/documentation/release-ops leaves that name exact target files and existing verification commands, while truly owner-controlled or external-environment requirements remain explicit blockers.
+  Forbidden changes: do not patch implementation files in this decomposition pass, do not invent evidence values, and do not declare Runtime Product Ready.
+  Verification: run `pnpm --workspace-root guard:todo-decomposition` and `pnpm --workspace-root phase-loop:todo-queue-integrity`.
+  Brownie must improve the queue before continuing: read `.brownie/todo.md`, inspect only the smallest relevant release evidence scripts/contracts, and replace the release-ops blocker TODOs with bounded implementation/documentation/release-ops leaves that name exact files and existing verification commands.
+  Keep truly owner-controlled or external-environment requirements as explicit blocker TODOs, but do not treat Brownie-owned Release Ops work as owner-only merely because the current item says `Verification: blocker`.
+  Also update `{relative_breakdown}` with the generated dependency graph and rationale.
+  Do not implement the release fixes in this decomposition pass, do not invent evidence values, and do not declare Runtime Product Ready.
+  Generated at `{timestamp}`.
+"""
+
+updated = todo + "\n\n" + item
+tmp = todo_path.with_name(f"{todo_path.name}.{os.getpid()}.release-ops-decompose.tmp")
+with open(tmp, "w", encoding="utf-8") as handle:
+    handle.write(updated)
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(tmp, 0o600)
+os.replace(tmp, todo_path)
+try:
+    dir_fd = os.open(str(todo_path.parent), os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+except Exception:
+    pass
+print(decompose_id)
+PY
 }
 
 ensure_blocked_todo_decomposition_request() {
@@ -1100,6 +1463,53 @@ remove_completed_todo_claim_from_queue() {
   if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$PHASE_LOOP_TODO" ]; then
     return 0
   fi
+  local stale_claim_status stale_claim_exit
+  set +e
+  stale_claim_status="$(
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    python3 - "$TODO_CLAIM_FILE" "$PHASE_LOOP_TODO" <<'PY'
+import json
+import pathlib
+import subprocess
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+todo_path = pathlib.Path(sys.argv[2])
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+    selected = claim.get("selected_todo")
+    todo_text = todo_path.read_text(encoding="utf-8")
+except Exception:
+    raise SystemExit(2)
+if not isinstance(selected, str) or not selected.strip():
+    raise SystemExit(2)
+first_line = selected.splitlines()[0].strip()
+if first_line in todo_text:
+    raise SystemExit(1)
+guard = subprocess.run(
+    ["pnpm", "--workspace-root", "guard:todo-decomposition"],
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    timeout=180,
+)
+if guard.returncode != 0:
+    raise SystemExit(2)
+print(json.dumps({"superseded": True, "reason": "selected_todo_absent_from_guard_valid_queue", "selected_first_line": first_line}, sort_keys=True))
+PY
+  )"
+  stale_claim_exit=$?
+  set -e
+  case "$stale_claim_exit" in
+    0)
+      printf '%s run=%s stale_claim_superseded=true result=%s\n' "$(now_utc)" "$run_stamp" "$stale_claim_status" >> "$SUPERVISOR_LOG"
+      return 0
+      ;;
+    1)
+      ;;
+    *)
+      ;;
+  esac
   if [ -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/phase-loop-progress-integrity.mjs" ]; then
     local completion_record_output
     if ! completion_record_output="$(
@@ -1150,7 +1560,21 @@ except FileNotFoundError:
     raise SystemExit(0)
 index = text.find(selected)
 if index < 0:
-    raise SystemExit(0)
+    if not selected_id:
+        raise SystemExit(0)
+    starts = list(re.finditer(r"(?m)^(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+", text))
+    for position, match in enumerate(starts):
+        block_end = starts[position + 1].start() if position + 1 < len(starts) else len(text)
+        candidate = text[match.start():block_end].rstrip()
+        candidate_first = candidate.splitlines()[0] if candidate.splitlines() else ""
+        candidate_id_match = re.match(r"^\s*(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+([^:\s]+)", candidate_first)
+        candidate_id = candidate_id_match.group(1).strip() if candidate_id_match else ""
+        if candidate_id == selected_id:
+            selected = candidate
+            index = match.start()
+            break
+    if index < 0:
+        raise SystemExit(0)
 if text.find(selected, index + len(selected)) >= 0:
     raise SystemExit("selected TODO appears more than once; refusing automatic removal")
 end = index + len(selected)
@@ -1225,6 +1649,24 @@ PY
       cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
       node scripts/guard-todo-decomposition.mjs "$todo_guard_path" 2>&1
     )"; then
+      local todo_repair_output todo_repair_guard_output
+      if todo_repair_output="$(try_deterministic_todo_decomposition_repair "$run_stamp" 2>&1)"; then
+        if todo_repair_guard_output="$(
+          cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+          node scripts/guard-todo-decomposition.mjs "$todo_guard_path" 2>&1
+        )"; then
+          printf '%s run=%s completed_todo_removal_guard_repaired=true repair=%s guard=%s\n' "$(now_utc)" "$run_stamp" "$todo_repair_output" "$todo_repair_guard_output" >> "$SUPERVISOR_LOG"
+          python3 - "$todo_backup" <<'PY'
+import pathlib
+import sys
+pathlib.Path(sys.argv[1]).unlink(missing_ok=True)
+PY
+          return 0
+        fi
+        printf '%s run=%s completed_todo_removal_repair_guard_failed=true repair=%s guard=%s\n' "$(now_utc)" "$run_stamp" "$todo_repair_output" "$todo_repair_guard_output" >> "$SUPERVISOR_LOG"
+      else
+        printf '%s run=%s completed_todo_removal_repair_not_applied=true result=%s\n' "$(now_utc)" "$run_stamp" "${todo_repair_output:-<no output>}" >> "$SUPERVISOR_LOG"
+      fi
       local release_ops_blocker_output release_ops_blocker_guard_output
       if [ -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/phase-loop-release-ops-blocker.mjs" ] && release_ops_blocker_output="$(
         cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
@@ -1685,6 +2127,15 @@ def allowed_args(command):
         return None
     if len(args) == 3 and args[0] == "pnpm" and args[1] == "--workspace-root" and re.fullmatch(r"[A-Za-z0-9:_-]+", args[2]):
         return args
+    if (
+        len(args) >= 5
+        and args[0] == "pnpm"
+        and args[1] == "--workspace-root"
+        and re.fullmatch(r"[A-Za-z0-9:_-]+", args[2])
+        and args[3] == "--"
+        and all(not re.search(r"[;&|`$<>]", part) for part in args[4:])
+    ):
+        return args
     if len(args) >= 2 and args[0] == "node" and args[1].startswith("scripts/") and all(not part.startswith("-") for part in args[1:]):
         return args
     if len(args) >= 3 and args[0] == "node" and args[1] == "--test" and args[2].startswith("scripts/") and all(not part.startswith("-") for part in args[2:]):
@@ -1726,6 +2177,15 @@ selected_scopes_dirty_at_baseline = [
     for scope in selected_scopes
     if scope in baseline_diff_files and scope in current_diff_files
 ]
+selected_route = ""
+for line in selected.splitlines():
+    stripped = line.strip()
+    if stripped.startswith("Route:"):
+        selected_route = stripped.removeprefix("Route:").strip().rstrip(".").lower()
+        break
+if selected_route == "todo-decomposition":
+    print(json.dumps({"completed": False, "reason": "todo_decomposition_requires_brownie_split_not_dirty_baseline_noop"}, sort_keys=True))
+    raise SystemExit(2)
 if selected_scopes and len(selected_scopes_dirty_at_baseline) == len(selected_scopes):
     verification_text = ""
     for line in selected.splitlines():
@@ -4882,6 +5342,29 @@ try_deterministic_todo_decomposition_repair() {
   )
 }
 
+run_integrated_supervisor_control() {
+  local run_stamp="${1:-unknown}"
+  local reason="${2:-unspecified}"
+  if [ "${PHASE_LOOP_SUPERVISOR_CONTROL_ACTIVE:-0}" = "1" ]; then
+    return 2
+  fi
+  if [ ! -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/phase-loop-supervisor-control.mjs" ]; then
+    return 2
+  fi
+  (
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    PHASE_LOOP_SUPERVISOR_CONTROL_ACTIVE=1 \
+      node scripts/phase-loop-supervisor-control.mjs \
+        --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
+        --repair \
+        --no-start \
+        --write
+  )
+  local status=$?
+  printf '%s integrated_supervisor_control_invoked run=%s reason=%s exit=%s\n' "$(now_utc)" "$run_stamp" "$reason" "$status" >> "$SUPERVISOR_LOG"
+  return "$status"
+}
+
 complete_applied_todo_after_verification() {
   local stdout_log="$1"
   local run_stamp="$2"
@@ -5027,6 +5510,15 @@ def allowed_args(command):
     except ValueError:
         return None
     if len(args) == 3 and args[0] == "pnpm" and args[1] == "--workspace-root" and re.fullmatch(r"[A-Za-z0-9:_-]+", args[2]):
+        return args
+    if (
+        len(args) >= 5
+        and args[0] == "pnpm"
+        and args[1] == "--workspace-root"
+        and re.fullmatch(r"[A-Za-z0-9:_-]+", args[2])
+        and args[3] == "--"
+        and all(not re.search(r"[;&|`$<>]", part) for part in args[4:])
+    ):
         return args
     if len(args) >= 2 and args[0] == "node" and args[1].startswith("scripts/") and all(not part.startswith("-") for part in args[1:]):
         return args
@@ -5492,7 +5984,7 @@ validate_todo_queue_integrity_before_claim() {
       --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
       --todo "$PHASE_LOOP_TODO" 2>&1
   )"; then
-    local replan_repair_output revalidation_output
+    local replan_repair_output revalidation_output todo_contract_repair_output
     if replan_repair_output="$(try_reconstruct_missing_todo_replan_records "$run_stamp" "$validation_output" 2>&1)"; then
       printf '%s todo_replan_record_reconstructed_before_claim=true result=%s\n' "$(now_utc)" "$replan_repair_output" >> "$SUPERVISOR_LOG"
       if revalidation_output="$(
@@ -5506,6 +5998,33 @@ validate_todo_queue_integrity_before_claim() {
       fi
       validation_output="$revalidation_output"
     fi
+    if todo_contract_repair_output="$(try_deterministic_todo_decomposition_repair "$run_stamp" 2>&1)"; then
+      printf '%s todo_contract_repaired_before_claim=true result=%s\n' "$(now_utc)" "$todo_contract_repair_output" >> "$SUPERVISOR_LOG"
+      if revalidation_output="$(
+        cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+        node scripts/phase-loop-todo-queue-integrity.mjs \
+          --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
+          --todo "$PHASE_LOOP_TODO" 2>&1
+      )"; then
+        printf '%s todo_queue_integrity_valid_after_contract_repair=true result=%s\n' "$(now_utc)" "$revalidation_output" >> "$SUPERVISOR_LOG"
+        return 0
+      fi
+      validation_output="$revalidation_output"
+    fi
+    local integrated_supervisor_output integrated_supervisor_status
+    integrated_supervisor_output="$(run_integrated_supervisor_control "$run_stamp" "todo_queue_integrity_failed_before_claim" 2>&1)"
+    integrated_supervisor_status=$?
+    printf '%s todo_queue_integrity_integrated_supervisor_control=true exit=%s result=%s\n' "$(now_utc)" "$integrated_supervisor_status" "${integrated_supervisor_output:-<no output>}" >> "$SUPERVISOR_LOG"
+    if revalidation_output="$(
+      cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+      node scripts/phase-loop-todo-queue-integrity.mjs \
+        --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
+        --todo "$PHASE_LOOP_TODO" 2>&1
+    )"; then
+      printf '%s todo_queue_integrity_valid_after_integrated_supervisor_control=true result=%s\n' "$(now_utc)" "$revalidation_output" >> "$SUPERVISOR_LOG"
+      return 0
+    fi
+    validation_output="$revalidation_output"
     PHASE_LOOP_TODO_QUEUE_INTEGRITY_FAILED=1
     PHASE_LOOP_TODO_QUEUE_INTEGRITY_DETAIL="$validation_output"
     printf '%s todo_queue_integrity_failed_before_claim=true result=%s\n' "$(now_utc)" "$validation_output" >> "$SUPERVISOR_LOG"
@@ -6142,9 +6661,47 @@ except FileNotFoundError:
     raise SystemExit(1)
 
 replacements = []
+removals = []
 notes = []
 creator_by_path = {}
 live_ids = set()
+pending_blocks = [entry for entry in unchecked_blocks(before)]
+pending_ids = {todo_id(block) for _start, _end, block in pending_blocks if todo_id(block)}
+
+def source_todo(block):
+    for line in block.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Source TODO:"):
+            return stripped[len("Source TODO:"):].strip().split()[0].rstrip(".,;:")
+        if stripped.startswith("Source:"):
+            return stripped[len("Source:"):].strip().split()[0].rstrip(".,;:")
+    return ""
+
+def has_required_leaf_contract(block):
+    lower = block.lower()
+    return (
+        "route:" in lower
+        and "depends on:" in lower
+        and "completion condition:" in lower
+        and "forbidden changes:" in lower
+        and "verification:" in lower
+    )
+
+def malformed_decomposition_leaf_removal_end(text, start, fallback_end):
+    position = text.find("\n", start)
+    if position < 0:
+        return fallback_end
+    position += 1
+    while position < fallback_end:
+        next_position = text.find("\n", position)
+        if next_position < 0 or next_position > fallback_end:
+            next_position = fallback_end
+        line = text[position:next_position]
+        if line.strip() and not line.startswith((" ", "\t")):
+            return position
+        position = next_position + 1
+    return fallback_end
+
 for _start, _end, block in unchecked_blocks(before):
     block_id = todo_id(block)
     if not block_id:
@@ -6156,6 +6713,20 @@ for _start, _end, block in unchecked_blocks(before):
 for start, end, block in unchecked_blocks(before):
     block_id = todo_id(block)
     if not block_id:
+        continue
+    source_id = source_todo(block)
+    if (
+        source_id.startswith("TODO-decompose-")
+        and not block_id.startswith("TODO-decompose-")
+        and not has_required_leaf_contract(block)
+    ):
+        removals.append((start, malformed_decomposition_leaf_removal_end(before, start, end)))
+        notes.append({
+            "todo_id": block_id,
+            "normalization": "remove_malformed_decomposition_leaf",
+            "source_todo": source_id,
+            "reason": "generated leaf is missing required TODO contract fields while its decomposition task is still pending",
+        })
         continue
     normalized = block
     changed = False
@@ -6205,15 +6776,21 @@ for start, end, block in unchecked_blocks(before):
     if changed:
         replacements.append((start, end, normalized))
 
-if not replacements:
+if not replacements and not removals:
     raise SystemExit(1)
+
+edits = [(start, end, None) for start, end in removals] + [
+    (start, end, replacement) for start, end, replacement in replacements
+]
+edits.sort(key=lambda entry: entry[0])
 
 after_parts = []
 cursor = 0
-for start, end, replacement in replacements:
+for start, end, replacement in edits:
     after_parts.append(before[cursor:start])
-    after_parts.append(replacement)
-    after_parts.append("\n" if end > start and before[end - 1:end] == "\n" else "")
+    if replacement is not None:
+        after_parts.append(replacement)
+        after_parts.append("\n" if end > start and before[end - 1:end] == "\n" else "")
     cursor = end
 after_parts.append(before[cursor:])
 after = "".join(after_parts)
@@ -6595,7 +7172,7 @@ write_runtime_terminal_repair_feedback() {
   local stderr_log="$3"
   local tmp_feedback
   tmp_feedback="$TODO_REPAIR_FEEDBACK_FILE.$$.$RANDOM.tmp"
-  python3 - "$tmp_feedback" "$TODO_CLAIM_FILE" "$TODO_REPAIR_FEEDBACK_FILE" "$stdout_log" "$stderr_log" "$PHASE_LOOP_BROWNIE_STORE_ROOT" "$PHASE_LOOP_WORKSPACE_ROOT" "$run_stamp" "$(now_utc)" <<'PY'
+  python3 - "$tmp_feedback" "$TODO_CLAIM_FILE" "$TODO_REPAIR_FEEDBACK_FILE" "$stdout_log" "$stderr_log" "$PHASE_LOOP_BROWNIE_STORE_ROOT" "$PHASE_LOOP_WORKSPACE_ROOT" "$LLM_PROVIDER_FAILURE_MEMORY_FILE" "$run_stamp" "$(now_utc)" <<'PY'
 import json
 import os
 import pathlib
@@ -6610,8 +7187,9 @@ stdout_log = pathlib.Path(sys.argv[4])
 stderr_log = pathlib.Path(sys.argv[5])
 store_root = pathlib.Path(sys.argv[6])
 workspace_root = pathlib.Path(sys.argv[7])
-run_stamp = sys.argv[8]
-timestamp = sys.argv[9]
+provider_failure_memory_path = pathlib.Path(sys.argv[8])
+run_stamp = sys.argv[9]
+timestamp = sys.argv[10]
 
 def read_json(path):
     try:
@@ -6741,11 +7319,12 @@ if no_eligible_runtime_status and len(patch_targets) > 1:
         ],
     }
 latest_provider_failure = llm_provider_failures[-1] if llm_provider_failures else {}
-if (
-    latest_provider_failure.get("failure_class") == "missing_provider_content"
-    and latest_provider_failure.get("request_phase") == "second_pass"
-):
-    verification["repair_hint"] = "The previous second-pass LLM response was missing message content after a workspace.read. Do not retry another workspace.read. Use the embedded workspace_read_preview for the selected target and emit exactly one compact workspace.write patch_file, or emit a concrete blocker TODO."
+if latest_provider_failure.get("failure_class") == "missing_provider_content":
+    request_phase = str(latest_provider_failure.get("request_phase") or "unknown")
+    if request_phase == "second_pass":
+        verification["repair_hint"] = "The previous second-pass LLM response was missing message content after a workspace.read. Do not retry another workspace.read. Use the embedded workspace_read_preview for the selected target and emit exactly one compact workspace.write patch_file, or emit a concrete blocker TODO."
+    else:
+        verification["repair_hint"] = "The previous LLM response was missing message content before a usable patch could be produced. Do not retry the same model blindly. Emit exactly one compact workspace.write patch_file for the selected target when enough context is already provided, or final-answer one concrete blocker."
 if any(str(item.get("code") or "").lower() == "missing_closing_fence" for item in intent_rejections):
     verification["repair_hint"] = "The previous workspace.write tool intent was truncated before the closing fence, likely because new_text was too large. Do not retry the same large patch. Emit a much smaller patch_file using one short exact old_text/new_text hunk, or patch `.brownie/todo.md` to split this TODO into narrower bounded leaves."
 if "Route: todo-decomposition" not in selected and patch_targets:
@@ -6832,6 +7411,22 @@ feedback = {
     "stdout_log": str(stdout_log),
     "stderr_log": str(stderr_log),
 }
+if llm_provider_failures:
+    provider_failure_memory_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(provider_failure_memory_path, "a", encoding="utf-8") as memory_handle:
+        for failure in llm_provider_failures[-3:]:
+            memory_record = {
+                "schema_version": 1,
+                "recorded_at": timestamp,
+                "run_stamp": run_stamp,
+                "claim_id": claim.get("claim_id"),
+                "selected_todo_first_line": str(claim.get("selected_todo", "")).splitlines()[0] if claim.get("selected_todo") else "",
+                **failure,
+            }
+            memory_handle.write(json.dumps(memory_record, ensure_ascii=False, sort_keys=True) + "\n")
+        memory_handle.flush()
+        os.fsync(memory_handle.fileno())
+    os.chmod(provider_failure_memory_path, 0o600)
 out_path.parent.mkdir(parents=True, exist_ok=True)
 with open(out_path, "w", encoding="utf-8") as handle:
     json.dump(feedback, handle, ensure_ascii=False, sort_keys=True, indent=2)
@@ -8771,10 +9366,15 @@ if repair_feedback:
         repair_feedback_lines.append(
             f"- llm_provider_failure_{index}: class=`{failure_class}` phase=`{request_phase}` kind=`{failure.get('kind', '')}` next_action=`{failure.get('next_action', '')}` reason={json.dumps(str(failure.get('reason', ''))[-500:], ensure_ascii=False)}"
         )
-        if failure_class == "missing_provider_content" and request_phase == "second_pass":
-            repair_feedback_lines.append(
-                "- second_pass_missing_content_recovery_policy: the previous second pass returned no message content after a workspace.read. Do not request another workspace.read for the same selected target in this repair turn; use the embedded workspace_read_preview if present, then emit exactly one compact workspace.write patch_file for the selected target, or final-answer one concrete blocker."
-            )
+        if failure_class == "missing_provider_content":
+            if request_phase == "second_pass":
+                repair_feedback_lines.append(
+                    "- second_pass_missing_content_recovery_policy: the previous second pass returned no message content after a workspace.read. Do not request another workspace.read for the same selected target in this repair turn; use the embedded workspace_read_preview if present, then emit exactly one compact workspace.write patch_file for the selected target, or final-answer one concrete blocker."
+                )
+            else:
+                repair_feedback_lines.append(
+                    "- missing_content_recovery_policy: the previous LLM response returned no message content before a usable patch could be produced. Do not retry the same model blindly; emit one compact workspace.write patch_file if the selected target context is sufficient, or final-answer one concrete blocker."
+                )
     actual_checks = verification.get("actual") if isinstance(verification.get("actual"), dict) else {}
     if (
         selected_parent_id == "E-17a-dirty-source-refusal"
@@ -9672,12 +10272,13 @@ phase_loop_sampling_defaults_for_model() {
 
 apply_phase_loop_llm_route() {
   local prompt_path="$1"
-  local meta_path route routed_model fast_model code_model deep_model prompt_bytes
+  local meta_path route routed_model base_model fast_model code_model deep_model prompt_bytes provider_recovery
   local fast_max_tokens code_max_tokens deep_max_tokens
   local fast_temperature code_temperature deep_temperature fast_top_p code_top_p deep_top_p fast_top_k code_top_k deep_top_k defaults
   if [ "${PHASE_LOOP_LLM_ROUTING:-1}" != "1" ]; then
     return 0
   fi
+  base_model="${BROWNIE_LLM_MODEL:-}"
   fast_model="${PHASE_LOOP_LLM_MODEL_FAST:-${BROWNIE_LLM_MODEL_FAST:-}}"
   code_model="${PHASE_LOOP_LLM_MODEL_CODE:-${BROWNIE_LLM_MODEL_CODE:-}}"
   deep_model="${PHASE_LOOP_LLM_MODEL_DEEP:-${BROWNIE_LLM_MODEL_DEEP:-}}"
@@ -9713,6 +10314,64 @@ apply_phase_loop_llm_route() {
     deep_temperature="${deep_temperature:-${1:-}}"
     deep_top_p="${deep_top_p:-${2:-}}"
     deep_top_k="${deep_top_k:-${3:-}}"
+  fi
+  if [ -f "$TODO_REPAIR_FEEDBACK_FILE" ]; then
+    provider_recovery="$(
+      python3 - "$TODO_REPAIR_FEEDBACK_FILE" "$LLM_PROVIDER_FAILURE_MEMORY_FILE" "$base_model" "$code_model" "$deep_model" <<'PY'
+import json
+import sys
+
+feedback_path = sys.argv[1]
+memory_path = sys.argv[2]
+base_model = sys.argv[3]
+code_model = sys.argv[4]
+deep_model = sys.argv[5]
+failures = []
+try:
+    feedback = json.load(open(feedback_path, encoding="utf-8"))
+except Exception:
+    feedback = {}
+verification = feedback.get("verification") if isinstance(feedback.get("verification"), dict) else {}
+if isinstance(verification.get("llm_provider_failures"), list):
+    failures.extend(item for item in verification.get("llm_provider_failures") if isinstance(item, dict))
+try:
+    with open(memory_path, encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                record = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(record, dict):
+                failures.append(record)
+except Exception:
+    pass
+for failure in reversed(failures):
+    if not isinstance(failure, dict):
+        continue
+    if failure.get("failure_class") != "missing_provider_content":
+        continue
+    failed_model = str(failure.get("model") or "")
+    if base_model and failed_model and base_model != failed_model:
+        print(json.dumps({
+            "failed_model": failed_model,
+            "fallback_model": base_model,
+            "request_phase": str(failure.get("request_phase") or "unknown"),
+            "switch_code": code_model == failed_model,
+            "switch_deep": deep_model == failed_model,
+        }, sort_keys=True))
+        sys.exit(0)
+sys.exit(1)
+PY
+    )" || provider_recovery=""
+    if [ -n "$provider_recovery" ]; then
+      if printf '%s' "$provider_recovery" | grep -q '"switch_code": true'; then
+        code_model="$base_model"
+      fi
+      if printf '%s' "$provider_recovery" | grep -q '"switch_deep": true'; then
+        deep_model="$base_model"
+      fi
+      printf '%s llm_provider_recovery=missing_provider_content_model_fallback detail=%s\n' "$(now_utc)" "$provider_recovery" >> "$SUPERVISOR_LOG"
+    fi
   fi
   if [ -n "$fast_model" ]; then
     export BROWNIE_LLM_MODEL_FAST="$fast_model"
@@ -10266,6 +10925,17 @@ run_brownie_once() {
   if [ "$todo_status" -ne 0 ]; then
     return "$todo_status"
   fi
+  if ! todo_first_raw_pending_is_recorded_blocked && todo_first_raw_pending_is_explicit_blocker; then
+    if claim_first_raw_pending_todo "$run_stamp"; then
+      record_explicit_blocker_todo_claim "$run_stamp"
+      write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"explicit_blocker_pre_runtime"}'
+      return 0
+    fi
+  fi
+  local selected_pending_explicit_blocker=0
+  if todo_selected_pending_is_explicit_blocker; then
+    selected_pending_explicit_blocker=1
+  fi
   active_target_path="$(active_claim_patch_only_target 2>/dev/null || true)"
   active_target_snapshot=""
   if [ -n "$active_target_path" ] && [ -f "$PHASE_LOOP_WORKSPACE_ROOT/$active_target_path" ]; then
@@ -10280,7 +10950,9 @@ run_brownie_once() {
     return 127
   fi
   local freshness_output
-  if ! freshness_output="$(check_brownie_binary_freshness 2>&1)"; then
+  if [ "$selected_pending_explicit_blocker" -eq 1 ]; then
+    printf '%s binary_freshness_skipped_for_explicit_blocker=true run=%s\n' "$(now_utc)" "$run_stamp" >> "$SUPERVISOR_LOG"
+  elif ! freshness_output="$(check_brownie_binary_freshness 2>&1)"; then
     local rebuild_output rebuild_status freshness_after_rebuild_output
     printf '%s binary_freshness_stale=true run=%s detail=%s\n' "$(now_utc)" "$run_stamp" "${freshness_output:-Brownie binary freshness check failed.}" >> "$SUPERVISOR_LOG"
     rebuild_output="$(rebuild_brownie_binaries_for_freshness 2>&1)"
@@ -10389,6 +11061,10 @@ PY
       write_status "no_progress" "$detail" "todo-queue-integrity-$run_stamp" "76" "${CONSECUTIVE_FAILURES:-0}"
       write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"todo_queue_integrity_failed_before_claim"}'
       return 76
+    elif todo_queue_has_brownie_owned_blockers && ensure_brownie_owned_blocker_refinement_request && claim_first_pending_todo "$run_stamp"; then
+      printf '%s brownie_owned_blocker_refinement_request_created todo=%s breakdown=%s\n' "$(now_utc)" "$PHASE_LOOP_TODO" "$PHASE_LOOP_TODO_BREAKDOWN" >> "$SUPERVISOR_LOG"
+    elif todo_queue_has_release_ops_blockers && ensure_release_ops_blocker_decomposition_request && claim_first_pending_todo "$run_stamp"; then
+      printf '%s release_ops_blocker_decomposition_request_created todo=%s breakdown=%s\n' "$(now_utc)" "$PHASE_LOOP_TODO" "$PHASE_LOOP_TODO_BREAKDOWN" >> "$SUPERVISOR_LOG"
     elif todo_queue_only_explicit_blockers; then
       detail="No implementable TODO remains; pending queue contains only explicit owner-controlled blocker TODOs. Phase-loop is stopped until owner/review evidence changes."
       printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
@@ -10779,10 +11455,75 @@ PY
     return 0
   elif [ "$pre_guard_verified_noop_status" -eq 1 ]; then
     detail="Selected TODO verified-noop fallback was eligible but failed safely before invoking Brownie: $pre_guard_verified_noop_output"
-    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
-    write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
-    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"verified_noop_fallback_failed"}'
-    return 74
+    if printf '%s' "$pre_guard_verified_noop_output" | grep -q 'owner governance evidence source_commit must match current HEAD'; then
+      local owner_governance_refresh_output owner_governance_refresh_status owner_governance_retry_output owner_governance_retry_status
+      owner_governance_refresh_output="$(
+        cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+        pnpm --workspace-root release:owner-governance-evidence
+      )"
+      owner_governance_refresh_status=$?
+      if [ "$owner_governance_refresh_status" -eq 0 ]; then
+        owner_governance_retry_output="$(try_selected_todo_verified_noop_completion_fallback "$run_stamp" 2>&1)"
+        owner_governance_retry_status=$?
+        if [ "$owner_governance_retry_status" -eq 0 ]; then
+          workspace_after="$(git_workspace_fingerprint)"
+          printf '%s\n%s\n' "$owner_governance_refresh_output" "$owner_governance_retry_output" > "$stdout_log"
+          : > "$stderr_log"
+          clear_repair_feedback
+          write_todo_claim "$(claim_field claim_id)" "completed" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+          remove_completed_todo_claim_from_queue "$run_stamp" >> "$SUPERVISOR_LOG" || true
+          detail="Owner governance evidence was stale; regenerated evidence and verified selected TODO before invoking Brownie: $owner_governance_retry_output"
+          write_status "last_run_succeeded" "$detail" "owner-governance-evidence-refresh-$run_stamp" "0" "0"
+          printf '%s run=%s owner_governance_evidence_refresh_completion=true phase=pre_guard refresh=%s result=%s\n' "$(now_utc)" "owner-governance-evidence-refresh-$run_stamp" "$owner_governance_refresh_output" "$owner_governance_retry_output" >> "$SUPERVISOR_LOG"
+          write_bdk_trajectory_event "$run_stamp" "verification.run" '{"source":"deterministic_owner_governance_evidence_refresh","result":"passed"}'
+          write_bdk_trajectory_event "$run_stamp" "todo.completed" '{"completion":"owner_governance_evidence_refresh_verified_noop"}'
+          phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after" || true
+          return 0
+        fi
+      fi
+      pre_guard_verified_noop_output="$pre_guard_verified_noop_output owner_governance_refresh_status=$owner_governance_refresh_status owner_governance_refresh_output=$owner_governance_refresh_output"
+    fi
+    local verified_noop_feedback
+    verified_noop_feedback="$(python3 - "$pre_guard_verified_noop_output" <<'PY'
+import json
+import sys
+
+raw = sys.argv[1]
+try:
+    parsed = json.loads(raw)
+except Exception:
+    parsed = {"raw": raw}
+
+reason = parsed.get("reason", "verified_noop_fallback_failed") if isinstance(parsed, dict) else "verified_noop_fallback_failed"
+results = parsed.get("results", []) if isinstance(parsed, dict) else []
+failed = [entry for entry in results if isinstance(entry, dict) and entry.get("exit_code") not in (0, "0", None)]
+failed_commands = [entry.get("command") for entry in failed if entry.get("command")]
+stdout_tail = "\n".join(str(entry.get("stdout_tail", "")) for entry in failed)[-4000:]
+stderr_tail = "\n".join(str(entry.get("stderr_tail", "")) for entry in failed)[-4000:]
+
+print(json.dumps({
+    "schema_version": 1,
+    "completed": False,
+    "reason": reason,
+    "diagnosis": "The selected TODO looked eligible for deterministic verified-noop completion, but its own verification command failed. Treat this as repairable implementation/test-fixture drift, not as a terminal blocker.",
+    "failed_commands": failed_commands,
+    "stdout_tail": stdout_tail,
+    "stderr_tail": stderr_tail,
+    "repair_hint": "Re-read the selected TODO and the failed command output. Repair only the selected TODO target files so the verification command passes semantically. If implementation and tests/fixtures drifted, align the tests/fixtures with the repository's actual public contract; do not merely weaken the guard and do not edit unrelated TODO files unless the TODO route is todo-decomposition.",
+    "next_required_behavior": "Retry the same selected TODO with the repair feedback embedded. Do not stop solely because verified-noop fallback failed.",
+}, ensure_ascii=False, sort_keys=True))
+PY
+)"
+    write_repair_feedback "$run_stamp" "$verified_noop_feedback" "$stdout_log" "$stderr_log" || true
+    if printf '%s' "$pre_guard_verified_noop_output" | grep -Eq 'dirty_baseline_(syntax_check|verification)_failed'; then
+      printf '%s %s; continuing into Brownie repair with embedded feedback instead of repeating pre-guard verified-noop.\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+      write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"verified_noop_dirty_baseline_repair_feedback_recorded"}'
+    else
+      printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+      write_status "no_progress" "$detail" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-1}"
+      write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"verified_noop_fallback_failed_repair_feedback_recorded"}'
+      return 76
+    fi
   fi
   local pre_guard_release_ops_output pre_guard_release_ops_status
   pre_guard_release_ops_output="$(try_release_ops_evidence_refresh_completion_fallback "$run_stamp" 2>&1)"
@@ -11633,6 +12374,10 @@ PY
       write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
       detail="Rejected Brownie TODO refinement proposal before applying it because TODO guard preflight failed; recorded repair feedback. apply=$todo_patch_proposal_apply_output stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
       write_status "no_progress" "$detail" "$run_id" "76" "${CONSECUTIVE_FAILURES:-1}"
+      local todo_patch_rejection_supervisor_output todo_patch_rejection_supervisor_status
+      todo_patch_rejection_supervisor_output="$(run_integrated_supervisor_control "$run_stamp" "todo_patch_proposal_preflight_failed" 2>&1)"
+      todo_patch_rejection_supervisor_status=$?
+      printf '%s run=%s todo_patch_rejection_integrated_supervisor_control=true exit=%s result=%s\n' "$(now_utc)" "$run_id" "$todo_patch_rejection_supervisor_status" "${todo_patch_rejection_supervisor_output:-<no output>}" >> "$SUPERVISOR_LOG"
       printf '%s run=%s valid_todo_patch_proposal_fallback_preflight_failed=true apply=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$todo_patch_proposal_apply_output" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
       write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"todo_patch_proposal_preflight_failed"}'
       return 76
@@ -11867,7 +12612,11 @@ PY
           printf '%s run=%s repair_feedback_recorded=true runtime_terminal_repair=true recovery=%s\n' "$(now_utc)" "$run_id" "$recovery_hint" >> "$SUPERVISOR_LOG"
         fi
         detail="Brownie run exited successfully but repeated the same non-progress fingerprint; recovery=$recovery_hint stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+        local no_progress_supervisor_output no_progress_supervisor_status
         write_status "no_progress" "$detail" "$run_id" "76" "${CONSECUTIVE_FAILURES:-1}"
+        no_progress_supervisor_output="$(run_integrated_supervisor_control "$run_stamp" "no_progress" 2>&1)"
+        no_progress_supervisor_status=$?
+        printf '%s run=%s no_progress_integrated_supervisor_control=true exit=%s result=%s\n' "$(now_utc)" "$run_id" "$no_progress_supervisor_status" "${no_progress_supervisor_output:-<no output>}" >> "$SUPERVISOR_LOG"
         printf '%s run=%s exit=%s recovery=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$exit_code" "$recovery_hint" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
         write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"no_progress"}'
         return 76

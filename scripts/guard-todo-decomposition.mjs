@@ -10,7 +10,7 @@ const defaultTodoPath = '.brownie/todo.md';
 const defaultBreakdownPath = '.brownie/todo-breakdown.md';
 const maxLeafBlockChars = 1800;
 const maxLeafBlockLines = 12;
-const allowedRoutes = new Set(['implementation', 'documentation', 'release-ops', 'todo-decomposition']);
+const allowedRoutes = new Set(['implementation', 'documentation', 'release-ops', 'todo-decomposition', 'blocker']);
 const todoContractSectionNames = [
   'phase_value_gate',
   'review_value_gate',
@@ -32,7 +32,7 @@ const todoContractSectionNames = [
 function hasUncheckedImplementationOrBlockerTodo(blocks) {
   for (const block of blocks) {
     const route = routeValue(block);
-    if (route === 'implementation') {
+    if (route === 'implementation' || route === 'todo-decomposition') {
       return true;
     }
     const completion = completionLines(block).join(' ').toLowerCase();
@@ -81,7 +81,7 @@ function maybeReadText(repoRoot, relativePath) {
 
 export function uncheckedTodoBlocks(text) {
   const starts = [];
-  const pattern = /^(?:[-*]|\d+[.)])\s+\[\s\]\s+/gm;
+  const pattern = /^(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+/gm;
   let match;
   while ((match = pattern.exec(text)) !== null) {
     starts.push(match.index);
@@ -89,7 +89,7 @@ export function uncheckedTodoBlocks(text) {
   return starts.map((start, index) => {
     const end = index + 1 < starts.length ? starts[index + 1] : text.length;
     return text.slice(start, end).trimEnd();
-  });
+  }).filter((block) => /^(?:[-*]|\d+[.)])\s+\[\s\]\s+/u.test(block));
 }
 
 function todoId(block) {
@@ -102,7 +102,7 @@ function sourceTodoLines(block) {
   return block
     .split('\n')
     .map((line) => line.trim())
-    .filter((line) => line.startsWith('Source TODO:'));
+    .filter((line) => line.startsWith('Source TODO:') || line.startsWith('Source:'));
 }
 
 function verificationLines(block) {
@@ -250,7 +250,9 @@ function boundedScopes(block) {
 
 function parentFromSource(block) {
   const line = sourceTodoLines(block)[0] ?? '';
-  const source = line.slice('Source TODO:'.length).trim();
+  const source = line.startsWith('Source TODO:')
+    ? line.slice('Source TODO:'.length).trim()
+    : line.slice('Source:'.length).trim();
   const id = source.split(':')[0]?.trim().replace(/[.,;]+$/u, '');
   return id || null;
 }
@@ -443,6 +445,39 @@ function validateGeneratedLeafIdentity(block, errors, options = {}) {
   if (parent && generatedMarkerSegments(parent).length > 0 && rootGeneratedTodoId(parent) === rootGeneratedTodoId(id)) {
     errors.push(`${owner}: Source TODO must reference the stable parent/root TODO ${rootGeneratedTodoId(id)}, not a generated sibling/descendant ${parent}.`);
   }
+  if (
+    routeValue(block) === 'todo-decomposition' &&
+    id.includes('replan-stalled-leaf') &&
+    parent &&
+    (parent.includes('replan-stalled-leaf') || parent.includes('todo-decomp-leaf'))
+  ) {
+    errors.push(`${owner}: recursive stalled-leaf replanning is not allowed; replace the generated decomposition leaf with concrete implementation/blocker leaves that reference the stable parent/root TODO.`);
+  }
+}
+
+function validateStalledLeafReplans(text, blocks, errors, options = {}) {
+  const uncheckedIds = uncheckedTodoIdSet(text);
+  const checkedIds = checkedTodoIds(text);
+  for (const block of blocks) {
+    const id = todoId(block);
+    const parent = parentFromSource(block);
+    if (
+      !id ||
+      !parent ||
+      routeValue(block) !== 'todo-decomposition' ||
+      !id.includes('replan-stalled-leaf')
+    ) {
+      continue;
+    }
+    const owner = `${options.path ?? defaultTodoPath} ${id}`;
+    if (checkedIds.has(parent)) {
+      errors.push(`${owner}: stale stalled-leaf replan targets completed TODO ${parent}; remove this replan and continue with the next unchecked implementation leaf.`);
+      continue;
+    }
+    if (!uncheckedIds.has(parent)) {
+      errors.push(`${owner}: stale stalled-leaf replan targets non-live TODO ${parent}; replan requests must target a currently unchecked TODO.`);
+    }
+  }
 }
 
 function validateLeafBlock(block, errors, options = {}) {
@@ -485,6 +520,11 @@ function validateLeafBlock(block, errors, options = {}) {
   }
   if (scopes.length > 2) {
     errors.push(`${owner}: Patch only/Create only scope must name at most two concrete backticked paths.`);
+  }
+  for (const target of scopes) {
+    if (target.endsWith('/')) {
+      errors.push(`${owner}: Patch only/Create only target must be a concrete file, not a directory: ${target}. Split or decompose into file-specific leaves.`);
+    }
   }
   const parent = parentFromSource(block);
   if (parent === id) {
@@ -670,6 +710,19 @@ function firstSchedulableTodoId(text) {
   const blockedIds = new Set();
   for (const block of blocks) {
     const id = todoId(block);
+    const route = routeValue(block);
+    const lower = block.toLowerCase();
+    if (
+      route === 'blocker' ||
+      (
+        route === 'release-ops' &&
+        lower.includes('blocker') &&
+        (lower.includes('inspect/blocker/fail-closed') || lower.includes('verification: blocker:'))
+      )
+    ) {
+      blockedIds.add(id);
+      continue;
+    }
     const deps = parseDependsOn(block);
     if (deps.some((dep) => uncheckedIds.has(dep) || blockedIds.has(dep))) {
       blockedIds.add(id);
@@ -779,6 +832,7 @@ export function validateTodoDecompositionText(text, options = {}) {
   validateDependencies(text, derivedBlocks, errors, options);
   validateVerificationPrerequisites(derivedBlocks, errors, options);
   validateDistinctSiblingLeaves(derivedBlocks, errors, options);
+  validateStalledLeafReplans(text, derivedBlocks, errors, options);
   if (options.breakdownText !== undefined) {
     validateBreakdownLedger(options.breakdownText, leafIds, errors, options);
   }

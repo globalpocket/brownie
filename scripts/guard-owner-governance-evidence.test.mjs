@@ -57,6 +57,14 @@ function validContract(overrides = {}) {
   };
 }
 
+test('guard-owner-governance-evidence reproducibility slice validates required sections', async (t) => {
+  const evidence = validEvidence();
+  assert.ok(evidence);
+  for (const sectionName of requiredSections) {
+    assert.ok(evidence.sections[sectionName], `Missing required section: ${sectionName}`);
+  }
+});
+
 function validEvidence(overrides = {}) {
   const sections = {
     branch_protection: section('satisfied'),

@@ -17,6 +17,30 @@ test('accepts structured decomposition leaf TODO', () => {
   }), []);
 });
 
+test('unchecked TODO parsing stops at checked items before the next pending leaf', () => {
+  const queue = `${validLeaf}
+
+- [x] E-15b-done: Patch only \`scripts/done.mjs\`:
+  Route: implementation.
+  Source TODO: E-15b.
+  Depends on: <none>.
+  Completion condition: completed sibling remains historical context only.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root guard:release-contract:test\`.
+
+- [ ] E-15b-next: Patch only \`scripts/next.mjs\`:
+  Route: implementation.
+  Source TODO: E-15b.
+  Depends on: <none>.
+  Completion condition: next pending leaf remains a separate unchecked block.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root guard:release-contract:test\`.`;
+
+  assert.deepEqual(validateTodoDecompositionText(queue, {
+    packageScripts: new Set(['guard:release-contract:test'])
+  }), []);
+});
+
 test('scope parsing ignores descriptive backticks after the bounded path', () => {
   const descriptiveLeaf = `- [ ] E-15d-child: Patch only \`scripts/guard-todo-decomposition.mjs\` to ensure \`soakEvidenceFixture\` includes \`name\`, \`version\`, \`description\`, and \`fixture\`.
   Route: implementation.
@@ -347,6 +371,75 @@ test('rejects generated leaf id chains that keep appending suffixes', () => {
   assert(errors.some((error) => error.includes('Source TODO must reference the stable parent/root TODO')), errors.join('\n'));
 });
 
+test('rejects recursive stalled-leaf replanning for decomposition leaves', () => {
+  const recursive = `- [ ] E-21c-replan-stalled-leaf-16dd69c42044: Patch only \`.brownie/todo.md\` to replace stalled TODO \`E-21c-todo-decomp-leaf-001\`.
+  Route: todo-decomposition.
+  Source TODO: E-21c-todo-decomp-leaf-001.
+  Depends on: <none>.
+  Completion condition: replace the generated TODO with another smaller generated TODO.
+  Forbidden changes: do not implement release evidence.
+  Verification: run \`pnpm --workspace-root guard:todo-decomposition\`.`;
+  const errors = validateTodoDecompositionText(recursive, {
+    packageScripts: new Set(['guard:todo-decomposition'])
+  });
+
+  assert(errors.some((error) => error.includes('recursive stalled-leaf replanning is not allowed')), errors.join('\n'));
+});
+
+test('rejects stalled-leaf replan whose source TODO is already completed', () => {
+  const text = `- [ ] E-21c-replan-stalled-leaf-475e76fa14b0: Patch only \`.brownie/todo.md\` to replan stalled Brownie TODO leaf into implementable child TODOs:
+  Route: todo-decomposition.
+  Source TODO: E-21c-runtime-operational-evidence-impl-3-target-01.
+  Depends on: <none>.
+  Completion condition: replace the stalled TODO with implementable child leaves.
+  Forbidden changes: do not implement release evidence.
+  Verification: run \`pnpm --workspace-root guard:todo-decomposition\`.
+
+- [x] E-21c-runtime-operational-evidence-impl-3-target-01: Patch only \`scripts/release-runtime-operational-evidence.mjs\`.
+  Route: implementation.
+  Source TODO: E-21c-runtime-operational-evidence-impl-3.
+  Depends on: <none>.
+  Completion condition: completed.
+  Forbidden changes: do not weaken guards.
+  Verification: run \`pnpm --workspace-root guard:runtime-operational-evidence\`.
+
+- [ ] E-21c-runtime-operational-evidence-impl-3-target-02: Patch only \`scripts/guard-runtime-operational-evidence.test.mjs\`.
+  Route: implementation.
+  Source TODO: E-21c-runtime-operational-evidence-impl-3.
+  Depends on: <none>.
+  Completion condition: continue implementation.
+  Forbidden changes: do not weaken guards.
+  Verification: run \`pnpm --workspace-root guard:runtime-operational-evidence\`.`;
+  const errors = validateTodoDecompositionText(text, {
+    packageScripts: new Set(['guard:todo-decomposition', 'guard:runtime-operational-evidence'])
+  });
+
+  assert(errors.some((error) => error.includes('stale stalled-leaf replan targets completed TODO')), errors.join('\n'));
+});
+
+test('rejects stalled-leaf replan whose source TODO is not live', () => {
+  const text = `- [ ] E-21c-replan-stalled-leaf-475e76fa14b0: Patch only \`.brownie/todo.md\` to replan stalled Brownie TODO leaf into implementable child TODOs:
+  Route: todo-decomposition.
+  Source TODO: E-21c-runtime-operational-evidence-impl-3-target-01.
+  Depends on: <none>.
+  Completion condition: replace the stalled TODO with implementable child leaves.
+  Forbidden changes: do not implement release evidence.
+  Verification: run \`pnpm --workspace-root guard:todo-decomposition\`.
+
+- [ ] E-21c-runtime-operational-evidence-impl-3-target-02: Patch only \`scripts/guard-runtime-operational-evidence.test.mjs\`.
+  Route: implementation.
+  Source TODO: E-21c-runtime-operational-evidence-impl-3.
+  Depends on: <none>.
+  Completion condition: continue implementation.
+  Forbidden changes: do not weaken guards.
+  Verification: run \`pnpm --workspace-root guard:runtime-operational-evidence\`.`;
+  const errors = validateTodoDecompositionText(text, {
+    packageScripts: new Set(['guard:todo-decomposition', 'guard:runtime-operational-evidence'])
+  });
+
+  assert(errors.some((error) => error.includes('stale stalled-leaf replan targets non-live TODO')), errors.join('\n'));
+});
+
 test('rejects duplicate sibling leaves after normalizing generated suffixes', () => {
   const duplicated = `- [ ] E-16f-phase-value-gate-contract-sync-leaf-2: Patch only \`docs/architecture/phase-value-manifest.json\` to add the \`phase_value_gate\` field.
   Route: documentation.
@@ -420,6 +513,21 @@ test('accepts implementation TODO when Product Ready is false and release blocke
   assert.deepEqual(errors, []);
 });
 
+test('rejects directory Patch only targets because Brownie cannot implement a concrete file leaf', () => {
+  const errors = validateTodoDecompositionText(`- [ ] E-21a-dir-leaf: Patch only \`scripts/\` to close a broad scripts slice:
+  Route: implementation.
+  Source TODO: E-21a-clean-release-workspace-contract.
+  Depends on: <none>.
+  Completion condition: the bounded scripts slice is implemented and verified.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root guard:todo-decomposition\`.`, {
+    repoRoot: process.cwd(),
+    packageScripts: new Set(['guard:todo-decomposition'])
+  });
+
+  assert(errors.some((error) => error.includes('must be a concrete file, not a directory: scripts/')), errors.join('\n'));
+});
+
 test('selects first schedulable TODO after dependency blockers', () => {
   const text = `- [ ] E-15b-child: Patch only \`scripts/example.mjs\`:
   Route: implementation.
@@ -437,6 +545,38 @@ test('selects first schedulable TODO after dependency blockers', () => {
   Verification: run \`pnpm --workspace-root guard:release-contract:test\`.`;
 
   assert.equal(nextSchedulableTodoId(text), 'E-15b-parent');
+});
+
+test('accepts explicit blocker route and skips it for schedulable implementation work', () => {
+  const text = `- [ ] E-20i-release-ops-blocker: Blocker: External release engineering ownership required for CI/CD pipeline configuration and production deployment credentials.
+  Route: blocker.
+  Source TODO: TODO-decompose-release-ops-blockers.
+  Depends on: <none>.
+  Completion condition: Release engineering team provides CI/CD pipeline access and deployment credentials or documents owner-controlled requirements.
+  Forbidden changes: do not attempt to configure external CI/CD or create deployment credentials.
+  Verification: inspect/blocker/fail-closed until release engineering team provides evidence of pipeline access or documented requirements.
+- [ ] E-20h-release-evidence-script: Patch only \`scripts/release-gate.mjs\` to add deterministic release evidence checks:
+  Route: implementation.
+  Source TODO: TODO-decompose-release-ops-blockers.
+  Depends on: <none>.
+  Completion condition: release-gate.mjs validates release evidence state with deterministic fail-closed behavior.
+  Forbidden changes: do not modify phase-loop.sh or external controller files.
+  Verification: run \`pnpm --workspace-root guard:release-gate\`.`;
+
+  assert.deepEqual(validateTodoDecompositionText(text, {
+    packageScripts: new Set(['guard:release-gate']),
+    breakdownText: `Parent TODO: TODO-decompose-release-ops-blockers
+Dependency graph:
+- E-20i-release-ops-blocker: <none>
+- E-20h-release-evidence-script: <none>
+Verification ledger:
+- E-20i-release-ops-blocker: inspect/blocker/fail-closed
+- E-20h-release-evidence-script: \`pnpm --workspace-root guard:release-gate\`
+Quality rubric:
+- E-20i-release-ops-blocker: explicit external blocker not runnable by the worker.
+- E-20h-release-evidence-script: bounded implementation leaf.`
+  }), []);
+  assert.equal(nextSchedulableTodoId(text), 'E-20h-release-evidence-script');
 });
 
 test('adversarial decomposition fixtures fail for the expected reason', () => {

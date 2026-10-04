@@ -13,7 +13,7 @@ import {
   redactDelegatedResult
 } from './release-runtime-operational-evidence.mjs';
 
-const requiredSections = ['artifact_lifecycle', 'golden_journey_fixture', 'soak_test'];
+const requiredSections = ['artifact_lifecycle', 'golden_journey_fixture', 'soak_test', 'executable_evidence_validation'];
 
 const forbiddenGeneratedEvidencePatterns = [
   /\/Users\//,
@@ -25,6 +25,15 @@ const forbiddenGeneratedEvidencePatterns = [
   /"command"\s*:/,
   /"stdout"\s*:/,
   /"stderr"\s*:/
+];
+
+const blockerPlaceholderPatterns = [
+  /blocker/i,
+  /placeholder/i,
+  /TODO.*evidence/i,
+  /not.*implemented/i,
+  /stub/i,
+  /mock.*evidence/i
 ];
 
 function generatedEvidenceForbiddenMatches(evidence) {
@@ -40,8 +49,62 @@ const requiredStatefulSoakStepIds = [
   'resume_replay_handling',
   'duplicate_side_effect_rejection',
   'process_loss_recovery',
-  'finite_convergence'
+  'finite_convergence',
+  'evidence_chain_integrity',
+  'artifact_lifecycle',
+  'golden_journey_fixture',
+  'soak_test',
+  'executable_evidence_validation'
 ];
+
+test('evidence_chain_integrity step is required for fail-closed evidence', () => {
+  const evidence = validEvidence();
+  evidence.sections.soak_test = { step_ids: requiredStatefulSoakStepIds.filter(id => id !== 'evidence_chain_integrity') };
+  const errors = validateRuntimeOperationalEvidence(evidence);
+  assert(errors.some((error) => error.includes('evidence_chain_integrity')),
+    'evidence_chain_integrity step must be present for fail-closed evidence');
+});
+
+test('evidence must not contain blocker placeholders', () => {
+  const evidence = validEvidence();
+  evidence.sections.artifact_lifecycle = { status: 'placeholder', blocker: 'TODO: implement evidence' };
+  const errors = validateRuntimeOperationalEvidence(evidence);
+  assert(errors.some((error) => error.includes('blocker') || error.includes('placeholder')),
+    'evidence must not contain blocker placeholders');
+});
+
+test('runtime operational evidence models release operation as executable fail-closed evidence', async (t) => {
+  const evidence = await buildRuntimeOperationalEvidence({
+    artifact_lifecycle: { status: 'executable', fail_closed: true },
+    golden_journey_fixture: { executed: true },
+    soak_test: { step_ids: requiredStatefulSoakStepIds }
+  });
+  const guardResult = await runRuntimeOperationalEvidenceGuard(evidence);
+  assert.ok(guardResult.valid, 'guard should pass for valid executable evidence');
+  assert.ok(guardResult.fail_closed === true, 'executable evidence must be fail-closed');
+  const redacted = redactDelegatedResult(evidence);
+  assert.ok(!generatedEvidenceForbiddenMatches(redacted).length, 'no forbidden patterns in redacted evidence');
+});
+
+test('fail-closed evidence requires explicit fail_closed_reasons when artifact lifecycle is not executable', () => {
+  const evidence = validEvidence({
+    artifact_lifecycle: { status: 'blocked', fail_closed: true },
+    fail_closed_reasons: ['artifact_lifecycle:blocked']
+  });
+  const errors = validateRuntimeOperationalEvidence(evidence);
+  assert.deepEqual(errors, [], 'fail-closed evidence with explicit reasons should pass validation');
+});
+
+test('rejects non-fail-closed executable evidence', async (t) => {
+  const evidence = await buildRuntimeOperationalEvidence({
+    artifact_lifecycle: { status: 'executable', fail_closed: false },
+    golden_journey_fixture: { executed: true },
+    soak_test: { step_ids: requiredStatefulSoakStepIds }
+  });
+  const guardResult = await runRuntimeOperationalEvidenceGuard(evidence);
+  assert.ok(!guardResult.valid, 'guard should reject non-fail-closed executable evidence');
+  assert.ok(guardResult.errors.some((e) => e.includes('fail_closed')), 'error should mention fail_closed');
+});
 
 function validateStatefulSoakSteps(evidence) {
   if (!evidence || typeof evidence !== 'object') {
@@ -150,6 +213,15 @@ function validEvidence(overrides = {}) {
         unrecoverable_run_count: 0,
         commands: [commandSummary()],
         stateful_steps: statefulSoakSteps()
+      }),
+      executable_evidence_validation: section('satisfied', {
+        fail_closed: true,
+        validated_sections: [
+          { id: 'artifact_lifecycle', status: 'satisfied', satisfied: true },
+          { id: 'golden_journey_fixture', status: 'satisfied', satisfied: true },
+          { id: 'soak_test', status: 'satisfied', satisfied: true }
+        ],
+        missing_executable_evidence: []
       })
     },
     ...overrides
@@ -157,7 +229,9 @@ function validEvidence(overrides = {}) {
 }
 
 test('accepts satisfied runtime operational evidence', () => {
-  assert.deepEqual(validateRuntimeOperationalEvidence(validEvidence()), []);
+  const evidence = validEvidence();
+  const errors = validateRuntimeOperationalEvidence(evidence);
+  assert.deepEqual(errors, []);
 });
 
 test('accepts contract-only mode when generated runtime operational evidence is absent', () => {
@@ -195,6 +269,16 @@ test('rejects satisfied golden journey without complete lifecycle evidence', () 
 test('rejects release-ready claims', () => {
   const errors = validateRuntimeOperationalEvidence(validEvidence({ runtime_release_ready: true }));
   assert(errors.some((error) => error.includes('runtime_release_ready true')));
+});
+
+test('validates fail-closed evidence with golden journey artifacts', () => {
+  const evidence = validEvidence({
+    fail_closed_reasons: ['golden_journey_fixture:not_executed_missing_artifacts']
+  });
+  evidence.sections.golden_journey_fixture = section('not_executed_missing_artifacts', { commands: [] });
+  evidence.sections.artifact_lifecycle = { status: 'executable', fail_closed: true };
+  const errors = validateRuntimeOperationalEvidence(evidence);
+  assert.equal(errors.length, 0, 'fail-closed evidence with explicit reason should be valid');
 });
 
 test('requires fail-closed reasons for incomplete artifact lifecycle evidence', () => {
@@ -270,7 +354,8 @@ test('accepts fail-closed artifact lifecycle when local release target manifest 
   evidence.fail_closed_reasons = [
     `artifact_lifecycle:${evidence.sections.artifact_lifecycle.status}`,
     'golden_journey_fixture:not_executed_missing_artifacts',
-    'soak_test:not_executed_missing_artifacts'
+    'soak_test:not_executed_missing_artifacts',
+    'executable_evidence_validation:not_executed'
   ];
   assert.equal(evidence.sections.artifact_lifecycle.local_release_targets_path, '.brownie/local-release-targets.json');
   assert.deepEqual(validateRuntimeOperationalEvidence(evidence), []);

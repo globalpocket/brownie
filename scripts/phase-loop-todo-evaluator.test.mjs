@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
   evaluateTodoQueue,
+  isBrownieOwnedBlockerTodo,
   isExplicitBlockerTodo,
   needsTodoDecomposition,
   selectFirstSchedulableTodo
@@ -223,6 +224,73 @@ test('blocked owner-controlled blocker does not suppress sibling implementation 
   const selected = selectFirstSchedulableTodo(queue, { blockedPath: blocked });
 
   assert(selected.startsWith('- [ ] E-15e-release-contract-audit-phase-resync:'), selected);
+});
+
+test('unblocked explicit blocker is not selected over schedulable implementation work', () => {
+  const queue = `- [ ] E-20i-blocker-ops-external: Blocker: External release ops environment configuration must be provided by repository owner before Brownie can complete release engineering tasks.
+  Route: release-ops.
+  Source TODO: TODO-decompose-release-ops-blockers-6ffca1beb681.
+  Depends on: <none>.
+  Completion condition: Owner provides CI/CD environment configuration or marks release ops as owner-only.
+  Forbidden changes: do not invent evidence values or declare Product Ready.
+  Verification: inspect/blocker/fail-closed - owner must provide environment configuration.
+
+- [ ] E-20h-release-evidence-script: Patch only \`scripts/release-gate.mjs\` to add deterministic release evidence checks:
+  Route: implementation.
+  Source TODO: TODO-decompose-release-ops-blockers-6ffca1beb681.
+  Depends on: <none>.
+  Completion condition: release-gate.mjs validates queue fingerprint matches claim state and rejects stale snapshots with clear error messages.
+  Forbidden changes: do not modify phase-loop.sh or external controller files.
+  Verification: run \`pnpm --workspace-root guard:release-gate\`.`;
+
+  const selected = selectFirstSchedulableTodo(queue);
+
+  assert(selected.startsWith('- [ ] E-20h-release-evidence-script:'), selected);
+});
+
+test('route blocker TODOs are explicit blockers and are not selected over implementation work', () => {
+  const queue = `- [ ] E-20i-release-ops-blocker: Blocker: External release engineering ownership required for CI/CD pipeline configuration and production deployment credentials.
+  Route: blocker.
+  Source TODO: TODO-decompose-release-ops-blockers.
+  Depends on: <none>.
+  Completion condition: Release engineering team provides CI/CD pipeline access and deployment credentials or documents owner-controlled requirements.
+  Forbidden changes: do not attempt to configure external CI/CD or create deployment credentials.
+  Verification: inspect/blocker/fail-closed until release engineering team provides evidence of pipeline access or documented requirements.
+
+- [ ] E-20h-release-evidence-script: Patch only \`scripts/release-gate.mjs\` to add deterministic release evidence checks:
+  Route: implementation.
+  Source TODO: TODO-decompose-release-ops-blockers.
+  Depends on: <none>.
+  Completion condition: release-gate.mjs validates queue fingerprint matches claim state and rejects stale snapshots with clear error messages.
+  Forbidden changes: do not modify phase-loop.sh or external controller files.
+  Verification: run \`pnpm --workspace-root guard:release-gate\`.`;
+
+  const selected = selectFirstSchedulableTodo(queue);
+
+  assert.equal(isExplicitBlockerTodo(queue.split('\n\n')[0]), true);
+  assert(selected.startsWith('- [ ] E-20h-release-evidence-script:'), selected);
+});
+
+test('distinguishes Brownie-owned release-ops blockers from external authority blockers', () => {
+  const brownieOwned = `- [ ] E-21c-release-ops-todo-split-golden-journey: Blocker: Golden Journey evidence is generated from a temporary workspace with observable workspace mutation instead of reusing the dirty development workspace:
+  Route: release-ops.
+  Source TODO: E-21c-release-ops-todo-split.
+  Depends on: <none>.
+  Completion condition: Release Ops has a concrete fail-closed evidence item for Golden Journey evidence, and Product Ready remains false until that evidence is produced and bound to the current release commit.
+  Forbidden changes: do not patch implementation files for this Release Ops blocker, do not invent evidence values, and do not declare Runtime Product Ready.
+  Verification: blocker: Release Ops evidence remains fail-closed until this item is replaced by generated evidence or by a bounded implementation TODO with existing verification.`;
+  const externalAuthority = `- [ ] E-20i-release-ops-blocker: Blocker: External release engineering ownership required for CI/CD pipeline configuration and production deployment credentials.
+  Route: release-ops.
+  Source TODO: TODO-decompose-release-ops-blockers.
+  Depends on: <none>.
+  Completion condition: Owner provides CI/CD pipeline access and deployment credentials or documents owner-controlled requirements.
+  Forbidden changes: do not attempt to configure external CI/CD or create deployment credentials.
+  Verification: inspect/blocker/fail-closed until release engineering team provides evidence of pipeline access or documented requirements.`;
+
+  assert.equal(isExplicitBlockerTodo(brownieOwned), true);
+  assert.equal(isBrownieOwnedBlockerTodo(brownieOwned), true);
+  assert.equal(isExplicitBlockerTodo(externalAuthority), true);
+  assert.equal(isBrownieOwnedBlockerTodo(externalAuthority), false);
 });
 
 test('does not classify bounded implementation TODOs mentioning blockers as explicit blockers', () => {

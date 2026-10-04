@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "evidence_id": "brownie-owner-governance-evidence-v1",
-  "generated_at": "2026-10-01T08:24:10.283Z",
+  "generated_at": "2026-10-04T03:30:29.408Z",
   "repository": "globalpocket/brownie",
-  "source_commit": "021c445882e010292ef8947db031923eb78a61a5",
+  "source_commit": "c68a13ee844b74242679c3b3c5e0a92133dba94c",
   "release_ready": false,
   "runtime_release_ready": false,
   "required_sections": [
@@ -17,18 +17,19 @@
   ],
   "sections": {
     "branch_protection": {
-      "status": "github_api_unavailable",
+      "status": "satisfied",
       "release_blocking": true,
       "checked_via": "gh api branches/main/protection",
-      "github_cli_available": true,
-      "github_cli_authorized": true
+      "required_pull_request_reviews_present": true,
+      "enforce_admins_enabled": true
     },
     "required_status_checks": {
-      "status": "github_api_unavailable",
+      "status": "satisfied",
       "release_blocking": true,
       "checked_via": "gh api branches/main/protection",
-      "github_cli_available": true,
-      "github_cli_authorized": true
+      "strict": true,
+      "required_context_count": 2,
+      "required_app_check_count": 2
     },
     "protected_tag_policy": {
       "status": "satisfied",
@@ -44,8 +45,8 @@
       "workflow_run_id_present": true,
       "workflow_sha_present": true,
       "workflow_repository_present": true,
-      "workflow_run_id": "35680993785",
-      "workflow_head_sha": "c4a451061db5ae48cd34be934b3f83055ee5571b",
+      "workflow_run_id": "36847041855",
+      "workflow_head_sha": "c68a13ee844b74242679c3b3c5e0a92133dba94c",
       "workflow_conclusion": "success",
       "required_check_names": [
         "check",
@@ -164,8 +165,5 @@
       "note": "License and publish posture are owner decisions; Runtime automation only records whether the decision evidence exists."
     }
   },
-  "fail_closed_reasons": [
-    "branch_protection:github_api_unavailable",
-    "required_status_checks:github_api_unavailable"
-  ]
+  "fail_closed_reasons": []
 }
