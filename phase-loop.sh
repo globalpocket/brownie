@@ -6114,6 +6114,20 @@ for line in selected.splitlines():
         break
 selected_id_for_route = selected_first.split("] ", 1)[1].split(":", 1)[0].strip() if "] " in selected_first else selected_first.split(":", 1)[0].strip()
 selected_is_decomposition_route = selected_route == "todo-decomposition" or selected_id_for_route.startswith("TODO-decompose-")
+repair_feedback_path = claim_path.parent / "repair-feedback.json"
+repair_feedback = {}
+try:
+    if repair_feedback_path.exists():
+        loaded_repair_feedback = json.loads(repair_feedback_path.read_text(encoding="utf-8"))
+        if isinstance(loaded_repair_feedback, dict):
+            repair_feedback = loaded_repair_feedback
+except Exception:
+    repair_feedback = {}
+contract_replan_feedback_selected = (
+    repair_feedback.get("kind") == "phase_loop_todo_contract_replan_feedback"
+    and repair_feedback.get("reason") == "supervisor_repeated_leaf_failure_requires_todo_contract_replan"
+    and (repair_feedback.get("selected_todo_first_line") or "") == selected_first
+)
 
 try:
     todo_text = todo_path.read_text(encoding="utf-8")
@@ -6168,7 +6182,7 @@ if candidate is None:
     sys.exit(2)
 
 run_id, payload, old_text, new_text = candidate
-if selected_route in {"implementation", "documentation"} and not selected_is_decomposition_route and not selected_is_derived_leaf:
+if selected_route in {"implementation", "documentation"} and not selected_is_decomposition_route and not selected_is_derived_leaf and not contract_replan_feedback_selected:
     print(json.dumps({
         "applied": False,
         "reason": "todo_refinement_requires_todo_decomposition_route",
@@ -6239,7 +6253,7 @@ def backticked_values(text):
 def completion_blocks(text):
     return {todo_id(block): block for block in unchecked_todo_blocks(text) if todo_id(block)}
 
-if selected_is_derived_leaf:
+if selected_is_derived_leaf and not contract_replan_feedback_selected:
     guard = subprocess.run(
         ["pnpm", "--workspace-root", "guard:todo-decomposition"],
         cwd=workspace_root,
@@ -9187,6 +9201,15 @@ leaf_has_read_preview_for_repair = bool(
     and any(preview_is_for_path(preview, selected_leaf_target_path) for preview in repair_workspace_read_previews)
 )
 leaf_has_any_read_preview_for_repair = bool(repair_workspace_read_previews)
+leaf_has_contract_replan_feedback = bool(
+    isinstance(repair_feedback, dict)
+    and repair_feedback.get("kind") == "phase_loop_todo_contract_replan_feedback"
+    and repair_feedback.get("reason") == "supervisor_repeated_leaf_failure_requires_todo_contract_replan"
+    and (
+        not repair_feedback.get("selected_todo_first_line")
+        or repair_feedback.get("selected_todo_first_line") == selected_first_line
+    )
+)
 leaf_has_oversized_repair = bool(
     isinstance(repair_feedback, dict)
     and isinstance(repair_feedback.get("verification"), dict)
@@ -9326,7 +9349,14 @@ if "Source TODO:" in selected_todo and re.search(r"^\s*[-*]\s+\[\s*\]\s+[^:\n]+:
         "- leaf_no_refinement_policy: a bounded leaf with one Patch only target must not be converted into more child TODOs just because the target file is large, unless Previous Repair Feedback shows a repeated oversized/input_too_large workspace.write.",
         "- leaf_todo_write_forbidden_policy: for a bounded Patch only leaf with no oversized/input_too_large repair feedback, `workspace.write` to `.brownie/todo.md` is not progress and must not be attempted. Use `workspace.read` for the target if needed, then `workspace.write` for the target path, or final-answer a concrete fail-closed blocker.",
     ]
-    if leaf_force_write_on_repair:
+    if leaf_has_contract_replan_feedback:
+        leaf_execution_policy_lines.append(
+            "- leaf_contract_replan_policy: Supervisor repair feedback says this selected leaf has repeatedly failed because its TODO contract may be too narrow. This is the explicit exception to normal bounded-leaf no-refinement. Patch `.brownie/todo.md` to replace only the selected leaf with one or more smaller implementable leaves, or emit one concrete fail-closed blocker if no implementable split exists."
+        )
+        leaf_execution_policy_lines.append(
+            f"- leaf_contract_replan_scope_policy: the `.brownie/todo.md` patch must remove the selected leaf `{selected_parent_id or '<selected leaf id>'}`, preserve the parent intent, keep existing unrelated TODOs, use existing verification commands, and must not declare Product Ready or weaken guards."
+        )
+    elif leaf_force_write_on_repair:
         leaf_execution_policy_lines.append(
             f"- leaf_required_next_tool_policy: the next tool must be `workspace.write` for `{selected_leaf_target_path or '<selected Patch only target>'}` unless final-answer fail-closed is unavoidable; the prior repair context already contains the target read preview, so `workspace.read` and `.brownie/todo.md` writes are not progress for this repair turn."
         )
@@ -9396,12 +9426,19 @@ if "Source TODO:" in selected_todo and re.search(r"^\s*[-*]\s+\[\s*\]\s+[^:\n]+:
             f"- leaf_initial_read_policy: if the target contents are not already embedded in this prompt, the next tool may be exactly one `workspace.read` for `{selected_leaf_target_path or '<selected Patch only target>'}`; after that read, move to `workspace.write` for the same target."
         )
 if "Source TODO:" in selected_todo and re.search(r"^\s*[-*]\s+\[\s*\]\s+[^:\n]+:\s+Create only\s+`", selected_todo):
-    leaf_execution_policy_lines = [
-        "- leaf_execution_policy: this selected TODO is already a bounded derived leaf; do not split it again and do not patch `.brownie/todo.md`. Create the named target file. If it cannot be safely created, fail closed in the final response instead of creating another TODO.",
-        f"- leaf_required_next_tool_policy: the next tool must be `workspace.write` for `{selected_leaf_target_path or '<selected Create only target>'}` unless final-answer fail-closed is unavoidable; `workspace.read` and `.brownie/todo.md` writes are not progress for this repair turn.",
-        "- create_only_policy: do not request `workspace.read` for the missing Create only target. Use `workspace.write` with a create-file operation or a patch that creates exactly the named file.",
-        "- leaf_no_refinement_policy: a bounded Create only leaf must not be converted into more child TODOs just because the target file does not exist yet.",
-    ]
+    if leaf_has_contract_replan_feedback:
+        leaf_execution_policy_lines = [
+            "- leaf_execution_policy: this selected TODO is a bounded Create only derived leaf, but Supervisor repair feedback says this selected leaf has repeatedly failed because its TODO contract may be too narrow.",
+            "- leaf_contract_replan_policy: this is the explicit exception to normal bounded-leaf no-refinement. Patch `.brownie/todo.md` to replace only the selected Create only leaf with one or more smaller implementable leaves, or emit one concrete fail-closed blocker if no implementable split exists.",
+            f"- leaf_contract_replan_scope_policy: the `.brownie/todo.md` patch must remove the selected leaf `{selected_parent_id or '<selected leaf id>'}`, preserve the parent intent, keep existing unrelated TODOs, use existing verification commands, and must not declare Product Ready or weaken guards.",
+        ]
+    else:
+        leaf_execution_policy_lines = [
+            "- leaf_execution_policy: this selected TODO is already a bounded derived leaf; do not split it again and do not patch `.brownie/todo.md`. Create the named target file. If it cannot be safely created, fail closed in the final response instead of creating another TODO.",
+            f"- leaf_required_next_tool_policy: the next tool must be `workspace.write` for `{selected_leaf_target_path or '<selected Create only target>'}` unless final-answer fail-closed is unavoidable; `workspace.read` and `.brownie/todo.md` writes are not progress for this repair turn.",
+            "- create_only_policy: do not request `workspace.read` for the missing Create only target. Use `workspace.write` with a create-file operation or a patch that creates exactly the named file.",
+            "- leaf_no_refinement_policy: a bounded Create only leaf must not be converted into more child TODOs just because the target file does not exist yet.",
+        ]
 if bdk_state == "decompose_todo":
     decomposition_policy_lines = [
         "- decomposition_policy: this invocation is TODO decomposition only; do not patch implementation, guard, evidence, source, or documentation files.",
