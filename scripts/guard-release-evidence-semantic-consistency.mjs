@@ -60,6 +60,10 @@ export function validateReleaseEvidenceSemanticConsistency({ contract = {}, evid
     addReason(reasons, 'undefined_source_commit');
   }
 
+  if (implemented && evidence.source_commit === '') {
+    addReason(reasons, 'empty_source_commit');
+  }
+
   const smokeSteps = evidence.smoke_steps ?? evidence.artifact_smoke?.steps;
   if (implemented && Array.isArray(smokeSteps)) {
     const normalized = smokeSteps.map((step) => {

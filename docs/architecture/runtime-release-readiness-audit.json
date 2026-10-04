@@ -29,7 +29,8 @@
         "workflow_run_id",
         "artifact_sha256"
       ],
-      "policy": "Runtime Release Ready remains false until current tested commit, workflow run id, and artifact SHA bindings are generated from executable evidence. Pending values must not be replaced with invented placeholders."
+      "policy": "Runtime Release Ready remains false until current tested commit, workflow run id, and artifact SHA bindings are generated from executable evidence. Pending values must not be replaced with invented placeholders.",
+      "next_evidence_step": "Execute pnpm release:gate to generate workflow_run_id and artifact_sha256 from current tested commit."
     },
     "trace_binding_schema": {
       "schema_version": 1,

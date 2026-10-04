@@ -43,6 +43,26 @@ export function runTraceBindingValidationCLI(args) {
   return result;
 }
 
+export function validateReleaseEvidence(claim) {
+  if (!claim || typeof claim !== 'object') {
+    return { valid: false, error: 'Claim must be a non-null object' };
+  }
+  const { claimId, queueGeneration, queueFingerprint, runStamp } = claim;
+  if (typeof claimId !== 'string' || claimId.length === 0) {
+    return { valid: false, error: 'claimId must be a non-empty string' };
+  }
+  if (typeof queueGeneration !== 'string' || queueGeneration.length === 0) {
+    return { valid: false, error: 'queueGeneration must be a non-empty string' };
+  }
+  if (typeof queueFingerprint !== 'string' || queueFingerprint.length === 0) {
+    return { valid: false, error: 'queueFingerprint must be a non-empty string' };
+  }
+  if (typeof runStamp !== 'string' || runStamp.length === 0) {
+    return { valid: false, error: 'runStamp must be a non-empty string' };
+  }
+  return { valid: true, claimId, queueGeneration, queueFingerprint, runStamp };
+}
+
 export function validateTraceBindingPayload(payload) {
   if (!payload || typeof payload !== 'object') {
     return { valid: false, error: 'Payload must be a non-null object' };

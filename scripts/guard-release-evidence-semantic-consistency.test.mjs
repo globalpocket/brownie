@@ -3,6 +3,13 @@ import assert from 'node:assert/strict';
 
 import { validateReleaseEvidenceSemanticConsistency } from './guard-release-evidence-semantic-consistency.mjs';
 
+test('validator function exists and returns expected structure', () => {
+  const result = validateReleaseEvidenceSemanticConsistency({ contract: {}, evidence: {} });
+  assert(typeof result === 'object', 'result should be an object');
+  assert('ok' in result, 'result should have ok property');
+  assert(Array.isArray(result.reasons), 'result should have reasons array');
+});
+
 const nullSourceCommitFixture = {
   name: 'implemented evidence with null commits',
   contract: { status: 'implemented_sufficient', implementation_commit: null, tested_commit: null },

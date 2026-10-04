@@ -28,6 +28,11 @@ Dependency graph:
 - E-15d-stateful-soak-runner-fixture: <none>
 - E-15d-stateful-soak-runner-real: <none>
 - E-15d-soak-section-collector: <none>
+- E-21c-replan-stalled-leaf-001: <none>
+- E-21c-replan-stalled-leaf-002: E-21c-replan-stalled-leaf-001
+- E-15e-todo-queue-decomposition: <none>
+- E-15f-todo-breakdown-update: <none>
+- E-50a-read-full-todo-queue: <none>
 - E-16f-release-contract-owner-governance-evidence-path: none
 - E-16e-semantic-consistency-guard-test-verify-step1b: E-16e-semantic-consistency-guard-test-verify-step1a
 - E-16e-semantic-consistency-guard-test-verify-step1c: E-16e-semantic-consistency-guard-test-verify-step1b
@@ -141,6 +146,9 @@ Verification ledger:
 - E-15d-stateful-soak-runner-fixture: `pnpm --workspace-root guard:runtime-operational-evidence:test`; `pnpm --workspace-root guard:runtime-operational-evidence`
 - E-15d-stateful-soak-runner-real: `pnpm --workspace-root guard:runtime-operational-evidence:test`; `pnpm --workspace-root guard:runtime-operational-evidence`
 - E-15d-soak-section-collector: `pnpm --workspace-root guard:runtime-operational-evidence:test`
+- E-15e-todo-queue-decomposition: run `pnpm --workspace-root guard:todo-decomposition` and `pnpm --workspace-root phase-loop:todo-queue-integrity`.
+- E-15f-todo-breakdown-update: run `pnpm --workspace-root guard:todo-decomposition` and inspect `.brownie/todo-breakdown.md` for the new entries.
+- E-50a-read-full-todo-queue: inspect `.brownie/todo.md` and confirm release-ops blocker TODOs are visible in the queue.
 - E-16f-release-contract-owner-governance-evidence-path: run `pnpm --workspace-root guard:release-contract` and inspect the owner_governance_evidence.default_path field in the contract JSON.
 - E-16e-semantic-consistency-guard-test-verify-step1b: `node --test scripts/guard-release-evidence-semantic-consistency.test.mjs`
 - E-16e-semantic-consistency-guard-test-verify-step1c: `node --test scripts/guard-release-evidence-semantic-consistency.test.mjs`
@@ -735,3 +743,650 @@ History:
 
 - 2026-10-01T06:34:24Z: Applied deterministic no_eligible_task fallback during run 20261001T063422Z; the checked parent remains in the queue so existing downstream dependencies still have a durable dependency anchor, and the implementation work moves to ordered single-target leaves.
 
+## TODO-decompose-broad-todo-84ad36d83e8d
+
+Parent TODO: E-21a-clean-release-workspace-contract
+
+Dependency graph:
+- E-21a-clean-release-workspace-contract-leaf-a: <none>
+- E-21a-clean-release-workspace-contract-leaf-b: E-21a-clean-release-workspace-contract-leaf-a
+- E-21a-clean-release-workspace-contract-leaf-c: E-21a-clean-release-workspace-contract-leaf-b
+
+Verification ledger:
+- E-21a-clean-release-workspace-contract-leaf-a: run `pnpm --workspace-root guard:release-contract` and `pnpm --workspace-root guard:runtime-release-readiness`.
+- E-21a-clean-release-workspace-contract-leaf-b: run `pnpm --workspace-root guard:runtime-release-readiness`.
+- E-21a-clean-release-workspace-contract-leaf-c: run `pnpm --workspace-root guard:todo-decomposition`.
+
+Quality rubric:
+- E-21a-clean-release-workspace-contract-leaf-a: bounded single target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-21a-clean-release-workspace-contract-leaf-b: bounded single target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-21a-clean-release-workspace-contract-leaf-c: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+
+History:
+
+- 2026-10-01T11:25:51Z: Deterministically decomposed E-21a-clean-release-workspace-contract during 20261001T112550Z; avoided LLM old_text patch anchors and resolved verification commands from existing package scripts.
+- 2026-10-01T12:07:34Z: Keeper repaired the decomposition after completion integrity correctly rejected leaf-a because it bundled two documentation targets but Brownie changed only runtime-release-contract.json; split the remaining audit and scripts work into follow-up single-scope leaves so the loop can resume without weakening completion integrity.
+
+## TODO-repair-E-21a-clean-release-workspace-contract-leaf-c-decompose-targets
+
+Parent TODO: E-21a-clean-release-workspace-contract
+
+Dependency graph:
+- E-21a-clean-release-workspace-contract-leaf-c-decompose-targets: <none>
+
+Verification ledger:
+- E-21a-clean-release-workspace-contract-leaf-c-decompose-targets: run `pnpm --workspace-root guard:todo-decomposition`
+
+Quality rubric:
+- E-21a-clean-release-workspace-contract-leaf-c-decompose-targets: bounded TODO repair scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+
+History:
+
+- 2026-10-01T13:59:34Z: Converted directory-scoped leaf E-21a-clean-release-workspace-contract-leaf-c into a Brownie-owned decomposition TODO because concrete Patch only/Create only file targets are required.
+
+## TODO-repair-E-21b-release-workspace-guard-decompose-targets
+
+Parent TODO: E-21b-release-workspace-guard
+
+Dependency graph:
+- E-21b-release-workspace-guard-decompose-targets: <none>
+
+Verification ledger:
+- E-21b-release-workspace-guard-decompose-targets: run `pnpm --workspace-root guard:todo-decomposition`
+
+Quality rubric:
+- E-21b-release-workspace-guard-decompose-targets: bounded TODO repair scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+
+History:
+
+- 2026-10-01T14:01:10Z: Converted directory-scoped leaf E-21b-release-workspace-guard into a Brownie-owned decomposition TODO because concrete Patch only/Create only file targets are required.
+
+## TODO-repair-E-21d-generation-consistency-guard-decompose-targets
+
+Parent TODO: E-21d-generation-consistency-guard
+
+Dependency graph:
+- E-21d-generation-consistency-guard-decompose-targets: <none>
+
+Verification ledger:
+- E-21d-generation-consistency-guard-decompose-targets: run `pnpm --workspace-root guard:todo-decomposition`
+
+Quality rubric:
+- E-21d-generation-consistency-guard-decompose-targets: bounded TODO repair scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+
+History:
+
+- 2026-10-01T14:01:41Z: Converted directory-scoped leaf E-21d-generation-consistency-guard into a Brownie-owned decomposition TODO because concrete Patch only/Create only file targets are required.
+
+## TODO-repair-E-21c-release-ops-todo-split-decompose-targets
+
+Parent TODO: E-21c-release-ops-todo-split
+
+Dependency graph:
+- E-21c-release-ops-todo-split-decompose-targets: E-21b-release-workspace-guard-decompose-targets
+
+Verification ledger:
+- E-21c-release-ops-todo-split-decompose-targets: run `pnpm --workspace-root guard:todo-decomposition`
+
+Quality rubric:
+- E-21c-release-ops-todo-split-decompose-targets: bounded TODO repair scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+
+History:
+
+- 2026-10-01T14:07:35Z: Reopened E-21c as a Brownie-owned decomposition TODO after dirty-baseline verified-noop consumed the live TODO before improved Brownie could split the remaining Release Ops blocker into executable leaves.
+
+## TODO-repair-E-21c-replan-stalled-leaf-6705771c47f0
+
+Parent TODO: E-21c-runtime-operational-evidence-impl-2-target-02
+
+Dependency graph:
+- E-21c-replan-stalled-leaf-6705771c47f0: <none>
+
+Verification ledger:
+- E-21c-replan-stalled-leaf-6705771c47f0: run `pnpm --workspace-root guard:todo-decomposition` and `pnpm --workspace-root phase-loop:todo-queue-integrity`.
+
+Quality rubric:
+- E-21c-replan-stalled-leaf-6705771c47f0: replace the stalled leaf with implementable child TODOs while preserving parent intent, exact patch targets, existing verification commands, and fail-closed release evidence semantics.
+
+History:
+
+- 2026-10-03T19:39:55Z: Supervisor detected repeated invalid_patch/no_progress on E-21c-runtime-operational-evidence-impl-2-target-02 and promoted Brownie-owned TODO replan instead of retrying the same single-target leaf.
+
+## TODO-repair-E-21e-owner-governance-reproducibility-decompose-targets
+
+Parent TODO: E-21e-owner-governance-reproducibility
+
+Dependency graph:
+- E-21e-owner-governance-reproducibility-decompose-targets: <none>
+
+Verification ledger:
+- E-21e-owner-governance-reproducibility-decompose-targets: run `pnpm --workspace-root guard:todo-decomposition`
+
+Quality rubric:
+- E-21e-owner-governance-reproducibility-decompose-targets: bounded TODO repair scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+
+History:
+
+- 2026-10-01T14:01:56Z: Converted directory-scoped leaf E-21e-owner-governance-reproducibility into a Brownie-owned decomposition TODO because concrete Patch only/Create only file targets are required.
+
+## TODO-decompose-E-21a-clean-release-workspace-contract-leaf-c-decompose-targets
+
+Parent TODO: E-21a-clean-release-workspace-contract
+
+Dependency graph:
+- E-21a-clean-release-workspace-contract-scripts-leaf-a: <none>
+
+Verification ledger:
+- E-21a-clean-release-workspace-contract-scripts-leaf-a: run `pnpm --workspace-root guard:release-contract:test` and `pnpm --workspace-root guard:release-contract`.
+
+Quality rubric:
+- E-21a-clean-release-workspace-contract-scripts-leaf-a: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+
+History:
+
+- 2026-10-01T18:13:00Z: Deterministically decomposed E-21a-clean-release-workspace-contract during 20261001T181300Z; avoided LLM old_text patch anchors and resolved verification commands from existing package scripts.
+
+## E-21a-clean-release-workspace-contract-scripts-leaf-a no-eligible multi-target split
+
+Parent TODO: E-21a-clean-release-workspace-contract-scripts-leaf-a: - [ ] E-21a-clean-release-workspace-contract-scripts-leaf-a: Patch only `scripts/guard-release-contract.mjs` and `scripts/guard-release-contract.test.mjs` to implement the script-specific slice requested by E-21a-clean-release-workspace-contract-leaf-c-decompose-targets:
+Parent source: E-21a-clean-release-workspace-contract
+
+Targets:
+
+- E-21a-clean-release-workspace-contract-scripts-leaf-a-target-01: `scripts/guard-release-contract.mjs`
+- E-21a-clean-release-workspace-contract-scripts-leaf-a-target-02: `scripts/guard-release-contract.test.mjs`
+
+Dependency graph:
+
+- E-21a-clean-release-workspace-contract-scripts-leaf-a-target-01: <none>
+- E-21a-clean-release-workspace-contract-scripts-leaf-a-target-02: E-21a-clean-release-workspace-contract-scripts-leaf-a-target-01
+
+Verification ledger:
+
+- E-21a-clean-release-workspace-contract-scripts-leaf-a-target-01: `run `pnpm --workspace-root guard:release-contract:test` and `pnpm --workspace-root guard:release-contract``
+- E-21a-clean-release-workspace-contract-scripts-leaf-a-target-02: `run `pnpm --workspace-root guard:release-contract:test` and `pnpm --workspace-root guard:release-contract``
+
+History:
+
+- 2026-10-01T18:22:06Z: Applied deterministic no_eligible_task fallback during run 20261001T182204Z; the checked parent remains in the queue so existing downstream dependencies still have a durable dependency anchor, and the implementation work moves to ordered single-target leaves.
+
+## TODO-decompose-E-21b-release-workspace-guard-decompose-targets
+
+Parent TODO: E-21b-release-workspace-guard
+
+Dependency graph:
+- E-21b-release-workspace-guard-scripts-leaf-a: <none>
+
+Verification ledger:
+- E-21b-release-workspace-guard-scripts-leaf-a: run `pnpm --workspace-root guard:release-contract:test` and `pnpm --workspace-root guard:release-contract`.
+
+Quality rubric:
+- E-21b-release-workspace-guard-scripts-leaf-a: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+
+History:
+
+- 2026-10-01T18:49:13Z: Deterministically decomposed E-21b-release-workspace-guard during 20261001T184913Z; avoided LLM old_text patch anchors and resolved verification commands from existing package scripts.
+
+## TODO-decompose-E-21c-release-ops-todo-split-decompose-targets
+
+Parent TODO: E-21c-release-ops-todo-split
+
+Dependency graph:
+- E-21c-release-ops-todo-split-clean-release-workspace: <none>
+- E-21c-release-ops-todo-split-artifact-e2e-smoke: E-21c-release-ops-todo-split-clean-release-workspace
+- E-21c-release-ops-todo-split-artifact-lifecycle: E-21c-release-ops-todo-split-artifact-e2e-smoke
+- E-21c-release-ops-todo-split-golden-journey: E-21c-release-ops-todo-split-artifact-lifecycle
+- E-21c-release-ops-todo-split-stateful-soak: E-21c-release-ops-todo-split-golden-journey
+- E-21c-release-ops-todo-split-provenance-binding: E-21c-release-ops-todo-split-stateful-soak
+- E-21c-release-ops-todo-split-owner-governance-reproducibility: E-21c-release-ops-todo-split-provenance-binding
+- E-21c-release-ops-todo-split-document-generation-sync: E-21c-release-ops-todo-split-owner-governance-reproducibility
+
+Verification ledger:
+- E-21c-release-ops-todo-split-clean-release-workspace: blocker: Release Ops evidence remains fail-closed until this item is replaced by generated evidence or by a bounded implementation TODO with existing verification.
+- E-21c-release-ops-todo-split-artifact-e2e-smoke: blocker: Release Ops evidence remains fail-closed until this item is replaced by generated evidence or by a bounded implementation TODO with existing verification.
+- E-21c-release-ops-todo-split-artifact-lifecycle: blocker: Release Ops evidence remains fail-closed until this item is replaced by generated evidence or by a bounded implementation TODO with existing verification.
+- E-21c-release-ops-todo-split-golden-journey: blocker: Release Ops evidence remains fail-closed until this item is replaced by generated evidence or by a bounded implementation TODO with existing verification.
+- E-21c-release-ops-todo-split-stateful-soak: blocker: Release Ops evidence remains fail-closed until this item is replaced by generated evidence or by a bounded implementation TODO with existing verification.
+- E-21c-release-ops-todo-split-provenance-binding: blocker: Release Ops evidence remains fail-closed until this item is replaced by generated evidence or by a bounded implementation TODO with existing verification.
+- E-21c-release-ops-todo-split-owner-governance-reproducibility: blocker: Release Ops evidence remains fail-closed until this item is replaced by generated evidence or by a bounded implementation TODO with existing verification.
+- E-21c-release-ops-todo-split-document-generation-sync: blocker: Release Ops evidence remains fail-closed until this item is replaced by generated evidence or by a bounded implementation TODO with existing verification.
+
+Quality rubric:
+- E-21c-release-ops-todo-split-clean-release-workspace: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-21c-release-ops-todo-split-artifact-e2e-smoke: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-21c-release-ops-todo-split-artifact-lifecycle: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-21c-release-ops-todo-split-golden-journey: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-21c-release-ops-todo-split-stateful-soak: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-21c-release-ops-todo-split-provenance-binding: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-21c-release-ops-todo-split-owner-governance-reproducibility: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-21c-release-ops-todo-split-document-generation-sync: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+
+History:
+
+- 2026-10-01T19:46:12Z: Deterministically decomposed E-21c-release-ops-todo-split during 20261001T194612Z; avoided LLM old_text patch anchors and resolved verification commands from existing package scripts.
+
+## TODO-decompose-E-21d-generation-consistency-guard-decompose-targets
+
+Parent TODO: E-21d-generation-consistency-guard
+
+Dependency graph:
+- E-21d-generation-consistency-guard-scripts-leaf-a: <none>
+
+Verification ledger:
+- E-21d-generation-consistency-guard-scripts-leaf-a: run `pnpm --workspace-root guard:release-evidence-semantic-consistency:test` and `pnpm --workspace-root guard:release-evidence-semantic-consistency`.
+
+Quality rubric:
+- E-21d-generation-consistency-guard-scripts-leaf-a: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+
+History:
+
+- 2026-10-01T20:11:34Z: Deterministically decomposed E-21d-generation-consistency-guard during 20261001T201134Z; avoided LLM old_text patch anchors and resolved verification commands from existing package scripts.
+
+## E-21d-generation-consistency-guard-scripts-leaf-a no-eligible multi-target split
+
+Parent TODO: E-21d-generation-consistency-guard-scripts-leaf-a: - [ ] E-21d-generation-consistency-guard-scripts-leaf-a: Patch only `scripts/guard-release-evidence-semantic-consistency.mjs` and `scripts/guard-release-evidence-semantic-consistency.test.mjs` to implement the script-specific slice requested by E-21d-generation-consistency-guard-decompose-targets:
+Parent source: E-21d-generation-consistency-guard
+
+Targets:
+
+- E-21d-generation-consistency-guard-scripts-leaf-a-target-01: `scripts/guard-release-evidence-semantic-consistency.mjs`
+- E-21d-generation-consistency-guard-scripts-leaf-a-target-02: `scripts/guard-release-evidence-semantic-consistency.test.mjs`
+
+Dependency graph:
+
+- E-21d-generation-consistency-guard-scripts-leaf-a-target-01: <none>
+- E-21d-generation-consistency-guard-scripts-leaf-a-target-02: E-21d-generation-consistency-guard-scripts-leaf-a-target-01
+
+Verification ledger:
+
+- E-21d-generation-consistency-guard-scripts-leaf-a-target-01: `run `pnpm --workspace-root guard:release-evidence-semantic-consistency:test` and `pnpm --workspace-root guard:release-evidence-semantic-consistency``
+- E-21d-generation-consistency-guard-scripts-leaf-a-target-02: `run `pnpm --workspace-root guard:release-evidence-semantic-consistency:test` and `pnpm --workspace-root guard:release-evidence-semantic-consistency``
+
+History:
+
+- 2026-10-01T20:19:24Z: Applied deterministic no_eligible_task fallback during run 20261001T201922Z; the checked parent remains in the queue so existing downstream dependencies still have a durable dependency anchor, and the implementation work moves to ordered single-target leaves.
+
+## TODO-decompose-E-21e-owner-governance-reproducibility-decompose-targets
+
+Parent TODO: E-21e-owner-governance-reproducibility
+
+Dependency graph:
+- E-21e-owner-governance-reproducibility-scripts-leaf-a: <none>
+
+Verification ledger:
+- E-21e-owner-governance-reproducibility-scripts-leaf-a: run `pnpm --workspace-root guard:owner-governance-evidence:test` and `pnpm --workspace-root guard:owner-governance-evidence`.
+
+Quality rubric:
+- E-21e-owner-governance-reproducibility-scripts-leaf-a: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+
+History:
+
+- 2026-10-01T22:55:21Z: Deterministically decomposed E-21e-owner-governance-reproducibility during 20261001T225521Z; avoided LLM old_text patch anchors and resolved verification commands from existing package scripts.
+
+## E-21e-owner-governance-reproducibility-scripts-leaf-a no-eligible multi-target split
+
+Parent TODO: E-21e-owner-governance-reproducibility-scripts-leaf-a: - [ ] E-21e-owner-governance-reproducibility-scripts-leaf-a: Patch only `scripts/guard-owner-governance-evidence.mjs` and `scripts/guard-owner-governance-evidence.test.mjs` to implement the script-specific slice requested by E-21e-owner-governance-reproducibility-decompose-targets:
+Parent source: E-21e-owner-governance-reproducibility
+
+Targets:
+
+- E-21e-owner-governance-reproducibility-scripts-leaf-a-target-01: `scripts/guard-owner-governance-evidence.mjs`
+- E-21e-owner-governance-reproducibility-scripts-leaf-a-target-02: `scripts/guard-owner-governance-evidence.test.mjs`
+
+Dependency graph:
+
+- E-21e-owner-governance-reproducibility-scripts-leaf-a-target-01: <none>
+- E-21e-owner-governance-reproducibility-scripts-leaf-a-target-02: E-21e-owner-governance-reproducibility-scripts-leaf-a-target-01
+
+Verification ledger:
+
+- E-21e-owner-governance-reproducibility-scripts-leaf-a-target-01: `run `pnpm --workspace-root guard:owner-governance-evidence:test` and `pnpm --workspace-root guard:owner-governance-evidence``
+- E-21e-owner-governance-reproducibility-scripts-leaf-a-target-02: `run `pnpm --workspace-root guard:owner-governance-evidence:test` and `pnpm --workspace-root guard:owner-governance-evidence``
+
+History:
+
+- 2026-10-01T23:00:26Z: Applied deterministic no_eligible_task fallback during run 20261001T230024Z; the checked parent remains in the queue so existing downstream dependencies still have a durable dependency anchor, and the implementation work moves to ordered single-target leaves.
+## E-20i-release-ops-blockers-6ffca1beb681
+
+Parent TODO: E-20i-release-ops-blockers-6ffca1beb681
+
+Dependency graph:
+- E-20h-release-evidence-script: <none>
+- E-20i-release-ops-blocker: <none>
+
+Verification ledger:
+- E-20h-release-evidence-script: `pnpm --workspace-root guard:release-gate`
+- E-20i-release-ops-blocker: inspect/blocker/fail-closed owner-provided release ops environment configuration.
+
+Quality rubric:
+- E-20h-release-evidence-script: bounded implementation leaf with existing package-script verification.
+- E-20i-release-ops-blocker: explicit blocker, not an implementation route.
+
+History:
+- 2026-10-02T10:16:40Z: Recorded Brownie-generated release-ops decomposition leaves after repairing route and verification contract drift.
+
+## E-20i-release-ops-blockers-6ffca1beb681 follow-up leaves
+
+Parent TODO: E-20i-release-ops-blockers-6ffca1beb681
+
+Dependency graph:
+- E-20h-release-evidence-doc: <none>
+- E-20i-release-gate-script: E-20h-release-evidence-doc
+
+Verification ledger:
+- E-20h-release-evidence-doc: `pnpm --workspace-root guard:todo-decomposition`; `pnpm --workspace-root guard:release-gate`
+- E-20i-release-gate-script: `pnpm --workspace-root guard:todo-decomposition`; `pnpm --workspace-root guard:release-gate`
+
+Quality rubric:
+- E-20h-release-evidence-doc: bounded documentation leaf with existing target path and explicit fail-closed release evidence scope.
+- E-20i-release-gate-script: bounded implementation leaf with existing target path and dependency on the documentation contract leaf.
+
+History:
+- 2026-10-02T13:55:00Z: Supervisor diagnosis found Brownie-generated follow-up leaf IDs missing from the breakdown ledger; recorded the dependency graph so TODO guard can validate the live queue.
+
+## TODO-repair-E-15f-todo-breakdown-update
+
+Parent TODO: E-20i-release-ops-blockers-1c5120ce46c2-r2
+
+Dependency graph:
+- E-15f-todo-breakdown-update: <none>
+
+Verification ledger:
+- E-15f-todo-breakdown-update: run `pnpm --workspace-root guard:todo-decomposition` and inspect `.brownie/todo-breakdown.md` for the new entries.
+
+Quality rubric:
+- E-15f-todo-breakdown-update: bounded TODO decomposition/breakdown maintenance leaf with existing verification and no Product Ready declaration.
+
+History:
+
+- 2026-10-02T16:21:25Z: Deterministically added missing breakdown section for E-20i-release-ops-blockers-1c5120ce46c2-r2 after Brownie reached no_eligible_task on E-15f-todo-breakdown-update.
+
+## TODO-refine-brownie-owned-blockers-59fb1bfdd8bc
+
+Parent TODO: brownie-owned-blocker-refinement
+
+Dependency graph:
+- E-21c-clean-release-workspace-impl-1: <none>
+- E-21c-runtime-operational-evidence-impl-2: E-21c-clean-release-workspace-impl-1
+- E-21c-runtime-operational-evidence-impl-3: E-21c-runtime-operational-evidence-impl-2
+- E-21c-runtime-operational-evidence-impl-4: E-21c-runtime-operational-evidence-impl-3
+- E-21c-runtime-operational-evidence-impl-5: E-21c-runtime-operational-evidence-impl-4
+- E-21c-provenance-binding-impl-6: E-21c-runtime-operational-evidence-impl-5
+- E-21c-owner-governance-reproducibility-impl-7: E-21c-provenance-binding-impl-6
+- E-21c-document-generation-sync-impl-8: E-21c-owner-governance-reproducibility-impl-7
+- E-20i-release-ops-blocker: <none>
+
+Verification ledger:
+- E-21c-clean-release-workspace-impl-1: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`.
+- E-21c-runtime-operational-evidence-impl-2: run `pnpm --workspace-root release:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`.
+- E-21c-runtime-operational-evidence-impl-3: run `pnpm --workspace-root release:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`.
+- E-21c-runtime-operational-evidence-impl-4: run `pnpm --workspace-root release:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`.
+- E-21c-runtime-operational-evidence-impl-5: run `pnpm --workspace-root release:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`.
+- E-21c-provenance-binding-impl-6: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`.
+- E-21c-owner-governance-reproducibility-impl-7: run `pnpm --workspace-root release:owner-governance-evidence:test` and `pnpm --workspace-root guard:owner-governance-evidence`.
+- E-21c-document-generation-sync-impl-8: run `pnpm --workspace-root guard:release-evidence-semantic-consistency:test` and `pnpm --workspace-root guard:release-evidence-semantic-consistency`.
+- E-20i-release-ops-blocker: inspect/blocker/fail-closed until release engineering team provides evidence of pipeline access or documented requirements.
+
+Quality rubric:
+- E-21c-clean-release-workspace-impl-1: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-21c-runtime-operational-evidence-impl-2: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-21c-runtime-operational-evidence-impl-3: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-21c-runtime-operational-evidence-impl-4: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-21c-runtime-operational-evidence-impl-5: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-21c-provenance-binding-impl-6: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-21c-owner-governance-reproducibility-impl-7: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-21c-document-generation-sync-impl-8: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+- E-20i-release-ops-blocker: bounded target scope, valid Source TODO, existing verification command, and no Product Ready declaration.
+
+History:
+
+- 2026-10-02T17:20:50Z: Deterministically decomposed brownie-owned-blocker-refinement during 20261002T172050Z; avoided LLM old_text patch anchors and resolved verification commands from existing package scripts.
+
+## E-21c-clean-release-workspace-impl-1 no-eligible multi-target split
+
+Parent TODO: E-21c-clean-release-workspace-impl-1: - [ ] E-21c-clean-release-workspace-impl-1: Patch only `scripts/release-supply-chain-artifact-evidence.mjs` and `scripts/guard-supply-chain-artifact-evidence.test.mjs` to replace Brownie-owned blocker E-21c-release-ops-todo-split-clean-release-workspace with executable Release evidence handling:
+Parent source: TODO-refine-brownie-owned-blockers-59fb1bfdd8bc
+
+Targets:
+
+- E-21c-clean-release-workspace-impl-1-target-01: `scripts/release-supply-chain-artifact-evidence.mjs`
+- E-21c-clean-release-workspace-impl-1-target-02: `scripts/guard-supply-chain-artifact-evidence.test.mjs`
+
+Dependency graph:
+
+- E-21c-clean-release-workspace-impl-1-target-01: <none>
+- E-21c-clean-release-workspace-impl-1-target-02: E-21c-clean-release-workspace-impl-1-target-01
+
+Verification ledger:
+
+- E-21c-clean-release-workspace-impl-1-target-01: `run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence``
+- E-21c-clean-release-workspace-impl-1-target-02: `run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence``
+
+History:
+
+- 2026-10-02T17:27:16Z: Applied deterministic no_eligible_task fallback during run 20261002T172715Z; the checked parent remains in the queue so existing downstream dependencies still have a durable dependency anchor, and the implementation work moves to ordered single-target leaves.
+
+## E-21c-runtime-operational-evidence-impl-2 no-eligible multi-target split
+
+Parent TODO: E-21c-runtime-operational-evidence-impl-2: - [ ] E-21c-runtime-operational-evidence-impl-2: Patch only `scripts/release-runtime-operational-evidence.mjs` and `scripts/guard-runtime-operational-evidence.test.mjs` to replace Brownie-owned blocker E-21c-release-ops-todo-split-artifact-e2e-smoke with executable Release evidence handling:
+Parent source: TODO-refine-brownie-owned-blockers-59fb1bfdd8bc
+
+Targets:
+
+- E-21c-runtime-operational-evidence-impl-2-target-01: `scripts/release-runtime-operational-evidence.mjs`
+- E-21c-runtime-operational-evidence-impl-2-target-02: `scripts/guard-runtime-operational-evidence.test.mjs`
+
+Dependency graph:
+
+- E-21c-runtime-operational-evidence-impl-2-target-01: E-21c-clean-release-workspace-impl-1
+- E-21c-runtime-operational-evidence-impl-2-target-02: E-21c-runtime-operational-evidence-impl-2-target-01
+
+Verification ledger:
+
+- E-21c-runtime-operational-evidence-impl-2-target-01: `run `pnpm --workspace-root release:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence``
+- E-21c-runtime-operational-evidence-impl-2-target-02: `run `pnpm --workspace-root release:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence``
+
+History:
+
+- 2026-10-02T19:05:13Z: Applied deterministic no_eligible_task fallback during run 20261002T190511Z; the checked parent remains in the queue so existing downstream dependencies still have a durable dependency anchor, and the implementation work moves to ordered single-target leaves.
+
+## TODO-repair-E-21c-replan-stalled-leaf-c0830caaef87
+
+Parent TODO: E-21c-replan-stalled-leaf-6705771c47f0
+
+Dependency graph:
+- E-21c-replan-stalled-leaf-c0830caaef87: <none>
+
+Verification ledger:
+- E-21c-replan-stalled-leaf-c0830caaef87: run `pnpm --workspace-root guard:todo-decomposition` and `pnpm --workspace-root phase-loop:todo-queue-integrity`.
+
+Quality rubric:
+- E-21c-replan-stalled-leaf-c0830caaef87: replace the stalled leaf with implementable child TODOs while preserving parent intent, exact patch targets, existing verification commands, and fail-closed release evidence semantics.
+
+History:
+
+- 2026-10-03T20:09:58Z: Supervisor detected repeated invalid_patch_with_repeated_no_progress on E-21c-replan-stalled-leaf-6705771c47f0 and promoted Brownie-owned TODO replan instead of retrying the same single-target leaf.
+
+## TODO-repair-E-21c-replan-stalled-leaf-1a95acd61134
+
+Parent TODO: E-21c-replan-stalled-leaf-001
+
+Dependency graph:
+- E-21c-replan-stalled-leaf-1a95acd61134: <none>
+
+Verification ledger:
+- E-21c-replan-stalled-leaf-1a95acd61134: run `pnpm --workspace-root guard:todo-decomposition` and `pnpm --workspace-root phase-loop:todo-queue-integrity`.
+
+Quality rubric:
+- E-21c-replan-stalled-leaf-1a95acd61134: replace the stalled leaf with implementable child TODOs while preserving parent intent, exact patch targets, existing verification commands, and fail-closed release evidence semantics.
+
+History:
+
+- 2026-10-03T20:45:41Z: Supervisor detected repeated invalid_patch_with_repeated_no_progress on E-21c-replan-stalled-leaf-001 and promoted Brownie-owned TODO replan instead of retrying the same single-target leaf.
+
+## TODO-repair-E-21c-todo-decomp-leaf-001
+
+Parent TODO: E-21c-replan-stalled-leaf-c0830caaef87.
+
+Dependency graph:
+- E-21c-todo-decomp-leaf-001: <none>
+
+Verification ledger:
+- E-21c-todo-decomp-leaf-001: run `pnpm --workspace-root guard:todo-decomposition` and `pnpm --workspace-root phase-loop:todo-queue-integrity`.
+
+Quality rubric:
+- E-21c-todo-decomp-leaf-001: derived TODO id preserves parent prefix, has bounded patch scope, and keeps the TODO queue/breakdown ledger consistent.
+
+History:
+
+- 2026-10-03T21:10:59Z: Supervisor repaired generated TODO id prefix from E-15e-todo-decomp-leaf-001 to E-21c-todo-decomp-leaf-001 after TODO decomposition guard rejected the live queue.
+
+## TODO-repair-E-21c-todo-decomp-leaf-002
+
+Parent TODO: E-21c-replan-stalled-leaf-c0830caaef87.
+
+Dependency graph:
+- E-21c-todo-decomp-leaf-002: <none>
+
+Verification ledger:
+- E-21c-todo-decomp-leaf-002: run `pnpm --workspace-root guard:todo-decomposition` and `pnpm --workspace-root phase-loop:todo-queue-integrity`.
+
+Quality rubric:
+- E-21c-todo-decomp-leaf-002: derived TODO id preserves parent prefix, has bounded patch scope, and keeps the TODO queue/breakdown ledger consistent.
+
+History:
+
+- 2026-10-03T21:10:59Z: Supervisor repaired generated TODO id prefix from E-15e-todo-decomp-leaf-002 to E-21c-todo-decomp-leaf-002 after TODO decomposition guard rejected the live queue.
+
+## TODO-repair-E-21c-replan-stalled-leaf-16dd69c42044
+
+Parent TODO: E-21c-todo-decomp-leaf-001
+
+Dependency graph:
+- E-21c-replan-stalled-leaf-16dd69c42044: <none>
+
+Verification ledger:
+- E-21c-replan-stalled-leaf-16dd69c42044: run `pnpm --workspace-root guard:todo-decomposition` and `pnpm --workspace-root phase-loop:todo-queue-integrity`.
+
+Quality rubric:
+- E-21c-replan-stalled-leaf-16dd69c42044: replace the stalled leaf with implementable child TODOs while preserving parent intent, exact patch targets, existing verification commands, and fail-closed release evidence semantics.
+
+History:
+
+- 2026-10-03T21:17:15Z: Supervisor detected repeated invalid_patch_with_repeated_no_progress on E-21c-todo-decomp-leaf-001 and promoted Brownie-owned TODO replan instead of retrying the same single-target leaf.
+
+## TODO-repair-E-21c-runtime-readiness-audit-evidence-leaf-001
+
+Parent TODO: E-21c-replan-stalled-leaf-c0830caaef87
+
+Dependency graph:
+- E-21c-runtime-readiness-audit-evidence-leaf-001: <none>
+- E-21c-release-gate-readiness-audit-leaf-002: E-21c-runtime-readiness-audit-evidence-leaf-001
+
+Verification ledger:
+- E-21c-runtime-readiness-audit-evidence-leaf-001: run `pnpm --workspace-root guard:runtime-release-readiness`.
+- E-21c-release-gate-readiness-audit-leaf-002: run `pnpm --workspace-root release:gate -- --dry-run`.
+
+Quality rubric:
+- E-21c-runtime-readiness-audit-evidence-leaf-001: bounded documentation leaf that updates Runtime readiness audit evidence without claiming Product Ready.
+- E-21c-release-gate-readiness-audit-leaf-002: bounded implementation leaf that keeps Release gate fail-closed on missing or inconsistent Runtime readiness audit evidence.
+
+History:
+
+- 2026-10-03T21:32:54Z: Replaced recursive stalled-leaf replan TODO with concrete implementation/documentation leaves to avoid decomposition recursion.
+
+## E-21c-runtime-operational-evidence-impl-3 no-eligible multi-target split
+
+Parent TODO: E-21c-runtime-operational-evidence-impl-3: - [ ] E-21c-runtime-operational-evidence-impl-3: Patch only `scripts/release-runtime-operational-evidence.mjs` and `scripts/guard-runtime-operational-evidence.test.mjs` to replace Brownie-owned blocker E-21c-release-ops-todo-split-artifact-lifecycle with executable Release evidence handling:
+Parent source: TODO-refine-brownie-owned-blockers-59fb1bfdd8bc
+
+Targets:
+
+- E-21c-runtime-operational-evidence-impl-3-target-01: `scripts/release-runtime-operational-evidence.mjs`
+- E-21c-runtime-operational-evidence-impl-3-target-02: `scripts/guard-runtime-operational-evidence.test.mjs`
+
+Dependency graph:
+
+- E-21c-runtime-operational-evidence-impl-3-target-01: E-21c-runtime-operational-evidence-impl-2
+- E-21c-runtime-operational-evidence-impl-3-target-02: E-21c-runtime-operational-evidence-impl-3-target-01
+
+Verification ledger:
+
+- E-21c-runtime-operational-evidence-impl-3-target-01: `run `pnpm --workspace-root release:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence``
+- E-21c-runtime-operational-evidence-impl-3-target-02: `run `pnpm --workspace-root release:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence``
+
+History:
+
+- 2026-10-03T22:02:59Z: Applied deterministic no_eligible_task fallback during run 20261003T220257Z; the checked parent remains in the queue so existing downstream dependencies still have a durable dependency anchor, and the implementation work moves to ordered single-target leaves.
+
+## E-21c-runtime-operational-evidence-impl-4 no-eligible multi-target split
+
+Parent TODO: E-21c-runtime-operational-evidence-impl-4: - [ ] E-21c-runtime-operational-evidence-impl-4: Patch only `scripts/release-runtime-operational-evidence.mjs` and `scripts/guard-runtime-operational-evidence.test.mjs` to replace Brownie-owned blocker E-21c-release-ops-todo-split-golden-journey with executable Release evidence handling:
+Parent source: TODO-refine-brownie-owned-blockers-59fb1bfdd8bc
+
+Targets:
+
+- E-21c-runtime-operational-evidence-impl-4-target-01: `scripts/release-runtime-operational-evidence.mjs`
+- E-21c-runtime-operational-evidence-impl-4-target-02: `scripts/guard-runtime-operational-evidence.test.mjs`
+
+Dependency graph:
+
+- E-21c-runtime-operational-evidence-impl-4-target-01: E-21c-runtime-operational-evidence-impl-3
+- E-21c-runtime-operational-evidence-impl-4-target-02: E-21c-runtime-operational-evidence-impl-4-target-01
+
+Verification ledger:
+
+- E-21c-runtime-operational-evidence-impl-4-target-01: `run `pnpm --workspace-root release:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence``
+- E-21c-runtime-operational-evidence-impl-4-target-02: `run `pnpm --workspace-root release:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence``
+
+History:
+
+- 2026-10-03T23:09:29Z: Applied deterministic no_eligible_task fallback during run 20261003T230927Z; the checked parent remains in the queue so existing downstream dependencies still have a durable dependency anchor, and the implementation work moves to ordered single-target leaves.
+
+## E-21c-runtime-operational-evidence-impl-5 no-eligible multi-target split
+
+Parent TODO: E-21c-runtime-operational-evidence-impl-5: - [ ] E-21c-runtime-operational-evidence-impl-5: Patch only `scripts/release-runtime-operational-evidence.mjs` and `scripts/guard-runtime-operational-evidence.test.mjs` to replace Brownie-owned blocker E-21c-release-ops-todo-split-stateful-soak with executable Release evidence handling:
+Parent source: TODO-refine-brownie-owned-blockers-59fb1bfdd8bc
+
+Targets:
+
+- E-21c-runtime-operational-evidence-impl-5-target-01: `scripts/release-runtime-operational-evidence.mjs`
+- E-21c-runtime-operational-evidence-impl-5-target-02: `scripts/guard-runtime-operational-evidence.test.mjs`
+
+Dependency graph:
+
+- E-21c-runtime-operational-evidence-impl-5-target-01: E-21c-runtime-operational-evidence-impl-4
+- E-21c-runtime-operational-evidence-impl-5-target-02: E-21c-runtime-operational-evidence-impl-5-target-01
+
+Verification ledger:
+
+- E-21c-runtime-operational-evidence-impl-5-target-01: `run `pnpm --workspace-root release:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence``
+- E-21c-runtime-operational-evidence-impl-5-target-02: `run `pnpm --workspace-root release:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence``
+
+History:
+
+- 2026-10-04T00:25:44Z: Applied deterministic no_eligible_task fallback during run 20261004T002542Z; the checked parent remains in the queue so existing downstream dependencies still have a durable dependency anchor, and the implementation work moves to ordered single-target leaves.
+
+## E-21c-owner-governance-reproducibility-impl-7 no-eligible multi-target split
+
+Parent TODO: E-21c-owner-governance-reproducibility-impl-7: - [ ] E-21c-owner-governance-reproducibility-impl-7: Patch only `scripts/release-owner-governance-evidence.mjs` and `scripts/guard-owner-governance-evidence.test.mjs` to replace Brownie-owned blocker E-21c-release-ops-todo-split-owner-governance-reproducibility with executable Release evidence handling:
+Parent source: TODO-refine-brownie-owned-blockers-59fb1bfdd8bc
+
+Targets:
+
+- E-21c-owner-governance-reproducibility-impl-7-target-01: `scripts/release-owner-governance-evidence.mjs`
+- E-21c-owner-governance-reproducibility-impl-7-target-02: `scripts/guard-owner-governance-evidence.test.mjs`
+
+Dependency graph:
+
+- E-21c-owner-governance-reproducibility-impl-7-target-01: <none>
+- E-21c-owner-governance-reproducibility-impl-7-target-02: E-21c-owner-governance-reproducibility-impl-7-target-01
+
+Verification ledger:
+
+- E-21c-owner-governance-reproducibility-impl-7-target-01: `run `pnpm --workspace-root release:owner-governance-evidence:test` and `pnpm --workspace-root guard:owner-governance-evidence``
+- E-21c-owner-governance-reproducibility-impl-7-target-02: `run `pnpm --workspace-root release:owner-governance-evidence:test` and `pnpm --workspace-root guard:owner-governance-evidence``
+
+History:
+
+- 2026-10-04T01:01:18Z: Applied deterministic no_eligible_task fallback during run 20261004T010116Z; the checked parent remains in the queue so existing downstream dependencies still have a durable dependency anchor, and the implementation work moves to ordered single-target leaves.

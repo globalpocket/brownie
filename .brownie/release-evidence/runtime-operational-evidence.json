@@ -1,14 +1,15 @@
 {
   "schema_version": 1,
   "evidence_id": "brownie-runtime-operational-evidence-v1",
-  "generated_at": "2026-09-30T02:25:00.020Z",
+  "generated_at": "2026-10-04T02:17:57.482Z",
   "repository": "globalpocket/brownie",
   "release_ready": false,
   "runtime_release_ready": false,
   "required_sections": [
     "artifact_lifecycle",
     "golden_journey_fixture",
-    "soak_test"
+    "soak_test",
+    "executable_evidence_validation"
   ],
   "sections": {
     "artifact_lifecycle": {
@@ -38,7 +39,7 @@
                   "command_summary": {
                     "kind": "command_summary",
                     "word_count": 2,
-                    "sha256": "f95823437748f5bcf5c8664222bcbe26762e8083a59f4499c52c8db39fa75b09"
+                    "sha256": "031dfad6a391abfda74efe6718be411e55e682f729cf4f4186ba4bf7aecf440e"
                   },
                   "exit_code": 0,
                   "signal": null,
@@ -60,7 +61,7 @@
                   "command_summary": {
                     "kind": "command_summary",
                     "word_count": 3,
-                    "sha256": "3cd67e07a4b69d9922d99417f9c200a072c5a265bf7ab8761c7e725daad57bd0"
+                    "sha256": "e10daa4e068ec6e639c04c309874f2896e71a81c5f11950bc449f9e8b71986f3"
                   },
                   "exit_code": 0,
                   "signal": null,
@@ -86,7 +87,7 @@
               "command_summary": {
                 "kind": "command_summary",
                 "word_count": 2,
-                "sha256": "f95823437748f5bcf5c8664222bcbe26762e8083a59f4499c52c8db39fa75b09"
+                "sha256": "031dfad6a391abfda74efe6718be411e55e682f729cf4f4186ba4bf7aecf440e"
               },
               "exit_code": 0,
               "signal": null,
@@ -108,7 +109,7 @@
               "command_summary": {
                 "kind": "command_summary",
                 "word_count": 3,
-                "sha256": "3cd67e07a4b69d9922d99417f9c200a072c5a265bf7ab8761c7e725daad57bd0"
+                "sha256": "e10daa4e068ec6e639c04c309874f2896e71a81c5f11950bc449f9e8b71986f3"
               },
               "exit_code": 0,
               "signal": null,
@@ -246,7 +247,7 @@
               "command_summary": {
                 "kind": "command_summary",
                 "word_count": 2,
-                "sha256": "08e2b8c589b784477dcbe6284c93e308023c05662c8e104d3941f5967bc070b4"
+                "sha256": "f7a798440d856daaf03984c52e35e5cd229182012a64e003172c255c0c4c84e6"
               },
               "exit_code": 0,
               "signal": null,
@@ -268,7 +269,7 @@
               "command_summary": {
                 "kind": "command_summary",
                 "word_count": 3,
-                "sha256": "c72d58a48dbc2f55125f5b420fe3e215b96f3320e89c15a7b1b0549ea12ab2a3"
+                "sha256": "a939fa6ea0fce1bfd677a514643e461e01cafbf6094fc3569a44b4b710d03742"
               },
               "exit_code": 0,
               "signal": null,
@@ -291,7 +292,7 @@
       ]
     },
     "golden_journey_fixture": {
-      "status": "failed",
+      "status": "satisfied",
       "release_blocking": true,
       "fixture_path": ".brownie/release-evidence/golden-journey-fixture",
       "lifecycle_evidence": {
@@ -299,7 +300,7 @@
         "proposal_preflight_observed": true,
         "apply_observed": true,
         "post_apply_verification_observed": true,
-        "workspace_mutation_observed": false,
+        "workspace_mutation_observed": true,
         "completion_observed": true
       },
       "commands": [
@@ -360,7 +361,7 @@
             "kind": "process_output_summary",
             "byte_length": 3165,
             "line_count": 1,
-            "sha256": "7e318549a0b58e025577926a37a28eb820bf1e4d804f0ed9d33249970ab27bb8"
+            "sha256": "b16620de0c83f28678b20cb31ae0f7427757ee1cb8c5c1243f4cf2fd57a6c677"
           },
           "stderr_summary": {
             "kind": "process_output_summary",
@@ -382,7 +383,7 @@
             "kind": "process_output_summary",
             "byte_length": 1589,
             "line_count": 1,
-            "sha256": "689d7ddf84696be38ea5a001e19af657fca11d0b335b95dfff83a068b2e29a93"
+            "sha256": "06fae77c125fa75cf4488c56b634855986d83a07924fda04eab8e64c1c0771c5"
           },
           "stderr_summary": {
             "kind": "process_output_summary",
@@ -416,6 +417,12 @@
           "finiteConvergence": true,
           "statefulSoakSteps": true,
           "workspaceMutationVerification": true
+        },
+        "executionPolicy": {
+          "failClosed": true,
+          "evidenceRequired": true,
+          "blockerOnMissing": true,
+          "verificationBeforeRelease": true
         },
         "platformLifecycleEvidence": {
           "requiredTargets": [
@@ -464,7 +471,12 @@
         "resume_replay_handling",
         "duplicate_side_effect_rejection",
         "process_loss_recovery",
-        "finite_convergence"
+        "finite_convergence",
+        "evidence_chain_integrity",
+        "artifact_lifecycle",
+        "golden_journey_fixture",
+        "soak_test",
+        "executable_evidence_validation"
       ],
       "note": "Version-only soak is retained as bounded CLI-startup diagnostics but is not sufficient Runtime durability evidence.",
       "commands": [
@@ -2669,11 +2681,38 @@
           }
         }
       ]
+    },
+    "executable_evidence_validation": {
+      "status": "not_executed",
+      "release_blocking": true,
+      "fail_closed": true,
+      "validated_sections": [
+        {
+          "id": "artifact_lifecycle",
+          "status": "failed",
+          "satisfied": false
+        },
+        {
+          "id": "golden_journey_fixture",
+          "status": "satisfied",
+          "satisfied": true
+        },
+        {
+          "id": "soak_test",
+          "status": "not_executed",
+          "satisfied": false
+        }
+      ],
+      "missing_executable_evidence": [
+        "artifact_lifecycle:failed",
+        "soak_test:not_executed"
+      ],
+      "note": "This section binds the runtime operational evidence guard to the executable evidence chain instead of allowing document-only release claims."
     }
   },
   "fail_closed_reasons": [
     "artifact_lifecycle:failed",
-    "golden_journey_fixture:failed",
-    "soak_test:not_executed"
+    "soak_test:not_executed",
+    "executable_evidence_validation:not_executed"
   ]
 }

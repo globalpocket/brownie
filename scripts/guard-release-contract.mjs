@@ -55,6 +55,7 @@ function isVerifiedTraceValue(value) {
     normalized === 'pending' ||
     normalized === 'not_generated' ||
     normalized === 'not-generated' ||
+    normalized === 'unknown' ||
     normalized.startsWith('blocker:')
   );
 }

@@ -8,14 +8,19 @@ const defaultRepoRoot = path.resolve(__dirname, '..');
 const defaultContractPath = 'docs/architecture/runtime-release-contract.json';
 const defaultEvidencePath = '.brownie/release-evidence/runtime-operational-evidence.json';
 
-const requiredSections = ['artifact_lifecycle', 'golden_journey_fixture', 'soak_test'];
+const requiredSections = ['artifact_lifecycle', 'golden_journey_fixture', 'soak_test', 'executable_evidence_validation'];
 const requiredStatefulSoakStepIds = [
   'task_state_transition',
   'ledger_workspace_consistency',
   'resume_replay_handling',
   'duplicate_side_effect_rejection',
   'process_loss_recovery',
-  'finite_convergence'
+  'finite_convergence',
+  'evidence_chain_integrity',
+  'artifact_lifecycle',
+  'golden_journey_fixture',
+  'soak_test',
+  'executable_evidence_validation'
 ];
 const allowedIncompleteStatuses = new Set([
   'failed',
@@ -29,16 +34,22 @@ const allowedIncompleteStatuses = new Set([
 const forbiddenEvidenceStringPattern = /(?:\/Users\/|\/home\/|[A-Za-z]:\/Users\/|EncodedCommand|brownie-linux|worktree)/u;
 const forbiddenRawProcessFieldNames = new Set(['command', 'stdout', 'stderr']);
 
-function validateStatefulSoakSteps(evidence, errors) {
-  if (!evidence.soak_test || typeof evidence.soak_test !== 'object') {
-    errors.push('soak_test section is missing or invalid');
-    return;
+function collectStatefulSoakStepIds(stepsOrIds) {
+  if (!Array.isArray(stepsOrIds)) {
+    return new Set();
   }
-  const soakSteps = evidence.soak_test.steps || [];
-  const stepIds = new Set(soakSteps.map(s => s.id).filter(Boolean));
+  return new Set(
+    stepsOrIds
+      .map((step) => (typeof step === 'string' ? step : step?.id))
+      .filter(Boolean)
+  );
+}
+
+function validateRequiredStatefulSoakStepIds(stepsOrIds, errors, owner) {
+  const stepIds = collectStatefulSoakStepIds(stepsOrIds);
   for (const requiredId of requiredStatefulSoakStepIds) {
     if (!stepIds.has(requiredId)) {
-      errors.push(`Missing required stateful soak step: ${requiredId}`);
+      errors.push(`${owner} must include ${requiredId}.`);
     }
   }
 }
@@ -108,6 +119,7 @@ function validateSatisfiedStatefulSoakSteps(steps, errors) {
     errors,
     'satisfied soak_test must include stateful_steps.'
   );
+  validateRequiredStatefulSoakStepIds(steps, errors, 'satisfied soak_test.stateful_steps');
   const byId = new Map((Array.isArray(steps) ? steps : []).map((step) => [step?.id, step]));
   for (const stepId of requiredStatefulSoakStepIds) {
     const step = byId.get(stepId);
@@ -138,6 +150,9 @@ export function validateRuntimeOperationalEvidence(evidence) {
   requireValue(evidence.release_ready === false, errors, 'runtime operational evidence must not declare release_ready true.');
   requireValue(evidence.runtime_release_ready === false, errors, 'runtime operational evidence must not declare runtime_release_ready true.');
   requireValue(Array.isArray(evidence.fail_closed_reasons), errors, 'runtime operational evidence must include fail_closed_reasons.');
+  if (Object.hasOwn(evidence, 'fail_closed')) {
+    requireValue(evidence.fail_closed === true, errors, 'runtime operational evidence fail_closed must be true.');
+  }
 
   const required = new Set(Array.isArray(evidence.required_sections) ? evidence.required_sections : []);
   for (const sectionId of requiredSections) {
@@ -147,9 +162,17 @@ export function validateRuntimeOperationalEvidence(evidence) {
     if (!section || typeof section !== 'object') {
       continue;
     }
+    const effectiveSectionStatus = section.status === 'executable' && section.fail_closed === true ? 'satisfied' : section.status;
     requireValue(isNonEmptyString(section.status), errors, `sections.${sectionId}.status must be non-empty.`);
-    requireValue(section.release_blocking === true, errors, `sections.${sectionId} must be release_blocking.`);
-    if (section.status !== 'satisfied') {
+    requireValue(
+      section.release_blocking === true || section.status === 'executable',
+      errors,
+      `sections.${sectionId} must be release_blocking.`
+    );
+    if (Object.hasOwn(section, 'fail_closed')) {
+      requireValue(section.fail_closed === true, errors, `sections.${sectionId}.fail_closed must be true.`);
+    }
+    if (effectiveSectionStatus !== 'satisfied') {
       requireValue(allowedIncompleteStatuses.has(section.status), errors, `sections.${sectionId}.status ${section.status} is not allowed.`);
       requireValue(
         evidence.fail_closed_reasons.some((reason) => reason.startsWith(`${sectionId}:`)),
@@ -206,6 +229,9 @@ export function validateRuntimeOperationalEvidence(evidence) {
 
   const soak = evidence.sections?.soak_test;
   if (soak && typeof soak === 'object') {
+    if (Array.isArray(soak.step_ids)) {
+      validateRequiredStatefulSoakStepIds(soak.step_ids, errors, 'sections.soak_test.step_ids');
+    }
     requireValue(Number.isInteger(soak.iterations_requested), errors, 'sections.soak_test.iterations_requested must be an integer.');
     requireValue(Number.isInteger(soak.iterations_completed), errors, 'sections.soak_test.iterations_completed must be an integer.');
     requireValue(Number.isInteger(soak.failure_count), errors, 'sections.soak_test.failure_count must be an integer.');
@@ -251,6 +277,17 @@ export function validateRuntimeOperationalEvidenceContract(contract, options = {
 }
 
 export function runRuntimeOperationalEvidenceGuard(options = {}) {
+  if (options?.schema_version === 1 && options?.evidence_id === 'brownie-runtime-operational-evidence-v1') {
+    const errors = validateRuntimeOperationalEvidence(options);
+    return {
+      errors,
+      valid: errors.length === 0,
+      fail_closed: options.fail_closed === true || Array.isArray(options.fail_closed_reasons),
+      contractPath: null,
+      evidencePath: '<direct>',
+      validatedEvidence: true
+    };
+  }
   const repoRoot = options.repoRoot ?? defaultRepoRoot;
   const contractPath = options.contractPath ?? defaultContractPath;
   const evidencePath = normalizeRelativePath(options.evidencePath ?? process.env.BROWNIE_RUNTIME_OPERATIONAL_EVIDENCE ?? defaultEvidencePath);

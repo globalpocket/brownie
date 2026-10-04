@@ -52,7 +52,7 @@ function maybeReadText(filePath) {
 
 export function uncheckedTodoBlocks(text) {
   const starts = [];
-  const pattern = /^(?:[-*]|\d+[.)])\s+\[\s\]\s+/gm;
+  const pattern = /^(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+/gm;
   let match;
   while ((match = pattern.exec(text ?? '')) !== null) {
     starts.push(match.index);
@@ -60,7 +60,7 @@ export function uncheckedTodoBlocks(text) {
   return starts.map((start, index) => {
     const end = index + 1 < starts.length ? starts[index + 1] : text.length;
     return text.slice(start, end).trimEnd();
-  });
+  }).filter((block) => /^(?:[-*]|\d+[.)])\s+\[\s\]\s+/u.test(block));
 }
 
 function todoId(block) {
@@ -243,7 +243,7 @@ function replanRecordsByParent(records) {
   return map;
 }
 
-function validReplanForRemovedParent(record, after) {
+function validReplanForRemovedParent(record, after, replanByParent = new Map(), completedIds = new Set(), ancestry = []) {
   if (record.parent_status !== 'superseded_by_children') {
     return {
       valid: false,
@@ -259,13 +259,37 @@ function validReplanForRemovedParent(record, after) {
   }
   const missing = [];
   const wrongSource = [];
+  const transitive = [];
+  if (ancestry.includes(record.parent_todo_id)) {
+    return {
+      valid: false,
+      reason: 'replan_cycle_detected',
+      cycle: [...ancestry, record.parent_todo_id]
+    };
+  }
+  const acceptedSourceTodoIds = new Set([record.parent_todo_id]);
+  if (typeof record.replacement_source_todo_id === 'string' && record.replacement_source_todo_id.trim()) {
+    acceptedSourceTodoIds.add(record.replacement_source_todo_id.trim());
+  }
   for (const child of children) {
     const block = after.get(child);
     if (!block) {
+      const childReplans = replanByParent.get(child) ?? [];
+      const acceptedChildReplan = childReplans.find((childRecord) => {
+        const result = validReplanForRemovedParent(childRecord, after, replanByParent, completedIds, [...ancestry, record.parent_todo_id]);
+        return result.valid;
+      });
+      if (acceptedChildReplan) {
+        transitive.push(child);
+        continue;
+      }
+      if (completedIds.has(child)) {
+        continue;
+      }
       missing.push(child);
       continue;
     }
-    if (sourceTodoId(block) !== record.parent_todo_id) {
+    if (!acceptedSourceTodoIds.has(sourceTodoId(block))) {
       wrongSource.push(child);
     }
   }
@@ -292,18 +316,28 @@ export function validateTodoQueueIntegrity({ todoBefore, todoAfter, completedTod
   const addedTodoIds = [];
   const replannedTodoIds = [];
 
+  for (const id of after.keys()) {
+    if (completedIds.has(id)) {
+      errors.push({
+        code: 'completed_todo_reappeared_in_live_queue',
+        message: 'A TODO with durable completion evidence is still present as an unchecked live queue item.',
+        todo_id: id
+      });
+    }
+  }
+
   for (const [id, beforeBlock] of before.entries()) {
     const afterBlock = after.get(id);
     if (!afterBlock) {
       removedTodoIds.push(id);
       if (!completedIds.has(id)) {
         const replans = replanByParent.get(id) ?? [];
-        const acceptedReplan = replans.find((record) => validReplanForRemovedParent(record, after).valid);
+        const acceptedReplan = replans.find((record) => validReplanForRemovedParent(record, after, replanByParent, completedIds).valid);
         if (acceptedReplan) {
           replannedTodoIds.push(id);
           continue;
         }
-        const rejectedReplan = replans.map((record) => validReplanForRemovedParent(record, after)).find((result) => !result.valid);
+        const rejectedReplan = replans.map((record) => validReplanForRemovedParent(record, after, replanByParent, completedIds)).find((result) => !result.valid);
         errors.push({
           code: 'todo_removed_without_completion_or_replan_record',
           message: 'A TODO was removed from the queue without durable completion or replan evidence.',
