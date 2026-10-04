@@ -7223,6 +7223,39 @@ sys.exit(1)
 PY
 }
 
+active_repair_feedback_matches_claim_and_run() {
+  local expected_run_stamp="$1"
+  if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$TODO_REPAIR_FEEDBACK_FILE" ]; then
+    return 1
+  fi
+  python3 - "$TODO_CLAIM_FILE" "$TODO_REPAIR_FEEDBACK_FILE" "$expected_run_stamp" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        claim = json.load(handle)
+    with open(sys.argv[2], encoding="utf-8") as handle:
+        feedback = json.load(handle)
+except Exception:
+    sys.exit(1)
+
+expected_run_stamp = sys.argv[3]
+if not expected_run_stamp or feedback.get("run_stamp") != expected_run_stamp:
+    sys.exit(1)
+
+claim_id = claim.get("claim_id")
+selected = str(claim.get("selected_todo") or "")
+selected_first_line = selected.splitlines()[0] if selected.splitlines() else ""
+feedback_first_line = str(feedback.get("selected_todo_first_line") or "")
+if claim_id and feedback.get("claim_id") == claim_id:
+    sys.exit(0)
+if selected_first_line and feedback_first_line == selected_first_line:
+    sys.exit(0)
+sys.exit(1)
+PY
+}
+
 write_runtime_terminal_repair_feedback() {
   local run_stamp="$1"
   local stdout_log="$2"
@@ -12804,9 +12837,9 @@ supervise() {
         printf '%s owner_blockers_only observed; exiting supervisor\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
         exit 0
       fi
-      if [ "$run_status" -eq 76 ] && active_todo_claim_exists && active_repair_feedback_matches_claim; then
+      if [ "$run_status" -eq 76 ] && active_todo_claim_exists && active_repair_feedback_matches_claim_and_run "$run_stamp"; then
         CONSECUTIVE_FAILURES=0
-        printf '%s repair_feedback_retry_scheduled run_status=%s\n' "$(now_utc)" "$run_status" >> "$SUPERVISOR_LOG"
+        printf '%s repair_feedback_retry_scheduled run_status=%s run_stamp=%s\n' "$(now_utc)" "$run_status" "$run_stamp" >> "$SUPERVISOR_LOG"
         interruptible_sleep "$PHASE_LOOP_INTERVAL_SECONDS" || true
         continue
       fi
