@@ -58,6 +58,27 @@ function validateTodoHasLiveWork(todoText, blocks, productReady, releaseBlockers
   }
   return { valid: true };
 }
+
+function validateTodoFileShape(text, errors, options = {}) {
+  const owner = options.path ?? defaultTodoPath;
+  const trimmed = String(text ?? '').trimStart();
+  if (!trimmed) {
+    return;
+  }
+
+  const firstTodoIndex = trimmed.search(/^(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+/mu);
+  const preamble = firstTodoIndex >= 0 ? trimmed.slice(0, firstTodoIndex) : trimmed;
+  const codeLikePreamble = /^(?:import|export)\s.+?from\s+['"][^'"]+['"];?$/mu.test(preamble) ||
+    /^(?:const|let|var)\s+\w+\s*=/mu.test(preamble) ||
+    /^function\s+\w+\s*\(/mu.test(preamble) ||
+    /^#!\/usr\/bin\/env\s+node/mu.test(preamble) ||
+    /^(?:use|mod)\s+[a-zA-Z_][\w:]*\s*;$/mu.test(preamble) ||
+    /^(?:pub\s+)?(?:async\s+)?fn\s+[a-zA-Z_]\w*\s*\(/mu.test(preamble) ||
+    /^(?:pub\s+)?(?:struct|enum|trait|impl)\s+[A-Z_a-z]\w*/mu.test(preamble);
+  if (codeLikePreamble) {
+    errors.push(`${owner}: TODO queue appears to contain source code instead of Markdown TODO entries; reject and restore the queue before continuing.`);
+  }
+}
 const todoContractVerificationSectionRequirements = new Map([
   ['pnpm --workspace-root guard:phase-value', ['phase_value_gate', 'review_value_gate', 'exit_criteria', 'guard_engine_change_review']],
   ['pnpm --workspace-root guard:release-contract', ['commit_trace', 'release_ready_conditions', 'release_artifact_evidence', 'supply_chain_artifact_evidence', 'runtime_operational_evidence', 'owner_governance_evidence', 'local_release_gate']],
@@ -817,6 +838,7 @@ export function validateTodoDecompositionText(text, options = {}) {
   const errors = [];
   const leafIds = [];
   const derivedBlocks = [];
+  validateTodoFileShape(text, errors, options);
   const blocks = uncheckedTodoBlocks(text);
   const liveWork = validateTodoHasLiveWork(
     text,

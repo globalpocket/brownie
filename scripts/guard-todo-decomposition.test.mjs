@@ -503,6 +503,41 @@ test('rejects checked-only TODO when Product Ready is false and release blockers
   assert(errors.some((error) => error.includes('Empty or non-executable TODO queue')), errors.join('\n'));
 });
 
+test('rejects source code accidentally written into the TODO queue', () => {
+  const errors = validateTodoDecompositionText(`import fs from 'node:fs';
+import path from 'node:path';
+
+const defaultOutPath = '.brownie/release-evidence/supply-chain-artifact-evidence.json';
+
+function collectEvidence() {
+  return {};
+}
+`, {
+    productReady: false,
+    releaseBlockersRemaining: true
+  });
+
+  assert(errors.some((error) => error.includes('TODO queue appears to contain source code')), errors.join('\n'));
+});
+
+test('rejects Rust source code accidentally written into the TODO queue', () => {
+  const errors = validateTodoDecompositionText(`use std::path::PathBuf;
+
+pub struct ToolExecution {
+  pub command: String,
+}
+
+fn execute_tool() {
+  // - [ ] fixture-looking-comment: not a live TODO queue item.
+}
+`, {
+    productReady: false,
+    releaseBlockersRemaining: true
+  });
+
+  assert(errors.some((error) => error.includes('TODO queue appears to contain source code')), errors.join('\n'));
+});
+
 test('accepts implementation TODO when Product Ready is false and release blockers remain', () => {
   const errors = validateTodoDecompositionText(validLeaf, {
     productReady: false,
