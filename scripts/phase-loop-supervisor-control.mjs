@@ -541,6 +541,8 @@ function todoBlocks(todoText) {
     const block = todoText.slice(start, end).trimEnd();
     return {
       block,
+      start,
+      end,
       first_line: todoFirstLine(block),
       sha256: crypto.createHash('sha256').update(block).digest('hex')
     };
@@ -818,17 +820,26 @@ function removeTodoBlocksById(todoText, idsToRemove) {
     return { text: todoText, removed: [] };
   }
   const removed = [];
-  const kept = [];
+  const ranges = [];
   for (const block of blocks) {
     const id = todoIdFromBlock(block.block);
     if (id && idsToRemove.has(id)) {
       removed.push(id);
+      ranges.push([block.start, block.end]);
       continue;
     }
-    kept.push(block.block);
   }
-  let text = kept.join('\n\n').trimEnd();
-  text = text ? `${text}\n` : '';
+  if (ranges.length === 0) {
+    return { text: todoText, removed };
+  }
+  let text = todoText;
+  for (const [start, end] of ranges.sort((left, right) => right[0] - left[0])) {
+    text = `${text.slice(0, start)}${text.slice(end)}`;
+  }
+  text = text.replace(/\n{3,}/gu, '\n\n');
+  if (text.trim().length > 0 && !text.endsWith('\n')) {
+    text = `${text}\n`;
+  }
   return { text, removed };
 }
 

@@ -209,8 +209,68 @@ Parent TODO: E-21c-runtime-operational-evidence-impl-2-target-02
   assert.doesNotMatch(todo, /E-21c-replan-stalled-leaf-/u);
   assert.doesNotMatch(todo, /E-21c-runtime-operational-evidence-impl-2-target-02: Patch only/u);
   assert.match(todo, /Depends on: <none>/u);
+  assert.match(todo, /E-21c-runtime-operational-evidence-impl-2-target-03/u);
   assert.doesNotMatch(breakdown, /TODO-repair-E-21c-replan-stalled-leaf-/u);
   assert.equal(result.repair.post_repair_validation.ok, true, JSON.stringify(result, null, 2));
+});
+
+test('preserves todo preamble and checked items when pruning generated TODO residue', () => {
+  const repo = makeRepo();
+  writeTodo(repo);
+  const removableTodo = `- [ ] E-21c-replan-stalled-leaf-${'b'.repeat(12)}: Patch only \`.brownie/todo.md\` to remove stale generated residue:
+  Route: todo-decomposition.
+  Source TODO: E-21c-runtime-operational-evidence-impl-2-target-02.
+  Depends on: <none>.
+  Completion condition: stale generated residue is removed.
+  Forbidden changes: do not weaken guards/tests.
+  Verification: run \`pnpm --workspace-root guard:todo-decomposition\`.`;
+  const checkedTodo = `- [x] E-21c-completed-context: Completed context must remain in the file:
+  Route: implementation.
+  Source TODO: E-21c.
+  Depends on: <none>.
+  Completion condition: already completed.
+  Forbidden changes: do not remove this historical record.
+  Verification: already complete.`;
+  fs.writeFileSync(path.join(repo, '.brownie/todo.md'), `# Brownie TODO Queue
+
+Operator note that must be preserved.
+
+${checkedTodo}
+
+${removableTodo}
+
+${ownerBlockerTodo}
+`);
+  fs.writeFileSync(path.join(repo, '.brownie/todo-breakdown.md'), `# breakdown
+
+Dependency graph:
+- E-20i-release-ops-blocker: <none>
+
+Verification ledger:
+- E-20i-release-ops-blocker: inspect/blocker/fail-closed
+
+Quality rubric:
+- E-20i-release-ops-blocker: explicit owner blocker
+`);
+  execFileSync('git', ['add', '.brownie/todo.md', '.brownie/todo-breakdown.md'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'todo preamble fixture'], { cwd: repo, stdio: 'ignore' });
+  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
+  writeJson(repo, '.brownie/private/phase-loop/status.json', {
+    status: 'blocked',
+    run_id: 'claim-failed',
+    consecutive_failures: 5,
+    detail: 'Failed to claim first pending TODO from queue: .brownie/todo.md'
+  });
+
+  const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
+  const todo = fs.readFileSync(path.join(repo, '.brownie/todo.md'), 'utf8');
+
+  assert.equal(result.repair.non_live_todo_residue.attempted, true, JSON.stringify(result, null, 2));
+  assert.doesNotMatch(todo, /E-21c-replan-stalled-leaf-/u);
+  assert.match(todo, /# Brownie TODO Queue/u);
+  assert.match(todo, /Operator note that must be preserved/u);
+  assert.match(todo, /E-21c-completed-context/u);
+  assert.match(todo, /E-20i-release-ops-blocker/u);
 });
 
 test('removes live child TODOs whose source parent is already checked complete', () => {

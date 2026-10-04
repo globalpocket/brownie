@@ -140,6 +140,18 @@ function validateEvidence(evidence, options = {}) {
   requireValue(evidence.runtime_release_ready === false, errors, 'supply-chain evidence must not declare runtime_release_ready true.');
   requireValue(Array.isArray(evidence.fail_closed_reasons), errors, 'supply-chain evidence must include fail_closed_reasons.');
   const failClosedReasons = Array.isArray(evidence.fail_closed_reasons) ? evidence.fail_closed_reasons : [];
+  requireValue(
+    ['clean', 'dirty', 'unknown'].includes(evidence.sourceCheckoutState),
+    errors,
+    'supply-chain evidence sourceCheckoutState must be clean, dirty, or unknown.'
+  );
+  if (evidence.sourceCheckoutState !== 'clean') {
+    requireValue(
+      failClosedReasons.some((reason) => reason === `source_checkout_state:${evidence.sourceCheckoutState}` || reason === 'source_tree_dirty:true'),
+      errors,
+      'supply-chain evidence fail_closed_reasons must include source checkout state when checkout is not clean.'
+    );
+  }
 
   const sectionIds = new Set(Array.isArray(evidence.required_sections) ? evidence.required_sections : []);
   for (const sectionId of requiredSections) {

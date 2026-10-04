@@ -162,17 +162,16 @@ export function validateRuntimeOperationalEvidence(evidence) {
     if (!section || typeof section !== 'object') {
       continue;
     }
-    const effectiveSectionStatus = section.status === 'executable' && section.fail_closed === true ? 'satisfied' : section.status;
     requireValue(isNonEmptyString(section.status), errors, `sections.${sectionId}.status must be non-empty.`);
     requireValue(
-      section.release_blocking === true || section.status === 'executable',
+      section.release_blocking === true,
       errors,
       `sections.${sectionId} must be release_blocking.`
     );
     if (Object.hasOwn(section, 'fail_closed')) {
       requireValue(section.fail_closed === true, errors, `sections.${sectionId}.fail_closed must be true.`);
     }
-    if (effectiveSectionStatus !== 'satisfied') {
+    if (section.status !== 'satisfied') {
       requireValue(allowedIncompleteStatuses.has(section.status), errors, `sections.${sectionId}.status ${section.status} is not allowed.`);
       requireValue(
         evidence.fail_closed_reasons.some((reason) => reason.startsWith(`${sectionId}:`)),

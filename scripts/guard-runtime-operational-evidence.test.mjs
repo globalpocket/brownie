@@ -276,9 +276,17 @@ test('validates fail-closed evidence with golden journey artifacts', () => {
     fail_closed_reasons: ['golden_journey_fixture:not_executed_missing_artifacts']
   });
   evidence.sections.golden_journey_fixture = section('not_executed_missing_artifacts', { commands: [] });
-  evidence.sections.artifact_lifecycle = { status: 'executable', fail_closed: true };
   const errors = validateRuntimeOperationalEvidence(evidence);
   assert.equal(errors.length, 0, 'fail-closed evidence with explicit reason should be valid');
+});
+
+test('rejects executable shortcut without satisfied operational evidence', () => {
+  const evidence = validEvidence({
+    fail_closed_reasons: ['artifact_lifecycle:executable']
+  });
+  evidence.sections.artifact_lifecycle = { status: 'executable', release_blocking: true, fail_closed: true };
+  const errors = validateRuntimeOperationalEvidence(evidence);
+  assert(errors.some((error) => error.includes('sections.artifact_lifecycle.status executable is not allowed')));
 });
 
 test('requires fail-closed reasons for incomplete artifact lifecycle evidence', () => {

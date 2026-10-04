@@ -1,6 +1,6 @@
 609998186f03111f7ede8a333128111613602db13b989fc376d125ad4746b1c1  .brownie/release-evidence/artifacts/win32-x64/brownie.exe
-78419a51dc755a1d1e195066c6636b3cf5900d953242841f03717603412ad9d7  .brownie/release-evidence/brownie-runtime-sbom.json
 a5f342724e4f7b7ae3e9d4c6f19793664abdce1a67a9043efa1b7fa0b61850a4  .brownie/release-evidence/artifacts/linux-arm64/brownie
-b02502b1334c9a0e0957eb3bf683997c363a9ae2c639f19e46cbad70a1b1fdf1  .brownie/release-evidence/brownie-runtime-provenance.json
+b42d402b820b78a995216bc79987d57fa65a59c9dd2c706e86ee47cafb64ebfc  .brownie/release-evidence/brownie-runtime-provenance.json
 bc32e7bd1482cc312211db9c08c1cea6d9cac6893c3f06c5aaa863c8cda4bf86  .brownie/release-evidence/artifacts/darwin-arm64/brownie
 e58a5587f8f43526ff3e06ef0c9ec5368fc25d1a70f2c5482c29ea065137f7b8  .brownie/release-evidence/artifacts/linux-x64/brownie
+eb9deb8275df62cce3193de1f24a7f80f9a174848704b2c1533a5028a0b89086  .brownie/release-evidence/brownie-runtime-sbom.json

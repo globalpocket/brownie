@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "evidence_id": "brownie-owner-governance-evidence-v1",
-  "generated_at": "2026-10-04T03:30:29.408Z",
+  "generated_at": "2026-10-04T03:58:36.767Z",
   "repository": "globalpocket/brownie",
-  "source_commit": "c68a13ee844b74242679c3b3c5e0a92133dba94c",
+  "source_commit": "29a296fc90fc9c98207ded66b3a438c12e93e30c",
   "release_ready": false,
   "runtime_release_ready": false,
   "required_sections": [
