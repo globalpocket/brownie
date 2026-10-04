@@ -56,10 +56,16 @@ function git(repoRoot, args) {
 }
 
 function gitDiffFiles(repoRoot) {
-  return git(repoRoot, ['diff', '--name-only', 'HEAD', '--'])
+  const changed = git(repoRoot, ['diff', '--name-only', 'HEAD', '--'])
     .split('\n')
     .map((entry) => entry.trim())
     .filter(Boolean);
+  const untracked = git(repoRoot, ['ls-files', '--others', '--exclude-standard'])
+    .split('\n')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return normalizeFileList([...changed, ...untracked])
+    .filter((entry) => !entry.startsWith('.brownie/private/'));
 }
 
 function normalizeFileList(files) {

@@ -256,6 +256,101 @@ test('CLI write-record allows selected targets that were already dirty at claim 
   assert.equal(result.completion_record_present, true);
 });
 
+test('CLI write-record counts untracked Create only target as selected progress', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-progress-integrity-untracked-create-'));
+  const createOnlyTodo = `- [ ] E-test-create-workflow: Create only \`.github/workflows/release.yml\` to add a release workflow.
+  Route: implementation.
+  Depends on: <none>.
+  Completion condition: workflow exists.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root guard:supply-chain-artifact-evidence\`.`;
+  fs.mkdirSync(path.join(tmp, '.brownie/private/phase-loop/todo-claims'), { recursive: true });
+  fs.mkdirSync(path.join(tmp, '.brownie/private/phase-loop/todo-completions'), { recursive: true });
+  fs.mkdirSync(path.join(tmp, '.brownie'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, '.brownie/todo.md'), queue(createOnlyTodo));
+  execFileSync('git', ['init', '-b', 'main'], { cwd: tmp, stdio: 'ignore' });
+  execFileSync('git', ['add', '.'], { cwd: tmp, stdio: 'ignore' });
+  execFileSync('git', ['-c', 'user.name=Brownie', '-c', 'user.email=brownie@example.invalid', 'commit', '-m', 'baseline'], { cwd: tmp, stdio: 'ignore' });
+  fs.mkdirSync(path.join(tmp, '.github/workflows'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, '.github/workflows/release.yml'), 'name: Release\n');
+  fs.writeFileSync(
+    path.join(tmp, '.brownie/private/phase-loop/todo-claims/current.json'),
+    `${JSON.stringify({
+      schema_version: 1,
+      claim_id: 'claim-create-only',
+      selected_todo: createOnlyTodo,
+      baseline_diff_files: [],
+      baseline_todo_text: queue(createOnlyTodo)
+    }, null, 2)}\n`
+  );
+
+  const output = execFileSync('node', [
+    path.resolve('scripts/phase-loop-progress-integrity.mjs'),
+    '--repo', tmp,
+    '--claim', '.brownie/private/phase-loop/todo-claims/current.json',
+    '--todo', '.brownie/todo.md',
+    '--run-stamp', 'test-run',
+    '--write-record'
+  ], {
+    cwd: path.resolve('.'),
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  const result = JSON.parse(output);
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+  assert.equal(result.selected_target_changed, true);
+  assert.deepEqual(result.selected_targets_changed, ['.github/workflows/release.yml']);
+  assert.equal(result.completion_record_present, true);
+});
+
+test('CLI write-record does not count pre-existing untracked Create only target as selected progress', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-progress-integrity-untracked-create-baseline-'));
+  const createOnlyTodo = `- [ ] E-test-create-workflow: Create only \`.github/workflows/release.yml\` to add a release workflow.
+  Route: implementation.
+  Depends on: <none>.
+  Completion condition: workflow exists.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root guard:supply-chain-artifact-evidence\`.`;
+  fs.mkdirSync(path.join(tmp, '.brownie/private/phase-loop/todo-claims'), { recursive: true });
+  fs.mkdirSync(path.join(tmp, '.brownie/private/phase-loop/todo-completions'), { recursive: true });
+  fs.mkdirSync(path.join(tmp, '.brownie'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, '.brownie/todo.md'), queue(createOnlyTodo));
+  execFileSync('git', ['init', '-b', 'main'], { cwd: tmp, stdio: 'ignore' });
+  execFileSync('git', ['add', '.'], { cwd: tmp, stdio: 'ignore' });
+  execFileSync('git', ['-c', 'user.name=Brownie', '-c', 'user.email=brownie@example.invalid', 'commit', '-m', 'baseline'], { cwd: tmp, stdio: 'ignore' });
+  fs.mkdirSync(path.join(tmp, '.github/workflows'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, '.github/workflows/release.yml'), 'name: Release\n');
+  fs.writeFileSync(
+    path.join(tmp, '.brownie/private/phase-loop/todo-claims/current.json'),
+    `${JSON.stringify({
+      schema_version: 1,
+      claim_id: 'claim-create-only',
+      selected_todo: createOnlyTodo,
+      baseline_diff_files: ['.github/workflows/release.yml'],
+      baseline_todo_text: queue(createOnlyTodo)
+    }, null, 2)}\n`
+  );
+
+  const output = execFileSync('node', [
+    path.resolve('scripts/phase-loop-progress-integrity.mjs'),
+    '--repo', tmp,
+    '--claim', '.brownie/private/phase-loop/todo-claims/current.json',
+    '--todo', '.brownie/todo.md',
+    '--run-stamp', 'test-run',
+    '--write-record'
+  ], {
+    cwd: path.resolve('.'),
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  const result = JSON.parse(output);
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+  assert.equal(result.selected_target_changed, false);
+  assert.equal(result.selected_target_dirty_at_baseline, true);
+  assert.deepEqual(result.selected_targets_dirty_at_baseline, ['.github/workflows/release.yml']);
+  assert.equal(result.completion_record_present, true);
+});
+
 test('reports missing selected target files for multi-target TODOs', () => {
   const result = validatePhaseLoopProgressIntegrity({
     claim: { claim_id: 'claim-1', selected_todo: e20a },

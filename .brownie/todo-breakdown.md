@@ -3,6 +3,38 @@
 This file records Brownie-managed decomposition decisions for the live queue in
 `.brownie/todo.md`. It is shared operational state, not release evidence.
 
+## TODO-decompose-clean-release-workflow-and-doc-sync-ca637ce0
+
+Parent TODO: TODO-decompose-clean-release-workflow-and-doc-sync-ca637ce0
+
+Dependency graph:
+- TODO-decompose-clean-release-workflow-and-doc-sync-ca637ce0: <none>
+- E-22a-release-workflow-clean-checkout-leaf: <none>
+- E-22b-doc-sync-contract-leaf-target-01: <none>
+- E-22b-doc-sync-contract-leaf-target-02: E-22b-doc-sync-contract-leaf-target-01
+- E-22b-doc-sync-contract-leaf-target-03: E-22b-doc-sync-contract-leaf-target-02
+- E-22b-doc-sync-contract-leaf-target-04: E-22b-doc-sync-contract-leaf-target-03
+
+Verification ledger:
+- TODO-decompose-clean-release-workflow-and-doc-sync-ca637ce0: `pnpm --workspace-root guard:todo-decomposition`; `pnpm --workspace-root phase-loop:todo-queue-integrity`
+- E-22a-release-workflow-clean-checkout-leaf: `pnpm --workspace-root guard:supply-chain-artifact-evidence`; `pnpm --workspace-root release:gate -- --dry-run`
+- E-22b-doc-sync-contract-leaf-target-01: `pnpm --workspace-root guard:release-evidence-semantic-consistency`
+- E-22b-doc-sync-contract-leaf-target-02: `pnpm --workspace-root guard:phase-value`
+- E-22b-doc-sync-contract-leaf-target-03: `pnpm --workspace-root guard:release-contract`
+- E-22b-doc-sync-contract-leaf-target-04: `pnpm --workspace-root guard:runtime-release-readiness`
+
+Quality rubric:
+- TODO-decompose-clean-release-workflow-and-doc-sync-ca637ce0: decomposition-only task; it may patch only `.brownie/todo.md` and `.brownie/todo-breakdown.md`; it must produce bounded leaf TODOs for clean release workflow and document generation sync while preserving the owner-controlled E-20i Runtime Release Ops blocker.
+- E-22a-release-workflow-clean-checkout-leaf: create-only workflow leaf; must not require credentials, publishing, or customer/Enterprise deployment; must express clean checkout, matrix targets, executable evidence, source identity, and provenance as fail-closed Release Ops workflow steps.
+- E-22b-doc-sync-contract-leaf-target-01: single-file final judgment sync leaf; must preserve fail-closed Product Ready status and avoid invented evidence.
+- E-22b-doc-sync-contract-leaf-target-02: single-file phase manifest sync leaf; must preserve fail-closed Product Ready status and avoid invented evidence.
+- E-22b-doc-sync-contract-leaf-target-03: single-file release contract sync leaf; must keep unknown trace bindings null until executable evidence exists.
+- E-22b-doc-sync-contract-leaf-target-04: single-file readiness audit sync leaf; must preserve fail-closed Product Ready status and avoid invented evidence.
+
+History:
+- 2026-10-04T16:35:00+09:00: Added after processing the PR #502 external review against current main ca637ce0. PR #503 already closed E-20i Runtime-vs-Enterprise separation and supervisor test CI wiring, so this decomposition task is limited to remaining valid release workflow and stale document-generation residuals.
+- 2026-10-04T17:35:00+09:00: Repaired Brownie-generated leaf TODOs after TODO guard rejection. Converted the missing workflow path from Patch only to Create only, removed the owner-blocker dependency from the implementable workflow leaf, and replaced hallucinated uppercase documentation paths with existing `docs/architecture/*` files.
+
 ## TODO-decompose-blocked-queue-71820ffb9fb9
 
 Parent TODO: TODO-decompose-blocked-queue-71820ffb9fb9: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs.

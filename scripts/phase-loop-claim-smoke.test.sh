@@ -3,6 +3,16 @@ set -eu
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PHASE_LOOP="$REPO_ROOT/phase-loop.sh"
+PHASE_LOOP_CLAIM_SMOKE_TIMEOUT_SECONDS="${PHASE_LOOP_CLAIM_SMOKE_TIMEOUT_SECONDS:-360}"
+PHASE_LOOP_COMMAND_TIMEOUT_SECONDS="${PHASE_LOOP_COMMAND_TIMEOUT_SECONDS:-25}"
+
+(
+  sleep "$PHASE_LOOP_CLAIM_SMOKE_TIMEOUT_SECONDS"
+  echo "phase-loop claim smoke timed out after ${PHASE_LOOP_CLAIM_SMOKE_TIMEOUT_SECONDS}s" >&2
+  kill -TERM "$$" 2>/dev/null || true
+) &
+claim_smoke_watchdog_pid="$!"
+trap 'kill "$claim_smoke_watchdog_pid" 2>/dev/null || true' EXIT
 
 if ! command -v rg >/dev/null 2>&1; then
   fallback_bin_dir="$(mktemp -d)"
@@ -43,6 +53,46 @@ assert_not_contains() {
     echo "expected $file not to contain pattern: $pattern" >&2
     exit 1
   fi
+}
+
+run_with_timeout() {
+  local seconds="$1"
+  shift
+  "$@" &
+  local child_pid="$!"
+  local elapsed=0
+  while kill -0 "$child_pid" 2>/dev/null; do
+    if [ "$elapsed" -ge "$seconds" ]; then
+      echo "command timed out after ${seconds}s: $*" >&2
+      kill "$child_pid" 2>/dev/null || true
+      sleep 1
+      kill -KILL "$child_pid" 2>/dev/null || true
+      wait "$child_pid" 2>/dev/null || true
+      return 124
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  wait "$child_pid"
+}
+
+wait_for_pid_exit() {
+  local pid="$1"
+  local seconds="$2"
+  local elapsed=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$elapsed" -ge "$seconds" ]; then
+      echo "expected pid=$pid to exit within ${seconds}s" >&2
+      kill "$pid" 2>/dev/null || true
+      sleep 1
+      kill -KILL "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 1
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  wait "$pid" 2>/dev/null || true
 }
 
 assert_contains "$PHASE_LOOP" "phase-loop-todo-queue-integrity\\.mjs"
@@ -515,7 +565,7 @@ PHASE_LOOP_PROMPT="$prompt_with_claim" \
 PHASE_LOOP_TODO="$todo_with_claim" \
 BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 claim_file="$state_with_claim/todo-claims/current.json"
 queue_state_file="$state_with_claim/todo-claims/todo-queue-state.json"
@@ -579,7 +629,7 @@ PHASE_LOOP_PROMPT="$prompt_with_blocked" \
 PHASE_LOOP_TODO="$todo_with_blocked" \
 BROWNIE_BIN="$fake_brownie_blocked_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 test ! -f "$state_with_blocked/stop"
 python3 - "$state_with_blocked/status.json" "$state_with_blocked/todo-claims/current.json" <<'PY'
 import json
@@ -606,7 +656,7 @@ PHASE_LOOP_PROMPT="$prompt_terminal_no_eligible" \
 PHASE_LOOP_TODO="$todo_terminal_no_eligible" \
 BROWNIE_BIN="$fake_brownie_terminal_no_eligible" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 terminal_no_eligible_exit="$?"
 set -e
 test "$terminal_no_eligible_exit" = "76"
@@ -640,14 +690,14 @@ PHASE_LOOP_PROMPT="$prompt_objective_apply_stalled" \
 PHASE_LOOP_TODO="$todo_objective_apply_stalled" \
 BROWNIE_BIN="$fake_brownie_objective_apply_pending" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 PHASE_LOOP_STATE_DIR="$state_objective_apply_stalled" \
 PHASE_LOOP_PROMPT="$prompt_objective_apply_stalled" \
 PHASE_LOOP_TODO="$todo_objective_apply_stalled" \
 BROWNIE_BIN="$fake_brownie_objective_apply_pending" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 set +e
 PHASE_LOOP_STATE_DIR="$state_objective_apply_stalled" \
@@ -655,7 +705,7 @@ PHASE_LOOP_PROMPT="$prompt_objective_apply_stalled" \
 PHASE_LOOP_TODO="$todo_objective_apply_stalled" \
 BROWNIE_BIN="$fake_brownie_objective_apply_pending" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 objective_apply_stalled_exit="$?"
 set -e
 test "$objective_apply_stalled_exit" = "76"
@@ -692,7 +742,7 @@ PHASE_LOOP_TODO="$todo_all_blocked" \
 PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_all_blocked" \
 BROWNIE_BIN="$fake_brownie_blocked_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 PHASE_LOOP_STATE_DIR="$state_all_blocked" \
 PHASE_LOOP_PROMPT="$prompt_all_blocked" \
@@ -700,7 +750,7 @@ PHASE_LOOP_TODO="$todo_all_blocked" \
 PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_all_blocked" \
 BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 python3 - "$state_all_blocked/todo-claims/current.json" "$todo_all_blocked" <<'PY'
 import json
@@ -740,7 +790,7 @@ PHASE_LOOP_PROMPT="$prompt_decomposition_leaf" \
 PHASE_LOOP_TODO="$todo_decomposition_leaf" \
 BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 decomposition_leaf_prompt_file="$(find "$state_decomposition_leaf/runs" -name '*.prompt.md' -print | sort | tail -n 1)"
 assert_contains "$decomposition_leaf_prompt_file" 'state: `implement`'
@@ -760,7 +810,7 @@ PHASE_LOOP_TODO="$todo_blocked_decomposition" \
 PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_blocked_decomposition" \
 BROWNIE_BIN="$fake_brownie_blocked_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 PHASE_LOOP_STATE_DIR="$state_blocked_decomposition" \
 PHASE_LOOP_PROMPT="$prompt_blocked_decomposition" \
@@ -768,7 +818,7 @@ PHASE_LOOP_TODO="$todo_blocked_decomposition" \
 PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_blocked_decomposition" \
 BROWNIE_BIN="$fake_brownie_blocked_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 set +e
 PHASE_LOOP_STATE_DIR="$state_blocked_decomposition" \
@@ -777,7 +827,7 @@ PHASE_LOOP_TODO="$todo_blocked_decomposition" \
 PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_blocked_decomposition" \
 BROWNIE_BIN="$fake_brownie_blocked_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 blocked_decomposition_exit="$?"
 set -e
 test "$blocked_decomposition_exit" = "75"
@@ -802,7 +852,7 @@ PHASE_LOOP_PROMPT="$prompt_with_blocked" \
 PHASE_LOOP_TODO="$todo_with_blocked" \
 BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 python3 - "$state_with_blocked/todo-claims/current.json" <<'PY'
 import json
@@ -824,7 +874,7 @@ PHASE_LOOP_PROMPT="$prompt_dependency" \
 PHASE_LOOP_TODO="$todo_dependency" \
 BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 dependency_prompt_file="$(find "$state_dependency/runs" -name '*.prompt.md' -print | sort | tail -n 1)"
 assert_contains "$dependency_prompt_file" 'dependency_policy: do not work on a TODO whose `Depends on:` entries are still pending'
@@ -869,7 +919,7 @@ PHASE_LOOP_PROMPT="$prompt_explicit_blocker" \
 PHASE_LOOP_TODO="$todo_explicit_blocker" \
 BROWNIE_BIN="$fake_brownie_must_not_run" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 python3 - "$state_explicit_blocker/status.json" "$state_explicit_blocker/todo-claims/current.json" "$state_explicit_blocker/todo-claims/blocked.jsonl" <<'PY'
 import json
@@ -892,7 +942,7 @@ PHASE_LOOP_PROMPT="$prompt_explicit_blocker" \
 PHASE_LOOP_TODO="$todo_explicit_blocker" \
 BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 python3 - "$state_explicit_blocker/todo-claims/current.json" <<'PY'
 import json
@@ -910,7 +960,7 @@ PHASE_LOOP_PROMPT="$prompt_with_claim" \
 PHASE_LOOP_TODO="$todo_with_claim" \
 BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 python3 - "$claim_file" <<'PY'
 import json
@@ -933,21 +983,21 @@ PHASE_LOOP_PROMPT="$prompt_stagnation" \
 PHASE_LOOP_TODO="$todo_stagnation" \
 BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 PHASE_LOOP_STATE_DIR="$state_stagnation" \
 PHASE_LOOP_PROMPT="$prompt_stagnation" \
 PHASE_LOOP_TODO="$todo_stagnation" \
 BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 if PHASE_LOOP_STATE_DIR="$state_stagnation" \
   PHASE_LOOP_PROMPT="$prompt_stagnation" \
   PHASE_LOOP_TODO="$todo_stagnation" \
   BROWNIE_BIN="$fake_brownie_json" \
   PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-  "$PHASE_LOOP" run-once >/dev/null; then
+  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null; then
   echo "expected repeated identical non-progress fingerprint to fail as no_progress" >&2
   exit 1
 fi
@@ -978,7 +1028,7 @@ PHASE_LOOP_PROMPT="$prompt_todo_md_only" \
 PHASE_LOOP_TODO="$todo_todo_md_only" \
 BROWNIE_BIN="$fake_brownie_todo_md_only_apply" \
 PHASE_LOOP_WORKSPACE_ROOT="$workspace_todo_md_only" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 python3 - "$state_todo_md_only/status.json" "$state_todo_md_only/progress-state.json" "$state_todo_md_only/todo-claims/current.json" "$todo_todo_md_only" <<'PY'
 import json
@@ -1003,7 +1053,7 @@ PHASE_LOOP_PROMPT="$prompt_todo_md_only" \
 PHASE_LOOP_TODO="$todo_todo_md_only" \
 BROWNIE_BIN="$fake_brownie_no_actionable" \
 PHASE_LOOP_WORKSPACE_ROOT="$workspace_todo_md_only" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 python3 - "$state_todo_md_only/status.json" "$state_todo_md_only/progress-state.json" "$state_todo_md_only/todo-claims/current.json" "$todo_todo_md_only" <<'PY'
 import json
@@ -1036,7 +1086,7 @@ PHASE_LOOP_PROMPT="$prompt_workspace_progress" \
 PHASE_LOOP_TODO="$todo_workspace_progress" \
 BROWNIE_BIN="$fake_brownie_workspace_change" \
 PHASE_LOOP_WORKSPACE_ROOT="$workspace_progress" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 python3 - "$state_workspace_progress/progress-state.json" <<'PY'
 import json
@@ -1099,7 +1149,7 @@ PHASE_LOOP_TODO="$todo_pr_progress" \
 BROWNIE_BIN="$fake_brownie_tracked_workspace_change" \
 PHASE_LOOP_WORKSPACE_ROOT="$workspace_pr_progress" \
 PHASE_LOOP_CREATE_PR_AFTER_PROGRESS=1 \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 python3 - "$state_pr_progress/status.json" "$workspace_pr_progress" <<'PY'
 import json
@@ -1169,7 +1219,16 @@ BROWNIE_BIN="$fake_brownie_tracked_workspace_change" \
 PHASE_LOOP_WORKSPACE_ROOT="$workspace_pr_supervise" \
 PHASE_LOOP_CREATE_PR_AFTER_PROGRESS=1 \
 PHASE_LOOP_INTERVAL_SECONDS=30 \
-"$PHASE_LOOP" supervise >/dev/null 2>/dev/null
+run_with_timeout 20 env \
+  "PATH=$fake_supervise_bin_dir:$PATH" \
+  "PHASE_LOOP_STATE_DIR=$state_pr_supervise" \
+  "PHASE_LOOP_PROMPT=$prompt_pr_supervise" \
+  "PHASE_LOOP_TODO=$todo_pr_supervise" \
+  "BROWNIE_BIN=$fake_brownie_tracked_workspace_change" \
+  "PHASE_LOOP_WORKSPACE_ROOT=$workspace_pr_supervise" \
+  "PHASE_LOOP_CREATE_PR_AFTER_PROGRESS=1" \
+  "PHASE_LOOP_INTERVAL_SECONDS=30" \
+  "$PHASE_LOOP" supervise >/dev/null 2>/dev/null
 
 python3 - "$state_pr_supervise/status.json" "$state_pr_supervise/logs/supervisor.log" "$workspace_pr_supervise" <<'PY'
 import json
@@ -1200,7 +1259,7 @@ BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 PHASE_LOOP_TODO_SNAPSHOT_LINES=1 \
 PHASE_LOOP_BASE_PROMPT_SNAPSHOT_LINES=1 \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 truncated_prompt="$(find "$state_truncated/runs" -name '*.prompt.md' -print | sort | tail -n 1)"
 python3 - "${truncated_prompt%.prompt.md}.prompt.meta.json" <<'PY'
@@ -1230,7 +1289,7 @@ PHASE_LOOP_TODO="$todo_retention" \
 BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 PHASE_LOOP_PROMPT_RETENTION_COUNT=2 \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 retained_prompt_count="$(find "$state_retention/runs" -name '*.prompt.md' | wc -l | tr -d ' ')"
 if [ "$retained_prompt_count" -gt 2 ]; then
@@ -1250,7 +1309,7 @@ if PHASE_LOOP_STATE_DIR="$state_too_large" \
   BROWNIE_BIN="$fake_brownie_json" \
   PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
   PHASE_LOOP_SELECTED_TODO_MAX_BYTES=8 \
-  "$PHASE_LOOP" run-once >/dev/null 2>/dev/null; then
+  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null 2>/dev/null; then
   echo "expected oversized selected TODO to fail closed before Runtime start" >&2
   exit 1
 fi
@@ -1276,7 +1335,7 @@ PHASE_LOOP_TODO="$todo_stale_claim" \
 BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 PHASE_LOOP_TEST_MUTATE_TODO_AFTER_PROMPT=1 \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 python3 - "$state_stale_claim/todo-claims/current.json" "$state_stale_claim/todo-claims" "$todo_stale_claim" <<'PY'
 import json
@@ -1304,7 +1363,7 @@ PHASE_LOOP_PROMPT="$prompt_generation" \
 PHASE_LOOP_TODO="$todo_generation" \
 BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 rm "$state_generation/todo-claims/current.json"
 printf -- '- [ ] B-00: externally inserted higher priority\n- [ ] B-01: first generation\n' > "$todo_generation"
@@ -1314,7 +1373,7 @@ PHASE_LOOP_PROMPT="$prompt_generation" \
 PHASE_LOOP_TODO="$todo_generation" \
 BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 python3 - "$state_generation/todo-claims/current.json" "$state_generation/todo-claims/todo-queue-state.json" <<'PY'
 import json
@@ -1339,7 +1398,7 @@ PHASE_LOOP_PROMPT="$prompt_same_head_queue_growth" \
 PHASE_LOOP_TODO="$todo_same_head_queue_growth" \
 BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 printf -- '- [ ] B-01: stable first task\n- [ ] B-02: appended follow-up task\n' > "$todo_same_head_queue_growth"
 
@@ -1348,7 +1407,7 @@ PHASE_LOOP_PROMPT="$prompt_same_head_queue_growth" \
 PHASE_LOOP_TODO="$todo_same_head_queue_growth" \
 BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 python3 - "$state_same_head_queue_growth/todo-claims/current.json" "$state_same_head_queue_growth/todo-claims/todo-queue-state.json" "$todo_same_head_queue_growth" <<'PY'
 import hashlib
@@ -1401,7 +1460,7 @@ PHASE_LOOP_PROMPT="$prompt_legacy" \
 PHASE_LOOP_TODO="$todo_legacy" \
 BROWNIE_BIN="$fake_brownie_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 python3 - "$state_legacy/todo-claims/current.json" "$todo_legacy" <<'PY'
 import json
@@ -1426,7 +1485,7 @@ if PHASE_LOOP_STATE_DIR="$state_empty" \
   PHASE_LOOP_TODO="$todo_empty" \
   BROWNIE_BIN="$fake_brownie_json" \
   PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-  "$PHASE_LOOP" run-once >/dev/null; then
+  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null; then
   echo "expected empty queue without an active claim to stop instead of run" >&2
   exit 1
 fi
@@ -1453,7 +1512,7 @@ if PHASE_LOOP_STATE_DIR="$state_empty_dirty" \
   PHASE_LOOP_TODO="$todo_empty_dirty" \
   BROWNIE_BIN="$fake_brownie_json" \
   PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-  "$PHASE_LOOP" run-once >/dev/null; then
+  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null; then
   echo "expected empty queue without durable claim to stop even with dirty/non-main workspace" >&2
   exit 1
 fi
@@ -1478,7 +1537,7 @@ if PHASE_LOOP_STATE_DIR="$state_invalid_json" \
   PHASE_LOOP_TODO="$todo_invalid_json" \
   BROWNIE_BIN="$fake_brownie_invalid_json" \
   PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-  "$PHASE_LOOP" run-once >/dev/null; then
+  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null; then
   echo "expected non-JSON CLI output to fail closed" >&2
   exit 1
 fi
@@ -1508,7 +1567,7 @@ PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 PHASE_LOOP_FAILURE_BACKOFF_SECONDS=30 \
 PHASE_LOOP_MAX_FAILURE_BACKOFF_SECONDS=30 \
 PHASE_LOOP_SLEEP_POLL_SECONDS=1 \
-"$PHASE_LOOP" supervise >/dev/null 2>/dev/null &
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" supervise >/dev/null 2>/dev/null &
 interruptible_pid="$!"
 
 for _ in 1 2 3 4 5; do
@@ -1520,7 +1579,7 @@ done
 
 start_epoch="$(date +%s)"
 PHASE_LOOP_STATE_DIR="$state_interruptible" "$PHASE_LOOP" stop >/dev/null
-wait "$interruptible_pid" 2>/dev/null || true
+wait_for_pid_exit "$interruptible_pid" 8
 elapsed=$(( $(date +%s) - start_epoch ))
 if [ "$elapsed" -gt 5 ]; then
   echo "expected stop to interrupt supervisor backoff promptly, elapsed=${elapsed}s" >&2
@@ -1550,7 +1609,7 @@ PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 PHASE_LOOP_TEST_CHILD_PID_FILE="$child_pid_file" \
 PHASE_LOOP_STOP_GRACE_SECONDS=1 \
 PHASE_LOOP_STOP_FORCE_SECONDS=3 \
-"$PHASE_LOOP" supervise >/dev/null 2>/dev/null &
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" supervise >/dev/null 2>/dev/null &
 child_supervisor_pid="$!"
 
 for _ in 1 2 3 4 5; do
@@ -1570,7 +1629,7 @@ PHASE_LOOP_STATE_DIR="$state_child_stop" \
 PHASE_LOOP_STOP_GRACE_SECONDS=1 \
 PHASE_LOOP_STOP_FORCE_SECONDS=3 \
 "$PHASE_LOOP" stop >/dev/null
-wait "$child_supervisor_pid" 2>/dev/null || true
+wait_for_pid_exit "$child_supervisor_pid" 8
 sleep 1
 if kill -0 "$child_pid" 2>/dev/null; then
   echo "expected stop to terminate supervisor-managed child pid=$child_pid" >&2
@@ -1619,7 +1678,7 @@ PHASE_LOOP_PROMPT="$prompt_exact_fast_path" \
 PHASE_LOOP_TODO="$todo_exact_fast_path" \
 BROWNIE_BIN="$fake_brownie_should_not_run" \
 PHASE_LOOP_WORKSPACE_ROOT="$exact_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 python3 - "$state_exact_fast_path/status.json" "$state_exact_fast_path/todo-claims/current.json" "$todo_exact_fast_path" "$exact_workspace/docs/golden.js" <<'PY'
 import json
@@ -1674,7 +1733,7 @@ PHASE_LOOP_PROMPT="$prompt_empty_queue_guard" \
 PHASE_LOOP_TODO="$todo_empty_queue_guard" \
 BROWNIE_BIN="$fake_brownie_should_not_run" \
 PHASE_LOOP_WORKSPACE_ROOT="$empty_queue_guard_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 empty_queue_guard_exit="$?"
 set -e
 test "$empty_queue_guard_exit" = "76"
@@ -1738,7 +1797,7 @@ PHASE_LOOP_PROMPT="$prompt_verified_noop_e19" \
 PHASE_LOOP_TODO="$verified_noop_e19_workspace/.brownie/todo.md" \
 BROWNIE_BIN="$fake_brownie_should_not_run" \
 PHASE_LOOP_WORKSPACE_ROOT="$verified_noop_e19_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 python3 - "$state_verified_noop_e19/status.json" "$state_verified_noop_e19/todo-claims/current.json" "$verified_noop_e19_workspace/.brownie/todo.md" <<'PY'
 import json
@@ -1834,7 +1893,7 @@ PHASE_LOOP_PROMPT="$release_ops_prompt" \
 PHASE_LOOP_TODO="$release_ops_workspace/.brownie/todo.md" \
 BROWNIE_BIN="$fake_brownie_should_not_run" \
 PHASE_LOOP_WORKSPACE_ROOT="$release_ops_workspace" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 python3 - "$release_ops_state/status.json" "$release_ops_state/todo-claims/current.json" "$release_ops_workspace/.brownie/todo.md" <<'PY'
 import json
@@ -1891,7 +1950,7 @@ PHASE_LOOP_TODO_BREAKDOWN="$broad_decomposition_breakdown" \
 PHASE_LOOP_WORKSPACE_ROOT="$broad_decomposition_workspace" \
 PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
 BROWNIE_BIN="$fake_brownie_broad_decomposition" \
-"$PHASE_LOOP" run-once >/dev/null || true
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null || true
 
 broad_decomposition_prompt_file="$(find "$broad_decomposition_state/runs" -name '*.prompt.md' -print | sort | tail -n 1)"
 python3 - "$broad_decomposition_todo" "$broad_decomposition_prompt_file" <<'PY'
@@ -1946,7 +2005,7 @@ PHASE_LOOP_TODO_BREAKDOWN="$no_eligible_split_workspace/.brownie/todo-breakdown.
 PHASE_LOOP_WORKSPACE_ROOT="$no_eligible_split_workspace" \
 PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
 BROWNIE_BIN="$fake_brownie_terminal_no_eligible" \
-"$PHASE_LOOP" run-once >/dev/null || true
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null || true
 
 PHASE_LOOP_STATE_DIR="$no_eligible_split_state" \
 PHASE_LOOP_PROMPT="$no_eligible_split_prompt" \
@@ -1955,7 +2014,7 @@ PHASE_LOOP_TODO_BREAKDOWN="$no_eligible_split_workspace/.brownie/todo-breakdown.
 PHASE_LOOP_WORKSPACE_ROOT="$no_eligible_split_workspace" \
 PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
 BROWNIE_BIN="$fake_brownie_terminal_no_eligible" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 python3 - "$no_eligible_split_workspace/.brownie/todo.md" "$no_eligible_split_workspace/.brownie/todo-breakdown.md" "$no_eligible_split_state/status.json" "$no_eligible_split_workspace/.brownie/private/phase-loop/todo-replans" <<'PY'
 import json
@@ -2102,7 +2161,7 @@ PHASE_LOOP_WORKSPACE_ROOT="$repair_feedback_workspace" \
 PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
 PHASE_LOOP_TEST_ARGV_FILE="$repair_feedback_argv" \
 BROWNIE_BIN="$fake_brownie_repair_feedback" \
-"$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
 repair_feedback_prompt_file="$(find "$repair_feedback_state/runs" -name '*.prompt.md' -print | sort | tail -n 1)"
 python3 - "$repair_feedback_argv" "$repair_feedback_prompt_file" <<'PY'

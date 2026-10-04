@@ -1,0 +1,60 @@
+name: Release Workflow
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-evidence:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Normalize checkout line endings
+        if: runner.os == 'Windows'
+        run: |
+          git config core.autocrlf false
+          git reset --hard HEAD
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build artifacts
+        run: pnpm build
+
+      - name: Run supply chain artifact evidence
+        run: pnpm --workspace-root guard:supply-chain-artifact-evidence
+
+      - name: Run release gate contract guard
+        run: pnpm --workspace-root guard:release-gate
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.os }}
+          path: |
+            extensions/brownie-vsix/dist/
+            extensions/brownie-vsix/package.json
+          if-no-files-found: error
+          retention-days: 7

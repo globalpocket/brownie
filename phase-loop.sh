@@ -1181,16 +1181,20 @@ fingerprint = hashlib.sha256(todo_text.encode("utf-8")).hexdigest()
 baseline_todo_text = claim.get("baseline_todo_text")
 baseline_matches_live_todo = isinstance(baseline_todo_text, str) and baseline_todo_text == todo_text
 try:
-    baseline_diff_files = [
-        line.strip()
+    baseline_diff_file_set = set()
+    for command in (
+        ["git", "diff", "--name-only", "HEAD", "--"],
+        ["git", "ls-files", "--others", "--exclude-standard"],
+    ):
         for line in subprocess.check_output(
-            ["git", "diff", "--name-only", "HEAD", "--"],
+            command,
             cwd=workspace,
             text=True,
             stderr=subprocess.DEVNULL,
-        ).splitlines()
-        if line.strip()
-    ]
+        ).splitlines():
+            if line.strip():
+                baseline_diff_file_set.add(line.strip())
+    baseline_diff_files = sorted(baseline_diff_file_set)
 except Exception:
     baseline_diff_files = claim.get("baseline_diff_files") if isinstance(claim.get("baseline_diff_files"), list) else []
 claim_baseline_diff_files = claim.get("baseline_diff_files") if isinstance(claim.get("baseline_diff_files"), list) else []
@@ -8241,7 +8245,7 @@ PY
             exit 66
             ;;
         esac
-        if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+        if [ ! -e "$path" ] && ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
           rm -f "$paths_file"
           exit 66
         fi
@@ -8255,7 +8259,7 @@ PY
             exit 66
             ;;
         esac
-        if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+        if [ ! -e "$path" ] && ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
           rm -f "$paths_file"
           exit 66
         fi
@@ -8433,16 +8437,20 @@ if not claim:
     except Exception:
         baseline_commit = ""
     try:
-        baseline_diff_files = [
-            line.strip()
+        baseline_diff_file_set = set()
+        for command in (
+            ["git", "diff", "--name-only", "HEAD", "--"],
+            ["git", "ls-files", "--others", "--exclude-standard"],
+        ):
             for line in subprocess.check_output(
-                ["git", "diff", "--name-only", "HEAD", "--"],
+                command,
                 cwd=workspace,
                 text=True,
                 stderr=subprocess.DEVNULL,
-            ).splitlines()
-            if line.strip()
-        ]
+            ).splitlines():
+                if line.strip():
+                    baseline_diff_file_set.add(line.strip())
+        baseline_diff_files = sorted(baseline_diff_file_set)
     except Exception:
         baseline_diff_files = []
     try:

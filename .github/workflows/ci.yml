@@ -42,6 +42,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Root workspace check
+        timeout-minutes: 15
         run: pnpm --workspace-root check
 
       - name: Root workspace test
