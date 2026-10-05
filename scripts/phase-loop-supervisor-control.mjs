@@ -518,15 +518,14 @@ function invalidPatchNeedsExactContextRepair(invalidPatch) {
   if (proposals.length === 0) {
     return false;
   }
-  return proposals.some((proposal) => {
-    const reason = String(proposal?.validation_reason ?? '').toLowerCase();
-    return (
-      reason.includes('old_text was not found') ||
-      reason.includes('old_text matches inside a word') ||
-      reason.includes('include the full line') ||
-      reason.includes('surrounding context')
-    );
-  });
+  const finalProposal = proposals[proposals.length - 1];
+  const reason = String(finalProposal?.validation_reason ?? '').toLowerCase();
+  return (
+    reason.includes('old_text was not found') ||
+    reason.includes('old_text matches inside a word') ||
+    reason.includes('include the full line') ||
+    reason.includes('surrounding context')
+  );
 }
 
 function fsyncFileAndParent(filePath) {

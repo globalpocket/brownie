@@ -550,8 +550,10 @@ fn execute_bounded_git(
         return Ok(result);
     }
 
-    let output = run_bounded_git_process(&root, args, git_timeout())
-        .context("failed to execute bounded git capability")?;
+    let output = match run_bounded_git_process(&root, args, git_timeout()) {
+        Ok(output) => output,
+        Err(_) => return Ok(git_process_launch_failure(tool_id, operation, "execute")),
+    };
     let text = String::from_utf8_lossy(&output.combined_capture.content);
     let total_line_count = text.lines().count();
     let summary_lines = text
@@ -626,7 +628,7 @@ fn execute_bounded_git(
 }
 
 fn inspect_bounded_git_head_for_status(root: &Path) -> anyhow::Result<Option<String>> {
-    let output = run_bounded_git_process(
+    let output = match run_bounded_git_process(
         root,
         &[
             "-c",
@@ -636,8 +638,10 @@ fn inspect_bounded_git_head_for_status(root: &Path) -> anyhow::Result<Option<Str
             "HEAD",
         ],
         git_timeout(),
-    )
-    .context("failed to inspect current git head for status")?;
+    ) {
+        Ok(output) => output,
+        Err(_) => return Ok(None),
+    };
     if output.timed_out || output.output_oversized || output.exit_code != Some(0) {
         return Ok(None);
     }
@@ -651,12 +655,20 @@ fn validate_git_repository_root(
     tool_id: &str,
     operation: &str,
 ) -> anyhow::Result<Option<ToolExecutionResult>> {
-    let repo = run_bounded_git_process(
+    let repo = match run_bounded_git_process(
         root,
         &["-c", "core.fsmonitor=false", "rev-parse", "--show-toplevel"],
         git_timeout(),
-    )
-    .context("failed to inspect git repository")?;
+    ) {
+        Ok(repo) => repo,
+        Err(_) => {
+            return Ok(Some(git_process_launch_failure(
+                tool_id,
+                operation,
+                "inspect_repository",
+            )));
+        }
+    };
     if repo.timed_out || repo.output_oversized {
         return Ok(Some(ToolExecutionResult {
             tool_id: tool_id.to_string(),
@@ -707,6 +719,34 @@ fn validate_git_repository_root(
         }));
     }
     Ok(None)
+}
+
+fn git_process_launch_failure(tool_id: &str, operation: &str, stage: &str) -> ToolExecutionResult {
+    ToolExecutionResult {
+        tool_id: tool_id.to_string(),
+        status: ToolExecutionStatus::Failed,
+        output: json!({
+            "reason": "Git capability process could not be launched or inspected; failed closed.",
+            "operation": operation,
+            "stage": stage,
+            "process_launched": false,
+            "process_launch_failed": true,
+            "timed_out": false,
+            "output_oversized": false,
+            "duration_ms": 0,
+            "process_tree_timeout_supported": process_tree_timeout_supported(),
+            "process_tree_kill_attempted": false,
+            "process_tree_kill_succeeded": false,
+            "process_tree_kill_reason": "process_not_launched",
+            "reader_thread_joined": true,
+            "git_environment_hardened": true,
+            "git_prompts_disabled": true,
+            "git_optional_locks_disabled": true,
+            "raw_diff_redacted": true,
+            "raw_file_content_redacted": true,
+            "absolute_paths_redacted": true,
+        }),
+    }
 }
 
 struct GitProcessResult {
@@ -7181,6 +7221,14 @@ printf '%s\n' '?? normal.txt'
                     .unwrap_or_else(|error| panic!("{scenario} attempt {attempt}: {error}"));
 
                 assert_eq!(result.status, ToolExecutionStatus::Failed);
+                if result.output["process_launch_failed"] == true {
+                    assert_eq!(
+                        result.output["process_tree_kill_reason"],
+                        "process_not_launched"
+                    );
+                    assert_eq!(result.output["reader_thread_joined"], true);
+                    continue;
+                }
                 assert_fake_git_cleanup(&result.output);
                 assert_eq!(result.output["reader_thread_joined"], true);
                 let pid_file = if scenario == "timeout" {
@@ -7207,6 +7255,32 @@ printf '%s\n' '?? normal.txt'
                 }
             }
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_status_spawn_failure_returns_structured_fail_closed_result() {
+        let _lock = git_test_env_lock();
+        let temp = git_repository("git-status-spawn-failure");
+        let missing_git = temp.path().join("missing-git-program");
+        let _guard = TestGitEnvGuard::set(&missing_git, 1_000);
+
+        let result =
+            GitCommandExecutor::status(temp.path(), &json!({})).expect("structured git failure");
+
+        assert_eq!(result.status, ToolExecutionStatus::Failed);
+        assert_eq!(result.output["operation"], "status");
+        assert_eq!(result.output["stage"], "inspect_repository");
+        assert_eq!(result.output["process_launched"], false);
+        assert_eq!(result.output["process_launch_failed"], true);
+        assert_eq!(
+            result.output["process_tree_kill_reason"],
+            "process_not_launched"
+        );
+        assert_eq!(result.output["reader_thread_joined"], true);
+        assert_eq!(result.output["git_environment_hardened"], true);
+        let serialized = result.output.to_string();
+        assert!(!serialized.contains("missing-git-program"));
     }
 
     fn git_repository(name: &str) -> tempfile::TempDir {
