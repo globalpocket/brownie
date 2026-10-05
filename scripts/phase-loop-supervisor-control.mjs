@@ -574,8 +574,7 @@ function appendStalledTodoBlockedRecord(repoRoot, diagnostic, ledgerSummary) {
   const existing = fs.existsSync(blockedPath) ? readJsonl(blockedPath) : [];
   const alreadyRecorded = existing.some((record) => (
     record?.selected_todo_first_line === firstLine ||
-    record?.selected_todo_sha256 === selectedHash ||
-    record?.todo_id === ledgerSummary.todo_id
+    record?.selected_todo_sha256 === selectedHash
   ));
   if (alreadyRecorded) {
     return { attempted: true, ok: true, changed: false, reason: 'stalled_todo_already_blocked' };
@@ -1488,12 +1487,12 @@ export function controlPhaseLoop(options = {}) {
       : { attempted: false, reason: 'todo_contract_replan_not_active' };
   const stalledTodoDecomposition = options.repair === false
     ? { attempted: false, reason: 'repair_disabled' }
-    : todoContractReplanRepair.attempted && todoContractReplanRepair.ok && stalledTodoBlocked.changed === true
+    : todoContractReplanRepair.attempted && todoContractReplanRepair.ok && stalledTodoBlocked.ok === true
       ? ensureStalledTodoDecompositionRequest(repoRoot, afterClaimRepair, ledgerSummary)
       : {
           attempted: false,
           reason: todoContractReplanRepair.attempted && todoContractReplanRepair.ok
-            ? 'stalled_todo_already_blocked_or_not_recorded'
+            ? 'stalled_todo_block_record_not_ready'
             : 'todo_contract_replan_not_active'
         };
   const semanticVerificationRepair = options.repair === false
