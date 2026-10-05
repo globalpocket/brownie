@@ -4590,14 +4590,20 @@ def target_route(original_route, target):
 claim = read_json(claim_path)
 feedback = read_json(feedback_path)
 progress = read_json(progress_path)
-if feedback.get("claim_id") != claim.get("claim_id"):
-    raise SystemExit(2)
 selected = claim.get("selected_todo")
 if not isinstance(selected, str) or not selected.strip():
     raise SystemExit(2)
 selected_first = selected.splitlines()[0] if selected.splitlines() else ""
 selected_id = todo_id_from_first_line(selected_first)
 if not selected_id:
+    raise SystemExit(2)
+feedback_claim_id = feedback.get("claim_id")
+feedback_first_line = feedback.get("selected_todo_first_line")
+if feedback_claim_id and feedback_claim_id != claim.get("claim_id"):
+    raise SystemExit(2)
+if not feedback_claim_id and feedback_first_line and feedback_first_line != selected_first:
+    raise SystemExit(2)
+if not feedback_claim_id and not feedback_first_line:
     raise SystemExit(2)
 if "Route: todo-decomposition" in selected:
     raise SystemExit(2)

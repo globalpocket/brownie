@@ -1139,12 +1139,19 @@ function maybeWriteTodoContractReplanFeedback(repoRoot, diagnostic, ledgerSummar
       ledger_summary: ledgerSummary
     };
   }
+  const claimId = claim?.claim_id
+    ?? diagnostic.verification_failure?.claim_id
+    ?? diagnostic.invalid_patch?.claim_id
+    ?? diagnostic.apply_rejection?.claim_id
+    ?? diagnostic.progress?.progress_projection?.claim_id
+    ?? null;
   const feedback = {
     schema_version: 1,
     kind: 'phase_loop_todo_contract_replan_feedback',
     generated_at: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z'),
     completed: false,
     reason: 'supervisor_repeated_leaf_failure_requires_todo_contract_replan',
+    claim_id: claimId,
     selected_todo: selectedTodo,
     selected_todo_first_line: todoFirstLine(selectedTodo) ?? ledgerSummary.selected_todo_first_line ?? null,
     failure_ledger_summary: ledgerSummary,
