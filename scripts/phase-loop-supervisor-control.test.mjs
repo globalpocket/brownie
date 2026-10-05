@@ -630,7 +630,7 @@ test('escalates invalid patch with repeated no-progress to TODO contract replan 
         {
           path: 'scripts/guard-runtime-operational-evidence.test.mjs',
           operation: 'patch_file',
-          validation_reason: 'Patch old_text was not found in the current target.',
+          validation_reason: 'Patch target is outside the selected bounded target.',
           content_preview: '[patch_file single_hunk old_chars=478 new_chars=1406]',
           hunk_count: 1
         }
@@ -652,6 +652,87 @@ test('escalates invalid patch with repeated no-progress to TODO contract replan 
   assert.equal(feedback.kind, 'phase_loop_todo_contract_replan_feedback');
   assert.equal(feedback.failure_ledger_summary.replan_reason, 'invalid_patch_with_repeated_no_progress');
   assert.equal(result.repair.invalid_patch.reason, 'todo_contract_replan_feedback_takes_precedence');
+});
+
+test('does not replan repairable subtoken old_text invalid patches before exact-context repair', () => {
+  const repo = makeRepo();
+  writeTodo(repo);
+  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
+  writeJson(repo, '.brownie/private/phase-loop/status.json', {
+    status: 'no_progress',
+    run_id: 'run-subtoken-invalid-patch',
+    consecutive_failures: 1,
+    detail: 'Brownie run exited successfully but repeated the same non-progress fingerprint'
+  });
+  writeJson(repo, '.brownie/private/phase-loop/progress-state.json', {
+    classification: 'no_progress',
+    same_progress_count: 2,
+    run_stamp: '20261005T105314Z',
+    progress_projection: {
+      cli_status: 'no_eligible_task',
+      closure: 'no_eligible_task',
+      claim_id: 'claim-subtoken-invalid-patch',
+      selected_todo: runtimeEvidenceTodo
+    }
+  });
+  writeJson(repo, '.brownie/private/phase-loop/todo-claims/current.json', {
+    claim_id: 'claim-subtoken-invalid-patch',
+    status: 'claimed',
+    selected_todo: runtimeEvidenceTodo
+  });
+  writeJson(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json', {
+    schema_version: 1,
+    kind: 'phase_loop_invalid_patch_repair_feedback',
+    reason: 'supervisor_invalid_workspace_write_patch',
+    invalid_patch: {
+      detected: true,
+      claim_id: 'claim-subtoken-invalid-patch',
+      reason: 'runtime_terminal_failure',
+      selected_todo: {
+        first_line: runtimeEvidenceTodo.split('\n')[0],
+        route: 'implementation',
+        patch_targets: ['scripts/guard-runtime-operational-evidence.test.mjs'],
+        verification_commands: ['pnpm --workspace-root release:runtime-operational-evidence:test']
+      },
+      invalid_patch_proposals: [
+        {
+          path: 'scripts/guard-runtime-operational-evidence.test.mjs',
+          operation: 'patch_file',
+          validation_reason: 'Patch old_text matches inside a word; include the full line or surrounding context.',
+          content_preview: '[patch_file single_hunk old_chars=24 new_chars=80]',
+          hunk_count: 1
+        }
+      ]
+    }
+  });
+  fs.writeFileSync(
+    path.join(repo, '.brownie/private/phase-loop/todo-claims/failure-ledger.jsonl'),
+    `${JSON.stringify({
+      schema_version: 1,
+      record_type: 'phase_loop_failure_event',
+      event_id: 'event-invalid-patch-subtoken',
+      observed_at: '2026-10-05T10:36:48Z',
+      todo_id: 'E-21c-runtime-operational-evidence-impl-2-target-02',
+      selected_todo_first_line: runtimeEvidenceTodo.split('\n')[0],
+      kind: 'invalid_patch',
+      status: 'no_progress',
+      progress_run_stamp: '20261005T103238Z',
+      same_progress_count: 1
+    })}\n`
+  );
+
+  const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
+  const feedback = JSON.parse(fs.readFileSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json'), 'utf8'));
+  const todo = fs.readFileSync(path.join(repo, '.brownie/todo.md'), 'utf8');
+
+  assert.equal(result.repair.todo_contract_replan.attempted, false, JSON.stringify(result, null, 2));
+  assert.equal(result.repair.todo_contract_replan.reason, 'threshold_not_met', JSON.stringify(result, null, 2));
+  assert.equal(result.repair.invalid_patch.attempted, true, JSON.stringify(result, null, 2));
+  assert.equal(result.repair.invalid_patch.ok, true, JSON.stringify(result, null, 2));
+  assert.equal(feedback.kind, 'phase_loop_invalid_patch_repair_feedback');
+  assert.equal(feedback.semantic_repair_policy.must_not_use_subtoken_old_text, true);
+  assert.match(feedback.repair_hint, /complete current line or a syntactic block/u);
+  assert.doesNotMatch(todo, /replan-stalled-leaf/u);
 });
 
 test('escalates invalid patch followed by no-progress on the same leaf to TODO contract replan feedback', () => {

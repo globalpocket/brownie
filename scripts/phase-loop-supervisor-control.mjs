@@ -459,15 +459,16 @@ function failureLedgerSummary(repoRoot, diagnostic, currentEventResult) {
   }, {});
   const progressSameCount = Number(diagnostic.progress?.same_progress_count ?? 0);
   const codes = issueCodes(diagnostic);
-  const invalidPatchWithRepeatedNoProgress = codes.has('invalid_workspace_write_patch_repeated') && progressSameCount >= 2;
+  const repairableInvalidPatch = invalidPatchNeedsExactContextRepair(diagnostic.invalid_patch);
+  const invalidPatchWithRepeatedNoProgress = codes.has('invalid_workspace_write_patch_repeated') && progressSameCount >= 2 && !repairableInvalidPatch;
   const semanticFailureWithRepeatedNoProgress = codes.has('verification_failure_requires_semantic_repair') && progressSameCount >= 2;
-  const invalidPatchThenNoProgress = (counts.invalid_patch ?? 0) >= 1 && (counts.no_progress ?? 0) >= 1;
+  const invalidPatchThenNoProgress = (counts.invalid_patch ?? 0) >= 1 && (counts.no_progress ?? 0) >= 1 && !repairableInvalidPatch;
   const shouldReplan = (
     progressSameCount >= 3 ||
     invalidPatchWithRepeatedNoProgress ||
     semanticFailureWithRepeatedNoProgress ||
     invalidPatchThenNoProgress ||
-    (counts.invalid_patch ?? 0) >= 2 ||
+    ((counts.invalid_patch ?? 0) >= 2 && !repairableInvalidPatch) ||
     (counts.semantic_verification_failure ?? 0) >= 2 ||
     (counts.semantic_verification_stalled ?? 0) >= 1 ||
     (counts.bounded_leaf_apply_rejection ?? 0) >= 1 ||
@@ -503,10 +504,29 @@ function failureLedgerSummary(repoRoot, diagnostic, currentEventResult) {
       observed_at: entry.observed_at
     })),
     counts,
+    repairable_invalid_patch: repairableInvalidPatch,
     should_replan: shouldReplan,
     replan_reason: replanReason,
     ledger_path: path.relative(repoRoot, ledgerPath)
   };
+}
+
+function invalidPatchNeedsExactContextRepair(invalidPatch) {
+  const proposals = Array.isArray(invalidPatch?.invalid_patch_proposals)
+    ? invalidPatch.invalid_patch_proposals
+    : [];
+  if (proposals.length === 0) {
+    return false;
+  }
+  return proposals.some((proposal) => {
+    const reason = String(proposal?.validation_reason ?? '').toLowerCase();
+    return (
+      reason.includes('old_text was not found') ||
+      reason.includes('old_text matches inside a word') ||
+      reason.includes('include the full line') ||
+      reason.includes('surrounding context')
+    );
+  });
 }
 
 function fsyncFileAndParent(filePath) {
@@ -1371,6 +1391,7 @@ function maybeWriteInvalidPatchRepairFeedback(repoRoot, diagnostic) {
     repair_hint: [
       'The previous workspace.write patch_file did not apply because old_text was not found in the current target.',
       'Do not repeat the same old_text and do not copy stale previews.',
+      'If validation says old_text matches inside a word, the next old_text must include the complete current line or a syntactic block with surrounding context; never use an identifier fragment, suffix, prefix, or other sub-token match.',
       'If exact current context is missing, request exactly one bounded workspace.read for the selected target; otherwise emit one smaller workspace.write patch_file hunk whose old_text exists now.',
       'Patch .brownie/todo.md only if the selected TODO contract is impossible.'
     ].join(' '),
@@ -1379,15 +1400,17 @@ function maybeWriteInvalidPatchRepairFeedback(repoRoot, diagnostic) {
       selected_patch_targets: patchTargets,
       must_preserve_selected_todo_intent: true,
       must_not_repeat_invalid_patch: true,
+      must_not_use_subtoken_old_text: true,
       must_not_only_make_checks_green: true,
       allowed_next_actions: [
         'request exactly one bounded workspace.read for the selected target if exact current context is missing',
-        'emit exactly one smaller workspace.write patch_file hunk whose old_text exists in the current target',
+        'emit exactly one smaller workspace.write patch_file hunk whose old_text exists in the current target and spans a complete line or syntactic block',
         'patch .brownie/todo.md only if the selected TODO contract is impossible',
         'report one concrete blocker if the selected target cannot satisfy the completion condition'
       ],
       forbidden_next_actions: [
         'repeat the same invalid old_text',
+        'use old_text that matches inside a word or identifier',
         'copy old_text from stale llm_response_previews',
         'write .brownie/todo.md to avoid a repairable target patch',
         'modify unrelated files',
