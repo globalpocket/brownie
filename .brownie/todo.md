@@ -126,3 +126,20 @@
   Completion condition: Test suite covers all fail-closed paths for missing, stale, and inconsistent evidence fields.
   Forbidden changes: do not weaken existing guard tests, do not invent evidence values, and do not mark tests passing without actual guard implementation.
   Verification: run `pnpm --workspace-root guard:release-contract:test`.
+
+- [ ] E-22f-1-release-contract-json-sync: Patch only `docs/architecture/runtime-release-contract.json` to update Release Contract evidence gates and remove stale E-17/RRP-8.7/4376c0a references:
+  Route: documentation.
+  Source TODO: E-22f-release-contract-audit-doc-sync.
+  Depends on: E-22e-release-contract-trace-binding-guard.
+  Completion condition: runtime-release-contract.json describes current executable evidence gates, latest audited main relationship, and fail-closed Product Ready status without stale authority claims.
+  Forbidden changes: do not claim Product Ready, do not hide remaining Release Ops blockers, and do not alter unrelated phase history.
+  Verification: run `pnpm --workspace-root guard:release-contract`.
+
+- [ ] E-22f-2-release-readiness-audit-sync: Patch only `docs/architecture/runtime-release-readiness-audit.json` to update Readiness Audit evidence gates and remove stale E-17/RRP-8.7/4376c0a references:
+  Route: documentation.
+  Source TODO: E-22f-release-contract-audit-doc-sync.
+  Depends on: E-22f-1-release-contract-json-sync.
+  Completion condition: runtime-release-readiness-audit.json describes the same current executable evidence gates as runtime-release-contract.json and preserves fail-closed Product Ready status.
+  Forbidden changes: do not claim Product Ready, do not hide remaining Release Ops blockers, and do not alter unrelated phase history.
+  Verification: run `pnpm --workspace-root guard:runtime-release-readiness`.
+

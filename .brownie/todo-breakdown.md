@@ -1480,3 +1480,26 @@ History:
 
 - 2026-10-05T15:46:58Z: Supervisor detected repeated invalid_patch_followed_by_no_progress on E-22e-release-contract-trace-binding-guard and promoted Brownie-owned TODO replan instead of retrying the same single-target leaf.
 - 2026-10-05T19:27:00Z: Completed the E-22e guard repair by adding fail-closed trace-binding condition coverage to `scripts/guard-release-contract.mjs`, sharing the guard condition list with `scripts/guard-release-contract.test.mjs`, and updating `docs/architecture/runtime-release-contract.json` so the live contract includes the required implementation/tested commit, workflow run, artifact SHA, and clean source identity release-blocking conditions.
+
+## TODO-repair-E-22f-replan-stalled-leaf-832d0467ce5e
+
+Parent TODO: E-22f-release-contract-audit-doc-sync
+
+Dependency graph:
+- E-22f-replan-stalled-leaf-832d0467ce5e: <none>
+- E-22f-1-release-contract-json-sync: E-22e-release-contract-trace-binding-guard
+- E-22f-2-release-readiness-audit-sync: E-22f-1-release-contract-json-sync
+
+Verification ledger:
+- E-22f-replan-stalled-leaf-832d0467ce5e: run `pnpm --workspace-root guard:todo-decomposition` and `pnpm --workspace-root phase-loop:todo-queue-integrity`.
+- E-22f-1-release-contract-json-sync: run `pnpm --workspace-root guard:release-contract`.
+- E-22f-2-release-readiness-audit-sync: run `pnpm --workspace-root guard:runtime-release-readiness`.
+
+Quality rubric:
+- E-22f-replan-stalled-leaf-832d0467ce5e: replace the stalled leaf with implementable child TODOs while preserving parent intent, exact patch targets, existing verification commands, and fail-closed release evidence semantics.
+- E-22f-1-release-contract-json-sync: keep Runtime Release fail-closed while synchronizing Release Contract evidence gates with current executable evidence.
+- E-22f-2-release-readiness-audit-sync: keep Runtime Product Ready false while synchronizing Readiness Audit evidence gates with the Release Contract.
+
+History:
+
+- 2026-10-05T21:18:08Z: Supervisor detected repeated invalid_patch_with_repeated_no_progress on E-22f-release-contract-audit-doc-sync and promoted Brownie-owned TODO replan instead of retrying the same single-target leaf.
