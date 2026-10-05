@@ -22,6 +22,7 @@ const requiredSections = [
 ];
 
 const hashPattern = /^sha256:[a-f0-9]{64}$/;
+const gitCommitPattern = /^[a-f0-9]{40}$/;
 const requiredArtifactSmokeE2eStepIds = [
   'base_mode_pack_load',
   'minimal_task_run',
@@ -32,6 +33,49 @@ const requiredArtifactSmokeE2eStepIds = [
 
 function isArtifactSmokeStepId(stepId) {
   return requiredArtifactSmokeE2eStepIds.includes(stepId);
+}
+
+function sha256Text(text) {
+  return `sha256:${crypto.createHash('sha256').update(text).digest('hex')}`;
+}
+
+function validateArtifactProvenanceBinding(artifact, errors, pathLabel) {
+  const binding = artifact?.provenance_binding;
+  requireValue(binding && typeof binding === 'object', errors, `${pathLabel}.provenance_binding must be present.`);
+  if (!binding || typeof binding !== 'object') {
+    return;
+  }
+  requireValue(gitCommitPattern.test(binding.implementationCommit), errors, `${pathLabel}.provenance_binding.implementationCommit must be a 40-character git SHA.`);
+  requireValue(gitCommitPattern.test(binding.testedCommit), errors, `${pathLabel}.provenance_binding.testedCommit must be a 40-character git SHA.`);
+  requireValue(isNonEmptyString(binding.workflowRunId), errors, `${pathLabel}.provenance_binding.workflowRunId must be present.`);
+  requireValue(binding.artifactSha256 === artifact.sha256, errors, `${pathLabel}.provenance_binding.artifactSha256 must match artifact sha256.`);
+  requireValue(isNonEmptyString(binding.platform), errors, `${pathLabel}.provenance_binding.platform must be present.`);
+  requireValue(isNonEmptyString(binding.architecture), errors, `${pathLabel}.provenance_binding.architecture must be present.`);
+  requireValue(binding.sourceCheckoutState === 'clean', errors, `${pathLabel}.provenance_binding.sourceCheckoutState must be clean.`);
+  requireValue(binding.buildSourceCommit === artifact.source_commit, errors, `${pathLabel}.provenance_binding.buildSourceCommit must match artifact source_commit.`);
+  requireValue(binding.buildSourceCleanTree === artifact.source_clean_tree, errors, `${pathLabel}.provenance_binding.buildSourceCleanTree must match artifact source_clean_tree.`);
+  requireValue(binding.buildSourceIdentity === artifact.source_identity, errors, `${pathLabel}.provenance_binding.buildSourceIdentity must match artifact source_identity.`);
+
+  const validation = binding.validation;
+  requireValue(validation?.valid === true, errors, `${pathLabel}.provenance_binding.validation.valid must be true.`);
+  const buildValidation = binding.buildSourceMetadataValidation;
+  requireValue(buildValidation?.valid === true, errors, `${pathLabel}.provenance_binding.buildSourceMetadataValidation.valid must be true.`);
+
+  const expectedSourceIdentity = sha256Text(`${artifact.source_commit}:${artifact.source_clean_tree}`);
+  requireValue(artifact.source_identity === expectedSourceIdentity, errors, `${pathLabel}.source_identity must match source commit/tree metadata.`);
+
+  const expectedProvenanceIdentity = sha256Text(
+    [
+      binding.implementationCommit,
+      binding.testedCommit,
+      binding.workflowRunId,
+      artifact.path,
+      binding.artifactSha256,
+      binding.platform,
+      binding.architecture
+    ].join('\n')
+  );
+  requireValue(artifact.provenance_identity === expectedProvenanceIdentity, errors, `${pathLabel}.provenance_identity must match provenance binding.`);
 }
 const allowedIncompleteStatuses = new Set([
   'blocked_external',
@@ -201,6 +245,7 @@ function validateEvidence(evidence, options = {}) {
       requireValue(hashPattern.test(artifact.source_commit), errors, `sections.artifacts.artifacts[${index}].source_commit must be sha256:<64 lowercase hex>.`);
       requireValue(artifact.source_clean_tree === 'clean', errors, `sections.artifacts.artifacts[${index}].source_clean_tree must be clean.`);
       requireValue(hashPattern.test(artifact.source_identity), errors, `sections.artifacts.artifacts[${index}].source_identity must be sha256:<64 lowercase hex>.`);
+      validateArtifactProvenanceBinding(artifact, errors, `sections.artifacts.artifacts[${index}]`);
     }
   }
 

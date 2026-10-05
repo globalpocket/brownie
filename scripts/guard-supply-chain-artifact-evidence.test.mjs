@@ -92,6 +92,53 @@ function sha256File(filePath) {
   return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')}`;
 }
 
+function sha256Text(text) {
+  return `sha256:${crypto.createHash('sha256').update(text).digest('hex')}`;
+}
+
+function artifactWithProvenance(repoRoot, artifactPath, overrides = {}) {
+  const sha256 = sha256File(path.join(repoRoot, artifactPath));
+  const sourceCommit = `sha256:${'a'.repeat(64)}`;
+  const sourceCleanTree = 'clean';
+  const sourceIdentity = sha256Text(`${sourceCommit}:${sourceCleanTree}`);
+  const binding = {
+    implementationCommit: '1'.repeat(40),
+    testedCommit: '2'.repeat(40),
+    workflowRunId: '123456',
+    artifactSha256: sha256,
+    platform: 'darwin',
+    architecture: 'arm64',
+    sourceCheckoutState: 'clean',
+    buildSourceCommit: sourceCommit,
+    buildSourceCleanTree: sourceCleanTree,
+    buildSourceIdentity: sourceIdentity,
+    validation: { valid: true },
+    buildSourceMetadataValidation: { valid: true }
+  };
+  return {
+    path: artifactPath,
+    sha256,
+    bytes: fs.statSync(path.join(repoRoot, artifactPath)).size,
+    target: 'darwin-arm64',
+    source_commit: sourceCommit,
+    source_clean_tree: sourceCleanTree,
+    source_identity: sourceIdentity,
+    provenance_identity: sha256Text(
+      [
+        binding.implementationCommit,
+        binding.testedCommit,
+        binding.workflowRunId,
+        artifactPath,
+        binding.artifactSha256,
+        binding.platform,
+        binding.architecture
+      ].join('\n')
+    ),
+    provenance_binding: binding,
+    ...overrides
+  };
+}
+
 function validContract(overrides = {}) {
   return {
     phase: 'RRP-8.7',
@@ -589,17 +636,39 @@ test('accepts satisfied artifacts with clean source identity binding', () => {
     (reason) => !reason.startsWith('artifacts:')
   );
   evidence.sections.artifacts = section('satisfied', {
-    artifacts: [
-      {
-        path: artifactPath,
-        sha256: sha256File(path.join(repoRoot, artifactPath)),
-        bytes: fs.statSync(path.join(repoRoot, artifactPath)).size,
-        target: 'darwin-arm64',
-        source_commit: `sha256:${'a'.repeat(64)}`,
-        source_clean_tree: 'clean',
-        source_identity: `sha256:${'b'.repeat(64)}`
-      }
-    ]
+    artifacts: [artifactWithProvenance(repoRoot, artifactPath)]
   });
   assert.deepEqual(validate({ evidence, repoRoot }), []);
+});
+
+test('rejects satisfied artifacts without provenance binding', () => {
+  const repoRoot = tempRepo();
+  const artifactPath = 'target/release/brownie';
+  fs.mkdirSync(path.join(repoRoot, 'target/release'), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, artifactPath), 'artifact');
+  const artifact = artifactWithProvenance(repoRoot, artifactPath);
+  delete artifact.provenance_binding;
+  const evidence = validEvidence(repoRoot);
+  evidence.fail_closed_reasons = evidence.fail_closed_reasons.filter(
+    (reason) => !reason.startsWith('artifacts:')
+  );
+  evidence.sections.artifacts = section('satisfied', { artifacts: [artifact] });
+  const errors = validate({ evidence, repoRoot });
+  assert(errors.some((error) => error.includes('provenance_binding must be present')));
+});
+
+test('rejects satisfied artifacts with tampered provenance binding', () => {
+  const repoRoot = tempRepo();
+  const artifactPath = 'target/release/brownie';
+  fs.mkdirSync(path.join(repoRoot, 'target/release'), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, artifactPath), 'artifact');
+  const artifact = artifactWithProvenance(repoRoot, artifactPath);
+  artifact.provenance_binding.workflowRunId = 'different-run';
+  const evidence = validEvidence(repoRoot);
+  evidence.fail_closed_reasons = evidence.fail_closed_reasons.filter(
+    (reason) => !reason.startsWith('artifacts:')
+  );
+  evidence.sections.artifacts = section('satisfied', { artifacts: [artifact] });
+  const errors = validate({ evidence, repoRoot });
+  assert(errors.some((error) => error.includes('provenance_identity must match provenance binding')));
 });

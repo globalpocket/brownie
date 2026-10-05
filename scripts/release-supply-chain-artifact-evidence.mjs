@@ -79,6 +79,31 @@ function validateProvenanceBinding(evidence) {
   return { valid: true };
 }
 
+function validateArtifactBuildSourceMetadata(artifact) {
+  if (!artifact || typeof artifact !== 'object') {
+    return { valid: false, reason: 'artifact_missing' };
+  }
+  if (!hashPattern.test(artifact.source_commit)) {
+    return { valid: false, reason: 'artifact_source_commit_missing_or_invalid' };
+  }
+  if (artifact.source_clean_tree !== 'clean') {
+    return { valid: false, reason: 'artifact_source_clean_tree_not_clean' };
+  }
+  if (!hashPattern.test(artifact.source_identity)) {
+    return { valid: false, reason: 'artifact_source_identity_missing_or_invalid' };
+  }
+  const expectedSourceIdentity = sha256Text(`${artifact.source_commit}:${artifact.source_clean_tree}`);
+  if (artifact.source_identity !== expectedSourceIdentity) {
+    return {
+      valid: false,
+      reason: 'artifact_source_identity_mismatch',
+      expectedSourceIdentity,
+      actualSourceIdentity: artifact.source_identity
+    };
+  }
+  return { valid: true };
+}
+
 function validateSourceCheckoutClean(evidence) {
   const checkoutState = evidence?.sourceCheckoutState;
   if (!checkoutState || typeof checkoutState !== 'string') {
@@ -252,17 +277,25 @@ function buildArtifactProvenanceBinding({ artifact, sourceCommit, sourceCheckout
     artifactSha256: artifact.sha256,
     platform,
     architecture,
-    sourceCheckoutState
+    sourceCheckoutState,
+    buildSourceCommit: artifact.source_commit ?? null,
+    buildSourceCleanTree: artifact.source_clean_tree ?? null,
+    buildSourceIdentity: artifact.source_identity ?? null
   };
   return {
     ...binding,
-    validation: validateProvenanceBinding(binding)
+    validation: validateProvenanceBinding(binding),
+    buildSourceMetadataValidation: validateArtifactBuildSourceMetadata(artifact)
   };
 }
 
 function bindArtifactSourceIdentity(artifact, provenanceBinding) {
-  if (provenanceBinding.validation.valid && provenanceBinding.sourceCheckoutState === 'clean') {
-    const sourceIdentity = sha256Text(
+  if (
+    provenanceBinding.validation.valid &&
+    provenanceBinding.buildSourceMetadataValidation.valid &&
+    provenanceBinding.sourceCheckoutState === 'clean'
+  ) {
+    const provenanceIdentity = sha256Text(
       [
         provenanceBinding.implementationCommit,
         provenanceBinding.testedCommit,
@@ -275,15 +308,15 @@ function bindArtifactSourceIdentity(artifact, provenanceBinding) {
     );
     return {
       ...artifact,
-      source_commit: sourceIdentity,
+      source_commit: provenanceBinding.buildSourceCommit,
       source_clean_tree: 'clean',
-      source_identity: sourceIdentity,
+      source_identity: provenanceBinding.buildSourceIdentity,
+      provenance_identity: provenanceIdentity,
       provenance_binding: provenanceBinding
     };
   }
   return {
     ...artifact,
-    source_clean_tree: provenanceBinding.sourceCheckoutState,
     provenance_binding: provenanceBinding
   };
 }
@@ -457,6 +490,9 @@ function findReleaseArtifacts(repoRoot) {
           platform: artifactEvidence.platform ?? null,
           arch: artifactEvidence.arch ?? null,
           target: artifactEvidence.target ?? artifact.target ?? entry.name,
+          source_commit: artifact.source_commit ?? null,
+          source_clean_tree: artifact.source_clean_tree ?? null,
+          source_identity: artifact.source_identity ?? null,
           artifact_evidence_path: evidencePath,
           smoke_evidence_path: smokeEvidence ? smokePath : null,
           smoke_evidence: smokeEvidence

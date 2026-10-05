@@ -15,6 +15,13 @@ function runGit(repoRoot, args) {
   });
 }
 
+function fetchBaseRefIfNeeded(repoRoot, baseName) {
+  if (!baseName) {
+    return;
+  }
+  runGit(repoRoot, ['fetch', '--no-tags', '--depth=50', 'origin', `${baseName}:refs/remotes/origin/${baseName}`]);
+}
+
 function gitStdout(repoRoot, args) {
   const result = runGit(repoRoot, args);
   if (result.status !== 0) {
@@ -27,6 +34,13 @@ function resolveDiffBase(repoRoot) {
   const explicitBase = process.env.BROWNIE_JS_REACHABILITY_BASE;
   if (explicitBase) {
     return explicitBase;
+  }
+  if (process.env.GITHUB_BASE_REF) {
+    fetchBaseRefIfNeeded(repoRoot, process.env.GITHUB_BASE_REF);
+    const githubMergeBase = gitStdout(repoRoot, ['merge-base', 'HEAD', `origin/${process.env.GITHUB_BASE_REF}`]);
+    if (githubMergeBase) {
+      return githubMergeBase;
+    }
   }
   const mainMergeBase = gitStdout(repoRoot, ['merge-base', 'HEAD', 'origin/main']);
   if (mainMergeBase) {
@@ -87,32 +101,66 @@ function addedFunctionDeclarations(repoRoot, baseRef, relativePath) {
   return declarations;
 }
 
-function countIdentifierReferences(repoRoot, sourceFiles, identifier) {
-  const pattern = new RegExp(`\\b${identifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g');
-  let count = 0;
+function functionHasReachableReference(repoRoot, sourceFiles, declaration) {
+  const sameFilePath = path.join(repoRoot, declaration.relativePath);
+  const sameFile = fs.existsSync(sameFilePath) ? fs.readFileSync(sameFilePath, 'utf8') : '';
+  const escaped = declaration.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const declarationPattern = new RegExp(`(?:export\\s+)?(?:async\\s+)?function\\s+${escaped}\\s*\\(`, 'g');
+  const sameFileWithoutDeclaration = sameFile.replace(declarationPattern, '');
+  const sameFileCallPattern = new RegExp(`\\b${escaped}\\s*\\(`);
+  if (sameFileCallPattern.test(sameFileWithoutDeclaration)) {
+    return true;
+  }
+  const namedImportPattern = new RegExp(`import\\s*\\{[^}]*\\b${escaped}\\b[^}]*\\}\\s*from\\s*['"][^'"]+['"]`, 'g');
   for (const relativePath of sourceFiles) {
-    const fullPath = path.join(repoRoot, relativePath);
-    let text;
-    try {
-      text = fs.readFileSync(fullPath, 'utf8');
-    } catch {
+    if (relativePath === declaration.relativePath) {
       continue;
     }
-    count += [...text.matchAll(pattern)].length;
+    const text = fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
+    if (namedImportPattern.test(text)) {
+      return true;
+    }
   }
-  return count;
+  return false;
 }
 
 export function validateAddedFunctionReachability(options = {}) {
   const repoRoot = options.repoRoot ?? defaultRepoRoot;
-  const baseRef = options.baseRef ?? resolveDiffBase(repoRoot);
+  const baseRef = Object.hasOwn(options, 'baseRef') ? options.baseRef : resolveDiffBase(repoRoot);
   const errors = [];
   if (!baseRef) {
+    if (process.env.CI || process.env.GITHUB_ACTIONS) {
+      return {
+        valid: false,
+        skipped: false,
+        reason: 'diff_base_unavailable',
+        errors: [
+          {
+            code: 'diff_base_unavailable',
+            message: 'JS added function reachability guard could not resolve a diff base in CI.'
+          }
+        ]
+      };
+    }
     return {
       valid: true,
       skipped: true,
       reason: 'diff_base_unavailable',
       errors
+    };
+  }
+  const head = gitStdout(repoRoot, ['rev-parse', 'HEAD']);
+  if (head && baseRef === head && (process.env.GITHUB_BASE_REF || process.env.GITHUB_EVENT_NAME === 'pull_request')) {
+    return {
+      valid: false,
+      skipped: false,
+      reason: 'diff_base_matches_head',
+      errors: [
+        {
+          code: 'diff_base_matches_head',
+          message: 'JS added function reachability guard resolved a pull-request diff base equal to HEAD.'
+        }
+      ]
     };
   }
 
@@ -123,8 +171,7 @@ export function validateAddedFunctionReachability(options = {}) {
   );
 
   for (const declaration of addedFunctions) {
-    const referenceCount = countIdentifierReferences(repoRoot, sourceFiles, declaration.name);
-    if (referenceCount <= 1) {
+    if (!functionHasReachableReference(repoRoot, sourceFiles, declaration)) {
       errors.push({
         code: 'added_function_unreachable',
         function_name: declaration.name,

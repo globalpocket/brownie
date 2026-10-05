@@ -61,3 +61,29 @@ test('accepts a newly added exported function covered by a test import', () => {
   const result = validateAddedFunctionReachability({ repoRoot, baseRef });
   assert.equal(result.valid, true);
 });
+
+test('does not count unrelated same-name functions as reachability', () => {
+  const { repoRoot, baseRef } = tempRepo();
+  fs.writeFileSync(path.join(repoRoot, 'scripts/other.mjs'), 'function validate(value) { return value; }\nvalidate(true);\n');
+  fs.appendFileSync(path.join(repoRoot, 'scripts/example.mjs'), '\nfunction validate(value) { return Boolean(value); }\n');
+  const result = validateAddedFunctionReachability({ repoRoot, baseRef });
+  assert.equal(result.valid, false);
+  assert(result.errors.some((error) => error.function_name === 'validate'));
+});
+
+test('fails closed in CI when diff base is unavailable', () => {
+  const { repoRoot } = tempRepo();
+  const previousCi = process.env.CI;
+  try {
+    process.env.CI = 'true';
+    const result = validateAddedFunctionReachability({ repoRoot, baseRef: null });
+    assert.equal(result.valid, false);
+    assert(result.errors.some((error) => error.code === 'diff_base_unavailable'));
+  } finally {
+    if (previousCi === undefined) {
+      delete process.env.CI;
+    } else {
+      process.env.CI = previousCi;
+    }
+  }
+});
