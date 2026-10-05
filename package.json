@@ -6,7 +6,7 @@
   "description": "Brownie Code-OSS extension and Rust runtime workspace.",
   "scripts": {
     "build": "pnpm --filter brownie-vsix build",
-    "check": "pnpm --filter brownie-vsix check && pnpm guard:release-contract && pnpm guard:trace-binding",
+    "check": "pnpm --filter brownie-vsix check && pnpm guard:release-contract && pnpm guard:trace-binding && pnpm guard:js-added-function-reachability",
     "guard:control-plane-authority": "node scripts/guard-control-plane-authority.mjs",
     "guard:control-plane-authority:test": "node --test scripts/guard-control-plane-authority.test.mjs",
     "guard:diagnostics": "node scripts/guard-diagnostics-api.mjs",
@@ -64,6 +64,8 @@
     "guard:json-parse:test": "node --test scripts/guard-json-parse.test.mjs",
     "guard:js-duplicate-exports": "node scripts/guard-js-duplicate-exports.mjs",
     "guard:js-duplicate-exports:test": "node --test scripts/guard-js-duplicate-exports.test.mjs",
+    "guard:js-added-function-reachability": "node scripts/guard-js-added-function-reachability.mjs",
+    "guard:js-added-function-reachability:test": "node --test scripts/guard-js-added-function-reachability.test.mjs",
     "guard:todo-decomposition": "node scripts/guard-todo-decomposition.mjs",
     "guard:todo-decomposition:test": "node --test scripts/guard-todo-decomposition.test.mjs",
     "repair:todo-decomposition": "node scripts/repair-todo-decomposition.mjs",
