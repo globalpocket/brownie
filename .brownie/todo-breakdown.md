@@ -1456,3 +1456,20 @@ Quality rubric:
 History:
 
 - 2026-10-04T13:40:00Z: Added from external review of main 3c5e622; existing owner-only E-20i blocker was not sufficient because Brownie-owned executable Release evidence work remains.
+
+## TODO-repair-E-22b-replan-stalled-leaf-4030af97e57f
+
+Parent TODO: E-22b-release-artifact-provenance-binding
+
+Dependency graph:
+- E-22b-replan-stalled-leaf-4030af97e57f: <none>
+
+Verification ledger:
+- E-22b-replan-stalled-leaf-4030af97e57f: run `pnpm --workspace-root guard:todo-decomposition` and `pnpm --workspace-root phase-loop:todo-queue-integrity`.
+
+Quality rubric:
+- E-22b-replan-stalled-leaf-4030af97e57f: replace the stalled leaf with implementable child TODOs while preserving parent intent, exact patch targets, existing verification commands, and fail-closed release evidence semantics.
+
+History:
+
+- 2026-10-05T06:42:56Z: Supervisor detected repeated invalid_patch_followed_by_no_progress on E-22b-release-artifact-provenance-binding and promoted Brownie-owned TODO replan instead of retrying the same single-target leaf.
