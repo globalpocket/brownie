@@ -153,6 +153,36 @@ test('skips previously blocked generated leaf ids across queue fingerprints', ()
   assert(selected.startsWith('- [ ] E-15f-next:'), selected);
 });
 
+test('skips stalled replan blocked IDs across queue fingerprints regardless of TODO shape', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-todo-evaluator-'));
+  const blocked = path.join(dir, 'blocked.jsonl');
+  const stalled = `- [ ] E-22b-release-artifact-provenance-binding: Patch only \`scripts/release-supply-chain-artifact-evidence.mjs\` and \`scripts/guard-supply-chain-artifact-evidence.test.mjs\`:
+  Route: implementation.
+  Source TODO: 2026-10-04 review.
+  Depends on: <none>.
+  Completion condition: Supply-chain artifact evidence is bound to CI commit, workflow run, artifact SHA, platform, architecture, and clean source identity.
+  Forbidden changes: do not invent artifact hashes and do not declare Product Ready.
+  Verification: run \`pnpm --workspace-root guard:supply-chain-artifact-evidence:test\`.`;
+  const replan = `- [ ] E-22b-replan-stalled-leaf-4030af97e57f: Patch only \`.brownie/todo.md\` and \`.brownie/todo-breakdown.md\` to replan stalled Brownie TODO leaf into implementable child TODOs:
+  Route: todo-decomposition.
+  Source TODO: E-22b-release-artifact-provenance-binding.
+  Depends on: <none>.
+  Completion condition: replace the stalled TODO with implementable child leaves.
+  Forbidden changes: do not implement release evidence here.
+  Verification: run \`pnpm --workspace-root guard:todo-decomposition\`.`;
+  const queue = `${stalled}\n${replan}`;
+  fs.writeFileSync(blocked, `${JSON.stringify({
+    block_reason: 'stalled_leaf_contract_replan',
+    queue_fingerprint: createHash('sha256').update(stalled).digest('hex'),
+    selected_todo_sha256: createHash('sha256').update(stalled).digest('hex'),
+    selected_todo_first_line: stalled.split('\n')[0]
+  })}\n`);
+
+  const selected = selectFirstSchedulableTodo(queue, { blockedPath: blocked });
+
+  assert(selected.startsWith('- [ ] E-22b-replan-stalled-leaf-4030af97e57f:'), selected);
+});
+
 test('skips broad parent after a generated leaf for the same product prefix was blocked', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-todo-evaluator-'));
   const blocked = path.join(dir, 'blocked.jsonl');

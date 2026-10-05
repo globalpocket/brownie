@@ -573,8 +573,11 @@ function appendStalledTodoBlockedRecord(repoRoot, diagnostic, ledgerSummary) {
   const selectedHash = crypto.createHash('sha256').update(selectedBlock).digest('hex');
   const existing = fs.existsSync(blockedPath) ? readJsonl(blockedPath) : [];
   const alreadyRecorded = existing.some((record) => (
-    record?.selected_todo_first_line === firstLine ||
-    record?.selected_todo_sha256 === selectedHash
+    record?.block_reason === 'stalled_leaf_contract_replan' &&
+    (
+      record?.selected_todo_first_line === firstLine ||
+      record?.selected_todo_sha256 === selectedHash
+    )
   ));
   if (alreadyRecorded) {
     return { attempted: true, ok: true, changed: false, reason: 'stalled_todo_already_blocked' };

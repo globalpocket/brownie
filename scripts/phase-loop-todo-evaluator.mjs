@@ -231,6 +231,11 @@ function readBlockedClaims(blockedPath, queueFingerprint, controllerFingerprint 
       if (typeof record.selected_todo_first_line === 'string' && record.selected_todo_first_line) {
         const blockedId = todoId(record.selected_todo_first_line);
         const explicitOwnerBlocker = record.selected_todo_first_line.includes('Blocker:');
+        const stalledLeafContractReplan = record.block_reason === 'stalled_leaf_contract_replan';
+        if (blockedId && stalledLeafContractReplan) {
+          stableIds.add(blockedId);
+          continue;
+        }
         if (
           blockedId &&
           (
@@ -298,7 +303,7 @@ export function selectFirstSchedulableTodo(text, options = {}) {
     }
     const firstLine = block.split('\n')[0]?.trim() ?? '';
     const blockHash = sha256Text(block);
-    if (blocked.stableIds.has(id) && (isDerivedLeaf(block) || isExplicitBlockerTodo(block) || id.includes('-leaf'))) {
+    if (blocked.stableIds.has(id)) {
       dependencyBlockedIds.add(id);
       continue;
     }

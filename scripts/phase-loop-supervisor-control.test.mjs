@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -192,11 +193,78 @@ test('ensures stalled TODO decomposition request even when blocked record alread
 
   assert.equal(result.repair.todo_contract_replan.ok, true, JSON.stringify(result, null, 2));
   assert.equal(result.repair.stalled_todo_blocked.ok, true, JSON.stringify(result, null, 2));
-  assert.equal(result.repair.stalled_todo_blocked.changed, false, JSON.stringify(result, null, 2));
+  assert.equal(result.repair.stalled_todo_blocked.changed, true, JSON.stringify(result, null, 2));
   assert.equal(result.repair.stalled_todo_decomposition.ok, true, JSON.stringify(result, null, 2));
   assert.equal(result.repair.stalled_todo_decomposition.changed, true, JSON.stringify(result, null, 2));
   assert.match(todo, /E-21c-replan-stalled-leaf-/u);
   assert.match(todo, /Route: todo-decomposition/u);
+});
+
+test('adds rich stalled replan block record when legacy block lacks reason', () => {
+  const repo = makeRepo();
+  writeTodo(repo);
+  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
+  writeJson(repo, '.brownie/private/phase-loop/status.json', {
+    status: 'no_progress',
+    run_id: 'run-legacy-block-record',
+    consecutive_failures: 1,
+    detail: 'Brownie run exited successfully but repeated the same non-progress fingerprint'
+  });
+  writeJson(repo, '.brownie/private/phase-loop/progress-state.json', {
+    classification: 'no_progress',
+    same_progress_count: 1,
+    run_stamp: '20261005T040000Z',
+    progress_projection: {
+      cli_status: 'no_eligible_task',
+      closure: 'no_eligible_task',
+      claim_id: 'claim-legacy-block-record',
+      selected_todo: runtimeEvidenceTodo
+    }
+  });
+  writeJson(repo, '.brownie/private/phase-loop/todo-claims/current.json', {
+    claim_id: 'claim-legacy-block-record',
+    status: 'claimed',
+    selected_todo: runtimeEvidenceTodo
+  });
+  const legacyBlocked = {
+    schema_version: 1,
+    blocked_at: '2026-10-05T03:00:00Z',
+    selected_todo_first_line: runtimeEvidenceTodo.split('\n')[0],
+    selected_todo_sha256: crypto.createHash('sha256').update(runtimeEvidenceTodo).digest('hex')
+  };
+  fs.writeFileSync(
+    path.join(repo, '.brownie/private/phase-loop/todo-claims/blocked.jsonl'),
+    `${JSON.stringify(legacyBlocked)}\n`
+  );
+  fs.writeFileSync(
+    path.join(repo, '.brownie/private/phase-loop/todo-claims/failure-ledger.jsonl'),
+    `${JSON.stringify({
+      schema_version: 1,
+      record_type: 'phase_loop_failure_event',
+      event_id: 'event-invalid-patch-before-legacy-block',
+      observed_at: '2026-10-05T03:30:00Z',
+      todo_id: 'E-21c-runtime-operational-evidence-impl-2-target-02',
+      selected_todo_first_line: runtimeEvidenceTodo.split('\n')[0],
+      kind: 'invalid_patch',
+      status: 'no_progress',
+      progress_run_stamp: '20261005T033000Z',
+      same_progress_count: 2
+    })}\n`
+  );
+
+  const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
+  const blockedRecords = fs.readFileSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/blocked.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+
+  assert.equal(result.repair.stalled_todo_blocked.changed, true, JSON.stringify(result, null, 2));
+  assert.ok(
+    blockedRecords.some((record) => record.block_reason === 'stalled_leaf_contract_replan'),
+    JSON.stringify(blockedRecords, null, 2)
+  );
+  assert.equal(result.repair.stalled_todo_decomposition.ok, true, JSON.stringify(result, null, 2));
+  assert.equal(result.repair.post_repair_validation.ok, true, JSON.stringify(result, null, 2));
 });
 
 test('does not treat stale same-id blocked record as current stalled TODO incarnation', () => {
