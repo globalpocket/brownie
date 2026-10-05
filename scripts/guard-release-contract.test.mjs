@@ -3,25 +3,7 @@ import crypto from 'node:crypto';
 import test from 'node:test';
 
 import { requiredReleaseGateCommands } from './release-gate.mjs';
-import { runReleaseContractGuard } from './guard-release-contract.mjs';
-
-const requiredConditionIds = [
-  'required_before_release_closed',
-  'product_completion_guard',
-  'mandatory_ci_success',
-  'os_artifacts_generated',
-  'artifact_smoke_tests',
-  'security_dependency_secret_scans',
-  'sbom_generated',
-  'checksums_generated',
-  'signature_or_integrity_proof',
-  'provenance_generated',
-  'tested_commit_matches_artifact_commit',
-  'audit_trace_matches_tested_commit',
-  'no_unresolved_release_blockers',
-  'owner_controlled_settings_complete',
-  'required_independent_reviews_complete'
-];
+import { requiredConditionIds, runReleaseContractGuard } from './guard-release-contract.mjs';
 
 function pendingTraceContract(overrides = {}) {
   return {

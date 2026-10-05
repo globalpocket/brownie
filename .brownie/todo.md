@@ -22,7 +22,7 @@
   Forbidden changes: do not count version-only loops as stateful soak, do not weaken Golden Journey evidence, and do not declare Runtime Product Ready.
   Verification: run `pnpm --workspace-root release:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`.
 
-- [ ] E-22e-release-contract-trace-binding-guard: Patch only `scripts/guard-release-contract.mjs` and `scripts/guard-release-contract.test.mjs`:
+- [x] E-22e-release-contract-trace-binding-guard: Patch only `scripts/guard-release-contract.mjs` and `scripts/guard-release-contract.test.mjs`:
   Route: implementation.
   Source TODO: 2026-10-04 review: Release Contract is not mechanically bound to latest commit, workflow run, artifact SHA, and executable evidence.
   Depends on: E-22d-runtime-stateful-soak-evidence.
@@ -111,7 +111,7 @@
   Forbidden changes: do not implement the release-evidence fix here, do not weaken guards/tests, do not invent evidence values, and do not declare Runtime Product Ready.
   Verification: run `pnpm --workspace-root guard:todo-decomposition` and `pnpm --workspace-root phase-loop:todo-queue-integrity`.
 
-- [ ] E-22e-guard-release-contract-impl-1: Patch only `scripts/guard-release-contract.mjs` to add implementation_commit, tested_commit, workflow_run_id, artifact_sha256, and clean source identity validation:
+- [x] E-22e-guard-release-contract-impl-1: Patch only `scripts/guard-release-contract.mjs` to add implementation_commit, tested_commit, workflow_run_id, artifact_sha256, and clean source identity validation:
   Route: implementation.
   Source TODO: E-22e-replan-stalled-leaf-16e2c69e67bb.
   Depends on: <none>.
@@ -119,7 +119,7 @@
   Forbidden changes: do not edit docs, do not mark Runtime Release Ready, do not delete required evidence fields, and do not bypass fail-closed checks.
   Verification: run `pnpm --workspace-root guard:release-contract:test` and `pnpm --workspace-root guard:release-contract`.
 
-- [ ] E-22e-guard-release-contract-impl-2: Patch only `scripts/guard-release-contract.test.mjs` to add test cases for null/stale/inconsistent evidence rejection:
+- [x] E-22e-guard-release-contract-impl-2: Patch only `scripts/guard-release-contract.test.mjs` to add test cases for null/stale/inconsistent evidence rejection:
   Route: implementation.
   Source TODO: E-22e-replan-stalled-leaf-16e2c69e67bb.
   Depends on: E-22e-guard-release-contract-impl-1.

@@ -1479,3 +1479,4 @@ Quality rubric:
 History:
 
 - 2026-10-05T15:46:58Z: Supervisor detected repeated invalid_patch_followed_by_no_progress on E-22e-release-contract-trace-binding-guard and promoted Brownie-owned TODO replan instead of retrying the same single-target leaf.
+- 2026-10-05T19:27:00Z: Completed the E-22e guard repair by adding fail-closed trace-binding condition coverage to `scripts/guard-release-contract.mjs`, sharing the guard condition list with `scripts/guard-release-contract.test.mjs`, and updating `docs/architecture/runtime-release-contract.json` so the live contract includes the required implementation/tested commit, workflow run, artifact SHA, and clean source identity release-blocking conditions.

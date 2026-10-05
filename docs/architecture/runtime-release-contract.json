@@ -209,6 +209,56 @@
         "GitHub review provenance for PR #458 is verified against the live GitHub pull request review API.",
         ".brownie/release-evidence/owner-governance-evidence.json records independent_reviews.status=satisfied and approved_review_count=6."
       ]
+    },
+    {
+      "id": "implementation_commit_bound",
+      "status": "missing_evidence",
+      "release_blocking": true,
+      "required_evidence": [
+        "Release workflow records the exact implementation commit used to build Runtime artifacts",
+        "implementation_commit is copied into commit_trace from executable CI evidence",
+        "implementation_commit is not a placeholder, blocker marker, or manually inferred value"
+      ]
+    },
+    {
+      "id": "tested_commit_bound",
+      "status": "missing_evidence",
+      "release_blocking": true,
+      "required_evidence": [
+        "Release workflow records the exact commit whose artifacts completed Runtime artifact E2E",
+        "tested_commit matches the source commit of the generated Runtime artifacts",
+        "tested_commit is not a placeholder, blocker marker, or manually inferred value"
+      ]
+    },
+    {
+      "id": "workflow_run_id_bound",
+      "status": "missing_evidence",
+      "release_blocking": true,
+      "required_evidence": [
+        "Release workflow records the GitHub Actions run identifier that generated and tested the artifacts",
+        "workflow_run_id is bound into the Release Contract from executable CI evidence",
+        "workflow_run_id is not a placeholder, blocker marker, or manually inferred value"
+      ]
+    },
+    {
+      "id": "artifact_sha256_bound",
+      "status": "missing_evidence",
+      "release_blocking": true,
+      "required_evidence": [
+        "Release workflow records SHA-256 digests for every generated Runtime artifact",
+        "artifact_sha256 in commit_trace is derived from generated artifact checksum evidence",
+        "artifact_sha256 is not a placeholder, blocker marker, or manually inferred value"
+      ]
+    },
+    {
+      "id": "clean_source_identity_verified",
+      "status": "missing_evidence",
+      "release_blocking": true,
+      "required_evidence": [
+        "Release workflow verifies the checkout is clean before generating Runtime artifacts",
+        "artifact source identity matches the tested commit and workflow run",
+        "clean source identity is recorded by executable evidence rather than manually asserted"
+      ]
     }
   ],
   "finite_phase_plan": [

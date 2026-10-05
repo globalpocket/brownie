@@ -13,7 +13,7 @@ const defaultAuditPath = 'docs/architecture/runtime-release-readiness-audit.json
 const defaultPackagePath = 'package.json';
 const defaultVsixPackagePath = 'extensions/brownie-vsix/package.json';
 
-const requiredConditionIds = [
+export const requiredConditionIds = [
   'required_before_release_closed',
   'product_completion_guard',
   'mandatory_ci_success',
@@ -28,7 +28,12 @@ const requiredConditionIds = [
   'audit_trace_matches_tested_commit',
   'no_unresolved_release_blockers',
   'owner_controlled_settings_complete',
-  'required_independent_reviews_complete'
+  'required_independent_reviews_complete',
+  'implementation_commit_bound',
+  'tested_commit_bound',
+  'workflow_run_id_bound',
+  'artifact_sha256_bound',
+  'clean_source_identity_verified'
 ];
 
 const requiredPhaseIds = [
