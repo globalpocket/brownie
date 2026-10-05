@@ -17,9 +17,16 @@ function runGit(repoRoot, args) {
 
 function fetchBaseRefIfNeeded(repoRoot, baseName) {
   if (!baseName) {
-    return;
+    return false;
   }
-  runGit(repoRoot, ['fetch', '--no-tags', '--depth=50', 'origin', `${baseName}:refs/remotes/origin/${baseName}`]);
+  const result = runGit(repoRoot, [
+    'fetch',
+    '--no-tags',
+    '--depth=100',
+    'origin',
+    `+refs/heads/${baseName}:refs/remotes/origin/${baseName}`
+  ]);
+  return result.status === 0;
 }
 
 function gitStdout(repoRoot, args) {
@@ -37,6 +44,11 @@ function resolveDiffBase(repoRoot) {
   }
   if (process.env.GITHUB_BASE_REF) {
     fetchBaseRefIfNeeded(repoRoot, process.env.GITHUB_BASE_REF);
+    const githubBaseRef = `origin/${process.env.GITHUB_BASE_REF}`;
+    const githubBaseSha = gitStdout(repoRoot, ['rev-parse', '--verify', githubBaseRef]);
+    if (githubBaseSha) {
+      return githubBaseRef;
+    }
     const githubMergeBase = gitStdout(repoRoot, ['merge-base', 'HEAD', `origin/${process.env.GITHUB_BASE_REF}`]);
     if (githubMergeBase) {
       return githubMergeBase;
@@ -129,7 +141,7 @@ export function validateAddedFunctionReachability(options = {}) {
   const baseRef = Object.hasOwn(options, 'baseRef') ? options.baseRef : resolveDiffBase(repoRoot);
   const errors = [];
   if (!baseRef) {
-    if (process.env.CI || process.env.GITHUB_ACTIONS) {
+    if (process.env.GITHUB_BASE_REF || process.env.GITHUB_EVENT_NAME === 'pull_request') {
       return {
         valid: false,
         skipped: false,

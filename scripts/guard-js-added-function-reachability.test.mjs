@@ -74,8 +74,10 @@ test('does not count unrelated same-name functions as reachability', () => {
 test('fails closed in CI when diff base is unavailable', () => {
   const { repoRoot } = tempRepo();
   const previousCi = process.env.CI;
+  const previousGithubEventName = process.env.GITHUB_EVENT_NAME;
   try {
     process.env.CI = 'true';
+    process.env.GITHUB_EVENT_NAME = 'pull_request';
     const result = validateAddedFunctionReachability({ repoRoot, baseRef: null });
     assert.equal(result.valid, false);
     assert(result.errors.some((error) => error.code === 'diff_base_unavailable'));
@@ -84,6 +86,42 @@ test('fails closed in CI when diff base is unavailable', () => {
       delete process.env.CI;
     } else {
       process.env.CI = previousCi;
+    }
+    if (previousGithubEventName === undefined) {
+      delete process.env.GITHUB_EVENT_NAME;
+    } else {
+      process.env.GITHUB_EVENT_NAME = previousGithubEventName;
+    }
+  }
+});
+
+test('skips outside pull request CI when diff base is unavailable', () => {
+  const { repoRoot } = tempRepo();
+  const previousCi = process.env.CI;
+  const previousGithubEventName = process.env.GITHUB_EVENT_NAME;
+  const previousGithubBaseRef = process.env.GITHUB_BASE_REF;
+  try {
+    process.env.CI = 'true';
+    delete process.env.GITHUB_EVENT_NAME;
+    delete process.env.GITHUB_BASE_REF;
+    const result = validateAddedFunctionReachability({ repoRoot, baseRef: null });
+    assert.equal(result.valid, true);
+    assert.equal(result.skipped, true);
+  } finally {
+    if (previousCi === undefined) {
+      delete process.env.CI;
+    } else {
+      process.env.CI = previousCi;
+    }
+    if (previousGithubEventName === undefined) {
+      delete process.env.GITHUB_EVENT_NAME;
+    } else {
+      process.env.GITHUB_EVENT_NAME = previousGithubEventName;
+    }
+    if (previousGithubBaseRef === undefined) {
+      delete process.env.GITHUB_BASE_REF;
+    } else {
+      process.env.GITHUB_BASE_REF = previousGithubBaseRef;
     }
   }
 });
