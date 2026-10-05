@@ -2,10 +2,10 @@
   "schema_version": 1,
   "contract_id": "runtime-release-engineering-contract-v1",
   "phase": "RRP-8.7",
-  "phase_title": "Owner Governance Evidence Gate (Branch Protection Verification Plan Documented)",
+  "phase_title": "Runtime Release Evidence Gate (E-22 fail-closed documentation sync)",
   "implementation_tracking": {
-    "last_modified": "2026-10-01",
-    "modification_reason": "E-21a-clean-release-workspace-contract bounded slice documentation update"
+    "last_modified": "2026-10-05",
+    "modification_reason": "E-22f-1-release-contract-json-sync update current evidence-gate description while preserving the guard-owned contract phase identifier"
   },
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
   "repository": "globalpocket/brownie",
@@ -18,7 +18,7 @@
     "scoring_basis": "Owner-governance independent reviews satisfied through verified PR #458 GitHub review provenance; runtime_release_ready remains false until executable supply-chain and runtime operational evidence bindings close."
   },
   "commit_trace": {
-    "audited_base_commit": "4376c0a7412a40f328fb3ba64bca487bba35a80e",
+    "audited_base_commit": "9a56cc6eae03326b15170467b9871d0f829affb1",
     "implementation_commit": null,
     "tested_commit": null,
     "release_tag": null,
