@@ -143,3 +143,11 @@
   Forbidden changes: do not claim Product Ready, do not hide remaining Release Ops blockers, and do not alter unrelated phase history.
   Verification: run `pnpm --workspace-root guard:runtime-release-readiness`.
 
+- [ ] E-22f-replan-stalled-leaf-83d8a9c3a915: Patch only `.brownie/todo.md` and `.brownie/todo-breakdown.md` to replan stalled Brownie TODO leaf into implementable child TODOs:
+  Route: todo-decomposition.
+  Source TODO: E-22f-1-release-contract-json-sync.
+  Depends on: <none>.
+  Completion condition: Patch `.brownie/todo.md` and `.brownie/todo-breakdown.md` so stalled TODO `E-22f-1-release-contract-json-sync` is replaced or superseded by implementable child leaves that preserve the parent intent, exact patch targets, existing verification commands, and ledger coverage.
+  Failure evidence: same_todo_apply_rejection_threshold; same_progress_count=1.
+  Forbidden changes: do not implement the release-evidence fix here, do not weaken guards/tests, do not invent evidence values, and do not declare Runtime Product Ready.
+  Verification: run `pnpm --workspace-root guard:todo-decomposition` and `pnpm --workspace-root phase-loop:todo-queue-integrity`.

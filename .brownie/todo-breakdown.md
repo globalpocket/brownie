@@ -1503,3 +1503,20 @@ Quality rubric:
 History:
 
 - 2026-10-05T21:18:08Z: Supervisor detected repeated invalid_patch_with_repeated_no_progress on E-22f-release-contract-audit-doc-sync and promoted Brownie-owned TODO replan instead of retrying the same single-target leaf.
+
+## TODO-repair-E-22f-replan-stalled-leaf-83d8a9c3a915
+
+Parent TODO: E-22f-1-release-contract-json-sync
+
+Dependency graph:
+- E-22f-replan-stalled-leaf-83d8a9c3a915: <none>
+
+Verification ledger:
+- E-22f-replan-stalled-leaf-83d8a9c3a915: run `pnpm --workspace-root guard:todo-decomposition` and `pnpm --workspace-root phase-loop:todo-queue-integrity`.
+
+Quality rubric:
+- E-22f-replan-stalled-leaf-83d8a9c3a915: replace the stalled leaf with implementable child TODOs while preserving parent intent, exact patch targets, existing verification commands, and fail-closed release evidence semantics.
+
+History:
+
+- 2026-10-05T23:26:52Z: Supervisor detected repeated same_todo_apply_rejection_threshold on E-22f-1-release-contract-json-sync and promoted Brownie-owned TODO replan instead of retrying the same single-target leaf.
