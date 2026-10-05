@@ -99,11 +99,12 @@ function sha256Text(text) {
 function artifactWithProvenance(repoRoot, artifactPath, overrides = {}) {
   const sha256 = sha256File(path.join(repoRoot, artifactPath));
   const sourceCommit = `sha256:${'a'.repeat(40)}`;
+  const sourceCommitSha = sourceCommit.slice('sha256:'.length);
   const sourceCleanTree = 'clean';
   const sourceIdentity = sha256Text(`${sourceCommit}:${sourceCleanTree}`);
   const binding = {
-    implementationCommit: '1'.repeat(40),
-    testedCommit: '2'.repeat(40),
+    implementationCommit: sourceCommitSha,
+    testedCommit: sourceCommitSha,
     workflowRunId: '123456',
     artifactSha256: sha256,
     platform: 'darwin',
@@ -671,4 +672,33 @@ test('rejects satisfied artifacts with tampered provenance binding', () => {
   evidence.sections.artifacts = section('satisfied', { artifacts: [artifact] });
   const errors = validate({ evidence, repoRoot });
   assert(errors.some((error) => error.includes('provenance_identity must match provenance binding')));
+});
+
+test('rejects satisfied artifacts whose commit bindings are not anchored to artifact source commit', () => {
+  const repoRoot = tempRepo();
+  const artifactPath = 'target/release/brownie';
+  fs.mkdirSync(path.join(repoRoot, 'target/release'), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, artifactPath), 'artifact');
+  const artifact = artifactWithProvenance(repoRoot, artifactPath);
+  artifact.provenance_binding.implementationCommit = '1'.repeat(40);
+  artifact.provenance_binding.testedCommit = '2'.repeat(40);
+  artifact.provenance_identity = sha256Text(
+    [
+      artifact.provenance_binding.implementationCommit,
+      artifact.provenance_binding.testedCommit,
+      artifact.provenance_binding.workflowRunId,
+      artifactPath,
+      artifact.provenance_binding.artifactSha256,
+      artifact.provenance_binding.platform,
+      artifact.provenance_binding.architecture
+    ].join('\n')
+  );
+  const evidence = validEvidence(repoRoot);
+  evidence.fail_closed_reasons = evidence.fail_closed_reasons.filter(
+    (reason) => !reason.startsWith('artifacts:')
+  );
+  evidence.sections.artifacts = section('satisfied', { artifacts: [artifact] });
+  const errors = validate({ evidence, repoRoot });
+  assert(errors.some((error) => error.includes('implementationCommit must match artifact source_commit')));
+  assert(errors.some((error) => error.includes('testedCommit must match artifact source_commit')));
 });

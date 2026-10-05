@@ -70,6 +70,16 @@ function validateProvenanceBinding(evidence) {
   if (typeof evidence.artifactSha256 !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(evidence.artifactSha256)) {
     return { valid: false, reason: 'artifact_sha256_invalid_format' };
   }
+  if (typeof evidence.buildSourceCommit !== 'string' || !/^sha256:[a-f0-9]{40}$/.test(evidence.buildSourceCommit)) {
+    return { valid: false, reason: 'build_source_commit_invalid_format' };
+  }
+  const expectedCommit = evidence.buildSourceCommit.slice('sha256:'.length);
+  if (evidence.implementationCommit !== expectedCommit) {
+    return { valid: false, reason: 'implementation_commit_source_mismatch' };
+  }
+  if (evidence.testedCommit !== expectedCommit) {
+    return { valid: false, reason: 'tested_commit_source_mismatch' };
+  }
   if (typeof evidence.platform !== 'string' || evidence.platform.length === 0) {
     return { valid: false, reason: 'platform_invalid_format' };
   }

@@ -56,6 +56,19 @@ function validateArtifactProvenanceBinding(artifact, errors, pathLabel) {
   requireValue(binding.buildSourceCommit === artifact.source_commit, errors, `${pathLabel}.provenance_binding.buildSourceCommit must match artifact source_commit.`);
   requireValue(binding.buildSourceCleanTree === artifact.source_clean_tree, errors, `${pathLabel}.provenance_binding.buildSourceCleanTree must match artifact source_clean_tree.`);
   requireValue(binding.buildSourceIdentity === artifact.source_identity, errors, `${pathLabel}.provenance_binding.buildSourceIdentity must match artifact source_identity.`);
+  const artifactSourceSha = sourceCommitHashPattern.test(artifact.source_commit)
+    ? artifact.source_commit.slice('sha256:'.length)
+    : null;
+  requireValue(
+    artifactSourceSha !== null && binding.implementationCommit === artifactSourceSha,
+    errors,
+    `${pathLabel}.provenance_binding.implementationCommit must match artifact source_commit.`
+  );
+  requireValue(
+    artifactSourceSha !== null && binding.testedCommit === artifactSourceSha,
+    errors,
+    `${pathLabel}.provenance_binding.testedCommit must match artifact source_commit.`
+  );
 
   const validation = binding.validation;
   requireValue(validation?.valid === true, errors, `${pathLabel}.provenance_binding.validation.valid must be true.`);
