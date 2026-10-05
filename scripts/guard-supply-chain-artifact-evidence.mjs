@@ -22,6 +22,7 @@ const requiredSections = [
 ];
 
 const hashPattern = /^sha256:[a-f0-9]{64}$/;
+const sourceCommitHashPattern = /^sha256:[a-f0-9]{40}$/;
 const gitCommitPattern = /^[a-f0-9]{40}$/;
 const requiredArtifactSmokeE2eStepIds = [
   'base_mode_pack_load',
@@ -242,7 +243,7 @@ function validateEvidence(evidence, options = {}) {
       validateReferencedFile(repoRoot, artifact, errors, `sections.artifacts.artifacts[${index}]`);
       validateOptionalPath(repoRoot, artifact.artifact_evidence_path, errors, `sections.artifacts.artifacts[${index}].artifact_evidence_path`);
       validateOptionalPath(repoRoot, artifact.smoke_evidence_path, errors, `sections.artifacts.artifacts[${index}].smoke_evidence_path`);
-      requireValue(hashPattern.test(artifact.source_commit), errors, `sections.artifacts.artifacts[${index}].source_commit must be sha256:<64 lowercase hex>.`);
+      requireValue(sourceCommitHashPattern.test(artifact.source_commit), errors, `sections.artifacts.artifacts[${index}].source_commit must be sha256:<40 lowercase git commit hex>.`);
       requireValue(artifact.source_clean_tree === 'clean', errors, `sections.artifacts.artifacts[${index}].source_clean_tree must be clean.`);
       requireValue(hashPattern.test(artifact.source_identity), errors, `sections.artifacts.artifacts[${index}].source_identity must be sha256:<64 lowercase hex>.`);
       validateArtifactProvenanceBinding(artifact, errors, `sections.artifacts.artifacts[${index}]`);

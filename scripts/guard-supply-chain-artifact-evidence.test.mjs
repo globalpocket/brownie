@@ -98,7 +98,7 @@ function sha256Text(text) {
 
 function artifactWithProvenance(repoRoot, artifactPath, overrides = {}) {
   const sha256 = sha256File(path.join(repoRoot, artifactPath));
-  const sourceCommit = `sha256:${'a'.repeat(64)}`;
+  const sourceCommit = `sha256:${'a'.repeat(40)}`;
   const sourceCleanTree = 'clean';
   const sourceIdentity = sha256Text(`${sourceCommit}:${sourceCleanTree}`);
   const binding = {

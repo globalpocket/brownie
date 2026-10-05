@@ -79,12 +79,21 @@ function validateProvenanceBinding(evidence) {
   return { valid: true };
 }
 
-function validateArtifactBuildSourceMetadata(artifact) {
+function validateArtifactBuildSourceMetadata(artifact, sourceCommit) {
   if (!artifact || typeof artifact !== 'object') {
     return { valid: false, reason: 'artifact_missing' };
   }
-  if (!hashPattern.test(artifact.source_commit)) {
+  const expectedBuildSourceCommit = sourceCommit ? `sha256:${sourceCommit}` : null;
+  if (typeof artifact.source_commit !== 'string' || !/^sha256:[a-f0-9]{40}$/.test(artifact.source_commit)) {
     return { valid: false, reason: 'artifact_source_commit_missing_or_invalid' };
+  }
+  if (expectedBuildSourceCommit && artifact.source_commit !== expectedBuildSourceCommit) {
+    return {
+      valid: false,
+      reason: 'artifact_source_commit_mismatch',
+      expectedBuildSourceCommit,
+      actualBuildSourceCommit: artifact.source_commit
+    };
   }
   if (artifact.source_clean_tree !== 'clean') {
     return { valid: false, reason: 'artifact_source_clean_tree_not_clean' };
@@ -285,7 +294,7 @@ function buildArtifactProvenanceBinding({ artifact, sourceCommit, sourceCheckout
   return {
     ...binding,
     validation: validateProvenanceBinding(binding),
-    buildSourceMetadataValidation: validateArtifactBuildSourceMetadata(artifact)
+    buildSourceMetadataValidation: validateArtifactBuildSourceMetadata(artifact, sourceCommit)
   };
 }
 
