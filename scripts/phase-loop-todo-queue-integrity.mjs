@@ -225,6 +225,55 @@ function todoReplanRecords(repoRoot) {
   return records;
 }
 
+function trackedBreakdownReplanRecords(repoRoot) {
+  const breakdownPath = path.join(repoRoot, '.brownie/todo-breakdown.md');
+  const text = maybeReadText(breakdownPath);
+  if (!text) {
+    return [];
+  }
+  const records = [];
+  const headingPattern = /^## TODO-repair-([^\n]+)\n/gmu;
+  const headings = [];
+  let heading;
+  while ((heading = headingPattern.exec(text)) !== null) {
+    headings.push({
+      parent_todo_id: heading[1].trim(),
+      start: heading.index,
+      content_start: headingPattern.lastIndex
+    });
+  }
+  for (let index = 0; index < headings.length; index += 1) {
+    const current = headings[index];
+    const next = headings[index + 1];
+    const section = text.slice(current.content_start, next ? next.start : text.length);
+    const childIds = [];
+    for (const line of section.split('\n')) {
+      const match = line.match(/^-\s+([A-Za-z0-9][A-Za-z0-9_.-]*):\s*/u);
+      if (!match) {
+        continue;
+      }
+      const childId = match[1].trim();
+      if (childId && childId !== current.parent_todo_id && !childIds.includes(childId)) {
+        childIds.push(childId);
+      }
+    }
+    if (childIds.length === 0) {
+      continue;
+    }
+    records.push({
+      schema_version: 1,
+      record_type: 'todo_replan',
+      operation: 'split_parent_into_children',
+      parent_status: 'superseded_by_children',
+      parent_todo_id: current.parent_todo_id,
+      generated_child_ids: childIds,
+      generated_leaf_ids: childIds,
+      replan_record_reason: 'tracked_todo_breakdown_repair_section'
+    });
+  }
+  return records;
+}
+
 function replanRecordsByParent(records) {
   const map = new Map();
   for (const record of records ?? []) {
@@ -398,7 +447,10 @@ export function loadCliInput(args) {
     todoBefore,
     todoAfter,
     completedTodoIds: [...completedTodoIds(repoRoot)],
-    todoReplanRecords: todoReplanRecords(repoRoot)
+    todoReplanRecords: [
+      ...todoReplanRecords(repoRoot),
+      ...trackedBreakdownReplanRecords(repoRoot)
+    ]
   };
 }
 

@@ -143,7 +143,7 @@
   Forbidden changes: do not claim Product Ready, do not hide remaining Release Ops blockers, and do not alter unrelated phase history.
   Verification: run `pnpm --workspace-root guard:runtime-release-readiness`.
 
-- [ ] E-22f-replan-stalled-leaf-83d8a9c3a915: Patch only `.brownie/todo.md` and `.brownie/todo-breakdown.md` to replan stalled Brownie TODO leaf into implementable child TODOs:
+- [x] E-22f-replan-stalled-leaf-83d8a9c3a915: Patch only `.brownie/todo.md` and `.brownie/todo-breakdown.md` to replan stalled Brownie TODO leaf into implementable child TODOs:
   Route: todo-decomposition.
   Source TODO: E-22f-1-release-contract-json-sync.
   Depends on: <none>.
@@ -151,3 +151,19 @@
   Failure evidence: same_todo_apply_rejection_threshold; same_progress_count=1.
   Forbidden changes: do not implement the release-evidence fix here, do not weaken guards/tests, do not invent evidence values, and do not declare Runtime Product Ready.
   Verification: run `pnpm --workspace-root guard:todo-decomposition` and `pnpm --workspace-root phase-loop:todo-queue-integrity`.
+
+- [ ] E-22f-1-release-contract-json-sync-doc: Patch only `docs/architecture/runtime-release-contract.json` to update Release Contract evidence gates:
+  Route: documentation.
+  Source TODO: E-22f-replan-stalled-leaf-83d8a9c3a915.
+  Depends on: E-22e-release-contract-trace-binding-guard.
+  Completion condition: Release Contract JSON describes current executable evidence gates (supply-chain artifact binding, runtime operational evidence, stateful soak evidence) without stale E-17/RRP-8.7/4376c0a references.
+  Forbidden changes: do not claim Product Ready, do not hide remaining blockers, do not alter unrelated phase history.
+  Verification: run `pnpm --workspace-root guard:release-contract` and inspect `docs/architecture/runtime-release-contract.json` for stale references.
+
+- [ ] E-22f-2-release-readiness-audit-doc: Patch only `docs/architecture/runtime-release-readiness-audit.json` to sync audit with current Release Contract:
+  Route: documentation.
+  Source TODO: E-22f-replan-stalled-leaf-83d8a9c3a915.
+  Depends on: E-22f-1-release-contract-json-sync-doc.
+  Completion condition: Readiness Audit JSON matches Release Contract evidence gates and reflects E-22 Release status without stale authority claims.
+  Forbidden changes: do not claim Product Ready, do not hide remaining blockers, do not alter unrelated phase history.
+  Verification: run `pnpm --workspace-root guard:runtime-release-readiness`.

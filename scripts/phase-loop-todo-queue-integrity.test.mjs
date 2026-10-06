@@ -411,3 +411,48 @@ test('CLI accepts parent TODO superseded by children when durable replan record 
   assert.equal(result.valid, true, output);
   assert.deepEqual(result.replanned_todo_ids, ['E-20a-golden-journey-workspace-mutation']);
 });
+
+test('CLI accepts parent TODO superseded by children from tracked breakdown repair ledger', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-todo-breakdown-replan-integrity-'));
+  fs.mkdirSync(path.join(tmp, '.brownie'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, '.brownie/todo.md'), queue(e20a, e20b));
+  fs.writeFileSync(path.join(tmp, '.brownie/todo-breakdown.md'), '# Brownie TODO breakdown\n');
+  execFileSync('git', ['init', '-b', 'main'], { cwd: tmp, stdio: 'ignore' });
+  execFileSync('git', ['add', '.brownie/todo.md', '.brownie/todo-breakdown.md'], { cwd: tmp, stdio: 'ignore' });
+  execFileSync('git', ['-c', 'user.name=Brownie', '-c', 'user.email=brownie@example.invalid', 'commit', '-m', 'todo baseline'], { cwd: tmp, stdio: 'ignore' });
+  const childA = `- [ ] E-20a-golden-journey-workspace-mutation-target-01: Patch only \`scripts/release-runtime-operational-evidence.mjs\`:
+  Route: implementation.
+  Source TODO: E-20a-golden-journey-workspace-mutation.
+  Depends on: <none>.
+  Completion condition: first split child updates runtime operational evidence collector.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root check\`.`;
+  const childB = `- [ ] E-20a-golden-journey-workspace-mutation-target-02: Patch only \`scripts/guard-runtime-operational-evidence.test.mjs\`:
+  Route: implementation.
+  Source TODO: E-20a-golden-journey-workspace-mutation.
+  Depends on: E-20a-golden-journey-workspace-mutation-target-01.
+  Completion condition: second split child updates runtime operational evidence tests.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root check\`.`;
+  fs.writeFileSync(path.join(tmp, '.brownie/todo.md'), queue(childA, childB, e20b));
+  fs.writeFileSync(path.join(tmp, '.brownie/todo-breakdown.md'), `# Brownie TODO breakdown
+
+## TODO-repair-E-20a-golden-journey-workspace-mutation
+
+Parent TODO: E-20a-golden-journey-workspace-mutation
+
+Dependency graph:
+- E-20a-golden-journey-workspace-mutation: <none>
+- E-20a-golden-journey-workspace-mutation-target-01: <none>
+- E-20a-golden-journey-workspace-mutation-target-02: E-20a-golden-journey-workspace-mutation-target-01
+`);
+
+  const output = execFileSync('node', [path.resolve('scripts/phase-loop-todo-queue-integrity.mjs'), '--repo', tmp, '--todo', '.brownie/todo.md'], {
+    cwd: path.resolve('.'),
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  const result = JSON.parse(output);
+  assert.equal(result.valid, true, output);
+  assert.deepEqual(result.replanned_todo_ids, ['E-20a-golden-journey-workspace-mutation']);
+});
