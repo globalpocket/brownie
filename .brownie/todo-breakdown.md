@@ -3,6 +3,36 @@
 This file records Brownie-managed decomposition decisions for the live queue in
 `.brownie/todo.md`. It is shared operational state, not release evidence.
 
+## E-23-distributable-runtime-roundtrip
+
+Parent source: 2026-10-06 external review of main `7a993f0`.
+
+Dependency graph:
+- E-23a-release-artifact-portable-archive: <none>
+- E-23b-release-artifact-download-roundtrip: E-23a-release-artifact-portable-archive
+- E-23c-release-artifact-runtime-journey: E-23b-release-artifact-download-roundtrip
+- E-23d-release-artifact-stateful-soak: E-23c-release-artifact-runtime-journey
+- E-23e-release-evidence-roundtrip-collector: E-23d-release-artifact-stateful-soak
+- E-23e-release-evidence-roundtrip-doc-sync: E-23e-release-evidence-roundtrip-collector
+- E-20i-runtime-release-ops-blocker: <none>
+
+Verification ledger:
+- E-23a-release-artifact-portable-archive: `pnpm --workspace-root release:local-artifact:test`; `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`; Release Workflow matrix
+- E-23b-release-artifact-download-roundtrip: `node --test scripts/release-artifact-roundtrip-e2e.test.mjs`; Release Workflow matrix
+- E-23c-release-artifact-runtime-journey: `node --test scripts/release-artifact-runtime-journey.test.mjs`; `pnpm --workspace-root guard:runtime-operational-evidence:test`; Release Workflow matrix
+- E-23d-release-artifact-stateful-soak: `node --test scripts/release-artifact-stateful-soak.test.mjs`; `pnpm --workspace-root guard:runtime-operational-evidence:test`; Release Workflow matrix
+- E-23e-release-evidence-roundtrip-collector: `pnpm --workspace-root guard:supply-chain-artifact-evidence`; `pnpm --workspace-root guard:runtime-operational-evidence`
+- E-23e-release-evidence-roundtrip-doc-sync: `pnpm --workspace-root guard:release-contract`; `pnpm --workspace-root guard:runtime-release-readiness`
+
+Quality rubric:
+- Downloaded packages, not build-tree binaries, are the authority for E-23b through E-23d.
+- Unix executable permission preservation is part of the package contract.
+- Stateful checks must be bounded and must fail closed on partial evidence.
+- Runtime Release Ops publication authority remains isolated in E-20i and does not block Brownie-owned implementation work.
+
+History:
+- 2026-10-06T23:00:00+09:00: Added after external review identified post-upload execution, portable permissions, artifact journey, stateful soak, and evidence synchronization as implementable work remaining after PR #543.
+
 ## TODO-decompose-clean-release-workflow-and-doc-sync-ca637ce0
 
 Parent TODO: TODO-decompose-clean-release-workflow-and-doc-sync-ca637ce0
