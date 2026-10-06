@@ -11111,6 +11111,36 @@ run_with_portable_timeout() {
   wait "$child_pid"
 }
 
+run_phase_loop_preflight() {
+  local run_stamp="$1"
+  local stage="${2:-general}"
+  local output status
+  if [ ! -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/phase-loop-preflight.mjs" ]; then
+    return 0
+  fi
+  set +e
+  output="$(
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    node scripts/phase-loop-preflight.mjs \
+      --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
+      --todo "$PHASE_LOOP_TODO" \
+      --claim "$TODO_CLAIM_FILE" \
+      --stage "$stage"
+  2>&1)"
+  status=$?
+  set -e
+  if [ "$status" -ne 0 ]; then
+    printf '%s run=%s phase_loop_preflight_failed=true stage=%s result=%s\n' "$(now_utc)" "$run_stamp" "$stage" "$output" >> "$SUPERVISOR_LOG"
+    detail="Phase-loop preflight failed before continuing; stage=$stage result=$output"
+    write_status "blocked" "$detail" "$run_stamp" "75" "${CONSECUTIVE_FAILURES:-0}"
+    write_bdk_trajectory_event "$run_stamp" "verification.run" "$output"
+    return 75
+  fi
+  printf '%s run=%s phase_loop_preflight_passed=true stage=%s result=%s\n' "$(now_utc)" "$run_stamp" "$stage" "$output" >> "$SUPERVISOR_LOG"
+  write_bdk_trajectory_event "$run_stamp" "verification.run" "$output"
+  return 0
+}
+
 acquire_lock() {
   if mkdir "$LOCK_DIR" 2>/dev/null; then
     echo "$$" > "$LOCK_DIR/pid"
@@ -11159,6 +11189,9 @@ run_brownie_once() {
   todo_status=$?
   if [ "$todo_status" -ne 0 ]; then
     return "$todo_status"
+  fi
+  if ! run_phase_loop_preflight "$run_stamp" "pre-claim"; then
+    return 75
   fi
   if ! todo_first_raw_pending_is_recorded_blocked && todo_first_raw_pending_is_explicit_blocker; then
     if claim_first_raw_pending_todo "$run_stamp"; then
@@ -12360,6 +12393,11 @@ PY
     fi
     write_bdk_trajectory_event "$run_stamp" "verification.run" "$changed_file_quality_gate"
     save_active_target_known_good "changed_file_quality_gates_passed" || true
+    if ! run_phase_loop_preflight "$run_stamp" "pre-completion"; then
+      write_repair_feedback "$run_stamp" "phase-loop pre-completion preflight failed; inspect status detail for the failing guard and fix the selected target or coupled release evidence before marking the TODO complete." "$stdout_log" "$stderr_log" || true
+      write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      return 75
+    fi
 
     local verification_completion
     if verification_completion="$(complete_applied_todo_after_verification "$stdout_log" "$run_stamp" 2>&1)"; then

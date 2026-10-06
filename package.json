@@ -79,6 +79,8 @@
     "phase-loop:progress-integrity:test": "node --test scripts/phase-loop-progress-integrity.test.mjs",
     "phase-loop:todo-queue-integrity": "node scripts/phase-loop-todo-queue-integrity.mjs",
     "phase-loop:todo-queue-integrity:test": "node --test scripts/phase-loop-todo-queue-integrity.test.mjs",
+    "phase-loop:preflight": "node scripts/phase-loop-preflight.mjs",
+    "phase-loop:preflight:test": "node --test scripts/phase-loop-preflight.test.mjs",
     "phase-loop:supervisor-diagnose": "node scripts/phase-loop-supervisor-diagnose.mjs --write",
     "phase-loop:supervisor-diagnose:test": "node --test scripts/phase-loop-supervisor-diagnose.test.mjs",
     "phase-loop:supervisor-control": "node scripts/phase-loop-supervisor-control.mjs --repair --start",
