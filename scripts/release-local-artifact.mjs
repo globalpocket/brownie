@@ -17,6 +17,9 @@ export const releaseArtifactSmokeArgs = [
   ['help', 'resume']
 ];
 
+export const releaseArtifactBuildTimeoutMs = 15 * 60_000;
+export const releaseArtifactSetupTimeoutMs = 5 * 60_000;
+
 function isMainModule() {
   return process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 }
@@ -218,12 +221,18 @@ export function buildLocalArtifact(options = {}) {
   fs.mkdirSync(outFull, { recursive: true });
   const buildPlan = buildPlanForTarget(target);
 
-  const setup = buildPlan.setup ? run(repoRoot, buildPlan.setup.command, buildPlan.setup.args) : null;
+  const setup = buildPlan.setup
+    ? run(repoRoot, buildPlan.setup.command, buildPlan.setup.args, {
+      timeoutMs: releaseArtifactSetupTimeoutMs
+    })
+    : null;
   if (setup && !setup.passed) {
     throw new Error(`cargo target setup failed for ${target}\n${tailText(setup.stderr || setup.stdout)}`);
   }
 
-  const build = run(repoRoot, buildPlan.buildCommand, buildPlan.buildArgs);
+  const build = run(repoRoot, buildPlan.buildCommand, buildPlan.buildArgs, {
+    timeoutMs: releaseArtifactBuildTimeoutMs
+  });
   if (!build.passed) {
     throw new Error(`cargo release build failed for ${target}\n${tailText(build.stderr || build.stdout)}`);
   }
