@@ -4,7 +4,7 @@
 
 - `runtime_release_ready`: false
 - `release_engineering_maturity`: executable-evidence-blocked
-- `contract-level_fail_closed_blockers`: E-20 executable Release evidence
+- `contract-level_fail_closed_blockers`: E-22 executable Release evidence
 
 ## Evidence
 
@@ -13,7 +13,7 @@
 - Release-gate and CI-reachable guard coverage added.
 - Owner review is mechanically closed for the current local release-readiness
   evidence path.
-- Executable Release evidence remains fail-closed until E-17 evidence passes.
+- Executable Release evidence remains fail-closed until E-22 evidence passes.
 
 ## Runtime Operational Evidence
 
@@ -43,7 +43,7 @@
 
 ### Remaining Fail-Closed Blockers
 
-- E-17 executable Release evidence: not yet complete.
+- E-22 executable Release evidence: not yet complete.
 - Product Ready is not reached until executable Release evidence passes and all
   release evidence blockers close.
 
@@ -55,4 +55,4 @@
 
 ### Status
 
-Runtime Product Ready: not reached. Owner review is mechanically closed, but executable Release evidence remains the fail-closed blocker until E-17 evidence passes.
+Runtime Product Ready: not reached. Owner review is mechanically closed, but executable Release evidence remains the fail-closed blocker until E-22 evidence passes.
