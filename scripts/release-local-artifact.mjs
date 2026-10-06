@@ -9,6 +9,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const defaultRepoRoot = path.resolve(__dirname, '..');
 
+export const releaseArtifactSmokeArgs = [
+  ['--version'],
+  ['help', 'run'],
+  ['--json', 'status'],
+  ['--json', 'mode', 'list'],
+  ['help', 'resume']
+];
+
 function isMainModule() {
   return process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 }
@@ -118,6 +126,9 @@ function run(repoRoot, command, args, options = {}) {
 }
 
 function tailText(value, maxLength = 4000) {
+  if (typeof value !== 'string') {
+    return '';
+  }
   return value.length > maxLength ? value.slice(-maxLength) : value;
 }
 
@@ -158,7 +169,7 @@ function assertNativeTargetMatchesRuntime(target) {
   }
 }
 
-function buildPlanForTarget(target) {
+export function buildPlanForTarget(target) {
   if (target === 'win32-x64' && process.platform === 'win32' && process.arch === 'arm64') {
     const vsDevCmd = 'C:\\BuildTools\\Common7\\Tools\\VsDevCmd.bat';
     if (!fs.existsSync(vsDevCmd)) {
@@ -172,10 +183,12 @@ function buildPlanForTarget(target) {
       buildArgs: [
         '/d',
         '/c',
-        `call ${vsDevCmd} -arch=x64 -host_arch=arm64 && cargo build --release -p brownie-cli --target x86_64-pc-windows-msvc`
+        `call ${vsDevCmd} -arch=x64 -host_arch=arm64 && cargo build --release -p brownie-cli -p brownie-runtime --target x86_64-pc-windows-msvc`
       ],
       sourceArtifact: 'target/x86_64-pc-windows-msvc/release/brownie.exe',
+      sourceRuntime: 'target/x86_64-pc-windows-msvc/release/brownie-runtime.exe',
       binaryName: 'brownie.exe',
+      runtimeName: 'brownie-runtime.exe',
       setup: {
         command: 'rustup',
         args: ['target', 'add', 'x86_64-pc-windows-msvc']
@@ -188,9 +201,11 @@ function buildPlanForTarget(target) {
   return {
     cargoTarget: null,
     buildCommand: 'cargo',
-    buildArgs: ['build', '--release', '-p', 'brownie-cli'],
+    buildArgs: ['build', '--release', '-p', 'brownie-cli', '-p', 'brownie-runtime'],
     sourceArtifact: `target/release/${binaryName}`,
+    sourceRuntime: `target/release/brownie-runtime${target.startsWith('win32-') ? '.exe' : ''}`,
     binaryName,
+    runtimeName: `brownie-runtime${target.startsWith('win32-') ? '.exe' : ''}`,
     setup: null
   };
 }
@@ -218,21 +233,22 @@ export function buildLocalArtifact(options = {}) {
   if (!fs.existsSync(sourceArtifact)) {
     throw new Error(`Expected release artifact is missing: ${buildPlan.sourceArtifact}`);
   }
+  const sourceRuntime = resolveRepoRelative(repoRoot, buildPlan.sourceRuntime);
+  if (!fs.existsSync(sourceRuntime)) {
+    throw new Error(`Expected Runtime companion is missing: ${buildPlan.sourceRuntime}`);
+  }
   const artifactRelativePath = normalizeRelativePath(path.join(outDir, binaryName));
   const artifactPath = resolveRepoRelative(repoRoot, artifactRelativePath);
+  const runtimeRelativePath = normalizeRelativePath(path.join(outDir, buildPlan.runtimeName));
+  const runtimePath = resolveRepoRelative(repoRoot, runtimeRelativePath);
   fs.copyFileSync(sourceArtifact, artifactPath);
+  fs.copyFileSync(sourceRuntime, runtimePath);
   if (!target.startsWith('win32-')) {
     fs.chmodSync(artifactPath, 0o755);
+    fs.chmodSync(runtimePath, 0o755);
   }
 
-  const smokeResults = [
-    smoke(repoRoot, artifactPath, ['--version']),
-    smoke(repoRoot, artifactPath, ['help', 'run']),
-    smoke(repoRoot, artifactPath, ['task', 'run', '--help']),
-    smoke(repoRoot, artifactPath, ['ledger', 'generate', '--help']),
-    smoke(repoRoot, artifactPath, ['stop', '--help']),
-    smoke(repoRoot, artifactPath, ['resume', '--help'])
-  ];
+  const smokeResults = releaseArtifactSmokeArgs.map((args) => smoke(repoRoot, artifactPath, args));
 
   // Validate smoke test results and reject raw stdout/stderr storage
   for (const result of smokeResults) {
@@ -240,8 +256,7 @@ export function buildLocalArtifact(options = {}) {
       throw new Error(`Smoke test failed: ${result.command}\n${tailText(result.stderr || result.stdout)}`);
     }
   }
-  // sourceCommit already declared earlier; use existing value
-  // const sourceCommit = sha256SourceCommit(repoRoot);
+  const sourceCommit = sha256SourceCommit(repoRoot);
   const sourceCleanTree = sha256CleanTree(repoRoot);
   const sourceIdentity = sha256String(`${sourceCommit}:${sourceCleanTree}`);
   const artifactEvidence = {
@@ -260,6 +275,11 @@ export function buildLocalArtifact(options = {}) {
       source_commit: sourceCommit,
       source_clean_tree: sourceCleanTree,
       source_identity: sourceIdentity
+    },
+    runtime_companion: {
+      path: runtimeRelativePath,
+      sha256: sha256File(runtimePath),
+      bytes: fs.statSync(runtimePath).size
     },
     build: {
       setup: setup
@@ -288,7 +308,13 @@ export function buildLocalArtifact(options = {}) {
     release_ready: false
   };
   const checksumPath = resolveRepoRelative(repoRoot, normalizeRelativePath(path.join(outDir, 'SHA256SUMS')));
-  fs.writeFileSync(checksumPath, `${artifactEvidence.artifact.sha256.replace(/^sha256:/, '')}  ${artifactRelativePath}\n`);
+  fs.writeFileSync(
+    checksumPath,
+    [
+      `${artifactEvidence.artifact.sha256.replace(/^sha256:/, '')}  ${artifactRelativePath}`,
+      `${artifactEvidence.runtime_companion.sha256.replace(/^sha256:/, '')}  ${runtimeRelativePath}`
+    ].join('\n') + '\n'
+  );
   writeJson(resolveRepoRelative(repoRoot, normalizeRelativePath(path.join(outDir, 'artifact-evidence.json'))), artifactEvidence);
   writeJson(resolveRepoRelative(repoRoot, normalizeRelativePath(path.join(outDir, 'smoke-evidence.json'))), smokeEvidence);
 
