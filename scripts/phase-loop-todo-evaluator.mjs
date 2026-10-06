@@ -297,14 +297,19 @@ export function selectFirstSchedulableTodo(text, options = {}) {
       continue;
     }
     const deps = dependsOn(block);
-    if (deps.some((dep) => uncheckedIds.has(dep) || dependencyBlockedIds.has(dep))) {
+    if (deps.some((dep) => (uncheckedIds.has(dep) && !blocked.stableIds.has(dep)) || dependencyBlockedIds.has(dep))) {
       dependencyBlockedIds.add(id);
       continue;
     }
     const firstLine = block.split('\n')[0]?.trim() ?? '';
     const blockHash = sha256Text(block);
     if (blocked.stableIds.has(id)) {
-      dependencyBlockedIds.add(id);
+      // A stable blocked id represents a TODO that the supervisor has already
+      // isolated or replanned in an earlier queue generation. Treat it as
+      // unschedulable, but do not let the stale unchecked line block later
+      // dependent work forever. The TODO queue integrity guard is responsible
+      // for preserving the replan/completion ledger; the selector must keep
+      // moving to the next valid leaf instead of deadlocking on the old parent.
       continue;
     }
     const blockedInCurrentQueue = blocked.hashes.has(blockHash) || blocked.firstLines.has(firstLine);

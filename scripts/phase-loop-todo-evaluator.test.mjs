@@ -183,6 +183,36 @@ test('skips stalled replan blocked IDs across queue fingerprints regardless of T
   assert(selected.startsWith('- [ ] E-22b-replan-stalled-leaf-4030af97e57f:'), selected);
 });
 
+test('treats stable replanned parent dependency as satisfied for later leaves', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-todo-evaluator-'));
+  const blocked = path.join(dir, 'blocked.jsonl');
+  const parent = `- [ ] E-22f-release-contract-audit-doc-sync: Patch only \`docs/architecture/runtime-release-contract.json\` and \`docs/architecture/runtime-release-readiness-audit.json\`:
+  Route: documentation.
+  Source TODO: review.
+  Depends on: <none>.
+  Completion condition: release documents are synchronized.
+  Forbidden changes: do not claim Product Ready.
+  Verification: run \`pnpm --workspace-root guard:release-contract\`.`;
+  const next = `- [ ] E-22g-final-judgment-manifest-doc-sync: Patch only \`docs/architecture/final-product-ready-judgment.md\` and \`docs/architecture/phase-value-manifest.json\`:
+  Route: documentation.
+  Source TODO: review.
+  Depends on: E-22f-release-contract-audit-doc-sync.
+  Completion condition: final judgment and phase manifest are synchronized.
+  Forbidden changes: do not claim Product Ready.
+  Verification: run \`pnpm --workspace-root guard:phase-value\`.`;
+  const queue = `${parent}\n${next}`;
+  fs.writeFileSync(blocked, `${JSON.stringify({
+    block_reason: 'stalled_leaf_contract_replan',
+    queue_fingerprint: createHash('sha256').update(parent).digest('hex'),
+    selected_todo_sha256: createHash('sha256').update(parent).digest('hex'),
+    selected_todo_first_line: parent.split('\n')[0]
+  })}\n`);
+
+  const selected = selectFirstSchedulableTodo(queue, { blockedPath: blocked });
+
+  assert(selected.startsWith('- [ ] E-22g-final-judgment-manifest-doc-sync:'), selected);
+});
+
 test('skips broad parent after a generated leaf for the same product prefix was blocked', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-todo-evaluator-'));
   const blocked = path.join(dir, 'blocked.jsonl');
