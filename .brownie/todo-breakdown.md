@@ -1520,7 +1520,7 @@ Verification ledger:
 
 Quality rubric:
 - E-22f-replan-stalled-leaf-83d8a9c3a915: replace the stalled leaf with implementable child TODOs while preserving parent intent, exact patch targets, existing verification commands, and fail-closed release evidence semantics.
-- E-22f-1-release-contract-json-sync-doc: keep Runtime Release fail-closed while synchronizing Release Contract evidence gates with current executable evidence.
+- E-22f-1-release-contract-json-sync-doc: keep Runtime Release fail-closed while synchronizing Release Contract evidence gates with current executable evidence and preserving the guard-owned `phase` value `RRP-8.7`.
 - E-22f-2-release-readiness-audit-doc: keep Runtime Product Ready false while synchronizing Readiness Audit evidence gates with the Release Contract.
 
 History:
