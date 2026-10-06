@@ -2,7 +2,7 @@
   "schema_version": 1,
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
   "phase": "RRP-8.7",
-  "phase_title": "Release Evidence Gate",
+  "phase_title": "Runtime Release Readiness Audit (RRP-8.7 executable evidence gates)",
   "payload_schema_classification": {
     "schema_version": 1,
     "type": "runtime-release-readiness-audit",
@@ -11,7 +11,7 @@
     "content_sha256": "sha256:c2a79ea781ccbb2b3653428047cd8fbbd7813ce361dab5f3a9004a4f9bf41fe7"
   },
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "6d09f670f0b39196fef2682710b298a7d32b99f6",
+  "audited_main_commit": "5b61df397fb274ab726c2ac6fc4c563d9898e5d2",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
     "release-evidence-executable-bindings"
@@ -20,7 +20,7 @@
     "contract_path": "docs/architecture/runtime-release-contract.json",
     "status": "partial",
     "phase": "RRP-8.7",
-    "audited_base_commit": "4376c0a7412a40f328fb3ba64bca487bba35a80e",
+    "audited_base_commit": "9a56cc6eae03326b15170467b9871d0f829affb1",
     "trace_binding_status": {
       "status": "blocked_missing_executable_evidence",
       "blocking_fields": [
@@ -498,7 +498,7 @@
     "RRP-8.7 adds machine-checked owner-governance evidence so owner-controlled residuals become precise fail-closed release blockers instead of prose-only blockers.",
     "The repository main branch now has branch protection enabled with required GitHub Actions checks check and index-platform, required pull request review, stale-review dismissal, last-push approval, enforced admins, force-push denial, deletion denial, and required conversation resolution. Owner-governance evidence now records branch_protection, required_status_checks, and remote_ci_workflow_provenance as satisfied.",
     "Future GitHub actor separation is recorded as: brownie-agent authors and pushes Brownie Phase Loop implementation PRs; globalpocket reviews and merges them through the protected-branch PR flow after required checks pass.",
-    "E-01 resynchronizes current phase-value, Runtime Release Contract, release-readiness audit, and semantic contract guard authority to origin/main 4376c0a7412a40f328fb3ba64bca487bba35a80e after R-20; stale RRP-8.4/RRP-8.6 fingerprint authority is no longer used as the current release contract fingerprint."
+    "E-22f keeps phase-value, Runtime Release Contract, release-readiness audit, and semantic contract guard authority aligned with current executable evidence gates; stale E-17 and 4376c0a authority claims are no longer used as current release evidence."
   ],
   "blockers": [
     "release-evidence-executable-bindings"
