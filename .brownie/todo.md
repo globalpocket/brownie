@@ -78,6 +78,30 @@
   Forbidden changes: do not invent run IDs or hashes, do not mark failed or absent platforms satisfied, and do not declare Product Ready without generated evidence.
   Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence` and `pnpm --workspace-root guard:runtime-operational-evidence`.
 
+- [ ] E-23e-release-evidence-supply-chain-guard: Patch only `scripts/guard-supply-chain-artifact-evidence.mjs` and `scripts/guard-supply-chain-artifact-evidence.test.mjs`:
+  Route: implementation.
+  Source TODO: E-23e-release-evidence-roundtrip-collector; PR #545 independent review P1.
+  Depends on: E-23e-release-evidence-roundtrip-collector.
+  Completion condition: the supply-chain guard rejects absent, stale, or inconsistent package SHA, binary SHA, workflow run, commit, platform, architecture, and downloaded-roundtrip bindings.
+  Forbidden changes: do not accept build-tree execution as downloaded-artifact evidence, do not weaken existing provenance checks, and do not declare Product Ready.
+  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test` and `pnpm --workspace-root guard:supply-chain-artifact-evidence`.
+
+- [ ] E-23e-release-evidence-runtime-guard: Patch only `scripts/guard-runtime-operational-evidence.mjs` and `scripts/guard-runtime-operational-evidence.test.mjs`:
+  Route: implementation.
+  Source TODO: E-23e-release-evidence-roundtrip-collector; PR #545 independent review P1.
+  Depends on: E-23e-release-evidence-roundtrip-collector.
+  Completion condition: the Runtime evidence guard rejects missing or inconsistent downloaded-artifact journey and stateful-soak results, including partial platform coverage and unbounded convergence claims.
+  Forbidden changes: do not count help/version smoke as journey or soak, do not weaken existing lifecycle checks, and do not declare Product Ready.
+  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test` and `pnpm --workspace-root guard:runtime-operational-evidence`.
+
+- [ ] E-23e-release-evidence-workflow-wiring: Patch only `.github/workflows/release.yml`:
+  Route: implementation.
+  Source TODO: E-23e-release-evidence-roundtrip-collector; PR #545 independent review P1.
+  Depends on: E-23e-release-evidence-supply-chain-guard, E-23e-release-evidence-runtime-guard.
+  Completion condition: Release Workflow runs both collectors after downloaded-artifact journey and soak checks, validates their outputs, and uploads the bound evidence from the same workflow run.
+  Forbidden changes: do not run collectors before their executable inputs exist, do not upload unvalidated evidence, and do not require publication credentials.
+  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence`, `pnpm --workspace-root guard:runtime-operational-evidence`, and the Release Workflow matrix.
+
 - [ ] E-23e-release-evidence-roundtrip-doc-sync: Patch only `docs/architecture/runtime-release-contract.json` and `docs/architecture/runtime-release-readiness-audit.json`:
   Route: documentation.
   Source TODO: E-23e-release-evidence-roundtrip-collector.

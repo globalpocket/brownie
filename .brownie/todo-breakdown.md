@@ -13,6 +13,9 @@ Dependency graph:
 - E-23c-release-artifact-runtime-journey: E-23b-release-artifact-download-roundtrip
 - E-23d-release-artifact-stateful-soak: E-23c-release-artifact-runtime-journey
 - E-23e-release-evidence-roundtrip-collector: E-23d-release-artifact-stateful-soak
+- E-23e-release-evidence-supply-chain-guard: E-23e-release-evidence-roundtrip-collector
+- E-23e-release-evidence-runtime-guard: E-23e-release-evidence-roundtrip-collector
+- E-23e-release-evidence-workflow-wiring: E-23e-release-evidence-supply-chain-guard, E-23e-release-evidence-runtime-guard
 - E-23e-release-evidence-roundtrip-doc-sync: E-23e-release-evidence-roundtrip-collector
 - E-20i-runtime-release-ops-blocker: <none>
 
@@ -22,12 +25,16 @@ Verification ledger:
 - E-23c-release-artifact-runtime-journey: `node --test scripts/release-artifact-runtime-journey.test.mjs`; `pnpm --workspace-root guard:runtime-operational-evidence:test`; Release Workflow matrix
 - E-23d-release-artifact-stateful-soak: `node --test scripts/release-artifact-stateful-soak.test.mjs`; `pnpm --workspace-root guard:runtime-operational-evidence:test`; Release Workflow matrix
 - E-23e-release-evidence-roundtrip-collector: `pnpm --workspace-root guard:supply-chain-artifact-evidence`; `pnpm --workspace-root guard:runtime-operational-evidence`
+- E-23e-release-evidence-supply-chain-guard: `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`; `pnpm --workspace-root guard:supply-chain-artifact-evidence`
+- E-23e-release-evidence-runtime-guard: `pnpm --workspace-root guard:runtime-operational-evidence:test`; `pnpm --workspace-root guard:runtime-operational-evidence`
+- E-23e-release-evidence-workflow-wiring: `pnpm --workspace-root guard:supply-chain-artifact-evidence`; `pnpm --workspace-root guard:runtime-operational-evidence`; Release Workflow matrix
 - E-23e-release-evidence-roundtrip-doc-sync: `pnpm --workspace-root guard:release-contract`; `pnpm --workspace-root guard:runtime-release-readiness`
 
 Quality rubric:
 - Downloaded packages, not build-tree binaries, are the authority for E-23b through E-23d.
 - Unix executable permission preservation is part of the package contract.
 - Stateful checks must be bounded and must fail closed on partial evidence.
+- Evidence collectors run after executable checks, and dedicated guards mechanically enforce every new binding.
 - Runtime Release Ops publication authority remains isolated in E-20i and does not block Brownie-owned implementation work.
 
 History:
