@@ -38,14 +38,6 @@
   Forbidden changes: do not claim Product Ready, do not hide remaining Release Ops blockers, and do not alter unrelated phase history.
   Verification: run `pnpm --workspace-root guard:release-contract` and `pnpm --workspace-root guard:runtime-release-readiness`.
 
-- [ ] E-22g-final-judgment-manifest-doc-sync: Patch only `docs/architecture/final-product-ready-judgment.md` and `docs/architecture/phase-value-manifest.json`:
-  Route: documentation.
-  Source TODO: 2026-10-04 review: Final Judgment and Phase Manifest still contain stale blocker generation references after implementation moved ahead.
-  Depends on: E-22f-release-contract-audit-doc-sync.
-  Completion condition: Final Judgment and Phase Manifest describe the same E-22 Release evidence status as the Contract/Audit, keep Runtime Product Ready false until executable evidence passes, and preserve owner-controlled Release Ops blocker separation.
-  Forbidden changes: do not claim Product Ready, do not hide remaining Release Ops blockers, and do not alter unrelated phase history.
-  Verification: run `pnpm --workspace-root guard:phase-value`, `pnpm --workspace-root guard:release-contract`, and `pnpm --workspace-root guard:runtime-release-readiness`.
-
 - [ ] E-20i-runtime-release-ops-blocker: Blocker: Owner-controlled Runtime Release Ops environment is required for clean CI build, artifact upload/provenance, and GitHub Release publication.
   Route: blocker.
   Source TODO: E-20i-release-ops-blocker.
