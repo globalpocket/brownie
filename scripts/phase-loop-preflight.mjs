@@ -277,19 +277,22 @@ function validateReleaseEvidence(repoRoot, errors) {
   }
 
   try {
-    const originMain = git(repoRoot, ['rev-parse', 'origin/main']);
-    if (typeof audit?.audited_main_commit === 'string' && /^[a-f0-9]{40}$/u.test(audit.audited_main_commit.trim()) && audit.audited_main_commit.trim() !== originMain) {
-      errors.push({
-        code: 'readiness_audit_main_commit_stale',
-        path: 'docs/architecture/runtime-release-readiness-audit.json',
-        expected: originMain,
-        actual: audit.audited_main_commit.trim(),
-        message: 'Readiness Audit audited_main_commit must match origin/main before phase-loop continues.'
-      });
+    const auditedCommit = typeof audit?.audited_main_commit === 'string' ? audit.audited_main_commit.trim() : '';
+    if (/^[a-f0-9]{40}$/u.test(auditedCommit)) {
+      const mergeBase = git(repoRoot, ['merge-base', auditedCommit, 'HEAD']);
+      if (mergeBase !== auditedCommit) {
+        errors.push({
+          code: 'readiness_audit_main_commit_unreachable',
+          path: 'docs/architecture/runtime-release-readiness-audit.json',
+          actual: auditedCommit,
+          message: 'Readiness Audit audited_main_commit must be a reachable ancestor of HEAD. Exact HEAD matching is intentionally not required because PR merge commits advance main after the audited evidence is generated.'
+        });
+      }
     }
   } catch {
-    // Offline clones or fixture repos may not have origin/main. The concrete SHA
-    // check above still prevents placeholders such as "current-main".
+    // Fixture repos may not contain the audited commit. The concrete SHA check
+    // above still prevents placeholders such as "current-main"; real phase-loop
+    // workspaces with full history get the ancestry check.
   }
 }
 
