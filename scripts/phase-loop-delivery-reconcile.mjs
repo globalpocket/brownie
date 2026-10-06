@@ -73,11 +73,16 @@ function targetChangedPaths(repoRoot, head, targetCommit) {
     .filter(Boolean);
 }
 
+function treesMatch(repoRoot, left, right) {
+  return tryGit(repoRoot, ['diff', '--quiet', left, right], { quiet: true }) !== null;
+}
+
 export function diagnoseDeliveryReconciliation({ repoRoot, target = 'origin/main' }) {
   const head = git(repoRoot, ['rev-parse', 'HEAD']).trim();
   const targetCommit = git(repoRoot, ['rev-parse', target]).trim();
   const branch = tryGit(repoRoot, ['symbolic-ref', '--short', 'HEAD'], { quiet: true })?.trim() ?? null;
   const headIsAncestor = tryGit(repoRoot, ['merge-base', '--is-ancestor', head, targetCommit], { quiet: true }) !== null;
+  const headTreeMatchesTarget = treesMatch(repoRoot, head, targetCommit);
   const files = statusEntries(repoRoot).map((entry) => {
     const worktree = worktreeBlob(repoRoot, entry.path);
     const index = indexBlob(repoRoot, entry.path);
@@ -98,7 +103,12 @@ export function diagnoseDeliveryReconciliation({ repoRoot, target = 'origin/main
   });
   const blockers = [];
   if (!branch) blockers.push({ code: 'detached_head', message: 'Delivery reconciliation requires an attached branch.' });
-  if (!headIsAncestor) blockers.push({ code: 'target_not_fast_forward', message: `${head} is not an ancestor of ${targetCommit}.` });
+  if (!headIsAncestor && !headTreeMatchesTarget) {
+    blockers.push({ code: 'target_not_fast_forward', message: `${head} is not an ancestor of ${targetCommit}, and their trees differ.` });
+  }
+  if (!headIsAncestor && headTreeMatchesTarget && files.length > 0) {
+    blockers.push({ code: 'squash_target_requires_clean_workspace', message: 'A squash-equivalent target can be received only from a clean index and worktree.' });
+  }
   for (const file of files) {
     if (!['merged_identical', 'known_delivery_history', 'absent_both'].includes(file.classification)) {
       blockers.push({ code: 'unrelated_local_change', path: file.path, status: file.status });
@@ -114,6 +124,7 @@ export function diagnoseDeliveryReconciliation({ repoRoot, target = 'origin/main
     target,
     target_commit: targetCommit,
     head_is_ancestor: headIsAncestor,
+    head_tree_matches_target: headTreeMatchesTarget,
     target_changed_paths: targetChangedPaths(repoRoot, head, targetCommit),
     files,
     safe_to_reconcile: blockers.length === 0,
@@ -136,14 +147,17 @@ export function reconcileDelivery({ repoRoot, target = 'origin/main', write = fa
     return { ...diagnosis, applied: false, reason: write ? (diagnosis.head === diagnosis.target_commit ? 'already_reconciled' : 'blocked') : 'dry_run' };
   }
 
-  git(repoRoot, ['read-tree', diagnosis.target_commit]);
-  const targetPaths = diagnosis.target_changed_paths
-    .filter((filePath) => blobAt(repoRoot, diagnosis.target_commit, filePath));
-  const deletedPaths = diagnosis.target_changed_paths
-    .filter((filePath) => !blobAt(repoRoot, diagnosis.target_commit, filePath));
-  if (targetPaths.length > 0) git(repoRoot, ['checkout-index', '-f', '--', ...targetPaths]);
-  for (const filePath of deletedPaths) {
-    fs.rmSync(path.join(repoRoot, filePath), { force: true });
+  const reconciliationMode = diagnosis.head_tree_matches_target ? 'squash_equivalent' : 'fast_forward';
+  if (reconciliationMode === 'fast_forward') {
+    git(repoRoot, ['read-tree', diagnosis.target_commit]);
+    const targetPaths = diagnosis.target_changed_paths
+      .filter((filePath) => blobAt(repoRoot, diagnosis.target_commit, filePath));
+    const deletedPaths = diagnosis.target_changed_paths
+      .filter((filePath) => !blobAt(repoRoot, diagnosis.target_commit, filePath));
+    if (targetPaths.length > 0) git(repoRoot, ['checkout-index', '-f', '--', ...targetPaths]);
+    for (const filePath of deletedPaths) {
+      fs.rmSync(path.join(repoRoot, filePath), { force: true });
+    }
   }
   git(repoRoot, ['update-ref', `refs/heads/${diagnosis.branch}`, diagnosis.target_commit, diagnosis.head]);
 
@@ -153,6 +167,7 @@ export function reconcileDelivery({ repoRoot, target = 'origin/main', write = fa
     applied: true,
     reconciled_at: new Date().toISOString(),
     previous_head: diagnosis.head,
+    reconciliation_mode: reconciliationMode,
     head: git(repoRoot, ['rev-parse', 'HEAD']).trim(),
     remaining_changes: remaining,
     clean: remaining.length === 0
