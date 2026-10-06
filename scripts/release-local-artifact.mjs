@@ -144,7 +144,11 @@ function smoke(artifactPath, args) {
       encoding: 'utf8',
       timeout: releaseArtifactSmokeTimeoutMs,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, BROWNIE_WORKSPACE_ROOT: workspaceRoot }
+      env: {
+        ...process.env,
+        BROWNIE_WORKSPACE_ROOT: workspaceRoot,
+        BROWNIE_CLI_DEBUG_INVALID_RESPONSE: '1'
+      }
     });
     return {
       args,
