@@ -3269,8 +3269,17 @@ fn sync_dir(path: &std::path::Path) -> Result<()> {
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
         .open(path)
         .with_context(|| format!("failed to open directory {}", path.display()))?;
-    file.sync_all()
-        .with_context(|| format!("failed to sync directory {}", path.display()))
+    match file.sync_all() {
+        Ok(()) => Ok(()),
+        // FlushFileBuffers is not supported for directory handles on all
+        // Windows filesystems/runners. The file itself has already been
+        // synced before the atomic replace, so only this unsupported
+        // directory-metadata flush is best-effort.
+        Err(error) if matches!(error.raw_os_error(), Some(1 | 5 | 6)) => Ok(()),
+        Err(error) => {
+            Err(error).with_context(|| format!("failed to sync directory {}", path.display()))
+        }
+    }
 }
 
 #[cfg(all(not(unix), not(windows)))]
