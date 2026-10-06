@@ -5,12 +5,14 @@ import {
   buildPlanForTarget,
   releaseArtifactBuildTimeoutMs,
   releaseArtifactSetupTimeoutMs,
+  releaseArtifactSmokeTimeoutMs,
   releaseArtifactSmokeArgs
 } from './release-local-artifact.mjs';
 
 test('release build and toolchain setup have CI-safe time budgets', () => {
   assert(releaseArtifactBuildTimeoutMs >= 10 * 60_000);
   assert(releaseArtifactSetupTimeoutMs >= 5 * 60_000);
+  assert(releaseArtifactSmokeTimeoutMs >= 60_000);
 });
 
 test('release artifact build contains the CLI and its Runtime companion', () => {

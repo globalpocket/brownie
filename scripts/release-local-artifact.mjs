@@ -19,6 +19,7 @@ export const releaseArtifactSmokeArgs = [
 
 export const releaseArtifactBuildTimeoutMs = 15 * 60_000;
 export const releaseArtifactSetupTimeoutMs = 5 * 60_000;
+export const releaseArtifactSmokeTimeoutMs = 60_000;
 
 function isMainModule() {
   return process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
@@ -139,13 +140,17 @@ function smoke(repoRoot, artifactPath, args) {
   const result = spawnSync(artifactPath, args, {
     cwd: repoRoot,
     encoding: 'utf8',
-    timeout: 15_000,
+    timeout: releaseArtifactSmokeTimeoutMs,
     stdio: ['ignore', 'pipe', 'pipe']
   });
   return {
     args,
+    command: [artifactPath, ...args].join(' '),
     exit_code: result.status,
-    passed: result.status === 0
+    passed: result.status === 0,
+    error_code: result.error?.code ?? null,
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? ''
   };
 }
 
@@ -262,7 +267,12 @@ export function buildLocalArtifact(options = {}) {
   // Validate smoke test results and reject raw stdout/stderr storage
   for (const result of smokeResults) {
     if (!result.passed) {
-      throw new Error(`Smoke test failed: ${result.command}\n${tailText(result.stderr || result.stdout)}`);
+      const reason = result.error_code
+        ? `spawn error: ${result.error_code}`
+        : `exit code: ${String(result.exit_code)}`;
+      throw new Error(
+        `Smoke test failed: ${result.command} (${reason})\n${tailText(result.stderr || result.stdout)}`
+      );
     }
   }
   const sourceCommit = sha256SourceCommit(repoRoot);
@@ -313,7 +323,7 @@ export function buildLocalArtifact(options = {}) {
     artifact_path: artifactRelativePath,
     artifact_sha256: artifactEvidence.artifact.sha256,
     status: smokeResults.every((entry) => entry.passed) ? 'satisfied' : 'failed',
-    commands: smokeResults,
+    commands: smokeResults.map(({ args, exit_code, passed }) => ({ args, exit_code, passed })),
     release_ready: false
   };
   const checksumPath = resolveRepoRelative(repoRoot, normalizeRelativePath(path.join(outDir, 'SHA256SUMS')));
