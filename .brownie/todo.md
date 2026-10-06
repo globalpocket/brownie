@@ -30,7 +30,7 @@
   Forbidden changes: do not edit docs in this implementation leaf, do not mark Runtime Release Ready, do not delete required evidence fields, and do not bypass fail-closed Release Contract checks.
   Verification: run `pnpm --workspace-root guard:release-contract:test` and `pnpm --workspace-root guard:release-contract`.
 
-- [ ] E-22f-release-contract-audit-doc-sync: Patch only `docs/architecture/runtime-release-contract.json` and `docs/architecture/runtime-release-readiness-audit.json`:
+- [x] E-22f-release-contract-audit-doc-sync: Patch only `docs/architecture/runtime-release-contract.json` and `docs/architecture/runtime-release-readiness-audit.json`:
   Route: documentation.
   Source TODO: 2026-10-04 review: Release documents still contain stale E-17/RRP-8.7/4376c0a references after implementation moved ahead.
   Depends on: E-22e-release-contract-trace-binding-guard.
@@ -119,7 +119,7 @@
   Forbidden changes: do not weaken existing guard tests, do not invent evidence values, and do not mark tests passing without actual guard implementation.
   Verification: run `pnpm --workspace-root guard:release-contract:test`.
 
-- [ ] E-22f-1-release-contract-json-sync: Patch only `docs/architecture/runtime-release-contract.json` to update Release Contract evidence gates and remove stale E-17/RRP-8.7/4376c0a references:
+- [x] E-22f-1-release-contract-json-sync: Patch only `docs/architecture/runtime-release-contract.json` to update Release Contract evidence gates and remove stale E-17/RRP-8.7/4376c0a references:
   Route: documentation.
   Source TODO: E-22f-release-contract-audit-doc-sync.
   Depends on: E-22e-release-contract-trace-binding-guard.
@@ -127,7 +127,7 @@
   Forbidden changes: do not claim Product Ready, do not hide remaining Release Ops blockers, and do not alter unrelated phase history.
   Verification: run `pnpm --workspace-root guard:release-contract`.
 
-- [ ] E-22f-2-release-readiness-audit-sync: Patch only `docs/architecture/runtime-release-readiness-audit.json` to update Readiness Audit evidence gates and remove stale E-17/RRP-8.7/4376c0a references:
+- [x] E-22f-2-release-readiness-audit-sync: Patch only `docs/architecture/runtime-release-readiness-audit.json` to update Readiness Audit evidence gates and remove stale E-17/RRP-8.7/4376c0a references:
   Route: documentation.
   Source TODO: E-22f-release-contract-audit-doc-sync.
   Depends on: E-22f-1-release-contract-json-sync.

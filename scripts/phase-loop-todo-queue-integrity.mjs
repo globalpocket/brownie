@@ -51,6 +51,14 @@ function maybeReadText(filePath) {
 }
 
 export function uncheckedTodoBlocks(text) {
+  return todoBlocksByCheckbox(text, /\s/u);
+}
+
+function checkedTodoBlocks(text) {
+  return todoBlocksByCheckbox(text, /[xX]/u);
+}
+
+function todoBlocksByCheckbox(text, checkboxPattern) {
   const starts = [];
   const pattern = /^(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+/gm;
   let match;
@@ -60,12 +68,12 @@ export function uncheckedTodoBlocks(text) {
   return starts.map((start, index) => {
     const end = index + 1 < starts.length ? starts[index + 1] : text.length;
     return text.slice(start, end).trimEnd();
-  }).filter((block) => /^(?:[-*]|\d+[.)])\s+\[\s\]\s+/u.test(block));
+  }).filter((block) => new RegExp(`^(?:[-*]|\\d+[.)])\\s+\\[${checkboxPattern.source}\\]\\s+`, 'u').test(block));
 }
 
 function todoId(block) {
   const firstLine = block.split('\n')[0]?.trim() ?? '';
-  const title = firstLine.replace(/^(?:[-*]|\d+[.)])\s+\[\s\]\s+/, '');
+  const title = firstLine.replace(/^(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+/, '');
   return title.split(':')[0]?.trim() ?? '';
 }
 
@@ -78,6 +86,10 @@ function blockMap(text) {
     }
   }
   return map;
+}
+
+function checkedTodoIds(text) {
+  return new Set(checkedTodoBlocks(text ?? '').map(todoId).filter(Boolean));
 }
 
 function firstLine(block) {
@@ -358,7 +370,7 @@ export function validateTodoQueueIntegrity({ todoBefore, todoAfter, completedTod
   const warnings = [];
   const before = blockMap(todoBefore ?? '');
   const after = blockMap(todoAfter ?? '');
-  const completedIds = new Set(completedIdsInput);
+  const completedIds = new Set([...completedIdsInput, ...checkedTodoIds(todoAfter)]);
   const replanByParent = replanRecordsByParent(todoReplanRecordsInput);
   const removedTodoIds = [];
   const changedTodoIds = [];

@@ -41,6 +41,17 @@ test('allows removing a completed TODO while preserving dependent TODO contract'
   assert.equal(result.valid, true, JSON.stringify(result.errors));
 });
 
+test('allows a TODO checked in the live queue to serve as durable completion evidence', () => {
+  const result = validateTodoQueueIntegrity({
+    todoBefore: queue(e20a, e20b),
+    todoAfter: queue(e20a.replace('- [ ]', '- [x]'), e20b),
+    completedTodoIds: []
+  });
+
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+  assert(result.completed_todo_ids.includes('E-20a-golden-journey-workspace-mutation'));
+});
+
 test('rejects dependent TODO dependency rewrite even when prerequisite is completed', () => {
   const result = validateTodoQueueIntegrity({
     todoBefore: queue(e20a, e20b),
