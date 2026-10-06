@@ -152,11 +152,18 @@
   Forbidden changes: do not change `phase` away from `RRP-8.7`, do not claim Product Ready, do not hide remaining blockers, do not alter unrelated phase history.
   Verification: run `pnpm --workspace-root guard:release-contract` and inspect `docs/architecture/runtime-release-contract.json` for stale references.
 
-- [ ] E-22f-replan-stalled-leaf-28a32359ccc9: Patch only `.brownie/todo.md` and `.brownie/todo-breakdown.md` to replan stalled Brownie TODO leaf into implementable child TODOs:
-  Route: todo-decomposition.
-  Source TODO: E-22f-2-release-readiness-audit-sync.
-  Depends on: <none>.
-  Completion condition: Patch `.brownie/todo.md` and `.brownie/todo-breakdown.md` so stalled TODO `E-22f-2-release-readiness-audit-sync` is replaced or superseded by implementable child leaves that preserve the parent intent, exact patch targets, existing verification commands, and ledger coverage.
-  Failure evidence: invalid_patch_followed_by_no_progress; same_progress_count=1.
-  Forbidden changes: do not implement the release-evidence fix here, do not weaken guards/tests, do not invent evidence values, and do not declare Runtime Product Ready.
-  Verification: run `pnpm --workspace-root guard:todo-decomposition` and `pnpm --workspace-root phase-loop:todo-queue-integrity`.
+- [ ] E-22f-release-contract-doc-update: Patch only `docs/architecture/runtime-release-contract.json` to update Release Contract fields:
+  Route: documentation.
+  Source TODO: E-22f-replan-stalled-leaf-28a32359ccc9.
+  Depends on: E-22e-release-contract-trace-binding-guard.
+  Completion condition: runtime-release-contract.json reflects current executable evidence gates (artifact SHA, workflow run ID, implementation commit, tested commit, clean source identity) without stale E-17/RRP-8.7/4376c0a references.
+  Forbidden changes: do not claim Product Ready, do not hide remaining blockers, do not alter unrelated phase history.
+  Verification: run `pnpm --workspace-root guard:release-contract` and inspect docs/architecture/runtime-release-contract.json for stale references.
+
+- [ ] E-22f-release-readiness-audit-doc-update: Patch only `docs/architecture/runtime-release-readiness-audit.json` to sync with current gates:
+  Route: documentation.
+  Source TODO: E-22f-replan-stalled-leaf-28a32359ccc9.
+  Depends on: E-22f-release-contract-doc-update.
+  Completion condition: runtime-release-readiness-audit.json describes same executable evidence gates as runtime-release-contract.json with consistent fail-closed Product Ready status.
+  Forbidden changes: do not claim Product Ready, do not hide remaining blockers, do not alter unrelated phase history.
+  Verification: run `pnpm --workspace-root guard:runtime-release-readiness` and diff both JSON files for consistency.

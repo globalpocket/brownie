@@ -1557,13 +1557,19 @@ Parent TODO: E-22f-2-release-readiness-audit-sync
 
 Dependency graph:
 - E-22f-replan-stalled-leaf-28a32359ccc9: <none>
+- E-22f-release-contract-doc-update: E-22e-release-contract-trace-binding-guard
+- E-22f-release-readiness-audit-doc-update: E-22f-release-contract-doc-update
 
 Verification ledger:
 - E-22f-replan-stalled-leaf-28a32359ccc9: run `pnpm --workspace-root guard:todo-decomposition` and `pnpm --workspace-root phase-loop:todo-queue-integrity`.
+- E-22f-release-contract-doc-update: run `pnpm --workspace-root guard:release-contract` and inspect docs/architecture/runtime-release-contract.json for stale references.
+- E-22f-release-readiness-audit-doc-update: run `pnpm --workspace-root guard:runtime-release-readiness` and diff both JSON files for consistency.
 
 Quality rubric:
 - E-22f-replan-stalled-leaf-28a32359ccc9: replace the stalled leaf with implementable child TODOs while preserving parent intent, exact patch targets, existing verification commands, and fail-closed release evidence semantics.
+- E-22f-release-contract-doc-update: keep Runtime Release fail-closed while updating only the Release Contract evidence-gate text.
+- E-22f-release-readiness-audit-doc-update: keep Runtime Product Ready false while synchronizing Readiness Audit evidence gates with the Release Contract.
 
 History:
 
-- 2026-10-06T04:33:33Z: Supervisor detected repeated invalid_patch_followed_by_no_progress on E-22f-2-release-readiness-audit-sync and promoted Brownie-owned TODO replan instead of retrying the same single-target leaf.
+2026-10-06T04:33:33Z: Supervisor detected repeated invalid_patch_followed_by_no_progress on E-22f-2-release-readiness-audit-sync and promoted Brownie-owned TODO replan instead of retrying the same single-target leaf.
