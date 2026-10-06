@@ -48,15 +48,29 @@ function blobAt(repoRoot, revision, filePath) {
   return tryGit(repoRoot, ['rev-parse', `${revision}:${filePath}`], { quiet: true })?.trim() ?? null;
 }
 
-function localBlob(repoRoot, filePath) {
+function worktreeBlob(repoRoot, filePath) {
   if (!fs.existsSync(path.join(repoRoot, filePath))) return null;
   return git(repoRoot, ['hash-object', '--', filePath]).trim();
 }
 
-function blobExistsInTargetHistory(repoRoot, target, blob) {
+function indexBlob(repoRoot, filePath) {
+  return tryGit(repoRoot, ['rev-parse', `:${filePath}`], { quiet: true })?.trim() ?? null;
+}
+
+function blobExistsInDeliveredRange(repoRoot, head, target, filePath, blob) {
   if (!blob) return false;
-  const commits = tryGit(repoRoot, ['log', '--format=%H', '--find-object', blob, target], { quiet: true });
+  const commits = tryGit(repoRoot, ['log', '--format=%H', '--find-object', blob, `${head}..${target}`, '--', filePath], { quiet: true });
   return typeof commits === 'string' && commits.trim().length > 0;
+}
+
+function isDeliveredBlob({ blob, targetBlob, repoRoot, head, targetCommit, filePath }) {
+  return blob === null || blob === targetBlob || blobExistsInDeliveredRange(repoRoot, head, targetCommit, filePath, blob);
+}
+
+function targetChangedPaths(repoRoot, head, targetCommit) {
+  return git(repoRoot, ['diff', '--name-only', '-z', head, targetCommit])
+    .split('\0')
+    .filter(Boolean);
 }
 
 export function diagnoseDeliveryReconciliation({ repoRoot, target = 'origin/main' }) {
@@ -65,13 +79,22 @@ export function diagnoseDeliveryReconciliation({ repoRoot, target = 'origin/main
   const branch = tryGit(repoRoot, ['symbolic-ref', '--short', 'HEAD'], { quiet: true })?.trim() ?? null;
   const headIsAncestor = tryGit(repoRoot, ['merge-base', '--is-ancestor', head, targetCommit], { quiet: true }) !== null;
   const files = statusEntries(repoRoot).map((entry) => {
-    const local = localBlob(repoRoot, entry.path);
+    const worktree = worktreeBlob(repoRoot, entry.path);
+    const index = indexBlob(repoRoot, entry.path);
     const targetBlob = blobAt(repoRoot, targetCommit, entry.path);
     let classification = 'unrelated_local_change';
-    if (local && targetBlob && local === targetBlob) classification = 'merged_identical';
-    else if (local && targetBlob && blobExistsInTargetHistory(repoRoot, targetCommit, local)) classification = 'known_delivery_history';
-    else if (!local && !targetBlob) classification = 'absent_both';
-    return { ...entry, local_blob: local, target_blob: targetBlob, classification };
+    const indexSafe = isDeliveredBlob({ blob: index, targetBlob, repoRoot, head, targetCommit, filePath: entry.path });
+    const worktreeSafe = isDeliveredBlob({ blob: worktree, targetBlob, repoRoot, head, targetCommit, filePath: entry.path });
+    if (!index && !worktree && !targetBlob) classification = 'absent_both';
+    else if (index === targetBlob && worktree === targetBlob) classification = 'merged_identical';
+    else if (indexSafe && worktreeSafe) classification = 'known_delivery_history';
+    return {
+      ...entry,
+      index_blob: index,
+      worktree_blob: worktree,
+      target_blob: targetBlob,
+      classification
+    };
   });
   const blockers = [];
   if (!branch) blockers.push({ code: 'detached_head', message: 'Delivery reconciliation requires an attached branch.' });
@@ -91,6 +114,7 @@ export function diagnoseDeliveryReconciliation({ repoRoot, target = 'origin/main
     target,
     target_commit: targetCommit,
     head_is_ancestor: headIsAncestor,
+    target_changed_paths: targetChangedPaths(repoRoot, head, targetCommit),
     files,
     safe_to_reconcile: blockers.length === 0,
     blockers
@@ -112,12 +136,16 @@ export function reconcileDelivery({ repoRoot, target = 'origin/main', write = fa
     return { ...diagnosis, applied: false, reason: write ? (diagnosis.head === diagnosis.target_commit ? 'already_reconciled' : 'blocked') : 'dry_run' };
   }
 
-  git(repoRoot, ['update-ref', `refs/heads/${diagnosis.branch}`, diagnosis.target_commit, diagnosis.head]);
   git(repoRoot, ['read-tree', diagnosis.target_commit]);
-  const restorePaths = diagnosis.files
-    .filter((file) => file.classification === 'known_delivery_history')
-    .map((file) => file.path);
-  if (restorePaths.length > 0) git(repoRoot, ['checkout-index', '-f', '--', ...restorePaths]);
+  const targetPaths = diagnosis.target_changed_paths
+    .filter((filePath) => blobAt(repoRoot, diagnosis.target_commit, filePath));
+  const deletedPaths = diagnosis.target_changed_paths
+    .filter((filePath) => !blobAt(repoRoot, diagnosis.target_commit, filePath));
+  if (targetPaths.length > 0) git(repoRoot, ['checkout-index', '-f', '--', ...targetPaths]);
+  for (const filePath of deletedPaths) {
+    fs.rmSync(path.join(repoRoot, filePath), { force: true });
+  }
+  git(repoRoot, ['update-ref', `refs/heads/${diagnosis.branch}`, diagnosis.target_commit, diagnosis.head]);
 
   const remaining = statusEntries(repoRoot);
   const result = {

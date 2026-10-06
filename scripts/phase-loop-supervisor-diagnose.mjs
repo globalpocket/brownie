@@ -1039,7 +1039,9 @@ export function diagnosePhaseLoop(options = {}) {
     'verification_failure_requires_semantic_repair',
     'semantic_verification_repair_stalled',
     'invalid_workspace_write_patch_repeated',
-    'bounded_leaf_refinement_rejected'
+    'bounded_leaf_refinement_rejected',
+    'merged_delivery_pending_reconciliation',
+    'delivery_reconciliation_blocked'
   ].includes(issue.code));
   const nextAction = shouldStopWorker
     ? 'cause_analysis_then_guard_or_queue_repair_before_worker_retry'

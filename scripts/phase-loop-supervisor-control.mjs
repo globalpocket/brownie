@@ -1460,6 +1460,13 @@ function maybeStartPhaseLoop(repoRoot, enabled, diagnostic) {
       next_action: 'verify_commit_push_pr_review_merge'
     };
   }
+  if (issueCodes(diagnostic).has('merged_delivery_pending_reconciliation') || issueCodes(diagnostic).has('delivery_reconciliation_blocked')) {
+    return {
+      attempted: false,
+      reason: 'delivery_reconciliation_required_not_starting',
+      next_action: 'reconcile_merged_delivery_then_run_preflight'
+    };
+  }
   const status = diagnostic.phase_loop?.status;
   if (diagnostic.summary?.healthy && (status === 'running' || status === 'last_run_succeeded')) {
     return { attempted: false, reason: 'phase_loop_already_healthy' };
