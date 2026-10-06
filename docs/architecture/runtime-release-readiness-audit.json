@@ -11,7 +11,7 @@
     "content_sha256": "sha256:c2a79ea781ccbb2b3653428047cd8fbbd7813ce361dab5f3a9004a4f9bf41fe7"
   },
   "repository": "globalpocket/brownie",
-  "audited_main_commit": "4376c0a7412a40f328fb3ba64bca487bba35a80e",
+  "audited_main_commit": "6d09f670f0b39196fef2682710b298a7d32b99f6",
   "runtime_release_ready": false,
   "release_ready_blocked_by": [
     "release-evidence-executable-bindings"

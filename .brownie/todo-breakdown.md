@@ -1526,3 +1526,27 @@ Quality rubric:
 History:
 
 - 2026-10-05T23:26:52Z: Supervisor detected repeated same_todo_apply_rejection_threshold on E-22f-1-release-contract-json-sync and promoted Brownie-owned TODO replan instead of retrying the same single-target leaf.
+
+## E-22f-1-release-contract-json-sync-doc no-eligible multi-target split
+
+Parent TODO: E-22f-1-release-contract-json-sync-doc: - [ ] E-22f-1-release-contract-json-sync-doc: Patch only `docs/architecture/runtime-release-contract.json` to update Release Contract evidence gates while preserving the guard-owned `phase` value:
+Parent source: E-22f-replan-stalled-leaf-83d8a9c3a915
+
+Targets:
+
+- E-22f-1-release-contract-json-sync-doc-target-01: `docs/architecture/runtime-release-contract.json`
+- E-22f-1-release-contract-json-sync-doc-target-02: `phase`
+
+Dependency graph:
+
+- E-22f-1-release-contract-json-sync-doc-target-01: E-22e-release-contract-trace-binding-guard
+- E-22f-1-release-contract-json-sync-doc-target-02: E-22f-1-release-contract-json-sync-doc-target-01
+
+Verification ledger:
+
+- E-22f-1-release-contract-json-sync-doc-target-01: `run `pnpm --workspace-root guard:release-contract` and inspect `docs/architecture/runtime-release-contract.json` for stale references`
+- E-22f-1-release-contract-json-sync-doc-target-02: `run `pnpm --workspace-root guard:release-contract` and inspect `docs/architecture/runtime-release-contract.json` for stale references`
+
+History:
+
+- 2026-10-06T01:16:04Z: Applied deterministic no_eligible_task fallback during run 20261006T011602Z; the checked parent remains in the queue so existing downstream dependencies still have a durable dependency anchor, and the implementation work moves to ordered single-target leaves.

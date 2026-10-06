@@ -152,18 +152,10 @@
   Forbidden changes: do not implement the release-evidence fix here, do not weaken guards/tests, do not invent evidence values, and do not declare Runtime Product Ready.
   Verification: run `pnpm --workspace-root guard:todo-decomposition` and `pnpm --workspace-root phase-loop:todo-queue-integrity`.
 
-- [ ] E-22f-1-release-contract-json-sync-doc: Patch only `docs/architecture/runtime-release-contract.json` to update Release Contract evidence gates while preserving the guard-owned `phase` value:
+- [x] E-22f-1-release-contract-json-sync-doc: Patch only `docs/architecture/runtime-release-contract.json` to update Release Contract evidence gates while preserving the guard-owned `phase` value:
   Route: documentation.
   Source TODO: E-22f-replan-stalled-leaf-83d8a9c3a915.
   Depends on: E-22e-release-contract-trace-binding-guard.
   Completion condition: Release Contract JSON describes current executable evidence gates (supply-chain artifact binding, runtime operational evidence, stateful soak evidence) without stale E-17/4376c0a authority claims, while keeping `phase` as the guard-owned contract identifier `RRP-8.7`.
   Forbidden changes: do not change `phase` away from `RRP-8.7`, do not claim Product Ready, do not hide remaining blockers, do not alter unrelated phase history.
   Verification: run `pnpm --workspace-root guard:release-contract` and inspect `docs/architecture/runtime-release-contract.json` for stale references.
-
-- [ ] E-22f-2-release-readiness-audit-doc: Patch only `docs/architecture/runtime-release-readiness-audit.json` to sync audit with current Release Contract:
-  Route: documentation.
-  Source TODO: E-22f-replan-stalled-leaf-83d8a9c3a915.
-  Depends on: E-22f-1-release-contract-json-sync-doc.
-  Completion condition: Readiness Audit JSON matches Release Contract evidence gates and reflects E-22 Release status without stale authority claims.
-  Forbidden changes: do not claim Product Ready, do not hide remaining blockers, do not alter unrelated phase history.
-  Verification: run `pnpm --workspace-root guard:runtime-release-readiness`.
