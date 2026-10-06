@@ -1550,3 +1550,20 @@ Verification ledger:
 History:
 
 - 2026-10-06T01:16:04Z: Applied deterministic no_eligible_task fallback during run 20261006T011602Z; the checked parent remains in the queue so existing downstream dependencies still have a durable dependency anchor, and the implementation work moves to ordered single-target leaves.
+
+## TODO-repair-E-22f-replan-stalled-leaf-28a32359ccc9
+
+Parent TODO: E-22f-2-release-readiness-audit-sync
+
+Dependency graph:
+- E-22f-replan-stalled-leaf-28a32359ccc9: <none>
+
+Verification ledger:
+- E-22f-replan-stalled-leaf-28a32359ccc9: run `pnpm --workspace-root guard:todo-decomposition` and `pnpm --workspace-root phase-loop:todo-queue-integrity`.
+
+Quality rubric:
+- E-22f-replan-stalled-leaf-28a32359ccc9: replace the stalled leaf with implementable child TODOs while preserving parent intent, exact patch targets, existing verification commands, and fail-closed release evidence semantics.
+
+History:
+
+- 2026-10-06T04:33:33Z: Supervisor detected repeated invalid_patch_followed_by_no_progress on E-22f-2-release-readiness-audit-sync and promoted Brownie-owned TODO replan instead of retrying the same single-target leaf.
