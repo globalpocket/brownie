@@ -136,22 +136,28 @@ function tailText(value, maxLength = 4000) {
   return value.length > maxLength ? value.slice(-maxLength) : value;
 }
 
-function smoke(repoRoot, artifactPath, args) {
-  const result = spawnSync(artifactPath, args, {
-    cwd: repoRoot,
-    encoding: 'utf8',
-    timeout: releaseArtifactSmokeTimeoutMs,
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-  return {
-    args,
-    command: [artifactPath, ...args].join(' '),
-    exit_code: result.status,
-    passed: result.status === 0,
-    error_code: result.error?.code ?? null,
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? ''
-  };
+function smoke(artifactPath, args) {
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-release-smoke-'));
+  try {
+    const result = spawnSync(artifactPath, args, {
+      cwd: workspaceRoot,
+      encoding: 'utf8',
+      timeout: releaseArtifactSmokeTimeoutMs,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, BROWNIE_WORKSPACE_ROOT: workspaceRoot }
+    });
+    return {
+      args,
+      command: [artifactPath, ...args].join(' '),
+      exit_code: result.status,
+      passed: result.status === 0,
+      error_code: result.error?.code ?? null,
+      stdout: result.stdout ?? '',
+      stderr: result.stderr ?? ''
+    };
+  } finally {
+    fs.rmSync(workspaceRoot, { recursive: true, force: true });
+  }
 }
 
 function writeJson(filePath, value) {
@@ -262,7 +268,7 @@ export function buildLocalArtifact(options = {}) {
     fs.chmodSync(runtimePath, 0o755);
   }
 
-  const smokeResults = releaseArtifactSmokeArgs.map((args) => smoke(repoRoot, artifactPath, args));
+  const smokeResults = releaseArtifactSmokeArgs.map((args) => smoke(artifactPath, args));
 
   // Validate smoke test results and reject raw stdout/stderr storage
   for (const result of smokeResults) {

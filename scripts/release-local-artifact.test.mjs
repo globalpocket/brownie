@@ -36,3 +36,11 @@ test('release artifact smoke invokes only current CLI surfaces', () => {
   const serialized = JSON.stringify(releaseArtifactSmokeArgs);
   assert.doesNotMatch(serialized, /task.*run|ledger.*generate|stop/u);
 });
+
+test('release artifact smoke commands are independently safe to probe', () => {
+  for (const args of releaseArtifactSmokeArgs) {
+    if (args.includes('run') || args.includes('resume')) {
+      assert.equal(args[0], 'help');
+    }
+  }
+});
