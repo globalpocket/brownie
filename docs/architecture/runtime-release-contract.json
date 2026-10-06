@@ -2,10 +2,10 @@
   "schema_version": 1,
   "contract_id": "runtime-release-engineering-contract-v1",
   "phase": "RRP-8.7",
-  "phase_title": "Runtime Release Evidence Gate (E-22 fail-closed documentation sync)",
+  "phase_title": "Runtime Release Readiness Audit (RRP-8.7 executable evidence gates)",
   "implementation_tracking": {
-    "last_modified": "2026-10-05",
-    "modification_reason": "E-22f-1-release-contract-json-sync update current evidence-gate description while preserving the guard-owned contract phase identifier"
+    "last_modified": "2026-10-06",
+    "modification_reason": "RRP-8.7 synchronize phase identifier and evidence gate description after E-22e guard implementation; executable evidence bindings remain pending"
   },
   "campaign": "runtime-release-readiness-p0-p1-finite-closure",
   "repository": "globalpocket/brownie",

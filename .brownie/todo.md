@@ -152,7 +152,7 @@
   Forbidden changes: do not change `phase` away from `RRP-8.7`, do not claim Product Ready, do not hide remaining blockers, do not alter unrelated phase history.
   Verification: run `pnpm --workspace-root guard:release-contract` and inspect `docs/architecture/runtime-release-contract.json` for stale references.
 
-- [ ] E-22f-release-contract-doc-update: Patch only `docs/architecture/runtime-release-contract.json` to update Release Contract fields:
+- [x] E-22f-release-contract-doc-update: Patch only `docs/architecture/runtime-release-contract.json` to update Release Contract fields:
   Route: documentation.
   Source TODO: E-22f-replan-stalled-leaf-28a32359ccc9.
   Depends on: E-22e-release-contract-trace-binding-guard.
