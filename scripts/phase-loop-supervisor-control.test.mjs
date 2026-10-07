@@ -177,6 +177,25 @@ test('archives a stale claim and keeps a rejected bounded leaf out of the generi
     status: 'in_progress',
     selected_todo: '- [ ] E-99-stale-claim: Patch only `scripts/obsolete.mjs`.'
   });
+  writeJson(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json', {
+    schema_version: 1,
+    kind: 'phase_loop_invalid_patch_repair_feedback',
+    reason: 'supervisor_invalid_workspace_write_patch',
+    invalid_patch: {
+      detected: true,
+      claim_id: 'claim-stale-bounded-leaf',
+      selected_todo: {
+        first_line: runtimeEvidenceTodo.split('\n')[0],
+        route: 'implementation',
+        patch_targets: ['scripts/guard-runtime-operational-evidence.test.mjs']
+      },
+      invalid_patch_proposals: [{
+        path: 'scripts/guard-runtime-operational-evidence.test.mjs',
+        operation: 'patch_file',
+        validation_reason: 'old_text_not_found'
+      }]
+    }
+  });
 
   const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
   const claimsDir = path.join(repo, '.brownie/private/phase-loop/todo-claims');
@@ -184,12 +203,13 @@ test('archives a stale claim and keeps a rejected bounded leaf out of the generi
   const todo = fs.readFileSync(path.join(repo, '.brownie/todo.md'), 'utf8');
   const archivedClaims = fs.readdirSync(claimsDir).filter((name) => name.startsWith('stale-current-'));
 
-  assert.equal(result.initial_summary.next_action, 'archive_stale_claim_then_force_bounded_leaf_target_patch');
+  assert.equal(result.initial_summary.next_action, 'cause_analysis_then_guard_or_queue_repair_before_worker_retry');
   assert.equal(result.repair.stale_active_claim.ok, true, JSON.stringify(result, null, 2));
   assert.equal(fs.existsSync(path.join(claimsDir, 'current.json')), false);
   assert.equal(archivedClaims.length, 1);
   assert.equal(result.repair.bounded_leaf_apply_rejection.ok, true, JSON.stringify(result, null, 2));
   assert.equal(result.repair.todo_contract_replan.reason, 'bounded_leaf_target_patch_takes_precedence');
+  assert.equal(result.repair.invalid_patch.reason, 'bounded_leaf_target_patch_takes_precedence');
   assert.equal(result.repair.stalled_todo_blocked.reason, 'todo_contract_replan_not_active');
   assert.equal(result.repair.stalled_todo_decomposition.reason, 'todo_contract_replan_not_active');
   assert.equal(feedback.kind, 'phase_loop_bounded_leaf_apply_rejection_repair_feedback');

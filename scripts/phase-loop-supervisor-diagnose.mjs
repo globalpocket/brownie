@@ -1043,7 +1043,20 @@ export function diagnosePhaseLoop(options = {}) {
     'merged_delivery_pending_reconciliation',
     'delivery_reconciliation_blocked'
   ].includes(issue.code));
-  const nextAction = issues.some((issue) => issue.code === 'active_claim_not_selected_by_live_queue') &&
+  const hasHigherPriorityStopWorkerIssue = issues.some((issue) => [
+    'todo_contract_invalid',
+    'todo_queue_integrity_invalid',
+    'explicit_blocker_selected_for_worker',
+    'phase_loop_pid_stale',
+    'stale_no_progress_projection_during_running_loop',
+    'verification_failure_requires_semantic_repair',
+    'semantic_verification_repair_stalled',
+    'invalid_workspace_write_patch_repeated',
+    'merged_delivery_pending_reconciliation',
+    'delivery_reconciliation_blocked'
+  ].includes(issue.code));
+  const nextAction = !hasHigherPriorityStopWorkerIssue &&
+    issues.some((issue) => issue.code === 'active_claim_not_selected_by_live_queue') &&
     issues.some((issue) => issue.code === 'bounded_leaf_refinement_rejected')
     ? 'archive_stale_claim_then_force_bounded_leaf_target_patch'
     : shouldStopWorker

@@ -1558,12 +1558,16 @@ export function controlPhaseLoop(options = {}) {
         };
   const semanticVerificationRepair = options.repair === false
     ? { attempted: false, reason: 'repair_disabled' }
-    : todoContractReplanRepair.attempted && todoContractReplanRepair.ok
+    : boundedLeafApplyRejectionRepair.attempted && boundedLeafApplyRejectionRepair.ok
+      ? { attempted: false, reason: 'bounded_leaf_target_patch_takes_precedence' }
+      : todoContractReplanRepair.attempted && todoContractReplanRepair.ok
       ? { attempted: false, reason: 'todo_contract_replan_feedback_takes_precedence' }
       : maybeWriteSemanticVerificationRepairFeedback(repoRoot, afterRepair);
   const invalidPatchRepair = options.repair === false
     ? { attempted: false, reason: 'repair_disabled' }
-    : todoContractReplanRepair.attempted && todoContractReplanRepair.ok
+    : boundedLeafApplyRejectionRepair.attempted && boundedLeafApplyRejectionRepair.ok
+      ? { attempted: false, reason: 'bounded_leaf_target_patch_takes_precedence' }
+      : todoContractReplanRepair.attempted && todoContractReplanRepair.ok
       ? { attempted: false, reason: 'todo_contract_replan_feedback_takes_precedence' }
       : maybeWriteInvalidPatchRepairFeedback(repoRoot, afterTerminalNoEligibleClaimRepair);
   const repairResults = {
