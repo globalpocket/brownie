@@ -940,7 +940,10 @@ function maybeRepairRejectedBoundedLeafReplanResidue(repoRoot, diagnostic) {
   );
   const currentSourceId = diagnostic.apply_rejection?.selected_todo?.id
     ?? todoIdFromFirstLine(diagnostic.apply_rejection?.selected_todo?.first_line);
-  if (currentSourceId) {
+  if (currentSourceId && (
+    issueCodes(diagnostic).has('bounded_leaf_refinement_rejected') ||
+    diagnostic.apply_rejection?.bounded_leaf_refinement === true
+  )) {
     sourceIds.add(currentSourceId);
   }
   if (sourceIds.size === 0) {
