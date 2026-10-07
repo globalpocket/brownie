@@ -9278,6 +9278,10 @@ selected_decomposition_source_id = ""
 source_match = re.search(r"Decompose broad TODO `([^`]+)`", selected_todo)
 if source_match:
     selected_decomposition_source_id = source_match.group(1).strip()
+if not selected_decomposition_source_id:
+    source_match = re.search(r"Source TODO `([^`]+)` was recorded with `stalled_leaf_contract_replan`", selected_todo)
+    if source_match:
+        selected_decomposition_source_id = source_match.group(1).strip()
 decomposition_policy_lines = []
 leaf_execution_policy_lines = []
 repair_workspace_read_previews = (
