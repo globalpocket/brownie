@@ -843,7 +843,6 @@ Quality rubric:
 test('archives terminal no_eligible active claim so the same live TODO can be claimed fresh', () => {
   const repo = makeRepo();
   writeTodo(repo);
-  fs.appendFileSync(path.join(repo, '.brownie/todo.md'), '\n<!-- pre-existing Brownie queue state -->\n');
   fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
   writeJson(repo, '.brownie/private/phase-loop/status.json', {
     status: 'no_progress',
@@ -867,8 +866,7 @@ test('archives terminal no_eligible active claim so the same live TODO can be cl
   writeJson(repo, '.brownie/private/phase-loop/todo-claims/current.json', {
     claim_id: 'claim-terminal-no-eligible',
     status: 'in_progress',
-    selected_todo: runtimeEvidenceTodo,
-    baseline_diff_files: ['.brownie/todo.md']
+    selected_todo: runtimeEvidenceTodo
   });
 
   const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
@@ -884,7 +882,7 @@ test('archives terminal no_eligible active claim so the same live TODO can be cl
   assert.equal(result.repair.todo_contract_replan.attempted, false, JSON.stringify(result, null, 2));
 });
 
-test('does not archive a terminal no_eligible claim when an unmanaged file is dirty', () => {
+test('does not restart a terminal no_eligible claim when the workspace is dirty', () => {
   const repo = makeRepo();
   writeTodo(repo);
   fs.writeFileSync(path.join(repo, 'unexpected-user-edit.txt'), 'preserve me\n');
@@ -912,12 +910,14 @@ test('does not archive a terminal no_eligible claim when an unmanaged file is di
     baseline_diff_files: ['.brownie/todo.md']
   });
 
-  const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
+  const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: true });
 
   assert.equal(result.repair.terminal_no_eligible_claim.attempted, false, JSON.stringify(result, null, 2));
   assert.equal(result.repair.terminal_no_eligible_claim.reason, 'workspace_changed_or_dirty_not_archiving_claim');
   assert.match(result.repair.terminal_no_eligible_claim.dirty_files.join('\n'), /unexpected-user-edit\.txt/u);
   assert.equal(fs.existsSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/current.json')), true);
+  assert.equal(result.start.attempted, false, JSON.stringify(result, null, 2));
+  assert.equal(result.start.reason, 'terminal_no_eligible_claim_requires_verified_baseline');
 });
 
 test('does not restart phase-loop when only owner blockers remain but dirty delivery is required', () => {

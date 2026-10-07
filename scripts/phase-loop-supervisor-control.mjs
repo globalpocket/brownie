@@ -1073,22 +1073,11 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
     projection.blocked_by_terminal_task_failure === true ||
     diagnostic.progress?.classification === 'no_progress'
   );
-  const claimPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/current.json');
-  const claim = readJsonOrNull(claimPath);
-  const baselineDirtyFiles = new Set(
-    Array.isArray(claim?.baseline_diff_files)
-      ? claim.baseline_diff_files.map((file) => String(file).trim()).filter(Boolean)
-      : []
-  );
   const workspaceChanged = diagnostic.progress?.workspace_changed === true;
   const dirtyFiles = Array.isArray(diagnostic.git?.dirty_files)
     ? diagnostic.git.dirty_files.filter((line) => !/^\?\?\s+\.brownie\/private\//u.test(String(line)))
     : [];
-  const unmanagedDirtyFiles = dirtyFiles.filter((line) => {
-    const file = String(line).replace(/^[ MADRCU?!]{1,2}\s+/u, '').trim();
-    return !baselineDirtyFiles.has(file);
-  });
-  const dirty = unmanagedDirtyFiles.length > 0;
+  const dirty = dirtyFiles.length > 0;
   if (!noEligible || !terminalTaskFailed) {
     return { attempted: false, reason: 'terminal_no_eligible_not_reported' };
   }
@@ -1097,11 +1086,12 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
       attempted: false,
       reason: 'workspace_changed_or_dirty_not_archiving_claim',
       workspace_changed: workspaceChanged,
-      dirty_files: unmanagedDirtyFiles,
-      baseline_dirty_files: [...baselineDirtyFiles]
+      dirty_files: dirtyFiles
     };
   }
 
+  const claimPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/current.json');
+  const claim = readJsonOrNull(claimPath);
   if (!claim) {
     return { attempted: true, ok: false, reason: 'claim_missing_or_invalid' };
   }
@@ -1690,8 +1680,15 @@ export function controlPhaseLoop(options = {}) {
   const postRepair = options.repair === false
     ? { attempted: false, reason: 'repair_disabled' }
     : postRepairValidation(repoRoot, repairResults, afterTerminalNoEligibleClaimRepair);
+  const terminalClaimRecoveryBlocked = terminalNoEligibleClaimRepair.reason === 'workspace_changed_or_dirty_not_archiving_claim';
   const start = postRepair.attempted && !postRepair.ok
     ? { attempted: false, reason: 'post_repair_validation_failed', validation: postRepair }
+    : terminalClaimRecoveryBlocked
+      ? {
+          attempted: false,
+          reason: 'terminal_no_eligible_claim_requires_verified_baseline',
+          terminal_claim_repair: terminalNoEligibleClaimRepair
+        }
     : maybeStartPhaseLoop(repoRoot, Boolean(options.start), afterTerminalNoEligibleClaimRepair);
   const final = start.attempted && start.ok
     ? diagnosePhaseLoop({ repoRoot, write: options.write !== false })
