@@ -1043,8 +1043,11 @@ export function diagnosePhaseLoop(options = {}) {
     'merged_delivery_pending_reconciliation',
     'delivery_reconciliation_blocked'
   ].includes(issue.code));
-  const nextAction = shouldStopWorker
-    ? 'cause_analysis_then_guard_or_queue_repair_before_worker_retry'
+  const nextAction = issues.some((issue) => issue.code === 'active_claim_not_selected_by_live_queue') &&
+    issues.some((issue) => issue.code === 'bounded_leaf_refinement_rejected')
+    ? 'archive_stale_claim_then_force_bounded_leaf_target_patch'
+    : shouldStopWorker
+      ? 'cause_analysis_then_guard_or_queue_repair_before_worker_retry'
     : deliveryRequired
       ? 'prepare_delivery_commit_pr'
     : shouldNotify

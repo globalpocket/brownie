@@ -142,6 +142,62 @@ test('escalates repeated no-progress on the same bounded leaf to TODO contract r
   assert.equal(ledger[0].todo_id, 'E-21c-runtime-operational-evidence-impl-2-target-02');
 });
 
+test('archives a stale claim and keeps a rejected bounded leaf out of the generic replan path', () => {
+  const repo = makeRepo();
+  writeTodo(repo);
+  const apply = {
+    kind: 'todo_apply_rejected',
+    reason: 'selected_todo_is_already_a_bounded_leaf',
+    repair_hint: 'Do not refine a bounded leaf TODO into another child TODO.',
+    selected_patch_targets: ['scripts/guard-runtime-operational-evidence.test.mjs'],
+    selected_todo_first_line: runtimeEvidenceTodo.split('\n')[0],
+    semantic_repair_policy: { mode: 'bounded_leaf_target_repair' },
+    source_run_id: 'run-stale-claim-bounded-leaf'
+  };
+  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
+  writeJson(repo, '.brownie/private/phase-loop/status.json', {
+    status: 'no_progress',
+    run_id: 'run-stale-claim-bounded-leaf',
+    consecutive_failures: 1,
+    detail: `Rejected Brownie TODO refinement proposal before applying it because TODO guard preflight failed; recorded repair feedback. apply=${JSON.stringify(apply)}`
+  });
+  writeJson(repo, '.brownie/private/phase-loop/progress-state.json', {
+    classification: 'no_progress',
+    same_progress_count: 3,
+    run_stamp: '20261007T080000Z',
+    progress_projection: {
+      cli_status: 'no_eligible_task',
+      closure: 'no_eligible_task',
+      claim_id: 'claim-stale-bounded-leaf',
+      selected_todo: runtimeEvidenceTodo
+    }
+  });
+  writeJson(repo, '.brownie/private/phase-loop/todo-claims/current.json', {
+    claim_id: 'claim-stale-bounded-leaf',
+    status: 'in_progress',
+    selected_todo: '- [ ] E-99-stale-claim: Patch only `scripts/obsolete.mjs`.'
+  });
+
+  const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
+  const claimsDir = path.join(repo, '.brownie/private/phase-loop/todo-claims');
+  const feedback = JSON.parse(fs.readFileSync(path.join(claimsDir, 'repair-feedback.json'), 'utf8'));
+  const todo = fs.readFileSync(path.join(repo, '.brownie/todo.md'), 'utf8');
+  const archivedClaims = fs.readdirSync(claimsDir).filter((name) => name.startsWith('stale-current-'));
+
+  assert.equal(result.initial_summary.next_action, 'archive_stale_claim_then_force_bounded_leaf_target_patch');
+  assert.equal(result.repair.stale_active_claim.ok, true, JSON.stringify(result, null, 2));
+  assert.equal(fs.existsSync(path.join(claimsDir, 'current.json')), false);
+  assert.equal(archivedClaims.length, 1);
+  assert.equal(result.repair.bounded_leaf_apply_rejection.ok, true, JSON.stringify(result, null, 2));
+  assert.equal(result.repair.todo_contract_replan.reason, 'bounded_leaf_target_patch_takes_precedence');
+  assert.equal(result.repair.stalled_todo_blocked.reason, 'todo_contract_replan_not_active');
+  assert.equal(result.repair.stalled_todo_decomposition.reason, 'todo_contract_replan_not_active');
+  assert.equal(feedback.kind, 'phase_loop_bounded_leaf_apply_rejection_repair_feedback');
+  assert.equal(feedback.semantic_repair_policy.mode, 'force_bounded_leaf_target_patch');
+  assert.equal(feedback.selected_todo_first_line, runtimeEvidenceTodo.split('\n')[0]);
+  assert.doesNotMatch(todo, /replan-stalled-leaf/u);
+});
+
 test('ensures stalled TODO decomposition request even when blocked record already exists', () => {
   const repo = makeRepo();
   writeTodo(repo);
