@@ -971,15 +971,35 @@ function maybeRepairRejectedBoundedLeafReplanResidue(repoRoot, diagnostic) {
       breakdownRemoved = nextBreakdown.removed;
     }
   }
+  const blockedPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/blocked.jsonl');
+  const blockedRecords = readJsonl(blockedPath);
+  const retainedBlockedRecords = blockedRecords.filter((record) => !(
+    record?.block_reason === 'stalled_leaf_contract_replan' &&
+    (record?.todo_id === sourceId || todoIdFromFirstLine(record?.selected_todo_first_line) === sourceId)
+  ));
+  const removedBlockedRecordCount = blockedRecords.length - retainedBlockedRecords.length;
+  if (removedBlockedRecordCount > 0) {
+    fs.writeFileSync(
+      blockedPath,
+      retainedBlockedRecords.map((record) => `${JSON.stringify(record, Object.keys(record).sort())}\n`).join(''),
+      { encoding: 'utf8', mode: 0o600 }
+    );
+    fsyncFileAndParent(blockedPath);
+  }
   return {
     attempted: true,
     ok: true,
     changed: true,
-    paths: ['.brownie/todo.md', ...(breakdownRemoved.length > 0 ? ['.brownie/todo-breakdown.md'] : [])],
+    paths: [
+      '.brownie/todo.md',
+      ...(breakdownRemoved.length > 0 ? ['.brownie/todo-breakdown.md'] : []),
+      ...(removedBlockedRecordCount > 0 ? ['.brownie/private/phase-loop/todo-claims/blocked.jsonl'] : [])
+    ],
     removed_todo_ids: removedBlocks.removed,
     source_todo_id: sourceId,
     pruned_dependency_lines: prunedDepends.pruned,
     removed_breakdown_sections: breakdownRemoved,
+    removed_blocked_record_count: removedBlockedRecordCount,
     reason: 'bounded_leaf_refinement_rejected_replan_residue_removed'
   };
 }

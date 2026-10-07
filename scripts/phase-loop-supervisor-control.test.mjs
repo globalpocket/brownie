@@ -197,6 +197,12 @@ Verification ledger:
     status: 'in_progress',
     selected_todo: '- [ ] E-99-stale-claim: Patch only `scripts/obsolete.mjs`.'
   });
+  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/blocked.jsonl'), `${JSON.stringify({
+    schema_version: 1,
+    block_reason: 'stalled_leaf_contract_replan',
+    todo_id: 'E-21c-runtime-operational-evidence-impl-2-target-02',
+    selected_todo_first_line: runtimeEvidenceTodo.split('\n')[0]
+  })}\n`);
   writeJson(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json', {
     schema_version: 1,
     kind: 'phase_loop_invalid_patch_repair_feedback',
@@ -230,6 +236,8 @@ Verification ledger:
   assert.equal(result.repair.bounded_leaf_apply_rejection.ok, true, JSON.stringify(result, null, 2));
   assert.equal(result.repair.rejected_bounded_leaf_replan_residue.ok, true, JSON.stringify(result, null, 2));
   assert.deepEqual(result.repair.rejected_bounded_leaf_replan_residue.removed_todo_ids, [rejectedReplanId]);
+  assert.equal(result.repair.rejected_bounded_leaf_replan_residue.removed_blocked_record_count, 1);
+  assert.equal(fs.readFileSync(path.join(claimsDir, 'blocked.jsonl'), 'utf8'), '');
   assert.equal(result.repair.todo_contract_replan.reason, 'bounded_leaf_target_patch_takes_precedence');
   assert.equal(result.repair.invalid_patch.reason, 'bounded_leaf_target_patch_takes_precedence');
   assert.equal(result.repair.stalled_todo_blocked.reason, 'todo_contract_replan_not_active');
