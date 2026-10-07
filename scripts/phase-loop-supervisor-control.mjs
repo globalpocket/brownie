@@ -191,6 +191,29 @@ function readJsonOrNull(filePath) {
   }
 }
 
+function baselineDirtyWorkspace(repoRoot) {
+  const files = new Set();
+  for (const args of [
+    ['diff', '--name-only', 'HEAD', '--'],
+    ['ls-files', '--others', '--exclude-standard']
+  ]) {
+    for (const line of runTextCommand(repoRoot, 'git', args).split('\n')) {
+      if (line.trim()) files.add(line.trim());
+    }
+  }
+  const fingerprints = {};
+  for (const file of [...files].sort()) {
+    const absolute = path.resolve(repoRoot, file);
+    if (absolute !== repoRoot && !absolute.startsWith(`${repoRoot}${path.sep}`)) continue;
+    try {
+      fingerprints[file] = crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex');
+    } catch {
+      fingerprints[file] = null;
+    }
+  }
+  return { files: Object.keys(fingerprints), fingerprints };
+}
+
 function todoFirstLine(block) {
   return typeof block === 'string' ? block.split('\n')[0]?.trim() ?? null : null;
 }
@@ -1073,11 +1096,23 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
     projection.blocked_by_terminal_task_failure === true ||
     diagnostic.progress?.classification === 'no_progress'
   );
+  const claimPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/current.json');
+  const claim = readJsonOrNull(claimPath);
   const workspaceChanged = diagnostic.progress?.workspace_changed === true;
-  const dirtyFiles = Array.isArray(diagnostic.git?.dirty_files)
-    ? diagnostic.git.dirty_files.filter((line) => !/^\?\?\s+\.brownie\/private\//u.test(String(line)))
-    : [];
-  const dirty = dirtyFiles.length > 0;
+  const baselineFingerprints = claim?.baseline_dirty_file_sha256;
+  let dirtyFiles = [];
+  let baselineVerified = false;
+  try {
+    const current = baselineDirtyWorkspace(repoRoot);
+    dirtyFiles = current.files.filter((file) => !file.startsWith('.brownie/private/'));
+    const expectedFiles = Object.keys(baselineFingerprints ?? {}).sort();
+    baselineVerified = expectedFiles.length > 0
+      && JSON.stringify(current.files) === JSON.stringify(expectedFiles)
+      && expectedFiles.every((file) => current.fingerprints[file] === baselineFingerprints[file]);
+  } catch {
+    dirtyFiles = Array.isArray(diagnostic.git?.dirty_files) ? diagnostic.git.dirty_files : [];
+  }
+  const dirty = dirtyFiles.length > 0 && !baselineVerified;
   if (!noEligible || !terminalTaskFailed) {
     return { attempted: false, reason: 'terminal_no_eligible_not_reported' };
   }
@@ -1086,12 +1121,11 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
       attempted: false,
       reason: 'workspace_changed_or_dirty_not_archiving_claim',
       workspace_changed: workspaceChanged,
-      dirty_files: dirtyFiles
+      dirty_files: dirtyFiles,
+      baseline_verified: baselineVerified
     };
   }
 
-  const claimPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/current.json');
-  const claim = readJsonOrNull(claimPath);
   if (!claim) {
     return { attempted: true, ok: false, reason: 'claim_missing_or_invalid' };
   }
