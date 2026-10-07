@@ -86,8 +86,8 @@ write_bdk_trajectory_event() {
     payload_json="{}"
   fi
   python3 - "$TODO_CLAIM_FILE" "$BDK_TRAJECTORY_FILE" "$BDK_TRAJECTORY_DIR/$run_stamp.jsonl" "$run_stamp" "$event_type" "$(now_utc)" "$payload_json" <<'PY'
-import json
 import hashlib
+import json
 import os
 import pathlib
 import re
@@ -8613,6 +8613,7 @@ write_todo_claim() {
   timestamp="$(now_utc)"
   tmp_claim="$TODO_CLAIM_FILE.$$.$RANDOM.tmp"
   python3 - "$tmp_claim" "$claim_id" "$status" "$selected_todo" "$queue_fingerprint" "$queue_generation" "$PHASE_LOOP_TODO" "$run_stamp" "$PHASE_LOOP_WORKSPACE_ROOT" "$timestamp" <<'PY'
+import hashlib
 import json
 import os
 import pathlib
