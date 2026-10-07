@@ -843,6 +843,7 @@ Quality rubric:
 test('archives terminal no_eligible active claim so the same live TODO can be claimed fresh', () => {
   const repo = makeRepo();
   writeTodo(repo);
+  fs.appendFileSync(path.join(repo, '.brownie/todo.md'), '\n<!-- pre-existing Brownie queue state -->\n');
   fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
   writeJson(repo, '.brownie/private/phase-loop/status.json', {
     status: 'no_progress',
@@ -866,7 +867,8 @@ test('archives terminal no_eligible active claim so the same live TODO can be cl
   writeJson(repo, '.brownie/private/phase-loop/todo-claims/current.json', {
     claim_id: 'claim-terminal-no-eligible',
     status: 'in_progress',
-    selected_todo: runtimeEvidenceTodo
+    selected_todo: runtimeEvidenceTodo,
+    baseline_diff_files: ['.brownie/todo.md']
   });
 
   const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
@@ -880,6 +882,42 @@ test('archives terminal no_eligible active claim so the same live TODO can be cl
   assert.equal(fs.existsSync(claimPath), false);
   assert.equal(archivedClaims.length, 1);
   assert.equal(result.repair.todo_contract_replan.attempted, false, JSON.stringify(result, null, 2));
+});
+
+test('does not archive a terminal no_eligible claim when an unmanaged file is dirty', () => {
+  const repo = makeRepo();
+  writeTodo(repo);
+  fs.writeFileSync(path.join(repo, 'unexpected-user-edit.txt'), 'preserve me\n');
+  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
+  writeJson(repo, '.brownie/private/phase-loop/status.json', {
+    status: 'no_progress',
+    run_id: 'run-terminal-no-eligible-dirty',
+    consecutive_failures: 0
+  });
+  writeJson(repo, '.brownie/private/phase-loop/progress-state.json', {
+    classification: 'no_progress',
+    same_progress_count: 1,
+    workspace_changed: false,
+    progress_projection: {
+      cli_status: 'no_eligible_task',
+      closure: 'no_eligible_task',
+      stop_reason: 'terminal_task_failed',
+      selected_todo: runtimeEvidenceTodo
+    }
+  });
+  writeJson(repo, '.brownie/private/phase-loop/todo-claims/current.json', {
+    claim_id: 'claim-terminal-no-eligible-dirty',
+    status: 'in_progress',
+    selected_todo: runtimeEvidenceTodo,
+    baseline_diff_files: ['.brownie/todo.md']
+  });
+
+  const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
+
+  assert.equal(result.repair.terminal_no_eligible_claim.attempted, false, JSON.stringify(result, null, 2));
+  assert.equal(result.repair.terminal_no_eligible_claim.reason, 'workspace_changed_or_dirty_not_archiving_claim');
+  assert.match(result.repair.terminal_no_eligible_claim.dirty_files.join('\n'), /unexpected-user-edit\.txt/u);
+  assert.equal(fs.existsSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/current.json')), true);
 });
 
 test('does not restart phase-loop when only owner blockers remain but dirty delivery is required', () => {
