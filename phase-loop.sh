@@ -837,23 +837,28 @@ if not matches:
 
 blocks = []
 base_blocks = []
+todo_id_pattern = re.compile(r"^[-*]\s+\[[ xX]\]\s+([^:\s]+)")
 for index, match in enumerate(matches):
     end = matches[index + 1].start() if index + 1 < len(matches) else len(todo)
     block = todo[match.start():end].rstrip("\n")
     first_line = block.splitlines()[0].strip() if block.splitlines() else ""
     block_hash = hashlib.sha256(block.encode("utf-8")).hexdigest()
+    todo_id_match = todo_id_pattern.match(first_line)
+    todo_id = todo_id_match.group(1) if todo_id_match else ""
     blocks.append((first_line, block_hash))
     if "TODO-decompose-blocked-queue-" not in first_line:
-        base_blocks.append((first_line, block_hash, block))
+        base_blocks.append((first_line, block_hash, block, todo_id))
 
 if not base_blocks:
     raise SystemExit(1)
 
-base_queue_material = "\n\n".join(block for _, _, block in base_blocks)
+base_queue_material = "\n\n".join(block for _, _, block, _ in base_blocks)
 queue_fingerprint = hashlib.sha256(base_queue_material.encode("utf-8")).hexdigest()
 
 blocked_hashes_for_current_queue = set()
 blocked_first_lines = set()
+stalled_leaf_ids = set()
+stalled_leaf_first_lines = set()
 if blocked_path.exists():
     for line in blocked_path.read_text(encoding="utf-8").splitlines():
         try:
@@ -863,6 +868,11 @@ if blocked_path.exists():
         first_line = record.get("selected_todo_first_line")
         if isinstance(first_line, str) and first_line:
             blocked_first_lines.add(first_line)
+            stalled_id_match = todo_id_pattern.match(first_line)
+            if record.get("block_reason") == "stalled_leaf_contract_replan":
+                stalled_leaf_first_lines.add(first_line)
+                if stalled_id_match:
+                    stalled_leaf_ids.add(stalled_id_match.group(1))
         if record.get("queue_fingerprint") == queue_fingerprint:
             blocked_hash = record.get("selected_todo_sha256")
             if isinstance(blocked_hash, str):
@@ -870,14 +880,42 @@ if blocked_path.exists():
 
 blocked_blocks = [
     first_line
-    for first_line, block_hash, _block in base_blocks
+    for first_line, block_hash, _block, _todo_id in base_blocks
     if block_hash in blocked_hashes_for_current_queue or first_line in blocked_first_lines
 ]
-if len(blocked_blocks) != len(base_blocks):
+all_base_blocks_blocked = len(blocked_blocks) == len(base_blocks)
+stalled_source = next(
+    (
+        (first_line, block, todo_id)
+        for first_line, _block_hash, block, todo_id in base_blocks
+        if first_line in stalled_leaf_first_lines or (todo_id and todo_id in stalled_leaf_ids)
+    ),
+    None,
+)
+if not all_base_blocks_blocked and stalled_source is None:
     raise SystemExit(1)
 
-short_hash = queue_fingerprint[:12]
-decompose_id = f"TODO-decompose-blocked-queue-{short_hash}"
+if stalled_source is not None and not all_base_blocks_blocked:
+    source_first_line, source_block, source_id = stalled_source
+    source_hash = hashlib.sha256(source_block.encode("utf-8")).hexdigest()
+    decompose_id = f"TODO-decompose-blocked-queue-stalled-{source_hash[:12]}"
+    source_description = (
+        f"Source TODO `{source_id or source_first_line}` was recorded with "
+        "`stalled_leaf_contract_replan`; it must be locally replanned before "
+        "any dependent TODO can become eligible."
+    )
+    decomposition_scope = (
+        "replace only the stalled source TODO with bounded child TODOs and "
+        "preserve every existing dependent edge"
+    )
+else:
+    decompose_id = f"TODO-decompose-blocked-queue-{queue_fingerprint[:12]}"
+    source_description = (
+        "every unchecked item in `.brownie/todo.md` for queue fingerprint "
+        f"`{queue_fingerprint}` is recorded as blocked in "
+        "`.brownie/private/phase-loop/todo-claims/blocked.jsonl`."
+    )
+    decomposition_scope = "replace broad blocked TODOs with smaller unchecked leaf TODOs"
 if decompose_id in todo:
     raise SystemExit(1)
 
@@ -889,19 +927,16 @@ except Exception:
 item = f"""
 
 - [ ] {decompose_id}: Decompose the currently blocked Product Ready TODO queue into implementable leaf TODOs:
-  Route: todo-decomposition. Source: every unchecked item in `.brownie/todo.md`
-  for queue fingerprint `{queue_fingerprint}` is recorded as blocked in
-  `.brownie/private/phase-loop/todo-claims/blocked.jsonl`. Brownie must own the
+  Route: todo-decomposition. {source_description} Brownie must own the local
   decomposition: read `.brownie/todo.md`, the blocked claim log, and only the
   smallest relevant target files; then propose a bounded `workspace.write`
-  patch that replaces broad blocked TODOs in `.brownie/todo.md` with smaller
-  unchecked leaf TODOs naming exact files and verification commands. Brownie
-  may also create or update `{relative_breakdown}` in the same `.brownie`
+  patch that {decomposition_scope.replace('replace only', 'replaces only').replace('replace broad', 'replaces broad')}, naming exact files and verification commands.
+  Brownie may also create or update `{relative_breakdown}` in the same `.brownie`
   hierarchy as a decomposition ledger, but the live queue must remain
-  `.brownie/todo.md`. Do not implement the release-evidence fixes in this
-  decomposition task; only split them into executable work or explicit blocker
-  TODOs. Keep owner-only or external-control requirements as explicit blocker
-  TODOs. Generated at `{timestamp}`.
+  `.brownie/todo.md`. Do not mark the stalled source TODO complete and do not
+  implement the release-evidence fixes in this decomposition task; only split
+  them into executable work or explicit blocker TODOs. Keep owner-only or
+  external-control requirements as explicit blocker TODOs. Generated at `{timestamp}`.
 """
 
 with open(todo_path, "a", encoding="utf-8") as handle:
@@ -909,6 +944,7 @@ with open(todo_path, "a", encoding="utf-8") as handle:
     handle.flush()
     os.fsync(handle.fileno())
 os.chmod(todo_path, 0o600)
+print(decompose_id)
 PY
 }
 

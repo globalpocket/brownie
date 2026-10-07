@@ -515,6 +515,41 @@ test('selects queued blocked-queue decomposition before the blocked parent that 
   assert(selected.startsWith('- [ ] TODO-decompose-blocked-queue-abc123:'), selected);
 });
 
+test('selects a locally queued stalled-leaf replan before its blocked dependency chain', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-todo-evaluator-'));
+  const blocked = path.join(dir, 'blocked.jsonl');
+  const stalled = `- [ ] E-23a-release-artifact-portable-archive-target-01: Patch only \`scripts/release.mjs\`:
+  Route: implementation.
+  Source TODO: E-23a.
+  Depends on: <none>.
+  Completion condition: portable archive is verified.
+  Forbidden changes: do not declare release ready.
+  Verification: run \`pnpm check\`.`;
+  const dependent = `- [ ] E-23a-release-artifact-portable-archive-target-02: Patch only \`scripts/release.test.mjs\`:
+  Route: implementation.
+  Source TODO: E-23a.
+  Depends on: E-23a-release-artifact-portable-archive-target-01.
+  Completion condition: dependent verification runs.
+  Forbidden changes: do not bypass the dependency.
+  Verification: run \`pnpm check\`.`;
+  const replan = `- [ ] TODO-decompose-blocked-queue-stalled-abc123def456: Decompose the stalled TODO into bounded children:
+  Route: todo-decomposition.
+  Source TODO: E-23a-release-artifact-portable-archive-target-01.
+  Depends on: <none>.
+  Completion condition: the stalled leaf is replaced without marking it complete.
+  Forbidden changes: do not implement the release fix.
+  Verification: run \`pnpm --workspace-root guard:todo-decomposition\`.`;
+  const queue = `${stalled}\n${dependent}\n${replan}`;
+  fs.writeFileSync(blocked, `${JSON.stringify({
+    block_reason: 'stalled_leaf_contract_replan',
+    selected_todo_first_line: stalled.split('\n')[0]
+  })}\n`);
+
+  const selected = selectFirstSchedulableTodo(queue, { blockedPath: blocked });
+
+  assert(selected.startsWith('- [ ] TODO-decompose-blocked-queue-stalled-abc123def456:'), selected);
+});
+
 test('does not let later decomposition requests jump ahead of ready leaf TODOs', () => {
   const text = `- [ ] E-15d-soak-section-collector: Patch only \`scripts/release-runtime-operational-evidence.mjs\`:
   Route: implementation.
