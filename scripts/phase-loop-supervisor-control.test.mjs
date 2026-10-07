@@ -154,6 +154,26 @@ test('archives a stale claim and keeps a rejected bounded leaf out of the generi
     semantic_repair_policy: { mode: 'bounded_leaf_target_repair' },
     source_run_id: 'run-stale-claim-bounded-leaf'
   };
+  const rejectedReplanId = 'E-21c-replan-stalled-leaf-0123456789ab';
+  fs.appendFileSync(path.join(repo, '.brownie/todo.md'), `\n- [ ] ${rejectedReplanId}: Patch only \`.brownie/todo.md\` and \`.brownie/todo-breakdown.md\` to replan stalled Brownie TODO leaf into implementable child TODOs:
+  Route: todo-decomposition.
+  Source TODO: E-21c-runtime-operational-evidence-impl-2-target-02.
+  Depends on: <none>.
+  Completion condition: replace the source with child leaves.
+  Failure evidence: same_todo_apply_rejection_threshold; same_progress_count=1.
+  Forbidden changes: do not weaken guards/tests.
+  Verification: run \`pnpm --workspace-root guard:todo-decomposition\` and \`pnpm --workspace-root phase-loop:todo-queue-integrity\`.
+`);
+  fs.appendFileSync(path.join(repo, '.brownie/todo-breakdown.md'), `\n## TODO-repair-${rejectedReplanId}
+
+Parent TODO: E-21c-runtime-operational-evidence-impl-2-target-02
+
+Dependency graph:
+- ${rejectedReplanId}: <none>
+
+Verification ledger:
+- ${rejectedReplanId}: run \`pnpm --workspace-root guard:todo-decomposition\` and \`pnpm --workspace-root phase-loop:todo-queue-integrity\`.
+`);
   fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
   writeJson(repo, '.brownie/private/phase-loop/status.json', {
     status: 'no_progress',
@@ -208,6 +228,8 @@ test('archives a stale claim and keeps a rejected bounded leaf out of the generi
   assert.equal(fs.existsSync(path.join(claimsDir, 'current.json')), false);
   assert.equal(archivedClaims.length, 1);
   assert.equal(result.repair.bounded_leaf_apply_rejection.ok, true, JSON.stringify(result, null, 2));
+  assert.equal(result.repair.rejected_bounded_leaf_replan_residue.ok, true, JSON.stringify(result, null, 2));
+  assert.deepEqual(result.repair.rejected_bounded_leaf_replan_residue.removed_todo_ids, [rejectedReplanId]);
   assert.equal(result.repair.todo_contract_replan.reason, 'bounded_leaf_target_patch_takes_precedence');
   assert.equal(result.repair.invalid_patch.reason, 'bounded_leaf_target_patch_takes_precedence');
   assert.equal(result.repair.stalled_todo_blocked.reason, 'todo_contract_replan_not_active');
@@ -215,7 +237,7 @@ test('archives a stale claim and keeps a rejected bounded leaf out of the generi
   assert.equal(feedback.kind, 'phase_loop_bounded_leaf_apply_rejection_repair_feedback');
   assert.equal(feedback.semantic_repair_policy.mode, 'force_bounded_leaf_target_patch');
   assert.equal(feedback.selected_todo_first_line, runtimeEvidenceTodo.split('\n')[0]);
-  assert.doesNotMatch(todo, /replan-stalled-leaf/u);
+  assert.doesNotMatch(todo, new RegExp(rejectedReplanId, 'u'));
 });
 
 test('ensures stalled TODO decomposition request even when blocked record already exists', () => {

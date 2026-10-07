@@ -926,6 +926,64 @@ function maybeRepairNonLiveTodoResidue(repoRoot, diagnostic) {
   };
 }
 
+function maybeRepairRejectedBoundedLeafReplanResidue(repoRoot, diagnostic) {
+  const codes = issueCodes(diagnostic);
+  if (!codes.has('bounded_leaf_refinement_rejected')) {
+    return { attempted: false, reason: 'bounded_leaf_refinement_rejection_not_reported' };
+  }
+  const sourceId = diagnostic.apply_rejection?.selected_todo?.id
+    ?? todoIdFromFirstLine(diagnostic.apply_rejection?.selected_todo?.first_line);
+  if (!sourceId) {
+    return { attempted: true, ok: false, reason: 'bounded_leaf_source_todo_missing' };
+  }
+  const todoPath = path.join(repoRoot, '.brownie/todo.md');
+  const breakdownPath = path.join(repoRoot, '.brownie/todo-breakdown.md');
+  if (!fs.existsSync(todoPath)) {
+    return { attempted: true, ok: false, reason: 'todo_missing' };
+  }
+  const todoText = fs.readFileSync(todoPath, 'utf8');
+  const idsToRemove = new Set(
+    todoBlocks(todoText)
+      .filter((block) => {
+        const id = todoIdFromBlock(block.block);
+        return isStalledLeafReplanId(id) &&
+          sourceTodoFromBlock(block.block) === sourceId &&
+          /Failure evidence:\s*same_todo_apply_rejection_threshold\b/u.test(block.block);
+      })
+      .map((block) => todoIdFromBlock(block.block))
+      .filter(Boolean)
+  );
+  if (idsToRemove.size === 0) {
+    return { attempted: false, reason: 'no_rejected_bounded_leaf_replan_residue_detected', source_todo_id: sourceId };
+  }
+  const removedBlocks = removeTodoBlocksById(todoText, idsToRemove);
+  const prunedDepends = pruneDependsOn(removedBlocks.text, idsToRemove);
+  fs.writeFileSync(todoPath, prunedDepends.text, { encoding: 'utf8', mode: 0o600 });
+  fsyncFileAndParent(todoPath);
+
+  let breakdownRemoved = [];
+  if (fs.existsSync(breakdownPath)) {
+    const breakdownText = fs.readFileSync(breakdownPath, 'utf8');
+    const nextBreakdown = removeBreakdownRepairSections(breakdownText, idsToRemove);
+    if (nextBreakdown.removed.length > 0) {
+      fs.writeFileSync(breakdownPath, nextBreakdown.text, { encoding: 'utf8', mode: 0o600 });
+      fsyncFileAndParent(breakdownPath);
+      breakdownRemoved = nextBreakdown.removed;
+    }
+  }
+  return {
+    attempted: true,
+    ok: true,
+    changed: true,
+    paths: ['.brownie/todo.md', ...(breakdownRemoved.length > 0 ? ['.brownie/todo-breakdown.md'] : [])],
+    removed_todo_ids: removedBlocks.removed,
+    source_todo_id: sourceId,
+    pruned_dependency_lines: prunedDepends.pruned,
+    removed_breakdown_sections: breakdownRemoved,
+    reason: 'bounded_leaf_refinement_rejected_replan_residue_removed'
+  };
+}
+
 function maybeArchiveStaleActiveClaim(repoRoot, diagnostic) {
   const codes = issueCodes(diagnostic);
   if (!codes.has('active_claim_not_selected_by_live_queue')) {
@@ -1522,12 +1580,18 @@ export function controlPhaseLoop(options = {}) {
   const afterClaimRepair = staleActiveClaimRepair.attempted && staleActiveClaimRepair.ok
     ? diagnosePhaseLoop({ repoRoot, write: options.write !== false })
     : afterResidueRepair;
-  const terminalNoEligibleClaimRepair = options.repair === false
+  const rejectedBoundedLeafReplanResidueRepair = options.repair === false
     ? { attempted: false, reason: 'repair_disabled' }
-    : maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, afterClaimRepair, ledgerSummary);
-  const afterTerminalNoEligibleClaimRepair = terminalNoEligibleClaimRepair.attempted && terminalNoEligibleClaimRepair.ok
+    : maybeRepairRejectedBoundedLeafReplanResidue(repoRoot, afterClaimRepair);
+  const afterRejectedBoundedLeafReplanResidueRepair = rejectedBoundedLeafReplanResidueRepair.attempted && rejectedBoundedLeafReplanResidueRepair.ok
     ? diagnosePhaseLoop({ repoRoot, write: options.write !== false })
     : afterClaimRepair;
+  const terminalNoEligibleClaimRepair = options.repair === false
+    ? { attempted: false, reason: 'repair_disabled' }
+    : maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, afterRejectedBoundedLeafReplanResidueRepair, ledgerSummary);
+  const afterTerminalNoEligibleClaimRepair = terminalNoEligibleClaimRepair.attempted && terminalNoEligibleClaimRepair.ok
+    ? diagnosePhaseLoop({ repoRoot, write: options.write !== false })
+    : afterRejectedBoundedLeafReplanResidueRepair;
   // A rejected refinement of an already bounded leaf is not evidence that the
   // leaf needs another decomposition.  It is a targeted execution failure:
   // retain the leaf contract and force the next worker turn onto its declared
@@ -1579,6 +1643,7 @@ export function controlPhaseLoop(options = {}) {
     stalled_todo_blocked: stalledTodoBlocked,
     stalled_todo_decomposition: stalledTodoDecomposition,
     non_live_todo_residue: nonLiveTodoResidueRepair,
+    rejected_bounded_leaf_replan_residue: rejectedBoundedLeafReplanResidueRepair,
     stale_active_claim: staleActiveClaimRepair,
     terminal_no_eligible_claim: terminalNoEligibleClaimRepair,
     semantic_verification: semanticVerificationRepair,
@@ -1610,6 +1675,7 @@ export function controlPhaseLoop(options = {}) {
       stalled_todo_blocked: stalledTodoBlocked,
       stalled_todo_decomposition: stalledTodoDecomposition,
       non_live_todo_residue: nonLiveTodoResidueRepair,
+      rejected_bounded_leaf_replan_residue: rejectedBoundedLeafReplanResidueRepair,
       stale_active_claim: staleActiveClaimRepair,
       terminal_no_eligible_claim: terminalNoEligibleClaimRepair,
       semantic_verification: semanticVerificationRepair,
