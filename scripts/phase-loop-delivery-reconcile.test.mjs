@@ -121,7 +121,7 @@ test('receives a clean squash-equivalent delivery without overwriting the worktr
   assert.equal(result.applied, true);
   assert.equal(result.reconciliation_mode, 'squash_equivalent');
   assert.equal(git(repo, ['rev-parse', 'HEAD']), squashTarget);
-  assert.equal(git(repo, ['status', '--porcelain']), '');
+  assert.equal(git(repo, ['status', '--porcelain', '--untracked-files=no']), '');
 });
 
 test('refuses a squash-equivalent delivery when the workspace is not clean', () => {
@@ -138,4 +138,33 @@ test('refuses a squash-equivalent delivery when the workspace is not clean', () 
   assert.equal(result.safe_to_reconcile, false);
   assert(result.blockers.some((blocker) => blocker.code === 'squash_target_requires_clean_workspace'));
   assert.equal(fs.readFileSync(path.join(repo, 'tracked.txt'), 'utf8'), 'user-owned\n');
+});
+
+test('cleans the index for a tree-equal fast-forward instead of treating it as squash-equivalent', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-delivery-reconcile-'));
+  git(repo, ['init', '-b', 'main']);
+  git(repo, ['config', 'user.name', 'brownie-agent']);
+  git(repo, ['config', 'user.email', 'brownie-agent@local']);
+  fs.writeFileSync(path.join(repo, 'tracked.txt'), 'base\n');
+  git(repo, ['add', '.']);
+  git(repo, ['commit', '-m', 'base']);
+  const base = git(repo, ['rev-parse', 'HEAD']);
+  fs.writeFileSync(path.join(repo, 'tracked.txt'), 'delivery\n');
+  git(repo, ['commit', '-am', 'delivery']);
+  const delivery = git(repo, ['rev-parse', 'HEAD']);
+  fs.writeFileSync(path.join(repo, 'tracked.txt'), 'base\n');
+  git(repo, ['commit', '-am', 'revert delivery']);
+  const target = git(repo, ['rev-parse', 'HEAD']);
+  git(repo, ['branch', 'target', target]);
+  git(repo, ['switch', '-C', 'workspace', base]);
+  fs.writeFileSync(path.join(repo, 'tracked.txt'), 'delivery\n');
+  git(repo, ['add', 'tracked.txt']);
+  fs.writeFileSync(path.join(repo, 'tracked.txt'), 'base\n');
+  const result = reconcileDelivery({ repoRoot: repo, target: 'target', write: true });
+  assert.equal(result.applied, true);
+  assert.equal(result.reconciliation_mode, 'fast_forward');
+  assert.equal(git(repo, ['rev-parse', 'HEAD']), target);
+  assert.equal(git(repo, ['status', '--porcelain', '--untracked-files=no']), '');
+  assert.equal(git(repo, ['show', ':tracked.txt']), 'base');
+  assert.notEqual(delivery, target);
 });

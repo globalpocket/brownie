@@ -147,7 +147,9 @@ export function reconcileDelivery({ repoRoot, target = 'origin/main', write = fa
     return { ...diagnosis, applied: false, reason: write ? (diagnosis.head === diagnosis.target_commit ? 'already_reconciled' : 'blocked') : 'dry_run' };
   }
 
-  const reconciliationMode = diagnosis.head_tree_matches_target ? 'squash_equivalent' : 'fast_forward';
+  const reconciliationMode = !diagnosis.head_is_ancestor && diagnosis.head_tree_matches_target
+    ? 'squash_equivalent'
+    : 'fast_forward';
   if (reconciliationMode === 'fast_forward') {
     git(repoRoot, ['read-tree', diagnosis.target_commit]);
     const targetPaths = diagnosis.target_changed_paths
