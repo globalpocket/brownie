@@ -416,7 +416,6 @@ function failureLedgerSummary(repoRoot, diagnostic, currentEventResult) {
     ((counts.invalid_patch ?? 0) >= 2 && !repairableInvalidPatch) ||
     (counts.semantic_verification_failure ?? 0) >= 2 ||
     (counts.semantic_verification_stalled ?? 0) >= 1 ||
-    (counts.bounded_leaf_apply_rejection ?? 0) >= 1 ||
     codes.has('semantic_verification_repair_stalled')
   );
   let replanReason = 'threshold_not_met';
@@ -927,34 +926,39 @@ function maybeRepairNonLiveTodoResidue(repoRoot, diagnostic) {
 }
 
 function maybeRepairRejectedBoundedLeafReplanResidue(repoRoot, diagnostic) {
-  const codes = issueCodes(diagnostic);
-  if (!codes.has('bounded_leaf_refinement_rejected')) {
-    return { attempted: false, reason: 'bounded_leaf_refinement_rejection_not_reported' };
-  }
-  const sourceId = diagnostic.apply_rejection?.selected_todo?.id
-    ?? todoIdFromFirstLine(diagnostic.apply_rejection?.selected_todo?.first_line);
-  if (!sourceId) {
-    return { attempted: true, ok: false, reason: 'bounded_leaf_source_todo_missing' };
-  }
   const todoPath = path.join(repoRoot, '.brownie/todo.md');
   const breakdownPath = path.join(repoRoot, '.brownie/todo-breakdown.md');
+  const ledgerPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/failure-ledger.jsonl');
   if (!fs.existsSync(todoPath)) {
     return { attempted: true, ok: false, reason: 'todo_missing' };
   }
+  const sourceIds = new Set(
+    readJsonl(ledgerPath)
+      .filter((entry) => entry?.kind === 'bounded_leaf_apply_rejection')
+      .map((entry) => entry?.todo_id ?? todoIdFromFirstLine(entry?.selected_todo_first_line))
+      .filter(Boolean)
+  );
+  const currentSourceId = diagnostic.apply_rejection?.selected_todo?.id
+    ?? todoIdFromFirstLine(diagnostic.apply_rejection?.selected_todo?.first_line);
+  if (currentSourceId) {
+    sourceIds.add(currentSourceId);
+  }
+  if (sourceIds.size === 0) {
+    return { attempted: false, reason: 'no_bounded_leaf_rejection_history' };
+  }
   const todoText = fs.readFileSync(todoPath, 'utf8');
-  const idsToRemove = new Set(
+  const matchingReplans =
     todoBlocks(todoText)
       .filter((block) => {
         const id = todoIdFromBlock(block.block);
         return isStalledLeafReplanId(id) &&
-          sourceTodoFromBlock(block.block) === sourceId &&
+          sourceIds.has(sourceTodoFromBlock(block.block)) &&
           /Failure evidence:\s*same_todo_apply_rejection_threshold\b/u.test(block.block);
-      })
-      .map((block) => todoIdFromBlock(block.block))
-      .filter(Boolean)
-  );
+      });
+  const idsToRemove = new Set(matchingReplans.map((block) => todoIdFromBlock(block.block)).filter(Boolean));
+  const affectedSourceIds = new Set(matchingReplans.map((block) => sourceTodoFromBlock(block.block)).filter(Boolean));
   if (idsToRemove.size === 0) {
-    return { attempted: false, reason: 'no_rejected_bounded_leaf_replan_residue_detected', source_todo_id: sourceId };
+    return { attempted: false, reason: 'no_rejected_bounded_leaf_replan_residue_detected', source_todo_ids: [...sourceIds].sort() };
   }
   const removedBlocks = removeTodoBlocksById(todoText, idsToRemove);
   const prunedDepends = pruneDependsOn(removedBlocks.text, idsToRemove);
@@ -975,7 +979,7 @@ function maybeRepairRejectedBoundedLeafReplanResidue(repoRoot, diagnostic) {
   const blockedRecords = readJsonl(blockedPath);
   const retainedBlockedRecords = blockedRecords.filter((record) => !(
     record?.block_reason === 'stalled_leaf_contract_replan' &&
-    (record?.todo_id === sourceId || todoIdFromFirstLine(record?.selected_todo_first_line) === sourceId)
+    (affectedSourceIds.has(record?.todo_id) || affectedSourceIds.has(todoIdFromFirstLine(record?.selected_todo_first_line)))
   ));
   const removedBlockedRecordCount = blockedRecords.length - retainedBlockedRecords.length;
   if (removedBlockedRecordCount > 0) {
@@ -996,7 +1000,7 @@ function maybeRepairRejectedBoundedLeafReplanResidue(repoRoot, diagnostic) {
       ...(removedBlockedRecordCount > 0 ? ['.brownie/private/phase-loop/todo-claims/blocked.jsonl'] : [])
     ],
     removed_todo_ids: removedBlocks.removed,
-    source_todo_id: sourceId,
+    source_todo_ids: [...affectedSourceIds].sort(),
     pruned_dependency_lines: prunedDepends.pruned,
     removed_breakdown_sections: breakdownRemoved,
     removed_blocked_record_count: removedBlockedRecordCount,
