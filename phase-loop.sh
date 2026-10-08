@@ -12367,6 +12367,31 @@ PY
 
     local todo_decomposition_validation
     if ! todo_decomposition_validation="$(validate_todo_decomposition_after_runtime_apply "$stdout_log" 2>&1)"; then
+      # A runtime TODO write is only progress when the resulting queue passes the
+      # decomposition contract.  Try the deterministic, claim-scoped repair
+      # before falling back to the narrow in-place normalizer below.  In
+      # particular this repairs generated child IDs that lost their parent's
+      # prefix, a case the normalizer intentionally does not guess at.
+      local todo_decomposition_deterministic_repair todo_decomposition_recheck
+      if todo_decomposition_deterministic_repair="$(try_deterministic_todo_decomposition_repair "$run_stamp" 2>&1)" \
+        && todo_decomposition_recheck="$(validate_todo_decomposition_after_runtime_apply "$stdout_log" 2>&1)"; then
+        clear_repair_feedback
+        refresh_active_todo_claim_from_live_queue "$run_stamp"
+        # A decomposition repair may replace the selected request altogether.
+        # Never revive that removed claim: archive it so the next invocation
+        # selects a live repaired leaf from the queue.
+        if active_todo_claim_exists; then
+          write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+        else
+          archive_stale_todo_claim "$run_stamp"
+        fi
+        detail="TODO decomposition guard failure was repaired deterministically in the same run; continuing with the repaired leaf TODO. repair=$todo_decomposition_deterministic_repair stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+        write_status "last_run_succeeded" "$detail" "$run_id" "$exit_code" "0"
+        printf '%s run=%s todo_decomposition_repaired_inline=true repair=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$todo_decomposition_deterministic_repair" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+        write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"todo_decomposition_repaired_inline"}'
+        return 0
+      fi
+      todo_decomposition_validation="${todo_decomposition_recheck:-$todo_decomposition_validation}"
       local todo_decomposition_normalization
       if todo_decomposition_normalization="$(normalize_todo_decomposition_after_guard_failure 2>&1)"; then
         clear_repair_feedback
