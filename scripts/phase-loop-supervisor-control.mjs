@@ -361,6 +361,7 @@ function appendFailureLedgerEvent(repoRoot, diagnostic) {
     status_run_id: diagnostic.phase_loop?.run_id ?? null,
     progress_classification: diagnostic.progress?.classification ?? null,
     progress_run_stamp: diagnostic.progress?.run_stamp ?? null,
+    progress_fingerprint: diagnostic.progress?.last_progress_fingerprint ?? null,
     same_progress_count: Number(diagnostic.progress?.same_progress_count ?? 0),
     claim_id: claimId,
     issue_codes: [...issueCodes(diagnostic)].sort()
@@ -426,6 +427,17 @@ function failureLedgerSummary(repoRoot, diagnostic, currentEventResult) {
     return acc;
   }, {});
   const progressSameCount = Number(diagnostic.progress?.same_progress_count ?? 0);
+  const progressFingerprint = diagnostic.progress?.last_progress_fingerprint ?? null;
+  // A durable ledger spans claim migrations, but prior failures must only
+  // contribute to the current streak when they describe the same unchanged
+  // progress projection.  A changed fingerprint is evidence of progress and
+  // begins a fresh failure epoch.
+  const sameFingerprintEvents = typeof progressFingerprint === 'string' && progressFingerprint.length > 0
+    ? sameTodoEvents.filter((entry) => entry?.progress_fingerprint === progressFingerprint)
+    : [];
+  const sameFingerprintNoProgressCount = sameFingerprintEvents
+    .filter((entry) => entry?.kind === 'no_progress')
+    .length;
   const codes = issueCodes(diagnostic);
   const repairableInvalidPatch = invalidPatchNeedsExactContextRepair(diagnostic.invalid_patch);
   const invalidPatchWithRepeatedNoProgress = codes.has('invalid_workspace_write_patch_repeated') && progressSameCount >= 2 && !repairableInvalidPatch;
@@ -434,7 +446,7 @@ function failureLedgerSummary(repoRoot, diagnostic, currentEventResult) {
   // Claim migration/rebaseline can legitimately reset progress-state's local
   // counter.  Preserve convergence across those boundaries by counting
   // no-progress events for the same TODO in the durable failure ledger.
-  const repeatedNoProgressInLedger = (counts.no_progress ?? 0) >= 3;
+  const repeatedNoProgressInLedger = sameFingerprintNoProgressCount >= 3;
   const shouldReplan = (
     progressSameCount >= 3 ||
     repeatedNoProgressInLedger ||
@@ -474,10 +486,13 @@ function failureLedgerSummary(repoRoot, diagnostic, currentEventResult) {
       kind: entry.kind,
       status_run_id: entry.status_run_id,
       progress_run_stamp: entry.progress_run_stamp,
+      progress_fingerprint: entry.progress_fingerprint ?? null,
       same_progress_count: entry.same_progress_count,
       observed_at: entry.observed_at
     })),
     counts,
+    current_progress_fingerprint: progressFingerprint,
+    same_fingerprint_no_progress_count: sameFingerprintNoProgressCount,
     repairable_invalid_patch: repairableInvalidPatch,
     should_replan: shouldReplan,
     replan_reason: replanReason,

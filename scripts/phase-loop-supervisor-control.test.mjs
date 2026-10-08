@@ -151,6 +151,7 @@ test('preserves repeated no-progress across claim migrations in the failure ledg
   });
   writeJson(repo, '.brownie/private/phase-loop/progress-state.json', {
     classification: 'no_progress', same_progress_count: 1, run_stamp: '20261008T000000Z',
+    last_progress_fingerprint: 'sha256:unchanged-fixture',
     progress_projection: {
       cli_status: 'no_eligible_task', closure: 'no_eligible_task',
       claim_id: 'claim-ledger-threshold', selected_todo: runtimeEvidenceTodo
@@ -165,7 +166,8 @@ test('preserves repeated no-progress across claim migrations in the failure ledg
     observed_at: `2026-10-08T00:0${index}:00Z`,
     todo_id: 'E-21c-runtime-operational-evidence-impl-2-target-02',
     selected_todo_first_line: runtimeEvidenceTodo.split('\n')[0], kind: 'no_progress',
-    status_run_id: `prior-run-${index}`, progress_run_stamp: `prior-stamp-${index}`, same_progress_count: 1
+    status_run_id: `prior-run-${index}`, progress_run_stamp: `prior-stamp-${index}`,
+    progress_fingerprint: 'sha256:unchanged-fixture', same_progress_count: 1
   })).join('\n');
   fs.writeFileSync(ledgerPath, `${priorEvents}\n`);
 
@@ -176,6 +178,41 @@ test('preserves repeated no-progress across claim migrations in the failure ledg
     result.repair.failure_ledger_summary.replan_reason,
     'same_todo_no_progress_ledger_threshold'
   );
+});
+
+test('does not carry a no-progress ledger streak across a changed progress fingerprint', () => {
+  const repo = makeRepo();
+  writeTodo(repo);
+  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
+  writeJson(repo, '.brownie/private/phase-loop/status.json', {
+    status: 'no_progress', run_id: 'run-fingerprint-reset', consecutive_failures: 0
+  });
+  writeJson(repo, '.brownie/private/phase-loop/progress-state.json', {
+    classification: 'no_progress', same_progress_count: 1, run_stamp: '20261008T000100Z',
+    last_progress_fingerprint: 'sha256:after-real-progress',
+    progress_projection: {
+      cli_status: 'no_eligible_task', closure: 'no_eligible_task',
+      claim_id: 'claim-fingerprint-reset', selected_todo: runtimeEvidenceTodo
+    }
+  });
+  writeJson(repo, '.brownie/private/phase-loop/todo-claims/current.json', {
+    claim_id: 'claim-fingerprint-reset', status: 'claimed', selected_todo: runtimeEvidenceTodo
+  });
+  const ledgerPath = path.join(repo, '.brownie/private/phase-loop/todo-claims/failure-ledger.jsonl');
+  const priorEvents = ['before-a', 'before-b'].map((event_id, index) => JSON.stringify({
+    schema_version: 1, record_type: 'phase_loop_failure_event', event_id,
+    observed_at: `2026-10-08T00:1${index}:00Z`,
+    todo_id: 'E-21c-runtime-operational-evidence-impl-2-target-02',
+    selected_todo_first_line: runtimeEvidenceTodo.split('\n')[0], kind: 'no_progress',
+    status_run_id: `before-run-${index}`, progress_run_stamp: `before-stamp-${index}`,
+    progress_fingerprint: 'sha256:before-real-progress', same_progress_count: 1
+  })).join('\n');
+  fs.writeFileSync(ledgerPath, `${priorEvents}\n`);
+
+  const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
+
+  assert.equal(result.repair.failure_ledger_summary.same_fingerprint_no_progress_count, 1);
+  assert.equal(result.repair.failure_ledger_summary.should_replan, false, JSON.stringify(result, null, 2));
 });
 
 test('archives a stale claim and keeps a rejected bounded leaf out of the generic replan path', () => {

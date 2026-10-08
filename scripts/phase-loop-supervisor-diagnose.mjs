@@ -1089,6 +1089,7 @@ export function diagnosePhaseLoop(options = {}) {
     progress: {
       classification: progress?.classification ?? null,
       same_progress_count: progressSameCount,
+      last_progress_fingerprint: progress?.last_progress_fingerprint ?? null,
       run_stamp: progressStamp,
       selected_todo: selected,
       projection_status: progressProjection.cli_status ?? null,
