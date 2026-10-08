@@ -9365,15 +9365,23 @@ leaf_has_missing_fence_repair = bool(
 )
 leaf_todo_refinement_rejected_for_implementation = bool(
     isinstance(repair_feedback, dict)
-    and isinstance(repair_feedback.get("verification"), dict)
     and (
-        str(repair_feedback.get("reason", "")).lower() == "selected_todo_is_already_a_bounded_leaf"
-        or str(repair_feedback.get("verification", {}).get("reason", "")).lower() == "selected_todo_is_already_a_bounded_leaf"
-        or any(
-            isinstance(item, dict)
-            and str(item.get("code", "")).lower() == "todo_md_write_denied_for_implementation_todo"
-            for item in repair_feedback.get("verification", {}).get("tool_intent_rejections", [])
-            if isinstance(repair_feedback.get("verification", {}).get("tool_intent_rejections", []), list)
+        (
+            repair_feedback.get("kind") == "phase_loop_bounded_leaf_apply_rejection_repair_feedback"
+            and str(repair_feedback.get("reason", "")).lower() == "supervisor_bounded_leaf_refinement_rejected"
+        )
+        or (
+            isinstance(repair_feedback.get("verification"), dict)
+            and (
+                str(repair_feedback.get("reason", "")).lower() == "selected_todo_is_already_a_bounded_leaf"
+                or str(repair_feedback.get("verification", {}).get("reason", "")).lower() == "selected_todo_is_already_a_bounded_leaf"
+                or any(
+                    isinstance(item, dict)
+                    and str(item.get("code", "")).lower() == "todo_md_write_denied_for_implementation_todo"
+                    for item in repair_feedback.get("verification", {}).get("tool_intent_rejections", [])
+                    if isinstance(repair_feedback.get("verification", {}).get("tool_intent_rejections", []), list)
+                )
+            )
         )
     )
 )
@@ -9449,7 +9457,11 @@ leaf_allow_bounded_reread_for_exact_patch = bool(
 )
 leaf_force_write_on_repair = bool(
     (repair_feedback or semantic_repair_requires_exact_write)
-    and (not harness_has_terminal_repair_required or semantic_repair_requires_exact_write)
+    and (
+        not harness_has_terminal_repair_required
+        or semantic_repair_requires_exact_write
+        or leaf_todo_refinement_rejected_for_implementation
+    )
     and not leaf_allow_bounded_reread_for_exact_patch
     and (
         semantic_repair_requires_exact_write
@@ -9463,6 +9475,7 @@ leaf_force_write_on_repair = bool(
     )
     and (
         leaf_has_read_preview_for_repair
+        or leaf_todo_refinement_rejected_for_implementation
         or (
             isinstance(repair_feedback.get("verification"), dict)
             and repair_feedback.get("verification", {}).get("invalid_patch_proposals")
