@@ -1129,12 +1129,37 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
     && legacyBaselineFiles[0] === '.brownie/todo.md'
     && JSON.stringify(dirtyFiles) === JSON.stringify(legacyBaselineFiles)
     && legacyTodoMatches;
-  const auditableLegacyBaseline = !baselineFingerprints
+  let auditableLegacyBaseline = !baselineFingerprints
     && legacyBaselineFiles.length === 2
     && legacyBaselineFiles.includes('.brownie/todo.md')
     && legacyBaselineFiles.includes('.brownie/todo-breakdown.md')
     && JSON.stringify(dirtyFiles) === JSON.stringify(legacyBaselineFiles)
-    && legacyBaselineFiles.every((file) => file === '.brownie/todo.md' || file === '.brownie/todo-breakdown.md');
+    && legacyBaselineFiles.every((file) => file === '.brownie/todo.md' || file === '.brownie/todo-breakdown.md')
+    && legacyTodoMatches;
+  let legacyRebaselineSnapshot = null;
+  if (auditableLegacyBaseline) {
+    try {
+      const current = baselineDirtyWorkspace(repoRoot);
+      const managedFiles = current.files.filter((file) => !file.startsWith('.brownie/private/'));
+      const todoText = fs.readFileSync(path.join(repoRoot, '.brownie/todo.md'), 'utf8');
+      const breakdownText = fs.readFileSync(path.join(repoRoot, '.brownie/todo-breakdown.md'), 'utf8');
+      if (JSON.stringify(managedFiles) !== JSON.stringify(legacyBaselineFiles)) {
+        auditableLegacyBaseline = false;
+      } else {
+        legacyRebaselineSnapshot = {
+          dirty_files: managedFiles,
+          dirty_file_sha256: Object.fromEntries(
+            managedFiles.map((file) => [file, current.fingerprints[file]])
+          ),
+          todo_text: todoText,
+          breakdown_text: breakdownText
+        };
+      }
+    } catch {
+      // A legacy migration is safe only when every managed baseline input can be preserved.
+      auditableLegacyBaseline = false;
+    }
+  }
   if (!noEligible || !terminalTaskFailed) {
     return { attempted: false, reason: 'terminal_no_eligible_not_reported' };
   }
@@ -1181,12 +1206,7 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
     archive_reason: 'terminal_no_eligible_active_claim_reset',
     legacy_baseline_rebased: legacyManagedBaseline,
     legacy_baseline_audited_rebaseline: auditableLegacyBaseline,
-    legacy_rebaseline_snapshot: auditableLegacyBaseline ? {
-      dirty_files: dirtyFiles,
-      dirty_file_sha256: baselineDirtyWorkspace(repoRoot).fingerprints,
-      todo_text: fs.readFileSync(path.join(repoRoot, '.brownie/todo.md'), 'utf8'),
-      breakdown_text: fs.readFileSync(path.join(repoRoot, '.brownie/todo-breakdown.md'), 'utf8')
-    } : null,
+    legacy_rebaseline_snapshot: legacyRebaselineSnapshot,
     evaluator_selected_todo_id: liveSelectedId,
     progress_run_stamp: diagnostic.progress?.run_stamp ?? null,
     status_run_id: diagnostic.phase_loop?.run_id ?? null,
@@ -1207,7 +1227,8 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
       removed_path: path.relative(repoRoot, claimPath),
       archived_claim_id: claim.claim_id ?? null,
       todo_id: selectedId,
-      legacy_baseline_rebased: legacyManagedBaseline
+      legacy_baseline_rebased: legacyManagedBaseline,
+      legacy_baseline_audited_rebaseline: auditableLegacyBaseline
     };
   } catch (error) {
     return {

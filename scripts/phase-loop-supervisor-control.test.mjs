@@ -963,6 +963,60 @@ test('does not rebaseline a legacy terminal claim when its TODO snapshot changed
   assert.equal(result.start.reason, 'terminal_no_eligible_claim_requires_verified_baseline');
 });
 
+test('archives an auditable two-file legacy baseline only when the TODO snapshot matches', () => {
+  const repo = makeRepo();
+  writeTodo(repo);
+  fs.appendFileSync(path.join(repo, '.brownie/todo.md'), '\nlegacy managed todo state\n');
+  fs.appendFileSync(path.join(repo, '.brownie/todo-breakdown.md'), '\nlegacy managed breakdown state\n');
+  const baselineTodoText = fs.readFileSync(path.join(repo, '.brownie/todo.md'), 'utf8');
+  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
+  writeJson(repo, '.brownie/private/phase-loop/status.json', { status: 'no_progress', run_id: 'legacy-two-file-run' });
+  writeJson(repo, '.brownie/private/phase-loop/progress-state.json', {
+    classification: 'no_progress', workspace_changed: false,
+    progress_projection: { cli_status: 'no_eligible_task', closure: 'no_eligible_task', stop_reason: 'terminal_task_failed', selected_todo: runtimeEvidenceTodo }
+  });
+  writeJson(repo, '.brownie/private/phase-loop/todo-claims/current.json', {
+    claim_id: 'legacy-two-file-claim', status: 'in_progress', selected_todo: runtimeEvidenceTodo,
+    baseline_diff_files: ['.brownie/todo.md', '.brownie/todo-breakdown.md'], baseline_todo_text: baselineTodoText
+  });
+
+  const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
+  const archiveName = fs.readdirSync(path.join(repo, '.brownie/private/phase-loop/todo-claims'))
+    .find((name) => name.startsWith('terminal-no-eligible-current-'));
+  assert.equal(result.repair.terminal_no_eligible_claim.ok, true, JSON.stringify(result, null, 2));
+  assert.equal(result.repair.terminal_no_eligible_claim.legacy_baseline_audited_rebaseline, true);
+  const archived = JSON.parse(fs.readFileSync(
+    path.join(repo, '.brownie/private/phase-loop/todo-claims', archiveName),
+    'utf8'
+  ));
+
+  assert.equal(archived.legacy_rebaseline_snapshot.todo_text, baselineTodoText);
+  assert.match(archived.legacy_rebaseline_snapshot.breakdown_text, /legacy managed breakdown state/u);
+});
+
+test('fails closed without throwing when an auditable legacy baseline file is unreadable', () => {
+  const repo = makeRepo();
+  writeTodo(repo);
+  fs.appendFileSync(path.join(repo, '.brownie/todo.md'), '\nlegacy managed todo state\n');
+  const baselineTodoText = fs.readFileSync(path.join(repo, '.brownie/todo.md'), 'utf8');
+  fs.rmSync(path.join(repo, '.brownie/todo-breakdown.md'));
+  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
+  writeJson(repo, '.brownie/private/phase-loop/status.json', { status: 'no_progress', run_id: 'legacy-missing-breakdown-run' });
+  writeJson(repo, '.brownie/private/phase-loop/progress-state.json', {
+    classification: 'no_progress', workspace_changed: false,
+    progress_projection: { cli_status: 'no_eligible_task', closure: 'no_eligible_task', stop_reason: 'terminal_task_failed', selected_todo: runtimeEvidenceTodo }
+  });
+  writeJson(repo, '.brownie/private/phase-loop/todo-claims/current.json', {
+    claim_id: 'legacy-missing-breakdown-claim', status: 'in_progress', selected_todo: runtimeEvidenceTodo,
+    baseline_diff_files: ['.brownie/todo.md', '.brownie/todo-breakdown.md'], baseline_todo_text: baselineTodoText
+  });
+
+  const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
+  assert.equal(result.repair.terminal_no_eligible_claim.attempted, false, JSON.stringify(result, null, 2));
+  assert.equal(result.repair.terminal_no_eligible_claim.reason, 'workspace_changed_or_dirty_not_archiving_claim');
+  assert.equal(fs.existsSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/current.json')), true);
+});
+
 test('does not restart phase-loop when only owner blockers remain but dirty delivery is required', () => {
   const repo = makeRepo();
   fs.mkdirSync(path.join(repo, '.brownie'), { recursive: true });
