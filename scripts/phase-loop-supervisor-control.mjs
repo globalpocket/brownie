@@ -1100,6 +1100,9 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
   const claim = readJsonOrNull(claimPath);
   const workspaceChanged = diagnostic.progress?.workspace_changed === true;
   const baselineFingerprints = claim?.baseline_dirty_file_sha256;
+  const legacyBaselineFiles = Array.isArray(claim?.baseline_diff_files)
+    ? claim.baseline_diff_files.map((file) => String(file)).sort()
+    : [];
   let dirtyFiles = [];
   let baselineVerified = false;
   try {
@@ -1113,10 +1116,14 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
     dirtyFiles = Array.isArray(diagnostic.git?.dirty_files) ? diagnostic.git.dirty_files : [];
   }
   const dirty = dirtyFiles.length > 0 && !baselineVerified;
+  const legacyManagedBaseline = !baselineFingerprints
+    && legacyBaselineFiles.length > 0
+    && JSON.stringify(dirtyFiles) === JSON.stringify(legacyBaselineFiles)
+    && legacyBaselineFiles.every((file) => file === '.brownie/todo.md' || file === '.brownie/todo-breakdown.md');
   if (!noEligible || !terminalTaskFailed) {
     return { attempted: false, reason: 'terminal_no_eligible_not_reported' };
   }
-  if (workspaceChanged || dirty) {
+  if (workspaceChanged || (dirty && !legacyManagedBaseline)) {
     return {
       attempted: false,
       reason: 'workspace_changed_or_dirty_not_archiving_claim',
@@ -1157,6 +1164,7 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
     archived_at: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z'),
     archived_by: 'phase-loop-supervisor-control',
     archive_reason: 'terminal_no_eligible_active_claim_reset',
+    legacy_baseline_rebased: legacyManagedBaseline,
     evaluator_selected_todo_id: liveSelectedId,
     progress_run_stamp: diagnostic.progress?.run_stamp ?? null,
     status_run_id: diagnostic.phase_loop?.run_id ?? null,
@@ -1176,7 +1184,8 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
       path: path.relative(repoRoot, archivePath),
       removed_path: path.relative(repoRoot, claimPath),
       archived_claim_id: claim.claim_id ?? null,
-      todo_id: selectedId
+      todo_id: selectedId,
+      legacy_baseline_rebased: legacyManagedBaseline
     };
   } catch (error) {
     return {
