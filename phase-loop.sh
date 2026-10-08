@@ -9385,17 +9385,6 @@ leaf_todo_refinement_rejected_for_implementation = bool(
         )
     )
 )
-leaf_read_denied_for_implementation = bool(
-    isinstance(repair_feedback, dict)
-    and str(repair_feedback.get("reason", "")).lower() == "runtime_terminal_failure"
-    and isinstance(repair_feedback.get("verification"), dict)
-    and any(
-        "bounded leaf repair requires the next tool to be workspace.write" in str(item).lower()
-        and "workspace.read is not progress" in str(item).lower()
-        for item in repair_feedback.get("verification", {}).get("tool_denial_reasons", [])
-        if isinstance(repair_feedback.get("verification", {}).get("tool_denial_reasons", []), list)
-    )
-)
 selected_leaf_is_test_only = bool(
     selected_leaf_target_path
     and (
@@ -9471,8 +9460,7 @@ leaf_force_write_on_repair = bool(
     and (
         not harness_has_terminal_repair_required
         or semantic_repair_requires_exact_write
-        or leaf_todo_refinement_rejected_for_implementation
-        or leaf_read_denied_for_implementation
+        or (leaf_todo_refinement_rejected_for_implementation and leaf_has_read_preview_for_repair)
     )
     and not leaf_allow_bounded_reread_for_exact_patch
     and (
@@ -9480,16 +9468,13 @@ leaf_force_write_on_repair = bool(
         or
         not leaf_has_oversized_repair
         or leaf_has_missing_fence_repair
-        or leaf_todo_refinement_rejected_for_implementation
-        or leaf_read_denied_for_implementation
+        or (leaf_todo_refinement_rejected_for_implementation and leaf_has_read_preview_for_repair)
         or selected_linux_helper_source_identity_repair
         or selected_linux_fields_source_identity_repair
         or selected_supply_chain_clean_source_guard_repair
     )
     and (
         leaf_has_read_preview_for_repair
-        or leaf_todo_refinement_rejected_for_implementation
-        or leaf_read_denied_for_implementation
         or (
             isinstance(repair_feedback.get("verification"), dict)
             and repair_feedback.get("verification", {}).get("invalid_patch_proposals")
@@ -9515,6 +9500,10 @@ if "Source TODO:" in selected_todo and re.search(r"^\s*[-*]\s+\[\s*\]\s+[^:\n]+:
         leaf_execution_policy_lines.append(
             f"- leaf_contract_replan_scope_policy: the `.brownie/todo.md` patch must remove the selected leaf `{selected_parent_id or '<selected leaf id>'}`, preserve the parent intent, keep existing unrelated TODOs, use existing verification commands, and must not declare Product Ready or weaken guards."
         )
+    elif leaf_todo_refinement_rejected_for_implementation and selected_leaf_target_path and not leaf_has_read_preview_for_repair:
+        leaf_execution_policy_lines.append(
+            f"- leaf_target_context_recovery_policy: the prior `.brownie/todo.md` refinement was rejected, but there is no saved read preview for `{selected_leaf_target_path}`. The next tool may be exactly one `workspace.read` for `{selected_leaf_target_path}` to obtain exact patch context. Do not read `.brownie/todo.md`, split the leaf, or modify any file in this recovery turn. After that target preview exists, the next repair turn must patch `{selected_leaf_target_path}` directly."
+        )
     elif leaf_force_write_on_repair:
         leaf_execution_policy_lines.append(
             f"- leaf_required_next_tool_policy: the next tool must be `workspace.write` for `{selected_leaf_target_path or '<selected Patch only target>'}` unless final-answer fail-closed is unavoidable; the prior repair context already contains the target read preview, so `workspace.read` and `.brownie/todo.md` writes are not progress for this repair turn."
@@ -9535,10 +9524,6 @@ if "Source TODO:" in selected_todo and re.search(r"^\s*[-*]\s+\[\s*\]\s+[^:\n]+:
                 leaf_execution_policy_lines.append(
                     f"- test_leaf_retry_policy: this is a test-only leaf. The next tool must be exactly one `workspace.write` patch_file for `{selected_leaf_target_path}` if the target contents are already available; otherwise exactly one `workspace.read` for `{selected_leaf_target_path}`. Do not patch `.brownie/todo.md`, production files, collector files, guard files, or breakdown files."
                 )
-        if leaf_read_denied_for_implementation:
-            leaf_execution_policy_lines.append(
-                f"- leaf_read_denied_retry_policy: the previous run rejected `workspace.read` because this bounded repair already requires a target edit. Do not read `.brownie/todo.md` or `{selected_leaf_target_path or '<selected Patch only target>'}` again; the next tool must be exactly one compact `workspace.write` patch for `{selected_leaf_target_path or '<selected Patch only target>'}`, unless final-answer fail-closed is unavoidable."
-            )
     elif harness_has_terminal_repair_required and selected_leaf_target_path:
         adjacent_context = selected_leaf_adjacent_test_path or selected_leaf_target_path
         leaf_execution_policy_lines.append(
