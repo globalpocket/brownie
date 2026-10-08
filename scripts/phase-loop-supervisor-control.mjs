@@ -1804,8 +1804,16 @@ export function controlPhaseLoop(options = {}) {
     ? { attempted: false, reason: 'repair_disabled' }
     : postRepairValidation(repoRoot, repairResults, afterPostReplanClaimRepair);
   const terminalClaimRecoveryBlocked = terminalNoEligibleClaimRepair.reason === 'workspace_changed_or_dirty_not_archiving_claim';
+  const postReplanClaimArchivalFailed = postReplanStaleActiveClaimRepair.attempted
+    && postReplanStaleActiveClaimRepair.ok === false;
   const start = postRepair.attempted && !postRepair.ok
     ? { attempted: false, reason: 'post_repair_validation_failed', validation: postRepair }
+    : postReplanClaimArchivalFailed
+      ? {
+          attempted: false,
+          reason: 'post_replan_stale_claim_archive_failed',
+          post_replan_stale_active_claim: postReplanStaleActiveClaimRepair
+        }
     : terminalClaimRecoveryBlocked
       ? {
           attempted: false,

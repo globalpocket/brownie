@@ -182,6 +182,40 @@ test('preserves repeated no-progress across claim migrations in the failure ledg
   );
 });
 
+test('does not start when post-replan stale claim archival fails', () => {
+  const repo = makeRepo();
+  writeTodo(repo);
+  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
+  writeJson(repo, '.brownie/private/phase-loop/status.json', {
+    status: 'no_progress', run_id: 'run-replan-archive-failure', consecutive_failures: 0
+  });
+  writeJson(repo, '.brownie/private/phase-loop/progress-state.json', {
+    classification: 'no_progress', same_progress_count: 3, run_stamp: '20261008T000200Z',
+    progress_projection: {
+      cli_status: 'no_eligible_task', closure: 'no_eligible_task',
+      claim_id: 'claim-replan-archive-failure', selected_todo: runtimeEvidenceTodo
+    }
+  });
+  writeJson(repo, '.brownie/private/phase-loop/todo-claims/current.json', {
+    claim_id: 'claim-replan-archive-failure', status: 'claimed', selected_todo: runtimeEvidenceTodo
+  });
+  const originalWriteFileSync = fs.writeFileSync;
+  fs.writeFileSync = function guardedWrite(file, ...args) {
+    if (String(file).includes('stale-current-')) {
+      throw new Error('simulated stale claim archive write failure');
+    }
+    return originalWriteFileSync.call(this, file, ...args);
+  };
+  try {
+    const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: true });
+    assert.equal(result.repair.post_replan_stale_active_claim.ok, false, JSON.stringify(result, null, 2));
+    assert.equal(result.start.attempted, false, JSON.stringify(result, null, 2));
+    assert.equal(result.start.reason, 'post_replan_stale_claim_archive_failed');
+  } finally {
+    fs.writeFileSync = originalWriteFileSync;
+  }
+});
+
 test('does not carry a no-progress ledger streak across a changed progress fingerprint', () => {
   const repo = makeRepo();
   writeTodo(repo);
