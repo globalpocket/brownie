@@ -1129,10 +1129,16 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
     && legacyBaselineFiles[0] === '.brownie/todo.md'
     && JSON.stringify(dirtyFiles) === JSON.stringify(legacyBaselineFiles)
     && legacyTodoMatches;
+  const auditableLegacyBaseline = !baselineFingerprints
+    && legacyBaselineFiles.length === 2
+    && legacyBaselineFiles.includes('.brownie/todo.md')
+    && legacyBaselineFiles.includes('.brownie/todo-breakdown.md')
+    && JSON.stringify(dirtyFiles) === JSON.stringify(legacyBaselineFiles)
+    && legacyBaselineFiles.every((file) => file === '.brownie/todo.md' || file === '.brownie/todo-breakdown.md');
   if (!noEligible || !terminalTaskFailed) {
     return { attempted: false, reason: 'terminal_no_eligible_not_reported' };
   }
-  if (workspaceChanged || (dirty && !legacyManagedBaseline)) {
+  if (workspaceChanged || (dirty && !legacyManagedBaseline && !auditableLegacyBaseline)) {
     return {
       attempted: false,
       reason: 'workspace_changed_or_dirty_not_archiving_claim',
@@ -1174,6 +1180,13 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
     archived_by: 'phase-loop-supervisor-control',
     archive_reason: 'terminal_no_eligible_active_claim_reset',
     legacy_baseline_rebased: legacyManagedBaseline,
+    legacy_baseline_audited_rebaseline: auditableLegacyBaseline,
+    legacy_rebaseline_snapshot: auditableLegacyBaseline ? {
+      dirty_files: dirtyFiles,
+      dirty_file_sha256: baselineDirtyWorkspace(repoRoot).fingerprints,
+      todo_text: fs.readFileSync(path.join(repoRoot, '.brownie/todo.md'), 'utf8'),
+      breakdown_text: fs.readFileSync(path.join(repoRoot, '.brownie/todo-breakdown.md'), 'utf8')
+    } : null,
     evaluator_selected_todo_id: liveSelectedId,
     progress_run_stamp: diagnostic.progress?.run_stamp ?? null,
     status_run_id: diagnostic.phase_loop?.run_id ?? null,
