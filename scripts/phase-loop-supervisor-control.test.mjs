@@ -142,6 +142,42 @@ test('escalates repeated no-progress on the same bounded leaf to TODO contract r
   assert.equal(ledger[0].todo_id, 'E-21c-runtime-operational-evidence-impl-2-target-02');
 });
 
+test('preserves repeated no-progress across claim migrations in the failure ledger', () => {
+  const repo = makeRepo();
+  writeTodo(repo);
+  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
+  writeJson(repo, '.brownie/private/phase-loop/status.json', {
+    status: 'no_progress', run_id: 'run-ledger-threshold', consecutive_failures: 0
+  });
+  writeJson(repo, '.brownie/private/phase-loop/progress-state.json', {
+    classification: 'no_progress', same_progress_count: 1, run_stamp: '20261008T000000Z',
+    progress_projection: {
+      cli_status: 'no_eligible_task', closure: 'no_eligible_task',
+      claim_id: 'claim-ledger-threshold', selected_todo: runtimeEvidenceTodo
+    }
+  });
+  writeJson(repo, '.brownie/private/phase-loop/todo-claims/current.json', {
+    claim_id: 'claim-ledger-threshold', status: 'claimed', selected_todo: runtimeEvidenceTodo
+  });
+  const ledgerPath = path.join(repo, '.brownie/private/phase-loop/todo-claims/failure-ledger.jsonl');
+  const priorEvents = ['prior-a', 'prior-b'].map((event_id, index) => JSON.stringify({
+    schema_version: 1, record_type: 'phase_loop_failure_event', event_id,
+    observed_at: `2026-10-08T00:0${index}:00Z`,
+    todo_id: 'E-21c-runtime-operational-evidence-impl-2-target-02',
+    selected_todo_first_line: runtimeEvidenceTodo.split('\n')[0], kind: 'no_progress',
+    status_run_id: `prior-run-${index}`, progress_run_stamp: `prior-stamp-${index}`, same_progress_count: 1
+  })).join('\n');
+  fs.writeFileSync(ledgerPath, `${priorEvents}\n`);
+
+  const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
+
+  assert.equal(result.repair.todo_contract_replan.ok, true, JSON.stringify(result, null, 2));
+  assert.equal(
+    result.repair.failure_ledger_summary.replan_reason,
+    'same_todo_no_progress_ledger_threshold'
+  );
+});
+
 test('archives a stale claim and keeps a rejected bounded leaf out of the generic replan path', () => {
   const repo = makeRepo();
   writeTodo(repo);

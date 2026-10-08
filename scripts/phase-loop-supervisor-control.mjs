@@ -431,8 +431,13 @@ function failureLedgerSummary(repoRoot, diagnostic, currentEventResult) {
   const invalidPatchWithRepeatedNoProgress = codes.has('invalid_workspace_write_patch_repeated') && progressSameCount >= 2 && !repairableInvalidPatch;
   const semanticFailureWithRepeatedNoProgress = codes.has('verification_failure_requires_semantic_repair') && progressSameCount >= 2;
   const invalidPatchThenNoProgress = (counts.invalid_patch ?? 0) >= 1 && (counts.no_progress ?? 0) >= 1 && !repairableInvalidPatch;
+  // Claim migration/rebaseline can legitimately reset progress-state's local
+  // counter.  Preserve convergence across those boundaries by counting
+  // no-progress events for the same TODO in the durable failure ledger.
+  const repeatedNoProgressInLedger = (counts.no_progress ?? 0) >= 3;
   const shouldReplan = (
     progressSameCount >= 3 ||
+    repeatedNoProgressInLedger ||
     invalidPatchWithRepeatedNoProgress ||
     semanticFailureWithRepeatedNoProgress ||
     invalidPatchThenNoProgress ||
@@ -445,6 +450,8 @@ function failureLedgerSummary(repoRoot, diagnostic, currentEventResult) {
   if (shouldReplan) {
     if (progressSameCount >= 3) {
       replanReason = 'same_todo_no_progress_threshold';
+    } else if (repeatedNoProgressInLedger) {
+      replanReason = 'same_todo_no_progress_ledger_threshold';
     } else if (invalidPatchWithRepeatedNoProgress) {
       replanReason = 'invalid_patch_with_repeated_no_progress';
     } else if (semanticFailureWithRepeatedNoProgress) {
