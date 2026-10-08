@@ -1103,6 +1103,14 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
   const legacyBaselineFiles = Array.isArray(claim?.baseline_diff_files)
     ? claim.baseline_diff_files.map((file) => String(file)).sort()
     : [];
+  const legacyTodoPath = path.join(repoRoot, '.brownie/todo.md');
+  let legacyTodoMatches = false;
+  try {
+    legacyTodoMatches = typeof claim?.baseline_todo_text === 'string'
+      && fs.readFileSync(legacyTodoPath, 'utf8') === claim.baseline_todo_text;
+  } catch {
+    legacyTodoMatches = false;
+  }
   let dirtyFiles = [];
   let baselineVerified = false;
   try {
@@ -1117,9 +1125,10 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
   }
   const dirty = dirtyFiles.length > 0 && !baselineVerified;
   const legacyManagedBaseline = !baselineFingerprints
-    && legacyBaselineFiles.length > 0
+    && legacyBaselineFiles.length === 1
+    && legacyBaselineFiles[0] === '.brownie/todo.md'
     && JSON.stringify(dirtyFiles) === JSON.stringify(legacyBaselineFiles)
-    && legacyBaselineFiles.every((file) => file === '.brownie/todo.md' || file === '.brownie/todo-breakdown.md');
+    && legacyTodoMatches;
   if (!noEligible || !terminalTaskFailed) {
     return { attempted: false, reason: 'terminal_no_eligible_not_reported' };
   }

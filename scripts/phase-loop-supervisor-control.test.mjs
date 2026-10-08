@@ -920,11 +920,11 @@ test('does not restart a terminal no_eligible claim when the workspace is dirty'
   assert.equal(result.start.reason, 'terminal_no_eligible_claim_requires_verified_baseline');
 });
 
-test('archives a legacy terminal claim when only Brownie-managed baseline TODO files are dirty', () => {
+test('archives a legacy terminal claim only when its saved TODO snapshot matches', () => {
   const repo = makeRepo();
   writeTodo(repo);
   fs.appendFileSync(path.join(repo, '.brownie/todo.md'), '\nlegacy managed state\n');
-  fs.appendFileSync(path.join(repo, '.brownie/todo-breakdown.md'), '\nlegacy managed state\n');
+  const baselineTodoText = fs.readFileSync(path.join(repo, '.brownie/todo.md'), 'utf8');
   fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
   writeJson(repo, '.brownie/private/phase-loop/status.json', { status: 'no_progress', run_id: 'legacy-run' });
   writeJson(repo, '.brownie/private/phase-loop/progress-state.json', {
@@ -933,13 +933,34 @@ test('archives a legacy terminal claim when only Brownie-managed baseline TODO f
   });
   writeJson(repo, '.brownie/private/phase-loop/todo-claims/current.json', {
     claim_id: 'legacy-claim', status: 'in_progress', selected_todo: runtimeEvidenceTodo,
-    baseline_diff_files: ['.brownie/todo-breakdown.md', '.brownie/todo.md']
+    baseline_diff_files: ['.brownie/todo.md'], baseline_todo_text: baselineTodoText
   });
 
   const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
   assert.equal(result.repair.terminal_no_eligible_claim.ok, true, JSON.stringify(result, null, 2));
   assert.equal(result.repair.terminal_no_eligible_claim.legacy_baseline_rebased, true);
   assert.equal(fs.existsSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/current.json')), false);
+});
+
+test('does not rebaseline a legacy terminal claim when its TODO snapshot changed', () => {
+  const repo = makeRepo();
+  writeTodo(repo);
+  const baselineTodoText = fs.readFileSync(path.join(repo, '.brownie/todo.md'), 'utf8');
+  fs.appendFileSync(path.join(repo, '.brownie/todo.md'), '\nchanged after legacy claim\n');
+  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
+  writeJson(repo, '.brownie/private/phase-loop/status.json', { status: 'no_progress', run_id: 'legacy-changed-run' });
+  writeJson(repo, '.brownie/private/phase-loop/progress-state.json', {
+    classification: 'no_progress', workspace_changed: false,
+    progress_projection: { cli_status: 'no_eligible_task', closure: 'no_eligible_task', stop_reason: 'terminal_task_failed', selected_todo: runtimeEvidenceTodo }
+  });
+  writeJson(repo, '.brownie/private/phase-loop/todo-claims/current.json', {
+    claim_id: 'legacy-changed-claim', status: 'in_progress', selected_todo: runtimeEvidenceTodo,
+    baseline_diff_files: ['.brownie/todo.md'], baseline_todo_text: baselineTodoText
+  });
+
+  const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: true });
+  assert.equal(result.repair.terminal_no_eligible_claim.attempted, false, JSON.stringify(result, null, 2));
+  assert.equal(result.start.reason, 'terminal_no_eligible_claim_requires_verified_baseline');
 });
 
 test('does not restart phase-loop when only owner blockers remain but dirty delivery is required', () => {
