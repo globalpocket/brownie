@@ -1755,20 +1755,34 @@ export function controlPhaseLoop(options = {}) {
             ? 'stalled_todo_block_record_not_ready'
             : 'todo_contract_replan_not_active'
         };
+  // Replanning can replace the selected live TODO.  Re-diagnose after the
+  // queue mutation and archive the old claim before any subsequent start, so
+  // the worker cannot immediately re-claim the superseded contract.
+  const afterTodoContractReplan = stalledTodoDecomposition.attempted && stalledTodoDecomposition.ok
+    ? diagnosePhaseLoop({ repoRoot, write: options.write !== false })
+    : afterTerminalNoEligibleClaimRepair;
+  const postReplanStaleActiveClaimRepair = options.repair === false
+    ? { attempted: false, reason: 'repair_disabled' }
+    : stalledTodoDecomposition.attempted && stalledTodoDecomposition.ok
+      ? maybeArchiveStaleActiveClaim(repoRoot, afterTodoContractReplan)
+      : { attempted: false, reason: 'todo_contract_replan_not_applied' };
+  const afterPostReplanClaimRepair = postReplanStaleActiveClaimRepair.attempted && postReplanStaleActiveClaimRepair.ok
+    ? diagnosePhaseLoop({ repoRoot, write: options.write !== false })
+    : afterTodoContractReplan;
   const semanticVerificationRepair = options.repair === false
     ? { attempted: false, reason: 'repair_disabled' }
     : boundedLeafApplyRejectionRepair.attempted && boundedLeafApplyRejectionRepair.ok
       ? { attempted: false, reason: 'bounded_leaf_target_patch_takes_precedence' }
       : todoContractReplanRepair.attempted && todoContractReplanRepair.ok
       ? { attempted: false, reason: 'todo_contract_replan_feedback_takes_precedence' }
-      : maybeWriteSemanticVerificationRepairFeedback(repoRoot, afterRepair);
+      : maybeWriteSemanticVerificationRepairFeedback(repoRoot, afterPostReplanClaimRepair);
   const invalidPatchRepair = options.repair === false
     ? { attempted: false, reason: 'repair_disabled' }
     : boundedLeafApplyRejectionRepair.attempted && boundedLeafApplyRejectionRepair.ok
       ? { attempted: false, reason: 'bounded_leaf_target_patch_takes_precedence' }
       : todoContractReplanRepair.attempted && todoContractReplanRepair.ok
       ? { attempted: false, reason: 'todo_contract_replan_feedback_takes_precedence' }
-      : maybeWriteInvalidPatchRepairFeedback(repoRoot, afterTerminalNoEligibleClaimRepair);
+      : maybeWriteInvalidPatchRepairFeedback(repoRoot, afterPostReplanClaimRepair);
   const repairResults = {
     failure_ledger: failureLedger,
     todo_queue_integrity: queueIntegrityRepair,
@@ -1777,6 +1791,7 @@ export function controlPhaseLoop(options = {}) {
     todo_contract_replan: todoContractReplanRepair,
     stalled_todo_blocked: stalledTodoBlocked,
     stalled_todo_decomposition: stalledTodoDecomposition,
+    post_replan_stale_active_claim: postReplanStaleActiveClaimRepair,
     non_live_todo_residue: nonLiveTodoResidueRepair,
     rejected_bounded_leaf_replan_residue: rejectedBoundedLeafReplanResidueRepair,
     stale_active_claim: staleActiveClaimRepair,
@@ -1787,7 +1802,7 @@ export function controlPhaseLoop(options = {}) {
   };
   const postRepair = options.repair === false
     ? { attempted: false, reason: 'repair_disabled' }
-    : postRepairValidation(repoRoot, repairResults, afterTerminalNoEligibleClaimRepair);
+    : postRepairValidation(repoRoot, repairResults, afterPostReplanClaimRepair);
   const terminalClaimRecoveryBlocked = terminalNoEligibleClaimRepair.reason === 'workspace_changed_or_dirty_not_archiving_claim';
   const start = postRepair.attempted && !postRepair.ok
     ? { attempted: false, reason: 'post_repair_validation_failed', validation: postRepair }
@@ -1797,10 +1812,10 @@ export function controlPhaseLoop(options = {}) {
           reason: 'terminal_no_eligible_claim_requires_verified_baseline',
           terminal_claim_repair: terminalNoEligibleClaimRepair
         }
-    : maybeStartPhaseLoop(repoRoot, Boolean(options.start), afterTerminalNoEligibleClaimRepair);
+    : maybeStartPhaseLoop(repoRoot, Boolean(options.start), afterPostReplanClaimRepair);
   const final = start.attempted && start.ok
     ? diagnosePhaseLoop({ repoRoot, write: options.write !== false })
-    : afterTerminalNoEligibleClaimRepair;
+    : afterPostReplanClaimRepair;
   return {
     schema_version: 1,
     control_kind: 'brownie_phase_loop_supervisor_control',
@@ -1816,6 +1831,7 @@ export function controlPhaseLoop(options = {}) {
       todo_contract_replan: todoContractReplanRepair,
       stalled_todo_blocked: stalledTodoBlocked,
       stalled_todo_decomposition: stalledTodoDecomposition,
+      post_replan_stale_active_claim: postReplanStaleActiveClaimRepair,
       non_live_todo_residue: nonLiveTodoResidueRepair,
       rejected_bounded_leaf_replan_residue: rejectedBoundedLeafReplanResidueRepair,
       stale_active_claim: staleActiveClaimRepair,

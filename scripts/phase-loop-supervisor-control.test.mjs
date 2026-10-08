@@ -127,6 +127,8 @@ test('escalates repeated no-progress on the same bounded leaf to TODO contract r
   assert.equal(result.repair.todo_contract_replan.ok, true, JSON.stringify(result, null, 2));
   assert.equal(result.repair.stalled_todo_blocked.ok, true, JSON.stringify(result, null, 2));
   assert.equal(result.repair.stalled_todo_decomposition.ok, true, JSON.stringify(result, null, 2));
+  assert.equal(result.repair.post_replan_stale_active_claim.ok, true, JSON.stringify(result, null, 2));
+  assert.equal(fs.existsSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/current.json')), false);
   assert.equal(result.repair.post_repair_validation.ok, true, JSON.stringify(result, null, 2));
   assert.deepEqual(result.repair.post_repair_validation.failed_steps, []);
   assert.match(todo, /E-21c-replan-stalled-leaf-/u);
