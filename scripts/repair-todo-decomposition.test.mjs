@@ -319,6 +319,82 @@ test('repairs dangling dependency when active claim was already removed from liv
   }
 });
 
+test('atomically repairs a derived leaf dependency and missing breakdown entries after a stale claim', () => {
+  const root = makeTempRepo();
+  try {
+    const staleSelected = `- [ ] E-23a-stale-decomposition: Patch only \`.brownie/todo.md\` to repair an earlier decomposition.
+  Route: todo-decomposition.
+  Source TODO: E-23a-parent.
+  Depends on: <none>.
+  Completion condition: the queue is valid.
+  Forbidden changes: do not edit implementation files.
+  Verification: run \`pnpm --workspace-root guard:todo-decomposition\`.`;
+    const decomposition = `- [ ] E-23a-breakdown-sync: Patch only \`.brownie/todo-breakdown.md\` to record child leaves for E-23a-parent:
+  Route: todo-decomposition.
+  Source TODO: E-23a-parent.
+  Depends on: <none>.
+  Completion condition: the breakdown ledger records each derived leaf.
+  Forbidden changes: do not edit implementation files.
+  Verification: run \`pnpm --workspace-root guard:todo-decomposition\`.`;
+    const implementation = `- [ ] E-23a-child-impl: Patch only \`scripts/release-local-artifact.mjs\` to implement the bounded child:
+  Route: implementation.
+  Source TODO: E-23a-parent.
+  Depends on: <none>.
+  Completion condition: the child implementation is complete.
+  Forbidden changes: do not declare Product Ready.
+  Verification: run \`pnpm --workspace-root guard:todo-decomposition\`.`;
+    const dependent = `- [ ] E-23a-child-test: Patch only \`scripts/release-local-artifact.test.mjs\` to test the bounded child:
+  Route: implementation.
+  Source TODO: E-23a-parent.
+  Depends on: E-23a-child-impl, E-23a-stale-decomposition.
+  Completion condition: the child test is complete.
+  Forbidden changes: do not declare Product Ready.
+  Verification: run \`pnpm --workspace-root guard:todo-decomposition\`.`;
+    fs.writeFileSync(path.join(root, 'scripts/release-local-artifact.mjs'), '// fixture\n');
+    fs.writeFileSync(path.join(root, 'scripts/release-local-artifact.test.mjs'), '// fixture\n');
+    fs.writeFileSync(path.join(root, '.brownie/todo.md'), `# Brownie TODO Queue\n\n## Product Ready Blocking Queue\n\n${decomposition}\n\n${implementation}\n\n${dependent}\n`);
+    fs.writeFileSync(path.join(root, '.brownie/todo-breakdown.md'), [
+      '# TODO breakdown',
+      '',
+      'Dependency graph:',
+      '- E-23a-stale-decomposition: <none>',
+      '- E-23a-child-test: E-23a-child-impl, E-23a-stale-decomposition',
+      '',
+      'Verification ledger:',
+      '- E-23a-stale-decomposition: run `pnpm --workspace-root guard:todo-decomposition`',
+      '',
+      'Quality rubric:',
+      '',
+      'History:',
+      ''
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, '.brownie/private/phase-loop/todo-claims/current.json'), JSON.stringify({
+      schema_version: 1,
+      claim_id: 'claim-test',
+      selected_todo: staleSelected
+    }, null, 2));
+
+    const result = runRepair(root);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const todoText = fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8');
+    const breakdownText = fs.readFileSync(path.join(root, '.brownie/todo-breakdown.md'), 'utf8');
+    assert(todoText.includes('Depends on: E-23a-child-impl.'), todoText);
+    assert(breakdownText.includes('## TODO-repair-derived-E-23a-parent'), breakdownText);
+    assert(breakdownText.includes('- E-23a-child-test: E-23a-child-impl'), breakdownText);
+    assert.deepEqual(validateTodoDecompositionText(todoText, {
+      path: '.brownie/todo.md',
+      repoRoot: root,
+      packageScripts: new Set(['guard:todo-decomposition']),
+      breakdownPath: '.brownie/todo-breakdown.md',
+      breakdownText,
+      productReady: false,
+      releaseBlockersRemaining: true
+    }), []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('adds missing breakdown section for breakdown-only decomposition leaf', () => {
   const root = makeTempRepo();
   try {

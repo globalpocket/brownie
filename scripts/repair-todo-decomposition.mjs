@@ -1154,7 +1154,7 @@ function repairSelectedLeafTodoContract({ claim, todoText, breakdownText, todoPa
   };
 }
 
-function repairDanglingLiveDependencies({ todoText, breakdownText, todoPath, breakdownPath }) {
+function repairDanglingLiveDependencies({ todoText, breakdownText, todoPath, breakdownPath, additionalSourceIds = [] }) {
   const blocks = uncheckedTodoBlocks(todoText);
   const ids = existingIds(todoText);
   const completedIds = readTodoCompletionIds();
@@ -1196,6 +1196,52 @@ function repairDanglingLiveDependencies({ todoText, breakdownText, todoPath, bre
       normalization: 'removed_breakdown_only_dependency',
       removed: breakdownOnlyDependencies,
       remaining: liveDependencies
+    });
+  }
+
+  // Runtime can write a valid leaf into the queue without writing its matching
+  // breakdown entry.  Treat the queue and ledger as one transaction: create a
+  // minimal per-leaf ledger entry before validating the repaired state.
+  const decompositionSourceIds = new Set([
+    ...uncheckedTodoBlocks(updatedTodo)
+      .filter((block) => routeValue(block) === 'todo-decomposition')
+      .map(sourceTodoId)
+      .filter(Boolean),
+    ...additionalSourceIds.filter(Boolean)
+  ]);
+  const entryCount = (text, id) => {
+    const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return (text.match(new RegExp(`^-\\s+${escaped}:`, 'gmu')) ?? []).length;
+  };
+  for (const sourceId of decompositionSourceIds) {
+    const leaves = uncheckedTodoBlocks(updatedTodo)
+      .filter((block) => sourceTodoId(block) === sourceId)
+      .map((block) => {
+        const verificationText = block
+          .split('\n')
+          .map((line) => line.trim())
+          .find((line) => line.startsWith('Verification:'));
+        return {
+          id: todoId(block),
+          depends: parseDependsOn(block).join(', ') || '<none>',
+          verificationText
+        };
+      })
+      .filter((leaf) => leaf.id);
+    if (leaves.length === 0 || leaves.every((leaf) => entryCount(updatedBreakdown, leaf.id) >= 2)) {
+      continue;
+    }
+    updatedBreakdown = upsertBreakdownSection({
+      breakdownText: updatedBreakdown,
+      decompositionId: `TODO-repair-derived-${sourceId}`,
+      sourceId,
+      leaves,
+      runStamp: 'derived-queue-ledger-sync'
+    });
+    notes.push({
+      normalization: 'synchronized_derived_leaf_breakdown_group',
+      parent_todo_id: sourceId,
+      leaf_ids: leaves.map((leaf) => leaf.id)
     });
   }
 
@@ -1278,7 +1324,15 @@ export function repairTodoDecomposition({
   const leafRepair = repairSelectedLeafTodoContract({ claim, todoText, breakdownText, todoPath, breakdownPath });
   if (leafRepair.applied || leafRepair.eligible) {
     if (leafRepair.reason === 'selected_leaf_missing_from_todo') {
-      const dependencyRepair = repairDanglingLiveDependencies({ todoText, breakdownText, todoPath, breakdownPath });
+      // The runtime may have replaced the claimed decomposition leaf. Repair
+      // the live queue/ledger atomically before selecting a successor.
+      const dependencyRepair = repairDanglingLiveDependencies({
+        todoText,
+        breakdownText,
+        todoPath,
+        breakdownPath,
+        additionalSourceIds: routeValue(selected) === 'todo-decomposition' ? [sourceTodoId(selected)] : []
+      });
       if (dependencyRepair.applied || dependencyRepair.eligible) {
         return dependencyRepair;
       }
