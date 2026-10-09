@@ -1105,6 +1105,14 @@ function maybeArchiveStaleActiveClaim(repoRoot, diagnostic) {
 }
 
 function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerSummary) {
+  const claimPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/current.json');
+  const claim = readJsonOrNull(claimPath);
+  // A malformed active claim is a hard safety boundary.  Check it before the
+  // generic replan precedence so repeated no-progress cannot mutate the TODO
+  // contract or reach a start decision while the active claim is unreadable.
+  if (!claim && fs.existsSync(claimPath)) {
+    return { attempted: false, reason: 'active_claim_unreadable_or_invalid' };
+  }
   if (ledgerSummary?.should_replan) {
     return { attempted: false, reason: 'todo_contract_replan_takes_precedence' };
   }
@@ -1122,17 +1130,12 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
     projection.blocked_by_terminal_task_failure === true ||
     diagnostic.progress?.classification === 'no_progress'
   );
-  const claimPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/current.json');
-  const claim = readJsonOrNull(claimPath);
   // An archived or otherwise absent claim cannot be the cause of a terminal
   // claim-recovery block.  Check this before examining a dirty workspace: the
   // latter may legitimately contain historical Brownie evidence which must
   // remain untouched, but it has no claim to archive or rebaseline here.
   if (!claim && !fs.existsSync(claimPath)) {
     return { attempted: false, reason: 'no_active_claim' };
-  }
-  if (!claim) {
-    return { attempted: false, reason: 'active_claim_unreadable_or_invalid' };
   }
   const workspaceChanged = diagnostic.progress?.workspace_changed === true;
   const baselineFingerprints = claim?.baseline_dirty_file_sha256;
