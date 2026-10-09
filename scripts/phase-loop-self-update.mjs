@@ -339,12 +339,14 @@ function isWithinRepo(repoRoot, candidate) {
 }
 
 function trustedVerificationArgs(command) {
-  if (command === 'cargo fmt --check') return ['cargo', ['fmt', '--check']];
+  if (command === 'cargo fmt --check') {
+    return { program: 'cargo', args: ['fmt', '--check'], requires_test_execution: false };
+  }
   const match = /^cargo test -p ([a-z0-9-]+)(?: ([A-Za-z0-9_:-]+))?$/u.exec(command);
   if (!match) return null;
   const args = ['test', '-p', match[1]];
   if (match[2]) args.push(match[2]);
-  return ['cargo', args];
+  return { program: 'cargo', args, requires_test_execution: Boolean(match[2]) };
 }
 
 function runTrustedVerification({ repoRoot, commands, run }) {
@@ -354,7 +356,7 @@ function runTrustedVerification({ repoRoot, commands, run }) {
     if (!invocation) {
       return { ok: false, reason: 'trusted_verification_command_forbidden', results, command };
     }
-    const [program, args] = invocation;
+    const { program, args } = invocation;
     const result = run(program, args, {
       cwd: repoRoot,
       encoding: 'utf8',
@@ -371,6 +373,10 @@ function runTrustedVerification({ repoRoot, commands, run }) {
     results.push(entry);
     if (result.status !== 0 || result.signal) {
       return { ok: false, reason: 'trusted_verification_failed', results };
+    }
+    if (invocation.requires_test_execution
+      && !/\brunning [1-9]\d* tests?\b/u.test(`${entry.stdout}\n${entry.stderr}`)) {
+      return { ok: false, reason: 'trusted_verification_no_tests_run', results };
     }
   }
   return { ok: true, results };
@@ -408,7 +414,11 @@ export function applyTrustedExactPatch({ repoRoot, targetPath, context, run = sp
   } catch {
     return { applied: false, reason: 'trusted_patch_target_unreadable' };
   }
-  if (!stat.isFile() || stat.isSymbolicLink() || !isWithinRepo(realRepoRoot, real)) {
+  const canonicalRelative = path.relative(realRepoRoot, real);
+  if (!stat.isFile()
+    || stat.isSymbolicLink()
+    || !isWithinRepo(realRepoRoot, real)
+    || isBrownieManagedPath(canonicalRelative)) {
     return { applied: false, reason: 'trusted_patch_target_unsafe' };
   }
 
@@ -422,13 +432,8 @@ export function applyTrustedExactPatch({ repoRoot, targetPath, context, run = sp
   const verification = runTrustedVerification({ repoRoot, commands: context.commands, run });
   if (!verification.ok) {
     const current = fs.readFileSync(absolute, 'utf8');
-    const replacementFirst = current.indexOf(context.newText);
-    if (replacementFirst >= 0 && replacementFirst === current.lastIndexOf(context.newText)) {
-      writeSourceAtomically(
-        absolute,
-        `${current.slice(0, replacementFirst)}${context.oldText}${current.slice(replacementFirst + context.newText.length)}`,
-        stat.mode & 0o777
-      );
+    if (current === after) {
+      writeSourceAtomically(absolute, before, stat.mode & 0o777);
       return { applied: false, reason: verification.reason, verification, restored: true };
     }
     return { applied: false, reason: `${verification.reason}_restore_refused`, verification, restored: false };
