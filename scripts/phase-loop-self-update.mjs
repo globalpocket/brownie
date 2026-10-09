@@ -105,6 +105,39 @@ function isBrownieManagedPath(file) {
     || file.includes('/.brownie/');
 }
 
+function hasExactlyOneOccurrence(text, needle) {
+  const first = text.indexOf(needle);
+  return first >= 0 && first === text.lastIndexOf(needle);
+}
+
+// A recovery worker can atomically apply the requested hunk and then stop
+// before it records completion. Ordinarily a source change blocks another
+// worker. The sole exception is the request-declared target while it still
+// holds exactly the trusted preimage; applyTrustedExactPatch validates and
+// atomically replaces that hunk before any controller write is accepted.
+function trustedDirtyTargetState({ repoRoot, targetPaths, context, files }) {
+  if (!context || targetPaths.length !== 1 || files.length !== 1 || files[0] !== targetPaths[0]) return null;
+  const targetPath = targetPaths[0];
+  if (isBrownieManagedPath(targetPath) || path.isAbsolute(targetPath) || targetPath.split('/').includes('..')) return null;
+  try {
+    const root = fs.realpathSync(repoRoot);
+    const absolute = path.resolve(root, targetPath);
+    const stat = fs.lstatSync(absolute);
+    const real = fs.realpathSync(absolute);
+    if (!stat.isFile() || stat.isSymbolicLink() || !isWithinRepo(root, real)) return null;
+    const text = fs.readFileSync(real, 'utf8');
+    if (hasExactlyOneOccurrence(text, context.oldText)) return 'preimage';
+    if (hasExactlyOneOccurrence(text, context.newText)) return 'postimage';
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function isTrustedDirtyTargetOnly(options) {
+  return trustedDirtyTargetState(options) !== null;
+}
+
 function requestFailure(reason, extra = {}) {
   return { eligible: false, reason, ...extra };
 }
@@ -283,7 +316,14 @@ export function evaluateSelfUpdateEligibility({ repoRoot, request, run = spawnSy
   const dirty = gitDirtyFiles(repoRoot, run);
   if (!dirty.ok) return requestFailure('git_status_unavailable', { diagnostic });
   const nonBrownieDirtyFiles = dirty.files.filter((file) => !isBrownieManagedPath(file));
-  if (nonBrownieDirtyFiles.length > 0) {
+  const trustedContext = trustedExactPatchContext(request);
+  const trustedTargetDirtyOnly = isTrustedDirtyTargetOnly({
+    repoRoot,
+    targetPaths,
+    context: trustedContext,
+    files: nonBrownieDirtyFiles
+  });
+  if (nonBrownieDirtyFiles.length > 0 && !trustedTargetDirtyOnly) {
     return requestFailure('non_brownie_workspace_changes_present', { non_brownie_dirty_files: nonBrownieDirtyFiles, diagnostic });
   }
 
@@ -311,6 +351,7 @@ export function evaluateSelfUpdateEligibility({ repoRoot, request, run = spawnSy
     provider_environment: providerEnvironment.source,
     target_paths: targetPaths,
     dirty_brownie_files: dirty.files,
+    trusted_target_dirty_only: trustedTargetDirtyOnly,
     diagnostic
   };
   // Keep credentials out of CLI/diagnostic JSON while making preflight and
@@ -325,9 +366,12 @@ export function buildSelfUpdateObjective({ request, eligibility }) {
   const targetPaths = eligibility.target_paths ?? [];
   const hasTrustedPatchContext = hasUnambiguousTrustedPatchContext(request);
   const trustedPatchInstruction = hasTrustedPatchContext
-    ? 'The recovery request supplies an exact trusted patch context. Do not use workspace.read to rediscover that hunk; emit the compact workspace.write patch_file directly so a large target file cannot truncate the recovery context.\n\n'
+    ? 'read_budget_repair_policy: trusted exact patch context is embedded below. The recovery request supplies an exact trusted patch context. Do not use workspace.read to rediscover that hunk; emit the compact workspace.write patch_file directly so a large target file cannot truncate the recovery context.\n\n'
     : '';
-  return `# Brownie controller self-update recovery\n\nYou are the dedicated Brownie recovery implementer. The normal phase loop is stopped. Runtime permissions and the bounded target contract below override this request.\n\n## Observed controller state\n\n- status: ${status}\n- diagnostic issue codes: ${issueCodes}\n- preserved Brownie state files: ${(eligibility.dirty_brownie_files ?? []).join(', ') || '<none>'}\n\n## Selected TODO\n\n- [ ] phase-loop-self-update: Patch only ${targetPaths.map((target) => `\`${target}\``).join(' and ')}.\n  Route: implementation.\n  Source TODO: phase-loop-self-update.\n  Depends on: <none>.\n  Completion condition: the diagnosed controller contradiction is removed without changing operational state.\n  Forbidden changes: do not edit \`.brownie/todo.md\`, \`.brownie/todo-breakdown.md\`, or any pre-existing \`.brownie/**\` state.\n  Verification: run the smallest targeted regression tests for the changed file.\n\n## Recovery request\n\n${request.trim()}\n\n${trustedPatchInstruction}## Required outcome\n\n1. Implement only the minimum controller/runtime change that removes the diagnosed contradiction.\n2. Add a regression test that proves the recovery path works and retain the denial test for the unsafe path.\n3. Run the smallest relevant tests and report exact commands/results.\n4. Do not stage, overwrite, revert, or delete pre-existing .brownie/ changes.\n5. Do not restart the normal phase loop. Finish with a concise summary suitable for a brownie-agent-authored PR.\n`;
+  const requiredOutcome = hasTrustedPatchContext
+    ? '1. Apply only the supplied exact patch to the declared target; do not widen it or rediscover its contents.\n2. Run exactly the supplied trusted verification commands and report their results.\n3. Do not stage, overwrite, revert, or delete pre-existing .brownie/ changes.\n4. Do not restart the normal phase loop. Finish with a concise summary suitable for a brownie-agent-authored PR.'
+    : '1. Implement only the minimum controller/runtime change that removes the diagnosed contradiction.\n2. Add a regression test that proves the recovery path works and retain the denial test for the unsafe path.\n3. Run the smallest relevant tests and report exact commands/results.\n4. Do not stage, overwrite, revert, or delete pre-existing .brownie/ changes.\n5. Do not restart the normal phase loop. Finish with a concise summary suitable for a brownie-agent-authored PR.';
+  return `# Brownie controller self-update recovery\n\nYou are the dedicated Brownie recovery implementer. The normal phase loop is stopped. Runtime permissions and the bounded target contract below override this request.\n\n## Observed controller state\n\n- status: ${status}\n- diagnostic issue codes: ${issueCodes}\n- preserved Brownie state files: ${(eligibility.dirty_brownie_files ?? []).join(', ') || '<none>'}\n\n## Selected TODO\n\n- [ ] phase-loop-self-update: Patch only ${targetPaths.map((target) => `\`${target}\``).join(' and ')}.\n  Route: implementation.\n  Source TODO: phase-loop-self-update.\n  Depends on: <none>.\n  Completion condition: the diagnosed controller contradiction is removed without changing operational state.\n  Forbidden changes: do not edit \`.brownie/todo.md\`, \`.brownie/todo-breakdown.md\`, or any pre-existing \`.brownie/**\` state.\n  Verification: run the smallest targeted regression tests for the changed file.\n\n## Recovery request\n\n${request.trim()}\n\n${trustedPatchInstruction}## Required outcome\n\n${requiredOutcome}\n`;
 }
 
 function writeAtomically(filePath, contents) {
@@ -345,11 +389,58 @@ function trustedVerificationArgs(command) {
   if (command === 'cargo fmt --check') {
     return { program: 'cargo', args: ['fmt', '--check'], requires_test_execution: false };
   }
+  if (command === 'cargo test -p brownie-runtime --all-features') {
+    return { program: 'cargo', args: ['test', '-p', 'brownie-runtime', '--all-features'], requires_test_execution: true };
+  }
+  if (command === 'pnpm --workspace-root guard:runtime-release-readiness') {
+    return { program: 'pnpm', args: ['--workspace-root', 'guard:runtime-release-readiness'], requires_test_execution: false };
+  }
+  if (command === 'pnpm --workspace-root guard:runtime-release-readiness:test') {
+    return {
+      program: 'pnpm',
+      args: ['--workspace-root', 'guard:runtime-release-readiness:test'],
+      requires_test_execution: true,
+      test_evidence: /(?:#|\u2139)\s*tests\s+[1-9]\d*\b/u
+    };
+  }
+  if (command === 'pnpm --workspace-root guard:release-contract') {
+    return { program: 'pnpm', args: ['--workspace-root', 'guard:release-contract'], requires_test_execution: false };
+  }
+  if (command === 'pnpm --workspace-root guard:release-contract:test') {
+    return {
+      program: 'pnpm',
+      args: ['--workspace-root', 'guard:release-contract:test'],
+      requires_test_execution: true,
+      test_evidence: /(?:#|\u2139)\s*tests\s+[1-9]\d*\b/u
+    };
+  }
+  if (command === 'pnpm --workspace-root guard:runtime-module-decomposition') {
+    return { program: 'pnpm', args: ['--workspace-root', 'guard:runtime-module-decomposition'], requires_test_execution: false };
+  }
+  if (command === 'pnpm --workspace-root guard:runtime-module-decomposition:test') {
+    return {
+      program: 'pnpm',
+      args: ['--workspace-root', 'guard:runtime-module-decomposition:test'],
+      requires_test_execution: true,
+      test_evidence: /(?:#|\u2139)\s*tests\s+[1-9]\d*\b/u
+    };
+  }
+  if (command === 'pnpm --workspace-root phase-loop:todo-evaluator:test') {
+    return {
+      program: 'pnpm',
+      args: ['--workspace-root', 'phase-loop:todo-evaluator:test'],
+      requires_test_execution: true,
+      test_evidence: /(?:#|\u2139)\s*tests\s+[1-9]\d*\b/u
+    };
+  }
+  if (command === 'git diff --check') {
+    return { program: 'git', args: ['diff', '--check'], requires_test_execution: false };
+  }
   const match = /^cargo test -p ([a-z0-9-]+)(?: ([A-Za-z0-9_:-]+))?$/u.exec(command);
   if (!match) return null;
   const args = ['test', '-p', match[1]];
   if (match[2]) args.push(match[2]);
-  return { program: 'cargo', args, requires_test_execution: Boolean(match[2]) };
+  return { program: 'cargo', args, requires_test_execution: true };
 }
 
 function runTrustedVerification({ repoRoot, commands, run }) {
@@ -377,8 +468,9 @@ function runTrustedVerification({ repoRoot, commands, run }) {
     if (result.status !== 0 || result.signal) {
       return { ok: false, reason: 'trusted_verification_failed', results };
     }
+    const testEvidence = invocation.test_evidence ?? /(?:\brunning [1-9]\d* tests?\b|\btest result: ok\. [1-9]\d* passed\b)/u;
     if (invocation.requires_test_execution
-      && !/\brunning [1-9]\d* tests?\b/u.test(`${entry.stdout}\n${entry.stderr}`)) {
+      && !testEvidence.test(`${entry.stdout}\n${entry.stderr}`)) {
       return { ok: false, reason: 'trusted_verification_no_tests_run', results };
     }
   }
@@ -470,6 +562,9 @@ function selfUpdateOutcome(result) {
   }
   if (automation.continuation_required === true) {
     return { ok: false, reason: 'cli_continuation_required' };
+  }
+  if (['no_actionable_work', 'no_eligible_work'].includes(automation.status)) {
+    return { ok: false, reason: 'cli_no_actionable_work' };
   }
   if (automation.blocked === true) return { ok: false, reason: 'cli_blocked' };
   if (automation.completed !== true || automation.status !== 'completed' || automation.controller_action !== 'stop') {
@@ -583,13 +678,37 @@ export function dispatchSelfUpdate({ repoRoot, request, run = spawnSync, now = (
   const trustedContext = trustedExactPatchContext(request);
   if (!outcome.ok && trustedContext && trustedContext.commands.length > 0 && eligibility.target_paths.length === 1) {
     const currentDirty = gitDirtyFiles(repoRoot, run);
+    const trustedTargetState = currentDirty.ok
+      ? trustedDirtyTargetState({
+        repoRoot,
+        targetPaths: eligibility.target_paths,
+        context: trustedContext,
+        files: currentDirty.files.filter((file) => !isBrownieManagedPath(file))
+      })
+      : null;
     const sourceTreeStillClean = currentDirty.ok
-      && currentDirty.files.every((file) => isBrownieManagedPath(file));
+      && (currentDirty.files.every((file) => isBrownieManagedPath(file))
+        || trustedTargetState !== null);
     if (!sourceTreeStillClean) {
       deterministicTrustedPatch = {
         applied: false,
         reason: 'trusted_patch_source_tree_changed_during_worker'
       };
+    } else if (trustedTargetState === 'postimage') {
+      const verification = runTrustedVerification({
+        repoRoot,
+        commands: trustedContext.commands,
+        run
+      });
+      deterministicTrustedPatch = {
+        applied: verification.ok,
+        verified_existing_patch: true,
+        target_path: eligibility.target_paths[0],
+        verification
+      };
+      if (verification.ok) {
+        outcome = { ok: true, reason: 'trusted_exact_patch_verified_after_worker_stop' };
+      }
     } else {
       deterministicTrustedPatch = applyTrustedExactPatch({
         repoRoot,

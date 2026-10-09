@@ -1796,6 +1796,7 @@ esac
         let temp = tempfile::tempdir().expect("tempdir");
         let marker = temp.path().join("spawned-after-drift");
         let script = temp.path().join("fake-mcp-drift.sh");
+        let replacement = temp.path().join("fake-mcp-drift-replacement.sh");
         std::fs::write(
             &script,
             r#"#!/bin/sh
@@ -1822,7 +1823,7 @@ esac
         };
         let catalog = list_tools(&config).expect("catalog");
         std::fs::write(
-            &script,
+            &replacement,
             format!(
                 r#"#!/bin/sh
 touch "{}"
@@ -1831,8 +1832,9 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"content":[{{"type":"text","t
                 marker.display()
             ),
         )
-        .expect("rewrite script");
-        make_executable(&script);
+        .expect("write replacement script");
+        make_executable(&replacement);
+        std::fs::rename(&replacement, &script).expect("replace script atomically");
 
         let error = call_tool(&config, &catalog.tools[0], json!({}))
             .expect_err("drifted executable identity should fail closed");

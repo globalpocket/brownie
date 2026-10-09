@@ -117,7 +117,7 @@
         "diagnostics_mentions": 99
       },
       "crates/brownie-runtime/src/mcp_client.rs": {
-        "line_count": 1898,
+        "line_count": 1900,
         "public_items": 19,
         "private_items": 61,
         "state_mutation_mentions": 0,
@@ -126,7 +126,7 @@
         "recovery_mentions": 0,
         "rpc_dispatch_mentions": 0,
         "approval_mentions": 0,
-        "mcp_mentions": 288,
+        "mcp_mentions": 289,
         "product_dod_mentions": 0,
         "diagnostics_mentions": 0
       },

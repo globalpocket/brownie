@@ -3308,7 +3308,10 @@ impl ToolIntentParser {
             blocks = extract_json_tool_request_blocks(content);
         }
         if blocks.is_empty() {
-            if let Some(block) = extract_recoverable_unclosed_brownie_tool_intent_block(content) {
+            if let Some(block) = extract_recoverable_unclosed_brownie_tool_intent_block(
+                content,
+                config.max_block_bytes,
+            ) {
                 blocks.push(block);
             }
         }
@@ -4610,7 +4613,10 @@ fn extract_fenced_blocks(content: &str) -> Vec<&str> {
     blocks
 }
 
-fn extract_recoverable_unclosed_brownie_tool_intent_block(content: &str) -> Option<&str> {
+fn extract_recoverable_unclosed_brownie_tool_intent_block(
+    content: &str,
+    max_block_bytes: usize,
+) -> Option<&str> {
     let marker = "```brownie-tool-intent";
     let pos = content.find(marker)?;
     let after = &content[pos + marker.len()..];
@@ -4619,8 +4625,87 @@ fn extract_recoverable_unclosed_brownie_tool_intent_block(content: &str) -> Opti
         .unwrap_or(after)
         .strip_prefix('\n')
         .unwrap_or(after);
-    parse_patch_file_old_new_text_from_malformed_tool_request(after.trim()).ok()?;
+    let trimmed = after.trim();
+    if trimmed.len() > max_block_bytes {
+        return Some(after);
+    }
+    let complete_tool_intent_envelope = serde_json::from_str::<Value>(trimmed)
+        .ok()
+        .map(|value| {
+            matches!(
+                value
+                    .as_object()
+                    .and_then(|object| object.get("tool_requests")),
+                Some(Value::Array(_))
+            )
+        })
+        .unwrap_or(false);
+    if !complete_tool_intent_envelope
+        && parse_patch_file_old_new_text_from_malformed_tool_request(trimmed).is_err()
+    {
+        return None;
+    }
     Some(after)
+}
+
+#[cfg(test)]
+#[test]
+fn parser_accepts_complete_unclosed_brownie_tool_intent_block() {
+    let parsed = ToolIntentParser::parse_assistant_content(
+        r#"```brownie-tool-intent
+{"tool_requests":[{"tool_id":"workspace.read","reason":"Need context.","input":{"path":"README.md"}}]}"#,
+    );
+    assert_eq!(parsed.requests.len(), 1);
+    assert_eq!(parsed.requests[0].tool_id, "workspace.read");
+    assert!(parsed.rejected.is_empty());
+}
+
+#[cfg(test)]
+#[test]
+fn parser_rejects_unclosed_non_envelope_brownie_tool_intent_block() {
+    let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{}");
+    assert!(parsed.requests.is_empty());
+    assert_eq!(parsed.rejected[0].code, "missing_closing_fence");
+}
+
+#[cfg(test)]
+#[test]
+fn parser_rejects_oversized_unclosed_brownie_tool_intent_block() {
+    let config = ToolIntentParserConfig {
+        max_block_bytes: 1,
+        ..ToolIntentParserConfig::default()
+    };
+    let parsed = ToolIntentParser::parse_assistant_content_with_config(
+        "```brownie-tool-intent\n{\"tool_requests\":[]}",
+        &config,
+    );
+    assert!(parsed.requests.is_empty());
+    assert_eq!(parsed.rejected[0].code, "block_too_large");
+}
+
+#[cfg(test)]
+#[test]
+fn parser_accepts_unclosed_brownie_tool_intent_marker_inside_json_string() {
+    let parsed = ToolIntentParser::parse_assistant_content(
+        r#"```brownie-tool-intent
+{"tool_requests":[{"tool_id":"workspace.read","reason":"Literal ```brownie-tool-intent is data.","input":{"path":"README.md"}}]}"#,
+    );
+    assert_eq!(parsed.requests.len(), 1);
+    assert_eq!(parsed.requests[0].tool_id, "workspace.read");
+    assert!(parsed.rejected.is_empty());
+}
+
+#[cfg(test)]
+#[test]
+fn parser_rejects_ambiguous_unclosed_brownie_tool_intent_blocks() {
+    let parsed = ToolIntentParser::parse_assistant_content(
+        r#"```brownie-tool-intent
+{"tool_requests":[{"tool_id":"workspace.read","reason":"Need context.","input":{"path":"README.md"}}]}
+interleaved ```brownie-tool-intent
+{"tool_requests":[{"tool_id":"workspace.read","reason":"Need more context.","input":{"path":"README.md"}}]}"#,
+    );
+    assert!(parsed.requests.is_empty());
+    assert_eq!(parsed.rejected[0].code, "missing_closing_fence");
 }
 
 fn extract_json_tool_request_blocks(content: &str) -> Vec<&str> {
