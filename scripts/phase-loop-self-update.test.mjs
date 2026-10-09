@@ -81,6 +81,8 @@ test('tells a recoverer to use trusted exact patch context without rereading a l
   const eligibility = evaluateSelfUpdateEligibility({ repoRoot: repo, request });
   const objective = buildSelfUpdateObjective({ request, eligibility });
   assert.match(objective, /Do not use workspace\.read to rediscover that hunk/u);
+  assert.match(objective, /Apply only the supplied exact patch/u);
+  assert.doesNotMatch(objective, /Add a regression test/u);
 });
 
 test('does not trust empty, duplicate, or incidental patch markers', () => {
@@ -140,6 +142,74 @@ Trusted verification commands:
   ]);
   const record = JSON.parse(fs.readFileSync(path.join(repo, result.result_path), 'utf8'));
   assert.equal(record.deterministic_trusted_patch.applied, true);
+});
+
+test('recovers a trusted target left dirty by a stopped worker without widening the dirty-file exception', () => {
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, 'scripts/phase-loop-self-update.mjs'), 'prefix\nold\n');
+  const request = `${recoveryRequest('Recover a worker that stopped after preparing its exact target.')}
+
+Trusted exact old_text:
+old
+
+Trusted exact new_text:
+new
+
+Trusted verification commands:
+- \`cargo fmt --check\``;
+  const result = dispatchSelfUpdate({
+    repoRoot: repo,
+    request,
+    now: () => new Date('2026-10-09T00:00:00.000Z'),
+    run(command, args, options) {
+      if (command === 'git') return spawnSync(command, args, options);
+      if (command.endsWith('brownie-runtime')) return runtimeStatusResult();
+      if (command.endsWith('brownie')) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ ok: true, automation: { status: 'no_actionable_work', controller_action: 'stop', completed: false, blocked: false, continuation_required: false, terminal_failure: false } }),
+          stderr: ''
+        };
+      }
+      assert.equal(command, 'cargo');
+      assert.deepEqual(args, ['fmt', '--check']);
+      return { status: 0, stdout: 'ok', stderr: '' };
+    }
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(fs.readFileSync(path.join(repo, 'scripts/phase-loop-self-update.mjs'), 'utf8'), 'prefix\nnew\n');
+});
+
+test('allows only explicit readiness-audit guard commands in trusted verification', () => {
+  const repo = makeRepo();
+  const invocations = [];
+  const result = applyTrustedExactPatch({
+    repoRoot: repo,
+    targetPath: 'scripts/phase-loop-self-update.mjs',
+    context: {
+      oldText: 'old',
+      newText: 'new',
+      commands: [
+        'pnpm --workspace-root guard:runtime-release-readiness',
+        'pnpm --workspace-root guard:runtime-release-readiness:test',
+        'git diff --check'
+      ]
+    },
+    run(command, args) {
+      invocations.push([command, args]);
+      return {
+        status: 0,
+        stdout: args.at(-1) === 'guard:runtime-release-readiness:test' ? '# tests 1\n# pass 1\n' : 'ok',
+        stderr: ''
+      };
+    }
+  });
+  assert.equal(result.applied, true, JSON.stringify(result));
+  assert.deepEqual(invocations, [
+    ['pnpm', ['--workspace-root', 'guard:runtime-release-readiness']],
+    ['pnpm', ['--workspace-root', 'guard:runtime-release-readiness:test']],
+    ['git', ['diff', '--check']]
+  ]);
 });
 
 test('refuses a trusted patch context with an unrecognised verification line', () => {
