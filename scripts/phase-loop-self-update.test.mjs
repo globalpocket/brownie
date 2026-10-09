@@ -128,7 +128,7 @@ Trusted verification commands:
       invocations.push([command, args]);
       return {
         status: 0,
-        stdout: args[0] === 'test' ? 'running 1 test\ntest trusted_patch ... ok\n' : 'ok',
+        stdout: args[0] === 'test' ? 'test result: ok. 1 passed; 0 failed;\n' : 'ok',
         stderr: ''
       };
     }

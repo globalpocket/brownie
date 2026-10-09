@@ -460,8 +460,10 @@ function runTrustedVerification({ repoRoot, commands, run }) {
     if (result.status !== 0 || result.signal) {
       return { ok: false, reason: 'trusted_verification_failed', results };
     }
-    if (invocation.requires_test_execution
-      && !/\brunning [1-9]\d* tests?\b/u.test(`${entry.stdout}\n${entry.stderr}`)) {
+    const verificationOutput = `${entry.stdout}\n${entry.stderr}`;
+    const testExecutionObserved = /\brunning [1-9]\d* tests?\b/u.test(verificationOutput)
+      || /\btest result: ok\. [1-9]\d* passed;/u.test(verificationOutput);
+    if (invocation.requires_test_execution && !testExecutionObserved) {
       return { ok: false, reason: 'trusted_verification_no_tests_run', results };
     }
   }
@@ -681,7 +683,11 @@ export function dispatchSelfUpdate({ repoRoot, request, run = spawnSync, now = (
     }
     outcome = selfUpdateOutcome(result);
   }
-  if (!outcome.ok && trustedContext && trustedContext.commands.length > 0 && eligibility.target_paths.length === 1) {
+  if (!outcome.ok
+    && !eligibility.pending_trusted_patch?.applied
+    && trustedContext
+    && trustedContext.commands.length > 0
+    && eligibility.target_paths.length === 1) {
     const currentDirty = gitDirtyFiles(repoRoot, run);
     const sourceTreeStillClean = currentDirty.ok
       && currentDirty.files.every((file) => isBrownieManagedPath(file));
