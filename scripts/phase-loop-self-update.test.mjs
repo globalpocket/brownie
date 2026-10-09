@@ -180,6 +180,45 @@ Trusted verification commands:
   assert.equal(fs.readFileSync(path.join(repo, 'scripts/phase-loop-self-update.mjs'), 'utf8'), 'prefix\nnew\n');
 });
 
+test('verifies a trusted patch already applied by a stopped worker', () => {
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, 'scripts/phase-loop-self-update.mjs'), 'prefix\nnew\n');
+  const request = `${recoveryRequest('Verify a worker patch after its completion record was lost.')}
+
+Trusted exact old_text:
+old
+
+Trusted exact new_text:
+new
+
+Trusted verification commands:
+- \`cargo fmt --check\``;
+  const result = dispatchSelfUpdate({
+    repoRoot: repo,
+    request,
+    now: () => new Date('2026-10-09T00:00:00.000Z'),
+    run(command, args, options) {
+      if (command === 'git') return spawnSync(command, args, options);
+      if (command.endsWith('brownie-runtime')) return runtimeStatusResult();
+      if (command.endsWith('brownie')) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ ok: true, automation: { status: 'no_actionable_work', controller_action: 'stop', completed: false, blocked: false, continuation_required: false, terminal_failure: false } }),
+          stderr: ''
+        };
+      }
+      assert.equal(command, 'cargo');
+      assert.deepEqual(args, ['fmt', '--check']);
+      return { status: 0, stdout: 'ok', stderr: '' };
+    }
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const record = JSON.parse(fs.readFileSync(path.join(repo, result.result_path), 'utf8'));
+  assert.equal(record.outcome, 'trusted_exact_patch_verified_after_worker_stop');
+  assert.equal(record.deterministic_trusted_patch.verified_existing_patch, true);
+  assert.equal(fs.readFileSync(path.join(repo, 'scripts/phase-loop-self-update.mjs'), 'utf8'), 'prefix\nnew\n');
+});
+
 test('allows only explicit safety-evidence guard commands in trusted verification', () => {
   const repo = makeRepo();
   const invocations = [];

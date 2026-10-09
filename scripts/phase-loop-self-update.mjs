@@ -115,20 +115,27 @@ function hasExactlyOneOccurrence(text, needle) {
 // worker. The sole exception is the request-declared target while it still
 // holds exactly the trusted preimage; applyTrustedExactPatch validates and
 // atomically replaces that hunk before any controller write is accepted.
-function isTrustedDirtyTargetOnly({ repoRoot, targetPaths, context, files }) {
-  if (!context || targetPaths.length !== 1 || files.length !== 1 || files[0] !== targetPaths[0]) return false;
+function trustedDirtyTargetState({ repoRoot, targetPaths, context, files }) {
+  if (!context || targetPaths.length !== 1 || files.length !== 1 || files[0] !== targetPaths[0]) return null;
   const targetPath = targetPaths[0];
-  if (isBrownieManagedPath(targetPath) || path.isAbsolute(targetPath) || targetPath.split('/').includes('..')) return false;
+  if (isBrownieManagedPath(targetPath) || path.isAbsolute(targetPath) || targetPath.split('/').includes('..')) return null;
   try {
     const root = fs.realpathSync(repoRoot);
     const absolute = path.resolve(root, targetPath);
     const stat = fs.lstatSync(absolute);
     const real = fs.realpathSync(absolute);
-    if (!stat.isFile() || stat.isSymbolicLink() || !isWithinRepo(root, real)) return false;
-    return hasExactlyOneOccurrence(fs.readFileSync(real, 'utf8'), context.oldText);
+    if (!stat.isFile() || stat.isSymbolicLink() || !isWithinRepo(root, real)) return null;
+    const text = fs.readFileSync(real, 'utf8');
+    if (hasExactlyOneOccurrence(text, context.oldText)) return 'preimage';
+    if (hasExactlyOneOccurrence(text, context.newText)) return 'postimage';
+    return null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+function isTrustedDirtyTargetOnly(options) {
+  return trustedDirtyTargetState(options) !== null;
 }
 
 function requestFailure(reason, extra = {}) {
@@ -652,19 +659,37 @@ export function dispatchSelfUpdate({ repoRoot, request, run = spawnSync, now = (
   const trustedContext = trustedExactPatchContext(request);
   if (!outcome.ok && trustedContext && trustedContext.commands.length > 0 && eligibility.target_paths.length === 1) {
     const currentDirty = gitDirtyFiles(repoRoot, run);
+    const trustedTargetState = currentDirty.ok
+      ? trustedDirtyTargetState({
+        repoRoot,
+        targetPaths: eligibility.target_paths,
+        context: trustedContext,
+        files: currentDirty.files.filter((file) => !isBrownieManagedPath(file))
+      })
+      : null;
     const sourceTreeStillClean = currentDirty.ok
       && (currentDirty.files.every((file) => isBrownieManagedPath(file))
-        || isTrustedDirtyTargetOnly({
-          repoRoot,
-          targetPaths: eligibility.target_paths,
-          context: trustedContext,
-          files: currentDirty.files.filter((file) => !isBrownieManagedPath(file))
-        }));
+        || trustedTargetState !== null);
     if (!sourceTreeStillClean) {
       deterministicTrustedPatch = {
         applied: false,
         reason: 'trusted_patch_source_tree_changed_during_worker'
       };
+    } else if (trustedTargetState === 'postimage') {
+      const verification = runTrustedVerification({
+        repoRoot,
+        commands: trustedContext.commands,
+        run
+      });
+      deterministicTrustedPatch = {
+        applied: verification.ok,
+        verified_existing_patch: true,
+        target_path: eligibility.target_paths[0],
+        verification
+      };
+      if (verification.ok) {
+        outcome = { ok: true, reason: 'trusted_exact_patch_verified_after_worker_stop' };
+      }
     } else {
       deterministicTrustedPatch = applyTrustedExactPatch({
         repoRoot,
