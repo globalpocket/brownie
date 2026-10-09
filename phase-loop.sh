@@ -9293,10 +9293,11 @@ if repair_feedback and selected_leaf_target_path:
         if harness_feedback and harness_feedback.get("ok") is False:
             bdk_state = "verify_or_repair"
             llm_route = "code"
-selected_decomposition_active = (
-    "TODO-decompose-" in selected_todo
-    or "Route: todo-decomposition" in selected_todo
-)
+selected_decomposition_active = bool(re.search(
+    r"^\s*Route:\s*todo-decomposition\.?\s*$",
+    selected_todo,
+    re.MULTILINE,
+))
 selected_decomposition_source_id = ""
 source_match = re.search(r"Decompose broad TODO `([^`]+)`", selected_todo)
 if source_match:
@@ -9502,7 +9503,11 @@ if leaf_has_oversized_repair and not leaf_has_missing_fence_repair and not (
     or selected_supply_chain_clean_source_guard_repair
 ):
     llm_route = "deep"
-if "Source TODO:" in selected_todo and re.search(r"^\s*[-*]\s+\[\s*\]\s+[^:\n]+:\s+Patch only\s+`", selected_todo):
+if (
+    not selected_decomposition_active
+    and "Source TODO:" in selected_todo
+    and re.search(r"^\s*[-*]\s+\[\s*\]\s+[^:\n]+:\s+Patch only\s+`", selected_todo)
+):
     leaf_execution_policy_lines = [
         "- leaf_execution_policy: this selected TODO is already a bounded derived leaf; normally patch the named target file. If repair feedback shows the target patch is repeatedly oversized or input_too_large, patch `.brownie/todo.md` instead to replace this leaf with one smaller concrete follow-up leaf. A missing closing fence alone means the next target-file patch must be smaller and complete.",
         "- leaf_no_refinement_policy: a bounded leaf with one Patch only target must not be converted into more child TODOs just because the target file is large, unless Previous Repair Feedback shows a repeated oversized/input_too_large workspace.write.",
