@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import {
   evaluateTodoQueue,
   isBrownieOwnedBlockerTodo,
@@ -38,6 +39,58 @@ test('evaluation includes selected id and score', () => {
 
   assert.equal(result.selected_todo_id, 'E-15-parent');
   assert(result.decomposition_score.score_percent > 0, result);
+});
+
+test('CLI isolates phase-loop workspace lineage from the evaluator controller checkout', () => {
+  const controllerRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-todo-evaluator-controller-'));
+  const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-todo-evaluator-workspace-'));
+  const controllerScripts = path.join(controllerRoot, 'scripts');
+  fs.mkdirSync(controllerScripts, { recursive: true });
+  for (const file of [
+    'phase-loop-todo-evaluator.mjs',
+    'phase-loop-todo-state.mjs',
+    'guard-todo-decomposition.mjs'
+  ]) {
+    fs.copyFileSync(path.join('scripts', file), path.join(controllerScripts, file));
+  }
+
+  fs.mkdirSync(path.join(controllerRoot, '.brownie/private/phase-loop/todo-replans'), { recursive: true });
+  fs.writeFileSync(path.join(controllerRoot, '.brownie/private/phase-loop/todo-replans', 'first.json'), `${JSON.stringify({
+    record_type: 'todo_replan',
+    operation: 'split_parent_into_children',
+    parent_status: 'superseded_by_children',
+    parent_todo_id: 'E-15-parent',
+    generated_child_ids: ['E-15-child']
+  })}\n`);
+  fs.writeFileSync(path.join(controllerRoot, '.brownie/private/phase-loop/todo-replans', 'second.json'), `${JSON.stringify({
+    record_type: 'todo_replan',
+    operation: 'split_parent_into_children',
+    parent_status: 'superseded_by_children',
+    parent_todo_id: 'E-15-other-parent',
+    generated_child_ids: ['E-15-child']
+  })}\n`);
+
+  const todoPath = path.join(workspaceRoot, '.brownie/todo.md');
+  const breakdownPath = path.join(workspaceRoot, '.brownie/todo-breakdown.md');
+  fs.mkdirSync(path.dirname(todoPath), { recursive: true });
+  fs.writeFileSync(todoPath, childFirstQueue);
+  fs.writeFileSync(breakdownPath, '# Breakdown\n');
+  const evaluator = fs.realpathSync(path.join(controllerScripts, 'phase-loop-todo-evaluator.mjs'));
+  const args = [evaluator, 'select', '--todo', todoPath, '--breakdown', breakdownPath];
+
+  const controllerSelection = spawnSync(process.execPath, args, {
+    encoding: 'utf8',
+    env: { ...process.env, PHASE_LOOP_WORKSPACE_ROOT: '' }
+  });
+  assert.equal(controllerSelection.status, 0, controllerSelection.stderr);
+  assert.equal(controllerSelection.stdout, '');
+
+  const workspaceSelection = spawnSync(process.execPath, args, {
+    encoding: 'utf8',
+    env: { ...process.env, PHASE_LOOP_WORKSPACE_ROOT: workspaceRoot }
+  });
+  assert.equal(workspaceSelection.status, 0, workspaceSelection.stderr);
+  assert.match(workspaceSelection.stdout, /^- \[ \] E-15-parent:/u);
 });
 
 test('does not select a child whose dependency is blocked', () => {

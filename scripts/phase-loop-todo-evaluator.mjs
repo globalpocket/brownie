@@ -15,7 +15,7 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const defaultRepoRoot = path.resolve(__dirname, '..');
+const defaultRepoRoot = path.resolve(process.env.PHASE_LOOP_WORKSPACE_ROOT || path.join(__dirname, '..'));
 
 function sha256Text(text) {
   return createHash('sha256').update(text).digest('hex');
