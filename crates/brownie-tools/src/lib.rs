@@ -4622,9 +4622,22 @@ fn extract_recoverable_unclosed_brownie_tool_intent_block(content: &str) -> Opti
         .unwrap_or(after)
         .strip_prefix('\n')
         .unwrap_or(after);
-    serde_json::from_str::<Value>(after.trim())
-        .or_else(|_| parse_patch_file_old_new_text_from_malformed_tool_request(after.trim()))
-        .ok()?;
+    let complete_tool_intent_envelope = serde_json::from_str::<Value>(after.trim())
+        .ok()
+        .map(|value| {
+            matches!(
+                value
+                    .as_object()
+                    .and_then(|object| object.get("tool_requests")),
+                Some(Value::Array(_))
+            )
+        })
+        .unwrap_or(false);
+    if !complete_tool_intent_envelope
+        && parse_patch_file_old_new_text_from_malformed_tool_request(after.trim()).is_err()
+    {
+        return None;
+    }
     Some(after)
 }
 
@@ -4638,6 +4651,14 @@ fn parser_accepts_complete_unclosed_brownie_tool_intent_block() {
     assert_eq!(parsed.requests.len(), 1);
     assert_eq!(parsed.requests[0].tool_id, "workspace.read");
     assert!(parsed.rejected.is_empty());
+}
+
+#[cfg(test)]
+#[test]
+fn parser_rejects_unclosed_non_envelope_brownie_tool_intent_block() {
+    let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{}");
+    assert!(parsed.requests.is_empty());
+    assert_eq!(parsed.rejected[0].code, "missing_closing_fence");
 }
 
 #[cfg(test)]
