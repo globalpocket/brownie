@@ -400,7 +400,7 @@ function trustedVerificationArgs(command) {
       program: 'pnpm',
       args: ['--workspace-root', 'guard:runtime-release-readiness:test'],
       requires_test_execution: true,
-      test_evidence: /# tests [1-9]\d*\b/u
+      test_evidence: /(?:#|\u2139)\s*tests\s+[1-9]\d*\b/u
     };
   }
   if (command === 'pnpm --workspace-root guard:release-contract') {
@@ -411,7 +411,7 @@ function trustedVerificationArgs(command) {
       program: 'pnpm',
       args: ['--workspace-root', 'guard:release-contract:test'],
       requires_test_execution: true,
-      test_evidence: /# tests [1-9]\d*\b/u
+      test_evidence: /(?:#|\u2139)\s*tests\s+[1-9]\d*\b/u
     };
   }
   if (command === 'git diff --check') {

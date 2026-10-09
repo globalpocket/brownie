@@ -241,7 +241,9 @@ test('allows only explicit safety-evidence guard commands in trusted verificatio
       invocations.push([command, args]);
       return {
         status: 0,
-        stdout: args.at(-1).endsWith(':test') ? '# tests 1\n# pass 1\n' : 'ok',
+        stdout: args.at(-1) === 'guard:runtime-release-readiness:test'
+          ? '\u2139 tests 1\n\u2139 pass 1\n'
+          : args.at(-1).endsWith(':test') ? '# tests 1\n# pass 1\n' : 'ok',
         stderr: ''
       };
     }
