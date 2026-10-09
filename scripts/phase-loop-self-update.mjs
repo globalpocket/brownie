@@ -414,6 +414,17 @@ function trustedVerificationArgs(command) {
       test_evidence: /(?:#|\u2139)\s*tests\s+[1-9]\d*\b/u
     };
   }
+  if (command === 'pnpm --workspace-root guard:runtime-module-decomposition') {
+    return { program: 'pnpm', args: ['--workspace-root', 'guard:runtime-module-decomposition'], requires_test_execution: false };
+  }
+  if (command === 'pnpm --workspace-root guard:runtime-module-decomposition:test') {
+    return {
+      program: 'pnpm',
+      args: ['--workspace-root', 'guard:runtime-module-decomposition:test'],
+      requires_test_execution: true,
+      test_evidence: /(?:#|\u2139)\s*tests\s+[1-9]\d*\b/u
+    };
+  }
   if (command === 'git diff --check') {
     return { program: 'git', args: ['diff', '--check'], requires_test_execution: false };
   }

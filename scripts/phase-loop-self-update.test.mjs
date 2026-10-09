@@ -220,7 +220,7 @@ Trusted verification commands:
   assert.equal(fs.readFileSync(path.join(repo, 'scripts/phase-loop-self-update.mjs'), 'utf8'), 'prefix\nnew\n');
 });
 
-test('allows only explicit safety-evidence guard commands in trusted verification', () => {
+test('allows only explicit safety-evidence and structural-assessment guard commands in trusted verification', () => {
   const repo = makeRepo();
   const invocations = [];
   const result = applyTrustedExactPatch({
@@ -234,6 +234,8 @@ test('allows only explicit safety-evidence guard commands in trusted verificatio
         'pnpm --workspace-root guard:runtime-release-readiness:test',
         'pnpm --workspace-root guard:release-contract',
         'pnpm --workspace-root guard:release-contract:test',
+        'pnpm --workspace-root guard:runtime-module-decomposition',
+        'pnpm --workspace-root guard:runtime-module-decomposition:test',
         'git diff --check'
       ]
     },
@@ -254,6 +256,8 @@ test('allows only explicit safety-evidence guard commands in trusted verificatio
     ['pnpm', ['--workspace-root', 'guard:runtime-release-readiness:test']],
     ['pnpm', ['--workspace-root', 'guard:release-contract']],
     ['pnpm', ['--workspace-root', 'guard:release-contract:test']],
+    ['pnpm', ['--workspace-root', 'guard:runtime-module-decomposition']],
+    ['pnpm', ['--workspace-root', 'guard:runtime-module-decomposition:test']],
     ['git', ['diff', '--check']]
   ]);
 });
