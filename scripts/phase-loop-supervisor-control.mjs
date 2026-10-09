@@ -1105,6 +1105,14 @@ function maybeArchiveStaleActiveClaim(repoRoot, diagnostic) {
 }
 
 function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerSummary) {
+  const claimPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/current.json');
+  const claim = readJsonOrNull(claimPath);
+  // A malformed active claim is a hard safety boundary.  Check it before the
+  // generic replan precedence so repeated no-progress cannot mutate the TODO
+  // contract or reach a start decision while the active claim is unreadable.
+  if (!claim && fs.existsSync(claimPath)) {
+    return { attempted: false, reason: 'active_claim_unreadable_or_invalid' };
+  }
   if (ledgerSummary?.should_replan) {
     return { attempted: false, reason: 'todo_contract_replan_takes_precedence' };
   }
@@ -1122,8 +1130,13 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
     projection.blocked_by_terminal_task_failure === true ||
     diagnostic.progress?.classification === 'no_progress'
   );
-  const claimPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/current.json');
-  const claim = readJsonOrNull(claimPath);
+  // An archived or otherwise absent claim cannot be the cause of a terminal
+  // claim-recovery block.  Check this before examining a dirty workspace: the
+  // latter may legitimately contain historical Brownie evidence which must
+  // remain untouched, but it has no claim to archive or rebaseline here.
+  if (!claim && !fs.existsSync(claimPath)) {
+    return { attempted: false, reason: 'no_active_claim' };
+  }
   const workspaceChanged = diagnostic.progress?.workspace_changed === true;
   const baselineFingerprints = claim?.baseline_dirty_file_sha256;
   const legacyBaselineFiles = Array.isArray(claim?.baseline_diff_files)
@@ -1199,9 +1212,6 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
     };
   }
 
-  if (!claim) {
-    return { attempted: true, ok: false, reason: 'claim_missing_or_invalid' };
-  }
   const claimStatus = String(claim.status ?? '');
   if (!['claimed', 'in_progress'].includes(claimStatus)) {
     return { attempted: false, reason: 'claim_not_active', claim_status: claimStatus };
@@ -1810,7 +1820,10 @@ export function controlPhaseLoop(options = {}) {
   const postRepair = options.repair === false
     ? { attempted: false, reason: 'repair_disabled' }
     : postRepairValidation(repoRoot, repairResults, afterPostReplanClaimRepair);
-  const terminalClaimRecoveryBlocked = terminalNoEligibleClaimRepair.reason === 'workspace_changed_or_dirty_not_archiving_claim';
+  const terminalClaimRecoveryBlocked = (
+    terminalNoEligibleClaimRepair.reason === 'workspace_changed_or_dirty_not_archiving_claim'
+    || terminalNoEligibleClaimRepair.reason === 'active_claim_unreadable_or_invalid'
+  );
   const postReplanClaimArchivalFailed = postReplanStaleActiveClaimRepair.attempted
     && postReplanStaleActiveClaimRepair.ok === false;
   // A controller self-update is a distinct Brownie run.  It is intentionally
