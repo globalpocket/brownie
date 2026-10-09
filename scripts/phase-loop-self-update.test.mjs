@@ -180,7 +180,7 @@ Trusted verification commands:
   assert.equal(fs.readFileSync(path.join(repo, 'scripts/phase-loop-self-update.mjs'), 'utf8'), 'prefix\nnew\n');
 });
 
-test('allows only explicit readiness-audit guard commands in trusted verification', () => {
+test('allows only explicit safety-evidence guard commands in trusted verification', () => {
   const repo = makeRepo();
   const invocations = [];
   const result = applyTrustedExactPatch({
@@ -192,6 +192,8 @@ test('allows only explicit readiness-audit guard commands in trusted verificatio
       commands: [
         'pnpm --workspace-root guard:runtime-release-readiness',
         'pnpm --workspace-root guard:runtime-release-readiness:test',
+        'pnpm --workspace-root guard:release-contract',
+        'pnpm --workspace-root guard:release-contract:test',
         'git diff --check'
       ]
     },
@@ -199,7 +201,7 @@ test('allows only explicit readiness-audit guard commands in trusted verificatio
       invocations.push([command, args]);
       return {
         status: 0,
-        stdout: args.at(-1) === 'guard:runtime-release-readiness:test' ? '# tests 1\n# pass 1\n' : 'ok',
+        stdout: args.at(-1).endsWith(':test') ? '# tests 1\n# pass 1\n' : 'ok',
         stderr: ''
       };
     }
@@ -208,6 +210,8 @@ test('allows only explicit readiness-audit guard commands in trusted verificatio
   assert.deepEqual(invocations, [
     ['pnpm', ['--workspace-root', 'guard:runtime-release-readiness']],
     ['pnpm', ['--workspace-root', 'guard:runtime-release-readiness:test']],
+    ['pnpm', ['--workspace-root', 'guard:release-contract']],
+    ['pnpm', ['--workspace-root', 'guard:release-contract:test']],
     ['git', ['diff', '--check']]
   ]);
 });

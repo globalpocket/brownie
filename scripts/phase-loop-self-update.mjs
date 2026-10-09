@@ -396,6 +396,17 @@ function trustedVerificationArgs(command) {
       test_evidence: /# tests [1-9]\d*\b/u
     };
   }
+  if (command === 'pnpm --workspace-root guard:release-contract') {
+    return { program: 'pnpm', args: ['--workspace-root', 'guard:release-contract'], requires_test_execution: false };
+  }
+  if (command === 'pnpm --workspace-root guard:release-contract:test') {
+    return {
+      program: 'pnpm',
+      args: ['--workspace-root', 'guard:release-contract:test'],
+      requires_test_execution: true,
+      test_evidence: /# tests [1-9]\d*\b/u
+    };
+  }
   if (command === 'git diff --check') {
     return { program: 'git', args: ['diff', '--check'], requires_test_execution: false };
   }
