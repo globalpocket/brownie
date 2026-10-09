@@ -2679,8 +2679,17 @@ pub(super) fn handle_approved_workspace_intents(
             let workspace_read_path = decision.input.get("path").and_then(Value::as_str);
             let todo_repair_read_allowed = workspace_read_path.is_some_and(is_todo_workspace_path)
                 && selected_todo_allows_todo_md_edit(&record.goal);
+            let patch_only_paths = patch_only_paths_from_goal(&record.goal);
+            let leaf_target_repair_read_allowed =
+                task_goal_allows_leaf_target_repair_workspace_read(&record.goal)
+                    && workspace_read_path.is_some_and(|requested| {
+                        patch_only_paths
+                            .iter()
+                            .any(|target| requested == target.as_str())
+                    });
             if task_goal_embeds_repair_workspace_read_preview(&record.goal)
                 && !todo_repair_read_allowed
+                && !leaf_target_repair_read_allowed
             {
                 store.tasks().append_task_event_with_payload(
                     record,
@@ -3268,6 +3277,22 @@ pub(super) fn todo_md_workspace_write_rejection_reason(
         }
         return None;
     }
+    if record
+        .goal
+        .contains("- leaf_oversized_repair_next_tool_policy:")
+    {
+        // The supervisor has established that the selected bounded leaf cannot carry
+        // the required patch in one proposal. The decomposition validator below still
+        // requires a full selected-block replacement with bounded, verified leaves.
+        return todo_decomposition_workspace_write_rejection_reason(record, input);
+    }
+    if record.goal.contains("- leaf_todo_write_forbidden_policy:")
+        && !record.goal.contains("- leaf_contract_replan_policy:")
+    {
+        return Some(
+            "Bounded Patch only leaves must not rewrite the live TODO queue unless the supervisor explicitly authorizes a contract replan or oversized-patch recovery.",
+        );
+    }
     if verification_failure_requires_target_file_repair(&record.goal) {
         return Some(
             "Previous verification reported a concrete target-file failure; do not rewrite `.brownie/todo.md` or decompose the TODO. Repair the named target file directly or fail closed.",
@@ -3450,7 +3475,10 @@ fn workspace_read_intent_runtime_rejection_reason(
                     .iter()
                     .any(|target| requested == target.as_str())
             });
-    if task_goal_embeds_repair_workspace_read_preview(&record.goal) && !todo_repair_read_allowed {
+    if task_goal_embeds_repair_workspace_read_preview(&record.goal)
+        && !todo_repair_read_allowed
+        && !leaf_target_repair_read_allowed
+    {
         return Ok(Some(
             "Repair feedback already embeds previous workspace.read output_preview; workspace.read is not progress. Request workspace.write or record a concrete blocker TODO."
                 .to_string(),
@@ -4139,6 +4167,7 @@ fn task_goal_allows_leaf_target_repair_workspace_read(goal: &str) -> bool {
     goal.contains("- leaf_target_read_missing_repair_policy:")
         || goal.contains("- stale_read_preview_policy:")
         || goal.contains("- leaf_retry_read_first_policy:")
+        || goal.contains("- leaf_exact_context_reread_policy:")
 }
 
 fn workspace_read_rejection_reason_from_selected_todo(goal: &str, input: &Value) -> Option<String> {
@@ -7094,6 +7123,47 @@ mod mcp_approval_lock_tests {
     }
 
     #[test]
+    fn bounded_leaf_todo_write_policy_denies_todo_rewrite_without_an_explicit_exception() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n- leaf_todo_write_forbidden_policy: bounded Patch only leaves must not rewrite the TODO queue.\n\n## Selected TODO\n\n- [ ] E-23a-release-artifact-portable-archive-leaf-01: Patch only `scripts/release-local-artifact.mjs`:\n  Route: implementation.\n  Source TODO: E-23a-release-artifact-portable-archive.\n  Depends on: <none>.\n  Completion condition: the release artifact can be archived.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n".to_string();
+
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "old_text": "- [ ] E-23a-release-artifact-portable-archive-leaf-01: Patch only `scripts/release-local-artifact.mjs`:\n  Route: implementation.\n  Source TODO: E-23a-release-artifact-portable-archive.\n  Depends on: <none>.\n  Completion condition: the release artifact can be archived.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n",
+                "new_text": "- [ ] E-23a-release-artifact-portable-archive-leaf-01-small-step: Patch only `scripts/release-local-artifact.mjs` to update one archive helper:\n  Route: implementation.\n  Source TODO: E-23a-release-artifact-portable-archive-leaf-01.\n  Depends on: <none>.\n  Completion condition: the named archive helper is updated.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n"
+            }),
+        );
+
+        assert_eq!(
+            reason,
+            Some(
+                "Bounded Patch only leaves must not rewrite the live TODO queue unless the supervisor explicitly authorizes a contract replan or oversized-patch recovery."
+            )
+        );
+    }
+
+    #[test]
+    fn oversized_leaf_repair_allows_a_validated_smaller_todo_replacement() {
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n- leaf_todo_write_forbidden_policy: bounded Patch only leaves must not rewrite the TODO queue without an exception.\n- leaf_oversized_repair_next_tool_policy: replace the full selected TODO block with one smaller concrete follow-up leaf.\n\n## Selected TODO\n\n- [ ] E-23a-release-artifact-portable-archive-leaf-01: Patch only `scripts/release-local-artifact.mjs`:\n  Route: implementation.\n  Source TODO: E-23a-release-artifact-portable-archive.\n  Depends on: <none>.\n  Completion condition: the release artifact can be archived.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n".to_string();
+
+        let reason = todo_md_workspace_write_rejection_reason(
+            &record,
+            &json!({
+                "path": ".brownie/todo.md",
+                "operation": "patch_file",
+                "old_text": "- [ ] E-23a-release-artifact-portable-archive-leaf-01: Patch only `scripts/release-local-artifact.mjs`:\n  Route: implementation.\n  Source TODO: E-23a-release-artifact-portable-archive.\n  Depends on: <none>.\n  Completion condition: the release artifact can be archived.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n",
+                "new_text": "- [ ] E-23a-release-artifact-portable-archive-leaf-01-small-step: Patch only `scripts/release-local-artifact.mjs` to update one archive helper:\n  Route: implementation.\n  Source TODO: E-23a-release-artifact-portable-archive-leaf-01.\n  Depends on: <none>.\n  Completion condition: the named archive helper is updated.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n"
+            }),
+        );
+
+        assert_eq!(reason, None, "{reason:?}");
+    }
+
+    #[test]
     fn read_budget_exhausted_stall_can_refine_selected_leaf_todo() {
         let temp = tempfile::tempdir().expect("temp dir");
         let store = BrownieStore::new(temp.path());
@@ -7349,6 +7419,23 @@ mod mcp_approval_lock_tests {
             &store,
             &record,
             &json!({"path": "scripts/guard-release-evidence-semantic-consistency.test.mjs"}),
+        )
+        .expect("intent rejection");
+
+        assert_eq!(reason, None);
+    }
+
+    #[test]
+    fn patch_only_leaf_repair_allows_one_exact_context_reread_after_a_truncated_preview() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let store = BrownieStore::new(temp.path());
+        let mut record = test_task_record();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## BDK Execution Packet\n\n- read_budget_repair_policy: a previous workspace.read preview was truncated.\n- previous_workspace_read_preview_0: [workspace.read path=scripts/release-local-artifact.mjs bytes_total=12800]\n  [...previous workspace.read preview middle omitted by phase-loop...]\n- leaf_exact_context_reread_policy: the next tool may be exactly one bounded `workspace.read` for `scripts/release-local-artifact.mjs` before a small workspace.write.\n\n## Selected TODO\n\n- [ ] E-23a-release-artifact-portable-archive-leaf-01: Patch only `scripts/release-local-artifact.mjs`:\n  Route: implementation.\n  Source TODO: E-23a-release-artifact-portable-archive.\n".to_string();
+
+        let reason = workspace_read_intent_runtime_rejection_reason(
+            &store,
+            &record,
+            &json!({"path": "scripts/release-local-artifact.mjs"}),
         )
         .expect("intent rejection");
 
@@ -7813,7 +7900,7 @@ mod mcp_approval_lock_tests {
     #[test]
     fn explicit_todo_md_maintenance_todos_can_patch_todo_md() {
         let mut record = test_task_record();
-        record.goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] TODO-maintenance: Update todo.md by decomposing an oversized blocker TODO.\n".to_string();
+        record.goal = "# Brownie Phase Loop Effective Prompt\n\n- leaf_todo_write_forbidden_policy: bounded Patch only leaves must not rewrite the TODO queue without an exception.\n\n## Selected TODO\n\n- [ ] TODO-maintenance: Update todo.md by decomposing an oversized blocker TODO.\n".to_string();
 
         let reason = todo_md_workspace_write_rejection_reason(
             &record,

@@ -9421,7 +9421,10 @@ leaf_has_truncated_read_preview_for_repair = bool(
     selected_leaf_target_path
     and any(
         preview_is_for_path(preview, selected_leaf_target_path)
-        and "[...previous workspace.read preview middle omitted by phase-loop...]" in str(preview)
+        and (
+            "[...previous workspace.read preview middle omitted by phase-loop...]" in str(preview)
+            or "[truncated at line boundary]" in str(preview)
+        )
         for preview in repair_workspace_read_previews
     )
 )
@@ -9438,6 +9441,18 @@ leaf_has_invalid_old_text_repair = bool(
         )
     )
 )
+repair_tool_denial_reasons = (
+    repair_feedback.get("verification", {}).get("tool_denial_reasons", [])
+    if isinstance(repair_feedback, dict)
+    and isinstance(repair_feedback.get("verification"), dict)
+    and isinstance(repair_feedback.get("verification", {}).get("tool_denial_reasons", []), list)
+    else []
+)
+leaf_has_read_budget_denial_repair = any(
+    "workspace.read is not progress" in str(reason).lower()
+    or "additional workspace.read" in str(reason).lower()
+    for reason in repair_tool_denial_reasons
+)
 semantic_repair_patch_input = None
 if isinstance(repair_feedback, dict) and isinstance(repair_feedback.get("verification"), dict):
     candidate_semantic_repair_patch_input = repair_feedback.get("verification", {}).get("semantic_repair_patch_file_input")
@@ -9452,7 +9467,7 @@ semantic_repair_requires_exact_write = bool(
 leaf_allow_bounded_reread_for_exact_patch = bool(
     selected_leaf_target_path
     and leaf_has_truncated_read_preview_for_repair
-    and leaf_has_invalid_old_text_repair
+    and (leaf_has_invalid_old_text_repair or leaf_has_read_budget_denial_repair)
     and not semantic_repair_requires_exact_write
 )
 leaf_force_write_on_repair = bool(
@@ -9538,7 +9553,7 @@ if "Source TODO:" in selected_todo and re.search(r"^\s*[-*]\s+\[\s*\]\s+[^:\n]+:
             )
     elif leaf_allow_bounded_reread_for_exact_patch:
         leaf_execution_policy_lines.append(
-            f"- leaf_exact_context_reread_policy: the previous patch failed because `old_text` was not found and the embedded read preview for `{selected_leaf_target_path}` was truncated. The next tool may be exactly one bounded `workspace.read` for `{selected_leaf_target_path}` to recover exact current context before a small `workspace.write`; do not write `.brownie/todo.md` and do not invent `old_text` from the truncated preview."
+            f"- leaf_exact_context_reread_policy: the embedded read preview for `{selected_leaf_target_path}` was truncated and either the previous patch could not match `old_text` or the prior exact-context read was denied by the read budget. The next tool may be exactly one bounded `workspace.read` for `{selected_leaf_target_path}` to recover exact current context before a small `workspace.write`; do not write `.brownie/todo.md` and do not invent `old_text` from the truncated preview."
         )
     elif repair_feedback and selected_leaf_target_path and leaf_has_any_read_preview_for_repair and not leaf_has_read_preview_for_repair:
         leaf_execution_policy_lines.append(
@@ -10038,7 +10053,7 @@ if repair_feedback:
             repair_feedback_lines.append(f"- previous_workspace_read_preview_0: <omitted stale read preview because it does not target `{selected_leaf_target_path}`>")
             workspace_read_previews = []
         elif leaf_allow_bounded_reread_for_exact_patch:
-            repair_feedback_lines.append(f"- read_budget_repair_policy: previous workspace.read content for `{selected_leaf_target_path}` was truncated and the last patch failed with `old_text was not found`; request exactly one bounded `workspace.read` for `{selected_leaf_target_path}` before retrying a target-file patch.")
+            repair_feedback_lines.append(f"- read_budget_repair_policy: previous workspace.read content for `{selected_leaf_target_path}` was truncated and the last exact-context recovery either failed to match `old_text` or was denied by the read budget; request exactly one bounded `workspace.read` for `{selected_leaf_target_path}` before retrying a target-file patch.")
         else:
             repair_feedback_lines.append("- read_budget_repair_policy: previous workspace.read content for the active target is embedded below; do not emit workspace.read in this invocation. Emit workspace.write, or write a concrete smaller blocker TODO if the embedded preview is insufficient.")
         for index, preview in enumerate(workspace_read_previews):

@@ -61,13 +61,13 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/controlled_tool_execution.rs": {
-        "line_count": 8049,
+        "line_count": 8136,
         "public_items": 74,
         "private_items": 119,
         "state_mutation_mentions": 47,
         "durable_write_mentions": 47,
-        "permission_decision_mentions": 105,
-        "recovery_mentions": 83,
+        "permission_decision_mentions": 108,
+        "recovery_mentions": 85,
         "rpc_dispatch_mentions": 0,
         "approval_mentions": 228,
         "mcp_mentions": 368,
@@ -402,7 +402,8 @@
     "PR pending: runtime module metrics refreshed after protected workspace.read denial recovery routing; runtime_release_ready remains false and broader extraction remains a later dedicated refactor.",
     "PR #458 updated runtime-module-decomposition metrics after phase-loop TODO decomposition hardening and long prompt mock request handling; closure status remains unchanged.",
     "PR #458 follow-up updated runtime-module-decomposition metrics after review-thread fixes for TODO repair hunk validation; closure status remains unchanged.",
-    "PR #566 updates runtime-module-decomposition metrics and bounded ceilings after fail-closed phase-loop self-update recovery hardening; Runtime authority remains in Rust and closure status is unchanged."
+    "PR #566 updates runtime-module-decomposition metrics and bounded ceilings after fail-closed phase-loop self-update recovery hardening; Runtime authority remains in Rust and closure status is unchanged.",
+    "PR pending: controlled-tool execution metrics refreshed for the one-target exact-context reread exception and validated oversized-leaf TODO replacement; module-decomposition closure status remains unchanged."
   ],
   "history": [
     "PR #462 updated runtime-module-decomposition metrics after Brownie loop harness and protected-read recovery hardening; closure status remains unchanged."
