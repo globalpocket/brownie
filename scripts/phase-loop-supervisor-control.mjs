@@ -1124,6 +1124,13 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
   );
   const claimPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/current.json');
   const claim = readJsonOrNull(claimPath);
+  // An archived or otherwise absent claim cannot be the cause of a terminal
+  // claim-recovery block.  Check this before examining a dirty workspace: the
+  // latter may legitimately contain historical Brownie evidence which must
+  // remain untouched, but it has no claim to archive or rebaseline here.
+  if (!claim) {
+    return { attempted: false, reason: 'no_active_claim' };
+  }
   const workspaceChanged = diagnostic.progress?.workspace_changed === true;
   const baselineFingerprints = claim?.baseline_dirty_file_sha256;
   const legacyBaselineFiles = Array.isArray(claim?.baseline_diff_files)
@@ -1199,9 +1206,6 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
     };
   }
 
-  if (!claim) {
-    return { attempted: true, ok: false, reason: 'claim_missing_or_invalid' };
-  }
   const claimStatus = String(claim.status ?? '');
   if (!['claimed', 'in_progress'].includes(claimStatus)) {
     return { attempted: false, reason: 'claim_not_active', claim_status: claimStatus };
