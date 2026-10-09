@@ -1022,7 +1022,8 @@ function maybeRecoverTerminalStalledReplan(repoRoot, diagnostic) {
   ));
   fs.writeFileSync(blockedPath, retainedBlocked.map((record) => `${JSON.stringify(record, Object.keys(record).sort())}\n`).join(''), { encoding: 'utf8', mode: 0o600 });
   fsyncFileAndParent(blockedPath);
-  const patchTargets = [...sourceBlock.block.matchAll(/Patch only\s+`([^`]+)`/gu)].map((match) => match[1]);
+  const patchScope = sourceBlock.first_line ?? sourceBlock.block.split('\n')[0] ?? '';
+  const patchTargets = [...patchScope.matchAll(/`([^`]+)`/gu)].map((match) => match[1]);
   const feedback = {
     schema_version: 1,
     kind: 'phase_loop_terminal_stalled_replan_recovery',
@@ -1860,12 +1861,20 @@ export function controlPhaseLoop(options = {}) {
   // Replanning can replace the selected live TODO.  Re-diagnose after the
   // queue mutation and archive the old claim before any subsequent start, so
   // the worker cannot immediately re-claim the superseded contract.
-  const afterTodoContractReplan = stalledTodoDecomposition.attempted && stalledTodoDecomposition.ok
+  const afterTodoContractReplan = (
+    stalledTodoDecomposition.attempted && stalledTodoDecomposition.ok
+  ) || (
+    terminalStalledReplanRecovery.attempted && terminalStalledReplanRecovery.ok
+  )
     ? diagnosePhaseLoop({ repoRoot, write: options.write !== false })
     : afterTerminalNoEligibleClaimRepair;
   const postReplanStaleActiveClaimRepair = options.repair === false
     ? { attempted: false, reason: 'repair_disabled' }
-    : stalledTodoDecomposition.attempted && stalledTodoDecomposition.ok
+    : (
+      stalledTodoDecomposition.attempted && stalledTodoDecomposition.ok
+    ) || (
+      terminalStalledReplanRecovery.attempted && terminalStalledReplanRecovery.ok
+    )
       ? maybeArchiveStaleActiveClaim(repoRoot, afterTodoContractReplan)
       : { attempted: false, reason: 'todo_contract_replan_not_applied' };
   const afterPostReplanClaimRepair = postReplanStaleActiveClaimRepair.attempted && postReplanStaleActiveClaimRepair.ok

@@ -856,7 +856,7 @@ Parent TODO: E-22e-release-contract-trace-binding-guard
 
 test('recovers a terminal generated replan to its bounded implementation source', () => {
   const repo = makeRepo();
-  const sourceTodo = `- [ ] E-23a-release-artifact-portable-archive-leaf-01: Patch only \`scripts/release-local-artifact.mjs\` to create a portable archive:\n  Route: implementation.\n  Source TODO: E-23a-release-artifact-portable-archive.\n  Depends on: <none>.\n  Completion condition: the archive is deterministic.\n  Forbidden changes: do not publish a release.\n  Verification: run \`pnpm --workspace-root release:local-artifact:test\`.`;
+  const sourceTodo = `- [ ] E-23a-release-artifact-portable-archive-leaf-01: Patch only \`scripts/release-local-artifact.mjs\` and \`scripts/release-local-artifact.test.mjs\` to create a portable archive:\n  Route: implementation.\n  Source TODO: E-23a-release-artifact-portable-archive.\n  Depends on: <none>.\n  Completion condition: the archive is deterministic.\n  Forbidden changes: do not publish a release.\n  Verification: run \`pnpm --workspace-root release:local-artifact:test\`.`;
   const replanId = `E-23a-replan-stalled-leaf-${'c'.repeat(12)}`;
   const replanTodo = `- [ ] ${replanId}: Patch only \`.brownie/todo.md\` and \`.brownie/todo-breakdown.md\` to replan stalled Brownie TODO leaf into implementable child TODOs:\n  Route: todo-decomposition.\n  Source TODO: E-23a-release-artifact-portable-archive-leaf-01.\n  Depends on: <none>.\n  Completion condition: stalled TODO is superseded.\n  Forbidden changes: do not weaken guards/tests.\n  Verification: run \`pnpm --workspace-root guard:todo-decomposition\`.`;
   fs.mkdirSync(path.join(repo, '.brownie'), { recursive: true });
@@ -888,7 +888,10 @@ test('recovers a terminal generated replan to its bounded implementation source'
   assert.match(todo, /E-23a-release-artifact-portable-archive-leaf-01/u);
   assert.doesNotMatch(todo, new RegExp(replanId, 'u'));
   assert.equal(feedback.semantic_repair_policy.mode, 'force_bounded_leaf_target_patch');
-  assert.deepEqual(feedback.semantic_repair_policy.selected_patch_targets, ['scripts/release-local-artifact.mjs']);
+  assert.deepEqual(feedback.semantic_repair_policy.selected_patch_targets, [
+    'scripts/release-local-artifact.mjs',
+    'scripts/release-local-artifact.test.mjs'
+  ]);
   assert.equal(fs.readFileSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/blocked.jsonl'), 'utf8'), '');
 });
 
