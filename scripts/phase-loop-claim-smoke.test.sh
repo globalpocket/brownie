@@ -2199,6 +2199,7 @@ assert "stale selected-target repair feedback must not override this" in phase_l
 assert "parent_dependencies = split_dependency_ids(line_value(selected_block, \"Depends on:\"))" in phase_loop, phase_loop
 assert "concrete_replacements" not in phase_loop, phase_loop
 assert "not selected_decomposition_active" in phase_loop, phase_loop
+assert "^\\s*Route:\\s*todo-decomposition\\.?\\s*$" in phase_loop, phase_loop
 PY
 
 echo "phase-loop claim smoke passed"

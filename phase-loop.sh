@@ -9293,10 +9293,11 @@ if repair_feedback and selected_leaf_target_path:
         if harness_feedback and harness_feedback.get("ok") is False:
             bdk_state = "verify_or_repair"
             llm_route = "code"
-selected_decomposition_active = (
-    "TODO-decompose-" in selected_todo
-    or "Route: todo-decomposition" in selected_todo
-)
+selected_decomposition_active = bool(re.search(
+    r"^\s*Route:\s*todo-decomposition\.?\s*$",
+    selected_todo,
+    re.MULTILINE,
+))
 selected_decomposition_source_id = ""
 source_match = re.search(r"Decompose broad TODO `([^`]+)`", selected_todo)
 if source_match:
