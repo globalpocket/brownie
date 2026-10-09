@@ -1139,6 +1139,36 @@ test('does not restart a terminal no_eligible claim when the workspace is dirty'
   assert.equal(result.start.reason, 'terminal_no_eligible_claim_requires_verified_baseline');
 });
 
+test('does not let historical Brownie artifacts block recovery when no active claim remains', () => {
+  const repo = makeRepo();
+  writeTodo(repo);
+  fs.writeFileSync(path.join(repo, '.brownie', 'historical-run.json'), '{"preserve":true}\n');
+  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
+  writeJson(repo, '.brownie/private/phase-loop/status.json', {
+    status: 'no_progress',
+    run_id: 'run-terminal-no-eligible-no-claim',
+    consecutive_failures: 0
+  });
+  writeJson(repo, '.brownie/private/phase-loop/progress-state.json', {
+    classification: 'no_progress',
+    same_progress_count: 1,
+    workspace_changed: false,
+    progress_projection: {
+      cli_status: 'no_eligible_task',
+      closure: 'no_eligible_task',
+      stop_reason: 'terminal_task_failed',
+      selected_todo: runtimeEvidenceTodo
+    }
+  });
+
+  const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
+
+  assert.equal(result.repair.terminal_no_eligible_claim.attempted, false, JSON.stringify(result, null, 2));
+  assert.equal(result.repair.terminal_no_eligible_claim.reason, 'no_active_claim');
+  assert.notEqual(result.start.reason, 'terminal_no_eligible_claim_requires_verified_baseline');
+  assert.equal(fs.existsSync(path.join(repo, '.brownie', 'historical-run.json')), true);
+});
+
 test('archives a legacy terminal claim only when its saved TODO snapshot matches', () => {
   const repo = makeRepo();
   writeTodo(repo);
