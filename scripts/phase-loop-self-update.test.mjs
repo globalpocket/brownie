@@ -73,6 +73,10 @@ test('plans a self-update only while the phase loop is stopped and source tree i
   assert.match(objective, /do not edit `\.brownie\/todo\.md`/u);
   assert.match(objective, /Repair controller policy contradiction/u);
   assert.match(objective, /Patch only `scripts\/phase-loop-self-update\.mjs`/u);
+  assert.match(objective, /next tool may be exactly one `workspace\.read` for one declared target path/u);
+  assert.match(objective, /self_update_initial_target_read_policy/u);
+  assert.doesNotMatch(objective, /read_budget_repair_policy/u);
+  assert.match(objective, /Do not read `\.brownie\/todo\.md`/u);
 });
 
 test('tells a recoverer to use trusted exact patch context without rereading a large target', () => {
