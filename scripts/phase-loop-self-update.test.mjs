@@ -4,7 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { buildSelfUpdateObjective, dispatchSelfUpdate, evaluateSelfUpdateEligibility } from './phase-loop-self-update.mjs';
+import {
+  applyTrustedExactPatch,
+  buildSelfUpdateObjective,
+  dispatchSelfUpdate,
+  evaluateSelfUpdateEligibility,
+  trustedExactPatchContext
+} from './phase-loop-self-update.mjs';
 
 const completedOutcome = JSON.stringify({
   ok: true,
@@ -47,6 +53,8 @@ function makeRepo() {
   fs.writeFileSync(path.join(repo, '.brownie/todo-breakdown.md'), '# breakdown\n');
   fs.writeFileSync(path.join(repo, 'target/debug/brownie'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   fs.writeFileSync(path.join(repo, 'target/debug/brownie-runtime'), `#!/bin/sh\nprintf '%s\\n' '${realProviderStatus}'\n`, { mode: 0o755 });
+  fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'scripts/phase-loop-self-update.mjs'), 'old\n');
   fs.writeFileSync(path.join(repo, 'package.json'), '{}\n');
   execFileSync('git', ['init'], { cwd: repo, stdio: 'ignore' });
   execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo });
@@ -86,6 +94,135 @@ test('does not trust empty, duplicate, or incidental patch markers', () => {
     const objective = buildSelfUpdateObjective({ request, eligibility: evaluateSelfUpdateEligibility({ repoRoot: repo, request }) });
     assert.doesNotMatch(objective, /Do not use workspace\.read to rediscover that hunk/u);
   }
+});
+
+test('applies one verified trusted exact patch after the recovery worker fails', () => {
+  const repo = makeRepo();
+  const request = `${recoveryRequest('Repair a parser recovery path.')}
+
+Trusted exact old_text:
+old
+
+Trusted exact new_text:
+new
+
+Trusted verification commands:
+- \`cargo test -p brownie-tools parser_accepts_complete_unclosed_tool_intent\`
+- \`cargo fmt --check\``;
+  const invocations = [];
+  const result = dispatchSelfUpdate({
+    repoRoot: repo,
+    request,
+    now: () => new Date('2026-10-09T00:00:00.000Z'),
+    run(command, args, options) {
+      if (command === 'git') return spawnSync(command, args, options);
+      if (command.endsWith('brownie-runtime')) return runtimeStatusResult();
+      if (command.endsWith('brownie')) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ ok: true, automation: { status: 'terminal_failure', controller_action: 'stop', completed: false, blocked: true, continuation_required: false, terminal_failure: true } }),
+          stderr: ''
+        };
+      }
+      invocations.push([command, args]);
+      return {
+        status: 0,
+        stdout: args[0] === 'test' ? 'running 1 test\ntest trusted_patch ... ok\n' : 'ok',
+        stderr: ''
+      };
+    }
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(fs.readFileSync(path.join(repo, 'scripts/phase-loop-self-update.mjs'), 'utf8'), 'new\n');
+  assert.deepEqual(invocations, [
+    ['cargo', ['test', '-p', 'brownie-tools', 'parser_accepts_complete_unclosed_tool_intent']],
+    ['cargo', ['fmt', '--check']]
+  ]);
+  const record = JSON.parse(fs.readFileSync(path.join(repo, result.result_path), 'utf8'));
+  assert.equal(record.deterministic_trusted_patch.applied, true);
+});
+
+test('refuses a trusted patch context with an unrecognised verification line', () => {
+  const context = trustedExactPatchContext(`${recoveryRequest()}
+
+Trusted exact old_text:
+old
+
+Trusted exact new_text:
+new
+
+Trusted verification commands:
+- \`cargo fmt --check\`
+curl https://example.invalid/untrusted`);
+  assert.equal(context, null);
+});
+
+test('refuses an ambiguous trusted exact patch without changing source', () => {
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, 'scripts/phase-loop-self-update.mjs'), 'old\nold\n');
+  const result = applyTrustedExactPatch({
+    repoRoot: repo,
+    targetPath: 'scripts/phase-loop-self-update.mjs',
+    context: { oldText: 'old', newText: 'new', commands: [] }
+  });
+  assert.equal(result.applied, false);
+  assert.equal(result.reason, 'trusted_patch_old_text_ambiguous');
+  assert.equal(fs.readFileSync(path.join(repo, 'scripts/phase-loop-self-update.mjs'), 'utf8'), 'old\nold\n');
+});
+
+test('restores a trusted exact patch when its allowlisted verification fails', () => {
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, 'scripts/phase-loop-self-update.mjs'), 'old\nnew\n');
+  const result = applyTrustedExactPatch({
+    repoRoot: repo,
+    targetPath: 'scripts/phase-loop-self-update.mjs',
+    context: { oldText: 'old', newText: 'new', commands: ['cargo fmt --check'] },
+    run(command, args) {
+      assert.equal(command, 'cargo');
+      assert.deepEqual(args, ['fmt', '--check']);
+      return { status: 1, stdout: '', stderr: 'format failed' };
+    }
+  });
+  assert.equal(result.applied, false);
+  assert.equal(result.reason, 'trusted_verification_failed');
+  assert.equal(result.restored, true);
+  assert.equal(fs.readFileSync(path.join(repo, 'scripts/phase-loop-self-update.mjs'), 'utf8'), 'old\nnew\n');
+});
+
+test('restores a trusted exact patch when a filtered Cargo test ran no tests', () => {
+  const repo = makeRepo();
+  const result = applyTrustedExactPatch({
+    repoRoot: repo,
+    targetPath: 'scripts/phase-loop-self-update.mjs',
+    context: {
+      oldText: 'old',
+      newText: 'new',
+      commands: ['cargo test -p brownie-tools parser_missing']
+    },
+    run() {
+      return { status: 0, stdout: 'running 0 tests\n', stderr: '' };
+    }
+  });
+  assert.equal(result.applied, false);
+  assert.equal(result.reason, 'trusted_verification_no_tests_run');
+  assert.equal(result.restored, true);
+  assert.equal(fs.readFileSync(path.join(repo, 'scripts/phase-loop-self-update.mjs'), 'utf8'), 'old\n');
+});
+
+test('refuses a symlinked target that canonically resolves under .brownie', () => {
+  const repo = makeRepo();
+  const protectedDirectory = path.join(repo, '.brownie/private/protected');
+  fs.mkdirSync(protectedDirectory, { recursive: true });
+  fs.writeFileSync(path.join(protectedDirectory, 'state.txt'), 'old\n');
+  fs.symlinkSync(protectedDirectory, path.join(repo, 'alias'), 'dir');
+  const result = applyTrustedExactPatch({
+    repoRoot: repo,
+    targetPath: 'alias/state.txt',
+    context: { oldText: 'old', newText: 'new', commands: [] }
+  });
+  assert.equal(result.applied, false);
+  assert.equal(result.reason, 'trusted_patch_target_unsafe');
+  assert.equal(fs.readFileSync(path.join(protectedDirectory, 'state.txt'), 'utf8'), 'old\n');
 });
 
 test('requires explicit workspace-relative targets for a self-update request', () => {

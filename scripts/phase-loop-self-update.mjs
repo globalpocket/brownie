@@ -15,18 +15,39 @@ const retryBaseDelayMs = 60_000;
 const retryMaxDelayMs = 30 * 60_000;
 const maxAppliedRecoveryResumes = 3;
 
-function hasUnambiguousTrustedPatchContext(request) {
+export function trustedExactPatchContext(request) {
   const oldHeadings = [...request.matchAll(/^Trusted exact old_text:\s*$/gmu)];
   const newHeadings = [...request.matchAll(/^Trusted exact new_text:\s*$/gmu)];
-  if (oldHeadings.length !== 1 || newHeadings.length !== 1) return false;
+  const verificationHeadings = [...request.matchAll(/^Trusted verification commands:\s*$/gmu)];
+  if (oldHeadings.length !== 1 || newHeadings.length !== 1 || verificationHeadings.length > 1) return null;
 
   const oldStart = oldHeadings[0].index + oldHeadings[0][0].length;
   const newStart = newHeadings[0].index + newHeadings[0][0].length;
-  if (oldStart >= newHeadings[0].index) return false;
+  if (oldStart >= newHeadings[0].index) return null;
 
   const oldText = request.slice(oldStart, newHeadings[0].index).trim();
-  const newText = request.slice(newStart).trim();
-  return oldText.length > 0 && newText.length > 0;
+  const verificationStart = verificationHeadings.length === 1
+    ? verificationHeadings[0].index
+    : request.length;
+  if (verificationStart < newStart) return null;
+  const newText = request.slice(newStart, verificationStart).trim();
+  if (oldText.length === 0 || newText.length === 0) return null;
+
+  const verificationLines = verificationHeadings.length === 0
+    ? []
+    : request.slice(verificationHeadings[0].index + verificationHeadings[0][0].length)
+      .split(/\r?\n/u)
+      .map((line) => line.trim());
+  if (verificationLines.some((line) => line.length > 0 && !/^-\s+`([^`]+)`\s*$/u.test(line))) return null;
+  const commands = verificationLines
+    .map((line) => /^-\s+`([^`]+)`\s*$/u.exec(line)?.[1] ?? null)
+    .filter((command) => command !== null);
+  if (verificationHeadings.length === 1 && commands.length === 0) return null;
+  return { oldText, newText, commands };
+}
+
+function hasUnambiguousTrustedPatchContext(request) {
+  return trustedExactPatchContext(request) !== null;
 }
 
 function parseArgs(argv) {
@@ -316,6 +337,119 @@ function writeAtomically(filePath, contents) {
   fs.renameSync(temporary, filePath);
 }
 
+function isWithinRepo(repoRoot, candidate) {
+  return candidate !== repoRoot && candidate.startsWith(`${repoRoot}${path.sep}`);
+}
+
+function trustedVerificationArgs(command) {
+  if (command === 'cargo fmt --check') {
+    return { program: 'cargo', args: ['fmt', '--check'], requires_test_execution: false };
+  }
+  const match = /^cargo test -p ([a-z0-9-]+)(?: ([A-Za-z0-9_:-]+))?$/u.exec(command);
+  if (!match) return null;
+  const args = ['test', '-p', match[1]];
+  if (match[2]) args.push(match[2]);
+  return { program: 'cargo', args, requires_test_execution: Boolean(match[2]) };
+}
+
+function runTrustedVerification({ repoRoot, commands, run }) {
+  const results = [];
+  for (const command of commands) {
+    const invocation = trustedVerificationArgs(command);
+    if (!invocation) {
+      return { ok: false, reason: 'trusted_verification_command_forbidden', results, command };
+    }
+    const { program, args } = invocation;
+    const result = run(program, args, {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      timeout: 10 * 60_000,
+      maxBuffer: 256 * 1024
+    });
+    const entry = {
+      command,
+      exit_code: result.status,
+      signal: result.signal ?? null,
+      stdout: String(result.stdout ?? '').slice(-12_000),
+      stderr: String(result.stderr ?? '').slice(-12_000)
+    };
+    results.push(entry);
+    if (result.status !== 0 || result.signal) {
+      return { ok: false, reason: 'trusted_verification_failed', results };
+    }
+    if (invocation.requires_test_execution
+      && !/\brunning [1-9]\d* tests?\b/u.test(`${entry.stdout}\n${entry.stderr}`)) {
+      return { ok: false, reason: 'trusted_verification_no_tests_run', results };
+    }
+  }
+  return { ok: true, results };
+}
+
+function writeSourceAtomically(filePath, contents, mode) {
+  const temporary = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  fs.writeFileSync(temporary, contents, { encoding: 'utf8', mode });
+  fs.renameSync(temporary, filePath);
+}
+
+export function applyTrustedExactPatch({ repoRoot, targetPath, context, run = spawnSync }) {
+  if (!context || typeof context.oldText !== 'string' || typeof context.newText !== 'string') {
+    return { applied: false, reason: 'trusted_patch_context_invalid' };
+  }
+  if (isBrownieManagedPath(targetPath) || path.isAbsolute(targetPath) || targetPath.split('/').includes('..')) {
+    return { applied: false, reason: 'trusted_patch_target_forbidden' };
+  }
+  let realRepoRoot;
+  try {
+    realRepoRoot = fs.realpathSync(repoRoot);
+  } catch {
+    return { applied: false, reason: 'trusted_patch_repo_unreadable' };
+  }
+  const absolute = path.resolve(realRepoRoot, targetPath);
+  if (!isWithinRepo(realRepoRoot, absolute)) return { applied: false, reason: 'trusted_patch_target_outside_repo' };
+
+  let stat;
+  let real;
+  let before;
+  try {
+    stat = fs.lstatSync(absolute);
+    real = fs.realpathSync(absolute);
+    before = fs.readFileSync(absolute, 'utf8');
+  } catch {
+    return { applied: false, reason: 'trusted_patch_target_unreadable' };
+  }
+  const canonicalRelative = path.relative(realRepoRoot, real);
+  if (!stat.isFile()
+    || stat.isSymbolicLink()
+    || !isWithinRepo(realRepoRoot, real)
+    || isBrownieManagedPath(canonicalRelative)) {
+    return { applied: false, reason: 'trusted_patch_target_unsafe' };
+  }
+
+  const first = before.indexOf(context.oldText);
+  const last = before.lastIndexOf(context.oldText);
+  if (first < 0) return { applied: false, reason: 'trusted_patch_old_text_missing' };
+  if (first !== last) return { applied: false, reason: 'trusted_patch_old_text_ambiguous' };
+
+  const after = `${before.slice(0, first)}${context.newText}${before.slice(first + context.oldText.length)}`;
+  writeSourceAtomically(absolute, after, stat.mode & 0o777);
+  const verification = runTrustedVerification({ repoRoot, commands: context.commands, run });
+  if (!verification.ok) {
+    const current = fs.readFileSync(absolute, 'utf8');
+    if (current === after) {
+      writeSourceAtomically(absolute, before, stat.mode & 0o777);
+      return { applied: false, reason: verification.reason, verification, restored: true };
+    }
+    return { applied: false, reason: `${verification.reason}_restore_refused`, verification, restored: false };
+  }
+  return {
+    applied: true,
+    target_path: targetPath,
+    verification,
+    before_sha256: `sha256:${crypto.createHash('sha256').update(before).digest('hex')}`,
+    after_sha256: `sha256:${crypto.createHash('sha256').update(after).digest('hex')}`
+  };
+}
+
 function selfUpdateOutcome(result) {
   if (result.status !== 0) return { ok: false, reason: 'process_exit_nonzero' };
   if (result.signal) return { ok: false, reason: 'process_signaled' };
@@ -444,7 +578,30 @@ export function dispatchSelfUpdate({ repoRoot, request, run = spawnSync, now = (
     resumeAttempts += 1;
     if (!isSameScopedContinuation(result, continuationScope)) break;
   }
-  const outcome = selfUpdateOutcome(result);
+  let outcome = selfUpdateOutcome(result);
+  let deterministicTrustedPatch = null;
+  const trustedContext = trustedExactPatchContext(request);
+  if (!outcome.ok && trustedContext && trustedContext.commands.length > 0 && eligibility.target_paths.length === 1) {
+    const currentDirty = gitDirtyFiles(repoRoot, run);
+    const sourceTreeStillClean = currentDirty.ok
+      && currentDirty.files.every((file) => isBrownieManagedPath(file));
+    if (!sourceTreeStillClean) {
+      deterministicTrustedPatch = {
+        applied: false,
+        reason: 'trusted_patch_source_tree_changed_during_worker'
+      };
+    } else {
+      deterministicTrustedPatch = applyTrustedExactPatch({
+        repoRoot,
+        targetPath: eligibility.target_paths[0],
+        context: trustedContext,
+        run
+      });
+      if (deterministicTrustedPatch.applied) {
+        outcome = { ok: true, reason: 'trusted_exact_patch_applied_after_worker_failure' };
+      }
+    }
+  }
   const record = {
     schema_version: 1,
     kind: 'brownie_phase_loop_self_update_dispatch',
@@ -456,6 +613,7 @@ export function dispatchSelfUpdate({ repoRoot, request, run = spawnSync, now = (
     continuation: continuationScope
       ? { attempted: true, scope: continuationScope, initial_exit_code: initialResult.status, resume_attempts: resumeAttempts, exhausted: resumeAttempts === maxAppliedRecoveryResumes && isSameScopedContinuation(result, continuationScope) }
       : { attempted: false },
+    deterministic_trusted_patch: deterministicTrustedPatch,
     stdout: String(result.stdout ?? '').slice(-12_000),
     stderr: String(result.stderr ?? '').slice(-12_000),
     dirty_brownie_files_preserved: eligibility.dirty_brownie_files
