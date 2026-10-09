@@ -366,7 +366,7 @@ export function buildSelfUpdateObjective({ request, eligibility }) {
   const targetPaths = eligibility.target_paths ?? [];
   const hasTrustedPatchContext = hasUnambiguousTrustedPatchContext(request);
   const trustedPatchInstruction = hasTrustedPatchContext
-    ? 'The recovery request supplies an exact trusted patch context. Do not use workspace.read to rediscover that hunk; emit the compact workspace.write patch_file directly so a large target file cannot truncate the recovery context.\n\n'
+    ? 'read_budget_repair_policy: trusted exact patch context is embedded below. The recovery request supplies an exact trusted patch context. Do not use workspace.read to rediscover that hunk; emit the compact workspace.write patch_file directly so a large target file cannot truncate the recovery context.\n\n'
     : '';
   const requiredOutcome = hasTrustedPatchContext
     ? '1. Apply only the supplied exact patch to the declared target; do not widen it or rediscover its contents.\n2. Run exactly the supplied trusted verification commands and report their results.\n3. Do not stage, overwrite, revert, or delete pre-existing .brownie/ changes.\n4. Do not restart the normal phase loop. Finish with a concise summary suitable for a brownie-agent-authored PR.'

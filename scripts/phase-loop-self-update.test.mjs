@@ -80,6 +80,7 @@ test('tells a recoverer to use trusted exact patch context without rereading a l
   const request = `${recoveryRequest()}\n\nTrusted exact old_text:\nold\n\nTrusted exact new_text:\nnew`;
   const eligibility = evaluateSelfUpdateEligibility({ repoRoot: repo, request });
   const objective = buildSelfUpdateObjective({ request, eligibility });
+  assert.match(objective, /read_budget_repair_policy: trusted exact patch context is embedded below/u);
   assert.match(objective, /Do not use workspace\.read to rediscover that hunk/u);
   assert.match(objective, /Apply only the supplied exact patch/u);
   assert.doesNotMatch(objective, /Add a regression test/u);
