@@ -974,6 +974,86 @@ function maybeRepairNonLiveTodoResidue(repoRoot, diagnostic) {
   };
 }
 
+// A generated stalled-leaf replan is a controller recovery mechanism, not a
+// product task in its own right.  If the worker returns terminal_failure
+// without proposing a write for that replan, enqueueing another replan would
+// only form a recursive TODO chain.  Restore the original bounded leaf and
+// attach a target-patch recovery packet instead.  This is deliberately
+// limited to a live implementation leaf with an explicit Patch only target.
+function maybeRecoverTerminalStalledReplan(repoRoot, diagnostic) {
+  const selected = diagnostic.progress?.selected_todo ?? {};
+  const selectedId = selected.id ?? todoIdFromFirstLine(selected.first_line);
+  const terminalNoProposal = diagnostic.phase_loop?.status === 'no_progress'
+    && String(diagnostic.phase_loop?.detail ?? '').includes('objective_apply_stalled');
+  if (!terminalNoProposal || !isStalledLeafReplanId(selectedId)) {
+    return { attempted: false, reason: 'terminal_stalled_replan_not_reported' };
+  }
+
+  const todoPath = path.join(repoRoot, '.brownie/todo.md');
+  const breakdownPath = path.join(repoRoot, '.brownie/todo-breakdown.md');
+  const blockedPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/blocked.jsonl');
+  const feedbackPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/repair-feedback.json');
+  if (!fs.existsSync(todoPath)) {
+    return { attempted: true, ok: false, reason: 'todo_missing' };
+  }
+  const todoText = fs.readFileSync(todoPath, 'utf8');
+  const replanBlock = todoBlocks(todoText).find((block) => todoIdFromBlock(block.block) === selectedId);
+  const sourceId = sourceTodoFromBlock(replanBlock?.block);
+  const sourceBlock = todoBlocks(todoText).find((block) => todoIdFromBlock(block.block) === sourceId);
+  if (!sourceId || !sourceBlock || !/Route:\s*implementation\./u.test(sourceBlock.block) || !/Patch only\s+`[^`]+`/u.test(sourceBlock.block)) {
+    return { attempted: true, ok: false, reason: 'replan_source_is_not_a_bounded_implementation_leaf', todo_id: selectedId, source_todo_id: sourceId };
+  }
+
+  const removed = removeTodoBlocksById(todoText, new Set([selectedId]));
+  fs.writeFileSync(todoPath, removed.text, { encoding: 'utf8', mode: 0o600 });
+  fsyncFileAndParent(todoPath);
+  let breakdownRemoved = [];
+  if (fs.existsSync(breakdownPath)) {
+    const nextBreakdown = removeBreakdownRepairSections(fs.readFileSync(breakdownPath, 'utf8'), new Set([selectedId]));
+    if (nextBreakdown.removed.length > 0) {
+      fs.writeFileSync(breakdownPath, nextBreakdown.text, { encoding: 'utf8', mode: 0o600 });
+      fsyncFileAndParent(breakdownPath);
+      breakdownRemoved = nextBreakdown.removed;
+    }
+  }
+  const retainedBlocked = readJsonl(blockedPath).filter((record) => !(
+    record?.block_reason === 'stalled_leaf_contract_replan' &&
+    (record?.todo_id === sourceId || todoIdFromFirstLine(record?.selected_todo_first_line) === sourceId)
+  ));
+  fs.writeFileSync(blockedPath, retainedBlocked.map((record) => `${JSON.stringify(record, Object.keys(record).sort())}\n`).join(''), { encoding: 'utf8', mode: 0o600 });
+  fsyncFileAndParent(blockedPath);
+  const patchTargets = [...sourceBlock.block.matchAll(/Patch only\s+`([^`]+)`/gu)].map((match) => match[1]);
+  const feedback = {
+    schema_version: 1,
+    kind: 'phase_loop_terminal_stalled_replan_recovery',
+    generated_at: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z'),
+    completed: false,
+    reason: 'generated_todo_decomposition_terminal_without_proposal',
+    selected_todo: sourceBlock.block,
+    selected_todo_first_line: sourceBlock.first_line,
+    superseded_replan_todo_id: selectedId,
+    repair_hint: 'The generated TODO replan ended without a workspace.write proposal. Do not recreate or edit the TODO queue. Emit exactly one compact workspace.write patch_file for a selected target, or report one concrete blocker.',
+    semantic_repair_policy: {
+      mode: 'force_bounded_leaf_target_patch',
+      selected_patch_targets: patchTargets,
+      must_preserve_selected_todo_intent: true,
+      must_not_refine_bounded_leaf_todo: true,
+      forbidden_next_actions: ['rewrite .brownie/todo.md', 'create another stalled-leaf replan', 'modify unrelated files']
+    },
+    generated_by: 'phase-loop-supervisor-control'
+  };
+  fs.writeFileSync(feedbackPath, `${JSON.stringify(feedback, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  fsyncFileAndParent(feedbackPath);
+  return {
+    attempted: true,
+    ok: true,
+    changed: true,
+    source_todo_id: sourceId,
+    removed_replan_todo_id: selectedId,
+    paths: ['.brownie/todo.md', ...(breakdownRemoved.length > 0 ? ['.brownie/todo-breakdown.md'] : []), '.brownie/private/phase-loop/todo-claims/blocked.jsonl', '.brownie/private/phase-loop/todo-claims/repair-feedback.json']
+  };
+}
+
 function maybeRepairRejectedBoundedLeafReplanResidue(repoRoot, diagnostic) {
   const todoPath = path.join(repoRoot, '.brownie/todo.md');
   const breakdownPath = path.join(repoRoot, '.brownie/todo-breakdown.md');
@@ -1752,10 +1832,15 @@ export function controlPhaseLoop(options = {}) {
   const boundedLeafApplyRejectionRepair = options.repair === false
     ? { attempted: false, reason: 'repair_disabled' }
     : maybeWriteBoundedLeafApplyRejectionFeedback(repoRoot, afterTerminalNoEligibleClaimRepair);
+  const terminalStalledReplanRecovery = options.repair === false
+    ? { attempted: false, reason: 'repair_disabled' }
+    : maybeRecoverTerminalStalledReplan(repoRoot, afterTerminalNoEligibleClaimRepair);
   const todoContractReplanRepair = options.repair === false
     ? { attempted: false, reason: 'repair_disabled' }
     : boundedLeafApplyRejectionRepair.attempted && boundedLeafApplyRejectionRepair.ok
       ? { attempted: false, reason: 'bounded_leaf_target_patch_takes_precedence' }
+      : terminalStalledReplanRecovery.attempted && terminalStalledReplanRecovery.ok
+        ? { attempted: false, reason: 'terminal_stalled_replan_recovered_to_bounded_leaf' }
       : maybeWriteTodoContractReplanFeedback(repoRoot, afterTerminalNoEligibleClaimRepair, ledgerSummary);
   const stalledTodoBlocked = options.repair === false
     ? { attempted: false, reason: 'repair_disabled' }
@@ -1815,7 +1900,8 @@ export function controlPhaseLoop(options = {}) {
     terminal_no_eligible_claim: terminalNoEligibleClaimRepair,
     semantic_verification: semanticVerificationRepair,
     invalid_patch: invalidPatchRepair,
-    bounded_leaf_apply_rejection: boundedLeafApplyRejectionRepair
+    bounded_leaf_apply_rejection: boundedLeafApplyRejectionRepair,
+    terminal_stalled_replan_recovery: terminalStalledReplanRecovery
   };
   const postRepair = options.repair === false
     ? { attempted: false, reason: 'repair_disabled' }
@@ -1894,6 +1980,7 @@ export function controlPhaseLoop(options = {}) {
       semantic_verification: semanticVerificationRepair,
       invalid_patch: invalidPatchRepair,
       bounded_leaf_apply_rejection: boundedLeafApplyRejectionRepair,
+      terminal_stalled_replan_recovery: terminalStalledReplanRecovery,
       post_repair_validation: postRepair
     },
     self_update: selfUpdate,
