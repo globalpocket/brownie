@@ -283,8 +283,27 @@ export function evaluateSelfUpdateEligibility({ repoRoot, request, run = spawnSy
   const dirty = gitDirtyFiles(repoRoot, run);
   if (!dirty.ok) return requestFailure('git_status_unavailable', { diagnostic });
   const nonBrownieDirtyFiles = dirty.files.filter((file) => !isBrownieManagedPath(file));
+  const trustedContext = targetPaths.length === 1 ? trustedExactPatchContext(request) : null;
+  let pendingTrustedPatch = null;
   if (nonBrownieDirtyFiles.length > 0) {
-    return requestFailure('non_brownie_workspace_changes_present', { non_brownie_dirty_files: nonBrownieDirtyFiles, diagnostic });
+    if (nonBrownieDirtyFiles.length !== 1
+      || nonBrownieDirtyFiles[0] !== targetPaths[0]
+      || !trustedContext) {
+      return requestFailure('non_brownie_workspace_changes_present', { non_brownie_dirty_files: nonBrownieDirtyFiles, diagnostic });
+    }
+    pendingTrustedPatch = trustedExactPatchAlreadyApplied({
+      repoRoot,
+      targetPath: targetPaths[0],
+      context: trustedContext,
+      run
+    });
+    if (!pendingTrustedPatch.applied) {
+      return requestFailure('non_brownie_workspace_changes_present', {
+        non_brownie_dirty_files: nonBrownieDirtyFiles,
+        pending_trusted_patch: pendingTrustedPatch,
+        diagnostic
+      });
+    }
   }
 
   const providerEnvironment = privateProviderEnvironment(repoRoot);
@@ -310,6 +329,7 @@ export function evaluateSelfUpdateEligibility({ repoRoot, request, run = spawnSy
     implementation_provider: provider.implementation_provider,
     provider_environment: providerEnvironment.source,
     target_paths: targetPaths,
+    pending_trusted_patch: pendingTrustedPatch,
     dirty_brownie_files: dirty.files,
     diagnostic
   };
@@ -341,9 +361,72 @@ function isWithinRepo(repoRoot, candidate) {
   return candidate !== repoRoot && candidate.startsWith(`${repoRoot}${path.sep}`);
 }
 
+function trustedExactPatchAlreadyApplied({ repoRoot, targetPath, context, run = spawnSync }) {
+  if (!context || typeof context.oldText !== 'string' || typeof context.newText !== 'string') {
+    return { applied: false, reason: 'trusted_patch_context_invalid' };
+  }
+  if (isBrownieManagedPath(targetPath) || path.isAbsolute(targetPath) || targetPath.split('/').includes('..')) {
+    return { applied: false, reason: 'trusted_patch_target_forbidden' };
+  }
+  let realRepoRoot;
+  try {
+    realRepoRoot = fs.realpathSync(repoRoot);
+  } catch {
+    return { applied: false, reason: 'trusted_patch_repo_unreadable' };
+  }
+  const absolute = path.resolve(realRepoRoot, targetPath);
+  if (!isWithinRepo(realRepoRoot, absolute)) return { applied: false, reason: 'trusted_patch_target_outside_repo' };
+
+  let stat;
+  let real;
+  let current;
+  try {
+    stat = fs.lstatSync(absolute);
+    real = fs.realpathSync(absolute);
+    current = fs.readFileSync(absolute, 'utf8');
+  } catch {
+    return { applied: false, reason: 'trusted_patch_target_unreadable' };
+  }
+  const canonicalRelative = path.relative(realRepoRoot, real);
+  if (!stat.isFile()
+    || stat.isSymbolicLink()
+    || !isWithinRepo(realRepoRoot, real)
+    || isBrownieManagedPath(canonicalRelative)) {
+    return { applied: false, reason: 'trusted_patch_target_unsafe' };
+  }
+
+  const baseline = run('git', ['show', `HEAD:${canonicalRelative}`], {
+    cwd: realRepoRoot,
+    encoding: 'utf8'
+  });
+  if (baseline.status !== 0 || baseline.signal) {
+    return { applied: false, reason: 'trusted_patch_baseline_unavailable' };
+  }
+  const before = String(baseline.stdout ?? '');
+  const first = before.indexOf(context.oldText);
+  const last = before.lastIndexOf(context.oldText);
+  if (first < 0) return { applied: false, reason: 'trusted_patch_old_text_missing' };
+  if (first !== last) return { applied: false, reason: 'trusted_patch_old_text_ambiguous' };
+  const expected = `${before.slice(0, first)}${context.newText}${before.slice(first + context.oldText.length)}`;
+  if (current !== expected) return { applied: false, reason: 'trusted_patch_current_content_mismatch' };
+  return {
+    applied: true,
+    target_path: canonicalRelative,
+    before_sha256: `sha256:${crypto.createHash('sha256').update(before).digest('hex')}`,
+    after_sha256: `sha256:${crypto.createHash('sha256').update(current).digest('hex')}`
+  };
+}
+
 function trustedVerificationArgs(command) {
   if (command === 'cargo fmt --check') {
     return { program: 'cargo', args: ['fmt', '--check'], requires_test_execution: false };
+  }
+  if (command === 'cargo test -p brownie-runtime --all-features') {
+    return {
+      program: 'cargo',
+      args: ['test', '-p', 'brownie-runtime', '--all-features'],
+      requires_test_execution: true
+    };
   }
   const match = /^cargo test -p ([a-z0-9-]+)(?: ([A-Za-z0-9_:-]+))?$/u.exec(command);
   if (!match) return null;
@@ -559,28 +642,45 @@ export function dispatchSelfUpdate({ repoRoot, request, run = spawnSync, now = (
   const objective = buildSelfUpdateObjective({ request, eligibility });
   writeAtomically(objectivePath, objective);
 
-  const initialResult = run(eligibility.brownie_bin, ['--json', 'run', '--file', objectivePath], {
-    cwd: repoRoot,
-    encoding: 'utf8',
-    env: eligibility.worker_env
-  });
-  const continuationScope = appliedRecoveryContinuationScope(initialResult);
-  let result = initialResult;
+  let initialResult = null;
+  let result = null;
+  let continuationScope = null;
   let resumeAttempts = 0;
-  while (continuationScope && resumeAttempts < maxAppliedRecoveryResumes) {
-    result = resumeAppliedRecovery({
-      brownieBin: eligibility.brownie_bin,
-      repoRoot,
-      workerEnv: eligibility.worker_env,
-      run,
-      scope: continuationScope
-    });
-    resumeAttempts += 1;
-    if (!isSameScopedContinuation(result, continuationScope)) break;
-  }
-  let outcome = selfUpdateOutcome(result);
   let deterministicTrustedPatch = null;
   const trustedContext = trustedExactPatchContext(request);
+  let outcome;
+  if (eligibility.pending_trusted_patch?.applied && trustedContext) {
+    const verification = runTrustedVerification({ repoRoot, commands: trustedContext.commands, run });
+    deterministicTrustedPatch = {
+      ...eligibility.pending_trusted_patch,
+      verification,
+      recovered_after_worker_stop: true
+    };
+    result = { status: verification.ok ? 0 : 1, signal: null, stdout: '', stderr: '' };
+    outcome = verification.ok
+      ? { ok: true, reason: 'trusted_exact_patch_verified_after_worker_stop' }
+      : { ok: false, reason: verification.reason };
+  } else {
+    initialResult = run(eligibility.brownie_bin, ['--json', 'run', '--file', objectivePath], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      env: eligibility.worker_env
+    });
+    continuationScope = appliedRecoveryContinuationScope(initialResult);
+    result = initialResult;
+    while (continuationScope && resumeAttempts < maxAppliedRecoveryResumes) {
+      result = resumeAppliedRecovery({
+        brownieBin: eligibility.brownie_bin,
+        repoRoot,
+        workerEnv: eligibility.worker_env,
+        run,
+        scope: continuationScope
+      });
+      resumeAttempts += 1;
+      if (!isSameScopedContinuation(result, continuationScope)) break;
+    }
+    outcome = selfUpdateOutcome(result);
+  }
   if (!outcome.ok && trustedContext && trustedContext.commands.length > 0 && eligibility.target_paths.length === 1) {
     const currentDirty = gitDirtyFiles(repoRoot, run);
     const sourceTreeStillClean = currentDirty.ok

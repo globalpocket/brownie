@@ -108,6 +108,7 @@ new
 
 Trusted verification commands:
 - \`cargo test -p brownie-tools parser_accepts_complete_unclosed_tool_intent\`
+- \`cargo test -p brownie-runtime --all-features\`
 - \`cargo fmt --check\``;
   const invocations = [];
   const result = dispatchSelfUpdate({
@@ -136,6 +137,7 @@ Trusted verification commands:
   assert.equal(fs.readFileSync(path.join(repo, 'scripts/phase-loop-self-update.mjs'), 'utf8'), 'new\n');
   assert.deepEqual(invocations, [
     ['cargo', ['test', '-p', 'brownie-tools', 'parser_accepts_complete_unclosed_tool_intent']],
+    ['cargo', ['test', '-p', 'brownie-runtime', '--all-features']],
     ['cargo', ['fmt', '--check']]
   ]);
   const record = JSON.parse(fs.readFileSync(path.join(repo, result.result_path), 'utf8'));
@@ -236,6 +238,43 @@ test('refuses self-update when user source changes are present', () => {
   const repo = makeRepo();
   fs.writeFileSync(path.join(repo, 'user-change.txt'), 'preserve me\n');
   const eligibility = evaluateSelfUpdateEligibility({ repoRoot: repo, request: recoveryRequest() });
+  assert.equal(eligibility.eligible, false);
+  assert.equal(eligibility.reason, 'non_brownie_workspace_changes_present');
+});
+
+test('verifies an exact Brownie-applied patch after its worker stops without accepting arbitrary source drift', () => {
+  const repo = makeRepo();
+  const request = `${recoveryRequest('Recover a parser boundary after the worker applied one exact hunk.')}
+
+Trusted exact old_text:
+old
+
+Trusted exact new_text:
+new
+
+Trusted verification commands:
+- \`cargo fmt --check\``;
+  fs.writeFileSync(path.join(repo, 'scripts/phase-loop-self-update.mjs'), 'new\n');
+  const invocations = [];
+  const result = dispatchSelfUpdate({
+    repoRoot: repo,
+    request,
+    now: () => new Date('2026-10-09T00:00:00.000Z'),
+    run(command, args, options) {
+      if (command === 'git') return spawnSync(command, args, options);
+      if (command.endsWith('brownie-runtime')) return runtimeStatusResult();
+      invocations.push([command, args]);
+      return { status: 0, stdout: 'ok', stderr: '' };
+    }
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(invocations, [['cargo', ['fmt', '--check']]]);
+  const record = JSON.parse(fs.readFileSync(path.join(repo, result.result_path), 'utf8'));
+  assert.equal(record.outcome, 'trusted_exact_patch_verified_after_worker_stop');
+  assert.equal(record.deterministic_trusted_patch.recovered_after_worker_stop, true);
+
+  fs.writeFileSync(path.join(repo, 'scripts/phase-loop-self-update.mjs'), 'untrusted\n');
+  const eligibility = evaluateSelfUpdateEligibility({ repoRoot: repo, request });
   assert.equal(eligibility.eligible, false);
   assert.equal(eligibility.reason, 'non_brownie_workspace_changes_present');
 });
