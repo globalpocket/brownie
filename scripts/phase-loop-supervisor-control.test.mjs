@@ -854,6 +854,47 @@ Parent TODO: E-22e-release-contract-trace-binding-guard
   assert.match(breakdown, /TODO-repair-E-22e-replan-stalled-leaf-16e2c69e67bb/u);
 });
 
+test('recovers a terminal generated replan to its bounded implementation source', () => {
+  const repo = makeRepo();
+  const sourceTodo = `- [ ] E-23a-release-artifact-portable-archive-leaf-01: Patch only \`scripts/release-local-artifact.mjs\` and \`scripts/release-local-artifact.test.mjs\` to create a portable archive:\n  Route: implementation.\n  Source TODO: E-23a-release-artifact-portable-archive.\n  Depends on: <none>.\n  Completion condition: the archive is deterministic.\n  Forbidden changes: do not publish a release.\n  Verification: run \`pnpm --workspace-root release:local-artifact:test\`.`;
+  const replanId = `E-23a-replan-stalled-leaf-${'c'.repeat(12)}`;
+  const replanTodo = `- [ ] ${replanId}: Patch only \`.brownie/todo.md\` and \`.brownie/todo-breakdown.md\` to replan stalled Brownie TODO leaf into implementable child TODOs:\n  Route: todo-decomposition.\n  Source TODO: E-23a-release-artifact-portable-archive-leaf-01.\n  Depends on: <none>.\n  Completion condition: stalled TODO is superseded.\n  Forbidden changes: do not weaken guards/tests.\n  Verification: run \`pnpm --workspace-root guard:todo-decomposition\`.`;
+  fs.mkdirSync(path.join(repo, '.brownie'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.brownie/todo.md'), `${sourceTodo}\n\n${replanTodo}\n`);
+  fs.writeFileSync(path.join(repo, '.brownie/todo-breakdown.md'), `# breakdown\n\n## TODO-repair-${replanId}\n\nParent TODO: E-23a-release-artifact-portable-archive-leaf-01\n`);
+  writeJson(repo, '.brownie/private/phase-loop/status.json', {
+    status: 'no_progress',
+    run_id: 'terminal-replan',
+    consecutive_failures: 0,
+    detail: 'recovery=objective_apply_stalled:apply_authorized_objective_proposal_or_emit_apply_blocker'
+  });
+  writeJson(repo, '.brownie/private/phase-loop/progress-state.json', {
+    classification: 'no_progress',
+    same_progress_count: 1,
+    selected_todo: { id: replanId, first_line: replanTodo.split('\n')[0], route: 'todo-decomposition' },
+    progress_projection: { cli_status: 'terminal_task_failed', selected_todo: replanTodo }
+  });
+  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/blocked.jsonl'), `${JSON.stringify({
+    block_reason: 'stalled_leaf_contract_replan',
+    todo_id: 'E-23a-release-artifact-portable-archive-leaf-01',
+    selected_todo_first_line: sourceTodo.split('\n')[0]
+  })}\n`);
+
+  const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
+  const todo = fs.readFileSync(path.join(repo, '.brownie/todo.md'), 'utf8');
+  const feedback = JSON.parse(fs.readFileSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json'), 'utf8'));
+
+  assert.equal(result.repair.terminal_stalled_replan_recovery.ok, true, JSON.stringify(result, null, 2));
+  assert.match(todo, /E-23a-release-artifact-portable-archive-leaf-01/u);
+  assert.doesNotMatch(todo, new RegExp(replanId, 'u'));
+  assert.equal(feedback.semantic_repair_policy.mode, 'force_bounded_leaf_target_patch');
+  assert.deepEqual(feedback.semantic_repair_policy.selected_patch_targets, [
+    'scripts/release-local-artifact.mjs',
+    'scripts/release-local-artifact.test.mjs'
+  ]);
+  assert.equal(fs.readFileSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/blocked.jsonl'), 'utf8'), '');
+});
+
 test('does not inherit completion from Source TODO lineage', () => {
   const repo = makeRepo();
   writeTodo(repo);
