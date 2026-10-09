@@ -1128,8 +1128,11 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
   // claim-recovery block.  Check this before examining a dirty workspace: the
   // latter may legitimately contain historical Brownie evidence which must
   // remain untouched, but it has no claim to archive or rebaseline here.
-  if (!claim) {
+  if (!claim && !fs.existsSync(claimPath)) {
     return { attempted: false, reason: 'no_active_claim' };
+  }
+  if (!claim) {
+    return { attempted: false, reason: 'active_claim_unreadable_or_invalid' };
   }
   const workspaceChanged = diagnostic.progress?.workspace_changed === true;
   const baselineFingerprints = claim?.baseline_dirty_file_sha256;
@@ -1814,7 +1817,10 @@ export function controlPhaseLoop(options = {}) {
   const postRepair = options.repair === false
     ? { attempted: false, reason: 'repair_disabled' }
     : postRepairValidation(repoRoot, repairResults, afterPostReplanClaimRepair);
-  const terminalClaimRecoveryBlocked = terminalNoEligibleClaimRepair.reason === 'workspace_changed_or_dirty_not_archiving_claim';
+  const terminalClaimRecoveryBlocked = (
+    terminalNoEligibleClaimRepair.reason === 'workspace_changed_or_dirty_not_archiving_claim'
+    || terminalNoEligibleClaimRepair.reason === 'active_claim_unreadable_or_invalid'
+  );
   const postReplanClaimArchivalFailed = postReplanStaleActiveClaimRepair.attempted
     && postReplanStaleActiveClaimRepair.ok === false;
   // A controller self-update is a distinct Brownie run.  It is intentionally

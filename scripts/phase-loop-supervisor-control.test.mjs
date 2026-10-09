@@ -1169,6 +1169,29 @@ test('does not let historical Brownie artifacts block recovery when no active cl
   assert.equal(fs.existsSync(path.join(repo, '.brownie', 'historical-run.json')), true);
 });
 
+test('fails closed when an active terminal claim is unreadable', () => {
+  const repo = makeRepo();
+  writeTodo(repo);
+  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
+  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/current.json'), '{not-json\n');
+  writeJson(repo, '.brownie/private/phase-loop/status.json', {
+    status: 'no_progress', run_id: 'run-terminal-no-eligible-invalid-claim'
+  });
+  writeJson(repo, '.brownie/private/phase-loop/progress-state.json', {
+    classification: 'no_progress', workspace_changed: false,
+    progress_projection: {
+      cli_status: 'no_eligible_task', closure: 'no_eligible_task',
+      stop_reason: 'terminal_task_failed', selected_todo: runtimeEvidenceTodo
+    }
+  });
+
+  const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: true });
+
+  assert.equal(result.repair.terminal_no_eligible_claim.reason, 'active_claim_unreadable_or_invalid');
+  assert.equal(result.start.reason, 'terminal_no_eligible_claim_requires_verified_baseline');
+  assert.equal(fs.readFileSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/current.json'), 'utf8'), '{not-json\n');
+});
+
 test('archives a legacy terminal claim only when its saved TODO snapshot matches', () => {
   const repo = makeRepo();
   writeTodo(repo);
