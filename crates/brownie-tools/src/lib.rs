@@ -4612,6 +4612,9 @@ fn extract_fenced_blocks(content: &str) -> Vec<&str> {
 
 fn extract_recoverable_unclosed_brownie_tool_intent_block(content: &str) -> Option<&str> {
     let marker = "```brownie-tool-intent";
+    if content.match_indices(marker).count() != 1 {
+        return None;
+    }
     let pos = content.find(marker)?;
     let after = &content[pos + marker.len()..];
     let after = after
@@ -4619,8 +4622,35 @@ fn extract_recoverable_unclosed_brownie_tool_intent_block(content: &str) -> Opti
         .unwrap_or(after)
         .strip_prefix('\n')
         .unwrap_or(after);
-    parse_patch_file_old_new_text_from_malformed_tool_request(after.trim()).ok()?;
+    serde_json::from_str::<Value>(after.trim())
+        .or_else(|_| parse_patch_file_old_new_text_from_malformed_tool_request(after.trim()))
+        .ok()?;
     Some(after)
+}
+
+#[cfg(test)]
+#[test]
+fn parser_accepts_complete_unclosed_brownie_tool_intent_block() {
+    let parsed = ToolIntentParser::parse_assistant_content(
+        r#"```brownie-tool-intent
+{"tool_requests":[{"tool_id":"workspace.read","reason":"Need context.","input":{"path":"README.md"}}]}"#,
+    );
+    assert_eq!(parsed.requests.len(), 1);
+    assert_eq!(parsed.requests[0].tool_id, "workspace.read");
+    assert!(parsed.rejected.is_empty());
+}
+
+#[cfg(test)]
+#[test]
+fn parser_rejects_ambiguous_unclosed_brownie_tool_intent_blocks() {
+    let parsed = ToolIntentParser::parse_assistant_content(
+        r#"```brownie-tool-intent
+{"tool_requests":[{"tool_id":"workspace.read","reason":"Need context.","input":{"path":"README.md"}}]}
+interleaved ```brownie-tool-intent
+{"tool_requests":[{"tool_id":"workspace.read","reason":"Need more context.","input":{"path":"README.md"}}]}"#,
+    );
+    assert!(parsed.requests.is_empty());
+    assert_eq!(parsed.rejected[0].code, "missing_closing_fence");
 }
 
 fn extract_json_tool_request_blocks(content: &str) -> Vec<&str> {
