@@ -15,7 +15,7 @@ const retryBaseDelayMs = 60_000;
 const retryMaxDelayMs = 30 * 60_000;
 const maxAppliedRecoveryResumes = 3;
 
-function trustedExactPatchContext(request) {
+export function trustedExactPatchContext(request) {
   const oldHeadings = [...request.matchAll(/^Trusted exact old_text:\s*$/gmu)];
   const newHeadings = [...request.matchAll(/^Trusted exact new_text:\s*$/gmu)];
   const verificationHeadings = [...request.matchAll(/^Trusted verification commands:\s*$/gmu)];
@@ -33,12 +33,15 @@ function trustedExactPatchContext(request) {
   const newText = request.slice(newStart, verificationStart).trim();
   if (oldText.length === 0 || newText.length === 0) return null;
 
-  const commands = verificationHeadings.length === 0
+  const verificationLines = verificationHeadings.length === 0
     ? []
     : request.slice(verificationHeadings[0].index + verificationHeadings[0][0].length)
       .split(/\r?\n/u)
-      .map((line) => /^-\s+`([^`]+)`\s*$/u.exec(line.trim())?.[1] ?? null)
-      .filter((command) => command !== null);
+      .map((line) => line.trim());
+  if (verificationLines.some((line) => line.length > 0 && !/^-\s+`([^`]+)`\s*$/u.test(line))) return null;
+  const commands = verificationLines
+    .map((line) => /^-\s+`([^`]+)`\s*$/u.exec(line)?.[1] ?? null)
+    .filter((command) => command !== null);
   if (verificationHeadings.length === 1 && commands.length === 0) return null;
   return { oldText, newText, commands };
 }

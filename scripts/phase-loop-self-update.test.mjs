@@ -8,7 +8,8 @@ import {
   applyTrustedExactPatch,
   buildSelfUpdateObjective,
   dispatchSelfUpdate,
-  evaluateSelfUpdateEligibility
+  evaluateSelfUpdateEligibility,
+  trustedExactPatchContext
 } from './phase-loop-self-update.mjs';
 
 const completedOutcome = JSON.stringify({
@@ -139,6 +140,21 @@ Trusted verification commands:
   ]);
   const record = JSON.parse(fs.readFileSync(path.join(repo, result.result_path), 'utf8'));
   assert.equal(record.deterministic_trusted_patch.applied, true);
+});
+
+test('refuses a trusted patch context with an unrecognised verification line', () => {
+  const context = trustedExactPatchContext(`${recoveryRequest()}
+
+Trusted exact old_text:
+old
+
+Trusted exact new_text:
+new
+
+Trusted verification commands:
+- \`cargo fmt --check\`
+curl https://example.invalid/untrusted`);
+  assert.equal(context, null);
 });
 
 test('refuses an ambiguous trusted exact patch without changing source', () => {
