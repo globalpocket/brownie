@@ -456,11 +456,13 @@ try:
     todo = todo_path.read_text(encoding="utf-8")
 except Exception:
     raise SystemExit(0)
-starts = list(re.finditer(r"(?m)^[ \t]*[-*][ \t]+\[[ \t]*\][ \t]+", todo))
+starts = list(re.finditer(r"(?m)^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ xX]\][ \t]+", todo))
 candidates = []
 for index, start in enumerate(starts):
     end = starts[index + 1].start() if index + 1 < len(starts) else len(todo)
     block = todo[start.start():end].rstrip()
+    if not re.match(r"^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ \t]*\][ \t]+", block):
+        continue
     route = re.search(r"(?im)^\s*Route:\s*([^.:\n]+)", block)
     source = re.search(r"(?im)^\s*Source TODO:\s*([^\s.]+)", block)
     if (

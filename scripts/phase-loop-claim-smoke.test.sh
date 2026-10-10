@@ -2276,6 +2276,10 @@ cat > "$contract_replan_feedback_todo" <<'EOF'
   Source TODO: E-source.
   Completion condition: replace the failed leaf with implementable children.
   Verification: run `pnpm --workspace-root guard:todo-decomposition`.
+
+- [x] E-completed-after-replan: Completed source must not extend the selected replan block.
+  Route: implementation.
+  Completion condition: this sentinel is not part of the selected replan TODO.
 EOF
 cat > "$contract_replan_feedback_state/progress-state.json" <<'EOF'
 {"schema_version":1,"progress_projection":{"route":"{\"command\":\"resume\",\"arguments\":[]}"}}
@@ -2323,6 +2327,8 @@ assert feedback["completed"] is False, feedback
 assert "## Previous Repair Feedback" in prompt, prompt
 assert "supervisor_repeated_leaf_failure_requires_todo_contract_replan" in prompt, prompt
 assert "E-source" in prompt, prompt
+selected = prompt.split("## Selected TODO", 1)[1].split("## TODO Queue Snapshot", 1)[0]
+assert "E-completed-after-replan" not in selected, selected
 PY
 
 # The feedback was authored for the failed source claim.  Once that claim is
