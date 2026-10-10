@@ -92,3 +92,44 @@ export function taskIsExecutable(task) {
   if (task?.route === 'blocker') missing.push('implementation_route');
   return { ok: missing.length === 0, missing };
 }
+
+function taskIdFromClaim(claimPath) {
+  const claim = JSON.parse(fs.readFileSync(claimPath, 'utf8'));
+  const first = String(claim.selected_todo ?? '').split('\n')[0] ?? '';
+  const match = first.match(/^(?:[-*]|\d+[.)])\s+\[\s\]\s+([^:\s]+)/u);
+  return { taskId: match?.[1] ?? '', claimId: claim.claim_id ?? null, spec: String(claim.selected_todo ?? '') };
+}
+
+// The CLI is deliberately an adapter: phase-loop may continue to emit its
+// historical trajectory while this ledger becomes the durable state authority.
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname) && process.argv[2] === 'record-trajectory') {
+  const args = new Map(process.argv.slice(3).reduce((pairs, value, index, values) => (
+    value.startsWith('--') ? [...pairs, [value.slice(2), values[index + 1]]] : pairs
+  ), []));
+  const repo = args.get('repo');
+  const claimPath = args.get('claim');
+  const type = args.get('type');
+  const runId = args.get('run');
+  if (!repo || !claimPath || !type) process.exit(2);
+  const { taskId, claimId, spec } = taskIdFromClaim(claimPath);
+  if (!taskId) process.exit(0);
+  const specHash = crypto.createHash('sha256').update(spec).digest('hex');
+  const transitions = {
+    'todo.claimed': ['queued', 'claimed'],
+    'workflow.routed': ['running'],
+    'skill.selected': ['running'],
+    'todo.completed': ['completed'],
+    'todo.blocked': ['blocked']
+  }[type] ?? [];
+  for (const to_state of transitions) {
+    const result = appendTaskTransition(repo, {
+      task_id: taskId,
+      to_state,
+      run_id: runId,
+      claim_id: claimId,
+      task_spec_sha256: specHash,
+      reason: to_state === 'blocked' ? 'trajectory_blocked' : undefined
+    });
+    if (!result.ok && result.code !== 'terminal_task_cannot_transition') process.exit(1);
+  }
+}
