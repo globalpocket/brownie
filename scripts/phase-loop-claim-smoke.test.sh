@@ -2271,7 +2271,7 @@ cat > "$contract_replan_feedback_todo" <<'EOF'
   Completion condition: source leaf was superseded after repeated failure.
   Verification: run `pnpm --workspace-root release:local-artifact:test`.
 
-- [ ] E-replan: Patch only `.brownie/todo.md` and `.brownie/todo-breakdown.md` to replan the failed archive leaf.
+- [ ] E-replan: Patch only `scripts/release-runtime-operational-evidence.mjs` to replan the failed archive leaf.
   Route: todo-decomposition.
   Source TODO: E-source.
   Completion condition: replace the failed leaf with implementable children.
@@ -2287,7 +2287,7 @@ cat > "$contract_replan_feedback_state/todo-claims/current.json" <<'EOF'
   "queue_generation": 2,
   "run_stamp": "20260913T000001Z",
   "schema_version": 1,
-  "selected_todo": "- [ ] E-replan: Patch only `.brownie/todo.md` and `.brownie/todo-breakdown.md` to replan the failed archive leaf.\n  Route: todo-decomposition.\n  Source TODO: E-source.\n  Completion condition: replace the failed leaf with implementable children.\n  Verification: run `pnpm --workspace-root guard:todo-decomposition`.",
+  "selected_todo": "- [ ] E-replan: Patch only `scripts/release-runtime-operational-evidence.mjs` to replan the failed archive leaf.\n  Route: todo-decomposition.\n  Source TODO: E-source.\n  Completion condition: replace the failed leaf with implementable children.\n  Verification: run `pnpm --workspace-root guard:todo-decomposition`.",
   "status": "in_progress"
 }
 EOF
