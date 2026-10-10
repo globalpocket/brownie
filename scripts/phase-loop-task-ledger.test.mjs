@@ -113,4 +113,11 @@ test('records restored invalid mutations as terminal failed attempts', () => {
   const attempt = taskProjection(readTaskLedger(repo)).get(taskAttemptId('T-10', 'claim-restored-mutation'));
   assert.equal(attempt.to_state, 'failed');
   assert.equal(attempt.reason, 'trajectory_failed');
+
+  const retryClaim = path.join(repo, 'retry-claim.json');
+  fs.writeFileSync(retryClaim, JSON.stringify({ claim_id: 'claim-restored-mutation-r1', selected_todo: '- [ ] T-10: bounded leaf' }));
+  for (const type of ['todo.claimed', 'workflow.routed', 'todo.completed']) {
+    execFileSync(process.execPath, [script, 'record-trajectory', '--repo', repo, '--claim', retryClaim, '--todo', todo, '--type', type, '--run', 'run-2'], { stdio: 'pipe' });
+  }
+  assert.equal(taskProjection(readTaskLedger(repo)).get(taskAttemptId('T-10', 'claim-restored-mutation-r1')).to_state, 'completed');
 });

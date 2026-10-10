@@ -54,6 +54,18 @@ test('rejects actionable terminal events as repair-required outcomes', () => {
   assert(result.failures.some((failure) => failure.class === 'actionable_terminal_event'));
 });
 
+test('keeps restored mutation failures within the public blocked-event contract', () => {
+  const result = evaluateBdkPublicHarnessTrajectory([
+    record('todo.claimed'),
+    record('workflow.routed'),
+    record('skill.selected'),
+    record('todo.blocked', { reason: 'syntax_breaking_target_restored' })
+  ]);
+  assert.equal(result.terminal_event_count, 1);
+  assert(result.failures.some((failure) => failure.class === 'actionable_terminal_event'));
+  assert.equal(result.failures.some((failure) => failure.class === 'terminal_event_missing'), false);
+});
+
 test('rejects private paths in public harness payloads', () => {
   const result = evaluateBdkPublicHarnessTrajectory([
     record('todo.claimed'),
