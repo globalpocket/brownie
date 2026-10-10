@@ -148,10 +148,10 @@ for path in (aggregate_path, run_path):
         handle.flush()
         os.fsync(handle.fileno())
 PY
-  # The ledger is controller state, not product workspace content.  Keeping it
-  # under the state root avoids making a bookkeeping event look like product
-  # work or changing the source-tree fingerprint.
-  if ! node "$ROOT_DIR/scripts/phase-loop-task-ledger.mjs" record-trajectory --repo "$STATE_DIR" --claim "$TODO_CLAIM_FILE" --todo "$PHASE_LOOP_TODO" --type "$event_type" --payload "$payload_json" --run "$run_stamp"; then
+  # The ledger adapter derives its controller-state path from a repository
+  # root.  Pass that root rather than STATE_DIR so writers and readers share
+  # the canonical .brownie/private/phase-loop/task-ledger.jsonl location.
+  if ! node "$ROOT_DIR/scripts/phase-loop-task-ledger.mjs" record-trajectory --repo "$ROOT_DIR" --claim "$TODO_CLAIM_FILE" --todo "$PHASE_LOOP_TODO" --type "$event_type" --payload "$payload_json" --run "$run_stamp"; then
     printf '%s task_ledger_transition_failed run=%s event=%s\n' "$(now_utc)" "$run_stamp" "$event_type" >> "$SUPERVISOR_LOG"
   fi
   case "$event_type" in
