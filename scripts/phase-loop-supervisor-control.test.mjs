@@ -146,6 +146,48 @@ test('does not restart the normal loop when a requested self-update is rejected'
   assert.equal(result.start.reason, 'self_update_request_not_dispatched_not_starting');
 });
 
+test('archives only resolved TODO-contract replan feedback after both current queue validations pass', () => {
+  const repo = makeRepo();
+  writeTodo(repo);
+  writeJson(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json', {
+    schema_version: 1,
+    kind: 'phase_loop_todo_contract_replan_feedback',
+    completed: false,
+    reason: 'supervisor_repeated_leaf_failure_requires_todo_contract_replan',
+    verification: { completed: false, reason: 'todo_decomposition_guard_failed_after_todo_apply' }
+  });
+
+  const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
+  const feedback = JSON.parse(fs.readFileSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json'), 'utf8'));
+
+  assert.equal(result.repair.resolved_repair_feedback_archive.ok, true, JSON.stringify(result, null, 2));
+  assert.equal(feedback.completed, true);
+  assert.equal(feedback.verification.completed, true);
+  assert.equal(fs.readdirSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback-archive')).length, 1);
+});
+
+test('retains semantic and invalid-patch feedback until their own verification succeeds', () => {
+  for (const kind of ['phase_loop_semantic_verification_repair_feedback', 'phase_loop_invalid_patch_repair_feedback']) {
+    const repo = makeRepo();
+    writeTodo(repo);
+    writeJson(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json', {
+      schema_version: 1,
+      kind,
+      completed: false,
+      reason: 'supervisor_failure',
+      verification: { completed: false, reason: 'verification_failed', failed_commands: ['pnpm --workspace-root release:runtime-operational-evidence:test'] }
+    });
+
+    const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
+    const feedback = JSON.parse(fs.readFileSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json'), 'utf8'));
+
+    assert.equal(result.repair.resolved_repair_feedback_archive.attempted, false, JSON.stringify(result, null, 2));
+    assert.equal(result.repair.resolved_repair_feedback_archive.reason, 'feedback_kind_requires_its_own_verification');
+    assert.equal(feedback.completed, false);
+    assert.equal(fs.existsSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback-archive')), false);
+  }
+});
+
 test('escalates repeated no-progress on the same bounded leaf to TODO contract replan feedback', () => {
   const repo = makeRepo();
   writeTodo(repo);

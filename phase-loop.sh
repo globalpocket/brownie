@@ -6169,7 +6169,7 @@ repair_feedback = {}
 try:
     if repair_feedback_path.exists():
         loaded_repair_feedback = json.loads(repair_feedback_path.read_text(encoding="utf-8"))
-        if isinstance(loaded_repair_feedback, dict):
+        if isinstance(loaded_repair_feedback, dict) and loaded_repair_feedback.get("completed") is not True:
             repair_feedback = loaded_repair_feedback
 except Exception:
     repair_feedback = {}
@@ -9107,8 +9107,11 @@ if repair_feedback_path.exists() and claim:
         candidate_first_line = str(candidate.get("selected_todo_first_line") or "")
         selected_first_line_for_feedback = selected_todo.splitlines()[0] if selected_todo.splitlines() else ""
         if (
-            candidate.get("claim_id") == claim.get("claim_id")
-            or (selected_first_line_for_feedback and candidate_first_line == selected_first_line_for_feedback)
+            candidate.get("completed") is not True
+            and (
+                candidate.get("claim_id") == claim.get("claim_id")
+                or (selected_first_line_for_feedback and candidate_first_line == selected_first_line_for_feedback)
+            )
         ):
             repair_feedback = candidate
     except Exception:

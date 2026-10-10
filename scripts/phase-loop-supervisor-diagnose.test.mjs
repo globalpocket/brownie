@@ -537,6 +537,31 @@ test('classifies stalled semantic verification repair after repeated no-progress
   assert.equal(result.summary.next_action, 'cause_analysis_then_guard_or_queue_repair_before_worker_retry');
 });
 
+test('ignores completed repair feedback in semantic and invalid-patch diagnosis', () => {
+  const repo = makeRepo();
+  writeTodo(repo, `${runtimeEvidenceTodo}\n`);
+  writeJson(repo, '.brownie/private/phase-loop/status.json', {
+    status: 'completed',
+    run_id: 'run-completed-feedback',
+    consecutive_failures: 0,
+    detail: 'completed'
+  });
+  writeJson(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json', {
+    completed: true,
+    verification: {
+      completed: false,
+      reason: 'verification_failed',
+      failed_commands: ['pnpm --workspace-root release:runtime-operational-evidence:test'],
+      invalid_patch_proposals: [{ path: 'scripts/guard-runtime-operational-evidence.test.mjs', operation: 'patch_file' }]
+    }
+  });
+
+  const result = diagnosePhaseLoop({ repoRoot: repo, write: false, timestamp: '2026-10-10T00:00:00Z' });
+
+  assert.equal(result.verification_failure, null, JSON.stringify(result, null, 2));
+  assert.equal(result.invalid_patch, null, JSON.stringify(result, null, 2));
+});
+
 test('classifies invalid workspace.write patch proposals from repair feedback', () => {
   const repo = makeRepo();
   writeTodo(repo, `${runtimeEvidenceTodo}\n`);

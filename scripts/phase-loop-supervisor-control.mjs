@@ -86,6 +86,41 @@ function runTodoQueueIntegrity(repoRoot) {
   ]);
 }
 
+function maybeArchiveResolvedRepairFeedback(repoRoot) {
+  const feedbackPath = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/repair-feedback.json');
+  const feedback = readJsonOrNull(feedbackPath);
+  if (!feedback || feedback.completed === true) return { attempted: false, reason: 'no_active_repair_feedback' };
+  if (feedback.kind !== 'phase_loop_todo_contract_replan_feedback') {
+    return { attempted: false, reason: 'feedback_kind_requires_its_own_verification', kind: feedback.kind ?? null };
+  }
+  try {
+    runTextCommand(repoRoot, process.execPath, ['scripts/guard-todo-decomposition.mjs']);
+    const integrity = runTodoQueueIntegrity(repoRoot);
+    if (integrity.valid !== true) return { attempted: false, reason: 'todo_queue_integrity_still_invalid', integrity };
+    const archiveDir = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/repair-feedback-archive');
+    fs.mkdirSync(archiveDir, { recursive: true, mode: 0o700 });
+    const stamp = new Date().toISOString().replace(/[-:.]/gu, '').replace(/Z$/u, 'Z');
+    const archivePath = path.join(archiveDir, `${stamp}.json`);
+    fs.writeFileSync(archivePath, `${JSON.stringify(feedback, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    const resolvedAt = new Date().toISOString();
+    const completedFeedback = {
+      ...feedback,
+      completed: true,
+      resolved_at: resolvedAt,
+      resolution: 'current_todo_guard_and_queue_integrity_passed',
+      archived_path: path.relative(repoRoot, archivePath),
+      ...(feedback.verification && typeof feedback.verification === 'object'
+        ? { verification: { ...feedback.verification, completed: true, resolved_at: resolvedAt } }
+        : {})
+    };
+    fs.writeFileSync(feedbackPath, `${JSON.stringify(completedFeedback, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    fsyncFileAndParent(archivePath); fsyncFileAndParent(feedbackPath);
+    return { attempted: true, ok: true, archive_path: path.relative(repoRoot, archivePath) };
+  } catch (error) {
+    return { attempted: false, reason: 'current_todo_validation_still_failing', error: error?.stderr?.toString?.() ?? error?.message ?? String(error) };
+  }
+}
+
 function maybeRepairTodoContract(repoRoot, diagnostic) {
   const codes = issueCodes(diagnostic);
   if (!codes.has('todo_contract_invalid')) {
@@ -1880,20 +1915,26 @@ export function controlPhaseLoop(options = {}) {
   const afterPostReplanClaimRepair = postReplanStaleActiveClaimRepair.attempted && postReplanStaleActiveClaimRepair.ok
     ? diagnosePhaseLoop({ repoRoot, write: options.write !== false })
     : afterTodoContractReplan;
+  const resolvedRepairFeedbackArchive = options.repair === false
+    ? { attempted: false, reason: 'repair_disabled' }
+    : maybeArchiveResolvedRepairFeedback(repoRoot);
+  const afterResolvedRepairFeedback = resolvedRepairFeedbackArchive.attempted && resolvedRepairFeedbackArchive.ok
+    ? diagnosePhaseLoop({ repoRoot, write: options.write !== false })
+    : afterPostReplanClaimRepair;
   const semanticVerificationRepair = options.repair === false
     ? { attempted: false, reason: 'repair_disabled' }
     : boundedLeafApplyRejectionRepair.attempted && boundedLeafApplyRejectionRepair.ok
       ? { attempted: false, reason: 'bounded_leaf_target_patch_takes_precedence' }
       : todoContractReplanRepair.attempted && todoContractReplanRepair.ok
       ? { attempted: false, reason: 'todo_contract_replan_feedback_takes_precedence' }
-      : maybeWriteSemanticVerificationRepairFeedback(repoRoot, afterPostReplanClaimRepair);
+      : maybeWriteSemanticVerificationRepairFeedback(repoRoot, afterResolvedRepairFeedback);
   const invalidPatchRepair = options.repair === false
     ? { attempted: false, reason: 'repair_disabled' }
     : boundedLeafApplyRejectionRepair.attempted && boundedLeafApplyRejectionRepair.ok
       ? { attempted: false, reason: 'bounded_leaf_target_patch_takes_precedence' }
       : todoContractReplanRepair.attempted && todoContractReplanRepair.ok
       ? { attempted: false, reason: 'todo_contract_replan_feedback_takes_precedence' }
-      : maybeWriteInvalidPatchRepairFeedback(repoRoot, afterPostReplanClaimRepair);
+      : maybeWriteInvalidPatchRepairFeedback(repoRoot, afterResolvedRepairFeedback);
   const repairResults = {
     failure_ledger: failureLedger,
     todo_queue_integrity: queueIntegrityRepair,
@@ -1910,7 +1951,8 @@ export function controlPhaseLoop(options = {}) {
     semantic_verification: semanticVerificationRepair,
     invalid_patch: invalidPatchRepair,
     bounded_leaf_apply_rejection: boundedLeafApplyRejectionRepair,
-    terminal_stalled_replan_recovery: terminalStalledReplanRecovery
+    terminal_stalled_replan_recovery: terminalStalledReplanRecovery,
+    resolved_repair_feedback_archive: resolvedRepairFeedbackArchive
   };
   const postRepair = options.repair === false
     ? { attempted: false, reason: 'repair_disabled' }
@@ -1962,10 +2004,10 @@ export function controlPhaseLoop(options = {}) {
           reason: 'terminal_no_eligible_claim_requires_verified_baseline',
           terminal_claim_repair: terminalNoEligibleClaimRepair
         }
-    : maybeStartPhaseLoop(repoRoot, Boolean(options.start), afterPostReplanClaimRepair);
+    : maybeStartPhaseLoop(repoRoot, Boolean(options.start), afterResolvedRepairFeedback);
   const final = start.attempted && start.ok
     ? diagnosePhaseLoop({ repoRoot, write: options.write !== false })
-    : afterPostReplanClaimRepair;
+    : afterResolvedRepairFeedback;
   return {
     schema_version: 1,
     control_kind: 'brownie_phase_loop_supervisor_control',
@@ -1990,6 +2032,7 @@ export function controlPhaseLoop(options = {}) {
       invalid_patch: invalidPatchRepair,
       bounded_leaf_apply_rejection: boundedLeafApplyRejectionRepair,
       terminal_stalled_replan_recovery: terminalStalledReplanRecovery,
+      resolved_repair_feedback_archive: resolvedRepairFeedbackArchive,
       post_repair_validation: postRepair
     },
     self_update: selfUpdate,
