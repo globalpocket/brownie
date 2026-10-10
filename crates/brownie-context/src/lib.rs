@@ -1621,7 +1621,7 @@ impl BdkExecutionState {
                 "request a bounded workspace.write repair to the target file that directly addresses the latest verification failure evidence. Do not patch `.brownie/todo.md` merely to avoid a concrete syntax/test failure after an implementation patch"
             }
             Self::TodoQueueRepair => {
-                "request exactly one workspace.write patch_file for `.brownie/todo.md`; prefer input `hunks:[{old_text,new_text,occurrence},...]`; for self-source repair use tiny complete-line hunks; for duplicate-only repair use only the exact duplicate block provided in the focused repair context as old_text, set new_text to an empty string, and set occurrence:2; do not invent TODO block text or include Queue protocol, Base Phase Loop Prompt, unrelated headings, or implementation files"
+                "request exactly one workspace.write patch_file for `.brownie/todo.md` using top-level `old_text` and `new_text` input fields; do not use `hunks` or `occurrence`. For self-source repair use one tiny complete-line replacement. For duplicate-only repair, use the exact duplicate block supplied by the focused repair context as old_text and an empty new_text; the runtime selects the duplicate occurrence after validating the top-level contract. Do not invent TODO block text or include Queue protocol, Base Phase Loop Prompt, unrelated headings, or implementation files"
             }
             Self::OversizedWriteRecovery => {
                 "do not repeat the oversized workspace.write. Reuse completed workspace.read evidence and request exactly one workspace.write patch_file for the named target with one complete hunk; keep the whole fenced JSON under about 1200 characters and the input below the parser limit. If no complete bounded target hunk is visible, request exactly one workspace.write patch_file for `.brownie/todo.md`: old_text must be the full selected TODO block, and new_text must contain exactly one smaller unchecked leaf TODO under 1200 characters. The leaf must use a new unique TODO id and include `Route:`, `Source TODO:` referencing the selected TODO id, `Depends on:`, `Completion condition:`, `Forbidden changes:`, and `Verification:`. The leaf must name at most one target file and one verification command. new_text must not contain the selected TODO first line, selected TODO id, the original broad TODO title, multiple TODO items, or implementation patch content"
@@ -2212,12 +2212,15 @@ mod tests {
             .contains("BDK Control Packet:\n- state: todo_queue_repair"));
         assert!(prompt.messages[1]
             .content
-            .contains("prefer input `hunks:[{old_text,new_text,occurrence},...]`"));
-        assert!(prompt.messages[1]
+            .contains("using top-level `old_text` and `new_text` input fields"));
+        assert!(!prompt.messages[1]
             .content
-            .contains("for duplicate-only repair use only the exact duplicate block provided"));
+            .contains("hunks:[{old_text,new_text,occurrence}"));
         assert!(prompt.messages[1].content.contains(
-            "do not invent TODO block text or include Queue protocol, Base Phase Loop Prompt"
+            "runtime selects the duplicate occurrence after validating the top-level contract"
+        ));
+        assert!(prompt.messages[1].content.contains(
+            "Do not invent TODO block text or include Queue protocol, Base Phase Loop Prompt"
         ));
     }
 

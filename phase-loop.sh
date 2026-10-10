@@ -9833,8 +9833,7 @@ if repair_feedback:
             "- repair_override_read_policy: do not read the selected implementation file while the TODO queue guard is failing. If Focused TODO Queue Repair Context provides `exact_block_json` or duplicate block JSON, do not read `.brownie/todo.md`; use that exact text as `old_text`. Read `.brownie/todo.md` only when no exact repair block is provided.",
             "- repair_override_next_tool_policy: when Focused TODO Queue Repair Context provides `exact_block_json`, the next tool must be `workspace.write`; `workspace.read` is forbidden for this repair turn.",
             "- repair_override_patch_size_policy: the TODO repair patch must be a short exact hunk around the invalid unchecked task block only; never include `## Queue protocol`, `## Base Phase Loop Prompt`, or unrelated headings in old_text/new_text.",
-            "- repair_override_hunks_policy: prefer `workspace.write` input `{path, operation:\"patch_file\", hunks:[{old_text,new_text,occurrence}, ...]}`. For self-source repair, use tiny complete-line hunks. For duplicate-only repair, use the exact duplicate block provided in Focused TODO Queue Repair Context as `old_text`, set `new_text` to an empty string, and set `occurrence` to 2. Do not invent or summarize TODO block text.",
-            "- repair_override_occurrence_policy: use `occurrence` only for duplicate-only guard failures. For invalid leaf block replacement, omit `occurrence` and replace the exact provided block once.",
+            "- repair_override_patch_contract: use `workspace.write` input `{path, operation:\"patch_file\", old_text, new_text}` with top-level `old_text` and `new_text`. Do not use `hunks` or `occurrence` for `.brownie/todo.md`. For self-source repair, use one tiny complete-line replacement. For duplicate-only repair, use the exact duplicate block supplied in Focused TODO Queue Repair Context as old_text and an empty new_text; the runtime selects the duplicate occurrence after validating the top-level contract. Do not invent or summarize TODO block text.",
         ])
         repair_feedback_lines.append("- todo_guard_repair_policy: repair `.brownie/todo.md` before any implementation work. Read `.brownie/todo.md` if needed, then emit one exact `workspace.write` patch that replaces the entire contiguous corrupt TODO block, from the first invalid/duplicate leaf through the last duplicate leaf, with a deduplicated valid block. Do not append another leaf, do not keep a leaf whose `Source TODO:` references itself, and do not patch implementation files in this repair pass.")
     if verification.get("stderr_tail"):
@@ -9960,7 +9959,7 @@ if repair_feedback:
                         repair_feedback_lines.append("- duplicate_declaration_exact_repair_policy: the target has duplicate `soakEvidenceFixture` declarations. Do not read again and do not patch `.brownie/todo.md`; request one `workspace.write` patch_file for `scripts/release-runtime-operational-evidence.mjs` that removes exactly one duplicate block using `old_text` equal to `duplicate_block_to_remove_json` and `new_text` equal to an empty string.")
                         repair_feedback_lines.append(f"- duplicate_block_to_remove_json: {json.dumps(duplicate_blocks[1], ensure_ascii=False)}")
                 if todo_guard_failed and "duplicate unchecked TODO id" in str(verification):
-                    repair_feedback_lines.append("- duplicate_todo_occurrence_repair_policy: the previous duplicate TODO repair used top-level `old_text`/`new_text`, which cannot disambiguate duplicate blocks. Retry the same exact old_text inside `input.hunks:[{old_text,new_text:\"\",occurrence:2}]`; do not use top-level old_text/new_text for duplicate-only repair.")
+                    repair_feedback_lines.append("- duplicate_todo_contract_repair_policy: keep top-level `old_text`/`new_text`. Do not use `hunks` or `occurrence` for `.brownie/todo.md`; use the exact duplicate block from Focused TODO Queue Repair Context as old_text and an empty new_text. The runtime selects the duplicate occurrence after validating the top-level contract.")
     missing_closing_fence = any(isinstance(item, dict) and str(item.get("code", "")).lower() == "missing_closing_fence" for item in (verification.get("tool_intent_rejections", []) if isinstance(verification.get("tool_intent_rejections"), list) else []))
     if missing_closing_fence:
         repair_feedback_lines.append("- truncated_write_repair_policy: the previous workspace.write JSON was too large and lost the closing fence; do not retry a large `new_text`. For `.brownie/todo.md`, emit exactly one compact replacement leaf under 900 characters, complete the JSON, and close the `brownie-tool-intent` fence. Do not copy the broad selected TODO body into `new_text`.")
@@ -10261,7 +10260,7 @@ if todo_guard_failed:
             f"- Keep exactly one unchecked `{duplicate_guard_id or '<duplicate TODO id>'}` block.",
             f"- Remove duplicate `{duplicate_guard_id or '<duplicate TODO id>'}` blocks.",
             "- Do not edit unrelated TODO blocks.",
-            "- Use exactly one `workspace.write` hunk: `{old_text:<exact_duplicate_block_json>, new_text:\"\", occurrence:2}`.",
+            "- Use exactly one `workspace.write` patch with top-level input `{old_text:<exact_duplicate_block_json>, new_text:\"\"}`; do not send hunks or occurrence.",
             f"- Repeat in later loops until the guard reports only one remaining `{duplicate_guard_id or '<duplicate TODO id>'}` block.",
             "",
             "Exact duplicate block JSON to copy into `old_text`:",
@@ -10269,8 +10268,6 @@ if todo_guard_failed:
             "",
             "Expected `new_text` JSON:",
             json.dumps("", ensure_ascii=False),
-            "Expected `occurrence`: 2",
-            "",
             "Do not include Queue protocol, Base Phase Loop Prompt, unrelated headings, or stale previous read previews in old_text/new_text.",
         ])
     else:
