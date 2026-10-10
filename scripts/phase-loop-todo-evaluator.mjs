@@ -237,7 +237,11 @@ function readBlockedClaims(blockedPath, queueFingerprint, controllerFingerprint 
         const blockedId = todoId(record.selected_todo_first_line);
         const explicitOwnerBlocker = record.selected_todo_first_line.includes('Blocker:');
         const stalledLeafContractReplan = record.block_reason === 'stalled_leaf_contract_replan';
-        if (blockedId && stalledLeafContractReplan) {
+        // A stable block suppresses retries only for the controller that
+        // observed it. A controller update is the explicit rebaseline point
+        // for legacy state, including records created before fingerprints.
+        const matchesController = !controllerFingerprint || record.controller_fingerprint === controllerFingerprint;
+        if (blockedId && stalledLeafContractReplan && matchesController) {
           stableIds.add(blockedId);
           continue;
         }
@@ -248,7 +252,7 @@ function readBlockedClaims(blockedPath, queueFingerprint, controllerFingerprint 
             blockedId.includes('-doc-sync-leaf') ||
             blockedId.startsWith('TODO-decompose-broad-todo-') ||
             explicitOwnerBlocker
-          )
+          ) && matchesController
         ) {
           stableIds.add(blockedId);
           const prefix = productPrefix(blockedId);

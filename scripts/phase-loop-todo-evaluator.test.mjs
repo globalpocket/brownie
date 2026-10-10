@@ -236,6 +236,30 @@ test('skips stalled replan blocked IDs across queue fingerprints regardless of T
   assert(selected.startsWith('- [ ] E-22b-replan-stalled-leaf-4030af97e57f:'), selected);
 });
 
+test('retries a stalled TODO after the controller fingerprint changes', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-todo-evaluator-'));
+  const blocked = path.join(dir, 'blocked.jsonl');
+  const stalled = `- [ ] E-23a-target: Patch only \`scripts/release.mjs\`:
+  Route: implementation.
+  Source TODO: E-23a.
+  Depends on: <none>.
+  Completion condition: archive is verified.
+  Forbidden changes: do not declare Product Ready.
+  Verification: run \`pnpm check\`.`;
+  fs.writeFileSync(blocked, `${JSON.stringify({
+    block_reason: 'stalled_leaf_contract_replan',
+    controller_fingerprint: 'old-controller',
+    selected_todo_first_line: stalled.split('\\n')[0]
+  })}\\n`);
+
+  const selected = selectFirstSchedulableTodo(stalled, {
+    blockedPath: blocked,
+    controllerFingerprint: 'new-controller'
+  });
+
+  assert.equal(selected, stalled);
+});
+
 test('does not treat a stable blocked record as dependency completion evidence', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-todo-evaluator-'));
   const blocked = path.join(dir, 'blocked.jsonl');
