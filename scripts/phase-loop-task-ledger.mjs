@@ -84,6 +84,56 @@ export function appendTaskTransition(repoRoot, input) {
   return { ok: true, event };
 }
 
+// Replanning is a single ledger commit: the original task becomes terminal
+// only in the same append that introduces every replacement child.  The TODO
+// markdown remains a compatibility projection during migration; consumers
+// must not infer task state from it.
+export function replanTaskWithChildren(repoRoot, { task_id, reason, children, run_id = null, claim_id = null, task_spec_sha256 = null, at }) {
+  if (!Array.isArray(children) || children.length === 0) return { ok: false, code: 'replan_requires_reason_and_children' };
+  const events = readTaskLedger(repoRoot);
+  const projection = taskProjection(events);
+  const parent = projection.get(task_id);
+  const childIds = children.map((child) => child?.task_id);
+  if (new Set(childIds).size !== childIds.length || childIds.some((id) => !id)) return { ok: false, code: 'replan_children_must_have_unique_ids' };
+  const parentVerdict = validateTransition({ previous: parent, toState: 'replanned', reason, replaces: childIds });
+  if (!parentVerdict.ok) return parentVerdict;
+  for (const child of children) {
+    const gate = taskIsExecutable(child);
+    if (!gate.ok) return { ok: false, code: 'replan_child_not_executable', task_id: child.task_id, missing: gate.missing };
+    if (projection.has(child.task_id)) return { ok: false, code: 'replan_child_already_exists', task_id: child.task_id };
+  }
+  const timestamp = at ?? new Date().toISOString();
+  const parentEvent = {
+    schema_version: 1, event_id: crypto.randomUUID(), task_id, from_state: parent?.to_state ?? null,
+    to_state: 'replanned', sequence: (parent?.sequence ?? 0) + 1, at: timestamp, run_id, claim_id,
+    reason, replaces: childIds, task_spec_sha256
+  };
+  const childEvents = children.map((child) => ({
+    schema_version: 1, event_id: crypto.randomUUID(), task_id: child.task_id, from_state: null,
+    to_state: 'queued', sequence: 1, at: timestamp, run_id, claim_id: null, reason: `replacement_for:${task_id}`,
+    replaces: [], task_spec_sha256: child.task_spec_sha256 ?? null,
+    patch_targets: child.patch_targets, verification_commands: child.verification_commands, route: child.route,
+    parent_task_id: task_id
+  }));
+  const file = taskLedgerPath(repoRoot);
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  // One synchronous append makes a partially written replacement set
+  // detectable as an invalid JSONL tail rather than a visible parent-only
+  // replan.  The writer only exposes the events after all validation above.
+  fs.appendFileSync(file, `${[parentEvent, ...childEvents].map((event) => JSON.stringify(event)).join('\n')}\n`, { encoding: 'utf8', mode: 0o600 });
+  return { ok: true, events: [parentEvent, ...childEvents] };
+}
+
+export function validateTaskLedger(events) {
+  const projection = new Map();
+  for (const event of events) {
+    const verdict = validateTransition({ previous: projection.get(event.task_id), ...event });
+    if (!verdict.ok) return { ok: false, ...verdict, event };
+    projection.set(event.task_id, event);
+  }
+  return { ok: true, projection };
+}
+
 export function taskIsExecutable(task) {
   const missing = [];
   if (!task?.task_id) missing.push('task_id');
