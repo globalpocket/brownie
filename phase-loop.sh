@@ -9148,11 +9148,23 @@ if repair_feedback_path.exists() and claim:
         candidate = json.loads(repair_feedback_path.read_text(encoding="utf-8"))
         candidate_first_line = str(candidate.get("selected_todo_first_line") or "")
         selected_first_line_for_feedback = selected_todo.splitlines()[0] if selected_todo.splitlines() else ""
+        route_match = re.search(r"(?im)^\s*Route:\s*([^.:\n]+)", selected_todo)
+        source_match = re.search(r"(?im)^\s*Source TODO:\s*([^\s.]+)", selected_todo)
+        feedback_todo_match = re.match(r"\s*-\s*\[[ xX]\]\s*([^:]+):", candidate_first_line)
+        contract_replan_handoff = (
+            candidate.get("kind") == "phase_loop_todo_contract_replan_feedback"
+            and route_match
+            and route_match.group(1).strip().lower() == "todo-decomposition"
+            and source_match
+            and feedback_todo_match
+            and source_match.group(1) == feedback_todo_match.group(1)
+        )
         if (
             candidate.get("completed") is not True
             and (
                 candidate.get("claim_id") == claim.get("claim_id")
                 or (selected_first_line_for_feedback and candidate_first_line == selected_first_line_for_feedback)
+                or contract_replan_handoff
             )
         ):
             repair_feedback = candidate
@@ -9386,6 +9398,12 @@ leaf_has_contract_replan_feedback = bool(
     and (
         not repair_feedback.get("selected_todo_first_line")
         or repair_feedback.get("selected_todo_first_line") == selected_first_line
+        or (
+            re.search(r"(?im)^\s*Route:\s*todo-decomposition\s*\.", selected_todo)
+            and (source_match := re.search(r"(?im)^\s*Source TODO:\s*([^\s.]+)", selected_todo))
+            and (feedback_match := re.match(r"\s*-\s*\[[ xX]\]\s*([^:]+):", str(repair_feedback.get("selected_todo_first_line") or "")))
+            and source_match.group(1) == feedback_match.group(1)
+        )
     )
 )
 leaf_has_oversized_repair = bool(
