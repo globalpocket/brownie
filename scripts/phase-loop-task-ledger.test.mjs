@@ -81,3 +81,20 @@ test('records repeated claims as separate immutable task attempts', () => {
   assert.equal(projection.get(taskAttemptId('T-8', 'claim-one')).to_state, 'claimed');
   assert.equal(projection.get(taskAttemptId('T-8', 'claim-two')).to_state, 'claimed');
 });
+
+test('keeps a repair-only replan nonterminal when replacement children are absent', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-task-ledger-'));
+  const todo = path.join(repo, '.brownie', 'todo.md');
+  fs.mkdirSync(path.dirname(todo), { recursive: true });
+  fs.writeFileSync(todo, '- [ ] T-9: bounded leaf\n');
+  const claim = path.join(repo, 'claim.json');
+  fs.writeFileSync(claim, JSON.stringify({ claim_id: 'claim-leaf', selected_todo: '- [ ] T-9: bounded leaf' }));
+  const script = path.join(process.cwd(), 'scripts', 'phase-loop-task-ledger.mjs');
+  execFileSync(process.execPath, [script, 'record-trajectory', '--repo', repo, '--claim', claim, '--todo', todo, '--type', 'todo.claimed', '--run', 'run-1'], { stdio: 'pipe' });
+  execFileSync(process.execPath, [script, 'record-trajectory', '--repo', repo, '--claim', claim, '--todo', todo, '--type', 'workflow.routed', '--run', 'run-1'], { stdio: 'pipe' });
+  execFileSync(process.execPath, [script, 'record-trajectory', '--repo', repo, '--claim', claim, '--todo', todo, '--type', 'todo.replanned', '--payload', '{"reason":"no_progress"}', '--run', 'run-1'], { stdio: 'pipe' });
+  const attempt = taskProjection(readTaskLedger(repo)).get(taskAttemptId('T-9', 'claim-leaf'));
+  assert.equal(attempt.to_state, 'running');
+  execFileSync(process.execPath, [script, 'record-trajectory', '--repo', repo, '--claim', claim, '--todo', todo, '--type', 'todo.completed', '--run', 'run-1'], { stdio: 'pipe' });
+  assert.equal(taskProjection(readTaskLedger(repo)).get(taskAttemptId('T-9', 'claim-leaf')).to_state, 'completed');
+});

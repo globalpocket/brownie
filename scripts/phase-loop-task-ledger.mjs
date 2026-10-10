@@ -207,14 +207,21 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
   if (type === 'todo.replanned') {
     let payload = {};
     try { payload = JSON.parse(payloadRaw ?? '{}'); } catch { /* use the event name below */ }
+    const reason = String(payload.reason ?? 'trajectory_replanned');
+    const children = replacementChildren(todoPath, sourceTaskId);
+    // `todo.replanned` is also emitted for repair feedback that deliberately
+    // keeps the same claim in progress. A durable replan exists only when
+    // replacement children are present; otherwise preserve the nonterminal
+    // attempt so a later routed/completed event remains valid.
+    if (children.length === 0) process.exit(0);
     const result = replanTaskWithChildren(repo, {
-      task_id: taskId,
-      reason: String(payload.reason ?? 'trajectory_replanned'),
-      children: replacementChildren(todoPath, sourceTaskId),
-      run_id: runId,
-      claim_id: claimId,
-      task_spec_sha256: specHash
-    });
+        task_id: taskId,
+        reason,
+        children,
+        run_id: runId,
+        claim_id: claimId,
+        task_spec_sha256: specHash
+      });
     if (!result.ok && result.code !== 'terminal_task_cannot_transition') process.exit(1);
     process.exit(0);
   }
