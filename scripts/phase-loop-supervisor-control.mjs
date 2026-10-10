@@ -91,7 +91,14 @@ function maybeArchiveResolvedRepairFeedback(repoRoot) {
   const feedback = readJsonOrNull(feedbackPath);
   if (!feedback || feedback.completed === true) return { attempted: false, reason: 'no_active_repair_feedback' };
   const verification = feedback.verification && typeof feedback.verification === 'object' ? feedback.verification : {};
-  const feedbackReason = typeof verification.reason === 'string' ? verification.reason : feedback.reason;
+  const verificationFailure = feedback.verification_failure && typeof feedback.verification_failure === 'object'
+    ? feedback.verification_failure
+    : {};
+  const feedbackReason = typeof verification.reason === 'string'
+    ? verification.reason
+    : typeof verificationFailure.reason === 'string'
+      ? verificationFailure.reason
+      : feedback.reason;
   const validatesCurrentTodoQueue = feedback.kind === 'phase_loop_todo_contract_replan_feedback'
     || feedbackReason === 'todo_decomposition_guard_failed_after_todo_apply';
   if (!validatesCurrentTodoQueue) {

@@ -174,7 +174,7 @@ test('archives a semantic feedback record only when its recorded failure is the 
     kind: 'phase_loop_semantic_verification_repair_feedback',
     completed: false,
     reason: 'supervisor_semantic_verification_failure',
-    verification: { completed: false, reason: 'todo_decomposition_guard_failed_after_todo_apply' }
+    verification_failure: { detected: true, reason: 'todo_decomposition_guard_failed_after_todo_apply' }
   });
 
   const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
@@ -182,7 +182,6 @@ test('archives a semantic feedback record only when its recorded failure is the 
 
   assert.equal(result.repair.resolved_repair_feedback_archive.ok, true, JSON.stringify(result, null, 2));
   assert.equal(feedback.completed, true);
-  assert.equal(feedback.verification.completed, true);
 });
 
 test('retains semantic and invalid-patch feedback until their own verification succeeds', () => {
