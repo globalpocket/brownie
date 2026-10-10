@@ -2276,6 +2276,10 @@ cat > "$contract_replan_feedback_todo" <<'EOF'
   Source TODO: E-source.
   Completion condition: replace the failed leaf with implementable children.
   Verification: run `pnpm --workspace-root guard:todo-decomposition`.
+
+- [x] E-completed-after-replan: Completed source must not extend the selected replan block.
+  Route: implementation.
+  Completion condition: this sentinel is not part of the selected replan TODO.
 EOF
 cat > "$contract_replan_feedback_state/progress-state.json" <<'EOF'
 {"schema_version":1,"progress_projection":{"route":"{\"command\":\"resume\",\"arguments\":[]}"}}
@@ -2323,6 +2327,33 @@ assert feedback["completed"] is False, feedback
 assert "## Previous Repair Feedback" in prompt, prompt
 assert "supervisor_repeated_leaf_failure_requires_todo_contract_replan" in prompt, prompt
 assert "E-source" in prompt, prompt
+selected = prompt.split("## Selected TODO", 1)[1].split("## TODO Queue Snapshot", 1)[0]
+assert "E-completed-after-replan" not in selected, selected
+PY
+
+# The feedback was authored for the failed source claim.  Once that claim is
+# archived, the controller must select its single matching decomposition TODO
+# rather than retrying the earlier implementation leaf at the head of the queue.
+rm -f "$contract_replan_feedback_state/todo-claims/current.json"
+PHASE_LOOP_STATE_DIR="$contract_replan_feedback_state" \
+PHASE_LOOP_PROMPT="$contract_replan_feedback_prompt" \
+PHASE_LOOP_TODO="$contract_replan_feedback_todo" \
+PHASE_LOOP_WORKSPACE_ROOT="$repair_feedback_workspace" \
+PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
+PHASE_LOOP_TEST_ARGV_FILE="$contract_replan_feedback_argv" \
+BROWNIE_BIN="$fake_brownie_repair_feedback" \
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+
+contract_replan_selection_prompt_file="$(find "$contract_replan_feedback_state/runs" -name '*.prompt.md' -print | sort | tail -n 1)"
+python3 - "$contract_replan_selection_prompt_file" <<'PY'
+import pathlib
+import sys
+
+prompt = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+selected = prompt.split("## Selected TODO", 1)[1].split("## TODO Queue Snapshot", 1)[0]
+selected_first_line = next(line for line in selected.splitlines() if line.strip())
+assert "E-replan" in selected_first_line, selected
+assert "E-source" not in selected_first_line, selected
 PY
 
 python3 - "$PHASE_LOOP" <<'PY'

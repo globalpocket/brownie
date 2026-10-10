@@ -416,7 +416,65 @@ todo_first_pending_item() {
   if [ ! -f "$PHASE_LOOP_TODO" ]; then
     return 0
   fi
+  local contract_replan_item
+  contract_replan_item="$(todo_contract_replan_feedback_pending_item 2>/dev/null || true)"
+  if [ -n "$contract_replan_item" ]; then
+    printf '%s\n' "$contract_replan_item"
+    return 0
+  fi
   node "$ROOT_DIR/scripts/phase-loop-todo-evaluator.mjs" select --todo "$PHASE_LOOP_TODO" --breakdown "$PHASE_LOOP_TODO_BREAKDOWN" --blocked "$TODO_BLOCKED_FILE" --controller-fingerprint "$(phase_loop_controller_fingerprint)"
+}
+
+todo_contract_replan_feedback_pending_item() {
+  if [ ! -f "$PHASE_LOOP_TODO" ] || [ ! -f "$TODO_REPAIR_FEEDBACK_FILE" ]; then
+    return 0
+  fi
+  python3 - "$PHASE_LOOP_TODO" "$TODO_REPAIR_FEEDBACK_FILE" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+todo_path = pathlib.Path(sys.argv[1])
+feedback_path = pathlib.Path(sys.argv[2])
+try:
+    feedback = json.loads(feedback_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+if (
+    feedback.get("completed") is True
+    or feedback.get("kind") != "phase_loop_todo_contract_replan_feedback"
+    or feedback.get("reason") != "supervisor_repeated_leaf_failure_requires_todo_contract_replan"
+):
+    raise SystemExit(0)
+source_first_line = str(feedback.get("selected_todo_first_line") or "")
+source_match = re.match(r"\s*-\s*\[[ xX]\]\s*([^:]+):", source_first_line)
+if not source_match:
+    raise SystemExit(0)
+source_id = source_match.group(1)
+try:
+    todo = todo_path.read_text(encoding="utf-8")
+except Exception:
+    raise SystemExit(0)
+starts = list(re.finditer(r"(?m)^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ xX]\][ \t]+", todo))
+candidates = []
+for index, start in enumerate(starts):
+    end = starts[index + 1].start() if index + 1 < len(starts) else len(todo)
+    block = todo[start.start():end].rstrip()
+    if not re.match(r"^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ \t]*\][ \t]+", block):
+        continue
+    route = re.search(r"(?im)^\s*Route:\s*([^.:\n]+)", block)
+    source = re.search(r"(?im)^\s*Source TODO:\s*([^\s.]+)", block)
+    if (
+        route
+        and route.group(1).strip().lower() == "todo-decomposition"
+        and source
+        and source.group(1) == source_id
+    ):
+        candidates.append(block)
+if len(candidates) == 1:
+    print(candidates[0])
+PY
 }
 
 phase_loop_controller_fingerprint() {
@@ -1174,11 +1232,16 @@ def todo_id(block):
     return match.group(1).strip() if match else ""
 
 def unchecked_blocks(text):
-    starts = [match.start() for match in re.finditer(r"(?m)^[ \t]*[-*][ \t]+\[[ \t]*\][ \t]+", text)]
+    # A live checked heading must delimit the preceding unchecked TODO just as
+    # an unchecked heading does.  Otherwise refreshing an active claim can
+    # absorb completed work that follows it and change the claimed contract.
+    starts = list(re.finditer(r"(?m)^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ xX]\][ \t]+", text))
     blocks = []
     for index, start in enumerate(starts):
-        end = starts[index + 1] if index + 1 < len(starts) else len(text)
-        blocks.append(text[start:end].rstrip())
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(text)
+        block = text[start.start():end].rstrip()
+        if re.match(r"^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ \t]*\][ \t]+", block):
+            blocks.append(block)
     return blocks
 
 try:
