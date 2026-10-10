@@ -427,7 +427,7 @@ function analyzeVerificationFailure(status, selectedTodo, repoRoot) {
 }
 
 function analyzeRepairFeedbackVerificationFailure(repairFeedback, selectedTodo, repoRoot) {
-  if (!repairFeedback || typeof repairFeedback !== 'object') {
+  if (!repairFeedback || typeof repairFeedback !== 'object' || repairFeedback.completed === true) {
     return {
       detected: false
     };
@@ -487,7 +487,7 @@ function analyzeRepairFeedbackVerificationFailure(repairFeedback, selectedTodo, 
 }
 
 function analyzeRepairFeedbackInvalidPatch(repairFeedback, selectedTodo) {
-  if (!repairFeedback || typeof repairFeedback !== 'object') {
+  if (!repairFeedback || typeof repairFeedback !== 'object' || repairFeedback.completed === true) {
     return {
       detected: false
     };
