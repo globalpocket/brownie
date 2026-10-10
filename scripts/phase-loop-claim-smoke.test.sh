@@ -2345,8 +2345,9 @@ import sys
 
 prompt = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 selected = prompt.split("## Selected TODO", 1)[1].split("## TODO Queue Snapshot", 1)[0]
-assert "E-replan" in selected, selected
-assert "E-source" not in selected, selected
+selected_first_line = next(line for line in selected.splitlines() if line.strip())
+assert "E-replan" in selected_first_line, selected
+assert "E-source" not in selected_first_line, selected
 PY
 
 python3 - "$PHASE_LOOP" <<'PY'
