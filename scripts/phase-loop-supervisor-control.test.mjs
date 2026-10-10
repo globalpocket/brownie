@@ -257,6 +257,7 @@ test('escalates repeated no-progress on the same bounded leaf to TODO contract r
   assert.match(todo, /Route: todo-decomposition/u);
   assert.equal(blocked.length, 1);
   assert.equal(blocked[0].todo_id, 'E-21c-runtime-operational-evidence-impl-2-target-02');
+  assert.match(blocked[0].controller_fingerprint, /^[a-f0-9]{64}$/u);
   assert.equal(feedback.kind, 'phase_loop_todo_contract_replan_feedback');
   assert.equal(feedback.semantic_repair_policy.mode, 'stalled_leaf_contract_replan');
   assert.equal(feedback.failure_ledger_summary.should_replan, true);

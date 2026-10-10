@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { appendTaskTransition, readTaskLedger, replanTaskWithChildren, taskIsExecutable, taskProjection, validateTaskLedger } from './phase-loop-task-ledger.mjs';
+import { appendTaskTransition, readTaskLedger, replanTaskWithChildren, taskAttemptId, taskIsExecutable, taskProjection, validateTaskLedger } from './phase-loop-task-ledger.mjs';
 
 test('task ledger enforces a terminal state machine', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-task-ledger-'));
@@ -63,4 +64,20 @@ test('ignores an incomplete replan journal instead of exposing a parent-only rep
   fs.mkdirSync(path.dirname(ledger), { recursive: true });
   fs.writeFileSync(ledger, '{"kind":"replan_transaction","events":[{"task_id":"T-7","to_state":"replanned"}]}\n');
   assert.deepEqual(readTaskLedger(repo), []);
+});
+
+test('records repeated claims as separate immutable task attempts', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-task-ledger-'));
+  const todo = path.join(repo, '.brownie', 'todo.md');
+  fs.mkdirSync(path.dirname(todo), { recursive: true });
+  fs.writeFileSync(todo, '- [ ] T-8: retryable bounded task\n');
+  const script = path.join(process.cwd(), 'scripts', 'phase-loop-task-ledger.mjs');
+  for (const claimId of ['claim-one', 'claim-two']) {
+    const claim = path.join(repo, `${claimId}.json`);
+    fs.writeFileSync(claim, JSON.stringify({ claim_id: claimId, selected_todo: '- [ ] T-8: retryable bounded task' }));
+    execFileSync(process.execPath, [script, 'record-trajectory', '--repo', repo, '--claim', claim, '--todo', todo, '--type', 'todo.claimed', '--run', claimId], { stdio: 'pipe' });
+  }
+  const projection = taskProjection(readTaskLedger(repo));
+  assert.equal(projection.get(taskAttemptId('T-8', 'claim-one')).to_state, 'claimed');
+  assert.equal(projection.get(taskAttemptId('T-8', 'claim-two')).to_state, 'claimed');
 });

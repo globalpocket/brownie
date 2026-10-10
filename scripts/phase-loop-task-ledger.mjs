@@ -163,7 +163,14 @@ function taskIdFromClaim(claimPath) {
   const claim = JSON.parse(fs.readFileSync(claimPath, 'utf8'));
   const first = String(claim.selected_todo ?? '').split('\n')[0] ?? '';
   const match = first.match(/^(?:[-*]|\d+[.)])\s+\[\s\]\s+([^:\s]+)/u);
-  return { taskId: match?.[1] ?? '', claimId: claim.claim_id ?? null, spec: String(claim.selected_todo ?? '') };
+  return { sourceTaskId: match?.[1] ?? '', claimId: claim.claim_id ?? null, spec: String(claim.selected_todo ?? '') };
+}
+
+// A TODO can be retried after an interrupted or failed claim. The ledger is
+// append-only and deliberately never reopens a terminal record, so its key
+// identifies one execution attempt while sourceTaskId remains the TODO key.
+export function taskAttemptId(sourceTaskId, claimId) {
+  return claimId ? `${sourceTaskId}@${claimId}` : sourceTaskId;
 }
 
 function replacementChildren(todoPath, parentTaskId) {
@@ -193,8 +200,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
   const todoPath = args.get('todo');
   const payloadRaw = args.get('payload');
   if (!repo || !claimPath || !type) process.exit(2);
-  const { taskId, claimId, spec } = taskIdFromClaim(claimPath);
-  if (!taskId) process.exit(0);
+  const { sourceTaskId, claimId, spec } = taskIdFromClaim(claimPath);
+  if (!sourceTaskId) process.exit(0);
+  const taskId = taskAttemptId(sourceTaskId, claimId);
   const specHash = crypto.createHash('sha256').update(spec).digest('hex');
   if (type === 'todo.replanned') {
     let payload = {};
@@ -202,7 +210,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
     const result = replanTaskWithChildren(repo, {
       task_id: taskId,
       reason: String(payload.reason ?? 'trajectory_replanned'),
-      children: replacementChildren(todoPath, taskId),
+      children: replacementChildren(todoPath, sourceTaskId),
       run_id: runId,
       claim_id: claimId,
       task_spec_sha256: specHash
