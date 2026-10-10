@@ -113,6 +113,9 @@ assert_contains "$PHASE_LOOP" "selected_todo_dirty_baseline_verified_completion"
 assert_contains "$PHASE_LOOP" "selected_targets_already_dirty_and_verification_passed"
 assert_contains "$PHASE_LOOP" "pruned_completed_dependency_lines"
 assert_not_contains "$PHASE_LOOP" "breakdown_only_dependency_pruned"
+assert_contains "$PHASE_LOOP" "Every generated leaf ID must be unique within new_text"
+assert_contains "$PHASE_LOOP" "A leaf must never depend on itself"
+assert_contains "$PHASE_LOOP" "distinct prerequisite TODO ID already present in the live queue"
 
 test_workspace="$(mktemp -d)"
 git -C "$test_workspace" init -b main >/dev/null
