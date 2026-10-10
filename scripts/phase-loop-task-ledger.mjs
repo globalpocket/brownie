@@ -209,20 +209,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
     try { payload = JSON.parse(payloadRaw ?? '{}'); } catch { /* use the event name below */ }
     const reason = String(payload.reason ?? 'trajectory_replanned');
     const children = replacementChildren(todoPath, sourceTaskId);
-    // A leaf can reach the historical `todo.replanned` trajectory without a
-    // replacement block having been materialized in TODO markdown. Do not
-    // reject the terminal event and leave that attempt running forever: keep
-    // the ledger truthful by recording the missing replacement as a blocker.
-    const result = children.length === 0
-      ? appendTaskTransition(repo, {
-        task_id: taskId,
-        to_state: 'blocked',
-        run_id: runId,
-        claim_id: claimId,
-        task_spec_sha256: specHash,
-        reason: `replan_without_replacements:${reason}`
-      })
-      : replanTaskWithChildren(repo, {
+    // `todo.replanned` is also emitted for repair feedback that deliberately
+    // keeps the same claim in progress. A durable replan exists only when
+    // replacement children are present; otherwise preserve the nonterminal
+    // attempt so a later routed/completed event remains valid.
+    if (children.length === 0) process.exit(0);
+    const result = replanTaskWithChildren(repo, {
         task_id: taskId,
         reason,
         children,

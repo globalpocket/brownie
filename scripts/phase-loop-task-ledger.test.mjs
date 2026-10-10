@@ -82,7 +82,7 @@ test('records repeated claims as separate immutable task attempts', () => {
   assert.equal(projection.get(taskAttemptId('T-8', 'claim-two')).to_state, 'claimed');
 });
 
-test('turns a replan without replacement children into an auditable block', () => {
+test('keeps a repair-only replan nonterminal when replacement children are absent', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-task-ledger-'));
   const todo = path.join(repo, '.brownie', 'todo.md');
   fs.mkdirSync(path.dirname(todo), { recursive: true });
@@ -93,7 +93,8 @@ test('turns a replan without replacement children into an auditable block', () =
   execFileSync(process.execPath, [script, 'record-trajectory', '--repo', repo, '--claim', claim, '--todo', todo, '--type', 'todo.claimed', '--run', 'run-1'], { stdio: 'pipe' });
   execFileSync(process.execPath, [script, 'record-trajectory', '--repo', repo, '--claim', claim, '--todo', todo, '--type', 'workflow.routed', '--run', 'run-1'], { stdio: 'pipe' });
   execFileSync(process.execPath, [script, 'record-trajectory', '--repo', repo, '--claim', claim, '--todo', todo, '--type', 'todo.replanned', '--payload', '{"reason":"no_progress"}', '--run', 'run-1'], { stdio: 'pipe' });
-  const terminal = taskProjection(readTaskLedger(repo)).get(taskAttemptId('T-9', 'claim-leaf'));
-  assert.equal(terminal.to_state, 'blocked');
-  assert.equal(terminal.reason, 'replan_without_replacements:no_progress');
+  const attempt = taskProjection(readTaskLedger(repo)).get(taskAttemptId('T-9', 'claim-leaf'));
+  assert.equal(attempt.to_state, 'running');
+  execFileSync(process.execPath, [script, 'record-trajectory', '--repo', repo, '--claim', claim, '--todo', todo, '--type', 'todo.completed', '--run', 'run-1'], { stdio: 'pipe' });
+  assert.equal(taskProjection(readTaskLedger(repo)).get(taskAttemptId('T-9', 'claim-leaf')).to_state, 'completed');
 });
