@@ -99,8 +99,13 @@ function maybeArchiveResolvedRepairFeedback(repoRoot) {
     : typeof verificationFailure.reason === 'string'
       ? verificationFailure.reason
       : feedback.reason;
-  const validatesCurrentTodoQueue = feedback.kind === 'phase_loop_todo_contract_replan_feedback'
-    || feedbackReason === 'todo_decomposition_guard_failed_after_todo_apply';
+  // A valid queue only proves that the current TODO documents are internally
+  // consistent.  It does not prove that a contract-replan request has been
+  // applied.  Treating the latter as resolved here drops the only instruction
+  // that can make the worker replace the repeated-failure leaf, which causes
+  // the supervisor to restart the same terminal path indefinitely.
+  const validatesCurrentTodoQueue = feedback.kind !== 'phase_loop_todo_contract_replan_feedback'
+    && feedbackReason === 'todo_decomposition_guard_failed_after_todo_apply';
   if (!validatesCurrentTodoQueue) {
     return { attempted: false, reason: 'feedback_kind_requires_its_own_verification', kind: feedback.kind ?? null };
   }

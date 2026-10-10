@@ -191,6 +191,7 @@ write_bdk_trajectory_prompt_routing_event() {
   payload_json="$(
     python3 - "$meta_path" <<'PY'
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -7229,10 +7230,28 @@ claim_id = claim.get("claim_id")
 selected = str(claim.get("selected_todo") or "")
 selected_first_line = selected.splitlines()[0] if selected.splitlines() else ""
 feedback_first_line = str(feedback.get("selected_todo_first_line") or "")
+route_match = re.search(r"(?im)^\s*Route:\s*([^.:\n]+)", selected)
+route = route_match.group(1).strip().lower() if route_match else ""
 if not claim_id:
     print("clear:claim_mismatch")
     raise SystemExit(0)
 if feedback.get("claim_id") != claim_id:
+    # A TODO-contract replan is deliberately authored against the failed
+    # implementation claim, then consumed by a new todo-decomposition claim.
+    # Preserve it only across that explicit Source TODO hand-off; all other
+    # claim mismatches remain fail-closed.
+    feedback_kind = str(feedback.get("kind") or "")
+    source_match = re.search(r"(?im)^\s*Source TODO:\s*([^\s.]+)", selected)
+    feedback_todo_match = re.match(r"\s*-\s*\[[ xX]\]\s*([^:]+):", feedback_first_line)
+    if (
+        feedback_kind == "phase_loop_todo_contract_replan_feedback"
+        and route == "todo-decomposition"
+        and source_match
+        and feedback_todo_match
+        and source_match.group(1) == feedback_todo_match.group(1)
+    ):
+        print("keep")
+        raise SystemExit(0)
     if selected_first_line and feedback_first_line == selected_first_line:
         print("keep")
         raise SystemExit(0)
@@ -7240,8 +7259,6 @@ if feedback.get("claim_id") != claim_id:
     raise SystemExit(0)
 
 first_line = selected_first_line
-route_match = re.search(r"(?im)^\s*Route:\s*([^.:\n]+)", selected)
-route = route_match.group(1).strip().lower() if route_match else ""
 scope_match = re.search(r"\b(?:Patch|Create) only\b(?P<scope>[^\n:]+)", first_line)
 targets = set()
 if scope_match:
@@ -7345,6 +7362,7 @@ active_repair_feedback_matches_claim() {
   fi
   python3 - "$TODO_CLAIM_FILE" "$TODO_REPAIR_FEEDBACK_FILE" <<'PY'
 import json
+import re
 import sys
 
 try:
@@ -7362,6 +7380,16 @@ feedback_first_line = str(feedback.get("selected_todo_first_line") or "")
 if claim_id and feedback.get("claim_id") == claim_id:
     sys.exit(0)
 if selected_first_line and feedback_first_line == selected_first_line:
+    sys.exit(0)
+route_match = re.search(r"(?im)^\s*Route:\s*([^.:\n]+)", selected)
+source_match = re.search(r"(?im)^\s*Source TODO:\s*([^\s.]+)", selected)
+feedback_todo_match = re.match(r"\s*-\s*\[[ xX]\]\s*([^:]+):", feedback_first_line)
+if (
+    str(feedback.get("kind") or "") == "phase_loop_todo_contract_replan_feedback"
+    and route_match and route_match.group(1).strip().lower() == "todo-decomposition"
+    and source_match and feedback_todo_match
+    and source_match.group(1) == feedback_todo_match.group(1)
+):
     sys.exit(0)
 sys.exit(1)
 PY
@@ -9120,11 +9148,23 @@ if repair_feedback_path.exists() and claim:
         candidate = json.loads(repair_feedback_path.read_text(encoding="utf-8"))
         candidate_first_line = str(candidate.get("selected_todo_first_line") or "")
         selected_first_line_for_feedback = selected_todo.splitlines()[0] if selected_todo.splitlines() else ""
+        route_match = re.search(r"(?im)^\s*Route:\s*([^.:\n]+)", selected_todo)
+        source_match = re.search(r"(?im)^\s*Source TODO:\s*([^\s.]+)", selected_todo)
+        feedback_todo_match = re.match(r"\s*-\s*\[[ xX]\]\s*([^:]+):", candidate_first_line)
+        contract_replan_handoff = (
+            candidate.get("kind") == "phase_loop_todo_contract_replan_feedback"
+            and route_match
+            and route_match.group(1).strip().lower() == "todo-decomposition"
+            and source_match
+            and feedback_todo_match
+            and source_match.group(1) == feedback_todo_match.group(1)
+        )
         if (
             candidate.get("completed") is not True
             and (
                 candidate.get("claim_id") == claim.get("claim_id")
                 or (selected_first_line_for_feedback and candidate_first_line == selected_first_line_for_feedback)
+                or contract_replan_handoff
             )
         ):
             repair_feedback = candidate
@@ -9358,6 +9398,12 @@ leaf_has_contract_replan_feedback = bool(
     and (
         not repair_feedback.get("selected_todo_first_line")
         or repair_feedback.get("selected_todo_first_line") == selected_first_line
+        or (
+            re.search(r"(?im)^\s*Route:\s*todo-decomposition\s*\.", selected_todo)
+            and (source_match := re.search(r"(?im)^\s*Source TODO:\s*([^\s.]+)", selected_todo))
+            and (feedback_match := re.match(r"\s*-\s*\[[ xX]\]\s*([^:]+):", str(repair_feedback.get("selected_todo_first_line") or "")))
+            and source_match.group(1) == feedback_match.group(1)
+        )
     )
 )
 leaf_has_oversized_repair = bool(

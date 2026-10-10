@@ -2259,6 +2259,72 @@ assert "semantic_completion_not_satisfied" in prompt, prompt
 assert "sections.soak_test.status=satisfied" in prompt, prompt
 PY
 
+contract_replan_feedback_state="$(mktemp -d)"
+contract_replan_feedback_prompt="$(mktemp)"
+contract_replan_feedback_todo="$(mktemp)"
+contract_replan_feedback_argv="$contract_replan_feedback_state/fake-brownie.argv"
+mkdir -p "$contract_replan_feedback_state/todo-claims"
+printf 'base prompt\n' > "$contract_replan_feedback_prompt"
+cat > "$contract_replan_feedback_todo" <<'EOF'
+- [x] E-source: Patch only `scripts/release-local-artifact.mjs` to repair portable archive packaging.
+  Route: implementation.
+  Completion condition: source leaf was superseded after repeated failure.
+  Verification: run `pnpm --workspace-root release:local-artifact:test`.
+
+- [ ] E-replan: Patch only `scripts/release-runtime-operational-evidence.mjs` to replan the failed archive leaf.
+  Route: todo-decomposition.
+  Source TODO: E-source.
+  Completion condition: replace the failed leaf with implementable children.
+  Verification: run `pnpm --workspace-root guard:todo-decomposition`.
+EOF
+cat > "$contract_replan_feedback_state/progress-state.json" <<'EOF'
+{"schema_version":1,"progress_projection":{"route":"{\"command\":\"resume\",\"arguments\":[]}"}}
+EOF
+cat > "$contract_replan_feedback_state/todo-claims/current.json" <<'EOF'
+{
+  "claim_id": "todo-g2-replan",
+  "queue_fingerprint": "def",
+  "queue_generation": 2,
+  "run_stamp": "20260913T000001Z",
+  "schema_version": 1,
+  "selected_todo": "- [ ] E-replan: Patch only `scripts/release-runtime-operational-evidence.mjs` to replan the failed archive leaf.\n  Route: todo-decomposition.\n  Source TODO: E-source.\n  Completion condition: replace the failed leaf with implementable children.\n  Verification: run `pnpm --workspace-root guard:todo-decomposition`.",
+  "status": "in_progress"
+}
+EOF
+cat > "$contract_replan_feedback_state/todo-claims/repair-feedback.json" <<'EOF'
+{
+  "claim_id": "todo-g1-source",
+  "kind": "phase_loop_todo_contract_replan_feedback",
+  "reason": "supervisor_repeated_leaf_failure_requires_todo_contract_replan",
+  "selected_todo_first_line": "- [ ] E-source: Patch only `scripts/release-local-artifact.mjs` to repair portable archive packaging.",
+  "completed": false,
+  "schema_version": 1
+}
+EOF
+
+PHASE_LOOP_STATE_DIR="$contract_replan_feedback_state" \
+PHASE_LOOP_PROMPT="$contract_replan_feedback_prompt" \
+PHASE_LOOP_TODO="$contract_replan_feedback_todo" \
+PHASE_LOOP_WORKSPACE_ROOT="$repair_feedback_workspace" \
+PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
+PHASE_LOOP_TEST_ARGV_FILE="$contract_replan_feedback_argv" \
+BROWNIE_BIN="$fake_brownie_repair_feedback" \
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+
+contract_replan_feedback_prompt_file="$(find "$contract_replan_feedback_state/runs" -name '*.prompt.md' -print | sort | tail -n 1)"
+python3 - "$contract_replan_feedback_state/todo-claims/repair-feedback.json" "$contract_replan_feedback_prompt_file" <<'PY'
+import json
+import pathlib
+import sys
+
+feedback = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+prompt = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
+assert feedback["completed"] is False, feedback
+assert "## Previous Repair Feedback" in prompt, prompt
+assert "supervisor_repeated_leaf_failure_requires_todo_contract_replan" in prompt, prompt
+assert "E-source" in prompt, prompt
+PY
+
 python3 - "$PHASE_LOOP" <<'PY'
 import pathlib
 import sys
