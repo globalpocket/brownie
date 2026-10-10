@@ -56,3 +56,11 @@ test('replan leaves the ledger unchanged when a child fails the execution gate',
   assert.equal(result.code, 'replan_child_not_executable');
   assert.deepEqual(readTaskLedger(repo), before);
 });
+
+test('ignores an incomplete replan journal instead of exposing a parent-only replacement', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-task-ledger-'));
+  const ledger = path.join(repo, '.brownie/private/phase-loop/task-ledger.jsonl');
+  fs.mkdirSync(path.dirname(ledger), { recursive: true });
+  fs.writeFileSync(ledger, '{"kind":"replan_transaction","events":[{"task_id":"T-7","to_state":"replanned"}]}\n');
+  assert.deepEqual(readTaskLedger(repo), []);
+});

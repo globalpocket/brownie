@@ -23,7 +23,17 @@ export function readTaskLedger(repoRoot) {
   const file = taskLedgerPath(repoRoot);
   try {
     return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).flatMap((line) => {
-      try { return [JSON.parse(line)]; } catch { return []; }
+      try {
+        const record = JSON.parse(line);
+        // A replacement set is projected only when its one-line journal
+        // record is complete. A torn append therefore exposes no terminal
+        // parent without its children.
+        if (record?.kind === 'replan_transaction') {
+          return Array.isArray(record.events) && record.events.length > 1 && record.events.every((event) => event?.task_id && TASK_STATES.has(event?.to_state))
+            ? record.events : [];
+        }
+        return [record];
+      } catch { return []; }
     });
   } catch (error) {
     if (error?.code === 'ENOENT') return [];
@@ -117,10 +127,16 @@ export function replanTaskWithChildren(repoRoot, { task_id, reason, children, ru
   }));
   const file = taskLedgerPath(repoRoot);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  // One synchronous append makes a partially written replacement set
-  // detectable as an invalid JSONL tail rather than a visible parent-only
-  // replan.  The writer only exposes the events after all validation above.
-  fs.appendFileSync(file, `${[parentEvent, ...childEvents].map((event) => JSON.stringify(event)).join('\n')}\n`, { encoding: 'utf8', mode: 0o600 });
+  // Keep the entire replacement set inside one journal record. A torn write
+  // cannot become a parent-only replan because readTaskLedger ignores an
+  // incomplete transaction rather than projecting its individual events.
+  const transaction = {
+    schema_version: 1,
+    kind: 'replan_transaction',
+    transaction_id: crypto.randomUUID(),
+    events: [parentEvent, ...childEvents]
+  };
+  fs.appendFileSync(file, `${JSON.stringify(transaction)}\n`, { encoding: 'utf8', mode: 0o600 });
   return { ok: true, events: [parentEvent, ...childEvents] };
 }
 
@@ -150,6 +166,20 @@ function taskIdFromClaim(claimPath) {
   return { taskId: match?.[1] ?? '', claimId: claim.claim_id ?? null, spec: String(claim.selected_todo ?? '') };
 }
 
+function replacementChildren(todoPath, parentTaskId) {
+  if (!todoPath || !fs.existsSync(todoPath)) return [];
+  const blocks = fs.readFileSync(todoPath, 'utf8').split(/\n(?=(?:[-*]|\d+[.)])\s+\[ \]\s+)/u);
+  const escapedParent = parentTaskId.replace(/[|\\{}()[\]^$+*?.]/g, '\\$&');
+  return blocks.flatMap((block) => {
+    if (!new RegExp(`Source TODO:\\s*${escapedParent}\\.`, 'u').test(block)) return [];
+    const taskId = block.match(/^(?:[-*]|\d+[.)])\s+\[ \]\s+([^:\s]+)/u)?.[1];
+    const targets = [...block.matchAll(/`([^`]+)`/gu)].map((match) => match[1]).filter((value) => /[/.]/u.test(value));
+    const verification = [...block.matchAll(/^\s*Verification:\s*run\s+`([^`]+)`/gmu)].map((match) => match[1]);
+    const route = block.match(/^\s*Route:\s*([^\s.]+)/mu)?.[1] ?? 'implementation';
+    return taskId ? [{ task_id: taskId, route, patch_targets: targets, verification_commands: verification }] : [];
+  });
+}
+
 // The CLI is deliberately an adapter: phase-loop may continue to emit its
 // historical trajectory while this ledger becomes the durable state authority.
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname) && process.argv[2] === 'record-trajectory') {
@@ -160,14 +190,29 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
   const claimPath = args.get('claim');
   const type = args.get('type');
   const runId = args.get('run');
+  const todoPath = args.get('todo');
+  const payloadRaw = args.get('payload');
   if (!repo || !claimPath || !type) process.exit(2);
   const { taskId, claimId, spec } = taskIdFromClaim(claimPath);
   if (!taskId) process.exit(0);
   const specHash = crypto.createHash('sha256').update(spec).digest('hex');
+  if (type === 'todo.replanned') {
+    let payload = {};
+    try { payload = JSON.parse(payloadRaw ?? '{}'); } catch { /* use the event name below */ }
+    const result = replanTaskWithChildren(repo, {
+      task_id: taskId,
+      reason: String(payload.reason ?? 'trajectory_replanned'),
+      children: replacementChildren(todoPath, taskId),
+      run_id: runId,
+      claim_id: claimId,
+      task_spec_sha256: specHash
+    });
+    if (!result.ok && result.code !== 'terminal_task_cannot_transition') process.exit(1);
+    process.exit(0);
+  }
   const transitions = {
     'todo.claimed': ['queued', 'claimed'],
     'workflow.routed': ['running'],
-    'skill.selected': ['running'],
     'todo.completed': ['completed'],
     'todo.blocked': ['blocked']
   }[type] ?? [];
