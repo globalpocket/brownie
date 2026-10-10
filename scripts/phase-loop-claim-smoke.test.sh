@@ -850,6 +850,62 @@ assert status["status"] == "blocked", status
 assert "Failed to claim first pending TODO" in status["detail"], status
 PY
 
+# A stale child may retain the generated recovery id in its Source TODO
+# provenance after the request itself was removed.  That text must not make
+# the controller believe the request is still queued.
+state_orphaned_request="$(mktemp -d)"
+prompt_orphaned_request="$(mktemp)"
+todo_orphaned_request="$(mktemp)"
+todo_breakdown_orphaned_request="$(mktemp)"
+printf 'base prompt\n' > "$prompt_orphaned_request"
+printf -- '- [ ] E-22b-generated-leaf: Patch only `scripts/release-supply-chain-artifact-evidence.mjs` to bind one artifact evidence field:\n  Route: implementation.\n  Source TODO: TODO-decompose-blocked-queue-stalled-PLACEHOLDER.\n  Depends on: <none>.\n  Completion condition: the bounded generated leaf is recovered through a fresh decomposition request.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`.\n' > "$todo_orphaned_request"
+orphan_hash="$(shasum -a 256 "$todo_orphaned_request" | awk '{ print $1 }')"
+orphan_id="TODO-decompose-blocked-queue-stalled-${orphan_hash:0:12}"
+perl -0pi -e "s/TODO-decompose-blocked-queue-stalled-PLACEHOLDER/$orphan_id/g" "$todo_orphaned_request"
+mkdir -p "$state_orphaned_request/todo-claims"
+python3 - "$todo_orphaned_request" "$state_orphaned_request/todo-claims/blocked.jsonl" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+todo = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+first_line = todo.splitlines()[0]
+pathlib.Path(sys.argv[2]).write_text(json.dumps({
+    "block_reason": "stalled_leaf_contract_replan",
+    "selected_todo_first_line": first_line,
+    "selected_todo_sha256": hashlib.sha256(todo.strip().encode("utf-8")).hexdigest(),
+    "todo_id": "E-22b-generated-leaf",
+}) + "\n", encoding="utf-8")
+PY
+
+PHASE_LOOP_STATE_DIR="$state_orphaned_request" \
+PHASE_LOOP_PROMPT="$prompt_orphaned_request" \
+PHASE_LOOP_TODO="$todo_orphaned_request" \
+PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_orphaned_request" \
+BROWNIE_BIN="$fake_brownie_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+
+python3 - "$state_orphaned_request/todo-claims/current.json" "$todo_orphaned_request" "$orphan_id" <<'PY'
+import json
+import re
+import sys
+
+claim = json.load(open(sys.argv[1], encoding="utf-8"))
+todo = open(sys.argv[2], encoding="utf-8").read()
+orphan_id = sys.argv[3]
+assert claim["status"] == "in_progress", claim
+selected = claim["selected_todo"]
+match = re.match(r"- \[ \] (TODO-decompose-blocked-queue(?:-stalled)?-[0-9a-f]{12}):", selected)
+assert match, claim
+# The stale Source TODO id remains provenance only.  Recovery must enqueue and
+# claim a new live request based on the current queue fingerprint instead.
+assert match.group(1) != orphan_id, claim
+assert selected in todo, todo
+assert f"Source TODO: {orphan_id}." in todo, todo
+PY
+
 printf -- '- [ ] R-09: blocked boundary task\n  Extra context that changes the queue fingerprint.\n- [ ] R-10: next unblocked task\n' > "$todo_with_blocked"
 
 PHASE_LOOP_STATE_DIR="$state_with_blocked" \
