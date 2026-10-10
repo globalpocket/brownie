@@ -1232,11 +1232,16 @@ def todo_id(block):
     return match.group(1).strip() if match else ""
 
 def unchecked_blocks(text):
-    starts = [match.start() for match in re.finditer(r"(?m)^[ \t]*[-*][ \t]+\[[ \t]*\][ \t]+", text)]
+    # A live checked heading must delimit the preceding unchecked TODO just as
+    # an unchecked heading does.  Otherwise refreshing an active claim can
+    # absorb completed work that follows it and change the claimed contract.
+    starts = list(re.finditer(r"(?m)^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ xX]\][ \t]+", text))
     blocks = []
     for index, start in enumerate(starts):
-        end = starts[index + 1] if index + 1 < len(starts) else len(text)
-        blocks.append(text[start:end].rstrip())
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(text)
+        block = text[start.start():end].rstrip()
+        if re.match(r"^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ \t]*\][ \t]+", block):
+            blocks.append(block)
     return blocks
 
 try:
