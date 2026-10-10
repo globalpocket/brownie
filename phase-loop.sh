@@ -82,6 +82,7 @@ write_bdk_trajectory_event() {
   local run_stamp="$1"
   local event_type="$2"
   local payload_json="${3:-}"
+  local ledger_event_type="${4:-$event_type}"
   if [ -z "$payload_json" ]; then
     payload_json="{}"
   fi
@@ -151,8 +152,8 @@ PY
   # The ledger adapter derives its controller-state path from a repository
   # root.  Pass that root rather than STATE_DIR so writers and readers share
   # the canonical .brownie/private/phase-loop/task-ledger.jsonl location.
-  if ! node "$ROOT_DIR/scripts/phase-loop-task-ledger.mjs" record-trajectory --repo "$ROOT_DIR" --claim "$TODO_CLAIM_FILE" --todo "$PHASE_LOOP_TODO" --type "$event_type" --payload "$payload_json" --run "$run_stamp"; then
-    printf '%s task_ledger_transition_failed run=%s event=%s\n' "$(now_utc)" "$run_stamp" "$event_type" >> "$SUPERVISOR_LOG"
+  if ! node "$ROOT_DIR/scripts/phase-loop-task-ledger.mjs" record-trajectory --repo "$ROOT_DIR" --claim "$TODO_CLAIM_FILE" --todo "$PHASE_LOOP_TODO" --type "$ledger_event_type" --payload "$payload_json" --run "$run_stamp"; then
+    printf '%s task_ledger_transition_failed run=%s event=%s\n' "$(now_utc)" "$run_stamp" "$ledger_event_type" >> "$SUPERVISOR_LOG"
   fi
   case "$event_type" in
     todo.completed|todo.replanned|todo.blocked)
@@ -12256,12 +12257,16 @@ PY
       fi
       write_repair_feedback "$run_stamp" "$syntax_repair_feedback" "$stdout_log" "$stderr_log" || true
       if active_todo_claim_exists; then
-        write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+        write_todo_claim "$(claim_field claim_id)" "failed" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
       fi
       detail="Rejected syntax-breaking workspace mutation and restored $active_target_path from pre-run snapshot. syntax=$(printf '%s' "$active_target_syntax_output" | tail -c 1000) stdout=$stdout_log stderr=$stderr_log"
       write_status "no_progress" "$detail" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-1}"
       printf '%s run=%s syntax_breaking_target_restored=true target=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_stamp" "$active_target_path" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
-      write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"syntax_breaking_target_restored"}'
+      # The public BDK contract has no todo.failed event. Keep its compatible
+      # repair-required terminal event while recording the precise terminal
+      # failure only in the private task ledger.
+      write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"syntax_breaking_target_restored"}' "todo.failed"
+      archive_stale_todo_claim "$run_stamp"
       return 76
     fi
     if [ -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/guard-js-duplicate-exports.mjs" ]; then
@@ -12297,12 +12302,15 @@ PY
 )"
         write_repair_feedback "$run_stamp" "$duplicate_export_feedback" "$stdout_log" "$stderr_log" || true
         if active_todo_claim_exists; then
-          write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+          write_todo_claim "$(claim_field claim_id)" "failed" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
         fi
         detail="Rejected duplicate-export workspace mutation and restored $active_target_path from pre-run snapshot. duplicate_export=$(printf '%s' "$active_target_duplicate_exports_output" | tail -c 1000) stdout=$stdout_log stderr=$stderr_log"
         write_status "no_progress" "$detail" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-1}"
         printf '%s run=%s duplicate_export_target_restored=true target=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_stamp" "$active_target_path" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
-        write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"duplicate_export_target_restored"}'
+        # See the syntax-recovery branch above: public trajectories remain
+        # schema-compatible while the ledger records the failed attempt.
+        write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"duplicate_export_target_restored"}' "todo.failed"
+        archive_stale_todo_claim "$run_stamp"
         return 76
       fi
     fi

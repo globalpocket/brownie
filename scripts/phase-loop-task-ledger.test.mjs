@@ -98,3 +98,26 @@ test('keeps a repair-only replan nonterminal when replacement children are absen
   execFileSync(process.execPath, [script, 'record-trajectory', '--repo', repo, '--claim', claim, '--todo', todo, '--type', 'todo.completed', '--run', 'run-1'], { stdio: 'pipe' });
   assert.equal(taskProjection(readTaskLedger(repo)).get(taskAttemptId('T-9', 'claim-leaf')).to_state, 'completed');
 });
+
+test('records restored invalid mutations as terminal failed attempts', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-task-ledger-'));
+  const todo = path.join(repo, '.brownie', 'todo.md');
+  fs.mkdirSync(path.dirname(todo), { recursive: true });
+  fs.writeFileSync(todo, '- [ ] T-10: bounded leaf\n');
+  const claim = path.join(repo, 'claim.json');
+  fs.writeFileSync(claim, JSON.stringify({ claim_id: 'claim-restored-mutation', selected_todo: '- [ ] T-10: bounded leaf' }));
+  const script = path.join(process.cwd(), 'scripts', 'phase-loop-task-ledger.mjs');
+  for (const type of ['todo.claimed', 'workflow.routed', 'todo.failed']) {
+    execFileSync(process.execPath, [script, 'record-trajectory', '--repo', repo, '--claim', claim, '--todo', todo, '--type', type, '--run', 'run-1'], { stdio: 'pipe' });
+  }
+  const attempt = taskProjection(readTaskLedger(repo)).get(taskAttemptId('T-10', 'claim-restored-mutation'));
+  assert.equal(attempt.to_state, 'failed');
+  assert.equal(attempt.reason, 'trajectory_failed');
+
+  const retryClaim = path.join(repo, 'retry-claim.json');
+  fs.writeFileSync(retryClaim, JSON.stringify({ claim_id: 'claim-restored-mutation-r1', selected_todo: '- [ ] T-10: bounded leaf' }));
+  for (const type of ['todo.claimed', 'workflow.routed', 'todo.completed']) {
+    execFileSync(process.execPath, [script, 'record-trajectory', '--repo', repo, '--claim', retryClaim, '--todo', todo, '--type', type, '--run', 'run-2'], { stdio: 'pipe' });
+  }
+  assert.equal(taskProjection(readTaskLedger(repo)).get(taskAttemptId('T-10', 'claim-restored-mutation-r1')).to_state, 'completed');
+});

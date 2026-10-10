@@ -229,7 +229,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
     'todo.claimed': ['queued', 'claimed'],
     'workflow.routed': ['running'],
     'todo.completed': ['completed'],
-    'todo.blocked': ['blocked']
+    'todo.blocked': ['blocked'],
+    'todo.failed': ['failed']
   }[type] ?? [];
   for (const to_state of transitions) {
     const result = appendTaskTransition(repo, {
@@ -238,7 +239,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
       run_id: runId,
       claim_id: claimId,
       task_spec_sha256: specHash,
-      reason: to_state === 'blocked' ? 'trajectory_blocked' : undefined
+      reason: to_state === 'blocked' ? 'trajectory_blocked' : to_state === 'failed' ? 'trajectory_failed' : undefined
     });
     if (!result.ok && result.code !== 'terminal_task_cannot_transition') process.exit(1);
   }
