@@ -56,3 +56,12 @@ test('rejects dirty delivery when only owner blocker remains', () => {
   assert.equal(result.valid, false);
   assert(result.errors.some((error) => error.code === 'dirty_delivery_required'), JSON.stringify(result.errors));
 });
+
+test('accepts Brownie-managed state changes when only an owner blocker remains', () => {
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, '.brownie/todo.md'), '- [ ] E-owner: Owner must provide release credentials:\n  Route: owner.\n  Verification: external owner handoff.\n');
+  fs.mkdirSync(path.join(repo, '.brownie/release-evidence'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.brownie/release-evidence/managed-state.json'), '{"generated":true}\n');
+  const result = validatePhaseLoopPreflight({ repo, skipCommands: true });
+  assert(!result.errors.some((error) => error.code === 'dirty_delivery_required'), JSON.stringify(result.errors));
+});

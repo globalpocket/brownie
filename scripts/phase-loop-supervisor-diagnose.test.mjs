@@ -320,6 +320,24 @@ test('classifies owner blocker stop with dirty worktree as delivery required', (
   assert(!result.issues.some((issue) => issue.code === 'phase_loop_not_healthy'), JSON.stringify(result));
 });
 
+test('does not require delivery for Brownie-managed state changes alone', () => {
+  const repo = makeRepo();
+  writeTodo(repo, `${externalBlockerTodo}\n`);
+  writeJson(repo, '.brownie/private/phase-loop/status.json', {
+    status: 'blocked',
+    run_id: 'managed-state-only-20261010T055500Z',
+    consecutive_failures: 0,
+    detail: 'No implementable TODO remains; pending queue contains only explicit owner-controlled blocker TODOs. Phase-loop is stopped until owner/review evidence changes.'
+  });
+  writeJson(repo, '.brownie/release-evidence/managed-state.json', { generated: true });
+  fs.appendFileSync(path.join(repo, '.brownie/todo.md'), '\n');
+
+  const result = diagnosePhaseLoop({ repoRoot: repo, write: false, timestamp: '2026-10-10T00:00:00Z' });
+
+  assert(!result.issues.some((issue) => issue.code === 'delivery_required'), JSON.stringify(result));
+  assert(result.issues.some((issue) => issue.code === 'workspace_has_uncommitted_changes'), JSON.stringify(result));
+});
+
 test('treats blocked_todo_recorded as a healthy transient while supervisor is running', () => {
   const repo = makeRepo();
   writeTodo(repo, `${externalBlockerTodo}\n\n${implementationTodo}\n`);
