@@ -191,6 +191,7 @@ write_bdk_trajectory_prompt_routing_event() {
   payload_json="$(
     python3 - "$meta_path" <<'PY'
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -7361,6 +7362,7 @@ active_repair_feedback_matches_claim() {
   fi
   python3 - "$TODO_CLAIM_FILE" "$TODO_REPAIR_FEEDBACK_FILE" <<'PY'
 import json
+import re
 import sys
 
 try:
@@ -7378,6 +7380,16 @@ feedback_first_line = str(feedback.get("selected_todo_first_line") or "")
 if claim_id and feedback.get("claim_id") == claim_id:
     sys.exit(0)
 if selected_first_line and feedback_first_line == selected_first_line:
+    sys.exit(0)
+route_match = re.search(r"(?im)^\s*Route:\s*([^.:\n]+)", selected)
+source_match = re.search(r"(?im)^\s*Source TODO:\s*([^\s.]+)", selected)
+feedback_todo_match = re.match(r"\s*-\s*\[[ xX]\]\s*([^:]+):", feedback_first_line)
+if (
+    str(feedback.get("kind") or "") == "phase_loop_todo_contract_replan_feedback"
+    and route_match and route_match.group(1).strip().lower() == "todo-decomposition"
+    and source_match and feedback_todo_match
+    and source_match.group(1) == feedback_todo_match.group(1)
+):
     sys.exit(0)
 sys.exit(1)
 PY
