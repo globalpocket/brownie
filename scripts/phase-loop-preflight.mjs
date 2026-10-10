@@ -190,10 +190,11 @@ function gitDirtyFiles(repoRoot) {
     .map((line) => line.trimEnd())
     .filter(Boolean)
     .map((line) => {
-      const body = line.slice(3);
+      const body = line.slice(2).trimStart();
       return body.includes(' -> ') ? body.split(' -> ').at(-1) : body;
     })
-    .filter((file) => !file.startsWith('.brownie/private/'))
+    .filter((file) => !file.startsWith('.brownie/'))
+    .filter((file) => !file.startsWith('crates/brownie-runtime/.brownie/'))
     .sort();
 }
 
@@ -305,7 +306,7 @@ function validateDirtyDelivery(repoRoot, todoText, errors) {
     errors.push({
       code: 'dirty_delivery_required',
       dirty_files: dirtyFiles,
-      message: 'The workspace has non-private uncommitted changes but no implementable TODO remains; phase-loop must stop for commit/PR/review/merge instead of treating owner/release blockers as completion.'
+      message: 'The workspace has uncommitted product changes but no implementable TODO remains; phase-loop must stop for commit/PR/review/merge instead of treating owner/release blockers as completion.'
     });
   }
 }

@@ -83,6 +83,15 @@ function gitStatusShort(repoRoot) {
   }
 }
 
+function isBrownieManagedStateChange(line) {
+  // `dirtyFiles` is normalized with trim(), so a tracked modification is
+  // represented as `M .brownie/...` (one status character), whereas an
+  // untracked file is `?? .brownie/...`. Parse the porcelain prefix instead
+  // of assuming a fixed three-character width.
+  const filePath = String(line ?? '').replace(/^[ MADRCU?!]{1,2}\s+/u, '');
+  return filePath.startsWith('.brownie/') || filePath.startsWith('crates/brownie-runtime/.brownie/');
+}
+
 function parseJsonFromCommandOutput(text) {
   if (typeof text !== 'string' || text.trim().length === 0) {
     return null;
@@ -973,7 +982,7 @@ export function diagnosePhaseLoop(options = {}) {
     );
   }
 
-  const deliveryDirtyFiles = dirtyFiles.filter((line) => !/^\?\?\s+\.brownie\/private\//u.test(line));
+  const deliveryDirtyFiles = dirtyFiles.filter((line) => !isBrownieManagedStateChange(line));
   if (deliveryDirtyFiles.length > 0 && noImplementableTodoSelected) {
     addIssue(
       issues,
