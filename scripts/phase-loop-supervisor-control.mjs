@@ -607,6 +607,20 @@ function todoBlocks(todoText) {
   });
 }
 
+function phaseLoopControllerFingerprint(repoRoot) {
+  const files = ['phase-loop.sh', 'scripts/phase-loop-todo-evaluator.mjs'];
+  // Diagnostic tests use an isolated state fixture rather than a controller
+  // checkout. In that case, fingerprint the executing controller itself.
+  const controllerRoot = files.every((file) => fs.existsSync(path.join(repoRoot, file)))
+    ? repoRoot
+    : defaultRepoRoot;
+  const manifest = files.map((file) => {
+    const content = fs.readFileSync(path.join(controllerRoot, file));
+    return `${crypto.createHash('sha256').update(content).digest('hex')}  ${file}\n`;
+  }).join('');
+  return crypto.createHash('sha256').update(manifest).digest('hex');
+}
+
 function appendStalledTodoBlockedRecord(repoRoot, diagnostic, ledgerSummary) {
   if (!ledgerSummary?.should_replan) {
     return { attempted: false, reason: 'failure_ledger_threshold_not_met' };
@@ -650,6 +664,7 @@ function appendStalledTodoBlockedRecord(repoRoot, diagnostic, ledgerSummary) {
     claim_id: claim?.claim_id ?? diagnostic.verification_failure?.claim_id ?? diagnostic.invalid_patch?.claim_id ?? '',
     queue_generation: claim?.queue_generation ?? null,
     queue_fingerprint: queueFingerprint,
+    controller_fingerprint: phaseLoopControllerFingerprint(repoRoot),
     todo_id: ledgerSummary.todo_id,
     selected_todo_sha256: selectedHash,
     selected_todo_first_line: firstLine
