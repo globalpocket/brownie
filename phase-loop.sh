@@ -7229,10 +7229,28 @@ claim_id = claim.get("claim_id")
 selected = str(claim.get("selected_todo") or "")
 selected_first_line = selected.splitlines()[0] if selected.splitlines() else ""
 feedback_first_line = str(feedback.get("selected_todo_first_line") or "")
+route_match = re.search(r"(?im)^\s*Route:\s*([^.:\n]+)", selected)
+route = route_match.group(1).strip().lower() if route_match else ""
 if not claim_id:
     print("clear:claim_mismatch")
     raise SystemExit(0)
 if feedback.get("claim_id") != claim_id:
+    # A TODO-contract replan is deliberately authored against the failed
+    # implementation claim, then consumed by a new todo-decomposition claim.
+    # Preserve it only across that explicit Source TODO hand-off; all other
+    # claim mismatches remain fail-closed.
+    feedback_kind = str(feedback.get("kind") or "")
+    source_match = re.search(r"(?im)^\s*Source TODO:\s*([^\s.]+)", selected)
+    feedback_todo_match = re.match(r"\s*-\s*\[[ xX]\]\s*([^:]+):", feedback_first_line)
+    if (
+        feedback_kind == "phase_loop_todo_contract_replan_feedback"
+        and route == "todo-decomposition"
+        and source_match
+        and feedback_todo_match
+        and source_match.group(1) == feedback_todo_match.group(1)
+    ):
+        print("keep")
+        raise SystemExit(0)
     if selected_first_line and feedback_first_line == selected_first_line:
         print("keep")
         raise SystemExit(0)
@@ -7240,8 +7258,6 @@ if feedback.get("claim_id") != claim_id:
     raise SystemExit(0)
 
 first_line = selected_first_line
-route_match = re.search(r"(?im)^\s*Route:\s*([^.:\n]+)", selected)
-route = route_match.group(1).strip().lower() if route_match else ""
 scope_match = re.search(r"\b(?:Patch|Create) only\b(?P<scope>[^\n:]+)", first_line)
 targets = set()
 if scope_match:
