@@ -148,6 +148,12 @@ for path in (aggregate_path, run_path):
         handle.flush()
         os.fsync(handle.fileno())
 PY
+  # The ledger is controller state, not product workspace content.  Keeping it
+  # under the state root avoids making a bookkeeping event look like product
+  # work or changing the source-tree fingerprint.
+  if ! node "$ROOT_DIR/scripts/phase-loop-task-ledger.mjs" record-trajectory --repo "$PHASE_LOOP_STATE_DIR" --claim "$TODO_CLAIM_FILE" --todo "$PHASE_LOOP_TODO" --type "$event_type" --payload "$payload_json" --run "$run_stamp"; then
+    printf '%s task_ledger_transition_failed run=%s event=%s\n' "$(now_utc)" "$run_stamp" "$event_type" >> "$SUPERVISOR_LOG"
+  fi
   case "$event_type" in
     todo.completed|todo.replanned|todo.blocked)
       evaluate_bdk_public_harness_feedback "$run_stamp" "$event_type" || true

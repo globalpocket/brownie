@@ -75,6 +75,7 @@
     "guard:tool-intent-contract": "node scripts/guard-tool-intent-contract.mjs",
     "guard:tool-intent-contract:test": "node --test scripts/guard-tool-intent-contract.test.mjs",
     "phase-loop:todo-state:test": "node --test scripts/phase-loop-todo-state.test.mjs",
+    "phase-loop:task-ledger:test": "node --test scripts/phase-loop-task-ledger.test.mjs",
     "phase-loop:todo-evaluator:test": "node --test scripts/phase-loop-todo-evaluator.test.mjs",
     "phase-loop:blocked-queue-replan:test": "node --test scripts/phase-loop-blocked-queue-replan.test.mjs",
     "phase-loop:progress-integrity": "node scripts/phase-loop-progress-integrity.mjs",
