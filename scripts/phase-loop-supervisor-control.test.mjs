@@ -166,6 +166,25 @@ test('archives only resolved TODO-contract replan feedback after both current qu
   assert.equal(fs.readdirSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback-archive')).length, 1);
 });
 
+test('archives a semantic feedback record only when its recorded failure is the current TODO guard', () => {
+  const repo = makeRepo();
+  writeTodo(repo);
+  writeJson(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json', {
+    schema_version: 1,
+    kind: 'phase_loop_semantic_verification_repair_feedback',
+    completed: false,
+    reason: 'supervisor_semantic_verification_failure',
+    verification: { completed: false, reason: 'todo_decomposition_guard_failed_after_todo_apply' }
+  });
+
+  const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
+  const feedback = JSON.parse(fs.readFileSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json'), 'utf8'));
+
+  assert.equal(result.repair.resolved_repair_feedback_archive.ok, true, JSON.stringify(result, null, 2));
+  assert.equal(feedback.completed, true);
+  assert.equal(feedback.verification.completed, true);
+});
+
 test('retains semantic and invalid-patch feedback until their own verification succeeds', () => {
   for (const kind of ['phase_loop_semantic_verification_repair_feedback', 'phase_loop_invalid_patch_repair_feedback']) {
     const repo = makeRepo();
