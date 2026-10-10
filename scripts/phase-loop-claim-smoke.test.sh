@@ -96,6 +96,8 @@ wait_for_pid_exit() {
 }
 
 assert_contains "$PHASE_LOOP" "phase-loop-todo-queue-integrity\\.mjs"
+assert_contains "$PHASE_LOOP" 'phase-loop-task-ledger\.mjs" record-trajectory --repo "\$STATE_DIR"'
+assert_not_contains "$PHASE_LOOP" 'phase-loop-task-ledger\.mjs" record-trajectory --repo "\$PHASE_LOOP_STATE_DIR"'
 assert_contains "$PHASE_LOOP" "todo_queue_integrity_failed_before_claim"
 assert_contains "$PHASE_LOOP" "PHASE_LOOP_TODO_QUEUE_INTEGRITY_FAILED"
 assert_contains "$PHASE_LOOP" "baseline_diff_files"
