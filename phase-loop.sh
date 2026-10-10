@@ -764,7 +764,12 @@ unchecked_decompose = re.search(
 )
 if unchecked_decompose:
     raise SystemExit(1)
-if decompose_id in todo:
+# A generated id can legitimately be mentioned by a descendant's `Source
+# TODO:` metadata after an interrupted decomposition.  Only an actual pending
+# TODO heading proves that the recovery request still exists; a substring
+# match would otherwise suppress the request and leave every blocked leaf
+# permanently unschedulable.
+if re.search(rf"(?m)^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ \t]\][ \t]+{re.escape(decompose_id)}:", todo):
     suffix = 2
     while decompose_id in todo:
         decompose_id = f"{base_decompose_id}-r{suffix}"
@@ -916,7 +921,9 @@ else:
         "`.brownie/private/phase-loop/todo-claims/blocked.jsonl`."
     )
     decomposition_scope = "replace broad blocked TODOs with smaller unchecked leaf TODOs"
-if decompose_id in todo:
+# As above, Source TODO provenance is not a live recovery request.  Restrict
+# duplicate detection to an unchecked TODO heading.
+if re.search(rf"(?m)^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ \t]\][ \t]+{re.escape(decompose_id)}:", todo):
     raise SystemExit(1)
 
 try:
