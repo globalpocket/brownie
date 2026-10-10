@@ -116,6 +116,7 @@ assert_not_contains "$PHASE_LOOP" "breakdown_only_dependency_pruned"
 assert_contains "$PHASE_LOOP" "Every generated leaf ID must be unique within new_text"
 assert_contains "$PHASE_LOOP" "A leaf must never depend on itself"
 assert_contains "$PHASE_LOOP" "distinct prerequisite TODO ID already present in the live queue"
+assert_contains "$PHASE_LOOP" 'never generate a read-only `Read`, `Inspect`, or `Extract` leaf'
 
 test_workspace="$(mktemp -d)"
 git -C "$test_workspace" init -b main >/dev/null
