@@ -1966,6 +1966,10 @@ assert "Decompose broad TODO `E-99-runtime-release-evidence`" in todo, todo
 assert "state: `decompose_todo`" in prompt, prompt
 assert "decomposition_policy: this invocation is TODO decomposition only" in prompt, prompt
 assert "replace the active decomposition request and its broad source TODO" in prompt, prompt
+assert "Every generated leaf MUST include the exact line `Source TODO: TODO-decompose-broad-todo-" in prompt, prompt
+assert "write one or two leaf TODOs in `new_text`" in prompt, prompt
+assert "under 900 characters" in prompt, prompt
+assert "do not silently discard parent requirements" in prompt, prompt
 PY
 
 no_eligible_split_state="$(mktemp -d)"
