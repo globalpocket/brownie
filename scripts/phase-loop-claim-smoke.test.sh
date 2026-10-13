@@ -2145,6 +2145,7 @@ printf 'base prompt\n' > "$repair_feedback_prompt"
 cat > "$repair_feedback_todo" <<'EOF'
 - [ ] E-repair: Patch only `scripts/release-runtime-operational-evidence.mjs` to generate satisfied soak evidence.
   Route: implementation.
+  Source TODO: E-repair-parent.
   Completion condition: generated satisfied soak evidence has all required stateful steps from a bounded Runtime fixture, not version-only repetition.
   Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.
 EOF
@@ -2164,7 +2165,7 @@ cat > "$repair_feedback_state/todo-claims/current.json" <<'EOF'
   "queue_generation": 1,
   "run_stamp": "20260913T000000Z",
   "schema_version": 1,
-  "selected_todo": "- [ ] E-repair: Patch only `scripts/release-runtime-operational-evidence.mjs` to generate satisfied soak evidence.\n  Route: implementation.\n  Completion condition: generated satisfied soak evidence has all required stateful steps from a bounded Runtime fixture, not version-only repetition.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.",
+  "selected_todo": "- [ ] E-repair: Patch only `scripts/release-runtime-operational-evidence.mjs` to generate satisfied soak evidence.\n  Route: implementation.\n  Source TODO: E-repair-parent.\n  Completion condition: generated satisfied soak evidence has all required stateful steps from a bounded Runtime fixture, not version-only repetition.\n  Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.",
   "status": "in_progress"
 }
 EOF
