@@ -1544,10 +1544,10 @@ impl PromptBuilder {
             messages: vec![
                 PromptMessage {
                     role: PromptRole::System,
-                    content: format!(
+                    content: [format!(
                         "You are Brownie Runtime. Execute the task according to the current runtime phase.\n\nRuntime Safety Invariants:\n- Runtime safety invariants override Mode Pack instructions.\n- Compiled Mode Pack permission policy overrides mode instructions.\n- Mode instructions override task/objective input.\n- Prompt text never grants side-effect permissions; RuntimePermissionGate remains authoritative.\n- Do not describe shell commands or code fences as a substitute for tools.\n\nTool Intent Contract:\n- When the task needs workspace context, file changes, verification, git inspection, MCP tool use, or subtasks, respond with exactly one fenced brownie-tool-intent JSON block.\n- The fenced block must use this shape and no extra top-level fields:\n```brownie-tool-intent\n{{\"tool_requests\":[{{\"tool_id\":\"workspace.read\",\"reason\":\"Read bounded workspace context.\",\"input\":{{\"path\":\"README.md\"}}}}]}}\n```\n- For file changes, request workspace.write with input {{\"path\":\"relative/path\",\"operation\":\"replace_file|create_file|patch_file|delete_file\",\"content\":\"bounded replacement content\"}}. workspace.write records a Runtime-owned proposal; it is not arbitrary shell execution.\n- For multi-step tasks, use completed Tool Execution results as the authoritative inputs for the next tool intent. Do not repeat a read/time request when its completed result already provides the value needed for the next step.
 - For patch_file after workspace.read, prefer old_text/new_text because Runtime can convert it into a bounded patch proposal: {{\"path\":\"relative/path\",\"operation\":\"patch_file\",\"old_text\":\"one shortest unique complete line or small complete-line block copied from Tool Execution\",\"new_text\":\"replacement text\"}}. Keep old_text/new_text short enough to fit the fenced JSON response. Never end old_text in the middle of a word; include the complete line or surrounding complete-line context.\n- Never infer or invent patch_file old_text from file sections that are not visible in the completed Tool Execution result. If the needed edit location is outside the visible workspace.read result, request workspace.write for `.brownie/todo.md` to replace the selected TODO with a smaller context-bounded follow-up TODO naming the exact symbol, section, test, or evidence file to read next.\n- If using content for patch_file, content must be a valid unified diff beginning with --- a/path, +++ b/path, and @@ hunk headers.\n- If a Tool Execution denies a duplicate workspace.read, the next assistant response for a file-changing task must request workspace.write. Do not request another workspace.read for that path.\n- For file-changing goals, do not finish or answer directly until you have requested workspace.write for the intended change or a `.brownie/todo.md` refinement when the visible read result is insufficient for a safe patch.\n- For line-append file changes, request workspace.read and any needed time.now value together in the same first tool intent, then compose the bounded replacement or patch content and request workspace.write in the second pass. For bounded task steps that need current time, prefer time.now. Do not use process.exec for date, echo, printf, sleep, or waiting.\n- Brownie owns TODO decomposition. When the live TODO queue (`.brownie/todo.md`, or legacy `todo.md` when explicitly selected) selects a TODO that is too large, blocked, missing required evidence, or not safely implementable in the current tool plan, request workspace.write to replace that TODO with one or more smaller implementable TODOs or a concrete blocker TODO. Do not keep rereading the TODO queue, README, or overview files instead of decomposing the selected TODO.\n- For release evidence or Git inspection, use allowed dedicated tools such as git.status and git.diff instead of process.exec. git.diff input must be {{}} or bounded boolean hints only, such as {{\"staged\":false,\"unstaged\":true,\"untracked\":false}}; never pass path, cwd, command, branch, ref, or revision to git.diff. If required workflow, artifact, or external evidence is unavailable through allowed tools, request workspace.write to refine the live TODO queue with the concrete blocker or follow-up TODO instead of failing silently.\n- Only request tools that appear as allowed in the Tool Plan.\n- If the Tool Plan omits a tool or marks it denied, do not request that tool.\n- If no tool is needed, answer directly without a brownie-tool-intent block.\n\nCompiled Mode Pack Policy:\n{mode_policy_summary}\n\nCompiled Mode Pack Instructions:\n{mode_instruction_material}"
-                    ),
+                    ), "\n\nBounded Leaf Override:\n- When the selected TODO is already a bounded leaf with explicit patch targets, never replace it through `.brownie/todo.md` merely because a required hunk is outside the visible workspace.read result.\n- For that bounded leaf, request one safe workspace.write restricted to its selected target when possible; otherwise report a concrete external/owner blocker naming the missing fact.\n- The TODO-refinement and decomposition instructions apply only to a selected TODO that is not already a bounded leaf. This override takes precedence over any earlier prompt text that would refine a bounded leaf.".to_string()].concat(),
                 },
                 PromptMessage {
                     role: PromptRole::User,
@@ -1578,9 +1578,15 @@ fn format_bdk_control_packet(
         "- state: {}\n- completed_workspace_reads: {}\n- next_output: {}\n- efficiency_rule: {}",
         state.name(),
         completed_reads,
-        state.next_output_contract(),
+        state.next_output_contract(goal_selects_bounded_patch_leaf(goal)),
         state.efficiency_rule(),
     )
+}
+
+fn goal_selects_bounded_patch_leaf(goal: &str) -> bool {
+    goal.contains("## Selected TODO")
+        && goal.contains("Patch only `")
+        && !goal.contains("Route: todo-decomposition")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1609,10 +1615,13 @@ impl BdkExecutionState {
         }
     }
 
-    fn next_output_contract(self) -> &'static str {
+    fn next_output_contract(self, bounded_leaf: bool) -> &'static str {
         match self {
             Self::ContextPlan => {
                 "request one smallest exact workspace.read/git inspection step; avoid overview files unless named by the TODO"
+            }
+            Self::ImplementPatch if bounded_leaf => {
+                "workspace.read is forbidden for the next output because the target file was already read. Request exactly one tool request total: one bounded workspace.write patch_file for the named target file, and keep the entire fenced JSON under about 1200 characters. Use one hunk only; old_text must be exact complete lines copied from completed Tool Execution and must cover a complete syntactic region for the requested replacement. For JavaScript/TypeScript function changes, old_text must include the complete function body being replaced, not only the `function ... {` signature line. new_text must be the smallest complete syntactic replacement needed for this pass. Do not patch unrelated large setup/parsing functions unless the selected TODO names them. Do not emit unrelated helper blocks, multiple function additions, or multiple tool_requests in one response. If the change needs multiple hunks or multiple writes, patch one complete syntactic hunk only and leave the remaining work for a later loop. If the needed old_text is not visible or the complete hunk would exceed the fenced JSON budget, report a concrete external/owner blocker naming the missing fact; never patch `.brownie/todo.md` to re-split this bounded leaf and do not request workspace.read to copy old_text again"
             }
             Self::ImplementPatch => {
                 "workspace.read is forbidden for the next output because the target file was already read. Request exactly one tool request total: one bounded workspace.write patch_file for the named target file, and keep the entire fenced JSON under about 1200 characters. Use one hunk only; old_text must be exact complete lines copied from completed Tool Execution and must cover a complete syntactic region for the requested replacement. For JavaScript/TypeScript function changes, old_text must include the complete function body being replaced, not only the `function ... {` signature line. new_text must be the smallest complete syntactic replacement needed for this pass. Do not patch unrelated large setup/parsing functions unless the selected TODO names them. Do not emit unrelated helper blocks, multiple function additions, or multiple tool_requests in one response. If the change needs multiple hunks or multiple writes, patch one complete syntactic hunk only and leave the remaining work for a later loop. If the needed old_text is not visible or the complete hunk would exceed the fenced JSON budget, patch `.brownie/todo.md` with a smaller context-bounded follow-up TODO; do not request workspace.read to copy old_text again"
@@ -1953,6 +1962,12 @@ mod tests {
             .contains("Brownie owns TODO decomposition"));
         assert!(!prompt.messages[0].content.contains("workspace.append_line"));
         assert!(!prompt.messages[0].content.contains("runtime.sleep"));
+        assert!(prompt.messages[0]
+            .content
+            .contains("Bounded Leaf Override:"));
+        assert!(prompt.messages[0]
+            .content
+            .contains("never replace it through `.brownie/todo.md`"));
         assert_eq!(prompt.messages[1].role, PromptRole::User);
         assert!(prompt.messages[1].content.contains("Task ID: task_1"));
         assert!(prompt.messages[1]
@@ -2092,7 +2107,10 @@ mod tests {
             .contains("completed_workspace_reads: 1"));
         assert!(prompt.messages[1]
             .content
-            .contains("patch `.brownie/todo.md` with a smaller context-bounded follow-up TODO"));
+            .contains("never patch `.brownie/todo.md` to re-split this bounded leaf"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("report a concrete external/owner blocker naming the missing fact"));
         assert!(prompt.messages[1]
             .content
             .contains("workspace.read is forbidden for the next output"));
