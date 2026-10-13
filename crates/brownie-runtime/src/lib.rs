@@ -15654,26 +15654,7 @@ fn preview_tool_output(content: &str) -> String {
 }
 
 fn preview_workspace_read_output(content: &str) -> String {
-    // Phase-loop write repair feeds this ledger preview back to the model. Keep
-    // it smaller than a single bounded patch hunk so a pathological source file
-    // cannot cause the model to echo the entire file and exhaust the intent
-    // parser before it emits a closing fence.
     preview_tool_output_with_limit(content, 2 * 1024)
-}
-
-#[cfg(test)]
-mod workspace_read_preview_tests {
-    use super::preview_workspace_read_output;
-
-    #[test]
-    fn bounds_large_workspace_read_context_for_followup_writes() {
-        let content = format!("{}\nlast line\n", "x".repeat(8 * 1024));
-        let preview = preview_workspace_read_output(&content);
-
-        assert!(preview.len() <= 2 * 1024 + "[truncated at line boundary]\n".len());
-        assert!(preview.ends_with("[truncated at line boundary]\n"));
-        assert!(!preview.contains("last line"));
-    }
 }
 
 fn preview_tool_output_with_limit(content: &str, max_chars: usize) -> String {
@@ -16078,6 +16059,16 @@ mod tests {
 
     pub(super) static ENV_LOCK: Mutex<()> = Mutex::new(());
     const TEST_MODEPACK_PINNED_COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    #[test]
+    fn bounds_workspace_read_context_for_followup_writes() {
+        let content = format!("{}\nlast line\n", "x".repeat(8 * 1024));
+        let preview = preview_workspace_read_output(&content);
+
+        assert!(preview.len() <= 2 * 1024 + "[truncated at line boundary]\n".len());
+        assert!(preview.ends_with("[truncated at line boundary]\n"));
+        assert!(!preview.contains("last line"));
+    }
 
     pub(super) fn parse_line(line: &str) -> JsonRpcResponse<Value> {
         serde_json::from_str(&handle_jsonrpc_input_line(line).expect("response line"))
