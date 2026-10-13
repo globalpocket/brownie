@@ -75,3 +75,10 @@ test('bounded implementation leaves are not instructed to re-split their TODO on
   assert.match(prompt, /bounded leaf with explicit patch targets, never rewrite `\.brownie\/todo\.md` to\s+create children solely because the visible context is insufficient\./);
   assert.match(prompt, /either emit one safe patch restricted\s+to those targets, or report a concrete external\/owner blocker/);
 });
+
+test('bounded leaf oversized recovery never redirects to the TODO queue', () => {
+  const controller = fs.readFileSync(path.join(repositoryRoot, 'phase-loop.sh'), 'utf8');
+  assert.match(controller, /oversized or truncated\. The next tool must be exactly one smaller complete `workspace\.write` patch_file/);
+  assert.match(controller, /oversized bounded-leaf repair is active[\s\S]{0,260}do not write `\.brownie\/todo\.md`/);
+  assert.doesNotMatch(controller, /leaf_oversized_repair_leaf_template/);
+});

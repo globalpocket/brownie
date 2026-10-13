@@ -9614,9 +9614,11 @@ leaf_force_write_on_repair = bool(
     and not leaf_allow_bounded_reread_for_exact_patch
     and (
         semantic_repair_requires_exact_write
-        or
-        not leaf_has_oversized_repair
-        or leaf_has_missing_fence_repair
+        # A bounded leaf remains an implementation task after an oversized or
+        # truncated proposal.  Re-splitting it is rejected by the supervisor,
+        # so recovery must use the known target context (or report a concrete
+        # blocker), not redirect to the TODO queue.
+        or leaf_has_oversized_repair
         or (leaf_todo_refinement_rejected_for_implementation and leaf_has_read_preview_for_repair)
         or selected_linux_helper_source_identity_repair
         or selected_linux_fields_source_identity_repair
@@ -9642,9 +9644,9 @@ if (
     and re.search(r"^\s*[-*]\s+\[\s*\]\s+[^:\n]+:\s+Patch only\s+`", selected_todo)
 ):
     leaf_execution_policy_lines = [
-        "- leaf_execution_policy: this selected TODO is already a bounded derived leaf; normally patch the named target file. If repair feedback shows the target patch is repeatedly oversized or input_too_large, patch `.brownie/todo.md` instead to replace this leaf with one smaller concrete follow-up leaf. A missing closing fence alone means the next target-file patch must be smaller and complete.",
-        "- leaf_no_refinement_policy: a bounded leaf with one Patch only target must not be converted into more child TODOs just because the target file is large, unless Previous Repair Feedback shows a repeated oversized/input_too_large workspace.write.",
-        "- leaf_todo_write_forbidden_policy: for a bounded Patch only leaf with no oversized/input_too_large repair feedback, `workspace.write` to `.brownie/todo.md` is not progress and must not be attempted. Use `workspace.read` for the target if needed, then `workspace.write` for the target path, or final-answer a concrete fail-closed blocker.",
+        "- leaf_execution_policy: this selected TODO is already a bounded derived leaf; patch the named target file. If repair feedback shows an oversized, input_too_large, or truncated target patch, retry only one smaller complete target-file hunk using saved exact context, or final-answer a concrete fail-closed blocker.",
+        "- leaf_no_refinement_policy: a bounded leaf with one Patch only target must not be converted into child TODOs because a target patch is large, truncated, or input_too_large.",
+        "- leaf_todo_write_forbidden_policy: for a bounded Patch only leaf, `workspace.write` to `.brownie/todo.md` is not progress and must not be attempted. Use `workspace.read` for the target only when exact context is unavailable, then `workspace.write` for the target path, or final-answer a concrete fail-closed blocker.",
     ]
     if leaf_has_contract_replan_feedback:
         leaf_execution_policy_lines.append(
@@ -9697,20 +9699,10 @@ if (
         leaf_execution_policy_lines.append(
             f"- leaf_target_read_missing_repair_policy: previous repair context did not contain a `workspace.read` preview for `{selected_leaf_target_path}`; do not invent `old_text` from stale TODO previews. The next tool may be exactly one `workspace.read` for `{selected_leaf_target_path}` before any `workspace.write`."
         )
-    elif leaf_has_oversized_repair and not selected_linux_helper_source_identity_repair and not selected_linux_fields_source_identity_repair and not selected_supply_chain_clean_source_guard_repair:
+    elif leaf_has_oversized_repair:
         leaf_execution_policy_lines.append(
-            f"- leaf_oversized_repair_next_tool_policy: the previous target-file patch was oversized or truncated. The next tool must be exactly one `workspace.write` patch_file for `.brownie/todo.md` that replaces the full selected TODO block `{selected_parent_id or '<selected leaf id>'}` with one smaller concrete follow-up leaf. The new leaf id must be different from `{selected_parent_id or '<selected leaf id>'}`, and `new_text` must not keep the selected TODO pending."
+            f"- leaf_oversized_repair_next_tool_policy: the previous target-file patch was oversized or truncated. The next tool must be exactly one smaller complete `workspace.write` patch_file for `{selected_leaf_target_path or '<selected Patch only target>'}` using saved exact target context; do not write `.brownie/todo.md`. If no complete bounded hunk is visible, final-answer a concrete external/owner blocker naming the missing fact."
         )
-        leaf_execution_policy_lines.append(
-            f"- leaf_oversized_repair_leaf_template: use a new id like `{selected_parent_id or 'E-16'}-small-step`; first line `- [ ] {selected_parent_id or 'E-16'}-small-step: Patch only `{selected_leaf_target_path or '<selected Patch only target>'}` to update one named helper or one named evidence field:` then `Route: implementation.`, `Source TODO: {selected_parent_id or '<selected leaf id>'}.`, `Depends on: <none>.`, one concrete completion condition, forbidden changes, and one bounded verification command."
-        )
-        if selected_stateful_soak_oversized_repair:
-            leaf_execution_policy_lines.append(
-                "- stateful_soak_leaf_target_policy: for E-16d, the smaller follow-up leaf must target the existing `buildSoakSection` function or one helper called from it. Do not target, create, rename, or copy any `soakEvidenceFixture*` constant; those fixture literals are stale failed-output debris and are not the implementation target."
-            )
-            leaf_execution_policy_lines.append(
-                "- stateful_soak_leaf_template: create one leaf such as `E-16d-stateful-soak-build-step-records`: Patch only `scripts/release-runtime-operational-evidence.mjs` to make `buildSoakSection` record one required stateful step id from `requiredStatefulSoakStepIds`; keep Verification to `pnpm --workspace-root guard:runtime-operational-evidence:test`."
-            )
     else:
         if selected_leaf_is_test_only:
             leaf_execution_policy_lines.append(
@@ -10097,8 +10089,11 @@ if repair_feedback:
                     repair_feedback_lines.append("- duplicate_todo_contract_repair_policy: keep top-level `old_text`/`new_text`. Do not use `hunks` or `occurrence` for `.brownie/todo.md`; use the exact duplicate block from Focused TODO Queue Repair Context as old_text and an empty new_text. The runtime selects the duplicate occurrence after validating the top-level contract.")
     missing_closing_fence = any(isinstance(item, dict) and str(item.get("code", "")).lower() == "missing_closing_fence" for item in (verification.get("tool_intent_rejections", []) if isinstance(verification.get("tool_intent_rejections"), list) else []))
     if missing_closing_fence:
-        repair_feedback_lines.append("- truncated_write_repair_policy: the previous workspace.write JSON was too large and lost the closing fence; do not retry a large `new_text`. For `.brownie/todo.md`, emit exactly one compact replacement leaf under 900 characters, complete the JSON, and close the `brownie-tool-intent` fence. Do not copy the broad selected TODO body into `new_text`.")
-        repair_feedback_lines.append("- truncated_implementation_patch_policy: for implementation files, do not retry a large `old_text`/`new_text` block. Use one small complete syntactic hunk under about 1200 JSON characters. Do not patch unrelated large setup/parsing functions unless the selected TODO names them. If the safe hunk would be larger, patch `.brownie/todo.md` with one smaller follow-up TODO instead.")
+        if leaf_execution_policy_lines:
+            repair_feedback_lines.append(f"- truncated_bounded_leaf_repair_policy: the previous workspace.write JSON was too large and lost the closing fence. Do not write `.brownie/todo.md` or re-split this bounded leaf. Retry exactly one small complete syntactic hunk for `{selected_leaf_target_path or '<selected leaf target>'}` under about 1200 JSON characters and close the `brownie-tool-intent` fence; if no such hunk is visible, final-answer a concrete external/owner blocker.")
+        else:
+            repair_feedback_lines.append("- truncated_write_repair_policy: the previous workspace.write JSON was too large and lost the closing fence; do not retry a large `new_text`. For `.brownie/todo.md`, emit exactly one compact replacement leaf under 900 characters, complete the JSON, and close the `brownie-tool-intent` fence. Do not copy the broad selected TODO body into `new_text`.")
+            repair_feedback_lines.append("- truncated_implementation_patch_policy: for implementation files, do not retry a large `old_text`/`new_text` block. Use one small complete syntactic hunk under about 1200 JSON characters. Do not patch unrelated large setup/parsing functions unless the selected TODO names them. If the safe hunk would be larger, patch `.brownie/todo.md` with one smaller follow-up TODO instead.")
         if selected_linux_helper_source_identity_repair:
             repair_feedback_lines.append("- linux_artifact_helper_exact_repair_policy: retry with exactly one fenced `brownie-tool-intent` JSON block containing one `workspace.write` patch_file request to `scripts/release-linux-x64-docker-artifact.mjs`; use the exact old_text/new_text below and do not include any other functions or TODO edits.")
             repair_feedback_lines.append("- linux_artifact_helper_old_text_json: \"function sha256File(filePath) {\\n  return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')}`;\\n}\\n\"")
@@ -10530,39 +10525,7 @@ elif harness_has_terminal_repair_required and selected_leaf_target_path:
     actionable_read_target = selected_leaf_adjacent_test_path or selected_leaf_target_path
     read_batch_policy_line = f"- read_batch_policy: actionable terminal repair is active. If completed_workspace_reads is 0, request exactly one bounded `workspace.read` for `{actionable_read_target}` to recover schema/verification context; after that, request `workspace.write` for `{selected_leaf_target_path}` or a concrete fail-closed blocker."
 elif leaf_has_oversized_repair and not leaf_has_missing_fence_repair and leaf_execution_policy_lines:
-    base_snapshot_for_prompt = "<omitted during oversized leaf repair to prevent prompt text from being copied into workspace.write old_text>"
-    exact_selected_block_json = json.dumps(selected_todo.rstrip(), ensure_ascii=False)
-    stateful_soak_extra_rules = []
-    if selected_stateful_soak_oversized_repair:
-        stateful_soak_extra_rules = [
-            "",
-            "E-16d stateful soak repair rules:",
-            "- The previous output targeted stale `soakEvidenceFixture*` constants and became oversized. Do not mention, target, create, rename, or copy `soakEvidenceFixture`, `soakEvidenceFixtureDuplicate`, `soakEvidenceFixtureDuplicate2`, or `soakEvidenceFixtureDuplicate3` in `new_text`.",
-            "- The replacement TODO must target `buildSoakSection` in `scripts/release-runtime-operational-evidence.mjs` or one helper called only from `buildSoakSection`.",
-            "- The replacement TODO must name exactly one required stateful behavior: task_state_transition, ledger_workspace_consistency, resume_replay_handling, duplicate_side_effect_rejection, process_loss_recovery, or finite_convergence.",
-            "- Use `Verification: run `pnpm --workspace-root guard:runtime-operational-evidence:test`.`",
-        ]
-    todo_snapshot_for_prompt = "\n".join([
-        "# Focused Oversized Leaf Repair Context",
-        "",
-        "The previous target-file patch was too large or truncated.",
-        "Patch `.brownie/todo.md` only, replacing the selected TODO with exactly one smaller unchecked follow-up leaf.",
-        "",
-        "Exact selected TODO block JSON to copy verbatim into `old_text`:",
-        exact_selected_block_json,
-        "",
-        "Required repair rules:",
-        "- `old_text` must be exactly the JSON string above after decoding, with no manually reconstructed lines.",
-        "- `new_text` must contain exactly one unchecked TODO leaf under 900 characters.",
-        f"- The new leaf id must be different from `{selected_parent_id or '<selected leaf id>'}`.",
-        f"- `Source TODO:` in the new leaf must be `{selected_parent_id or '<selected leaf id>'}`.",
-        f"- The first line must name exactly one concrete repository path in backticks, preferably `{selected_leaf_target_path or '<selected Patch only target>'}`.",
-        "- Do not copy the broad selected TODO first line into `new_text`.",
-        "- Do not patch implementation files in this repair turn.",
-        "- Do not include Queue protocol, Base Phase Loop Prompt, previous workspace read previews, or fixture bodies in old_text/new_text.",
-        *stateful_soak_extra_rules,
-    ])
-    read_batch_policy_line = "- read_batch_policy: oversized leaf repair is active, so do not request `workspace.read`; request exactly one `workspace.write` patch to `.brownie/todo.md` using Focused Oversized Leaf Repair Context."
+    read_batch_policy_line = f"- read_batch_policy: oversized bounded-leaf repair is active. Reuse saved exact context and request exactly one small `workspace.write` patch for `{selected_leaf_target_path or '<selected Patch only target>'}`; do not write `.brownie/todo.md`. If exact context cannot support one complete hunk, report a concrete external/owner blocker."
 
 harness_feedback_lines = []
 if harness_feedback:

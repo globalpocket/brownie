@@ -1579,7 +1579,7 @@ fn format_bdk_control_packet(
         state.name(),
         completed_reads,
         state.next_output_contract(goal_selects_bounded_patch_leaf(goal)),
-        state.efficiency_rule(),
+        state.efficiency_rule(goal_selects_bounded_patch_leaf(goal)),
     )
 }
 
@@ -1632,6 +1632,9 @@ impl BdkExecutionState {
             Self::TodoQueueRepair => {
                 "request exactly one workspace.write patch_file for `.brownie/todo.md` using top-level `old_text` and `new_text` input fields; do not use `hunks` or `occurrence`. For self-source repair use one tiny complete-line replacement. For duplicate-only repair, use the exact duplicate block supplied by the focused repair context as old_text and an empty new_text; the runtime selects the duplicate occurrence after validating the top-level contract. Do not invent TODO block text or include Queue protocol, Base Phase Loop Prompt, unrelated headings, or implementation files"
             }
+            Self::OversizedWriteRecovery if bounded_leaf => {
+                "do not repeat the oversized workspace.write. Reuse completed workspace.read evidence and request exactly one smaller complete workspace.write patch_file for the named target with one complete hunk; keep the whole fenced JSON under about 1200 characters and the input below the parser limit. If no complete bounded target hunk is visible, report a concrete external/owner blocker naming the missing fact. Never patch `.brownie/todo.md` to re-split this bounded leaf"
+            }
             Self::OversizedWriteRecovery => {
                 "do not repeat the oversized workspace.write. Reuse completed workspace.read evidence and request exactly one workspace.write patch_file for the named target with one complete hunk; keep the whole fenced JSON under about 1200 characters and the input below the parser limit. If no complete bounded target hunk is visible, request exactly one workspace.write patch_file for `.brownie/todo.md`: old_text must be the full selected TODO block, and new_text must contain exactly one smaller unchecked leaf TODO under 1200 characters. The leaf must use a new unique TODO id and include `Route:`, `Source TODO:` referencing the selected TODO id, `Depends on:`, `Completion condition:`, `Forbidden changes:`, and `Verification:`. The leaf must name at most one target file and one verification command. new_text must not contain the selected TODO first line, selected TODO id, the original broad TODO title, multiple TODO items, or implementation patch content"
             }
@@ -1645,7 +1648,7 @@ impl BdkExecutionState {
         }
     }
 
-    fn efficiency_rule(self) -> &'static str {
+    fn efficiency_rule(self, bounded_leaf: bool) -> &'static str {
         match self {
             Self::ContextPlan => {
                 "read one exact file first; move to implement_patch or a narrower follow-up instead of batching broad reads"
@@ -1658,6 +1661,9 @@ impl BdkExecutionState {
             }
             Self::TodoQueueRepair => {
                 "repair the TODO queue before implementation work; use the smallest visible exact old_text/new_text hunk and avoid large replacement JSON"
+            }
+            Self::OversizedWriteRecovery if bounded_leaf => {
+                "the previous workspace.write input exceeded parser limits; one smaller complete target hunk based on completed read evidence, or a concrete external/owner blocker when no complete hunk is visible, is progress. Re-splitting the bounded leaf through `.brownie/todo.md`, repeating the large patch, or multiple writes is no progress"
             }
             Self::OversizedWriteRecovery => {
                 "the previous workspace.write input exceeded parser limits; one smaller complete target hunk based on completed read evidence, or one short leaf TODO only when the target hunk is not visible, is progress. Multiple writes, repeating the large patch, or keeping the selected broad TODO pending is no progress"
@@ -2375,7 +2381,9 @@ mod tests {
         assert!(prompt.messages[1]
             .content
             .contains("If no complete bounded target hunk is visible"));
-        assert!(prompt.messages[1].content.contains("new unique TODO id"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("Never patch `.brownie/todo.md` to re-split this bounded leaf"));
     }
 
     #[test]
@@ -2411,9 +2419,9 @@ mod tests {
         assert!(prompt.messages[1]
             .content
             .contains("state: oversized_write_recovery"));
-        assert!(prompt.messages[1]
-            .content
-            .contains("keeping the selected broad TODO pending is no progress"));
+        assert!(prompt.messages[1].content.contains(
+            "Re-splitting the bounded leaf through `.brownie/todo.md`, repeating the large patch, or multiple writes is no progress"
+        ));
         assert!(!prompt.messages[1]
             .content
             .contains("state: blocker_or_write"));

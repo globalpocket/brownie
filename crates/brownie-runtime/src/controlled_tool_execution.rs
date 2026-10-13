@@ -3314,20 +3314,11 @@ pub(super) fn todo_md_workspace_write_rejection_reason(
         }
         return None;
     }
-    if record
-        .goal
-        .contains("- leaf_oversized_repair_next_tool_policy:")
-    {
-        // The supervisor has established that the selected bounded leaf cannot carry
-        // the required patch in one proposal. The decomposition validator below still
-        // requires a full selected-block replacement with bounded, verified leaves.
-        return todo_decomposition_workspace_write_rejection_reason(record, input);
-    }
     if record.goal.contains("- leaf_todo_write_forbidden_policy:")
         && !record.goal.contains("- leaf_contract_replan_policy:")
     {
         return Some(
-            "Bounded Patch only leaves must not rewrite the live TODO queue unless the supervisor explicitly authorizes a contract replan or oversized-patch recovery.",
+            "Bounded Patch only leaves must not rewrite the live TODO queue unless the supervisor explicitly authorizes a contract replan.",
         );
     }
     if verification_failure_requires_target_file_repair(&record.goal) {
@@ -7193,13 +7184,13 @@ mod mcp_approval_lock_tests {
         assert_eq!(
             reason,
             Some(
-                "Bounded Patch only leaves must not rewrite the live TODO queue unless the supervisor explicitly authorizes a contract replan or oversized-patch recovery."
+                "Bounded Patch only leaves must not rewrite the live TODO queue unless the supervisor explicitly authorizes a contract replan."
             )
         );
     }
 
     #[test]
-    fn oversized_leaf_repair_allows_a_validated_smaller_todo_replacement() {
+    fn oversized_bounded_leaf_repair_still_denies_todo_replacement() {
         let mut record = test_task_record();
         record.goal = "# Brownie Phase Loop Effective Prompt\n\n- leaf_todo_write_forbidden_policy: bounded Patch only leaves must not rewrite the TODO queue without an exception.\n- leaf_oversized_repair_next_tool_policy: replace the full selected TODO block with one smaller concrete follow-up leaf.\n\n## Selected TODO\n\n- [ ] E-23a-release-artifact-portable-archive-leaf-01: Patch only `scripts/release-local-artifact.mjs`:\n  Route: implementation.\n  Source TODO: E-23a-release-artifact-portable-archive.\n  Depends on: <none>.\n  Completion condition: the release artifact can be archived.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run `pnpm --workspace-root check`.\n".to_string();
 
@@ -7213,7 +7204,12 @@ mod mcp_approval_lock_tests {
             }),
         );
 
-        assert_eq!(reason, None, "{reason:?}");
+        assert_eq!(
+            reason,
+            Some(
+                "Bounded Patch only leaves must not rewrite the live TODO queue unless the supervisor explicitly authorizes a contract replan."
+            )
+        );
     }
 
     #[test]
