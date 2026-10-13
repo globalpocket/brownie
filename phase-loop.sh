@@ -9614,6 +9614,10 @@ leaf_force_write_on_repair = bool(
     and not leaf_allow_bounded_reread_for_exact_patch
     and (
         semantic_repair_requires_exact_write
+        # Keep the established direct-write path for ordinary repairs with
+        # saved target context. The oversized branch below is additive, not a
+        # reason to send non-oversized repairs back through another read.
+        or not leaf_has_oversized_repair
         # A bounded leaf remains an implementation task after an oversized or
         # truncated proposal.  Re-splitting it is rejected by the supervisor,
         # so recovery must use the known target context (or report a concrete

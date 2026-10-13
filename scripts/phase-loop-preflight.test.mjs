@@ -82,3 +82,9 @@ test('bounded leaf oversized recovery never redirects to the TODO queue', () => 
   assert.match(controller, /oversized bounded-leaf repair is active[\s\S]{0,260}do not write `\.brownie\/todo\.md`/);
   assert.doesNotMatch(controller, /leaf_oversized_repair_leaf_template/);
 });
+
+test('ordinary leaf repair keeps the direct-write path when target context is available', () => {
+  const controller = fs.readFileSync(path.join(repositoryRoot, 'phase-loop.sh'), 'utf8');
+  assert.match(controller, /or not leaf_has_oversized_repair/);
+  assert.match(controller, /leaf_required_next_tool_policy: the next tool must be `workspace\.write`/);
+});

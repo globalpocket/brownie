@@ -2179,6 +2179,9 @@ cat > "$repair_feedback_state/todo-claims/repair-feedback.json" <<'EOF'
     "completed": false,
     "expected": "sections.soak_test.status=satisfied",
     "reason": "semantic_completion_not_satisfied",
+    "workspace_read_previews": [
+      "workspace.read: completed path=scripts/release-runtime-operational-evidence.mjs preview=export const operationalEvidence = {};"
+    ],
     "results": [
       {
         "command": "pnpm --workspace-root guard:runtime-operational-evidence:test",
@@ -2261,6 +2264,8 @@ assert "state: `verify_or_repair`" in prompt, prompt
 assert "## Previous Repair Feedback" in prompt, prompt
 assert "semantic_completion_not_satisfied" in prompt, prompt
 assert "sections.soak_test.status=satisfied" in prompt, prompt
+assert "leaf_required_next_tool_policy: the next tool must be `workspace.write` for `scripts/release-runtime-operational-evidence.mjs`" in prompt, prompt
+assert "leaf_initial_read_policy" not in prompt, prompt
 PY
 
 contract_replan_feedback_state="$(mktemp -d)"

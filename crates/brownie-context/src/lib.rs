@@ -1584,9 +1584,16 @@ fn format_bdk_control_packet(
 }
 
 fn goal_selects_bounded_patch_leaf(goal: &str) -> bool {
-    goal.contains("## Selected TODO")
-        && goal.contains("Patch only `")
-        && !goal.contains("Route: todo-decomposition")
+    let Some((_, selected_todo_and_following_sections)) = goal.split_once("## Selected TODO")
+    else {
+        return false;
+    };
+    let selected_todo = selected_todo_and_following_sections
+        .split("\n## ")
+        .next()
+        .unwrap_or(selected_todo_and_following_sections);
+
+    selected_todo.contains("Patch only `") && !selected_todo.contains("Route: todo-decomposition")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2384,6 +2391,13 @@ mod tests {
         assert!(prompt.messages[1]
             .content
             .contains("Never patch `.brownie/todo.md` to re-split this bounded leaf"));
+    }
+
+    #[test]
+    fn bounded_leaf_selection_ignores_decomposition_routes_in_queue_snapshots() {
+        let goal = "# Brownie Phase Loop Effective Prompt\n\n## Selected TODO\n\n- [ ] E-23a: Patch only `scripts/release-local-artifact.mjs`.\n  Route: implementation.\n\n## TODO Queue Snapshot\n\n- [x] TODO-decompose-old: historical item.\n  Route: todo-decomposition.\n";
+
+        assert!(goal_selects_bounded_patch_leaf(goal));
     }
 
     #[test]
