@@ -19,19 +19,19 @@ selected TODO, the next assistant tool intent must do one of these two things:
    patch; or
 2. emit a bounded `workspace.write` proposal that rewrites the selected
    `todo.md` item into smaller concrete follow-up TODOs naming exact files,
-   missing evidence, or owner decisions. This is allowed even for a selected
-   TODO that names a concrete implementation file when the completed
-   `workspace.read` result does not expose the exact small `old_text` needed
-   for a safe patch.
+   missing evidence, or owner decisions. This is allowed only when the
+   selected TODO is not already a bounded leaf with explicit patch targets.
 
 Do not answer with only an implementation plan after target files have already
 been read. Do not request another broad discovery read such as `.`, a
 directory, or a repeated `package.json`/workflow read. If the target file was
-read and the patch is clear, write the patch. If the selected TODO names a
-concrete implementation file but the visible read result is insufficient to
-copy a short exact `old_text`, do not invent surrounding code. Instead patch
-`.brownie/todo.md` to replace the selected TODO with smaller context-bounded
-follow-up TODOs naming the exact symbol, section, test, or evidence needed.
+read and the patch is clear, write the patch. When the selected TODO is a
+bounded leaf with explicit patch targets, never rewrite `.brownie/todo.md` to
+create children solely because the visible context is insufficient. Read the
+small missing target-file context and then either emit one safe patch restricted
+to those targets, or report a concrete external/owner blocker with the missing
+fact and why that target cannot satisfy its completion condition. Only a
+non-leaf TODO may be replaced with smaller context-bounded follow-up TODOs.
 
 ## Authority
 

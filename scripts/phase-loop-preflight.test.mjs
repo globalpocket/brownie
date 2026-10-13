@@ -4,9 +4,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import { duplicateJsonKeys, validatePhaseLoopPreflight } from './phase-loop-preflight.mjs';
+
+const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
 
 function makeRepo() {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-phase-loop-preflight-'));
@@ -64,4 +67,11 @@ test('accepts Brownie-managed state changes when only an owner blocker remains',
   fs.writeFileSync(path.join(repo, '.brownie/release-evidence/managed-state.json'), '{"generated":true}\n');
   const result = validatePhaseLoopPreflight({ repo, skipCommands: true });
   assert(!result.errors.some((error) => error.code === 'dirty_delivery_required'), JSON.stringify(result.errors));
+});
+
+test('bounded implementation leaves are not instructed to re-split their TODO on missing patch context', () => {
+  const prompt = fs.readFileSync(path.join(repositoryRoot, 'phase-loop.md'), 'utf8');
+  assert.match(prompt, /This is allowed only when the\s+selected TODO is not already a bounded leaf with explicit patch targets\./);
+  assert.match(prompt, /bounded leaf with explicit patch targets, never rewrite `\.brownie\/todo\.md` to\s+create children solely because the visible context is insufficient\./);
+  assert.match(prompt, /either emit one safe patch restricted\s+to those targets, or report a concrete external\/owner blocker/);
 });
