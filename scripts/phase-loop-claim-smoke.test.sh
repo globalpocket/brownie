@@ -77,7 +77,48 @@ run_with_timeout() {
     sleep 1
     elapsed=$((elapsed + 1))
   done
-  wait "$child_pid"
+  local child_status=0
+  if wait "$child_pid"; then
+    child_status=0
+  else
+    child_status="$?"
+  fi
+  if [ "$child_status" -ne 0 ]; then
+    echo "phase-loop claim smoke command failed exit=$child_status: $*" >&2
+    if [ -n "${PHASE_LOOP_STATE_DIR:-}" ]; then
+      for diagnostic_file in status.json progress-state.json; do
+        if [ -f "$PHASE_LOOP_STATE_DIR/$diagnostic_file" ]; then
+          echo "--- $PHASE_LOOP_STATE_DIR/$diagnostic_file ---" >&2
+          cat "$PHASE_LOOP_STATE_DIR/$diagnostic_file" >&2
+        fi
+      done
+      latest_stdout="$(find "$PHASE_LOOP_STATE_DIR/runs" -name '*.stdout.log' -type f -print 2>/dev/null | LC_ALL=C sort | tail -n 1)"
+      latest_stderr="$(find "$PHASE_LOOP_STATE_DIR/runs" -name '*.stderr.log' -type f -print 2>/dev/null | LC_ALL=C sort | tail -n 1)"
+      for diagnostic_file in "$latest_stdout" "$latest_stderr"; do
+        if [ -n "$diagnostic_file" ] && [ -f "$diagnostic_file" ]; then
+          echo "--- $diagnostic_file (tail) ---" >&2
+          tail -n 80 "$diagnostic_file" >&2
+        fi
+      done
+      if [ -f "$PHASE_LOOP_STATE_DIR/logs/supervisor.log" ]; then
+        echo "--- $PHASE_LOOP_STATE_DIR/logs/supervisor.log (tail) ---" >&2
+        tail -n 80 "$PHASE_LOOP_STATE_DIR/logs/supervisor.log" >&2
+      fi
+    fi
+  fi
+  if [ -n "${CLAIM_SMOKE_REPO_TODO_SHA256:-}" ]; then
+    local current_todo_sha256
+    local current_breakdown_sha256
+    current_todo_sha256="$(shasum "$REPO_ROOT/.brownie/todo.md" | awk '{print $1}')"
+    current_breakdown_sha256="$(shasum "$REPO_ROOT/.brownie/todo-breakdown.md" | awk '{print $1}')"
+    local current_private_state_sha256
+    current_private_state_sha256="$(claim_smoke_private_state_sha256)"
+    if [ "$current_todo_sha256" != "$CLAIM_SMOKE_REPO_TODO_SHA256" ] || [ "$current_breakdown_sha256" != "$CLAIM_SMOKE_REPO_BREAKDOWN_SHA256" ] || [ "$current_private_state_sha256" != "$CLAIM_SMOKE_REPO_PRIVATE_STATE_SHA256" ]; then
+      echo "phase-loop claim smoke leaked temporary controller state into the repository: todo=${PHASE_LOOP_TODO:-<default>} breakdown=${PHASE_LOOP_TODO_BREAKDOWN:-<default>} workspace=${PHASE_LOOP_WORKSPACE_ROOT:-<default>} state=${PHASE_LOOP_STATE_DIR:-<default>}" >&2
+      return 97
+    fi
+  fi
+  return "$child_status"
 }
 
 wait_for_pid_exit() {
@@ -100,9 +141,12 @@ wait_for_pid_exit() {
 }
 
 assert_contains "$PHASE_LOOP" "phase-loop-todo-queue-integrity\\.mjs"
-assert_contains "$PHASE_LOOP" 'phase-loop-task-ledger\.mjs" record-trajectory --repo "\$ROOT_DIR"'
+assert_contains "$PHASE_LOOP" 'phase-loop-task-ledger\.mjs" record-trajectory --repo "\$PHASE_LOOP_WORKSPACE_ROOT"'
+assert_not_contains "$PHASE_LOOP" 'phase-loop-task-ledger\.mjs" record-trajectory --repo "\$ROOT_DIR"'
 assert_not_contains "$PHASE_LOOP" 'phase-loop-task-ledger\.mjs" record-trajectory --repo "\$PHASE_LOOP_STATE_DIR"'
 assert_not_contains "$PHASE_LOOP" 'phase-loop-task-ledger\.mjs" record-trajectory --repo "\$STATE_DIR"'
+assert_contains "$PHASE_LOOP" 'path == ".brownie/private" or path.startswith\(".brownie/private/"\)'
+assert_contains "$PHASE_LOOP" 'and path not in controller_private_paths'
 assert_contains "$PHASE_LOOP" "todo_queue_integrity_failed_before_claim"
 assert_contains "$PHASE_LOOP" "PHASE_LOOP_TODO_QUEUE_INTEGRITY_FAILED"
 assert_contains "$PHASE_LOOP" "baseline_diff_files"
@@ -124,6 +168,30 @@ assert_contains "$PHASE_LOOP" "Every generated leaf ID must be unique within new
 assert_contains "$PHASE_LOOP" "A leaf must never depend on itself"
 assert_contains "$PHASE_LOOP" "distinct prerequisite TODO ID already present in the live queue"
 assert_contains "$PHASE_LOOP" 'never generate a read-only `Read`, `Inspect`, or `Extract` leaf'
+
+claim_smoke_private_state_sha256() {
+  local state_root="$REPO_ROOT/.brownie/private/phase-loop"
+  if [ ! -d "$state_root" ]; then
+    printf '%s\n' absent
+    return 0
+  fi
+  find "$state_root" -type f -print | LC_ALL=C sort | while IFS= read -r state_file; do
+    shasum "$state_file"
+  done | shasum | awk '{print $1}'
+}
+
+# Every scenario below must confine queue mutations to its own TODO/breakdown
+# paths.  A smoke fixture must never mutate the repository queue that CI later
+# validates, even when the scenario exits through a replan or repair path.
+CLAIM_SMOKE_REPO_TODO_SHA256="$(shasum "$REPO_ROOT/.brownie/todo.md" | awk '{print $1}')"
+CLAIM_SMOKE_REPO_BREAKDOWN_SHA256="$(shasum "$REPO_ROOT/.brownie/todo-breakdown.md" | awk '{print $1}')"
+CLAIM_SMOKE_REPO_PRIVATE_STATE_SHA256="$(claim_smoke_private_state_sha256)"
+# Test invocations always use temporary queue/state paths; their durable
+# controller store must be isolated as well.  Otherwise phase-loop's default
+# store rooted at this repository can leave replan records that alter later
+# repository guards despite an unchanged fixture TODO.
+CLAIM_SMOKE_BROWNIE_STORE_ROOT="$(mktemp -d)"
+export PHASE_LOOP_BROWNIE_STORE_ROOT="$CLAIM_SMOKE_BROWNIE_STORE_ROOT"
 
 test_workspace="$(mktemp -d)"
 git -C "$test_workspace" init -b main >/dev/null
@@ -608,10 +676,12 @@ assert claim["selected_todo"].startswith("- [ ] B-01: durable claim task"), clai
 assert claim["queue_generation"] == 1, claim
 assert claim["queue_fingerprint"] == queue_state["fingerprint"], (claim, queue_state)
 assert queue_state["generation"] == 1, queue_state
-assert progress_state["classification"] == "non_progress_success", progress_state
-assert progress_state["meaningful_progress"] is False, progress_state
+assert progress_state["classification"] == "progress", progress_state
+assert progress_state["meaningful_progress"] is True, progress_state
+assert progress_state["continuation_required"] is False, progress_state
 assert progress_state["progress_projection"]["closure"] == "budget_exhausted", progress_state
-assert progress_state["progress_projection"]["next_action"] == "inspect_progress_overview", progress_state
+assert progress_state["progress_projection"]["stop_class"] == "continuation_required", progress_state
+assert progress_state["progress_projection"]["controller_action"] == "resume", progress_state
 assert prompt_meta["selected_todo_complete"] is False, prompt_meta
 assert prompt_meta["selected_todo_completion_reason"] == "selected_todo_still_unchecked", prompt_meta
 assert prompt_meta["context_hints"][:2] == [
@@ -659,6 +729,8 @@ PY
 state_terminal_no_eligible="$(mktemp -d)"
 prompt_terminal_no_eligible="$(mktemp)"
 todo_terminal_no_eligible="$(mktemp)"
+todo_breakdown_terminal_no_eligible="$(mktemp)"
+root_breakdown_before="$(shasum "$REPO_ROOT/.brownie/todo-breakdown.md" | awk '{print $1}')"
 printf 'base prompt\n' > "$prompt_terminal_no_eligible"
 printf -- '- [ ] E-15a-redaction-guard: implement concrete guard task\n' > "$todo_terminal_no_eligible"
 
@@ -666,12 +738,14 @@ set +e
 PHASE_LOOP_STATE_DIR="$state_terminal_no_eligible" \
 PHASE_LOOP_PROMPT="$prompt_terminal_no_eligible" \
 PHASE_LOOP_TODO="$todo_terminal_no_eligible" \
+PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_terminal_no_eligible" \
 BROWNIE_BIN="$fake_brownie_terminal_no_eligible" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 terminal_no_eligible_exit="$?"
 set -e
 test "$terminal_no_eligible_exit" = "76"
+test "$(shasum "$REPO_ROOT/.brownie/todo-breakdown.md" | awk '{print $1}')" = "$root_breakdown_before"
 python3 - "$state_terminal_no_eligible/status.json" "$state_terminal_no_eligible/progress-state.json" "$state_terminal_no_eligible/todo-claims/current.json" "$state_terminal_no_eligible/todo-claims/repair-feedback.json" <<'PY'
 import json
 import sys
@@ -1783,6 +1857,7 @@ git -C "$empty_queue_guard_workspace" config user.name Brownie
 git -C "$empty_queue_guard_workspace" config user.email brownie@example.invalid
 mkdir -p "$empty_queue_guard_workspace/.brownie" "$empty_queue_guard_workspace/docs/architecture" "$empty_queue_guard_workspace/scripts" "$empty_queue_guard_workspace/docs"
 cp "$REPO_ROOT/scripts/guard-todo-decomposition.mjs" "$empty_queue_guard_workspace/scripts/guard-todo-decomposition.mjs"
+cp "$REPO_ROOT/scripts/phase-loop-todo-state.mjs" "$empty_queue_guard_workspace/scripts/phase-loop-todo-state.mjs"
 printf '{"scripts":{}}\n' > "$empty_queue_guard_workspace/package.json"
 printf '{"product_ready":false}\n' > "$empty_queue_guard_workspace/docs/architecture/phase-value-manifest.json"
 cat > "$empty_queue_guard_workspace/docs/golden.js" <<'EOF'
@@ -1845,6 +1920,7 @@ cp "$REPO_ROOT/package.json" "$verified_noop_e19_workspace/package.json"
 cp "$REPO_ROOT/extensions/brownie-vsix/package.json" "$verified_noop_e19_workspace/extensions/brownie-vsix/package.json"
 cp "$REPO_ROOT/scripts/phase-loop-claim-smoke.test.sh" "$verified_noop_e19_workspace/scripts/phase-loop-claim-smoke.test.sh"
 cp "$REPO_ROOT/scripts/guard-todo-decomposition.mjs" "$verified_noop_e19_workspace/scripts/guard-todo-decomposition.mjs"
+cp "$REPO_ROOT/scripts/phase-loop-todo-state.mjs" "$verified_noop_e19_workspace/scripts/phase-loop-todo-state.mjs"
 printf '{"product_ready":false}\n' > "$verified_noop_e19_workspace/docs/architecture/phase-value-manifest.json"
 cat > "$verified_noop_e19_workspace/.brownie/todo.md" <<'EOF'
 - [ ] E-19a-prevent-empty-queue-completion: Patch only `phase-loop.sh` so completed TODO removal is reverted when the resulting `.brownie/todo.md` fails the decomposition guard:
@@ -1917,6 +1993,7 @@ release_ops_workspace="$(mktemp -d)"
 mkdir -p "$release_ops_workspace/.brownie/release-evidence" "$release_ops_workspace/docs/architecture" "$release_ops_workspace/scripts"
 cp "$REPO_ROOT/phase-loop.sh" "$release_ops_workspace/phase-loop.sh"
 cp "$REPO_ROOT/scripts/guard-todo-decomposition.mjs" "$release_ops_workspace/scripts/guard-todo-decomposition.mjs"
+cp "$REPO_ROOT/scripts/phase-loop-todo-state.mjs" "$release_ops_workspace/scripts/phase-loop-todo-state.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-todo-evaluator.mjs" "$release_ops_workspace/scripts/phase-loop-todo-evaluator.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-release-ops-blocker.mjs" "$release_ops_workspace/scripts/phase-loop-release-ops-blocker.mjs"
 printf '{"scripts":{}}\n' > "$release_ops_workspace/package.json"
@@ -2379,6 +2456,8 @@ assert "must_not_complete_by_todo_refinement_only" in phase_loop, phase_loop
 assert "selected_target_implementation_required" in phase_loop, phase_loop
 assert "try_no_eligible_multitarget_leaf_split_fallback" in phase_loop, phase_loop
 assert "deterministic_no_eligible_multitarget_split" in phase_loop, phase_loop
+assert "no_eligible_multitarget_leaf_split_pre_guard_exit" in phase_loop, phase_loop
+assert '"reason": "selected_todo_not_in_queue"' in phase_loop, phase_loop
 assert "split_multitarget_or_force_bounded_workspace_write" in phase_loop, phase_loop
 assert "TODO guard failure takes precedence over public-harness actionable-terminal feedback" in phase_loop, phase_loop
 assert "harness_actionable_terminal_policy: suppressed because TODO queue repair is active" in phase_loop, phase_loop

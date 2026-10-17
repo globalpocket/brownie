@@ -92,6 +92,530 @@ function runRepair(root) {
   });
 }
 
+test('rebaselines sibling leaves when verification dependencies form a cycle and Create-only targets already exist', () => {
+  const root = makeTempRepo();
+  try {
+    fs.mkdirSync(path.join(root, '.github/workflows'), { recursive: true });
+    fs.mkdirSync(path.join(root, '.brownie/private/phase-loop/todo-completions'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.github/workflows/release.yml'), 'name: fixture\n');
+    fs.writeFileSync(path.join(root, '.brownie/private/phase-loop/todo-completions/e23a.json'), JSON.stringify({
+      selected_todo_id: 'E-23a-release-artifact-portable-archive'
+    }));
+    const sourceId = 'E-23b-release-artifact-download-roundtrip';
+    const leaf = (suffix, target, dependencies, verificationTarget = 'scripts/release-artifact-roundtrip-e2e.test.mjs') => `- [ ] ${sourceId}-target-${suffix}: Create only \`${target}\` for the downloaded release-artifact roundtrip:
+  Route: implementation.
+  Source TODO: ${sourceId}.
+  Depends on: ${dependencies.length > 0 ? dependencies.join(', ') : '<none>'}.
+  Completion condition: Create only \`${target}\` with a bounded downloaded-artifact verification path.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`node --test ${verificationTarget}\`.`;
+    const target01 = `${sourceId}-target-01`;
+    const target02 = `${sourceId}-target-02`;
+    const target03 = `${sourceId}-target-03`;
+    const target04 = `${sourceId}-target-04`;
+    const target05 = `${sourceId}-target-05`;
+    const target06 = `${sourceId}-target-06`;
+    const target07 = `${sourceId}-target-07`;
+    const todoText = [
+      '# Brownie TODO Queue',
+      '',
+      `- [x] ${sourceId}: Parent release artifact roundtrip.`,
+      '',
+      leaf('01', 'scripts/release-artifact-roundtrip-e2e.mjs', ['E-23a-release-artifact-portable-archive', target02]),
+      '',
+      leaf('02', 'scripts/release-artifact-roundtrip-e2e.test.mjs', [target01]),
+      '',
+      leaf('03', 'package.json', [target02]),
+      '',
+      leaf('04', '.github/workflows/release.yml', [target03, target02]),
+      '',
+      leaf('05', 'scripts/release-artifact-support.test.mjs', [target02]),
+      '',
+      leaf('06', 'scripts/release-artifact-support.mjs', [target05], 'scripts/release-artifact-support.test.mjs'),
+      '',
+      `- [ ] ${target07}: Create only \`scripts/release-artifact-extra.mjs\` and \`package.json\` for a mixed-scope fixture:
+  Route: implementation.
+  Source TODO: ${sourceId}.
+  Depends on: ${target02}.
+  Completion condition: keep each target classified by whether it already exists.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`node --test scripts/release-artifact-roundtrip-e2e.test.mjs\`.`,
+      ''
+    ].join('\n');
+    const breakdownText = [
+      '# TODO breakdown',
+      '',
+      `## ${sourceId} split`,
+      '',
+      `Parent TODO: ${sourceId}: Parent release artifact roundtrip.`,
+      'Dependency graph:',
+      `- ${target01}: E-23a-release-artifact-portable-archive, ${target02}`,
+      `- ${target02}: ${target01}`,
+      `- ${target03}: ${target02}`,
+      `- ${target04}: ${target03}, ${target02}`,
+      `- ${target05}: ${target02}`,
+      `- ${target06}: ${target05}`,
+      `- ${target07}: ${target02}`,
+      '',
+      'Verification ledger:',
+      `- ${target01}: \`node --test scripts/release-artifact-roundtrip-e2e.test.mjs\``,
+      `- ${target02}: \`node --test scripts/release-artifact-roundtrip-e2e.test.mjs\``,
+      `- ${target03}: \`node --test scripts/release-artifact-roundtrip-e2e.test.mjs\``,
+      `- ${target04}: \`node --test scripts/release-artifact-roundtrip-e2e.test.mjs\``,
+      `- ${target05}: \`node --test scripts/release-artifact-roundtrip-e2e.test.mjs\``,
+      `- ${target06}: \`node --test scripts/release-artifact-support.test.mjs\``,
+      `- ${target07}: \`node --test scripts/release-artifact-roundtrip-e2e.test.mjs\``,
+      '',
+      'Quality rubric:',
+      '- Each leaf has one concrete target and an executable verification command.',
+      '',
+      'History:',
+      '- fixture',
+      ''
+    ].join('\n');
+    fs.writeFileSync(path.join(root, '.brownie/todo.md'), todoText);
+    fs.writeFileSync(path.join(root, '.brownie/todo-breakdown.md'), breakdownText);
+    fs.writeFileSync(path.join(root, '.brownie/private/phase-loop/todo-claims/current.json'), JSON.stringify({
+      schema_version: 1,
+      claim_id: 'claim-e23b-cycle',
+      selected_todo: leaf('01', 'scripts/release-artifact-roundtrip-e2e.mjs', ['E-23a-release-artifact-portable-archive', target02])
+    }, null, 2));
+
+    const result = runRepair(root);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const repairedTodo = fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8');
+    const repairedBreakdown = fs.readFileSync(path.join(root, '.brownie/todo-breakdown.md'), 'utf8');
+    assert.match(repairedTodo, new RegExp(`${target01}[\\s\\S]*?Depends on: E-23a-release-artifact-portable-archive, ${target02}\\.`));
+    assert.match(repairedTodo, new RegExp(`${target02}[\\s\\S]*?Depends on: <none>\\.`));
+    assert.match(repairedTodo, new RegExp(target03 + ': Patch only `package\\.json`'));
+    assert.match(repairedTodo, new RegExp(target04 + ': Patch only `\\.github/workflows/release\\.yml`'));
+    assert.match(repairedTodo, new RegExp(`${target05}[\\s\\S]*?Depends on: ${target02}\\.`));
+    assert.match(repairedTodo, new RegExp(target07 + ': Patch only `package\\.json` and Create only `scripts/release-artifact-extra\\.mjs`'));
+    assert.match(repairedBreakdown, new RegExp(`- ${target02}: <none>`));
+
+    fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'scripts/release-artifact-extra.mjs'), '// fixture\n');
+    const repeated = runRepair(root);
+    assert.equal(repeated.status, 0, `${repeated.stdout}\n${repeated.stderr}`);
+    const rerunTodo = fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8');
+    assert.match(rerunTodo, new RegExp(target07 + ': Patch only `package\\.json` and `scripts/release-artifact-extra\\.mjs`'));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('normalizes an existing Create-only target when it is the final unchecked source leaf', () => {
+  const root = makeTempRepo();
+  try {
+    const sourceId = 'E-23z-single-existing-target';
+    const leafId = `${sourceId}-target-01`;
+    fs.writeFileSync(path.join(root, '.brownie/todo.md'), [
+      '# Brownie TODO Queue',
+      '',
+      `- [x] ${sourceId}: Parent fixture.`,
+      '',
+      `- [ ] ${leafId}: Create only \`package.json\` for the final unchecked source leaf:`,
+      '  Route: implementation.',
+      `  Source TODO: ${sourceId}.`,
+      '  Depends on: <none>.',
+      '  Completion condition: classify the existing target correctly.',
+      '  Forbidden changes: do not edit unrelated files.',
+      '  Verification: run `pnpm --workspace-root guard:todo-decomposition`.',
+      ''
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, '.brownie/todo-breakdown.md'), [
+      '# TODO breakdown',
+      '',
+      `## ${sourceId} split`,
+      '',
+      `Parent TODO: ${sourceId}: Parent fixture.`,
+      'Dependency graph:',
+      `- ${leafId}: <none>`,
+      '',
+      'Verification ledger:',
+      `- ${leafId}: \`pnpm --workspace-root guard:todo-decomposition\``,
+      '',
+      'Quality rubric:',
+      '- The final leaf has a concrete target.',
+      '',
+      'History:',
+      '- fixture',
+      ''
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, '.brownie/private/phase-loop/todo-claims/current.json'), JSON.stringify({
+      schema_version: 1,
+      claim_id: 'claim-single-existing-target',
+      selected_todo: `- [ ] ${leafId}: Create only \`package.json\` for the final unchecked source leaf:`
+    }, null, 2));
+
+    const result = runRepair(root);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8'), new RegExp(leafId + ': Patch only `package\\.json`'));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('does not accept a sibling dependency backed only by an invalidated completion receipt', () => {
+  const root = makeTempRepo();
+  try {
+    const sourceId = 'E-23z-invalidated-completion';
+    const leafId = `${sourceId}-target-01`;
+    const removedId = 'E-23z-superseded-parent';
+    fs.mkdirSync(path.join(root, '.brownie/private/phase-loop/todo-completions'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.brownie/private/phase-loop/todo-completions/invalid.json'), JSON.stringify({
+      selected_todo_id: removedId,
+      reason: 'source_parent_completed'
+    }));
+    fs.writeFileSync(path.join(root, '.brownie/todo.md'), [
+      '# Brownie TODO Queue',
+      '',
+      `- [x] ${sourceId}: Parent fixture.`,
+      '',
+      `- [ ] ${leafId}: Create only \`package.json\` for an invalidated completion fixture:`,
+      '  Route: implementation.',
+      `  Source TODO: ${sourceId}.`,
+      `  Depends on: ${removedId}.`,
+      '  Completion condition: require a canonically valid dependency.',
+      '  Forbidden changes: do not edit unrelated files.',
+      '  Verification: run `pnpm --workspace-root guard:todo-decomposition`.',
+      ''
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, '.brownie/todo-breakdown.md'), [
+      '# TODO breakdown',
+      '',
+      `## ${sourceId} split`,
+      '',
+      `Parent TODO: ${sourceId}: Parent fixture.`,
+      'Dependency graph:',
+      `- ${leafId}: ${removedId}`,
+      '',
+      'Verification ledger:',
+      `- ${leafId}: \`pnpm --workspace-root guard:todo-decomposition\``,
+      '',
+      'Quality rubric:',
+      '- The final leaf has a concrete target.',
+      '',
+      'History:',
+      '- fixture',
+      ''
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, '.brownie/private/phase-loop/todo-claims/current.json'), JSON.stringify({
+      schema_version: 1,
+      claim_id: 'claim-invalidated-completion',
+      selected_todo: `- [ ] ${leafId}: Create only \`package.json\` for an invalidated completion fixture:`
+    }, null, 2));
+
+    const result = runRepair(root);
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /source_sibling_contract_repair_failed_guard/);
+    assert.ok(fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8').includes(`${leafId}: Create only \`package.json\``));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('retains descriptive scope words while normalizing an existing Create-only target', () => {
+  const root = makeTempRepo();
+  try {
+    const sourceId = 'E-23z-descriptive-scope-word';
+    const leafId = `${sourceId}-target-01`;
+    fs.writeFileSync(path.join(root, '.brownie/todo.md'), [
+      '# Brownie TODO Queue',
+      '',
+      `- [x] ${sourceId}: Parent fixture.`,
+      '',
+      `- [ ] ${leafId}: Create only \`package.json\` to preserve Patch only behavior:`,
+      '  Route: implementation.',
+      `  Source TODO: ${sourceId}.`,
+      '  Depends on: <none>.',
+      '  Completion condition: retain descriptive wording outside scopes.',
+      '  Forbidden changes: do not edit unrelated files.',
+      '  Verification: run `pnpm --workspace-root guard:todo-decomposition`.',
+      ''
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, '.brownie/todo-breakdown.md'), [
+      '# TODO breakdown', '', `## ${sourceId} split`, '', `Parent TODO: ${sourceId}: Parent fixture.`,
+      'Dependency graph:', `- ${leafId}: <none>`, '', 'Verification ledger:',
+      `- ${leafId}: \`pnpm --workspace-root guard:todo-decomposition\``, '', 'Quality rubric:',
+      '- The final leaf has a concrete target.', '', 'History:', '- fixture', ''
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, '.brownie/private/phase-loop/todo-claims/current.json'), JSON.stringify({
+      schema_version: 1,
+      claim_id: 'claim-descriptive-scope-word',
+      selected_todo: `- [ ] ${leafId}: Create only \`package.json\` to preserve Patch only behavior:`
+    }, null, 2));
+
+    const result = runRepair(root);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.ok(fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8').includes(`${leafId}: Patch only \`package.json\` to preserve Patch only behavior:`));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('does not treat a verification path prefix as an exact sibling output', () => {
+  const root = makeTempRepo();
+  try {
+    const sourceId = 'E-23z-verification-prefix';
+    const firstId = `${sourceId}-target-01`;
+    const secondId = `${sourceId}-target-02`;
+    const leaf = (id, target, dependency, verification) => `- [ ] ${id}: Create only \`${target}\` for an exact verification-path fixture:
+  Route: implementation.
+  Source TODO: ${sourceId}.
+  Depends on: ${dependency}.
+  Completion condition: retain only dependencies justified by exact verification paths.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`node --test ${verification}\`.`;
+    fs.writeFileSync(path.join(root, '.brownie/todo.md'), [
+      '# Brownie TODO Queue',
+      '',
+      `- [x] ${sourceId}: Parent fixture.`,
+      '',
+      leaf(firstId, 'scripts/prefix-tool.mjs', secondId, 'scripts/prefix-tool.mjs'),
+      '',
+      leaf(secondId, 'scripts/prefix-tool.mjs.map', firstId, 'scripts/prefix-tool.mjs.map'),
+      ''
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, '.brownie/todo-breakdown.md'), [
+      '# TODO breakdown',
+      '',
+      `## ${sourceId} split`,
+      '',
+      `Parent TODO: ${sourceId}: Parent fixture.`,
+      'Dependency graph:',
+      `- ${firstId}: ${secondId}`,
+      `- ${secondId}: ${firstId}`,
+      '',
+      'Verification ledger:',
+      `- ${firstId}: \`node --test scripts/prefix-tool.mjs\``,
+      `- ${secondId}: \`node --test scripts/prefix-tool.mjs.map\``,
+      '',
+      'Quality rubric:',
+      '- Each leaf has a concrete target.',
+      '',
+      'History:',
+      '- fixture',
+      ''
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, '.brownie/private/phase-loop/todo-claims/current.json'), JSON.stringify({
+      schema_version: 1,
+      claim_id: 'claim-verification-prefix',
+      selected_todo: leaf(firstId, 'scripts/prefix-tool.mjs', secondId, 'scripts/prefix-tool.mjs')
+    }, null, 2));
+
+    const result = runRepair(root);
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /unrepairable_source_sibling_cycle/);
+    const todo = fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8');
+    assert.match(todo, new RegExp(`${firstId}[\\s\\S]*?Depends on: ${secondId}\\.`));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('does not treat descriptive backticks as Create-only scopes when breaking a cycle', () => {
+  const root = makeTempRepo();
+  try {
+    const sourceId = 'E-23z-descriptive-scope';
+    const firstId = `${sourceId}-target-01`;
+    const secondId = `${sourceId}-target-02`;
+    const first = `- [ ] ${firstId}: Create only \`scripts/declared-output.mjs\` with verification described by \`scripts/descriptive-output.mjs\`:
+  Route: implementation.
+  Source TODO: ${sourceId}.
+  Depends on: ${secondId}.
+  Completion condition: preserve only the leading Create-only target as scope.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`node --test scripts/declared-output.mjs\`.`;
+    const second = `- [ ] ${secondId}: Create only \`scripts/descriptive-output.mjs\` for the companion leaf:
+  Route: implementation.
+  Source TODO: ${sourceId}.
+  Depends on: ${firstId}.
+  Completion condition: retain the cycle when no exact declared creator justifies removal.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`node --test scripts/descriptive-output.mjs\`.`;
+    fs.writeFileSync(path.join(root, '.brownie/todo.md'), [
+      '# Brownie TODO Queue',
+      '',
+      `- [x] ${sourceId}: Parent fixture.`,
+      '',
+      first,
+      '',
+      second,
+      ''
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, '.brownie/todo-breakdown.md'), [
+      '# TODO breakdown',
+      '',
+      `## ${sourceId} split`,
+      '',
+      `Parent TODO: ${sourceId}: Parent fixture.`,
+      'Dependency graph:',
+      `- ${firstId}: ${secondId}`,
+      `- ${secondId}: ${firstId}`,
+      '',
+      'Verification ledger:',
+      `- ${firstId}: \`node --test scripts/declared-output.mjs\``,
+      `- ${secondId}: \`node --test scripts/descriptive-output.mjs\``,
+      '',
+      'Quality rubric:',
+      '- Each leaf has a concrete target.',
+      '',
+      'History:',
+      '- fixture',
+      ''
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, '.brownie/private/phase-loop/todo-claims/current.json'), JSON.stringify({
+      schema_version: 1,
+      claim_id: 'claim-descriptive-scope',
+      selected_todo: first
+    }, null, 2));
+
+    const result = runRepair(root);
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /unrepairable_source_sibling_cycle/);
+    assert.match(fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8'), new RegExp(`${firstId}[\\s\\S]*?Depends on: ${secondId}\\.`));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('does not remove a cycle edge when its output verifier is only downstream of the cycle', () => {
+  const root = makeTempRepo();
+  try {
+    const sourceId = 'E-23z-downstream-verifier';
+    const firstId = `${sourceId}-target-01`;
+    const secondId = `${sourceId}-target-02`;
+    const downstreamId = `${sourceId}-target-03`;
+    const leaf = (id, target, dependency, verification) => `- [ ] ${id}: Create only \`${target}\` for a cycle-path verifier fixture:
+  Route: implementation.
+  Source TODO: ${sourceId}.
+  Depends on: ${dependency}.
+  Completion condition: retain a cycle unless the verifier proves the particular removed edge is a prerequisite.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`node --test ${verification}\`.`;
+    const first = leaf(firstId, 'scripts/first.mjs', secondId, 'scripts/first.mjs');
+    const second = leaf(secondId, 'scripts/second.mjs', firstId, 'scripts/second.mjs');
+    const downstream = leaf(downstreamId, 'scripts/downstream.mjs', firstId, 'scripts/first.mjs');
+    fs.writeFileSync(path.join(root, '.brownie/todo.md'), [
+      '# Brownie TODO Queue',
+      '',
+      `- [x] ${sourceId}: Parent fixture.`,
+      '',
+      first,
+      '',
+      second,
+      '',
+      downstream,
+      ''
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, '.brownie/todo-breakdown.md'), [
+      '# TODO breakdown',
+      '',
+      `## ${sourceId} split`,
+      '',
+      `Parent TODO: ${sourceId}: Parent fixture.`,
+      'Dependency graph:',
+      `- ${firstId}: ${secondId}`,
+      `- ${secondId}: ${firstId}`,
+      `- ${downstreamId}: ${firstId}`,
+      '',
+      'Verification ledger:',
+      `- ${firstId}: \`node --test scripts/first.mjs\``,
+      `- ${secondId}: \`node --test scripts/second.mjs\``,
+      `- ${downstreamId}: \`node --test scripts/first.mjs\``,
+      '',
+      'Quality rubric:',
+      '- Each leaf has a concrete target.',
+      '',
+      'History:',
+      '- fixture',
+      ''
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, '.brownie/private/phase-loop/todo-claims/current.json'), JSON.stringify({
+      schema_version: 1,
+      claim_id: 'claim-downstream-verifier',
+      selected_todo: first
+    }, null, 2));
+
+    const result = runRepair(root);
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /unrepairable_source_sibling_cycle/);
+    const todo = fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8');
+    assert.match(todo, new RegExp(`${firstId}[\\s\\S]*?Depends on: ${secondId}\\.`));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('does not use the target leaf to reach a verifier while deciding which cycle edge to remove', () => {
+  const root = makeTempRepo();
+  try {
+    const sourceId = 'E-23z-shared-cycle-verifier';
+    const targetId = `${sourceId}-target-01`;
+    const prerequisiteId = `${sourceId}-target-02`;
+    const verifierId = `${sourceId}-target-03`;
+    const leaf = (id, target, dependencies, verification) => `- [ ] ${id}: Create only \`${target}\` for a target-excluding cycle-path fixture:
+  Route: implementation.
+  Source TODO: ${sourceId}.
+  Depends on: ${dependencies}.
+  Completion condition: retain each prerequisite unless its verifier is reachable without traversing the target leaf.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`node --test ${verification}\`.`;
+    const target = leaf(targetId, 'scripts/target.mjs', `${prerequisiteId}, ${verifierId}`, 'scripts/target.mjs');
+    const prerequisite = leaf(prerequisiteId, 'scripts/prerequisite.mjs', targetId, 'scripts/prerequisite.mjs');
+    const verifier = leaf(verifierId, 'scripts/verifier.mjs', targetId, 'scripts/target.mjs');
+    fs.writeFileSync(path.join(root, '.brownie/todo.md'), [
+      '# Brownie TODO Queue',
+      '',
+      `- [x] ${sourceId}: Parent fixture.`,
+      '',
+      target,
+      '',
+      prerequisite,
+      '',
+      verifier,
+      ''
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, '.brownie/todo-breakdown.md'), [
+      '# TODO breakdown',
+      '',
+      `## ${sourceId} split`,
+      '',
+      `Parent TODO: ${sourceId}: Parent fixture.`,
+      'Dependency graph:',
+      `- ${targetId}: ${prerequisiteId}, ${verifierId}`,
+      `- ${prerequisiteId}: ${targetId}`,
+      `- ${verifierId}: ${targetId}`,
+      '',
+      'Verification ledger:',
+      `- ${targetId}: \`node --test scripts/target.mjs\``,
+      `- ${prerequisiteId}: \`node --test scripts/prerequisite.mjs\``,
+      `- ${verifierId}: \`node --test scripts/target.mjs\``,
+      '',
+      'Quality rubric:',
+      '- Each leaf has a concrete target.',
+      '',
+      'History:',
+      '- fixture',
+      ''
+    ].join('\n'));
+    fs.writeFileSync(path.join(root, '.brownie/private/phase-loop/todo-claims/current.json'), JSON.stringify({
+      schema_version: 1,
+      claim_id: 'claim-shared-cycle-verifier',
+      selected_todo: target
+    }, null, 2));
+
+    const result = runRepair(root);
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /source_sibling_contract_repair_failed_guard/);
+    const todo = fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8');
+    assert.match(todo, new RegExp(`${targetId}[\\s\\S]*?Depends on: ${prerequisiteId}, ${verifierId}\\.`));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('deterministically decomposes E-19h release contract trace binding with allowlisted verification', () => {
   const root = makeTempRepo();
   try {

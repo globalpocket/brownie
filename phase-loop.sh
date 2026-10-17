@@ -150,9 +150,9 @@ for path in (aggregate_path, run_path):
         os.fsync(handle.fileno())
 PY
   # The ledger adapter derives its controller-state path from a repository
-  # root.  Pass that root rather than STATE_DIR so writers and readers share
-  # the canonical .brownie/private/phase-loop/task-ledger.jsonl location.
-  if ! node "$ROOT_DIR/scripts/phase-loop-task-ledger.mjs" record-trajectory --repo "$ROOT_DIR" --claim "$TODO_CLAIM_FILE" --todo "$PHASE_LOOP_TODO" --type "$ledger_event_type" --payload "$payload_json" --run "$run_stamp"; then
+  # root.  Keep it inside the selected workspace so isolated controller runs
+  # cannot write task-ledger records into the phase-loop script checkout.
+  if ! node "$ROOT_DIR/scripts/phase-loop-task-ledger.mjs" record-trajectory --repo "$PHASE_LOOP_WORKSPACE_ROOT" --claim "$TODO_CLAIM_FILE" --todo "$PHASE_LOOP_TODO" --type "$ledger_event_type" --payload "$payload_json" --run "$run_stamp"; then
     printf '%s task_ledger_transition_failed run=%s event=%s\n' "$(now_utc)" "$run_stamp" "$ledger_event_type" >> "$SUPERVISOR_LOG"
   fi
   case "$event_type" in
@@ -3131,7 +3131,22 @@ changed_all = {
     if len(line) >= 4 and line[:2].strip()
 }
 todo_paths = {".brownie/todo.md", "todo.md"}
-unexpected = sorted(path for path in changed_all if path not in allowed_paths and path not in todo_paths)
+# Controller state is intentionally rooted beneath the selected workspace so
+# task-ledger and trajectory writes survive a process restart.  It is not a
+# product change and must not make an otherwise bounded release-ops evidence
+# refresh fail closed.  All other unallowlisted workspace paths remain
+# fail-closed below.
+controller_private_paths = {
+    path for path in changed_all
+    if path == ".brownie/private" or path.startswith(".brownie/private/")
+}
+unexpected = sorted(
+    path
+    for path in changed_all
+    if path not in allowed_paths
+    and path not in todo_paths
+    and path not in controller_private_paths
+)
 if unexpected:
     print(json.dumps({"completed": False, "reason": "unexpected_workspace_changes", "unexpected": unexpected}, sort_keys=True))
     raise SystemExit(1)
@@ -4703,6 +4718,7 @@ PY
 try_no_eligible_multitarget_leaf_split_fallback() {
   local run_stamp="$1"
   if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$TODO_REPAIR_FEEDBACK_FILE" ] || [ ! -f "$PROGRESS_STATE_FILE" ]; then
+    printf '%s\n' '{"applied":false,"eligible":false,"operation":"no_eligible_multitarget_leaf_split_fallback","reason":"required_state_missing"}'
     return 2
   fi
   python3 - "$TODO_CLAIM_FILE" "$TODO_REPAIR_FEEDBACK_FILE" "$PROGRESS_STATE_FILE" "$PHASE_LOOP_TODO" "$PHASE_LOOP_TODO_BREAKDOWN" "$PHASE_LOOP_WORKSPACE_ROOT" "$run_stamp" "$(now_utc)" <<'PY'
@@ -4757,28 +4773,37 @@ def target_route(original_route, target):
         return "implementation"
     return route
 
+def skip(reason):
+    print(json.dumps({
+        "applied": False,
+        "eligible": False,
+        "operation": "no_eligible_multitarget_leaf_split_fallback",
+        "reason": reason,
+    }, ensure_ascii=False, sort_keys=True))
+    raise SystemExit(2)
+
 claim = read_json(claim_path)
 feedback = read_json(feedback_path)
 progress = read_json(progress_path)
 selected = claim.get("selected_todo")
 if not isinstance(selected, str) or not selected.strip():
-    raise SystemExit(2)
+    skip("selected_todo_missing")
 selected_first = selected.splitlines()[0] if selected.splitlines() else ""
 selected_id = todo_id_from_first_line(selected_first)
 if not selected_id:
-    raise SystemExit(2)
+    skip("selected_todo_id_missing")
 feedback_claim_id = feedback.get("claim_id")
 feedback_first_line = feedback.get("selected_todo_first_line")
 if feedback_claim_id and feedback_claim_id != claim.get("claim_id"):
-    raise SystemExit(2)
+    skip("feedback_claim_id_mismatch")
 if not feedback_claim_id and feedback_first_line and feedback_first_line != selected_first:
-    raise SystemExit(2)
+    skip("feedback_selected_todo_mismatch")
 if not feedback_claim_id and not feedback_first_line:
-    raise SystemExit(2)
+    skip("feedback_identity_missing")
 if "Route: todo-decomposition" in selected:
-    raise SystemExit(2)
+    skip("todo_decomposition_route")
 if progress.get("classification") != "no_progress":
-    raise SystemExit(2)
+    skip("progress_not_no_progress")
 
 verification_feedback = feedback.get("verification") if isinstance(feedback.get("verification"), dict) else {}
 combined = " ".join(
@@ -4794,15 +4819,15 @@ combined = " ".join(
     ]
 )
 if "no_eligible_task" not in combined and "split_multitarget_leaf" not in combined:
-    raise SystemExit(2)
+    skip("no_eligible_recovery_evidence_missing")
 
 scope_match = re.search(r"\b(?P<operation>Patch|Create) only\b(?P<scope>[^\n:]+)", selected_first)
 if not scope_match:
-    raise SystemExit(2)
+    skip("selected_scope_not_patch_or_create_only")
 operation = scope_match.group("operation")
 targets = [target.strip() for target in re.findall(r"`([^`\n]+)`", scope_match.group("scope")) if target.strip()]
 if len(targets) <= 1:
-    raise SystemExit(2)
+    skip("selected_scope_not_multitarget")
 if len(set(targets)) != len(targets):
     print(json.dumps({
         "applied": False,
@@ -4816,9 +4841,9 @@ if len(set(targets)) != len(targets):
 try:
     todo_text = todo_path.read_text(encoding="utf-8")
 except Exception:
-    raise SystemExit(2)
+    skip("todo_unreadable")
 if selected not in todo_text:
-    raise SystemExit(2)
+    skip("selected_todo_not_in_queue")
 try:
     breakdown_text = breakdown_path.read_text(encoding="utf-8")
 except FileNotFoundError:
@@ -4843,7 +4868,7 @@ if not original_verification:
 
 checked_selected = re.sub(r"^(\s*[-*]\s+)\[\s\]", r"\1[x]", selected, count=1)
 if checked_selected == selected:
-    raise SystemExit(2)
+    skip("selected_todo_not_pending")
 
 leaf_blocks = []
 leaf_ids = []
@@ -11831,6 +11856,7 @@ PY
   local pre_guard_no_eligible_multitarget_output pre_guard_no_eligible_multitarget_status
   pre_guard_no_eligible_multitarget_output="$(try_no_eligible_multitarget_leaf_split_fallback "$run_stamp" 2>&1)"
   pre_guard_no_eligible_multitarget_status=$?
+  printf '%s run=%s no_eligible_multitarget_leaf_split_pre_guard_exit=%s result=%s\n' "$(now_utc)" "$run_stamp" "$pre_guard_no_eligible_multitarget_status" "$pre_guard_no_eligible_multitarget_output" >> "$SUPERVISOR_LOG"
   if [ "$pre_guard_no_eligible_multitarget_status" -eq 0 ]; then
     workspace_after="$(git_workspace_fingerprint)"
     printf '%s\n' "$pre_guard_no_eligible_multitarget_output" > "$stdout_log"

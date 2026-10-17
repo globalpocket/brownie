@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadTodoState } from './phase-loop-todo-state.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -628,6 +629,9 @@ function validateDependencies(text, blocks, errors, options = {}) {
   const owner = options.path ?? defaultTodoPath;
   const uncheckedIds = uncheckedTodoIdSet(text);
   const checkedIds = checkedTodoIds(text);
+  const invalidCheckedIds = options.invalidCheckedTodoIds instanceof Set
+    ? options.invalidCheckedTodoIds
+    : new Set(Array.isArray(options.invalidCheckedTodoIds) ? options.invalidCheckedTodoIds : []);
   const completedIds = options.completedTodoIds instanceof Set
     ? options.completedTodoIds
     : new Set(Array.isArray(options.completedTodoIds) ? options.completedTodoIds : []);
@@ -644,10 +648,11 @@ function validateDependencies(text, blocks, errors, options = {}) {
       if (completedIds.has(dep)) {
         continue;
       }
-      if (!uncheckedIds.has(dep) && !checkedIds.has(dep) && options.breakdownText && options.breakdownText.includes(dep)) {
+      const validCheckedDependency = checkedIds.has(dep) && !invalidCheckedIds.has(dep);
+      if (!uncheckedIds.has(dep) && !validCheckedDependency && options.breakdownText && options.breakdownText.includes(dep)) {
         errors.push(`${owner} ${id}: dependency ${dep} is present only in the breakdown ledger, not the live TODO queue; leaf TODOs must not depend on abstract/decomposed parent IDs because Runtime cannot schedule them.`);
       }
-      if (!uncheckedIds.has(dep) && !checkedIds.has(dep) && options.breakdownText && !options.breakdownText.includes(dep)) {
+      if (!uncheckedIds.has(dep) && !validCheckedDependency && options.breakdownText && !options.breakdownText.includes(dep)) {
         errors.push(`${owner} ${id}: dependency ${dep} is not present in unchecked, checked, or breakdown-ledger state.`);
       }
     }
@@ -913,12 +918,21 @@ function readJsonOrNull(repoRoot, relativePath) {
 
 export function validateTodoDecomposition(repoRoot = defaultRepoRoot, todoPath = defaultTodoPath) {
   const state = releaseState(repoRoot);
-  return validateTodoDecompositionText(readText(repoRoot, todoPath), {
+  const todoText = readText(repoRoot, todoPath);
+  const todoState = loadTodoState(repoRoot, todoText, {
+    breakdownPath: path.resolve(repoRoot, defaultBreakdownPath)
+  });
+  const unresolvedSupersededIds = new Set(
+    [...todoState.supersededIds].filter((id) => !todoState.resolvedIds.has(id))
+  );
+  return validateTodoDecompositionText(todoText, {
     path: todoPath,
     repoRoot,
     packageScripts: packageScripts(repoRoot),
     breakdownPath: defaultBreakdownPath,
     breakdownText: maybeReadText(repoRoot, defaultBreakdownPath),
+    completedTodoIds: todoState.resolvedIds,
+    invalidCheckedTodoIds: unresolvedSupersededIds,
     productReady: state.productReady,
     releaseBlockersRemaining: state.releaseBlockersRemaining
   });

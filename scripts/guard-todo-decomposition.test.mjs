@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { nextSchedulableTodoId, validateTodoDecompositionText } from './guard-todo-decomposition.mjs';
+import os from 'node:os';
+import path from 'node:path';
+import { nextSchedulableTodoId, validateTodoDecomposition, validateTodoDecompositionText } from './guard-todo-decomposition.mjs';
 
 const validLeaf = `- [ ] E-15b-child: Patch only \`scripts/example.mjs\`:
   Route: implementation.
@@ -602,6 +604,92 @@ test('accepts dependency on checked live TODO after completed parent remains in 
     repoRoot: process.cwd(),
     packageScripts: new Set(['release:runtime-operational-evidence:test', 'guard:runtime-operational-evidence'])
   }), []);
+});
+
+test('rejects a checked dependency when canonical state marks it superseded', () => {
+  const text = `- [x] E-22c-runtime-artifact-e2e-evidence: Patch only \`scripts/release-runtime-operational-evidence.mjs\`:
+  Route: implementation.
+  Source TODO: E-22c.
+  Depends on: <none>.
+  Completion condition: Parent was split into children.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root guard:runtime-operational-evidence\`.
+- [ ] E-22d-runtime-stateful-soak-evidence: Patch only \`scripts/release-runtime-operational-evidence.mjs\`:
+  Route: implementation.
+  Source TODO: E-22d.
+  Depends on: E-22c-runtime-artifact-e2e-evidence.
+  Completion condition: Depend only on a canonically resolved parent.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root guard:runtime-operational-evidence\`.`;
+
+  const errors = validateTodoDecompositionText(text, {
+    repoRoot: process.cwd(),
+    packageScripts: new Set(['guard:runtime-operational-evidence']),
+    breakdownText: '- E-22c-runtime-artifact-e2e-evidence: E-22c-child\n',
+    invalidCheckedTodoIds: new Set(['E-22c-runtime-artifact-e2e-evidence'])
+  });
+  assert(errors.some((error) => error.includes('dependency E-22c-runtime-artifact-e2e-evidence is present only in the breakdown ledger')), errors.join('\n'));
+});
+
+test('repository guard rejects a checked dependency when canonical state marks it superseded', () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-superseded-guard-'));
+  try {
+    fs.mkdirSync(path.join(repoRoot, '.brownie/private/phase-loop/todo-replans'), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ scripts: { 'guard:runtime-operational-evidence': 'node -e ""' } }));
+    fs.writeFileSync(path.join(repoRoot, '.brownie/todo.md'), `- [x] E-22c-runtime-artifact-e2e-evidence: Completed split parent.
+- [ ] E-22d-runtime-stateful-soak-evidence: Patch only \`package.json\`:
+  Route: implementation.
+  Source TODO: E-22d.
+  Depends on: E-22c-runtime-artifact-e2e-evidence.
+  Completion condition: depend only on canonical state.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root guard:runtime-operational-evidence\`.
+`);
+    fs.writeFileSync(path.join(repoRoot, '.brownie/todo-breakdown.md'), '- E-22c-runtime-artifact-e2e-evidence: E-22c-child\n');
+    fs.writeFileSync(path.join(repoRoot, '.brownie/private/phase-loop/todo-replans/split.json'), JSON.stringify({
+      record_type: 'todo_replan',
+      operation: 'split_parent_into_children',
+      parent_status: 'superseded_by_children',
+      parent_todo_id: 'E-22c-runtime-artifact-e2e-evidence',
+      generated_child_ids: ['E-22c-child']
+    }));
+
+    const errors = validateTodoDecomposition(repoRoot);
+    assert(errors.some((error) => error.includes('dependency E-22c-runtime-artifact-e2e-evidence is present only in the breakdown ledger')), errors.join('\n'));
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('repository guard accepts a checked superseded dependency once all generated children are complete', () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-resolved-parent-guard-'));
+  try {
+    fs.mkdirSync(path.join(repoRoot, '.brownie/private/phase-loop/todo-replans'), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ scripts: { 'guard:runtime-operational-evidence': 'node -e ""' } }));
+    fs.writeFileSync(path.join(repoRoot, '.brownie/todo.md'), `- [x] E-22c-runtime-artifact-e2e-evidence: Completed split parent.
+- [x] E-22c-child: Completed generated child.
+- [ ] E-22d-runtime-stateful-soak-evidence: Patch only \`package.json\`:
+  Route: implementation.
+  Source TODO: E-22d.
+  Depends on: E-22c-runtime-artifact-e2e-evidence.
+  Completion condition: accept a canonically resolved parent.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root guard:runtime-operational-evidence\`.
+`);
+    fs.writeFileSync(path.join(repoRoot, '.brownie/todo-breakdown.md'), '- E-22d-runtime-stateful-soak-evidence: E-22c-runtime-artifact-e2e-evidence\n');
+    fs.writeFileSync(path.join(repoRoot, '.brownie/private/phase-loop/todo-replans/split.json'), JSON.stringify({
+      record_type: 'todo_replan',
+      operation: 'split_parent_into_children',
+      parent_status: 'superseded_by_children',
+      parent_todo_id: 'E-22c-runtime-artifact-e2e-evidence',
+      generated_child_ids: ['E-22c-child']
+    }));
+
+    const errors = validateTodoDecomposition(repoRoot);
+    assert(!errors.some((error) => error.includes('dependency E-22c-runtime-artifact-e2e-evidence')), errors.join('\n'));
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
 });
 
 test('rejects dependency that is satisfied only by private completion state', () => {

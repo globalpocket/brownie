@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateTodoDecompositionText } from './guard-todo-decomposition.mjs';
+import { loadTodoState } from './phase-loop-todo-state.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -79,30 +80,14 @@ function readTodoReplanRecords() {
   return records;
 }
 
-function readTodoCompletionIds() {
-  const absoluteDir = path.resolve(repoRoot, '.brownie/private/phase-loop/todo-completions');
-  let entries = [];
-  try {
-    entries = fs.readdirSync(absoluteDir, { withFileTypes: true });
-  } catch {
-    return new Set();
-  }
-  const ids = new Set();
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith('.json')) {
-      continue;
-    }
-    try {
-      const record = JSON.parse(fs.readFileSync(path.join(absoluteDir, entry.name), 'utf8'));
-      const id = typeof record?.selected_todo_id === 'string' ? record.selected_todo_id.trim() : '';
-      if (id) {
-        ids.add(id);
-      }
-    } catch {
-      // Malformed completion records must not authorize dependency rewrites.
-    }
-  }
-  return ids;
+function canonicalCompletedTodoIds(todoText, breakdownPath) {
+  return canonicalTodoState(todoText, breakdownPath).completedIds;
+}
+
+function canonicalTodoState(todoText, breakdownPath) {
+  return loadTodoState(repoRoot, todoText, {
+    breakdownPath: path.resolve(repoRoot, breakdownPath)
+  });
 }
 
 function writeTransitiveReplanRecords({ removedParentIds, replacementSourceTodoId, generatedChildIds, runStamp }) {
@@ -226,6 +211,57 @@ function createOnlyScopes(block) {
   return [...rest.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
 }
 
+function leadingBacktickedScopes(text) {
+  const scopes = [];
+  let cursor = 0;
+  while (true) {
+    const leading = text.slice(cursor).match(/^\s*/u)?.[0] ?? '';
+    cursor += leading.length;
+    if (text[cursor] !== '`') break;
+    const end = text.indexOf('`', cursor + 1);
+    if (end < 0) break;
+    scopes.push(text.slice(cursor + 1, end));
+    cursor = end + 1;
+    const separator = text.slice(cursor).match(/^\s*(?:,|and\b|&)\s*/u)?.[0];
+    if (!separator || text[cursor + separator.length] !== '`') break;
+    cursor += separator.length;
+  }
+  return { scopes, end: cursor };
+}
+
+function leadingCreateOnlyScopes(block) {
+  const line = firstLine(block);
+  const marker = 'Create only';
+  const start = line.indexOf(marker);
+  return start < 0 ? [] : leadingBacktickedScopes(line.slice(start + marker.length)).scopes;
+}
+
+function normalizeExistingCreateOnlyScopes(block) {
+  const line = firstLine(block);
+  const markers = ['Patch only', 'Create only'].map((marker) => {
+    const start = line.indexOf(marker);
+    if (start < 0) return null;
+    const parsed = leadingBacktickedScopes(line.slice(start + marker.length));
+    return parsed.scopes.length > 0 ? { marker, start, parsed, end: start + marker.length + parsed.end } : null;
+  }).filter(Boolean);
+  const createClause = markers.find(({ marker }) => marker === 'Create only');
+  if (!createClause) return block;
+  const patchScopes = markers
+    .filter(({ marker }) => marker === 'Patch only')
+    .flatMap(({ parsed }) => parsed.scopes);
+  const existingCreateScopes = createClause.parsed.scopes.filter(existingFile);
+  if (existingCreateScopes.length === 0) return block;
+  const missing = createClause.parsed.scopes.filter((scope) => !existingFile(scope));
+  const existing = [...new Set([...patchScopes, ...existingCreateScopes])];
+  const clauses = [];
+  if (existing.length > 0) clauses.push(`Patch only ${existing.map((scope) => `\`${scope}\``).join(' and ')}`);
+  if (missing.length > 0) clauses.push(`Create only ${missing.map((scope) => `\`${scope}\``).join(' and ')}`);
+  const scopeStart = Math.min(...markers.map(({ start }) => start));
+  const scopeEnd = Math.max(...markers.map(({ end }) => end));
+  const replacement = `${line.slice(0, scopeStart)}${clauses.join(' and ')}${line.slice(scopeEnd)}`;
+  return block.replace(line, replacement);
+}
+
 function boundedScopes(block) {
   return [...patchOnlyScopes(block), ...createOnlyScopes(block)];
 }
@@ -234,6 +270,18 @@ function extractBacktickedPaths(text) {
   return [...text.matchAll(/`([^`]+)`/g)]
     .map((match) => match[1])
     .filter((value) => value.includes('/') || value.startsWith('.brownie/'));
+}
+
+function verificationScriptPaths(block) {
+  return block
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('Verification:'))
+    .flatMap((line) => [...line.matchAll(/`([^`]+)`/g)].map((match) => match[1]))
+    .flatMap((command) => {
+      const match = command.match(/^node\s+(?:--test\s+)?(scripts\/[^\s]+)/u);
+      return match ? [match[1]] : [];
+    });
 }
 
 function replaceBacktickedPath(text, from, to) {
@@ -927,6 +975,83 @@ function replaceFirst(text, needle, replacement) {
   return text.slice(0, index) + replacement + text.slice(index + needle.length);
 }
 
+function repairSourceSiblingContracts({ todoText, breakdownText, todoPath, breakdownPath, completedTodoIds, invalidCheckedTodoIds }) {
+  const blocks = uncheckedTodoBlocks(todoText);
+  const groups = new Map();
+  for (const block of blocks) {
+    const sourceId = sourceTodoId(block);
+    if (!sourceId) continue;
+    groups.set(sourceId, [...(groups.get(sourceId) ?? []), block]);
+  }
+  let updatedTodo = todoText;
+  let updatedBreakdown = breakdownText;
+  const normalizations = [];
+  const unresolvedCycles = [];
+  for (const [sourceId, siblings] of groups) {
+    const siblingIds = new Set(siblings.map(todoId));
+    const siblingDependencies = new Map(siblings.map((block) => [
+      todoId(block),
+      parseDependsOn(block).filter((dependency) => siblingIds.has(dependency))
+    ]));
+    const reachesSibling = (fromId, targetId, seen = new Set()) => {
+      if (fromId === targetId) return true;
+      if (seen.has(fromId)) return false;
+      return (siblingDependencies.get(fromId) ?? []).some((dependency) =>
+        reachesSibling(dependency, targetId, new Set([...seen, fromId]))
+      );
+    };
+    const hasCycle = siblings.length > 1 && [...siblingIds].some((start) => {
+      const visit = (id, seen) => (siblingDependencies.get(id) ?? []).some((dependency) =>
+        dependency === start || (!seen.has(dependency) && visit(dependency, new Set([...seen, dependency])))
+      );
+      return visit(start, new Set([start]));
+    });
+    const hasExistingCreateOnlyTarget = siblings.some((block) => leadingCreateOnlyScopes(block).some(existingFile));
+    if (!hasCycle && !hasExistingCreateOnlyTarget) continue;
+    for (let index = 0; index < siblings.length; index += 1) {
+      const original = siblings[index];
+      let normalized = normalizeExistingCreateOnlyScopes(original);
+      const existingDependencies = parseDependsOn(normalized);
+      const expectedDependencies = existingDependencies.filter((dependency) => {
+        if (!hasCycle || !siblingIds.has(dependency) || !reachesSibling(dependency, todoId(original))) return true;
+        const verifierIsOnRemovedEdgeCyclePath = siblings.some((verifier) => {
+          const verifierId = todoId(verifier);
+          return verifier !== original
+            && leadingCreateOnlyScopes(original).some((target) => verificationScriptPaths(verifier).includes(target))
+            && reachesSibling(dependency, verifierId, new Set([todoId(original)]))
+            && reachesSibling(verifierId, todoId(original));
+        });
+        return !verifierIsOnRemovedEdgeCyclePath;
+      });
+      normalized = replaceDependsOn(normalized, expectedDependencies).block;
+      if (normalized === original) continue;
+      updatedTodo = replaceFirst(updatedTodo, original, normalized) ?? updatedTodo;
+      const id = todoId(original);
+      const graphPattern = new RegExp(`(^-\\s+${id.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}:\\s*).*(\\s*$)`, 'mu');
+      updatedBreakdown = updatedBreakdown.replace(graphPattern, `$1${expectedDependencies.join(', ') || '<none>'}$2`);
+      normalizations.push({ sourceId, id, dependencies: expectedDependencies });
+    }
+    if (hasCycle && normalizations.filter((normalization) => normalization.sourceId === sourceId).length === 0) {
+      unresolvedCycles.push(sourceId);
+    }
+  }
+  if (normalizations.length === 0) {
+    return unresolvedCycles.length > 0
+      ? { applied: false, eligible: true, reason: 'unrepairable_source_sibling_cycle', sourceIds: unresolvedCycles }
+      : { applied: false, eligible: false, reason: 'no_source_sibling_contract_drift' };
+  }
+  const validationErrors = validateTodoDecompositionText(updatedTodo, {
+    path: todoPath, repoRoot, packageScripts: packageScripts(), breakdownPath, breakdownText: updatedBreakdown,
+    completedTodoIds,
+    invalidCheckedTodoIds,
+    productReady: false, releaseBlockersRemaining: true
+  });
+  if (validationErrors.length > 0) return { applied: false, eligible: true, reason: 'source_sibling_contract_repair_failed_guard', validationErrors, normalizations };
+  writeAtomic(todoPath, updatedTodo);
+  writeAtomic(breakdownPath, updatedBreakdown);
+  return { applied: true, operation: 'deterministic_source_sibling_contract_rebaseline', todoPath, breakdownPath, normalizations };
+}
+
 function repairSelectedLeafTodoContract({ claim, todoText, breakdownText, todoPath, breakdownPath }) {
   const selected = claim.selected_todo;
   if (typeof selected !== 'string') {
@@ -1094,7 +1219,7 @@ function repairSelectedLeafTodoContract({ claim, todoText, breakdownText, todoPa
   }
 
   const ids = existingIds(todoText);
-  const completedIds = readTodoCompletionIds();
+  const completedIds = canonicalCompletedTodoIds(todoText, breakdownPath);
   const dependencies = parseDependsOn(normalizedBlock);
   const liveDependencies = dependencies.filter((dependency) => ids.has(dependency) || completedIds.has(dependency));
   const removedDependencies = dependencies.filter((dependency) => !ids.has(dependency) && !completedIds.has(dependency));
@@ -1157,7 +1282,7 @@ function repairSelectedLeafTodoContract({ claim, todoText, breakdownText, todoPa
 function repairDanglingLiveDependencies({ todoText, breakdownText, todoPath, breakdownPath, additionalSourceIds = [] }) {
   const blocks = uncheckedTodoBlocks(todoText);
   const ids = existingIds(todoText);
-  const completedIds = readTodoCompletionIds();
+  const completedIds = canonicalCompletedTodoIds(todoText, breakdownPath);
   const notes = [];
   let updatedTodo = todoText;
   let updatedBreakdown = breakdownText;
@@ -1321,6 +1446,16 @@ export function repairTodoDecomposition({
   const selected = claim.selected_todo;
   const todoText = readText(todoPath);
   const breakdownText = fs.existsSync(path.resolve(repoRoot, breakdownPath)) ? readText(breakdownPath) : '# TODO breakdown\n';
+  const todoState = canonicalTodoState(todoText, breakdownPath);
+  const unresolvedSupersededIds = new Set(
+    [...todoState.supersededIds].filter((id) => !todoState.resolvedIds.has(id))
+  );
+  const siblingRepair = repairSourceSiblingContracts({
+    todoText, breakdownText, todoPath, breakdownPath,
+    completedTodoIds: todoState.resolvedIds,
+    invalidCheckedTodoIds: unresolvedSupersededIds
+  });
+  if (siblingRepair.applied || siblingRepair.eligible) return siblingRepair;
   const leafRepair = repairSelectedLeafTodoContract({ claim, todoText, breakdownText, todoPath, breakdownPath });
   if (leafRepair.applied || leafRepair.eligible) {
     if (leafRepair.reason === 'selected_leaf_missing_from_todo') {
