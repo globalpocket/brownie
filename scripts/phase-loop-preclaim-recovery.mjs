@@ -73,6 +73,54 @@ function restoreSnapshot({ recoveryDir, todoPath, breakdownPath, breakdownExiste
   }
 }
 
+const terminalRecoveryStatuses = new Set([
+  'applied',
+  'failed_reverted',
+  'failed_recovery_snapshot_missing',
+  'failed_recovery_record_invalid'
+]);
+
+function findInterruptedRecovery({ stateDir, todoPath, breakdownPath, diagnostic }) {
+  const recoveryRoot = path.join(stateDir, 'preclaim-recovery');
+  if (!fs.existsSync(recoveryRoot)) return null;
+  const matches = fs.readdirSync(recoveryRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
+      const recoveryDir = path.join(recoveryRoot, entry.name);
+      const recordPath = path.join(recoveryDir, 'record.json');
+      if (!fs.existsSync(recordPath)) return null;
+      const record = readJson(recordPath);
+      return record.status === 'started'
+        && record.before?.todo_path === todoPath
+        && record.before?.breakdown_path === breakdownPath
+        && record.diagnostic_tail === diagnostic.slice(-6000)
+        ? { recoveryDir, recordPath, record }
+        : null;
+    })
+    .filter(Boolean);
+  if (matches.length > 1) {
+    throw new Error('multiple interrupted pre-claim recovery records match the current event');
+  }
+  return matches[0] ?? null;
+}
+
+function recoverySnapshotMissing({ record }) {
+  const required = [
+    record.rollback_snapshot?.todo,
+    record.claim_snapshot?.recovery_claim_path
+  ];
+  if (record.rollback_snapshot?.breakdown) required.push(record.rollback_snapshot.breakdown);
+  return required.filter((filePath) => typeof filePath !== 'string' || !fs.existsSync(filePath));
+}
+
+function markRecoveryTerminal({ recordPath, record, status, reason, missing = [] }) {
+  record.status = status;
+  record.failure_reason = reason;
+  record.snapshot_missing = missing;
+  record.terminal_recorded_at = new Date().toISOString();
+  writeJson(recordPath, record);
+}
+
 async function main(rawArgs) {
   const args = rawArgs;
   const repo = path.resolve(args.repo ?? repositoryRoot);
@@ -102,35 +150,88 @@ async function main(rawArgs) {
   const todoBeforeHash = sha256Text(todoBeforeText);
   const breakdownBeforeHash = breakdownBeforeExists ? sha256Text(breakdownBeforeText) : null;
   const eventKey = sha256Text(`${todoBeforeHash}\n${breakdownBeforeHash ?? 'missing'}\n${diagnostic}`);
-  const recoveryDir = path.join(stateDir, 'preclaim-recovery', eventKey);
-  const recordPath = path.join(recoveryDir, 'record.json');
-  if (fs.existsSync(recordPath)) {
-    return 2;
+  let recoveryDir = path.join(stateDir, 'preclaim-recovery', eventKey);
+  let recordPath = path.join(recoveryDir, 'record.json');
+  let recoveryRecord = fs.existsSync(recordPath) ? readJson(recordPath) : null;
+  if (!recoveryRecord) {
+    const interrupted = findInterruptedRecovery({ stateDir, todoPath, breakdownPath, diagnostic });
+    if (interrupted) {
+      recoveryDir = interrupted.recoveryDir;
+      recordPath = interrupted.recordPath;
+      recoveryRecord = interrupted.record;
+    }
+  }
+  if (recoveryRecord) {
+    if (recoveryRecord.status !== 'started') {
+      return terminalRecoveryStatuses.has(recoveryRecord.status) ? 2 : 1;
+    }
+    const missingSnapshots = recoverySnapshotMissing({ record: recoveryRecord });
+    if (missingSnapshots.length > 0) {
+      markRecoveryTerminal({
+        recordPath,
+        record: recoveryRecord,
+        status: 'failed_recovery_snapshot_missing',
+        reason: 'recovery_snapshot_missing',
+        missing: missingSnapshots
+      });
+      return 1;
+    }
+    try {
+      restoreSnapshot({
+        recoveryDir,
+        todoPath,
+        breakdownPath,
+        breakdownExisted: Boolean(recoveryRecord.rollback_snapshot.breakdown)
+      });
+    } catch (error) {
+      markRecoveryTerminal({
+        recordPath,
+        record: recoveryRecord,
+        status: 'failed_recovery_snapshot_missing',
+        reason: 'recovery_snapshot_restore_failed',
+        missing: [String(error?.message ?? error)]
+      });
+      return 1;
+    }
+    recoveryRecord.recovery_resumes = [
+      ...(Array.isArray(recoveryRecord.recovery_resumes) ? recoveryRecord.recovery_resumes : []),
+      {
+        run_stamp: runStamp,
+        resumed_at: new Date().toISOString(),
+        rollback_performed: true
+      }
+    ];
+    recoveryRecord.resumed_after_interruption = true;
+    writeJson(recordPath, recoveryRecord);
   }
 
-  fs.mkdirSync(recoveryDir, { recursive: true, mode: 0o700 });
-  fs.copyFileSync(todoPath, path.join(recoveryDir, 'todo.before.md'));
-  fs.chmodSync(path.join(recoveryDir, 'todo.before.md'), 0o600);
-  if (breakdownBeforeExists) {
-    fs.copyFileSync(breakdownPath, path.join(recoveryDir, 'todo-breakdown.before.md'));
-    fs.chmodSync(path.join(recoveryDir, 'todo-breakdown.before.md'), 0o600);
+  if (!recoveryRecord) {
+    fs.mkdirSync(recoveryDir, { recursive: true, mode: 0o700 });
+    fs.copyFileSync(todoPath, path.join(recoveryDir, 'todo.before.md'));
+    fs.chmodSync(path.join(recoveryDir, 'todo.before.md'), 0o600);
+    if (breakdownBeforeExists) {
+      fs.copyFileSync(breakdownPath, path.join(recoveryDir, 'todo-breakdown.before.md'));
+      fs.chmodSync(path.join(recoveryDir, 'todo-breakdown.before.md'), 0o600);
+    }
   }
 
-  const recoveryClaimPath = path.join(recoveryDir, 'claim.json');
-  const recoveryClaim = {
-    schema_version: 1,
-    claim_id: String(claim.claim_id ?? `preclaim-recovery-${eventKey.slice(0, 16)}`),
-    status: 'preclaim_recovery',
-    selected_todo: selectedTodo,
-    queue_fingerprint: String(claim.queue_fingerprint ?? ''),
-    source_claim_path: claimPath,
-    event_key: eventKey
-  };
-  writeJson(recoveryClaimPath, recoveryClaim);
-  atomicWrite(path.join(recoveryDir, 'selected-todo.before.md'), selectedTodo ? `${selectedTodo}\n` : '');
+  const recoveryClaimPath = recoveryRecord?.claim_snapshot?.recovery_claim_path ?? path.join(recoveryDir, 'claim.json');
+  if (!recoveryRecord) {
+    const recoveryClaim = {
+      schema_version: 1,
+      claim_id: String(claim.claim_id ?? `preclaim-recovery-${eventKey.slice(0, 16)}`),
+      status: 'preclaim_recovery',
+      selected_todo: selectedTodo,
+      queue_fingerprint: String(claim.queue_fingerprint ?? ''),
+      source_claim_path: claimPath,
+      event_key: eventKey
+    };
+    writeJson(recoveryClaimPath, recoveryClaim);
+    atomicWrite(path.join(recoveryDir, 'selected-todo.before.md'), selectedTodo ? `${selectedTodo}\n` : '');
+  }
 
-  const firstLine = selectedTodo.split('\n')[0] ?? '';
-  const targetSnapshot = [...firstLine.matchAll(/\b(Patch|Create) only\s+`([^`]+)`/gu)].map((match) => {
+  const firstLine = recoveryRecord?.claim_snapshot?.selected_todo_first_line ?? selectedTodo.split('\n')[0] ?? '';
+  const targetSnapshot = recoveryRecord?.target_snapshot ?? [...firstLine.matchAll(/\b(Patch|Create) only\s+`([^`]+)`/gu)].map((match) => {
     const targetPath = path.resolve(repo, match[2]);
     return {
       operation: match[1],
@@ -139,7 +240,7 @@ async function main(rawArgs) {
       sha256_before: sha256File(targetPath)
     };
   });
-  const record = {
+  const record = recoveryRecord ?? {
     schema_version: 1,
     record_type: 'phase_loop_preclaim_recovery',
     status: 'started',

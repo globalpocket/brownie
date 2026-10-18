@@ -115,6 +115,60 @@ test('repairs reparable pre-claim decomposition drift and records a reversible t
   assert.equal(repeated.status, 2);
 });
 
+test('resumes an interrupted started recovery after rolling back its snapshot', () => {
+  const root = makeFixture();
+  const todoPath = path.join(root, '.brownie/todo.md');
+  const diagnostic = 'node scripts/guard-todo-decomposition.mjs: Create only target already exists; TODO dependencies must not contain cycles; dependency E-23b-release-artifact-download-roundtrip is present only in the breakdown ledger';
+  const repairScript = path.join(root, 'scripts/repair-todo-decomposition.mjs');
+  const repairScriptSource = fs.readFileSync(repairScript, 'utf8');
+  fs.writeFileSync(repairScript, `import fs from 'node:fs';\nfs.writeFileSync(${JSON.stringify(todoPath)}, 'interrupted before repair completed\\n');\nprocess.kill(process.pid, 'SIGKILL');\n`);
+
+  const interrupted = runRecovery(root, diagnostic);
+  assert.equal(interrupted.status, null);
+  assert.equal(interrupted.signal, 'SIGKILL');
+  assert.equal(fs.readFileSync(todoPath, 'utf8'), 'interrupted before repair completed\n');
+  fs.writeFileSync(repairScript, repairScriptSource);
+
+  const resumed = runRecovery(root, diagnostic);
+  assert.equal(resumed.status, 0, `${resumed.stdout}\n${resumed.stderr}`);
+  const recoveryRoot = path.join(root, '.brownie/private/phase-loop/preclaim-recovery');
+  const recoveryDirectory = fs.readdirSync(recoveryRoot, { withFileTypes: true }).find((entry) => entry.isDirectory());
+  const record = JSON.parse(fs.readFileSync(path.join(recoveryRoot, recoveryDirectory.name, 'record.json'), 'utf8'));
+  assert.equal(record.status, 'applied');
+  assert.equal(record.resumed_after_interruption, true);
+  assert.equal(record.recovery_resumes.length, 1);
+  assert.equal(record.recovery_resumes[0].rollback_performed, true);
+  assert.notEqual(fs.readFileSync(todoPath, 'utf8'), 'interrupted before repair completed\n');
+});
+
+test('fails closed and records a terminal audit when an interrupted recovery snapshot is missing', () => {
+  const root = makeFixture();
+  const diagnostic = 'node scripts/guard-todo-decomposition.mjs: Create only target already exists; TODO dependencies must not contain cycles; dependency E-23b-release-artifact-download-roundtrip is present only in the breakdown ledger';
+  const repairScript = path.join(root, 'scripts/repair-todo-decomposition.mjs');
+  const repairScriptSource = fs.readFileSync(repairScript, 'utf8');
+  fs.writeFileSync(repairScript, `process.kill(process.pid, 'SIGKILL');\n`);
+  const interrupted = runRecovery(root, diagnostic);
+  assert.equal(interrupted.signal, 'SIGKILL');
+  fs.writeFileSync(repairScript, repairScriptSource);
+
+  const recoveryRoot = path.join(root, '.brownie/private/phase-loop/preclaim-recovery');
+  const recoveryDirectory = fs.readdirSync(recoveryRoot, { withFileTypes: true }).find((entry) => entry.isDirectory());
+  const recordPath = path.join(recoveryRoot, recoveryDirectory.name, 'record.json');
+  const startedRecord = JSON.parse(fs.readFileSync(recordPath, 'utf8'));
+  fs.unlinkSync(startedRecord.rollback_snapshot.todo);
+
+  const failed = runRecovery(root, diagnostic);
+  assert.equal(failed.status, 1, `${failed.stdout}\n${failed.stderr}`);
+  const failedRecord = JSON.parse(fs.readFileSync(recordPath, 'utf8'));
+  assert.equal(failedRecord.status, 'failed_recovery_snapshot_missing');
+  assert.equal(failedRecord.failure_reason, 'recovery_snapshot_missing');
+  assert.deepEqual(failedRecord.snapshot_missing, [startedRecord.rollback_snapshot.todo]);
+
+  const repeated = runRecovery(root, diagnostic);
+  assert.equal(repeated.status, 2);
+  assert.deepEqual(JSON.parse(fs.readFileSync(recordPath, 'utf8')), failedRecord);
+});
+
 test('rejects non-reparable pre-claim diagnostics without creating recovery evidence', () => {
   const root = makeFixture();
   const result = runRecovery(root, 'node scripts/guard-release-contract.mjs: readiness audit hash mismatch');
