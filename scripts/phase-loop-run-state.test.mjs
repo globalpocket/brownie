@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { inspectSupervisorOwnership, migrateLegacyPhaseLoopState, normalizeStaleRunningStatus, rollbackStaleRunningRecovery, watchdogContinuationLiveness } from './phase-loop-run-state.mjs';
+import { inspectSupervisorOwnership, migrateLegacyPhaseLoopState, normalizeStaleRunningStatus, rollbackStaleRunningRecovery, terminateLegacySupervisor, watchdogContinuationLiveness } from './phase-loop-run-state.mjs';
 
 function fixture() {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-run-state-'));
@@ -421,11 +421,12 @@ function writeLegacyFixture(stateDir, { pid = 48100, supervisorPid = 33061, root
   fs.writeFileSync(path.join(stateDir, 'phase-loop.lock', 'pid'), `${supervisorPid}\n`);
 }
 
-function sameRootLegacyRecords() {
+function sameRootLegacyRecords(stateDir) {
   return [{
     pid: 33061,
     command: 'bash /repo/phase-loop.sh supervise',
-    start_time: 'Sun Oct 18 16:30:00 2026'
+    start_time: 'Sun Oct 18 16:30:00 2026',
+    state_dir: stateDir
   }];
 }
 
@@ -441,7 +442,7 @@ test('archives and rebaselines a confirmed same-root legacy owner exactly once',
     processExists: (pid) => live && pid === 33061,
     getProcessCommand: (pid) => pid === 33061 ? 'bash /repo/phase-loop.sh supervise' : '',
     getProcessStartTime: () => 'Sun Oct 18 16:30:00 2026',
-    listAllSupervisors: () => live ? sameRootLegacyRecords() : [],
+    listAllSupervisors: () => live ? sameRootLegacyRecords(stateDir) : [],
     stopSupervisor: ({ candidate }) => {
       stopCalls += 1;
       assert.equal(candidate.pid, 33061);
@@ -463,6 +464,55 @@ test('archives and rebaselines a confirmed same-root legacy owner exactly once',
   assert.equal(manifest.kind, 'phase_loop_legacy_state_archive');
   assert.ok(manifest.files.some((entry) => entry.category === 'claim'));
   assert.ok(manifest.files.some((entry) => entry.category === 'target_snapshot'));
+});
+
+test('blocks a same-root supervisor whose state directory is different', () => {
+  const { stateDir, statusPath } = fixture();
+  writeLegacyFixture(stateDir);
+  const foreignState = [{
+    pid: 33061,
+    command: 'bash /repo/phase-loop.sh supervise',
+    start_time: 'Sun Oct 18 16:30:00 2026',
+    state_dir: '/other-state'
+  }];
+  let stopCalls = 0;
+  const result = migrateLegacyPhaseLoopState({
+    stateDir,
+    rootDir: '/repo',
+    processExists: () => true,
+    getProcessCommand: () => foreignState[0].command,
+    getProcessStartTime: () => foreignState[0].start_time,
+    listAllSupervisors: () => foreignState,
+    stopSupervisor: () => { stopCalls += 1; return { ok: true }; }
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'legacy_state_ownership_unproven');
+  assert.equal(result.inspection.reason, 'legacy_foreign_supervisor');
+  assert.equal(stopCalls, 0);
+  assert.equal(JSON.parse(fs.readFileSync(statusPath, 'utf8')).status, 'blocked');
+  assert.equal(fs.readFileSync(path.join(stateDir, 'phase-loop.pid'), 'utf8'), '48100\n');
+});
+
+test('rescans descendants before force-killing a respawned legacy child', () => {
+  const live = new Set([33061, 44002]);
+  const signals = [];
+  let scans = 0;
+  const result = terminateLegacySupervisor({
+    candidate: { pid: 33061 },
+    processExists: (pid) => live.has(pid),
+    listDescendants: () => {
+      scans += 1;
+      return scans === 1 ? [44001] : [44001, 44002];
+    },
+    killProcess: (pid, signal) => {
+      signals.push([pid, signal]);
+      if (signal === 'SIGKILL') live.delete(pid);
+    },
+    sleep: () => {}
+  });
+  assert.equal(result.ok, true);
+  assert.ok(scans > 2);
+  assert.ok(signals.some(([pid, signal]) => pid === 44002 && signal === 'SIGKILL'));
 });
 
 test('blocks and preserves state when a foreign supervisor is live', () => {
@@ -544,7 +594,7 @@ test('refuses a status race discovered after the archive and never starts a seco
         status.updated_at = '2026-10-18T16:59:59.000Z';
         fs.writeFileSync(statusPath, JSON.stringify(status));
       }
-      return sameRootLegacyRecords();
+      return sameRootLegacyRecords(stateDir);
     },
     stopSupervisor: () => { stopCalls += 1; return { ok: true }; }
   });
@@ -565,7 +615,7 @@ test('refuses rebaseline when stopping the legacy owner dirties claim state', ()
     processExists: (pid) => live && pid === 33061,
     getProcessCommand: () => 'bash /repo/phase-loop.sh supervise',
     getProcessStartTime: () => 'Sun Oct 18 16:30:00 2026',
-    listAllSupervisors: () => live ? sameRootLegacyRecords() : [],
+    listAllSupervisors: () => live ? sameRootLegacyRecords(stateDir) : [],
     stopSupervisor: () => {
       live = false;
       fs.writeFileSync(path.join(stateDir, 'todo-claims', 'current.json'), JSON.stringify({ claim_id: 'changed-during-stop' }));
@@ -588,7 +638,7 @@ test('leaves continuation blocked when reversible cleanup fails after owner stop
     processExists: (pid) => live && pid === 33061,
     getProcessCommand: () => 'bash /repo/phase-loop.sh supervise',
     getProcessStartTime: () => 'Sun Oct 18 16:30:00 2026',
-    listAllSupervisors: () => live ? sameRootLegacyRecords() : [],
+    listAllSupervisors: () => live ? sameRootLegacyRecords(stateDir) : [],
     stopSupervisor: () => { live = false; return { ok: true }; },
     runtimeCleaner: () => ({ ok: false, code: 'legacy_cleanup_fixture_failure' })
   });

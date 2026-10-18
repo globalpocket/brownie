@@ -56,6 +56,17 @@ function fsyncDirectory(directory) {
   }
 }
 
+function copyFileAndFsync(source, destination) {
+  fs.copyFileSync(source, destination);
+  fs.chmodSync(destination, 0o600);
+  const handle = fs.openSync(destination, fs.constants.O_RDONLY);
+  try {
+    fs.fsyncSync(handle);
+  } finally {
+    fs.closeSync(handle);
+  }
+}
+
 function hashBytes(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
@@ -121,8 +132,7 @@ function archiveLegacyStateAtomically({ stateDir, recoveryId, reason, now = new 
       if (entry.kind === 'symlink') {
         fs.symlinkSync(fs.readlinkSync(source), destination);
       } else {
-        fs.copyFileSync(source, destination);
-        fs.chmodSync(destination, 0o600);
+        copyFileAndFsync(source, destination);
       }
     }
     const manifest = {
@@ -172,6 +182,23 @@ function processStartTime(pid) {
   }
 }
 
+function processStateDir(pid) {
+  try {
+    const environment = fs.readFileSync(`/proc/${pid}/environ`, 'utf8');
+    const entry = environment.split('\0').find((value) => value.startsWith('PHASE_LOOP_STATE_DIR='));
+    if (entry) return entry.slice('PHASE_LOOP_STATE_DIR='.length);
+  } catch {
+    // macOS does not expose /proc; use ps below when available.
+  }
+  try {
+    const command = execFileSync('ps', ['-wwE', '-p', String(pid), '-o', 'command='], { encoding: 'utf8' }).trim();
+    const match = command.match(/(?:^|\s)PHASE_LOOP_STATE_DIR=([^\s]+)/u);
+    return match?.[1] || '';
+  } catch {
+    return '';
+  }
+}
+
 function canonicalizePath(value) {
   if (!value) return '';
   try {
@@ -194,6 +221,20 @@ function commandLooksLikeSupervisor(command) {
   return /\bphase-loop\.sh\b.*\bsupervise\b/u.test(command);
 }
 
+function reportedSupervisorStateDir(record) {
+  if (typeof record?.state_dir === 'string' && record.state_dir) return record.state_dir;
+  if (typeof record?.environment?.PHASE_LOOP_STATE_DIR === 'string' && record.environment.PHASE_LOOP_STATE_DIR) {
+    return record.environment.PHASE_LOOP_STATE_DIR;
+  }
+  const match = String(record?.command || '').match(/(?:^|\s)PHASE_LOOP_STATE_DIR=([^\s]+)/u);
+  return match?.[1] || '';
+}
+
+function supervisorStateDirMatches(record, stateDir) {
+  const reported = reportedSupervisorStateDir(record);
+  return Boolean(reported && canonicalizePath(reported) === canonicalizePath(stateDir));
+}
+
 function allSupervisorProcessRecords() {
   let output = '';
   try {
@@ -206,7 +247,7 @@ function allSupervisorProcessRecords() {
     if (!Number.isInteger(pid) || pid <= 1 || !processIsAlive(pid)) return [];
     const command = processCommand(pid);
     if (!commandLooksLikeSupervisor(command)) return [];
-    return [{ pid, command, start_time: processStartTime(pid) }];
+    return [{ pid, command, start_time: processStartTime(pid), state_dir: processStateDir(pid) }];
   });
 }
 
@@ -354,12 +395,17 @@ export function inspectLegacyPhaseLoopState({
   const records = [...listAllSupervisors()].filter((record) => Number.isInteger(record?.pid) && record.pid > 1);
   const liveRecords = records.filter((record) => processExists(record.pid));
   const sameRootRecords = liveRecords.filter((record) => supervisorCommandMatchesRoot(record.command || '', rootDir));
+  const stateDirRecords = sameRootRecords.filter((record) => supervisorStateDirMatches(record, stateDir));
+  const foreignStateDirRecords = sameRootRecords.filter((record) => (
+    reportedSupervisorStateDir(record) && !supervisorStateDirMatches(record, stateDir)
+  ));
   const foreignRecords = liveRecords.filter((record) => (
     commandLooksLikeSupervisor(record.command || '') && !supervisorCommandMatchesRoot(record.command || '', rootDir)
   ));
   const pidLive = pid !== null && processExists(pid);
   const pidCommand = pidLive ? getProcessCommand(pid) : '';
   const pidStartTime = pidLive ? getProcessStartTime(pid) : '';
+  const pidRecord = pidLive ? liveRecords.find((record) => record.pid === pid) : null;
   const lockPid = readLockPid(stateDir);
   const lockLive = lockPid !== null && processExists(lockPid);
   const ownership = inspectSupervisorOwnership({
@@ -386,9 +432,20 @@ export function inspectLegacyPhaseLoopState({
   const candidateStartTime = candidate?.start_time || (candidate ? getProcessStartTime(candidate.pid) : '');
   const pidIsCandidate = Boolean(candidate && pid === candidate.pid);
   const pidIsForeignSupervisor = Boolean(pidLive && commandLooksLikeSupervisor(pidCommand) && !supervisorCommandMatchesRoot(pidCommand, rootDir));
+  const pidIsForeignStateSupervisor = Boolean(
+    pidLive
+      && commandLooksLikeSupervisor(pidCommand)
+      && supervisorCommandMatchesRoot(pidCommand, rootDir)
+      && pidRecord
+      && reportedSupervisorStateDir(pidRecord)
+      && !supervisorStateDirMatches(pidRecord, stateDir)
+  );
   const pidIsOtherLiveProcess = Boolean(pidLive && !commandLooksLikeSupervisor(pidCommand));
   const candidateIsStrictlyConfirmed = Boolean(
     candidate
+      && sameRootRecords.length === 1
+      && stateDirRecords.length === 1
+      && reportedSupervisorStateDir(candidate)
       && candidateStartTime
       && !pidError
       && !(pidFilePresent && pid === null)
@@ -399,8 +456,9 @@ export function inspectLegacyPhaseLoopState({
       && (!status.supervisor_pid || status.supervisor_pid === candidate.pid)
   );
   let reason = 'legacy_ownership_unproven';
-  if (foreignRecords.length > 0 || pidIsForeignSupervisor) reason = 'legacy_foreign_supervisor';
+  if (foreignRecords.length > 0 || foreignStateDirRecords.length > 0 || pidIsForeignSupervisor || pidIsForeignStateSupervisor) reason = 'legacy_foreign_supervisor';
   else if (sameRootRecords.length > 1) reason = 'legacy_ambiguous_same_root_supervisors';
+  else if (sameRootRecords.length === 1 && stateDirRecords.length === 0) reason = 'legacy_state_dir_ownership_unproven';
   else if (pidIsOtherLiveProcess) reason = 'legacy_pid_reused_by_other_process';
   else if (pidError || (pidFilePresent && pid === null)) reason = 'legacy_pid_unreadable';
   else if (candidate && !candidateStartTime) reason = 'legacy_supervisor_start_time_unreadable';
@@ -425,6 +483,8 @@ export function inspectLegacyPhaseLoopState({
     lock_live: lockLive,
     live_supervisors: liveRecords,
     same_root_supervisors: sameRootRecords,
+    state_dir_supervisors: stateDirRecords,
+    foreign_state_dir_supervisors: foreignStateDirRecords,
     foreign_supervisors: foreignRecords,
     candidate: candidate ? { ...candidate, start_time: candidateStartTime } : null,
     candidate_confirmed: candidateIsStrictlyConfirmed,
@@ -464,20 +524,30 @@ function supervisorDescendantPids(pid) {
   return descendants;
 }
 
-function terminateLegacySupervisor({ candidate, processExists = (pid) => processIsAlive(pid) }) {
-  const managed = [candidate.pid, ...supervisorDescendantPids(candidate.pid)];
+export function terminateLegacySupervisor({
+  candidate,
+  processExists = (pid) => processIsAlive(pid),
+  listDescendants = supervisorDescendantPids,
+  killProcess = process.kill,
+  sleep = sleepMilliseconds
+}) {
+  const collectManaged = () => [...new Set([candidate.pid, ...listDescendants(candidate.pid)])];
+  let managed = collectManaged();
   for (const pid of managed) {
-    try { process.kill(pid, 'SIGTERM'); } catch (error) { if (error?.code !== 'ESRCH') return { ok: false, code: 'legacy_stop_signal_failed', error: error.message }; }
+    try { killProcess(pid, 'SIGTERM'); } catch (error) { if (error?.code !== 'ESRCH') return { ok: false, code: 'legacy_stop_signal_failed', error: error.message }; }
   }
   for (let attempt = 0; attempt < 50; attempt += 1) {
+    managed = [...new Set([...managed, ...collectManaged()])];
     if (!managed.some((pid) => processExists(pid))) return { ok: true, stopped_pids: managed };
-    sleepMilliseconds(100);
+    sleep(100);
   }
+  managed = [...new Set([...managed, ...collectManaged()])];
   for (const pid of managed) {
     if (!processExists(pid)) continue;
-    try { process.kill(pid, 'SIGKILL'); } catch (error) { if (error?.code !== 'ESRCH') return { ok: false, code: 'legacy_stop_force_signal_failed', error: error.message }; }
+    try { killProcess(pid, 'SIGKILL'); } catch (error) { if (error?.code !== 'ESRCH') return { ok: false, code: 'legacy_stop_force_signal_failed', error: error.message }; }
   }
-  sleepMilliseconds(100);
+  sleep(100);
+  managed = [...new Set([...managed, ...collectManaged()])];
   return managed.some((pid) => processExists(pid))
     ? { ok: false, code: 'legacy_supervisor_stop_timeout', stopped_pids: managed }
     : { ok: true, stopped_pids: managed, forced: true };
