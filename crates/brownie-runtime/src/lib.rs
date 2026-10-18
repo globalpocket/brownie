@@ -18904,6 +18904,8 @@ modes:
         runtime_policy_count: usize,
     }
 
+    static CURRENT_AGENTMODES_CHECKOUT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn write_current_agentmodes_modepack_if_available(
         workspace_root: &std::path::Path,
     ) -> Option<CurrentAgentModesFixture> {
@@ -18976,8 +18978,15 @@ modes:
         }
 
         if required {
+            let _guard = recover_lock(&CURRENT_AGENTMODES_CHECKOUT_LOCK);
             let root = current_agentmodes_managed_checkout_for_test("brownie-runtime");
-            prepare_current_agentmodes_checkout_for_test(&root);
+            if let Err(reason) = prepare_current_agentmodes_checkout_for_test(&root) {
+                eprintln!(
+                    "agentmodes_compatibility status=external-blocked repository={} revision={} reason={reason}",
+                    baseline.repository, baseline.revision
+                );
+                return None;
+            }
             assert_current_agentmodes_root_for_test(&root);
             return Some(root);
         }
@@ -19050,7 +19059,7 @@ modes:
             ))
     }
 
-    fn prepare_current_agentmodes_checkout_for_test(root: &std::path::Path) {
+    fn prepare_current_agentmodes_checkout_for_test(root: &std::path::Path) -> Result<(), String> {
         let baseline = brownie_agentmodes::CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
         if current_agentmodes_revision(root).as_deref() == Some(baseline.revision)
             && root
@@ -19058,49 +19067,86 @@ modes:
                 .is_file()
             && root.join("prompts/core.orchestrator.md").is_file()
         {
-            return;
+            return Ok(());
         }
         if root.exists() {
-            std::fs::remove_dir_all(root).expect("remove stale AgentModes compatibility checkout");
+            std::fs::remove_dir_all(root)
+                .map_err(|error| format!("remove stale checkout: {error}"))?;
         }
         std::fs::create_dir_all(root.parent().expect("AgentModes checkout parent"))
-            .expect("create AgentModes compatibility checkout parent");
+            .map_err(|error| format!("create checkout parent: {error}"))?;
         let repository_url = format!("https://github.com/{}.git", baseline.repository);
-        assert_git_status_for_test(
-            std::process::Command::new("git")
+        run_git_with_retries("clone AgentModes compatibility baseline", || {
+            if root.exists() {
+                let _ = std::fs::remove_dir_all(root);
+            }
+            let mut command = std::process::Command::new("git");
+            command
+                .args([
+                    "-c",
+                    "http.connectTimeout=10",
+                    "-c",
+                    "http.lowSpeedTime=10",
+                    "-c",
+                    "http.lowSpeedLimit=1",
+                ])
                 .arg("clone")
                 .arg("--no-checkout")
                 .arg(&repository_url)
-                .arg(root),
-            "clone AgentModes compatibility baseline",
-        );
-        assert_git_status_for_test(
-            std::process::Command::new("git")
+                .arg(root);
+            command
+        })?;
+        run_git_with_retries("fetch AgentModes compatibility baseline revision", || {
+            let mut command = std::process::Command::new("git");
+            command
                 .arg("-C")
                 .arg(root)
                 .arg("fetch")
                 .arg("--depth")
                 .arg("1")
                 .arg("origin")
-                .arg(baseline.revision),
-            "fetch AgentModes compatibility baseline revision",
-        );
-        assert_git_status_for_test(
-            std::process::Command::new("git")
-                .arg("-C")
-                .arg(root)
-                .arg("checkout")
-                .arg("--detach")
-                .arg(baseline.revision),
+                .arg(baseline.revision);
+            command
+        })?;
+        run_git_with_retries(
             "checkout AgentModes compatibility baseline revision",
-        );
+            || {
+                let mut command = std::process::Command::new("git");
+                command
+                    .arg("-C")
+                    .arg(root)
+                    .arg("checkout")
+                    .arg("--detach")
+                    .arg(baseline.revision);
+                command
+            },
+        )?;
+        Ok(())
     }
 
-    fn assert_git_status_for_test(command: &mut std::process::Command, label: &str) {
-        let status = command
-            .status()
-            .unwrap_or_else(|error| panic!("{label}: {error}"));
-        assert!(status.success(), "{label} failed with status {status}");
+    fn run_git_with_retries<F>(operation: &str, mut command: F) -> Result<(), String>
+    where
+        F: FnMut() -> std::process::Command,
+    {
+        const MAX_ATTEMPTS: usize = 2;
+        let mut diagnostics = Vec::new();
+        for attempt in 1..=MAX_ATTEMPTS {
+            let output = command()
+                .output()
+                .map_err(|error| format!("attempt {attempt}: spawn failed: {error}"))?;
+            if output.status.success() {
+                return Ok(());
+            }
+            diagnostics.push(format!(
+                "attempt {attempt}: status={}; stderr={}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+            if attempt < MAX_ATTEMPTS {
+                std::thread::sleep(std::time::Duration::from_secs(attempt as u64));
+            }
+        }
+        Err(format!("{operation}; {}", diagnostics.join(" | ")))
     }
 
     fn current_agentmodes_revision(root: &std::path::Path) -> Option<String> {
