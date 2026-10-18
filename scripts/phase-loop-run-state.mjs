@@ -123,6 +123,7 @@ function archiveLegacyStateAtomically({ stateDir, recoveryId, reason, now = new 
   const temporary = path.join(recoveryRoot, `.${recoveryId}.tmp`);
   const archivePath = path.join(recoveryRoot, recoveryId);
   fs.mkdirSync(recoveryRoot, { recursive: true, mode: 0o700 });
+  fsyncDirectory(stateDir);
   fs.mkdirSync(temporary, { recursive: true, mode: 0o700 });
   try {
     for (const entry of before.files) {
