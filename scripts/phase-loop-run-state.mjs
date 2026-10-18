@@ -527,11 +527,13 @@ function supervisorDescendantPids(pid) {
 export function terminateLegacySupervisor({
   candidate,
   processExists = (pid) => processIsAlive(pid),
-  listDescendants = supervisorDescendantPids,
+  listDescendants = null,
   killProcess = process.kill,
-  sleep = sleepMilliseconds
+  sleep = null
 }) {
-  const collectManaged = () => [...new Set([candidate.pid, ...listDescendants(candidate.pid)])];
+  const descendantLister = listDescendants || ((pid) => supervisorDescendantPids(pid));
+  const sleeper = sleep || ((milliseconds) => sleepMilliseconds(milliseconds));
+  const collectManaged = () => [...new Set([candidate.pid, ...descendantLister(candidate.pid)])];
   let managed = collectManaged();
   for (const pid of managed) {
     try { killProcess(pid, 'SIGTERM'); } catch (error) { if (error?.code !== 'ESRCH') return { ok: false, code: 'legacy_stop_signal_failed', error: error.message }; }
@@ -539,14 +541,14 @@ export function terminateLegacySupervisor({
   for (let attempt = 0; attempt < 50; attempt += 1) {
     managed = [...new Set([...managed, ...collectManaged()])];
     if (!managed.some((pid) => processExists(pid))) return { ok: true, stopped_pids: managed };
-    sleep(100);
+    sleeper(100);
   }
   managed = [...new Set([...managed, ...collectManaged()])];
   for (const pid of managed) {
     if (!processExists(pid)) continue;
     try { killProcess(pid, 'SIGKILL'); } catch (error) { if (error?.code !== 'ESRCH') return { ok: false, code: 'legacy_stop_force_signal_failed', error: error.message }; }
   }
-  sleep(100);
+  sleeper(100);
   managed = [...new Set([...managed, ...collectManaged()])];
   return managed.some((pid) => processExists(pid))
     ? { ok: false, code: 'legacy_supervisor_stop_timeout', stopped_pids: managed }
