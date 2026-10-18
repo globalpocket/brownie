@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import {
@@ -158,4 +161,10 @@ test('rejects missing package script wiring', () => {
   assert(errors.some((error) => error.includes('phase-loop:implementation-preflight')));
   assert(errors.some((error) => error.includes('phase-loop:merge-preflight')));
   assert(errors.some((error) => error.includes('guard:phase-loop-actor-separation')));
+});
+
+test('requires an explicit implementation actor guard before PR creation', () => {
+  const controller = fs.readFileSync(path.resolve(fileURLToPath(new URL('.', import.meta.url)), '..', 'phase-loop.sh'), 'utf8');
+  assert.match(controller, /phase_loop_require_implementation_pr_actor/u);
+  assert.match(controller, /reason=implementation_actor_guard_failed/u);
 });

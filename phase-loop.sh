@@ -8852,6 +8852,15 @@ print(title[:180])
 PY
 }
 
+phase_loop_require_implementation_pr_actor() {
+  local guard_script="$PHASE_LOOP_WORKSPACE_ROOT/scripts/phase-loop-pr-actor-guard.mjs"
+  if [ ! -f "$guard_script" ]; then
+    printf '%s implementation_pr_actor_guard_missing=true path=%s\n' "$(now_utc)" "$guard_script" >> "$SUPERVISOR_LOG"
+    return 1
+  fi
+  node "$guard_script"
+}
+
 phase_loop_create_pr_for_progress() {
   local run_stamp="$1"
   local stdout_log="$2"
@@ -8876,6 +8885,10 @@ phase_loop_create_pr_for_progress() {
     printf '%s pr_create_skipped reason=implementation_preflight_failed\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
     return 1
   }
+  if ! phase_loop_require_implementation_pr_actor; then
+    printf '%s pr_create_skipped reason=implementation_actor_guard_failed\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
+    return 1
+  fi
 
   title="$(phase_loop_safe_pr_title)"
   body="Automated Brownie phase-loop output for active TODO claim.

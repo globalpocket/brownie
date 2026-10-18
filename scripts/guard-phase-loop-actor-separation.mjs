@@ -46,6 +46,8 @@ export function runPhaseLoopActorSeparationGuard(options = {}) {
   const createWindowsVm = options.createWindowsVm ?? readText(repoRoot, 'scripts/create-windows-release-vm.mjs', errors);
   const manageVmImages = options.manageVmImages ?? readText(repoRoot, 'scripts/manage-release-vm-images.mjs', errors);
   const bootstrapVms = options.bootstrapVms ?? readText(repoRoot, 'scripts/bootstrap-release-vms.mjs', errors);
+  const phaseLoop = options.phaseLoop ?? readText(repoRoot, 'phase-loop.sh', errors);
+  const prActorGuard = options.prActorGuard ?? readText(repoRoot, 'scripts/phase-loop-pr-actor-guard.mjs', errors);
 
   requireValue(policy.schema_version === 1, errors, `${policyPath} schema_version must be 1.`);
   requireValue(policy.policy_id === 'brownie-phase-loop-actor-separation-v1', errors, `${policyPath} policy_id must match.`);
@@ -152,6 +154,9 @@ export function runPhaseLoopActorSeparationGuard(options = {}) {
   requireValue(packageJson.scripts?.['guard:phase-loop-actor-separation:test'] === 'node --test scripts/guard-phase-loop-actor-separation.test.mjs', errors, 'package.json must define guard:phase-loop-actor-separation:test.');
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:phase-loop-actor-separation'), errors, 'VSIX check must invoke guard:phase-loop-actor-separation.');
   requireValue(vsixPackageJson.scripts?.check?.includes('pnpm --workspace-root guard:phase-loop-actor-separation:test'), errors, 'VSIX check must invoke guard:phase-loop-actor-separation:test.');
+  requireValue(phaseLoop.includes('phase-loop-pr-actor-guard.mjs'), errors, 'phase-loop.sh must invoke the implementation PR actor guard before commit/push/PR creation.');
+  requireValue(prActorGuard.includes("expectedActor = 'brownie-agent'"), errors, 'phase-loop-pr-actor-guard.mjs must default implementation PR creation to actor brownie-agent.');
+  requireValue(prActorGuard.includes('validateImplementationPrActor'), errors, 'phase-loop-pr-actor-guard.mjs must validate the authenticated implementation PR actor.');
 
   return { errors, policyPath };
 }
