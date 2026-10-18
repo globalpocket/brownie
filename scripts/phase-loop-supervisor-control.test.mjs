@@ -1758,6 +1758,45 @@ test('archives terminal no_eligible active claim so the same live TODO can be cl
   assert.equal(result.repair.todo_contract_replan.attempted, false, JSON.stringify(result, null, 2));
 });
 
+test('fails closed when active claim disappears during terminal cleanup', () => {
+  const repo = makeRepo();
+  writeTodo(repo);
+  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
+  writeJson(repo, '.brownie/private/phase-loop/status.json', {
+    status: 'no_progress', run_id: 'run-terminal-no-eligible-enoent'
+  });
+  writeJson(repo, '.brownie/private/phase-loop/progress-state.json', {
+    classification: 'no_progress', same_progress_count: 1, workspace_changed: false,
+    progress_projection: {
+      cli_status: 'no_eligible_task', closure: 'no_eligible_task',
+      stop_reason: 'terminal_task_failed', selected_todo: runtimeEvidenceTodo
+    }
+  });
+  const claimRelativePath = '.brownie/private/phase-loop/todo-claims/current.json';
+  const claimPath = path.join(repo, claimRelativePath);
+  writeJson(repo, claimRelativePath, {
+    claim_id: 'claim-terminal-no-eligible-enoent', status: 'in_progress', selected_todo: runtimeEvidenceTodo
+  });
+  const originalRmSync = fs.rmSync;
+  fs.rmSync = function guardedRemove(file, ...args) {
+    if (String(file) === claimPath) {
+      const error = new Error('simulated claim cleanup race');
+      error.code = 'ENOENT';
+      throw error;
+    }
+    return originalRmSync.call(this, file, ...args);
+  };
+  try {
+    const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: true });
+    assert.equal(result.repair.terminal_no_eligible_claim.ok, false, JSON.stringify(result, null, 2));
+    assert.equal(result.repair.terminal_no_eligible_claim.reason, 'active_claim_disappeared_during_cleanup');
+    assert.equal(result.start.attempted, false, JSON.stringify(result, null, 2));
+    assert.equal(fs.existsSync(claimPath), true);
+  } finally {
+    fs.rmSync = originalRmSync;
+  }
+});
+
 test('does not restart a terminal no_eligible claim when the workspace is dirty', () => {
   const repo = makeRepo();
   writeTodo(repo);

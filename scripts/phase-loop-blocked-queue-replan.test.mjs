@@ -4,8 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
-const repoRoot = path.resolve(import.meta.dirname, '..');
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const phaseLoop = path.join(repoRoot, 'phase-loop.sh');
 
 test('creates one local blocked-queue replan for a stalled leaf even when unrelated blockers remain', () => {

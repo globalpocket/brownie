@@ -307,6 +307,21 @@ function readJsonOrNull(filePath) {
   }
 }
 
+function removeActiveClaimForArchive(claimPath) {
+  try {
+    fs.rmSync(claimPath);
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error?.code === 'ENOENT'
+        ? 'active_claim_disappeared_during_cleanup'
+        : 'active_claim_cleanup_failed',
+      error: error?.message ?? String(error)
+    };
+  }
+}
+
 // A handoff record is control-plane state, not optional diagnostic output.
 // Do not treat a truncated record as absent: doing so would silently resume a
 // repeatedly failing claim without knowing whether an implementer accepted it.
@@ -1746,7 +1761,10 @@ function maybeArchiveStaleActiveClaim(repoRoot, diagnostic) {
   };
   try {
     fs.writeFileSync(archivePath, `${JSON.stringify(archived, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-    fs.rmSync(claimPath, { force: true });
+    const removal = removeActiveClaimForArchive(claimPath);
+    if (!removal.ok) {
+      return { attempted: true, ok: false, ...removal, path: path.relative(repoRoot, archivePath) };
+    }
     fsyncFileAndParent(archivePath);
     return {
       attempted: true,
@@ -1914,7 +1932,10 @@ function maybeArchiveTerminalNoEligibleActiveClaim(repoRoot, diagnostic, ledgerS
   };
   try {
     fs.writeFileSync(archivePath, `${JSON.stringify(archived, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-    fs.rmSync(claimPath, { force: true });
+    const removal = removeActiveClaimForArchive(claimPath);
+    if (!removal.ok) {
+      return { attempted: true, ok: false, ...removal, path: path.relative(repoRoot, archivePath) };
+    }
     fsyncFileAndParent(archivePath);
     return {
       attempted: true,
