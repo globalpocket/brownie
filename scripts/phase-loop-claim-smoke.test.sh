@@ -177,6 +177,7 @@ assert_contains "$PHASE_LOOP" "Every generated leaf ID must be unique within new
 assert_contains "$PHASE_LOOP" "A leaf must never depend on itself"
 assert_contains "$PHASE_LOOP" "distinct prerequisite TODO ID already present in the live queue"
 assert_contains "$PHASE_LOOP" 'never generate a read-only `Read`, `Inspect`, or `Extract` leaf'
+assert_contains "$PHASE_LOOP" "phase-loop-pr-actor-guard.mjs"
 
 claim_smoke_private_state_sha256() {
   local state_root="$REPO_ROOT/.brownie/private/phase-loop"
@@ -1269,6 +1270,8 @@ workspace_pr_progress="$(mktemp -d)"
 remote_pr_progress="$(mktemp -d)"
 fake_bin_dir="$(mktemp -d)"
 git -C "$workspace_pr_progress" init -b main >/dev/null
+mkdir -p "$workspace_pr_progress/scripts"
+cp "$REPO_ROOT/scripts/phase-loop-pr-actor-guard.mjs" "$workspace_pr_progress/scripts/phase-loop-pr-actor-guard.mjs"
 printf 'base\n' > "$workspace_pr_progress/README.md"
 git -C "$workspace_pr_progress" add README.md
 git -C "$workspace_pr_progress" -c user.name=Brownie -c user.email=brownie@example.invalid commit -m init >/dev/null
@@ -1338,6 +1341,8 @@ workspace_pr_supervise="$(mktemp -d)"
 remote_pr_supervise="$(mktemp -d)"
 fake_supervise_bin_dir="$(mktemp -d)"
 git -C "$workspace_pr_supervise" init -b main >/dev/null
+mkdir -p "$workspace_pr_supervise/scripts"
+cp "$REPO_ROOT/scripts/phase-loop-pr-actor-guard.mjs" "$workspace_pr_supervise/scripts/phase-loop-pr-actor-guard.mjs"
 printf 'base\n' > "$workspace_pr_supervise/README.md"
 git -C "$workspace_pr_supervise" add README.md
 git -C "$workspace_pr_supervise" -c user.name=Brownie -c user.email=brownie@example.invalid commit -m init >/dev/null
@@ -1409,6 +1414,42 @@ head = subprocess.check_output(["git", "-C", workspace, "rev-parse", "HEAD"], te
 remote = subprocess.check_output(["git", "-C", workspace, "rev-parse", "origin/brownie-agent/smoke-pr-supervise"], text=True).strip()
 assert head == remote, (head, remote)
 PY
+
+actor_guard_missing_workspace="$(mktemp -d)"
+actor_guard_missing_state="$(mktemp -d)"
+mkdir -p "$actor_guard_missing_workspace/scripts"
+set +e
+PATH="$fake_bin_dir:$PATH" \
+PHASE_LOOP_STATE_DIR="$actor_guard_missing_state" \
+PHASE_LOOP_WORKSPACE_ROOT="$actor_guard_missing_workspace" \
+bash -c 'script=$1; set --; source "$script" >/dev/null; phase_loop_require_implementation_pr_actor' _ "$PHASE_LOOP"
+actor_guard_missing_exit="$?"
+set -e
+test "$actor_guard_missing_exit" = "1"
+
+actor_guard_invalid_workspace="$(mktemp -d)"
+actor_guard_invalid_state="$(mktemp -d)"
+actor_guard_invalid_bin_dir="$(mktemp -d)"
+mkdir -p "$actor_guard_invalid_workspace/scripts"
+cp "$REPO_ROOT/scripts/phase-loop-pr-actor-guard.mjs" "$actor_guard_invalid_workspace/scripts/phase-loop-pr-actor-guard.mjs"
+cat > "$actor_guard_invalid_bin_dir/gh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+if [ "${1:-} ${2:-}" = "api user" ]; then
+  printf 'globalpocket\n'
+  exit 0
+fi
+exit 1
+SH
+chmod +x "$actor_guard_invalid_bin_dir/gh"
+set +e
+PATH="$actor_guard_invalid_bin_dir:$PATH" \
+PHASE_LOOP_STATE_DIR="$actor_guard_invalid_state" \
+PHASE_LOOP_WORKSPACE_ROOT="$actor_guard_invalid_workspace" \
+bash -c 'script=$1; set --; source "$script" >/dev/null; phase_loop_require_implementation_pr_actor' _ "$PHASE_LOOP"
+actor_guard_invalid_exit="$?"
+set -e
+test "$actor_guard_invalid_exit" = "1"
 
 state_truncated="$(mktemp -d)"
 prompt_truncated="$(mktemp)"
