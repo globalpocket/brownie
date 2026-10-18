@@ -1288,7 +1288,7 @@ function repairSelectedLeafTodoContract({ claim, todoText, breakdownText, todoPa
   };
 }
 
-function repairDanglingLiveDependencies({ todoText, breakdownText, todoPath, breakdownPath, additionalSourceIds = [] }) {
+function repairDanglingLiveDependencies({ todoText, breakdownText, todoPath, breakdownPath, additionalSourceIds = [], validate = true }) {
   const blocks = uncheckedTodoBlocks(todoText);
   const ids = existingIds(todoText);
   const todoState = canonicalTodoState(todoText, breakdownPath);
@@ -1434,6 +1434,19 @@ function repairDanglingLiveDependencies({ todoText, breakdownText, todoPath, bre
   }
 
   updatedTodo = updatedTodo.replace(/\n{3,}/gu, '\n\n').trimEnd() + '\n';
+  if (!validate) {
+    return {
+      applied: true,
+      deferred: true,
+      operation: 'deterministic_dangling_dependency_repair',
+      todoPath,
+      breakdownPath,
+      updatedTodo,
+      updatedBreakdown,
+      normalizations: notes
+    };
+  }
+
   const validationErrors = validateTodoDecompositionText(updatedTodo, {
     path: todoPath,
     repoRoot,
@@ -1503,18 +1516,70 @@ export function repairTodoDecomposition({
 } = {}) {
   const claim = readJson(claimPath);
   const selected = claim.selected_todo;
-  const todoText = readText(todoPath);
-  const breakdownText = fs.existsSync(path.resolve(repoRoot, breakdownPath)) ? readText(breakdownPath) : '# TODO breakdown\n';
-  const todoState = canonicalTodoState(todoText, breakdownPath);
+  let todoText = readText(todoPath);
+  let breakdownText = fs.existsSync(path.resolve(repoRoot, breakdownPath)) ? readText(breakdownPath) : '# TODO breakdown\n';
+  let todoState = canonicalTodoState(todoText, breakdownPath);
   const unresolvedSupersededIds = new Set(
     [...todoState.supersededIds].filter((id) => !todoState.resolvedIds.has(id))
   );
+
+  // A live leaf can still depend on a checked/superseded parent while sibling
+  // leaves in that same source group contain independently repairable cycle or
+  // Create-only drift. Rebase the parent dependency first so the sibling
+  // repair's fail-closed validation can see the same schedulable frontier that
+  // Runtime will see after the complete transaction.
+  const selectedSourceId = sourceTodoId(selected);
+  const hasUnresolvedSupersededDependency = Boolean(selectedSourceId && unresolvedSupersededIds.has(selectedSourceId)) && uncheckedTodoBlocks(todoText).some((block) =>
+    parseDependsOn(block).some((dependency) => unresolvedSupersededIds.has(dependency))
+  );
+  let deferredDependencyRepair = null;
+  if (hasUnresolvedSupersededDependency) {
+    const dependencyRepair = repairDanglingLiveDependencies({ todoText, breakdownText, todoPath, breakdownPath, validate: false });
+    if (dependencyRepair.applied) {
+      deferredDependencyRepair = dependencyRepair;
+      todoText = dependencyRepair.updatedTodo;
+      breakdownText = dependencyRepair.updatedBreakdown;
+      todoState = canonicalTodoState(todoText, breakdownPath);
+    } else if (dependencyRepair.eligible) {
+      return dependencyRepair;
+    }
+  }
+
   const siblingRepair = repairSourceSiblingContracts({
     todoText, breakdownText, todoPath, breakdownPath,
     completedTodoIds: todoState.resolvedIds,
     invalidCheckedTodoIds: unresolvedSupersededIds
   });
   if (siblingRepair.applied || siblingRepair.eligible) return siblingRepair;
+  if (deferredDependencyRepair) {
+    const validationErrors = validateTodoDecompositionText(todoText, {
+      path: todoPath,
+      repoRoot,
+      packageScripts: packageScripts(),
+      breakdownPath,
+      breakdownText,
+      productReady: false,
+      releaseBlockersRemaining: true
+    });
+    if (validationErrors.length > 0) {
+      return {
+        applied: false,
+        eligible: true,
+        reason: 'dangling_dependency_repair_failed_guard',
+        normalizations: deferredDependencyRepair.normalizations,
+        validationErrors
+      };
+    }
+    writeAtomic(todoPath, todoText);
+    writeAtomic(breakdownPath, breakdownText);
+    return {
+      applied: true,
+      operation: deferredDependencyRepair.operation,
+      todoPath,
+      breakdownPath,
+      normalizations: deferredDependencyRepair.normalizations
+    };
+  }
   const leafRepair = repairSelectedLeafTodoContract({
     claim,
     todoText,

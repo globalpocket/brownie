@@ -48,6 +48,7 @@ PHASE_LOOP_PROMPT_RETENTION_COUNT="${PHASE_LOOP_PROMPT_RETENTION_COUNT:-20}"
 PHASE_LOOP_STOP_GRACE_SECONDS="${PHASE_LOOP_STOP_GRACE_SECONDS:-15}"
 PHASE_LOOP_STOP_FORCE_SECONDS="${PHASE_LOOP_STOP_FORCE_SECONDS:-5}"
 PHASE_LOOP_SLEEP_POLL_SECONDS="${PHASE_LOOP_SLEEP_POLL_SECONDS:-1}"
+PHASE_LOOP_PRECLAIM_RECOVERY_MAX_RETRIES="${PHASE_LOOP_PRECLAIM_RECOVERY_MAX_RETRIES:-3}"
 PHASE_LOOP_CREATE_PR_AFTER_PROGRESS="${PHASE_LOOP_CREATE_PR_AFTER_PROGRESS:-0}"
 PHASE_LOOP_PR_REMOTE="${PHASE_LOOP_PR_REMOTE:-origin}"
 PHASE_LOOP_PR_BASE="${PHASE_LOOP_PR_BASE:-main}"
@@ -5725,13 +5726,14 @@ PY
 
 try_deterministic_todo_decomposition_repair() {
   local run_stamp="$1"
-  if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/repair-todo-decomposition.mjs" ]; then
+  local claim_path="${2:-$TODO_CLAIM_FILE}"
+  if [ ! -f "$claim_path" ] || [ ! -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/repair-todo-decomposition.mjs" ]; then
     return 2
   fi
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
     node scripts/repair-todo-decomposition.mjs \
-      --claim "$TODO_CLAIM_FILE" \
+      --claim "$claim_path" \
       --todo "$PHASE_LOOP_TODO" \
       --breakdown "$PHASE_LOOP_TODO_BREAKDOWN" \
       --run-stamp "$run_stamp"
@@ -11575,6 +11577,29 @@ run_phase_loop_preflight() {
   status=$?
   set -e
   if [ "$status" -ne 0 ]; then
+    if [ "$stage" = "pre-claim" ] && [ "${PHASE_LOOP_PRECLAIM_RECOVERY_ACTIVE:-0}" != "1" ] && [ -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/phase-loop-preclaim-recovery.mjs" ]; then
+      local recovery_output recovery_status
+      set +e
+      recovery_output="$(
+        cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+        node scripts/phase-loop-preclaim-recovery.mjs \
+          --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
+          --todo "$PHASE_LOOP_TODO" \
+          --breakdown "$PHASE_LOOP_TODO_BREAKDOWN" \
+          --claim "$TODO_CLAIM_FILE" \
+          --state-dir "$STATE_DIR" \
+          --run-stamp "$run_stamp" \
+          --max-retries "$PHASE_LOOP_PRECLAIM_RECOVERY_MAX_RETRIES" \
+          --diagnostic "$output" 2>&1
+      )"
+      recovery_status=$?
+      set -e
+      printf '%s run=%s preclaim_recovery_exit=%s result=%s\n' "$(now_utc)" "$run_stamp" "$recovery_status" "${recovery_output:-<no output>}" >> "$SUPERVISOR_LOG"
+      if [ "$recovery_status" -eq 0 ]; then
+        PHASE_LOOP_PRECLAIM_RECOVERY_ACTIVE=1 run_phase_loop_preflight "$run_stamp" "$stage"
+        return $?
+      fi
+    fi
     printf '%s run=%s phase_loop_preflight_failed=true stage=%s result=%s\n' "$(now_utc)" "$run_stamp" "$stage" "$output" >> "$SUPERVISOR_LOG"
     detail="Phase-loop preflight failed before continuing; stage=$stage result=$output"
     write_status "blocked" "$detail" "$run_stamp" "75" "${CONSECUTIVE_FAILURES:-0}"
