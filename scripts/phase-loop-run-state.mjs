@@ -47,6 +47,105 @@ function writeJsonAtomically(file, value) {
   fs.renameSync(temporary, file);
 }
 
+function fsyncDirectory(directory) {
+  const handle = fs.openSync(directory, fs.constants.O_RDONLY);
+  try {
+    fs.fsyncSync(handle);
+  } finally {
+    fs.closeSync(handle);
+  }
+}
+
+function hashBytes(value) {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function collectStateFiles(stateDir) {
+  const entries = [];
+  const visit = (directory, relativeDirectory = '') => {
+    let names;
+    try {
+      names = fs.readdirSync(directory).sort();
+    } catch (error) {
+      if (error?.code === 'ENOENT') return;
+      throw error;
+    }
+    for (const name of names) {
+      if (!relativeDirectory && name === 'legacy-recovery') continue;
+      const absolute = path.join(directory, name);
+      const relative = path.join(relativeDirectory, name);
+      const stat = fs.lstatSync(absolute);
+      if (stat.isDirectory()) {
+        visit(absolute, relative);
+      } else if (stat.isFile() || stat.isSymbolicLink()) {
+        const value = stat.isSymbolicLink()
+          ? Buffer.from(`symlink:${fs.readlinkSync(absolute)}`, 'utf8')
+          : fs.readFileSync(absolute);
+        const category = relative.startsWith(`todo-claims${path.sep}`)
+          ? 'claim'
+          : relative.startsWith(`runs${path.sep}`) && relative.endsWith('.target.before')
+            ? 'target_snapshot'
+            : 'state';
+        entries.push({
+          path: relative.split(path.sep).join('/'),
+          category,
+          kind: stat.isSymbolicLink() ? 'symlink' : 'file',
+          sha256: hashBytes(value),
+          bytes: value.length
+        });
+      }
+    }
+  };
+  visit(stateDir);
+  return entries;
+}
+
+function stateSnapshot(stateDir) {
+  const files = collectStateFiles(stateDir);
+  const fingerprint = hashBytes(files.map((entry) => `${entry.path}\0${entry.kind}\0${entry.sha256}\0${entry.bytes}`).join('\n'));
+  return { fingerprint, files };
+}
+
+function archiveLegacyStateAtomically({ stateDir, recoveryId, reason, now = new Date().toISOString() }) {
+  const before = stateSnapshot(stateDir);
+  const recoveryRoot = path.join(stateDir, 'legacy-recovery');
+  const temporary = path.join(recoveryRoot, `.${recoveryId}.tmp`);
+  const archivePath = path.join(recoveryRoot, recoveryId);
+  fs.mkdirSync(recoveryRoot, { recursive: true, mode: 0o700 });
+  fs.mkdirSync(temporary, { recursive: true, mode: 0o700 });
+  try {
+    for (const entry of before.files) {
+      const source = path.join(stateDir, entry.path);
+      const destination = path.join(temporary, entry.path);
+      fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+      if (entry.kind === 'symlink') {
+        fs.symlinkSync(fs.readlinkSync(source), destination);
+      } else {
+        fs.copyFileSync(source, destination);
+        fs.chmodSync(destination, 0o600);
+      }
+    }
+    const manifest = {
+      schema_version: 1,
+      kind: 'phase_loop_legacy_state_archive',
+      recovery_id: recoveryId,
+      reason,
+      archived_at: now,
+      state_dir: stateDir,
+      state_fingerprint: before.fingerprint,
+      files: before.files
+    };
+    writeJsonAtomically(path.join(temporary, 'manifest.json'), manifest);
+    fsyncDirectory(temporary);
+    fs.renameSync(temporary, archivePath);
+    fsyncDirectory(recoveryRoot);
+    return { archive_path: archivePath, manifest_path: path.join(archivePath, 'manifest.json'), ...before };
+  } catch (error) {
+    fs.rmSync(temporary, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 function processIsAlive(pid, kill = process.kill) {
   if (!Number.isInteger(pid) || pid <= 1) return false;
   try {
@@ -60,6 +159,14 @@ function processIsAlive(pid, kill = process.kill) {
 function processCommand(pid) {
   try {
     return execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' }).trim();
+  } catch {
+    return '';
+  }
+}
+
+function processStartTime(pid) {
+  try {
+    return execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8' }).trim();
   } catch {
     return '';
   }
@@ -83,18 +190,30 @@ function supervisorCommandMatchesRoot(command, rootDir) {
   ));
 }
 
-function liveSupervisorPids(rootDir) {
+function commandLooksLikeSupervisor(command) {
+  return /\bphase-loop\.sh\b.*\bsupervise\b/u.test(command);
+}
+
+function allSupervisorProcessRecords() {
   let output = '';
   try {
-    output = execFileSync('ps', ['-axo', 'pid=', '-o', 'command='], { encoding: 'utf8' });
+    output = execFileSync('ps', ['-axo', 'pid='], { encoding: 'utf8' });
   } catch {
     return [];
   }
   return output.split('\n').flatMap((line) => {
-    const match = line.trim().match(/^(\d+)\s+(.*)$/u);
-    if (!match || !supervisorCommandMatchesRoot(match[2], rootDir)) return [];
-    return [Number.parseInt(match[1], 10)];
+    const pid = Number.parseInt(line.trim(), 10);
+    if (!Number.isInteger(pid) || pid <= 1 || !processIsAlive(pid)) return [];
+    const command = processCommand(pid);
+    if (!commandLooksLikeSupervisor(command)) return [];
+    return [{ pid, command, start_time: processStartTime(pid) }];
   });
+}
+
+function liveSupervisorPids(rootDir) {
+  return allSupervisorProcessRecords()
+    .filter((record) => supervisorCommandMatchesRoot(record.command, rootDir))
+    .map((record) => record.pid);
 }
 
 function readPid(file) {
@@ -174,6 +293,344 @@ export function inspectSupervisorOwnership({
     command_looks_like_supervisor: commandLooksLikeSupervisor,
     live_supervisors: liveSupervisors,
     ownership_ok: Boolean(livePid && matchingOwner && commandLooksLikeSupervisor)
+  };
+}
+
+function sameStateFiles(left, right, ignoredPaths = new Set()) {
+  const normalize = (snapshot) => snapshot.files
+    .filter((entry) => !ignoredPaths.has(entry.path))
+    .map((entry) => `${entry.path}\0${entry.kind}\0${entry.sha256}\0${entry.bytes}`)
+    .join('\n');
+  return normalize(left) === normalize(right);
+}
+
+const LEGACY_STOP_ALLOWED_STATE_PATHS = new Set(['phase-loop.lock/pid']);
+
+function readLockPid(stateDir) {
+  return readPid(path.join(stateDir, 'phase-loop.lock', 'pid'));
+}
+
+export function inspectLegacyPhaseLoopState({
+  stateDir,
+  pidFile = path.join(stateDir, 'phase-loop.pid'),
+  ownerFile = path.join(stateDir, 'phase-loop-owner.json'),
+  rootDir = '',
+  processExists = (pid) => processIsAlive(pid),
+  getProcessCommand = processCommand,
+  getProcessStartTime = processStartTime,
+  listAllSupervisors = allSupervisorProcessRecords
+}) {
+  const statusPath = path.join(stateDir, 'status.json');
+  let status;
+  let statusError = null;
+  try {
+    status = readJson(statusPath);
+  } catch (error) {
+    statusError = error;
+  }
+  if (statusError) {
+    return { ok: false, code: 'legacy_status_unreadable', error: statusError.message };
+  }
+  if (!status || status.continuation_required !== true || status.controller_action !== 'resume') {
+    return { ok: true, migration_needed: false, reason: 'legacy_continuation_not_pending', status };
+  }
+
+  let pid = null;
+  let pidError = null;
+  let pidFilePresent = false;
+  try {
+    pidFilePresent = fs.existsSync(pidFile);
+    pid = readPid(pidFile);
+  } catch (error) {
+    pidError = error;
+  }
+  let owner = null;
+  let ownerError = null;
+  try {
+    owner = readOwner(ownerFile);
+  } catch (error) {
+    ownerError = error;
+  }
+  const records = [...listAllSupervisors()].filter((record) => Number.isInteger(record?.pid) && record.pid > 1);
+  const liveRecords = records.filter((record) => processExists(record.pid));
+  const sameRootRecords = liveRecords.filter((record) => supervisorCommandMatchesRoot(record.command || '', rootDir));
+  const foreignRecords = liveRecords.filter((record) => (
+    commandLooksLikeSupervisor(record.command || '') && !supervisorCommandMatchesRoot(record.command || '', rootDir)
+  ));
+  const pidLive = pid !== null && processExists(pid);
+  const pidCommand = pidLive ? getProcessCommand(pid) : '';
+  const pidStartTime = pidLive ? getProcessStartTime(pid) : '';
+  const lockPid = readLockPid(stateDir);
+  const lockLive = lockPid !== null && processExists(lockPid);
+  const ownership = inspectSupervisorOwnership({
+    stateDir,
+    pidFile,
+    ownerFile,
+    rootDir,
+    processExists,
+    getProcessCommand,
+    listSupervisors: () => sameRootRecords.map((record) => record.pid)
+  });
+  if (ownership.ownership_ok) {
+    return {
+      ok: true,
+      migration_needed: false,
+      reason: 'legacy_owner_already_current',
+      status,
+      ownership,
+      live_supervisors: liveRecords
+    };
+  }
+
+  const candidate = sameRootRecords.length === 1 ? sameRootRecords[0] : null;
+  const candidateStartTime = candidate?.start_time || (candidate ? getProcessStartTime(candidate.pid) : '');
+  const pidIsCandidate = Boolean(candidate && pid === candidate.pid);
+  const pidIsForeignSupervisor = Boolean(pidLive && commandLooksLikeSupervisor(pidCommand) && !supervisorCommandMatchesRoot(pidCommand, rootDir));
+  const pidIsOtherLiveProcess = Boolean(pidLive && !commandLooksLikeSupervisor(pidCommand));
+  const candidateIsStrictlyConfirmed = Boolean(
+    candidate
+      && candidateStartTime
+      && !pidError
+      && !(pidFilePresent && pid === null)
+      && foreignRecords.length === 0
+      && !pidIsForeignSupervisor
+      && !pidIsOtherLiveProcess
+      && (!pidLive || pidIsCandidate || !pid)
+      && (!status.supervisor_pid || status.supervisor_pid === candidate.pid)
+  );
+  let reason = 'legacy_ownership_unproven';
+  if (foreignRecords.length > 0 || pidIsForeignSupervisor) reason = 'legacy_foreign_supervisor';
+  else if (sameRootRecords.length > 1) reason = 'legacy_ambiguous_same_root_supervisors';
+  else if (pidIsOtherLiveProcess) reason = 'legacy_pid_reused_by_other_process';
+  else if (pidError || (pidFilePresent && pid === null)) reason = 'legacy_pid_unreadable';
+  else if (candidate && !candidateStartTime) reason = 'legacy_supervisor_start_time_unreadable';
+  else if (candidate && !candidateIsStrictlyConfirmed) reason = 'legacy_supervisor_identity_mismatch';
+  else if (!candidate && lockLive) reason = 'legacy_live_lock_owner_unproven';
+  else if (!candidate) reason = 'legacy_no_live_supervisor';
+
+  return {
+    ok: true,
+    migration_needed: true,
+    reason,
+    status,
+    pid,
+    pid_live: pidLive,
+    pid_command: pidCommand,
+    pid_start_time: pidStartTime,
+    pid_error: pidError?.message ?? null,
+    pid_file_present: pidFilePresent,
+    owner_present: Boolean(owner),
+    owner_error: ownerError?.message ?? null,
+    lock_pid: lockPid,
+    lock_live: lockLive,
+    live_supervisors: liveRecords,
+    same_root_supervisors: sameRootRecords,
+    foreign_supervisors: foreignRecords,
+    candidate: candidate ? { ...candidate, start_time: candidateStartTime } : null,
+    candidate_confirmed: candidateIsStrictlyConfirmed,
+    ownership
+  };
+}
+
+function sleepMilliseconds(milliseconds) {
+  if (milliseconds <= 0) return;
+  const shared = new SharedArrayBuffer(4);
+  Atomics.wait(new Int32Array(shared), 0, 0, milliseconds);
+}
+
+function supervisorDescendantPids(pid) {
+  let output = '';
+  try {
+    output = execFileSync('ps', ['-axo', 'pid=,ppid='], { encoding: 'utf8' });
+  } catch {
+    return [];
+  }
+  const children = new Map();
+  for (const line of output.split('\n')) {
+    const [child, parent] = line.trim().split(/\s+/u);
+    if (!child || !parent) continue;
+    const list = children.get(parent) || [];
+    list.push(Number.parseInt(child, 10));
+    children.set(parent, list);
+  }
+  const descendants = [];
+  const stack = [...(children.get(String(pid)) || [])];
+  while (stack.length > 0) {
+    const child = stack.pop();
+    if (!Number.isInteger(child) || descendants.includes(child)) continue;
+    descendants.push(child);
+    stack.push(...(children.get(String(child)) || []));
+  }
+  return descendants;
+}
+
+function terminateLegacySupervisor({ candidate, processExists = (pid) => processIsAlive(pid) }) {
+  const managed = [candidate.pid, ...supervisorDescendantPids(candidate.pid)];
+  for (const pid of managed) {
+    try { process.kill(pid, 'SIGTERM'); } catch (error) { if (error?.code !== 'ESRCH') return { ok: false, code: 'legacy_stop_signal_failed', error: error.message }; }
+  }
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (!managed.some((pid) => processExists(pid))) return { ok: true, stopped_pids: managed };
+    sleepMilliseconds(100);
+  }
+  for (const pid of managed) {
+    if (!processExists(pid)) continue;
+    try { process.kill(pid, 'SIGKILL'); } catch (error) { if (error?.code !== 'ESRCH') return { ok: false, code: 'legacy_stop_force_signal_failed', error: error.message }; }
+  }
+  sleepMilliseconds(100);
+  return managed.some((pid) => processExists(pid))
+    ? { ok: false, code: 'legacy_supervisor_stop_timeout', stopped_pids: managed }
+    : { ok: true, stopped_pids: managed, forced: true };
+}
+
+function removeLegacyRuntimeFiles(stateDir, { processExists = (pid) => processIsAlive(pid) } = {}) {
+  const lockPid = readLockPid(stateDir);
+  if (lockPid !== null && processExists(lockPid)) {
+    return { ok: false, code: 'legacy_live_lock_during_rebaseline', lock_pid: lockPid };
+  }
+  for (const target of [
+    path.join(stateDir, 'phase-loop.pid'),
+    path.join(stateDir, 'phase-loop-owner.json'),
+    path.join(stateDir, 'stop'),
+    path.join(stateDir, 'phase-loop.lock')
+  ]) {
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+  return { ok: true };
+}
+
+export function migrateLegacyPhaseLoopState({
+  stateDir,
+  pidFile = path.join(stateDir, 'phase-loop.pid'),
+  ownerFile = path.join(stateDir, 'phase-loop-owner.json'),
+  rootDir = '',
+  now = new Date().toISOString(),
+  processExists = (pid) => processIsAlive(pid),
+  getProcessCommand = processCommand,
+  getProcessStartTime = processStartTime,
+  listAllSupervisors = allSupervisorProcessRecords,
+  archiveSnapshot = null,
+  stopSupervisor = null,
+  stateSnapshotReader = stateSnapshot,
+  statusWriter = writeJsonAtomically,
+  runtimeCleaner = null
+}) {
+  const archiveWriter = archiveSnapshot || ((args) => archiveLegacyStateAtomically(args));
+  const stopOwner = stopSupervisor || ((args) => terminateLegacySupervisor(args));
+  const cleanRuntime = runtimeCleaner || ((directory, options) => removeLegacyRuntimeFiles(directory, options));
+  const inspected = inspectLegacyPhaseLoopState({
+    stateDir,
+    pidFile,
+    ownerFile,
+    rootDir,
+    processExists,
+    getProcessCommand,
+    getProcessStartTime,
+    listAllSupervisors
+  });
+  if (!inspected.ok || !inspected.migration_needed) return inspected;
+  const recoveryId = crypto.randomUUID();
+  let archive;
+  try {
+    archive = archiveWriter({ stateDir, recoveryId, reason: inspected.reason, now });
+  } catch (error) {
+    return { ok: false, blocked: true, code: 'legacy_state_archive_failed', recovery_id: recoveryId, error: error.message };
+  }
+  const archivedSnapshot = stateSnapshotReader(stateDir);
+  if (archivedSnapshot.fingerprint !== archive.fingerprint) {
+    return { ok: false, blocked: true, code: 'legacy_state_archive_snapshot_mismatch', recovery_id: recoveryId, archive_path: archive.archive_path };
+  }
+
+  const rechecked = inspectLegacyPhaseLoopState({
+    stateDir,
+    pidFile,
+    ownerFile,
+    rootDir,
+    processExists,
+    getProcessCommand,
+    getProcessStartTime,
+    listAllSupervisors
+  });
+  if (!rechecked.ok || rechecked.reason !== inspected.reason || stateSnapshotReader(stateDir).fingerprint !== archive.fingerprint) {
+    return { ok: false, blocked: true, code: 'legacy_state_changed_during_migration', recovery_id: recoveryId, archive_path: archive.archive_path, inspection: rechecked };
+  }
+
+  if (rechecked.candidate_confirmed) {
+    if (rechecked.candidate?.pid !== inspected.candidate?.pid
+      || rechecked.candidate?.start_time !== inspected.candidate?.start_time) {
+      return { ok: false, blocked: true, code: 'legacy_supervisor_identity_race', recovery_id: recoveryId, archive_path: archive.archive_path, inspection: rechecked };
+    }
+    const stopResult = stopOwner({ candidate: rechecked.candidate, processExists });
+    if (!stopResult?.ok) {
+      return { ok: false, blocked: true, code: stopResult?.code || 'legacy_supervisor_stop_failed', recovery_id: recoveryId, archive_path: archive.archive_path, stop: stopResult };
+    }
+    const afterStop = inspectLegacyPhaseLoopState({
+      stateDir,
+      pidFile,
+      ownerFile,
+      rootDir,
+      processExists,
+      getProcessCommand,
+      getProcessStartTime,
+      listAllSupervisors
+    });
+    if (!afterStop.ok || afterStop.same_root_supervisors?.length > 0 || afterStop.foreign_supervisors?.length > 0 || !sameStateFiles(stateSnapshotReader(stateDir), archive, LEGACY_STOP_ALLOWED_STATE_PATHS)) {
+      return { ok: false, blocked: true, code: 'legacy_supervisor_stop_race', recovery_id: recoveryId, archive_path: archive.archive_path, inspection: afterStop };
+    }
+  } else if (rechecked.reason !== 'legacy_no_live_supervisor') {
+    const blockedStatus = {
+      ...rechecked.status,
+      status: 'blocked',
+      detail: `Legacy phase-loop state migration is blocked because supervisor ownership could not be proven: ${rechecked.reason}. recovery_id=${recoveryId}`,
+      exit_code: '75',
+      stop_class: 'recoverable_unknown_nonterminal',
+      stop_reason: 'legacy_state_ownership_unproven',
+      recovery_id: recoveryId,
+      recovery_audit: archive.manifest_path,
+      updated_at: now
+    };
+    if (stateSnapshotReader(stateDir).fingerprint !== archive.fingerprint) {
+      return { ok: false, blocked: true, code: 'legacy_state_changed_before_block', recovery_id: recoveryId, archive_path: archive.archive_path };
+    }
+    try {
+      statusWriter(path.join(stateDir, 'status.json'), blockedStatus);
+    } catch (error) {
+      return { ok: false, blocked: true, code: 'legacy_blocked_status_write_failed', recovery_id: recoveryId, archive_path: archive.archive_path, error: error.message };
+    }
+    return { ok: false, blocked: true, code: 'legacy_state_ownership_unproven', recovery_id: recoveryId, archive_path: archive.archive_path, status: blockedStatus, inspection: rechecked };
+  }
+
+  const currentBeforeRebaseline = stateSnapshotReader(stateDir);
+  if (!sameStateFiles(currentBeforeRebaseline, archive, new Set(['status.json', ...LEGACY_STOP_ALLOWED_STATE_PATHS]))) {
+    return { ok: false, blocked: true, code: 'legacy_state_dirty_before_rebaseline', recovery_id: recoveryId, archive_path: archive.archive_path };
+  }
+  const rebaselinedStatus = {
+    ...rechecked.status,
+    status: 'recovered_legacy_state',
+    detail: `Archived and rebaselined legacy phase-loop state; safe for one fresh supervisor. recovery_id=${recoveryId}`,
+    exit_code: '78',
+    continuation_required: false,
+    controller_action: 'stop',
+    stop_class: 'recoverable_unknown_nonterminal',
+    stop_reason: 'legacy_state_rebaselined',
+    recovery_id: recoveryId,
+    recovery_audit: archive.manifest_path,
+    updated_at: now
+  };
+  try {
+    const cleanup = cleanRuntime(stateDir, { processExists });
+    if (!cleanup?.ok) return { ok: false, blocked: true, code: cleanup.code || 'legacy_rebaseline_cleanup_failed', recovery_id: recoveryId, archive_path: archive.archive_path, cleanup };
+    statusWriter(path.join(stateDir, 'status.json'), rebaselinedStatus);
+  } catch (error) {
+    return { ok: false, blocked: true, code: 'legacy_rebaseline_failed', recovery_id: recoveryId, archive_path: archive.archive_path, error: error.message };
+  }
+  return {
+    ok: true,
+    migrated: true,
+    recovery_id: recoveryId,
+    archive_path: archive.archive_path,
+    status: rebaselinedStatus,
+    stopped_legacy_pid: rechecked.candidate?.pid ?? null
   };
 }
 
@@ -409,7 +866,7 @@ export function watchdogContinuationLiveness({
   return { ok: true, expired: true, redelegate: true, recovery_id: recoveryId, age_seconds: ageSeconds, owner_pid: ownership.pid, run_id: status.run_id ?? null };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname) && ['normalize-stale-running', 'rollback-stale-running', 'watch-continuation'].includes(process.argv[2])) {
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname) && ['normalize-stale-running', 'rollback-stale-running', 'watch-continuation', 'migrate-legacy-state'].includes(process.argv[2])) {
   const args = new Map(process.argv.slice(3).reduce((pairs, value, index, values) => (
     value.startsWith('--') ? [...pairs, [value.slice(2), values[index + 1]]] : pairs
   ), []));
@@ -426,7 +883,14 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
         maxAgeSeconds: Number.parseInt(args.get('max-age-seconds') || '900', 10),
         runStamp: args.get('run-stamp')
       })
-      : normalizeStaleRunningStatus({
+      : process.argv[2] === 'migrate-legacy-state'
+        ? migrateLegacyPhaseLoopState({
+          stateDir,
+          pidFile: args.get('pid-file') || path.join(stateDir, 'phase-loop.pid'),
+          ownerFile: args.get('owner-file') || path.join(stateDir, 'phase-loop-owner.json'),
+          rootDir: args.get('root-dir') || ''
+        })
+        : normalizeStaleRunningStatus({
       stateDir,
       pidFile: args.get('pid-file') || path.join(stateDir, 'phase-loop.pid'),
       ownerPid: args.has('owner-pid') ? Number.parseInt(args.get('owner-pid'), 10) : null,
@@ -436,5 +900,16 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
       runStamp: args.get('run-stamp')
     });
   process.stdout.write(`${JSON.stringify(result)}\n`);
-  if (!result.ok) process.exit(result.code === 'run_already_running' || result.code === 'supervisor_ownership_conflict' || result.code === 'continuation_ownership_unproven' ? 75 : 78);
+  if (!result.ok) process.exit(result.code === 'run_already_running'
+    || result.code === 'supervisor_ownership_conflict'
+    || result.code === 'continuation_ownership_unproven'
+    || result.code === 'legacy_state_ownership_unproven'
+    || result.code === 'legacy_foreign_supervisor'
+    || result.code === 'legacy_ambiguous_same_root_supervisors'
+    || result.code === 'legacy_pid_reused_by_other_process'
+    || result.code === 'legacy_state_changed_during_migration'
+    || result.code === 'legacy_state_changed_before_block'
+    || result.blocked
+      ? 75
+      : 78);
 }

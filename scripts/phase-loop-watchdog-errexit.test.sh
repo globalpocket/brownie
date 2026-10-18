@@ -103,6 +103,22 @@ set -e
 [ "$start_status" -eq 75 ]
 [ ! -e "$start_case_dir/is-running-called" ]
 
+migration_start_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-migration-start.XXXXXX")"
+trap 'rm -rf "$migration_start_case_dir"' EXIT
+mkdir -p "$migration_start_case_dir/logs"
+set +e
+PHASE_LOOP_STATE_DIR="$migration_start_case_dir" STATE_DIR="$migration_start_case_dir" ROOT_DIR="$ROOT_DIR" bash -c '
+  set -e
+  source "$ROOT_DIR/phase-loop.sh" status >/dev/null 2>&1
+  phase_loop_migrate_legacy_state() { return 75; }
+  phase_loop_watch_continuation_liveness() { touch "$STATE_DIR/watchdog-called"; return 0; }
+  start
+' bash
+migration_start_status=$?
+set -e
+[ "$migration_start_status" -eq 75 ]
+[ ! -e "$migration_start_case_dir/watchdog-called" ]
+
 ownership_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-owner.XXXXXX")"
 trap 'rm -rf "$ownership_case_dir"' EXIT
 mkdir -p "$ownership_case_dir/logs"
@@ -125,6 +141,7 @@ printf '%s\n' 'phase-loop watchdog preserves caller errexit state (off/on)'
 printf '%s\n' 'phase-loop supervisor terminalizes watchdog ownership failure (75 -> blocked/78)'
 printf '%s\n' 'phase-loop supervisor terminalizes generic watchdog failure (78 -> blocked/78)'
 printf '%s\n' 'phase-loop startup checks continuation watchdog before live-owner return'
+printf '%s\n' 'phase-loop startup fails closed before watchdog when legacy migration is blocked'
 printf '%s\n' 'phase-loop is_running fails closed on foreign owner metadata'
 
 restart_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-restart.XXXXXX")"

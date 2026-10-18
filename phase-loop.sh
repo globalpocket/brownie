@@ -13995,6 +13995,28 @@ phase_loop_watch_continuation_liveness() {
   return 0
 }
 
+phase_loop_migrate_legacy_state() {
+  if [ ! -f "$ROOT_DIR/scripts/phase-loop-run-state.mjs" ]; then
+    return 0
+  fi
+  local migration_output migration_status
+  if migration_output="$(node "$ROOT_DIR/scripts/phase-loop-run-state.mjs" migrate-legacy-state \
+    --state-dir "$STATE_DIR" \
+    --pid-file "$PID_FILE" \
+    --owner-file "$SUPERVISOR_OWNER_FILE" \
+    --root-dir "$ROOT_DIR" 2>&1)"; then
+    migration_status=0
+  else
+    migration_status=$?
+  fi
+  printf '%s legacy_state_migration_exit=%s result=%s\n' "$(now_utc)" "$migration_status" "${migration_output:-<no output>}" >> "$SUPERVISOR_LOG"
+  if [ "$migration_status" -ne 0 ]; then
+    printf '%s\n' "${migration_output:-Legacy phase-loop state migration refused to continue.}" >&2
+    return "$migration_status"
+  fi
+  return 0
+}
+
 supervise() {
   load_env
   if ! acquire_lock; then
@@ -14096,6 +14118,16 @@ normalize_stale_running_before_start() {
 
 start() {
   load_env
+  local migration_status
+  if phase_loop_migrate_legacy_state; then
+    migration_status=0
+  else
+    migration_status=$?
+  fi
+  if [ "$migration_status" -ne 0 ]; then
+    printf '%s\n' "Legacy phase-loop state migration refused startup." >&2
+    exit "$migration_status"
+  fi
   local watchdog_status
   if phase_loop_watch_continuation_liveness "startup-watchdog-$(date -u +%Y%m%dT%H%M%SZ)"; then
     watchdog_status=0
@@ -14185,6 +14217,11 @@ case "${1:-status}" in
     phase_loop_watch_continuation_liveness "manual-watchdog-$(date -u +%Y%m%dT%H%M%SZ)"
     exit $?
     ;;
+  migrate-legacy)
+    load_env
+    phase_loop_migrate_legacy_state
+    exit $?
+    ;;
   restart)
     restart_pid=""
     if [ -f "$PID_FILE" ]; then
@@ -14233,7 +14270,7 @@ case "${1:-status}" in
     exit "$run_once_status"
     ;;
   *)
-    echo "usage: $0 {start|status|stop|restart|check-binary-freshness|run-once}" >&2
+    echo "usage: $0 {start|status|stop|restart|watchdog|migrate-legacy|check-binary-freshness|run-once}" >&2
     exit 64
     ;;
 esac

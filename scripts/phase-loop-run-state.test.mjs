@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { inspectSupervisorOwnership, normalizeStaleRunningStatus, rollbackStaleRunningRecovery, watchdogContinuationLiveness } from './phase-loop-run-state.mjs';
+import { inspectSupervisorOwnership, migrateLegacyPhaseLoopState, normalizeStaleRunningStatus, rollbackStaleRunningRecovery, watchdogContinuationLiveness } from './phase-loop-run-state.mjs';
 
 function fixture() {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-run-state-'));
@@ -391,6 +391,209 @@ test('run-once installs exit and signal terminalization hooks after entering run
   assert.match(controller, /SUPERVISOR_OWNER_FILE=/u);
   assert.match(controller, /write_supervisor_owner/gu);
   assert.match(controller, /phase_loop_watch_continuation_liveness/gu);
+  assert.match(controller, /phase_loop_migrate_legacy_state[\s\S]*phase_loop_watch_continuation_liveness/u);
   assert.match(controller, /PHASE_LOOP_CONTINUATION_WATCHDOG_SECONDS/u);
   assert.match(controller, /--owner-generation/u);
+});
+
+function writeLegacyFixture(stateDir, { pid = 48100, supervisorPid = 33061, rootDir = '/repo' } = {}) {
+  fs.writeFileSync(path.join(stateDir, 'status.json'), JSON.stringify({
+    status: 'running',
+    detail: 'legacy continuation after host loss',
+    run_id: 'legacy-continuation',
+    updated_at: '2026-10-18T16:37:00.000Z',
+    continuation_required: true,
+    controller_action: 'resume',
+    supervisor_pid: supervisorPid,
+    supervisor_generation: 'legacy-generation',
+    workspace_root: rootDir
+  }));
+  fs.writeFileSync(path.join(stateDir, 'phase-loop.pid'), `${pid}\n`);
+  fs.mkdirSync(path.join(stateDir, 'todo-claims'), { recursive: true });
+  fs.writeFileSync(path.join(stateDir, 'todo-claims', 'current.json'), JSON.stringify({
+    claim_id: 'legacy-claim',
+    status: 'in_progress',
+    selected_todo: '- [ ] legacy migration fixture'
+  }));
+  fs.mkdirSync(path.join(stateDir, 'runs'), { recursive: true });
+  fs.writeFileSync(path.join(stateDir, 'runs', 'legacy.target.before'), 'target-before\n');
+  fs.mkdirSync(path.join(stateDir, 'phase-loop.lock'), { recursive: true });
+  fs.writeFileSync(path.join(stateDir, 'phase-loop.lock', 'pid'), `${supervisorPid}\n`);
+}
+
+function sameRootLegacyRecords() {
+  return [{
+    pid: 33061,
+    command: 'bash /repo/phase-loop.sh supervise',
+    start_time: 'Sun Oct 18 16:30:00 2026'
+  }];
+}
+
+test('archives and rebaselines a confirmed same-root legacy owner exactly once', () => {
+  const { stateDir, statusPath } = fixture();
+  writeLegacyFixture(stateDir);
+  let live = true;
+  let stopCalls = 0;
+  const result = migrateLegacyPhaseLoopState({
+    stateDir,
+    rootDir: '/repo',
+    now: '2026-10-18T17:00:00.000Z',
+    processExists: (pid) => live && pid === 33061,
+    getProcessCommand: (pid) => pid === 33061 ? 'bash /repo/phase-loop.sh supervise' : '',
+    getProcessStartTime: () => 'Sun Oct 18 16:30:00 2026',
+    listAllSupervisors: () => live ? sameRootLegacyRecords() : [],
+    stopSupervisor: ({ candidate }) => {
+      stopCalls += 1;
+      assert.equal(candidate.pid, 33061);
+      live = false;
+      fs.rmSync(path.join(stateDir, 'phase-loop.lock'), { recursive: true, force: true });
+      return { ok: true };
+    }
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.migrated, true);
+  assert.equal(result.stopped_legacy_pid, 33061);
+  assert.equal(stopCalls, 1);
+  assert.equal(JSON.parse(fs.readFileSync(statusPath, 'utf8')).status, 'recovered_legacy_state');
+  assert.equal(JSON.parse(fs.readFileSync(statusPath, 'utf8')).continuation_required, false);
+  assert.equal(fs.existsSync(path.join(stateDir, 'phase-loop.pid')), false);
+  assert.equal(fs.existsSync(path.join(stateDir, 'phase-loop-owner.json')), false);
+  assert.equal(fs.existsSync(path.join(stateDir, 'phase-loop.lock')), false);
+  const manifest = JSON.parse(fs.readFileSync(path.join(result.archive_path, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.kind, 'phase_loop_legacy_state_archive');
+  assert.ok(manifest.files.some((entry) => entry.category === 'claim'));
+  assert.ok(manifest.files.some((entry) => entry.category === 'target_snapshot'));
+});
+
+test('blocks and preserves state when a foreign supervisor is live', () => {
+  const { stateDir, statusPath } = fixture();
+  writeLegacyFixture(stateDir);
+  const foreign = [{ pid: 33061, command: 'bash /foreign/phase-loop.sh supervise', start_time: 'Sun Oct 18 16:30:00 2026' }];
+  let stopCalls = 0;
+  const result = migrateLegacyPhaseLoopState({
+    stateDir,
+    rootDir: '/repo',
+    processExists: () => true,
+    getProcessCommand: () => foreign[0].command,
+    getProcessStartTime: () => foreign[0].start_time,
+    listAllSupervisors: () => foreign,
+    stopSupervisor: () => { stopCalls += 1; return { ok: true }; }
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'legacy_state_ownership_unproven');
+  assert.equal(result.inspection.reason, 'legacy_foreign_supervisor');
+  assert.equal(stopCalls, 0);
+  const blocked = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+  assert.equal(blocked.status, 'blocked');
+  assert.equal(blocked.continuation_required, true);
+  assert.equal(fs.readFileSync(path.join(stateDir, 'phase-loop.pid'), 'utf8'), '48100\n');
+  assert.ok(fs.existsSync(path.join(result.archive_path, 'manifest.json')));
+});
+
+test('blocks PID reuse by a non-supervisor without deleting the lock or pidfile', () => {
+  const { stateDir, statusPath } = fixture();
+  writeLegacyFixture(stateDir);
+  const result = migrateLegacyPhaseLoopState({
+    stateDir,
+    rootDir: '/repo',
+    processExists: (pid) => pid === 48100,
+    getProcessCommand: () => 'node unrelated-worker.mjs',
+    getProcessStartTime: () => 'Sun Oct 18 16:30:00 2026',
+    listAllSupervisors: () => []
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'legacy_state_ownership_unproven');
+  assert.equal(result.inspection.reason, 'legacy_pid_reused_by_other_process');
+  assert.equal(JSON.parse(fs.readFileSync(statusPath, 'utf8')).continuation_required, true);
+  assert.equal(fs.existsSync(path.join(stateDir, 'phase-loop.lock')), true);
+  assert.equal(fs.readFileSync(path.join(stateDir, 'phase-loop.pid'), 'utf8'), '48100\n');
+});
+
+test('fails closed when the audit archive cannot be created', () => {
+  const { stateDir, statusPath } = fixture();
+  writeLegacyFixture(stateDir);
+  const before = fs.readFileSync(statusPath, 'utf8');
+  const result = migrateLegacyPhaseLoopState({
+    stateDir,
+    rootDir: '/repo',
+    processExists: () => false,
+    listAllSupervisors: () => [],
+    archiveSnapshot: () => { throw new Error('archive disk full'); }
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'legacy_state_archive_failed');
+  assert.equal(fs.readFileSync(statusPath, 'utf8'), before);
+  assert.equal(fs.existsSync(path.join(stateDir, 'legacy-recovery')), false);
+});
+
+test('refuses a status race discovered after the archive and never starts a second owner', () => {
+  const { stateDir, statusPath } = fixture();
+  writeLegacyFixture(stateDir);
+  let inspections = 0;
+  let stopCalls = 0;
+  const result = migrateLegacyPhaseLoopState({
+    stateDir,
+    rootDir: '/repo',
+    processExists: (pid) => pid === 33061,
+    getProcessCommand: () => 'bash /repo/phase-loop.sh supervise',
+    getProcessStartTime: () => 'Sun Oct 18 16:30:00 2026',
+    listAllSupervisors: () => {
+      inspections += 1;
+      if (inspections === 2) {
+        const status = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+        status.updated_at = '2026-10-18T16:59:59.000Z';
+        fs.writeFileSync(statusPath, JSON.stringify(status));
+      }
+      return sameRootLegacyRecords();
+    },
+    stopSupervisor: () => { stopCalls += 1; return { ok: true }; }
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'legacy_state_changed_during_migration');
+  assert.equal(stopCalls, 0);
+  assert.equal(JSON.parse(fs.readFileSync(statusPath, 'utf8')).status, 'running');
+  assert.ok(fs.existsSync(path.join(result.archive_path, 'manifest.json')));
+});
+
+test('refuses rebaseline when stopping the legacy owner dirties claim state', () => {
+  const { stateDir, statusPath } = fixture();
+  writeLegacyFixture(stateDir);
+  let live = true;
+  const result = migrateLegacyPhaseLoopState({
+    stateDir,
+    rootDir: '/repo',
+    processExists: (pid) => live && pid === 33061,
+    getProcessCommand: () => 'bash /repo/phase-loop.sh supervise',
+    getProcessStartTime: () => 'Sun Oct 18 16:30:00 2026',
+    listAllSupervisors: () => live ? sameRootLegacyRecords() : [],
+    stopSupervisor: () => {
+      live = false;
+      fs.writeFileSync(path.join(stateDir, 'todo-claims', 'current.json'), JSON.stringify({ claim_id: 'changed-during-stop' }));
+      return { ok: true };
+    }
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'legacy_supervisor_stop_race');
+  assert.equal(JSON.parse(fs.readFileSync(statusPath, 'utf8')).status, 'running');
+  assert.equal(fs.existsSync(path.join(stateDir, 'phase-loop.pid')), true);
+});
+
+test('leaves continuation blocked when reversible cleanup fails after owner stop', () => {
+  const { stateDir, statusPath } = fixture();
+  writeLegacyFixture(stateDir);
+  let live = true;
+  const result = migrateLegacyPhaseLoopState({
+    stateDir,
+    rootDir: '/repo',
+    processExists: (pid) => live && pid === 33061,
+    getProcessCommand: () => 'bash /repo/phase-loop.sh supervise',
+    getProcessStartTime: () => 'Sun Oct 18 16:30:00 2026',
+    listAllSupervisors: () => live ? sameRootLegacyRecords() : [],
+    stopSupervisor: () => { live = false; return { ok: true }; },
+    runtimeCleaner: () => ({ ok: false, code: 'legacy_cleanup_fixture_failure' })
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'legacy_cleanup_fixture_failure');
+  assert.equal(JSON.parse(fs.readFileSync(statusPath, 'utf8')).continuation_required, true);
+  assert.equal(fs.existsSync(path.join(stateDir, 'phase-loop.pid')), true);
 });
