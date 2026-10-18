@@ -523,18 +523,20 @@ test('confirms a default-state supervisor without an explicit state-dir environm
 });
 
 test('rescans descendants before force-killing a respawned legacy child', () => {
-  const live = new Set([33061, 44002]);
+  const live = new Set([33061, 44001, 44002]);
   const signals = [];
   let scans = 0;
   const result = terminateLegacySupervisor({
-    candidate: { pid: 33061 },
+    candidate: { pid: 33061, start_time: 'candidate' },
     processExists: (pid) => live.has(pid),
+    getProcessStartTime: (pid) => ({ 33061: 'candidate', 44001: 'child-1', 44002: 'child-2' }[pid] || ''),
     listDescendants: () => {
       scans += 1;
-      return scans === 1 ? [44001] : [44001, 44002];
+      return scans <= 2 ? [44001] : [44001, 44002];
     },
     killProcess: (pid, signal) => {
       signals.push([pid, signal]);
+      if (signal === 'SIGTERM' && pid === 44001) live.delete(pid);
       if (signal === 'SIGKILL') live.delete(pid);
     },
     sleep: () => {}
@@ -567,6 +569,23 @@ test('blocks and preserves state when a foreign supervisor is live', () => {
   assert.equal(blocked.continuation_required, true);
   assert.equal(fs.readFileSync(path.join(stateDir, 'phase-loop.pid'), 'utf8'), '48100\n');
   assert.ok(fs.existsSync(path.join(result.archive_path, 'manifest.json')));
+});
+
+test('ignores an unrelated foreign-checkout supervisor when this state does not reference it', () => {
+  const { stateDir, statusPath } = fixture();
+  writeLegacyFixture(stateDir, { supervisorPid: 33062 });
+  const unrelated = [{ pid: 33061, command: 'bash /foreign-checkout/phase-loop.sh supervise', start_time: 'Sun Oct 18 16:30:00 2026' }];
+  const result = migrateLegacyPhaseLoopState({
+    stateDir,
+    rootDir: '/repo',
+    processExists: (pid) => pid === 33061,
+    getProcessCommand: () => unrelated[0].command,
+    getProcessStartTime: () => unrelated[0].start_time,
+    listAllSupervisors: () => unrelated
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.migrated, true);
+  assert.equal(JSON.parse(fs.readFileSync(statusPath, 'utf8')).status, 'recovered_legacy_state');
 });
 
 test('blocks PID reuse by a non-supervisor without deleting the lock or pidfile', () => {
