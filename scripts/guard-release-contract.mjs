@@ -83,6 +83,10 @@ function readText(repoRoot, relativePath, errors) {
   }
 }
 
+export function computeReadinessAuditContentSha256(auditText) {
+  return 'sha256:' + crypto.createHash('sha256').update(auditText).digest('hex');
+}
+
 function requireValue(condition, errors, message) {
   if (!condition) {
     errors.push(message);
@@ -378,7 +382,7 @@ export function runReleaseContractGuard(options = {}) {
   const contract = options.contract ?? readJson(repoRoot, contractPath, errors);
   const audit = options.audit ?? readJson(repoRoot, auditPath, errors);
   const auditText = options.auditText ?? readText(repoRoot, auditPath, errors);
-  const readinessAuditContentSha256 = 'sha256:' + crypto.createHash('sha256').update(auditText).digest('hex');
+  const readinessAuditContentSha256 = computeReadinessAuditContentSha256(auditText);
   const packageJson = options.packageJson ?? readJson(repoRoot, defaultPackagePath, errors);
   const vsixPackageJson = options.vsixPackageJson ?? readJson(repoRoot, defaultVsixPackagePath, errors);
   const releaseGateText = options.releaseGateText ?? readText(repoRoot, 'scripts/release-gate.mjs', errors);
