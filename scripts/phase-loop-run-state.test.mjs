@@ -430,6 +430,13 @@ function sameRootLegacyRecords(stateDir) {
   }];
 }
 
+function defaultLegacyFixture() {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-default-root-'));
+  const stateDir = path.join(rootDir, '.brownie', 'private', 'phase-loop');
+  fs.mkdirSync(stateDir, { recursive: true });
+  return { rootDir, stateDir, statusPath: path.join(stateDir, 'status.json') };
+}
+
 test('archives and rebaselines a confirmed same-root legacy owner exactly once', () => {
   const { stateDir, statusPath } = fixture();
   writeLegacyFixture(stateDir);
@@ -491,6 +498,28 @@ test('blocks a same-root supervisor whose state directory is different', () => {
   assert.equal(stopCalls, 0);
   assert.equal(JSON.parse(fs.readFileSync(statusPath, 'utf8')).status, 'blocked');
   assert.equal(fs.readFileSync(path.join(stateDir, 'phase-loop.pid'), 'utf8'), '48100\n');
+});
+
+test('confirms a default-state supervisor without an explicit state-dir environment value', () => {
+  const { rootDir, stateDir, statusPath } = defaultLegacyFixture();
+  writeLegacyFixture(stateDir, { rootDir });
+  let live = true;
+  const result = migrateLegacyPhaseLoopState({
+    stateDir,
+    rootDir,
+    processExists: (pid) => live && pid === 33061,
+    getProcessCommand: () => `bash ${rootDir}/phase-loop.sh supervise`,
+    getProcessStartTime: () => 'Sun Oct 18 16:30:00 2026',
+    listAllSupervisors: () => live ? [{
+      pid: 33061,
+      command: `bash ${rootDir}/phase-loop.sh supervise`,
+      start_time: 'Sun Oct 18 16:30:00 2026'
+    }] : [],
+    stopSupervisor: () => { live = false; fs.rmSync(path.join(stateDir, 'phase-loop.lock'), { recursive: true, force: true }); return { ok: true }; }
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.migrated, true);
+  assert.equal(JSON.parse(fs.readFileSync(statusPath, 'utf8')).status, 'recovered_legacy_state');
 });
 
 test('rescans descendants before force-killing a respawned legacy child', () => {

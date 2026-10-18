@@ -146,7 +146,13 @@ function archiveLegacyStateAtomically({ stateDir, recoveryId, reason, now = new 
       files: before.files
     };
     writeJsonAtomically(path.join(temporary, 'manifest.json'), manifest);
-    fsyncDirectory(temporary);
+    const directories = new Set([temporary]);
+    for (const entry of before.files) {
+      directories.add(path.dirname(path.join(temporary, entry.path)));
+    }
+    [...directories]
+      .sort((left, right) => right.split(path.sep).length - left.split(path.sep).length)
+      .forEach((directory) => fsyncDirectory(directory));
     fs.renameSync(temporary, archivePath);
     fsyncDirectory(recoveryRoot);
     return { archive_path: archivePath, manifest_path: path.join(archivePath, 'manifest.json'), ...before };
@@ -230,9 +236,17 @@ function reportedSupervisorStateDir(record) {
   return match?.[1] || '';
 }
 
-function supervisorStateDirMatches(record, stateDir) {
+function supervisorStateDirMatches(record, stateDir, rootDir = '') {
   const reported = reportedSupervisorStateDir(record);
-  return Boolean(reported && canonicalizePath(reported) === canonicalizePath(stateDir));
+  if (reported) return canonicalizePath(reported) === canonicalizePath(stateDir);
+  const defaultStateDir = rootDir
+    ? path.join(canonicalizePath(rootDir), '.brownie', 'private', 'phase-loop')
+    : '';
+  return Boolean(defaultStateDir && canonicalizePath(defaultStateDir) === canonicalizePath(stateDir));
+}
+
+function supervisorStateDirProof(record, stateDir, rootDir) {
+  return Boolean(reportedSupervisorStateDir(record) || supervisorStateDirMatches(record, stateDir, rootDir));
 }
 
 function allSupervisorProcessRecords() {
@@ -395,9 +409,9 @@ export function inspectLegacyPhaseLoopState({
   const records = [...listAllSupervisors()].filter((record) => Number.isInteger(record?.pid) && record.pid > 1);
   const liveRecords = records.filter((record) => processExists(record.pid));
   const sameRootRecords = liveRecords.filter((record) => supervisorCommandMatchesRoot(record.command || '', rootDir));
-  const stateDirRecords = sameRootRecords.filter((record) => supervisorStateDirMatches(record, stateDir));
+  const stateDirRecords = sameRootRecords.filter((record) => supervisorStateDirMatches(record, stateDir, rootDir));
   const foreignStateDirRecords = sameRootRecords.filter((record) => (
-    reportedSupervisorStateDir(record) && !supervisorStateDirMatches(record, stateDir)
+    reportedSupervisorStateDir(record) && !supervisorStateDirMatches(record, stateDir, rootDir)
   ));
   const foreignRecords = liveRecords.filter((record) => (
     commandLooksLikeSupervisor(record.command || '') && !supervisorCommandMatchesRoot(record.command || '', rootDir)
@@ -438,14 +452,14 @@ export function inspectLegacyPhaseLoopState({
       && supervisorCommandMatchesRoot(pidCommand, rootDir)
       && pidRecord
       && reportedSupervisorStateDir(pidRecord)
-      && !supervisorStateDirMatches(pidRecord, stateDir)
+      && !supervisorStateDirMatches(pidRecord, stateDir, rootDir)
   );
   const pidIsOtherLiveProcess = Boolean(pidLive && !commandLooksLikeSupervisor(pidCommand));
   const candidateIsStrictlyConfirmed = Boolean(
     candidate
       && sameRootRecords.length === 1
       && stateDirRecords.length === 1
-      && reportedSupervisorStateDir(candidate)
+      && supervisorStateDirProof(candidate, stateDir, rootDir)
       && candidateStartTime
       && !pidError
       && !(pidFilePresent && pid === null)
