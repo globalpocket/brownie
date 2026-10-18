@@ -249,19 +249,30 @@ function supervisorStateDirProof(record, stateDir, rootDir) {
   return Boolean(reportedSupervisorStateDir(record) || supervisorStateDirMatches(record, stateDir, rootDir));
 }
 
-function allSupervisorProcessRecords() {
+export function allSupervisorProcessRecords({
+  readProcessTable = null,
+  processAlive = processIsAlive,
+  getStartTime = null,
+  getStateDir = null
+} = {}) {
+  const startTimeReader = getStartTime || ((pid) => processStartTime(pid));
+  const stateDirReader = getStateDir || ((pid) => processStateDir(pid));
   let output = '';
-  try {
-    output = execFileSync('ps', ['-axo', 'pid='], { encoding: 'utf8' });
-  } catch {
-    return [];
+  if (readProcessTable) output = readProcessTable();
+  else {
+    try {
+      output = execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' });
+    } catch {
+      return [];
+    }
   }
   return output.split('\n').flatMap((line) => {
-    const pid = Number.parseInt(line.trim(), 10);
-    if (!Number.isInteger(pid) || pid <= 1 || !processIsAlive(pid)) return [];
-    const command = processCommand(pid);
+    const match = line.match(/^\s*(\d+)\s+(.*)$/u);
+    const pid = Number.parseInt(match?.[1] || '', 10);
+    const command = match?.[2]?.trim() || '';
+    if (!Number.isInteger(pid) || pid <= 1 || !processAlive(pid)) return [];
     if (!commandLooksLikeSupervisor(command)) return [];
-    return [{ pid, command, start_time: processStartTime(pid), state_dir: processStateDir(pid) }];
+    return [{ pid, command, start_time: startTimeReader(pid), state_dir: stateDirReader(pid) }];
   });
 }
 

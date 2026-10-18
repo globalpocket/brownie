@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { inspectSupervisorOwnership, migrateLegacyPhaseLoopState, normalizeStaleRunningStatus, rollbackStaleRunningRecovery, terminateLegacySupervisor, watchdogContinuationLiveness } from './phase-loop-run-state.mjs';
+import { allSupervisorProcessRecords, inspectSupervisorOwnership, migrateLegacyPhaseLoopState, normalizeStaleRunningStatus, rollbackStaleRunningRecovery, terminateLegacySupervisor, watchdogContinuationLiveness } from './phase-loop-run-state.mjs';
 
 function fixture() {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-run-state-'));
@@ -586,6 +586,18 @@ test('ignores an unrelated foreign-checkout supervisor when this state does not 
   assert.equal(result.ok, true);
   assert.equal(result.migrated, true);
   assert.equal(JSON.parse(fs.readFileSync(statusPath, 'utf8')).status, 'recovered_legacy_state');
+});
+
+test('reads a large process table in one command and enriches supervisors only', () => {
+  const enriched = [];
+  const records = allSupervisorProcessRecords({
+    readProcessTable: () => `${Array.from({ length: 200 }, (_, index) => ` ${index + 100} worker-${index}`).join('\n')}\n 33061 bash /repo/phase-loop.sh supervise`,
+    processAlive: () => true,
+    getStartTime: (pid) => { enriched.push(['start', pid]); return 'supervisor-start'; },
+    getStateDir: (pid) => { enriched.push(['state', pid]); return '/state'; }
+  });
+  assert.deepEqual(records, [{ pid: 33061, command: 'bash /repo/phase-loop.sh supervise', start_time: 'supervisor-start', state_dir: '/state' }]);
+  assert.deepEqual(enriched, [['start', 33061], ['state', 33061]]);
 });
 
 test('blocks PID reuse by a non-supervisor without deleting the lock or pidfile', () => {
