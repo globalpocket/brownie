@@ -463,6 +463,7 @@ export function inspectLegacyPhaseLoopState({
   const candidate = stateDirRecords.length === 1 ? stateDirRecords[0] : null;
   const candidateStartTime = candidate?.start_time || (candidate ? getProcessStartTime(candidate.pid) : '');
   const pidIsCandidate = Boolean(candidate && pid === candidate.pid);
+  const lockIsCandidate = Boolean(lockLive && candidate && lockPid === candidate.pid);
   const pidIsForeignSupervisor = Boolean(pidLive && commandLooksLikeSupervisor(pidCommand) && !supervisorCommandMatchesRoot(pidCommand, rootDir));
   const pidIsForeignStateSupervisor = Boolean(
     pidLive
@@ -486,6 +487,7 @@ export function inspectLegacyPhaseLoopState({
       && !pidIsForeignSupervisor
       && !pidIsOtherLiveProcess
       && (!pidLive || pidIsCandidate || !pid)
+      && (!lockLive || lockIsCandidate)
       && (!status.supervisor_pid || status.supervisor_pid === candidate.pid)
   );
   let reason = 'legacy_ownership_unproven';
@@ -493,6 +495,7 @@ export function inspectLegacyPhaseLoopState({
   else if (associatedSameRootRecords.length > 1) reason = 'legacy_ambiguous_same_root_supervisors';
   else if (associatedSameRootRecords.length === 1 && stateDirRecords.length === 0) reason = 'legacy_state_dir_ownership_unproven';
   else if (pidIsOtherLiveProcess) reason = 'legacy_pid_reused_by_other_process';
+  else if (lockLive && !lockIsCandidate) reason = 'legacy_live_lock_owner_unproven';
   else if (pidError || (pidFilePresent && pid === null)) reason = 'legacy_pid_unreadable';
   else if (candidate && !candidateStartTime) reason = 'legacy_supervisor_start_time_unreadable';
   else if (candidate && !candidateIsStrictlyConfirmed) reason = 'legacy_supervisor_identity_mismatch';
@@ -574,12 +577,15 @@ export function terminateLegacySupervisor({
   const discover = () => {
     for (const pid of descendantLister(candidate.pid)) {
       if (!managed.has(pid)) {
-        managed.set(pid, { pid, start_time: getProcessStartTime(pid) });
+        const start_time = getProcessStartTime(pid);
+        if (!processExists(pid)) continue;
+        managed.set(pid, { pid, start_time });
       }
     }
     for (const identity of managed.values()) {
+      if (!processExists(identity.pid)) continue;
       if (!identity.start_time) return { ok: false, code: 'legacy_process_identity_unreadable', pid: identity.pid };
-      if (processExists(identity.pid) && getProcessStartTime(identity.pid) !== identity.start_time) {
+      if (getProcessStartTime(identity.pid) !== identity.start_time) {
         return { ok: false, code: 'legacy_process_identity_changed', pid: identity.pid };
       }
     }

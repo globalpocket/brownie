@@ -473,6 +473,27 @@ test('archives and rebaselines a confirmed same-root legacy owner exactly once',
   assert.ok(manifest.files.some((entry) => entry.category === 'target_snapshot'));
 });
 
+test('blocks a live lock owned by a different PID before stopping the candidate', () => {
+  const { stateDir, statusPath } = fixture();
+  writeLegacyFixture(stateDir);
+  fs.writeFileSync(path.join(stateDir, 'phase-loop.lock', 'pid'), '33062\n');
+  let stopCalls = 0;
+  const result = migrateLegacyPhaseLoopState({
+    stateDir,
+    rootDir: '/repo',
+    processExists: (pid) => pid === 33061 || pid === 33062,
+    getProcessCommand: (pid) => pid === 33061 ? 'bash /repo/phase-loop.sh supervise' : 'node unrelated-lock-owner.mjs',
+    getProcessStartTime: () => 'Sun Oct 18 16:30:00 2026',
+    listAllSupervisors: () => [{ pid: 33061, command: 'bash /repo/phase-loop.sh supervise', start_time: 'Sun Oct 18 16:30:00 2026', state_dir: stateDir }],
+    stopSupervisor: () => { stopCalls += 1; return { ok: true }; }
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'legacy_state_ownership_unproven');
+  assert.equal(result.inspection.reason, 'legacy_live_lock_owner_unproven');
+  assert.equal(stopCalls, 0);
+  assert.equal(JSON.parse(fs.readFileSync(statusPath, 'utf8')).status, 'blocked');
+});
+
 test('blocks a same-root supervisor whose state directory is different', () => {
   const { stateDir, statusPath } = fixture();
   writeLegacyFixture(stateDir);
