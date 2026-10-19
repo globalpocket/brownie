@@ -576,6 +576,51 @@ function supervisorDescendantPids(pid) {
   return descendants;
 }
 
+export function quiesceLegacySupervisor({
+  candidate,
+  processExists = (pid) => processIsAlive(pid),
+  getProcessStartTime = processStartTime,
+  listDescendants = null,
+  killProcess = process.kill
+}) {
+  const descendantLister = listDescendants || ((pid) => supervisorDescendantPids(pid));
+  const managed = new Map([[candidate.pid, { pid: candidate.pid, start_time: candidate.start_time }]]);
+  for (const pid of descendantLister(candidate.pid)) {
+    if (Number.isInteger(pid) && pid > 1 && processExists(pid)) {
+      managed.set(pid, { pid, start_time: getProcessStartTime(pid) });
+    }
+  }
+  const signal = (name) => {
+    for (const identity of managed.values()) {
+      if (!processExists(identity.pid)
+        || !identity.start_time
+        || getProcessStartTime(identity.pid) !== identity.start_time) {
+        return { ok: false, code: 'legacy_process_identity_changed', pid: identity.pid };
+      }
+      try {
+        killProcess(identity.pid, 0);
+      } catch (error) {
+        if (error?.code === 'ESRCH') continue;
+        return { ok: false, code: 'legacy_supervisor_quiesce_signal_failed', pid: identity.pid, error: error.message };
+      }
+      try {
+        killProcess(identity.pid, name);
+      } catch (error) {
+        if (error?.code !== 'ESRCH') {
+          return { ok: false, code: 'legacy_supervisor_quiesce_signal_failed', pid: identity.pid, error: error.message };
+        }
+      }
+    }
+    return { ok: true };
+  };
+  const stopped = signal('SIGSTOP');
+  if (!stopped.ok) return stopped;
+  return {
+    ok: true,
+    resume: () => signal('SIGCONT')
+  };
+}
+
 export function terminateLegacySupervisor({
   candidate,
   processExists = (pid) => processIsAlive(pid),
@@ -665,12 +710,14 @@ export function migrateLegacyPhaseLoopState({
   getProcessStartTime = processStartTime,
   listAllSupervisors = allSupervisorProcessRecords,
   archiveSnapshot = null,
+  quiesceSupervisor = null,
   stopSupervisor = null,
   stateSnapshotReader = stateSnapshot,
   statusWriter = writeJsonAtomically,
   runtimeCleaner = null
 }) {
   const archiveWriter = archiveSnapshot || ((args) => archiveLegacyStateAtomically(args));
+  const quiesceOwner = quiesceSupervisor || ((args) => quiesceLegacySupervisor(args));
   const stopOwner = stopSupervisor || ((args) => terminateLegacySupervisor(args));
   const cleanRuntime = runtimeCleaner || ((directory, options) => removeLegacyRuntimeFiles(directory, options));
   const inspected = inspectLegacyPhaseLoopState({
@@ -685,14 +732,33 @@ export function migrateLegacyPhaseLoopState({
   });
   if (!inspected.ok || !inspected.migration_needed) return inspected;
   const recoveryId = crypto.randomUUID();
+  let quiescedOwner = null;
+  const releaseQuiescedOwner = () => {
+    if (!quiescedOwner) return { ok: true };
+    const result = typeof quiescedOwner.resume === 'function' ? quiescedOwner.resume() : { ok: true };
+    quiescedOwner = null;
+    return result?.ok === false ? result : { ok: true };
+  };
+  if (inspected.candidate_confirmed) {
+    try {
+      quiescedOwner = quiesceOwner({ candidate: inspected.candidate, processExists, getProcessStartTime });
+    } catch (error) {
+      return { ok: false, blocked: true, code: 'legacy_supervisor_quiesce_failed', recovery_id: recoveryId, error: error.message };
+    }
+    if (!quiescedOwner?.ok) {
+      return { ok: false, blocked: true, code: quiescedOwner?.code || 'legacy_supervisor_quiesce_failed', recovery_id: recoveryId, quiesce: quiescedOwner };
+    }
+  }
   let archive;
   try {
     archive = archiveWriter({ stateDir, recoveryId, reason: inspected.reason, now });
   } catch (error) {
+    releaseQuiescedOwner();
     return { ok: false, blocked: true, code: 'legacy_state_archive_failed', recovery_id: recoveryId, error: error.message };
   }
   const archivedSnapshot = stateSnapshotReader(stateDir);
   if (archivedSnapshot.fingerprint !== archive.fingerprint) {
+    releaseQuiescedOwner();
     return { ok: false, blocked: true, code: 'legacy_state_archive_snapshot_mismatch', recovery_id: recoveryId, archive_path: archive.archive_path };
   }
 
@@ -707,6 +773,7 @@ export function migrateLegacyPhaseLoopState({
     listAllSupervisors
   });
   if (!rechecked.ok || rechecked.reason !== inspected.reason || stateSnapshotReader(stateDir).fingerprint !== archive.fingerprint) {
+    releaseQuiescedOwner();
     return { ok: false, blocked: true, code: 'legacy_state_changed_during_migration', recovery_id: recoveryId, archive_path: archive.archive_path, inspection: rechecked };
   }
 
@@ -714,7 +781,12 @@ export function migrateLegacyPhaseLoopState({
     if (rechecked.candidate?.pid !== inspected.candidate?.pid
       || rechecked.candidate?.start_time !== inspected.candidate?.start_time
       || rechecked.candidate?.command !== inspected.candidate?.command) {
+      releaseQuiescedOwner();
       return { ok: false, blocked: true, code: 'legacy_supervisor_identity_race', recovery_id: recoveryId, archive_path: archive.archive_path, inspection: rechecked };
+    }
+    const releaseResult = releaseQuiescedOwner();
+    if (!releaseResult.ok) {
+      return { ok: false, blocked: true, code: releaseResult.code || 'legacy_supervisor_resume_failed', recovery_id: recoveryId, archive_path: archive.archive_path, resume: releaseResult };
     }
     const stopResult = stopOwner({ candidate: rechecked.candidate, processExists });
     if (!stopResult?.ok) {
@@ -738,6 +810,10 @@ export function migrateLegacyPhaseLoopState({
       return { ok: false, blocked: true, code: 'legacy_supervisor_stop_race', recovery_id: recoveryId, archive_path: archive.archive_path, inspection: afterStop };
     }
   } else if (rechecked.reason !== 'legacy_no_live_supervisor') {
+    const releaseResult = releaseQuiescedOwner();
+    if (!releaseResult.ok) {
+      return { ok: false, blocked: true, code: releaseResult.code || 'legacy_supervisor_resume_failed', recovery_id: recoveryId, archive_path: archive.archive_path, resume: releaseResult };
+    }
     const blockedStatus = {
       ...rechecked.status,
       status: 'blocked',

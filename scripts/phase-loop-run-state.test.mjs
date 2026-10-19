@@ -473,6 +473,38 @@ test('archives and rebaselines a confirmed same-root legacy owner exactly once',
   assert.ok(manifest.files.some((entry) => entry.category === 'target_snapshot'));
 });
 
+test('quiesces a confirmed legacy owner before enforcing archive snapshot stability', () => {
+  const { stateDir } = fixture();
+  writeLegacyFixture(stateDir);
+  let live = true;
+  let quiesced = false;
+  const result = migrateLegacyPhaseLoopState({
+    stateDir,
+    rootDir: '/repo',
+    processExists: (pid) => live && pid === 33061,
+    getProcessCommand: () => 'bash /repo/phase-loop.sh supervise',
+    getProcessStartTime: () => 'Sun Oct 18 16:30:00 2026',
+    listAllSupervisors: () => live ? sameRootLegacyRecords(stateDir) : [],
+    quiesceSupervisor: () => {
+      quiesced = true;
+      return { ok: true, resume: () => { quiesced = false; return { ok: true }; } };
+    },
+    archiveSnapshot: () => {
+      assert.equal(quiesced, true);
+      return { fingerprint: 'stable', files: [], archive_path: 'archive', manifest_path: 'manifest' };
+    },
+    stateSnapshotReader: () => ({ fingerprint: 'stable', files: [] }),
+    stopSupervisor: () => {
+      assert.equal(quiesced, false);
+      live = false;
+      fs.rmSync(path.join(stateDir, 'phase-loop.lock'), { recursive: true, force: true });
+      return { ok: true };
+    }
+  });
+  assert.equal(result.ok, true);
+  assert.equal(quiesced, false);
+});
+
 test('blocks a live lock owned by a different PID before stopping the candidate', () => {
   const { stateDir, statusPath } = fixture();
   writeLegacyFixture(stateDir);
