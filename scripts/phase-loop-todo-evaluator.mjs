@@ -248,6 +248,7 @@ function readBlockedClaims(blockedPath, queueFingerprint, controllerFingerprint 
         const blockedId = todoId(record.selected_todo_first_line);
         const explicitOwnerBlocker = record.selected_todo_first_line.includes('Blocker:');
         const stalledLeafContractReplan = record.block_reason === 'stalled_leaf_contract_replan';
+        const terminalRuntimeFailure = record.block_reason === 'terminal_runtime_failure';
         // A stable block suppresses retries only for the controller that
         // observed it. A controller update is the explicit rebaseline point
         // for legacy state, including records created before fingerprints.
@@ -257,6 +258,10 @@ function readBlockedClaims(blockedPath, queueFingerprint, controllerFingerprint 
           if (typeof record.target_scope_key === 'string' && record.target_scope_key && typeof record.verification_command === 'string' && record.verification_command) {
             stableScopeContracts.add(`${record.target_scope_key}\u0000${record.verification_command}`);
           }
+          continue;
+        }
+        if (blockedId && terminalRuntimeFailure && matchesController) {
+          stableIds.add(blockedId);
           continue;
         }
         if (

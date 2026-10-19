@@ -33,6 +33,10 @@ export function readTaskLedger(repoRoot) {
           return Array.isArray(record.events) && record.events.length > 1 && record.events.every((event) => event?.task_id && TASK_STATES.has(event?.to_state))
             ? record.events : [];
         }
+        if (record?.kind === 'terminal_failure_transaction') {
+          return Array.isArray(record.events) && record.events.length > 0 && record.events.every((event) => event?.task_id && TASK_STATES.has(event?.to_state))
+            ? record.events : [];
+        }
         if (record?.kind === 'unclaimed_trajectory') return [];
         return [record];
       } catch { return []; }
@@ -226,6 +230,114 @@ export function replanTaskWithChildren(repoRoot, { task_id, reason, children, ru
   };
   fs.appendFileSync(file, `${JSON.stringify(transaction)}\n`, { encoding: 'utf8', mode: 0o600 });
   return { ok: true, events: [parentEvent, ...childEvents] };
+}
+
+function selectedTodoId(selectedTodo) {
+  return String(selectedTodo ?? '').split('\n')[0].match(/^\s*(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+([^:\s]+)/u)?.[1] ?? '';
+}
+
+function terminalFailureRecoveryTaskId(selectedTodo, recoveryId) {
+  const sourceTaskId = selectedTodoId(selectedTodo);
+  return `${sourceTaskId || 'unknown-task'}@recovery-${recoveryId}`;
+}
+
+export function recordTerminalFailureRecovery(repoRoot, {
+  selected_todo,
+  claim_id = null,
+  run_id = null,
+  queue_generation = null,
+  queue_fingerprint = null,
+  provider_failure_fingerprint = null,
+  retry_cap = 0,
+  recovery_id = null,
+  claim_absent = false,
+  blocked_reason = 'terminal_runtime_failure',
+  at
+}) {
+  if (typeof selected_todo !== 'string' || !selected_todo.trim()) {
+    return { ok: false, code: 'terminal_failure_selected_todo_missing' };
+  }
+  const resolvedRecoveryId = recovery_id || crypto.createHash('sha256')
+    .update(JSON.stringify({ selected_todo, queue_generation, queue_fingerprint, provider_failure_fingerprint, blocked_reason }))
+    .digest('hex')
+    .slice(0, 24);
+  const taskId = claim_id
+    ? `${selectedTodoId(selected_todo) || 'unknown-task'}@${claim_id}`
+    : terminalFailureRecoveryTaskId(selected_todo, resolvedRecoveryId);
+  const specHash = crypto.createHash('sha256').update(selected_todo).digest('hex');
+  const targetScope = selected_todo.match(/\b(?:Patch|Create) only\b([^\n]*)/u)?.[1] ?? '';
+  const targetFiles = [...targetScope.matchAll(/`([^`]+)`/gu)]
+    .map((match) => match[1])
+    .filter((value) => /[/.]/u.test(value));
+  const verificationCommands = [...selected_todo.matchAll(/^\s*Verification:\s*run\s+`([^`]+)`/gmu)]
+    .map((match) => match[1]);
+  const parentTodoId = selected_todo.match(/^\s*(?:Source|Parent) TODO:\s*([^\s.]+)/mu)?.[1] ?? null;
+  let events;
+  try {
+    events = readTaskLedger(repoRoot);
+  } catch (error) {
+    return { ok: false, code: 'ledger_append_failed', error: error.message };
+  }
+  if (events.some((event) => event?.recovery_id === resolvedRecoveryId && event?.to_state === 'failed')) {
+    return { ok: true, code: 'duplicate_terminal_failure_recovery', task_id: taskId, recovery_id: resolvedRecoveryId };
+  }
+  const projected = taskProjection(events);
+  const current = projected.get(taskId);
+  const timestamp = at ?? new Date().toISOString();
+  const common = {
+    schema_version: 1,
+    task_id: taskId,
+    run_id,
+    claim_id: claim_id ?? null,
+    task_spec_sha256: specHash,
+    reason: 'trajectory_failed',
+    blocked_reason,
+    parent_todo_id: parentTodoId,
+    recovery_id: resolvedRecoveryId,
+    selected_todo,
+    target_files: targetFiles,
+    verification_commands: verificationCommands,
+    queue_generation,
+    queue_fingerprint,
+    provider_failure_fingerprint,
+    retry_cap: Number.isInteger(Number(retry_cap)) ? Number(retry_cap) : 0,
+    claim_absent: Boolean(claim_absent),
+    terminal_failure: true,
+    blocked_evidence: true,
+    at: timestamp
+  };
+  const eventsToWrite = [];
+  if (!current) {
+    eventsToWrite.push(
+      { ...common, event_id: crypto.randomUUID(), from_state: null, to_state: 'queued', sequence: 1 },
+      { ...common, event_id: crypto.randomUUID(), from_state: 'queued', to_state: 'claimed', sequence: 2 },
+      { ...common, event_id: crypto.randomUUID(), from_state: 'claimed', to_state: 'running', sequence: 3 }
+    );
+  } else if (isTerminalTaskState(current.to_state)) {
+    return { ok: false, code: 'terminal_task_cannot_transition', task_id: taskId };
+  }
+  eventsToWrite.push({
+    ...common,
+    event_id: crypto.randomUUID(),
+    from_state: current?.to_state ?? 'running',
+    to_state: 'failed',
+    sequence: (current?.sequence ?? (eventsToWrite.at(-1)?.sequence ?? 0)) + 1
+  });
+  const file = taskLedgerPath(repoRoot);
+  const transaction = {
+    schema_version: 1,
+    kind: 'terminal_failure_transaction',
+    transaction_id: crypto.randomUUID(),
+    recovery_id: resolvedRecoveryId,
+    events: eventsToWrite
+  };
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    fs.appendFileSync(file, `${JSON.stringify(transaction)}\n`, { encoding: 'utf8', mode: 0o600 });
+  } catch (error) {
+    return { ok: false, code: 'ledger_append_failed', error: error.message };
+  }
+  return { ok: true, code: 'terminal_failure_recorded', task_id: taskId, recovery_id: resolvedRecoveryId, event: eventsToWrite.at(-1) };
 }
 
 export function validateTaskLedger(events) {
@@ -485,6 +597,28 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
     type,
     runId,
     payloadRaw
+  });
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+  if (!result.ok) process.exit(78);
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname) && process.argv[2] === 'record-terminal-failure') {
+  const args = new Map(process.argv.slice(3).reduce((pairs, value, index, values) => (
+    value.startsWith('--') ? [...pairs, [value.slice(2), values[index + 1]]] : pairs
+  ), []));
+  const repo = args.get('repo');
+  if (!repo || !args.get('selected-todo')) process.exit(2);
+  const result = recordTerminalFailureRecovery(repo, {
+    selected_todo: args.get('selected-todo'),
+    claim_id: args.get('claim-id') || null,
+    run_id: args.get('run') || null,
+    queue_generation: args.get('queue-generation') || null,
+    queue_fingerprint: args.get('queue-fingerprint') || null,
+    provider_failure_fingerprint: args.get('provider-failure-fingerprint') || null,
+    retry_cap: args.get('retry-cap') || 0,
+    recovery_id: args.get('recovery-id') || null,
+    claim_absent: args.get('claim-absent') === 'true',
+    blocked_reason: args.get('blocked-reason') || 'terminal_runtime_failure'
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
   if (!result.ok) process.exit(78);

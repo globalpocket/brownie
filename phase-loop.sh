@@ -38,6 +38,7 @@ PHASE_LOOP_STATUS_WRITE_IN_PROGRESS=0
 PHASE_LOOP_SUPERVISOR_PID=""
 PHASE_LOOP_SUPERVISOR_GENERATION=""
 PHASE_LOOP_CONTINUATION_WATCHDOG_SECONDS="${PHASE_LOOP_CONTINUATION_WATCHDOG_SECONDS:-900}"
+PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP="${PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP:-0}"
 PHASE_LOOP_DEFERRED_SIGNAL_PENDING=0
 PHASE_LOOP_DEFERRED_SIGNAL_CODE=""
 PHASE_LOOP_FINALIZING=0
@@ -1604,6 +1605,146 @@ with open(blocked_path, "a", encoding="utf-8") as handle:
 os.chmod(blocked_path, 0o600)
 PY
   sync_parent_dir "$TODO_CLAIM_DIR"
+}
+
+record_terminal_failure_todo_claim() {
+  local run_stamp="$1"
+  local progress_file="$2"
+  local context selected_todo claim_id queue_generation queue_fingerprint provider_failure_fingerprint claim_absent recovery_output recovery_status recovery_id
+  context="$(python3 - "$TODO_CLAIM_FILE" "$progress_file" "$PHASE_LOOP_TODO" "$TODO_QUEUE_STATE_FILE" "$RUN_DIR/$run_stamp.claim.before-runtime.json" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+progress_path = pathlib.Path(sys.argv[2])
+todo_path = pathlib.Path(sys.argv[3])
+queue_state_path = pathlib.Path(sys.argv[4])
+pre_runtime_claim_path = pathlib.Path(sys.argv[5])
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8")) if claim_path.exists() else {}
+except Exception:
+    claim = {}
+claim_absent = not claim_path.exists()
+if claim_absent and pre_runtime_claim_path.exists():
+    try:
+        claim = json.loads(pre_runtime_claim_path.read_text(encoding="utf-8"))
+    except Exception:
+        claim = {}
+try:
+    progress = json.loads(progress_path.read_text(encoding="utf-8"))
+except Exception:
+    progress = {}
+try:
+    queue_state = json.loads(queue_state_path.read_text(encoding="utf-8"))
+except Exception:
+    queue_state = {}
+projection = progress.get("progress_projection") if isinstance(progress.get("progress_projection"), dict) else {}
+selected = str(claim.get("selected_todo") or projection.get("selected_todo") or "")
+if not selected.strip() and todo_path.exists():
+    todo_text = todo_path.read_text(encoding="utf-8")
+    starts = list(re.finditer(r"(?m)^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ \t]*\][ \t]+", todo_text))
+    if starts:
+        end = len(todo_text)
+        next_heading = re.search(r"(?m)^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ xX]\][ \t]+", todo_text[starts[0].end():])
+        if next_heading:
+            end = starts[0].end() + next_heading.start()
+        selected = todo_text[starts[0].start():end].rstrip()
+if not selected.strip():
+    raise SystemExit(1)
+print(json.dumps({
+    "selected_todo": selected,
+    "claim_id": str(claim.get("claim_id") or projection.get("claim_id") or ""),
+    "queue_generation": claim.get("queue_generation") or projection.get("queue_generation") or queue_state.get("generation"),
+    "queue_fingerprint": str(claim.get("queue_fingerprint") or projection.get("queue_fingerprint") or queue_state.get("fingerprint") or ""),
+    "provider_failure_fingerprint": str(projection.get("provider_failure_fingerprint") or ""),
+    "claim_absent": claim_absent,
+}, ensure_ascii=False, sort_keys=True))
+PY
+  )" || {
+    PHASE_LOOP_TASK_LEDGER_FAILURE=1
+    PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL="Terminal failure recovery could not recover the selected TODO from claim/progress evidence."
+    return 78
+  }
+  selected_todo="$(printf '%s' "$context" | python3 -c 'import json,sys; print(json.load(sys.stdin)["selected_todo"])')"
+  claim_id="$(printf '%s' "$context" | python3 -c 'import json,sys; print(json.load(sys.stdin)["claim_id"])')"
+  queue_generation="$(printf '%s' "$context" | python3 -c 'import json,sys; print(json.load(sys.stdin)["queue_generation"] or "")')"
+  queue_fingerprint="$(printf '%s' "$context" | python3 -c 'import json,sys; print(json.load(sys.stdin)["queue_fingerprint"])')"
+  provider_failure_fingerprint="$(printf '%s' "$context" | python3 -c 'import json,sys; print(json.load(sys.stdin)["provider_failure_fingerprint"])')"
+  claim_absent="$(printf '%s' "$context" | python3 -c 'import json,sys; print("true" if json.load(sys.stdin)["claim_absent"] else "false")')"
+  recovery_output="$(
+    node "$ROOT_DIR/scripts/phase-loop-task-ledger.mjs" record-terminal-failure \
+      --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
+      --selected-todo "$selected_todo" \
+      --claim-id "$claim_id" \
+      --run "$run_stamp" \
+      --queue-generation "$queue_generation" \
+      --queue-fingerprint "$queue_fingerprint" \
+      --provider-failure-fingerprint "$provider_failure_fingerprint" \
+      --retry-cap "$PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP" \
+      --claim-absent "$claim_absent" \
+      --blocked-reason terminal_runtime_failure 2>&1
+  )"
+  recovery_status=$?
+  recovery_id="$(printf '%s' "$recovery_output" | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("recovery_id", ""))
+except Exception: print("")' 2>/dev/null || true)"
+  python3 - "$TODO_BLOCKED_FILE" "$selected_todo" "$claim_id" "$queue_generation" "$queue_fingerprint" "$provider_failure_fingerprint" "$recovery_id" "$run_stamp" "$PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP" "$claim_absent" "$(phase_loop_controller_fingerprint)" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+blocked_path = pathlib.Path(sys.argv[1])
+selected = sys.argv[2]
+recovery_id = sys.argv[7]
+record = {
+    "schema_version": 1,
+    "blocked_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat().replace("+00:00", "Z"),
+    "run_stamp": sys.argv[8],
+    "claim_id": sys.argv[3],
+    "queue_generation": sys.argv[4],
+    "queue_fingerprint": sys.argv[5],
+    "selected_todo": selected,
+    "selected_todo_sha256": hashlib.sha256(selected.encode("utf-8")).hexdigest(),
+    "selected_todo_first_line": selected.splitlines()[0] if selected.splitlines() else "",
+    "provider_failure_fingerprint": sys.argv[6],
+    "recovery_id": recovery_id,
+    "retry_cap": int(sys.argv[9] or 0),
+    "block_reason": "terminal_runtime_failure",
+    "terminal_failure": True,
+    "claim_absent": sys.argv[10] == "true",
+    "controller_fingerprint": sys.argv[11],
+}
+blocked_path.parent.mkdir(parents=True, exist_ok=True)
+existing = []
+if blocked_path.exists():
+    existing = blocked_path.read_text(encoding="utf-8").splitlines()
+records = []
+for line in existing:
+    if not line.strip():
+        continue
+    try:
+        parsed = json.loads(line)
+    except Exception:
+        continue
+    if isinstance(parsed, dict):
+        records.append(parsed)
+if not recovery_id or not any(item.get("recovery_id") == recovery_id for item in records):
+    with blocked_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+        handle.flush()
+        import os
+        os.fsync(handle.fileno())
+PY
+  if [ "$recovery_status" -ne 0 ]; then
+    PHASE_LOOP_TASK_LEDGER_FAILURE=1
+    PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL="Terminal failure ledger recording failed: ${recovery_output:-<no output>}"
+    return 78
+  fi
+  printf '%s\n' "$recovery_output"
+  return 0
 }
 
 selected_todo_is_explicit_blocker() {
@@ -8645,6 +8786,9 @@ if not isinstance(payload, dict):
     payload = {}
 
 automation = payload.get("automation") if isinstance(payload.get("automation"), dict) else {}
+provider_failure = payload.get("llm_provider_failure") if isinstance(payload.get("llm_provider_failure"), dict) else {}
+if not provider_failure and isinstance(automation.get("llm_provider_failure"), dict):
+    provider_failure = automation.get("llm_provider_failure")
 claim = {}
 if claim_snapshot.get("ok") and isinstance(claim_snapshot.get("claim"), dict):
     claim = claim_snapshot["claim"]
@@ -8678,6 +8822,9 @@ progress_projection = {
     "terminal_final_state": text(payload.get("terminal_completion_final_state")),
     "terminal_task_status": text(payload.get("terminal_completion_task_status")),
     "next_action": text(payload.get("next_action")),
+    "provider_failure_fingerprint": text(provider_failure.get("failure_fingerprint")),
+    "provider_failure_class": text(provider_failure.get("failure_class")),
+    "provider_retryable": text(provider_failure.get("retryable")),
 }
 
 previous = {}
@@ -8839,7 +8986,9 @@ progress_projection["objective_apply_stalled"] = objective_apply_stalled
 no_progress = exit_code == 0 and not meaningful_progress
 stagnated = no_progress and not continuation_required and same_count >= threshold
 classification = (
-    "continuation_required"
+    "terminal_failure"
+    if terminal_non_progress
+    else "continuation_required"
     if continuation_required
     else "no_progress"
     if (stagnated or terminal_non_progress)
@@ -12028,7 +12177,7 @@ _run_brownie_once() {
   local release_contract_before release_contract_repair_output release_contract_repair_status
   local phase_value_manifest_before phase_value_manifest_repair_output phase_value_manifest_repair_status
   local workspace_status_before
-  local active_target_path active_target_snapshot active_target_syntax_output active_target_syntax_status
+  local active_target_path active_target_snapshot active_target_syntax_output active_target_syntax_status claim_snapshot_before_runtime
   local use_resume=0
   local CLAIM_CREATED_THIS_RUN=0
   local CLAIM_REPLACED_BLOCKED=0
@@ -12250,6 +12399,9 @@ PY
     write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"stably_blocked"}'
     return 0
   fi
+  claim_snapshot_before_runtime="$RUN_DIR/$run_stamp.claim.before-runtime.json"
+  cp "$TODO_CLAIM_FILE" "$claim_snapshot_before_runtime"
+  chmod 600 "$claim_snapshot_before_runtime" 2>/dev/null || true
   if [ "$use_resume" -ne 1 ]; then
     if ! build_effective_prompt "$effective_prompt"; then
       detail="Failed to build effective phase-loop prompt: $effective_prompt"
@@ -13797,6 +13949,29 @@ PY
     fi
 
     case "$progress_classification" in
+      terminal_failure)
+        local terminal_failure_recovery_output terminal_failure_recovery_status
+        if terminal_failure_recovery_output="$(record_terminal_failure_todo_claim "$run_stamp" "$PROGRESS_STATE_FILE" 2>&1)"; then
+          terminal_failure_recovery_status=0
+        else
+          terminal_failure_recovery_status=$?
+        fi
+        if active_todo_claim_exists; then
+          write_runtime_terminal_repair_feedback "$run_stamp" "$stdout_log" "$stderr_log" || true
+        fi
+        write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"runtime_terminal_failure","terminal_failure":true}' "todo.failed" || true
+        if active_todo_claim_exists; then
+          write_todo_claim "$(claim_field claim_id)" "failed" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+        fi
+        if [ "$terminal_failure_recovery_status" -ne 0 ]; then
+          write_status "blocked" "Terminal runtime failure could not be fully recorded; refusing to retry the selected TODO. recovery=$terminal_failure_recovery_output stdout=$stdout_log stderr=$stderr_log" "$run_id" "78" "${CONSECUTIVE_FAILURES:-1}"
+          return 78
+        fi
+        detail="Brownie reported terminal_task_failed with no_eligible_task; retired the selected claim and recorded durable blocked evidence without treating the product queue as complete. recovery=$terminal_failure_recovery_output stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+        write_status "blocked" "$detail" "$run_id" "76" "${CONSECUTIVE_FAILURES:-1}"
+        printf '%s run=%s terminal_runtime_failure_recorded=true recovery=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$terminal_failure_recovery_output" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+        return 76
+        ;;
       no_progress)
         recovery_hint="$(classify_no_progress_recovery "$stdout_log" "$stderr_log" "$PROGRESS_STATE_FILE")"
         if active_todo_claim_exists && python3 - "$PROGRESS_STATE_FILE" "$BDK_HARNESS_FEEDBACK_FILE" "$(claim_field claim_id)" <<'PY'
