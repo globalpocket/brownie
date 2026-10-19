@@ -14149,7 +14149,18 @@ PY
       sync_parent_dir "$STATE_DIR"
     fi
   }
-  trap 'phase_loop_release_legacy_migration_lock' EXIT INT TERM
+  phase_loop_migration_signal_handler() {
+    local signal_name="$1"
+    phase_loop_release_legacy_migration_lock
+    trap - INT TERM
+    if [ "$signal_name" = "INT" ]; then
+      exit 130
+    fi
+    exit 143
+  }
+  trap 'phase_loop_release_legacy_migration_lock' EXIT
+  trap 'phase_loop_migration_signal_handler INT' INT
+  trap 'phase_loop_migration_signal_handler TERM' TERM
   local migration_output migration_status
   if migration_output="$(node "$ROOT_DIR/scripts/phase-loop-run-state.mjs" migrate-legacy-state \
     --state-dir "$STATE_DIR" \

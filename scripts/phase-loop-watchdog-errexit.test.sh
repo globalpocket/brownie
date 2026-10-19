@@ -206,6 +206,26 @@ PHASE_LOOP_STATE_DIR="$reused_migration_lock_case_dir" STATE_DIR="$reused_migrat
 ' bash
 printf '%s\n' 'phase-loop migration reclaims a PID-reused migration owner lock'
 
+signal_migration_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-migration-signal.XXXXXX")"
+trap 'rm -rf "$signal_migration_case_dir"' EXIT
+mkdir -p "$signal_migration_case_dir/logs"
+set +e
+PHASE_LOOP_STATE_DIR="$signal_migration_case_dir" STATE_DIR="$signal_migration_case_dir" ROOT_DIR="$ROOT_DIR" bash -c '
+  set -u
+  source "$ROOT_DIR/phase-loop.sh" status >/dev/null 2>&1
+  node() {
+    touch "$STATE_DIR/node-called"
+    kill -TERM "$$"
+  }
+  phase_loop_migrate_legacy_state
+' bash
+signal_migration_status=$?
+set -e
+[ "$signal_migration_status" -eq 143 ]
+[ -e "$signal_migration_case_dir/node-called" ]
+[ ! -d "$signal_migration_case_dir/phase-loop-legacy-migration.lock" ]
+printf '%s\n' 'phase-loop migration signal handler exits after releasing its lock'
+
 restart_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-restart.XXXXXX")"
 trap 'rm -rf "$restart_case_dir"' EXIT
 mkdir -p "$restart_case_dir/logs" "$restart_case_dir/phase-loop.lock"
