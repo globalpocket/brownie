@@ -122,13 +122,14 @@ function archiveLegacyStateAtomically({ stateDir, recoveryId, reason, now = new 
   const recoveryRoot = path.join(stateDir, 'legacy-recovery');
   const temporary = path.join(recoveryRoot, `.${recoveryId}.tmp`);
   const archivePath = path.join(recoveryRoot, recoveryId);
+  const payloadRoot = path.join(temporary, 'payload');
   fs.mkdirSync(recoveryRoot, { recursive: true, mode: 0o700 });
   fsyncDirectory(stateDir);
   fs.mkdirSync(temporary, { recursive: true, mode: 0o700 });
   try {
     for (const entry of before.files) {
       const source = path.join(stateDir, entry.path);
-      const destination = path.join(temporary, entry.path);
+      const destination = path.join(payloadRoot, entry.path);
       fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
       if (entry.kind === 'symlink') {
         fs.symlinkSync(fs.readlinkSync(source), destination);
@@ -144,12 +145,13 @@ function archiveLegacyStateAtomically({ stateDir, recoveryId, reason, now = new 
       archived_at: now,
       state_dir: stateDir,
       state_fingerprint: before.fingerprint,
+      payload_root: 'payload',
       files: before.files
     };
     writeJsonAtomically(path.join(temporary, 'manifest.json'), manifest);
-    const directories = new Set([temporary]);
+    const directories = new Set([temporary, payloadRoot]);
     for (const entry of before.files) {
-      directories.add(path.dirname(path.join(temporary, entry.path)));
+      directories.add(path.dirname(path.join(payloadRoot, entry.path)));
     }
     [...directories]
       .sort((left, right) => right.split(path.sep).length - left.split(path.sep).length)
@@ -161,6 +163,44 @@ function archiveLegacyStateAtomically({ stateDir, recoveryId, reason, now = new 
     fs.rmSync(temporary, { recursive: true, force: true });
     throw error;
   }
+}
+
+function reusableLegacyBlockedArchive({ stateDir, inspected, stateSnapshotReader }) {
+  const status = inspected.status;
+  const recoveryId = status?.recovery_id;
+  if (status?.status !== 'blocked'
+    || status.continuation_required !== true
+    || status.controller_action !== 'resume'
+    || typeof recoveryId !== 'string'
+    || path.basename(recoveryId) !== recoveryId) {
+    return null;
+  }
+  const archivePath = path.join(stateDir, 'legacy-recovery', recoveryId);
+  const manifestPath = path.join(archivePath, 'manifest.json');
+  let manifest;
+  try {
+    manifest = readJson(manifestPath);
+  } catch {
+    return null;
+  }
+  if (!manifest
+    || manifest.kind !== 'phase_loop_legacy_state_archive'
+    || manifest.recovery_id !== recoveryId
+    || manifest.state_dir !== stateDir
+    || manifest.reason !== inspected.reason
+    || !Array.isArray(manifest.files)
+    || !sameStateFiles(stateSnapshotReader(stateDir), manifest, new Set(['status.json']))) {
+    return null;
+  }
+  return {
+    ok: false,
+    blocked: true,
+    code: 'legacy_state_ownership_unproven',
+    recovery_id: recoveryId,
+    archive_path: archivePath,
+    status,
+    inspection: inspected
+  };
 }
 
 function processIsAlive(pid, kill = process.kill) {
@@ -754,6 +794,8 @@ export function migrateLegacyPhaseLoopState({
     listAllSupervisors
   });
   if (!inspected.ok || !inspected.migration_needed) return inspected;
+  const reusableArchive = reusableLegacyBlockedArchive({ stateDir, inspected, stateSnapshotReader });
+  if (reusableArchive) return reusableArchive;
   const recoveryId = crypto.randomUUID();
   let quiescedOwner = null;
   const releaseQuiescedOwner = () => {

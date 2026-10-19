@@ -192,6 +192,7 @@ migration_supervise_status=$?
 set -e
 [ "$migration_supervise_status" -eq 75 ]
 [ ! -e "$migration_supervise_case_dir/status-write-called" ]
+[ ! -e "$migration_supervise_case_dir/logs/supervisor.log" ]
 printf '%s\n' 'phase-loop supervisor does not write status while migration owns the state'
 
 ownerless_migration_lock_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-ownerless-migration-lock.XXXXXX")"

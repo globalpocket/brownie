@@ -473,6 +473,23 @@ test('archives and rebaselines a confirmed same-root legacy owner exactly once',
   assert.ok(manifest.files.some((entry) => entry.category === 'target_snapshot'));
 });
 
+test('keeps an original manifest in the archive payload beside the recovery manifest', () => {
+  const { stateDir } = fixture();
+  writeLegacyFixture(stateDir);
+  fs.writeFileSync(path.join(stateDir, 'manifest.json'), 'legacy-manifest\n');
+  const result = migrateLegacyPhaseLoopState({
+    stateDir,
+    rootDir: '/repo',
+    processExists: () => false,
+    listAllSupervisors: () => []
+  });
+  assert.equal(result.ok, true);
+  assert.equal(fs.readFileSync(path.join(result.archive_path, 'payload', 'manifest.json'), 'utf8'), 'legacy-manifest\n');
+  const manifest = JSON.parse(fs.readFileSync(path.join(result.archive_path, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.payload_root, 'payload');
+  assert.ok(manifest.files.some((entry) => entry.path === 'manifest.json'));
+});
+
 test('quiesces a confirmed legacy owner before enforcing archive snapshot stability', () => {
   const { stateDir } = fixture();
   writeLegacyFixture(stateDir);
@@ -538,6 +555,27 @@ test('blocks a live lock owned by a different PID before stopping the candidate'
   assert.equal(result.inspection.reason, 'legacy_live_lock_owner_unproven');
   assert.equal(stopCalls, 0);
   assert.equal(JSON.parse(fs.readFileSync(statusPath, 'utf8')).status, 'blocked');
+});
+
+test('reuses an existing archive for a repeated blocked migration with the same state', () => {
+  const { stateDir, statusPath } = fixture();
+  writeLegacyFixture(stateDir);
+  const options = {
+    stateDir,
+    rootDir: '/repo',
+    processExists: (pid) => pid === 33061 || pid === 33062,
+    getProcessCommand: () => 'bash /repo/phase-loop.sh supervise',
+    getProcessStartTime: () => 'Sun Oct 18 16:30:00 2026',
+    listAllSupervisors: () => [{ pid: 33061, command: 'bash /repo/phase-loop.sh supervise', start_time: 'Sun Oct 18 16:30:00 2026', state_dir: '/other-state' }]
+  };
+  const first = migrateLegacyPhaseLoopState(options);
+  const second = migrateLegacyPhaseLoopState(options);
+  assert.equal(first.ok, false);
+  assert.equal(second.ok, false);
+  assert.equal(second.recovery_id, first.recovery_id);
+  assert.equal(second.archive_path, first.archive_path);
+  assert.equal(JSON.parse(fs.readFileSync(statusPath, 'utf8')).recovery_id, first.recovery_id);
+  assert.deepEqual(fs.readdirSync(path.join(stateDir, 'legacy-recovery')), [first.recovery_id]);
 });
 
 test('blocks a same-root supervisor whose state directory is different', () => {

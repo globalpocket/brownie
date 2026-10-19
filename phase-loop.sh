@@ -14149,7 +14149,8 @@ phase_loop_migrate_legacy_state() {
   fi
   mkdir -p "$STATE_DIR"
   if phase_loop_legacy_migration_lock_active; then
-    printf '%s legacy_state_migration_lock_busy=true\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
+    # The migration owner snapshots this directory. A contender must leave it
+    # byte-for-byte unchanged; the 75 result is the contention diagnostic.
     return 75
   fi
   local migration_lock_staging
