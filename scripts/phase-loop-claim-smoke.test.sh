@@ -142,6 +142,7 @@ assert_contains "$PHASE_LOOP" 'local guard_script="\$ROOT_DIR/scripts/phase-loop
 assert_contains "$PHASE_LOOP" 'node "\$guard_script" --repo "\$ROOT_DIR" --baseline-ref "\$PHASE_LOOP_APPROVED_CONTROLLER_BASELINE"'
 assert_contains "$PHASE_LOOP" 'phase-loop-task-ledger\.mjs" record-trajectory --repo "\$PHASE_LOOP_WORKSPACE_ROOT"'
 assert_contains "$PHASE_LOOP" "phase-loop-run-state\.mjs"
+assert_contains "$PHASE_LOOP" "\.brownie/headless-\*"
 assert_contains "$PHASE_LOOP" "refusing to leave status running"
 assert_not_contains "$PHASE_LOOP" 'phase-loop-task-ledger\.mjs" record-trajectory --repo "\$ROOT_DIR"'
 assert_not_contains "$PHASE_LOOP" 'phase-loop-task-ledger\.mjs" record-trajectory --repo "\$PHASE_LOOP_STATE_DIR"'
@@ -465,6 +466,10 @@ fake_brownie_terminal_no_eligible="$(mktemp)"
 cat > "$fake_brownie_terminal_no_eligible" <<'SH'
 #!/usr/bin/env bash
 set -eu
+if [ "${PHASE_LOOP_TEST_HEADLESS_ONLY:-0}" = "1" ]; then
+  mkdir -p "$PHASE_LOOP_WORKSPACE_ROOT/.brownie/headless-continuations"
+  printf '%s\n' '{"headless":"controller-output-only"}' > "$PHASE_LOOP_WORKSPACE_ROOT/.brownie/headless-continuations/fresh-run.json"
+fi
 if [ "${PHASE_LOOP_TEST_REMOVE_CLAIM:-0}" = "1" ]; then
   rm -f "$PHASE_LOOP_STATE_DIR/todo-claims/current.json"
 fi
@@ -795,6 +800,7 @@ PHASE_LOOP_TODO="$todo_terminal_no_eligible" \
 PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_terminal_no_eligible" \
 BROWNIE_BIN="$fake_brownie_terminal_no_eligible" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+PHASE_LOOP_TEST_HEADLESS_ONLY=1 \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 terminal_no_eligible_exit="$?"
 set -e

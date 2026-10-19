@@ -8448,6 +8448,7 @@ git_workspace_fingerprint() {
           status_path="$(printf '%s' "$status_line" | cut -c4-)"
           case "$status_path" in
             .brownie/private|.brownie/private/*) continue ;;
+            .brownie/headless-*|.brownie/headless-*/*) continue ;;
           esac
           printf '%s\n' "$status_line"
         done
