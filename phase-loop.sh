@@ -14017,6 +14017,10 @@ phase_loop_migrate_legacy_state() {
     return 0
   fi
   mkdir -p "$STATE_DIR"
+  if phase_loop_legacy_migration_lock_active; then
+    printf '%s legacy_state_migration_lock_busy=true\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
+    return 75
+  fi
   if ! mkdir "$LEGACY_MIGRATION_LOCK_DIR" 2>/dev/null; then
     printf '%s legacy_state_migration_lock_busy=true\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
     return 75

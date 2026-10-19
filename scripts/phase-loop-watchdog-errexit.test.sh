@@ -177,6 +177,20 @@ PHASE_LOOP_STATE_DIR="$migration_lock_case_dir" STATE_DIR="$migration_lock_case_
 ' bash
 printf '%s\n' 'phase-loop supervisor lock acquisition is serialized against legacy migration cleanup'
 
+stale_migration_lock_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-stale-migration-lock.XXXXXX")"
+trap 'rm -rf "$stale_migration_lock_case_dir"' EXIT
+mkdir -p "$stale_migration_lock_case_dir/logs" "$stale_migration_lock_case_dir/phase-loop-legacy-migration.lock"
+printf '%s\n' '999999999' > "$stale_migration_lock_case_dir/phase-loop-legacy-migration.lock/pid"
+PHASE_LOOP_STATE_DIR="$stale_migration_lock_case_dir" STATE_DIR="$stale_migration_lock_case_dir" ROOT_DIR="$ROOT_DIR" bash -c '
+  set -u
+  source "$ROOT_DIR/phase-loop.sh" status >/dev/null 2>&1
+  if phase_loop_legacy_migration_lock_active; then
+    exit 1
+  fi
+  [ ! -d "$STATE_DIR/phase-loop-legacy-migration.lock" ]
+' bash
+printf '%s\n' 'phase-loop migration reclaims a dead migration owner lock'
+
 restart_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-restart.XXXXXX")"
 trap 'rm -rf "$restart_case_dir"' EXIT
 mkdir -p "$restart_case_dir/logs" "$restart_case_dir/phase-loop.lock"
