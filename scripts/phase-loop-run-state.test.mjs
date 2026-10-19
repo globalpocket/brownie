@@ -621,6 +621,21 @@ test('reads a large process table in one command and enriches supervisors only',
   assert.deepEqual(enriched, [['start', 33061], ['state', 33061]]);
 });
 
+test('binds supervisor command and start time from one process-table snapshot', () => {
+  const records = allSupervisorProcessRecords({
+    readProcessTable: () => ' 33061 Mon Oct  7 01:52:00 2026 bash /repo/phase-loop.sh supervise\n',
+    processAlive: () => true,
+    getStartTime: () => { throw new Error('start time must come from the process table'); },
+    getStateDir: () => '/state'
+  });
+  assert.deepEqual(records, [{
+    pid: 33061,
+    command: 'bash /repo/phase-loop.sh supervise',
+    start_time: 'Mon Oct  7 01:52:00 2026',
+    state_dir: '/state'
+  }]);
+});
+
 test('blocks PID reuse by a non-supervisor without deleting the lock or pidfile', () => {
   const { stateDir, statusPath } = fixture();
   writeLegacyFixture(stateDir);

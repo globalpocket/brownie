@@ -262,7 +262,7 @@ export function allSupervisorProcessRecords({
   if (readProcessTable) output = readProcessTable();
   else {
     try {
-      output = execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' });
+      output = execFileSync('ps', ['-axo', 'pid=,lstart=,command='], { encoding: 'utf8' });
     } catch {
       return [];
     }
@@ -270,10 +270,13 @@ export function allSupervisorProcessRecords({
   return output.split('\n').flatMap((line) => {
     const match = line.match(/^\s*(\d+)\s+(.*)$/u);
     const pid = Number.parseInt(match?.[1] || '', 10);
-    const command = match?.[2]?.trim() || '';
+    let command = match?.[2]?.trim() || '';
+    const snapshotStart = command.match(/^([A-Z][a-z]{2} [A-Z][a-z]{2}\s+\d{1,2} \d{2}:\d{2}:\d{2} \d{4})\s+(.*)$/u);
+    const start_time = snapshotStart?.[1] || '';
+    if (snapshotStart) command = snapshotStart[2].trim();
     if (!Number.isInteger(pid) || pid <= 1 || !processAlive(pid)) return [];
     if (!commandLooksLikeSupervisor(command)) return [];
-    return [{ pid, command, start_time: startTimeReader(pid), state_dir: stateDirReader(pid) }];
+    return [{ pid, command, start_time: start_time || startTimeReader(pid), state_dir: stateDirReader(pid) }];
   });
 }
 
@@ -429,9 +432,9 @@ export function inspectLegacyPhaseLoopState({
     commandLooksLikeSupervisor(record.command || '') && !supervisorCommandMatchesRoot(record.command || '', rootDir)
   ));
   const pidLive = pid !== null && processExists(pid);
-  const pidCommand = pidLive ? getProcessCommand(pid) : '';
-  const pidStartTime = pidLive ? getProcessStartTime(pid) : '';
   const pidRecord = pidLive ? liveRecords.find((record) => record.pid === pid) : null;
+  const pidCommand = pidLive ? (pidRecord?.command || getProcessCommand(pid)) : '';
+  const pidStartTime = pidLive ? (pidRecord?.start_time || getProcessStartTime(pid)) : '';
   const lockPid = readLockPid(stateDir);
   const lockLive = lockPid !== null && processExists(lockPid);
   const referencedPids = new Set([pid, status.supervisor_pid, lockPid].filter((value) => Number.isInteger(value) && value > 1));
@@ -699,7 +702,8 @@ export function migrateLegacyPhaseLoopState({
 
   if (rechecked.candidate_confirmed) {
     if (rechecked.candidate?.pid !== inspected.candidate?.pid
-      || rechecked.candidate?.start_time !== inspected.candidate?.start_time) {
+      || rechecked.candidate?.start_time !== inspected.candidate?.start_time
+      || rechecked.candidate?.command !== inspected.candidate?.command) {
       return { ok: false, blocked: true, code: 'legacy_supervisor_identity_race', recovery_id: recoveryId, archive_path: archive.archive_path, inspection: rechecked };
     }
     const stopResult = stopOwner({ candidate: rechecked.candidate, processExists });

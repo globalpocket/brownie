@@ -14135,6 +14135,11 @@ PY
     printf '%s legacy_state_migration_lock_owner_create_failed=true\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
     return 78
   fi
+  if ! sync_parent_dir "$migration_lock_staging"; then
+    rm -rf "$migration_lock_staging"
+    printf '%s legacy_state_migration_lock_stage_sync_failed=true\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
+    return 78
+  fi
   if ! mv "$migration_lock_staging" "$LEGACY_MIGRATION_LOCK_DIR" 2>/dev/null; then
     rm -rf "$migration_lock_staging"
     printf '%s legacy_state_migration_lock_busy=true\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
