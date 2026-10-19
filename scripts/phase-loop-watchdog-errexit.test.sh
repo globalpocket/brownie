@@ -119,6 +119,25 @@ set -e
 [ "$migration_start_status" -eq 75 ]
 [ ! -e "$migration_start_case_dir/watchdog-called" ]
 
+restart_migration_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-migration-restart.XXXXXX")"
+trap 'rm -rf "$restart_migration_case_dir"' EXIT
+mkdir -p "$restart_migration_case_dir/logs"
+set +e
+PHASE_LOOP_STATE_DIR="$restart_migration_case_dir" STATE_DIR="$restart_migration_case_dir" ROOT_DIR="$ROOT_DIR" bash -c '
+  set -e
+  source "$ROOT_DIR/phase-loop.sh" status >/dev/null 2>&1
+  phase_loop_migrate_legacy_state() { touch "$STATE_DIR/migration-called"; return 75; }
+  stop_loop() { touch "$STATE_DIR/stop-loop-called"; return 0; }
+  start() { touch "$STATE_DIR/start-called"; return 0; }
+  restart
+' bash
+restart_migration_status=$?
+set -e
+[ "$restart_migration_status" -eq 75 ]
+[ -e "$restart_migration_case_dir/migration-called" ]
+[ ! -e "$restart_migration_case_dir/stop-loop-called" ]
+[ ! -e "$restart_migration_case_dir/start-called" ]
+
 ownership_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-owner.XXXXXX")"
 trap 'rm -rf "$ownership_case_dir"' EXIT
 mkdir -p "$ownership_case_dir/logs"

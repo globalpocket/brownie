@@ -14228,6 +14228,50 @@ status() {
   fi
 }
 
+restart() {
+  load_env
+  local migration_status
+  if phase_loop_migrate_legacy_state; then
+    migration_status=0
+  else
+    migration_status=$?
+  fi
+  if [ "$migration_status" -ne 0 ]; then
+    printf '%s\n' "Legacy phase-loop state migration refused restart." >&2
+    return "$migration_status"
+  fi
+
+  local restart_pid=""
+  if [ -f "$PID_FILE" ]; then
+    restart_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [ -n "$restart_pid" ] && kill -0 "$restart_pid" 2>/dev/null && ! is_running; then
+      printf '%s\n' "phase-loop restart refused; live supervisor ownership could not be proven: pid $restart_pid" >&2
+      return 75
+    fi
+  fi
+  stop_loop
+  sleep 2
+  if [ -f "$PID_FILE" ]; then
+    local old_pid
+    old_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+      if ! is_running; then
+        printf '%s\n' "phase-loop restart refused; live supervisor ownership could not be proven: pid $old_pid" >&2
+        return 75
+      fi
+      kill "$old_pid" 2>/dev/null || true
+      sleep 1
+      if kill -0 "$old_pid" 2>/dev/null; then
+        printf '%s\n' "phase-loop restart refused; supervisor pid $old_pid is still running" >&2
+        return 75
+      fi
+    fi
+  fi
+  rm -f "$PID_FILE" "$STOP_FILE"
+  rm -rf "$LOCK_DIR"
+  start
+}
+
 case "${1:-status}" in
   start)
     start
@@ -14249,34 +14293,7 @@ case "${1:-status}" in
     exit $?
     ;;
   restart)
-    restart_pid=""
-    if [ -f "$PID_FILE" ]; then
-      restart_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
-      if [ -n "$restart_pid" ] && kill -0 "$restart_pid" 2>/dev/null && ! is_running; then
-        printf '%s\n' "phase-loop restart refused; live supervisor ownership could not be proven: pid $restart_pid" >&2
-        exit 75
-      fi
-    fi
-    stop_loop
-    sleep 2
-    if [ -f "$PID_FILE" ]; then
-      old_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
-      if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-        if ! is_running; then
-          printf '%s\n' "phase-loop restart refused; live supervisor ownership could not be proven: pid $old_pid" >&2
-          exit 75
-        fi
-        kill "$old_pid" 2>/dev/null || true
-        sleep 1
-        if kill -0 "$old_pid" 2>/dev/null; then
-          printf '%s\n' "phase-loop restart refused; supervisor pid $old_pid is still running" >&2
-          exit 75
-        fi
-      fi
-    fi
-    rm -f "$PID_FILE" "$STOP_FILE"
-    rm -rf "$LOCK_DIR"
-    start
+    restart
     ;;
   status)
     status
