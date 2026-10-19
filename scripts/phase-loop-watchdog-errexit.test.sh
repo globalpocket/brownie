@@ -144,6 +144,20 @@ printf '%s\n' 'phase-loop startup checks continuation watchdog before live-owner
 printf '%s\n' 'phase-loop startup fails closed before watchdog when legacy migration is blocked'
 printf '%s\n' 'phase-loop is_running fails closed on foreign owner metadata'
 
+migration_lock_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-migration-lock.XXXXXX")"
+trap 'rm -rf "$migration_lock_case_dir"' EXIT
+mkdir -p "$migration_lock_case_dir/logs" "$migration_lock_case_dir/phase-loop-legacy-migration.lock"
+printf '%s\n' "$$" > "$migration_lock_case_dir/phase-loop-legacy-migration.lock/pid"
+PHASE_LOOP_STATE_DIR="$migration_lock_case_dir" STATE_DIR="$migration_lock_case_dir" ROOT_DIR="$ROOT_DIR" bash -c '
+  set -u
+  source "$ROOT_DIR/phase-loop.sh" status >/dev/null 2>&1
+  if acquire_lock; then
+    exit 1
+  fi
+  [ ! -d "$STATE_DIR/phase-loop.lock" ]
+' bash
+printf '%s\n' 'phase-loop supervisor lock acquisition is serialized against legacy migration cleanup'
+
 restart_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-restart.XXXXXX")"
 trap 'rm -rf "$restart_case_dir"' EXIT
 mkdir -p "$restart_case_dir/logs" "$restart_case_dir/phase-loop.lock"

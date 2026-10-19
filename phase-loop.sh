@@ -8,6 +8,7 @@ LOG_DIR="$STATE_DIR/logs"
 PID_FILE="$STATE_DIR/phase-loop.pid"
 SUPERVISOR_OWNER_FILE="$STATE_DIR/phase-loop-owner.json"
 LOCK_DIR="$STATE_DIR/phase-loop.lock"
+LEGACY_MIGRATION_LOCK_DIR="$STATE_DIR/phase-loop-legacy-migration.lock"
 STOP_FILE="$STATE_DIR/stop"
 STATUS_FILE="$STATE_DIR/status.json"
 SUPERVISOR_LOG="$LOG_DIR/supervisor.log"
@@ -11812,7 +11813,23 @@ run_phase_loop_preflight() {
   return 0
 }
 
+phase_loop_legacy_migration_lock_active() {
+  if [ ! -d "$LEGACY_MIGRATION_LOCK_DIR" ]; then
+    return 1
+  fi
+  local migration_pid
+  migration_pid="$(cat "$LEGACY_MIGRATION_LOCK_DIR/pid" 2>/dev/null || true)"
+  if [ -n "$migration_pid" ] && kill -0 "$migration_pid" 2>/dev/null; then
+    return 0
+  fi
+  rm -rf "$LEGACY_MIGRATION_LOCK_DIR"
+  return 1
+}
+
 acquire_lock() {
+  if phase_loop_legacy_migration_lock_active; then
+    return 1
+  fi
   if mkdir "$LOCK_DIR" 2>/dev/null; then
     echo "$$" > "$LOCK_DIR/pid"
     trap 'rm -rf "$LOCK_DIR"' EXIT INT TERM
@@ -13999,6 +14016,13 @@ phase_loop_migrate_legacy_state() {
   if [ ! -f "$ROOT_DIR/scripts/phase-loop-run-state.mjs" ]; then
     return 0
   fi
+  mkdir -p "$STATE_DIR"
+  if ! mkdir "$LEGACY_MIGRATION_LOCK_DIR" 2>/dev/null; then
+    printf '%s legacy_state_migration_lock_busy=true\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
+    return 75
+  fi
+  printf '%s\n' "$$" > "$LEGACY_MIGRATION_LOCK_DIR/pid"
+  trap 'rm -rf "$LEGACY_MIGRATION_LOCK_DIR"' EXIT INT TERM
   local migration_output migration_status
   if migration_output="$(node "$ROOT_DIR/scripts/phase-loop-run-state.mjs" migrate-legacy-state \
     --state-dir "$STATE_DIR" \
@@ -14010,6 +14034,8 @@ phase_loop_migrate_legacy_state() {
     migration_status=$?
   fi
   printf '%s legacy_state_migration_exit=%s result=%s\n' "$(now_utc)" "$migration_status" "${migration_output:-<no output>}" >> "$SUPERVISOR_LOG"
+  rm -rf "$LEGACY_MIGRATION_LOCK_DIR"
+  trap - EXIT INT TERM
   if [ "$migration_status" -ne 0 ]; then
     printf '%s\n' "${migration_output:-Legacy phase-loop state migration refused to continue.}" >&2
     return "$migration_status"
