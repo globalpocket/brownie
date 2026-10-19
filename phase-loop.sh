@@ -11817,13 +11817,90 @@ phase_loop_legacy_migration_lock_active() {
   if [ ! -d "$LEGACY_MIGRATION_LOCK_DIR" ]; then
     return 1
   fi
-  local migration_pid
-  migration_pid="$(cat "$LEGACY_MIGRATION_LOCK_DIR/pid" 2>/dev/null || true)"
-  if [ -n "$migration_pid" ] && kill -0 "$migration_pid" 2>/dev/null; then
-    return 0
+  local migration_pid owner_file expected_start expected_command expected_root actual_start actual_command quarantine_dir
+  owner_file="$LEGACY_MIGRATION_LOCK_DIR/owner.json"
+  if [ -f "$owner_file" ]; then
+    migration_pid="$(python3 - "$owner_file" <<'PY'
+import json
+import sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        value = json.load(handle).get("pid")
+    print(value if isinstance(value, int) and value > 0 else "")
+except Exception:
+    print("")
+PY
+)"
+    if [ -z "$migration_pid" ]; then
+      return 0
+    fi
+    if ! kill -0 "$migration_pid" 2>/dev/null; then
+      migration_pid=""
+    else
+      expected_start="$(python3 - "$owner_file" <<'PY'
+import json
+import sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        value = json.load(handle).get("start_time")
+    print(value if isinstance(value, str) else "")
+except Exception:
+    print("")
+PY
+)"
+      expected_command="$(python3 - "$owner_file" <<'PY'
+import json
+import sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        value = json.load(handle).get("command")
+    print(value if isinstance(value, str) else "")
+except Exception:
+    print("")
+PY
+)"
+      expected_root="$(python3 - "$owner_file" <<'PY'
+import json
+import sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        value = json.load(handle).get("root_dir")
+    print(value if isinstance(value, str) else "")
+except Exception:
+    print("")
+PY
+)"
+      actual_start="$(ps -p "$migration_pid" -o lstart= 2>/dev/null | sed 's/^ *//;s/ *$//')"
+      actual_command="$(ps -p "$migration_pid" -o command= 2>/dev/null | sed 's/^ *//;s/ *$//')"
+      if [ -n "$expected_start" ] && [ -n "$expected_command" ] && [ -n "$expected_root" ] &&
+        [ -n "$actual_start" ] && [ -n "$actual_command" ] &&
+        [ "$expected_start" = "$actual_start" ] &&
+        [ "$expected_command" = "$actual_command" ] &&
+        [ "$expected_root" = "$ROOT_DIR" ]; then
+        return 0
+      fi
+    fi
+  else
+    migration_pid="$(cat "$LEGACY_MIGRATION_LOCK_DIR/pid" 2>/dev/null || true)"
+    if [ -z "$migration_pid" ]; then
+      # An uninitialized lock is fail-closed. New owners are published before
+      # the canonical directory becomes visible by the migration path below.
+      return 0
+    fi
+    if kill -0 "$migration_pid" 2>/dev/null; then
+      return 0
+    fi
   fi
-  rm -rf "$LEGACY_MIGRATION_LOCK_DIR"
-  return 1
+
+  quarantine_dir="$STATE_DIR/phase-loop-legacy-migration.reclaim.$$.$RANDOM"
+  if mv "$LEGACY_MIGRATION_LOCK_DIR" "$quarantine_dir" 2>/dev/null; then
+    rm -rf "$quarantine_dir"
+    sync_parent_dir "$STATE_DIR"
+    return 1
+  fi
+  # Another migration either reclaimed the lock or published a new owner.
+  # Treat the result as active so this caller cannot race it.
+  return 0
 }
 
 acquire_lock() {
@@ -14021,12 +14098,58 @@ phase_loop_migrate_legacy_state() {
     printf '%s legacy_state_migration_lock_busy=true\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
     return 75
   fi
-  if ! mkdir "$LEGACY_MIGRATION_LOCK_DIR" 2>/dev/null; then
+  local migration_lock_staging
+  migration_lock_staging="$(mktemp -d "$STATE_DIR/phase-loop-legacy-migration.lock.$$.XXXXXX" 2>/dev/null || true)"
+  if [ -z "$migration_lock_staging" ]; then
+    printf '%s legacy_state_migration_lock_create_failed=true\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
+    return 78
+  fi
+  local migration_start_time migration_command
+  migration_start_time="$(ps -p $$ -o lstart= 2>/dev/null | sed 's/^ *//;s/ *$//')"
+  migration_command="$(ps -p $$ -o command= 2>/dev/null | sed 's/^ *//;s/ *$//')"
+  if [ -z "$migration_start_time" ] || [ -z "$migration_command" ] || ! python3 - \
+    "$migration_lock_staging/owner.json" "$migration_lock_staging/pid" "$$" "$migration_start_time" "$migration_command" "$ROOT_DIR" <<'PY'
+import json
+import os
+import sys
+
+owner_path, pid_path, pid, start_time, command, root_dir = sys.argv[1:]
+payload = {
+    "pid": int(pid),
+    "start_time": start_time,
+    "command": command,
+    "root_dir": root_dir,
+}
+with open(owner_path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, sort_keys=True)
+    handle.write("\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+with open(pid_path, "w", encoding="utf-8") as handle:
+    handle.write(f"{pid}\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+PY
+  then
+    rm -rf "$migration_lock_staging"
+    printf '%s legacy_state_migration_lock_owner_create_failed=true\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
+    return 78
+  fi
+  if ! mv "$migration_lock_staging" "$LEGACY_MIGRATION_LOCK_DIR" 2>/dev/null; then
+    rm -rf "$migration_lock_staging"
     printf '%s legacy_state_migration_lock_busy=true\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
     return 75
   fi
-  printf '%s\n' "$$" > "$LEGACY_MIGRATION_LOCK_DIR/pid"
-  trap 'rm -rf "$LEGACY_MIGRATION_LOCK_DIR"' EXIT INT TERM
+  sync_parent_dir "$STATE_DIR"
+  phase_loop_release_legacy_migration_lock() {
+    if [ -d "$LEGACY_MIGRATION_LOCK_DIR" ] &&
+      [ "$(cat "$LEGACY_MIGRATION_LOCK_DIR/pid" 2>/dev/null || true)" = "$$" ] &&
+      [ -f "$LEGACY_MIGRATION_LOCK_DIR/owner.json" ]; then
+      rm -rf "$LEGACY_MIGRATION_LOCK_DIR"
+      sync_parent_dir "$STATE_DIR"
+    fi
+  }
+  trap 'phase_loop_release_legacy_migration_lock' EXIT INT TERM
   local migration_output migration_status
   if migration_output="$(node "$ROOT_DIR/scripts/phase-loop-run-state.mjs" migrate-legacy-state \
     --state-dir "$STATE_DIR" \
@@ -14038,7 +14161,7 @@ phase_loop_migrate_legacy_state() {
     migration_status=$?
   fi
   printf '%s legacy_state_migration_exit=%s result=%s\n' "$(now_utc)" "$migration_status" "${migration_output:-<no output>}" >> "$SUPERVISOR_LOG"
-  rm -rf "$LEGACY_MIGRATION_LOCK_DIR"
+  phase_loop_release_legacy_migration_lock
   trap - EXIT INT TERM
   if [ "$migration_status" -ne 0 ]; then
     printf '%s\n' "${migration_output:-Legacy phase-loop state migration refused to continue.}" >&2
