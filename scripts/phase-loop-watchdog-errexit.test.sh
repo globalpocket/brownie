@@ -208,6 +208,32 @@ PHASE_LOOP_STATE_DIR="$stale_migration_lock_case_dir" STATE_DIR="$stale_migratio
 ' bash
 printf '%s\n' 'phase-loop migration reclaims a dead migration owner lock'
 
+replaced_migration_lock_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-replaced-migration-lock.XXXXXX")"
+trap 'rm -rf "$replaced_migration_lock_case_dir"' EXIT
+mkdir -p "$replaced_migration_lock_case_dir/logs" "$replaced_migration_lock_case_dir/phase-loop-legacy-migration.lock"
+printf '%s\n' '999999999' > "$replaced_migration_lock_case_dir/phase-loop-legacy-migration.lock/pid"
+PHASE_LOOP_STATE_DIR="$replaced_migration_lock_case_dir" STATE_DIR="$replaced_migration_lock_case_dir" ROOT_DIR="$ROOT_DIR" bash -c '
+  set -u
+  source "$ROOT_DIR/phase-loop.sh" status >/dev/null 2>&1
+  identity_calls_file="$STATE_DIR/identity-calls"
+  printf "%s\n" 0 > "$identity_calls_file"
+  phase_loop_legacy_migration_lock_identity() {
+    identity_calls=$(( $(cat "$identity_calls_file") + 1 ))
+    printf "%s\n" "$identity_calls" > "$identity_calls_file"
+    if [ "$identity_calls" -eq 1 ]; then
+      printf "%s\n" inspected-lock
+    else
+      printf "%s\n" replacement-lock
+    fi
+  }
+  if ! phase_loop_legacy_migration_lock_active; then
+    exit 1
+  fi
+  [ "$(cat "$identity_calls_file")" -eq 2 ]
+  [ -d "$STATE_DIR/phase-loop-legacy-migration.lock" ]
+' bash
+printf '%s\n' 'phase-loop does not reclaim a migration lock whose identity changed during inspection'
+
 reused_migration_lock_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-reused-migration-lock.XXXXXX")"
 trap 'rm -rf "$reused_migration_lock_case_dir"' EXIT
 mkdir -p "$reused_migration_lock_case_dir/logs" "$reused_migration_lock_case_dir/phase-loop-legacy-migration.lock"

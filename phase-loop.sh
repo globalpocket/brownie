@@ -11814,11 +11814,30 @@ run_phase_loop_preflight() {
   return 0
 }
 
+phase_loop_legacy_migration_lock_identity() {
+  python3 - "$LEGACY_MIGRATION_LOCK_DIR" <<'PY'
+import os
+import sys
+
+try:
+    stat_result = os.stat(sys.argv[1])
+except OSError:
+    print("")
+    raise SystemExit(0)
+print(f"{stat_result.st_dev}:{stat_result.st_ino}")
+PY
+}
+
 phase_loop_legacy_migration_lock_active() {
   if [ ! -d "$LEGACY_MIGRATION_LOCK_DIR" ]; then
     return 1
   fi
   local migration_pid owner_file expected_start expected_command expected_root actual_start actual_command quarantine_dir
+  local inspected_lock_identity current_lock_identity
+  inspected_lock_identity="$(phase_loop_legacy_migration_lock_identity)"
+  if [ -z "$inspected_lock_identity" ]; then
+    return 0
+  fi
   owner_file="$LEGACY_MIGRATION_LOCK_DIR/owner.json"
   if [ -f "$owner_file" ]; then
     migration_pid="$(python3 - "$owner_file" <<'PY'
@@ -11896,6 +11915,14 @@ PY
     fi
   fi
 
+  # The inspected directory may have been replaced while PID metadata was
+  # being checked. Revalidate its filesystem identity immediately before the
+  # rename so a delayed stale-lock reclaimer cannot quarantine a newly
+  # published migration owner.
+  current_lock_identity="$(phase_loop_legacy_migration_lock_identity)"
+  if [ -z "$current_lock_identity" ] || [ "$current_lock_identity" != "$inspected_lock_identity" ]; then
+    return 0
+  fi
   quarantine_dir="$STATE_DIR/phase-loop-legacy-migration.reclaim.$$.$RANDOM"
   if mv "$LEGACY_MIGRATION_LOCK_DIR" "$quarantine_dir" 2>/dev/null; then
     rm -rf "$quarantine_dir"
