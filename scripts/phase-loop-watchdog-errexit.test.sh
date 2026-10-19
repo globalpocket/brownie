@@ -206,6 +206,31 @@ PHASE_LOOP_STATE_DIR="$reused_migration_lock_case_dir" STATE_DIR="$reused_migrat
 ' bash
 printf '%s\n' 'phase-loop migration reclaims a PID-reused migration owner lock'
 
+foreign_root_migration_lock_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-migration-foreign-root.XXXXXX")"
+trap 'rm -rf "$foreign_root_migration_lock_case_dir"' EXIT
+mkdir -p "$foreign_root_migration_lock_case_dir/logs" "$foreign_root_migration_lock_case_dir/phase-loop-legacy-migration.lock"
+PHASE_LOOP_STATE_DIR="$foreign_root_migration_lock_case_dir" STATE_DIR="$foreign_root_migration_lock_case_dir" ROOT_DIR="$ROOT_DIR" bash -c '
+  set -u
+  source "$ROOT_DIR/phase-loop.sh" status >/dev/null 2>&1
+  owner_start="$(ps -p $$ -o lstart= 2>/dev/null | sed "s/^ *//;s/ *$//")"
+  owner_command="$(ps -p $$ -o command= 2>/dev/null | sed "s/^ *//;s/ *$//")"
+  python3 - "$STATE_DIR/phase-loop-legacy-migration.lock/owner.json" "$$" "$owner_start" "$owner_command" <<'PY'
+import json
+import sys
+
+owner_path, pid, start_time, command = sys.argv[1:]
+with open(owner_path, "w", encoding="utf-8") as handle:
+    json.dump({"pid": int(pid), "start_time": start_time, "command": command, "root_dir": "/foreign-checkout"}, handle)
+    handle.write("\n")
+PY
+  printf "%s\n" "$$" > "$STATE_DIR/phase-loop-legacy-migration.lock/pid"
+  if ! phase_loop_legacy_migration_lock_active; then
+    exit 1
+  fi
+  [ -d "$STATE_DIR/phase-loop-legacy-migration.lock" ]
+' bash
+printf '%s\n' 'phase-loop preserves a verified migration owner from a foreign root'
+
 signal_migration_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-migration-signal.XXXXXX")"
 trap 'rm -rf "$signal_migration_case_dir"' EXIT
 mkdir -p "$signal_migration_case_dir/logs"

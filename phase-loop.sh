@@ -11875,8 +11875,11 @@ PY
       if [ -n "$expected_start" ] && [ -n "$expected_command" ] && [ -n "$expected_root" ] &&
         [ -n "$actual_start" ] && [ -n "$actual_command" ] &&
         [ "$expected_start" = "$actual_start" ] &&
-        [ "$expected_command" = "$actual_command" ] &&
-        [ "$expected_root" = "$ROOT_DIR" ]; then
+        [ "$expected_command" = "$actual_command" ]; then
+        if [ "$expected_root" != "$ROOT_DIR" ] && [ -d "$LOG_DIR" ]; then
+          printf '%s legacy_state_migration_lock_foreign_root_verified=true owner_root=%s caller_root=%s\n' \
+            "$(now_utc)" "$expected_root" "$ROOT_DIR" >> "$SUPERVISOR_LOG"
+        fi
         return 0
       fi
     fi
