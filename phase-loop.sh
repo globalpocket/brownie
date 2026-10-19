@@ -65,6 +65,7 @@ PHASE_LOOP_BASE_PROMPT_SNAPSHOT_LINES="${PHASE_LOOP_BASE_PROMPT_SNAPSHOT_LINES:-
 PHASE_LOOP_PROMPT_RETENTION_COUNT="${PHASE_LOOP_PROMPT_RETENTION_COUNT:-20}"
 PHASE_LOOP_STOP_GRACE_SECONDS="${PHASE_LOOP_STOP_GRACE_SECONDS:-15}"
 PHASE_LOOP_STOP_FORCE_SECONDS="${PHASE_LOOP_STOP_FORCE_SECONDS:-5}"
+PHASE_LOOP_LEGACY_MIGRATION_OWNERLESS_GRACE_SECONDS="${PHASE_LOOP_LEGACY_MIGRATION_OWNERLESS_GRACE_SECONDS:-30}"
 PHASE_LOOP_SLEEP_POLL_SECONDS="${PHASE_LOOP_SLEEP_POLL_SECONDS:-1}"
 PHASE_LOOP_PRECLAIM_RECOVERY_MAX_RETRIES="${PHASE_LOOP_PRECLAIM_RECOVERY_MAX_RETRIES:-3}"
 PHASE_LOOP_APPROVED_CONTROLLER_BASELINE="${PHASE_LOOP_APPROVED_CONTROLLER_BASELINE:-origin/main}"
@@ -11828,6 +11829,22 @@ print(f"{stat_result.st_dev}:{stat_result.st_ino}")
 PY
 }
 
+phase_loop_legacy_migration_lock_ownerless_stale() {
+  python3 - "$LEGACY_MIGRATION_LOCK_DIR" "$PHASE_LOOP_LEGACY_MIGRATION_OWNERLESS_GRACE_SECONDS" <<'PY'
+import os
+import sys
+import time
+
+try:
+    lock_age = time.time() - os.stat(sys.argv[1]).st_mtime
+    grace = float(sys.argv[2])
+except (OSError, ValueError):
+    print("0")
+    raise SystemExit(0)
+print("1" if lock_age >= grace else "0")
+PY
+}
+
 phase_loop_legacy_migration_lock_active() {
   if [ ! -d "$LEGACY_MIGRATION_LOCK_DIR" ]; then
     return 1
@@ -11906,11 +11923,14 @@ PY
   else
     migration_pid="$(cat "$LEGACY_MIGRATION_LOCK_DIR/pid" 2>/dev/null || true)"
     if [ -z "$migration_pid" ]; then
-      # An uninitialized lock is fail-closed. New owners are published before
-      # the canonical directory becomes visible by the migration path below.
-      return 0
-    fi
-    if kill -0 "$migration_pid" 2>/dev/null; then
+      # Publication creates the canonical directory before moving both owner
+      # records into it. Keep a fresh ownerless directory active while that
+      # short publication window is possible, but reclaim an abandoned one
+      # after its lease so a crash cannot block migration forever.
+      if [ "$(phase_loop_legacy_migration_lock_ownerless_stale)" != "1" ]; then
+        return 0
+      fi
+    elif kill -0 "$migration_pid" 2>/dev/null; then
       return 0
     fi
   fi

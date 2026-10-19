@@ -194,6 +194,32 @@ set -e
 [ ! -e "$migration_supervise_case_dir/status-write-called" ]
 printf '%s\n' 'phase-loop supervisor does not write status while migration owns the state'
 
+ownerless_migration_lock_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-ownerless-migration-lock.XXXXXX")"
+trap 'rm -rf "$ownerless_migration_lock_case_dir"' EXIT
+mkdir -p "$ownerless_migration_lock_case_dir/logs" "$ownerless_migration_lock_case_dir/phase-loop-legacy-migration.lock"
+PHASE_LOOP_STATE_DIR="$ownerless_migration_lock_case_dir" STATE_DIR="$ownerless_migration_lock_case_dir" ROOT_DIR="$ROOT_DIR" bash -c '
+  set -u
+  source "$ROOT_DIR/phase-loop.sh" status >/dev/null 2>&1
+  if ! phase_loop_legacy_migration_lock_active; then
+    exit 1
+  fi
+  [ -d "$STATE_DIR/phase-loop-legacy-migration.lock" ]
+' bash
+printf '%s\n' 'phase-loop keeps a fresh ownerless migration publication active'
+
+stale_ownerless_migration_lock_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-stale-ownerless-migration-lock.XXXXXX")"
+trap 'rm -rf "$stale_ownerless_migration_lock_case_dir"' EXIT
+mkdir -p "$stale_ownerless_migration_lock_case_dir/logs" "$stale_ownerless_migration_lock_case_dir/phase-loop-legacy-migration.lock"
+PHASE_LOOP_STATE_DIR="$stale_ownerless_migration_lock_case_dir" STATE_DIR="$stale_ownerless_migration_lock_case_dir" ROOT_DIR="$ROOT_DIR" PHASE_LOOP_LEGACY_MIGRATION_OWNERLESS_GRACE_SECONDS=0 bash -c '
+  set -u
+  source "$ROOT_DIR/phase-loop.sh" status >/dev/null 2>&1
+  if phase_loop_legacy_migration_lock_active; then
+    exit 1
+  fi
+  [ ! -d "$STATE_DIR/phase-loop-legacy-migration.lock" ]
+' bash
+printf '%s\n' 'phase-loop reclaims an abandoned ownerless migration publication'
+
 stale_migration_lock_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-stale-migration-lock.XXXXXX")"
 trap 'rm -rf "$stale_migration_lock_case_dir"' EXIT
 mkdir -p "$stale_migration_lock_case_dir/logs" "$stale_migration_lock_case_dir/phase-loop-legacy-migration.lock"

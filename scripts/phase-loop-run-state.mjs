@@ -590,34 +590,57 @@ export function quiesceLegacySupervisor({
       managed.set(pid, { pid, start_time: getProcessStartTime(pid) });
     }
   }
-  const signal = (name) => {
+  const stopped = new Map();
+  const resumeStopped = () => {
+    let failure = null;
+    for (const identity of [...stopped.values()].reverse()) {
+      if (!processExists(identity.pid) || !identity.start_time || getProcessStartTime(identity.pid) !== identity.start_time) {
+        stopped.delete(identity.pid);
+        continue;
+      }
+      try {
+        killProcess(identity.pid, 'SIGCONT');
+      } catch (error) {
+        if (error?.code !== 'ESRCH' && !failure) {
+          failure = { ok: false, code: 'legacy_supervisor_resume_signal_failed', pid: identity.pid, error: error.message };
+        }
+      }
+      stopped.delete(identity.pid);
+    }
+    return failure || { ok: true };
+  };
+  const stop = () => {
     for (const identity of managed.values()) {
       if (!processExists(identity.pid)
         || !identity.start_time
         || getProcessStartTime(identity.pid) !== identity.start_time) {
+        resumeStopped();
         return { ok: false, code: 'legacy_process_identity_changed', pid: identity.pid };
       }
       try {
         killProcess(identity.pid, 0);
       } catch (error) {
         if (error?.code === 'ESRCH') continue;
+        resumeStopped();
         return { ok: false, code: 'legacy_supervisor_quiesce_signal_failed', pid: identity.pid, error: error.message };
       }
       try {
-        killProcess(identity.pid, name);
+        killProcess(identity.pid, 'SIGSTOP');
+        stopped.set(identity.pid, identity);
       } catch (error) {
         if (error?.code !== 'ESRCH') {
+          resumeStopped();
           return { ok: false, code: 'legacy_supervisor_quiesce_signal_failed', pid: identity.pid, error: error.message };
         }
       }
     }
     return { ok: true };
   };
-  const stopped = signal('SIGSTOP');
-  if (!stopped.ok) return stopped;
+  const stopResult = stop();
+  if (!stopResult.ok) return stopResult;
   return {
     ok: true,
-    resume: () => signal('SIGCONT')
+    resume: resumeStopped
   };
 }
 

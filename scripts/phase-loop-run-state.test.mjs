@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { allSupervisorProcessRecords, inspectSupervisorOwnership, migrateLegacyPhaseLoopState, normalizeStaleRunningStatus, rollbackStaleRunningRecovery, terminateLegacySupervisor, watchdogContinuationLiveness } from './phase-loop-run-state.mjs';
+import { allSupervisorProcessRecords, inspectSupervisorOwnership, migrateLegacyPhaseLoopState, normalizeStaleRunningStatus, quiesceLegacySupervisor, rollbackStaleRunningRecovery, terminateLegacySupervisor, watchdogContinuationLiveness } from './phase-loop-run-state.mjs';
 
 function fixture() {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-run-state-'));
@@ -503,6 +503,20 @@ test('quiesces a confirmed legacy owner before enforcing archive snapshot stabil
   });
   assert.equal(result.ok, true);
   assert.equal(quiesced, false);
+});
+
+test('resumes processes already quiesced when a later identity check fails', () => {
+  const signals = [];
+  const result = quiesceLegacySupervisor({
+    candidate: { pid: 33061, start_time: 'candidate' },
+    processExists: () => true,
+    getProcessStartTime: (pid) => pid === 33061 ? 'candidate' : '',
+    listDescendants: () => [33062],
+    killProcess: (pid, signal) => { signals.push([pid, signal]); }
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'legacy_process_identity_changed');
+  assert.deepEqual(signals, [[33061, 0], [33061, 'SIGSTOP'], [33061, 'SIGCONT']]);
 });
 
 test('blocks a live lock owned by a different PID before stopping the candidate', () => {
