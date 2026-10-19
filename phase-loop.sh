@@ -14143,11 +14143,24 @@ PY
     printf '%s legacy_state_migration_lock_stage_sync_failed=true\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
     return 78
   fi
-  if ! mv "$migration_lock_staging" "$LEGACY_MIGRATION_LOCK_DIR" 2>/dev/null; then
+  # mkdir is the exclusive publication primitive here. A plain `mv` is not
+  # sufficient: on BSD/macOS, moving a directory onto an existing directory
+  # can succeed by nesting the source below the destination, which would let
+  # two concurrent callers believe they own the migration lock.
+  if ! mkdir "$LEGACY_MIGRATION_LOCK_DIR" 2>/dev/null; then
     rm -rf "$migration_lock_staging"
     printf '%s legacy_state_migration_lock_busy=true\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
     return 75
   fi
+  if ! mv "$migration_lock_staging/owner.json" "$LEGACY_MIGRATION_LOCK_DIR/owner.json" 2>/dev/null ||
+    ! mv "$migration_lock_staging/pid" "$LEGACY_MIGRATION_LOCK_DIR/pid" 2>/dev/null; then
+    rm -rf "$migration_lock_staging" "$LEGACY_MIGRATION_LOCK_DIR"
+    sync_parent_dir "$STATE_DIR"
+    printf '%s legacy_state_migration_lock_publish_failed=true\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
+    return 78
+  fi
+  rmdir "$migration_lock_staging" 2>/dev/null || true
+  sync_parent_dir "$LEGACY_MIGRATION_LOCK_DIR"
   sync_parent_dir "$STATE_DIR"
   phase_loop_release_legacy_migration_lock() {
     if [ -d "$LEGACY_MIGRATION_LOCK_DIR" ] &&
