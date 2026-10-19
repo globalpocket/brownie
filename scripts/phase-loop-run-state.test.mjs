@@ -609,6 +609,33 @@ test('ignores an unrelated foreign-checkout supervisor when this state does not 
   assert.equal(JSON.parse(fs.readFileSync(statusPath, 'utf8')).status, 'recovered_legacy_state');
 });
 
+test('blocks a foreign-root supervisor that explicitly reports this state directory', () => {
+  const { stateDir, statusPath } = fixture();
+  writeLegacyFixture(stateDir, { supervisorPid: 33062 });
+  const foreign = [{
+    pid: 33061,
+    command: 'bash /foreign-checkout/phase-loop.sh supervise',
+    start_time: 'Sun Oct 18 16:30:00 2026',
+    state_dir: stateDir
+  }];
+  let stopCalls = 0;
+  const result = migrateLegacyPhaseLoopState({
+    stateDir,
+    rootDir: '/repo',
+    processExists: () => true,
+    getProcessCommand: () => foreign[0].command,
+    getProcessStartTime: () => foreign[0].start_time,
+    listAllSupervisors: () => foreign,
+    stopSupervisor: () => { stopCalls += 1; return { ok: true }; }
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'legacy_state_ownership_unproven');
+  assert.equal(result.inspection.reason, 'legacy_foreign_supervisor');
+  assert.equal(stopCalls, 0);
+  assert.equal(result.inspection.foreign_root_state_dir_supervisors.length, 1);
+  assert.equal(JSON.parse(fs.readFileSync(statusPath, 'utf8')).status, 'blocked');
+});
+
 test('reads a large process table in one command and enriches supervisors only', () => {
   const enriched = [];
   const records = allSupervisorProcessRecords({

@@ -177,6 +177,23 @@ PHASE_LOOP_STATE_DIR="$migration_lock_case_dir" STATE_DIR="$migration_lock_case_
 ' bash
 printf '%s\n' 'phase-loop supervisor lock acquisition is serialized against legacy migration cleanup'
 
+migration_supervise_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-migration-supervise.XXXXXX")"
+trap 'rm -rf "$migration_supervise_case_dir"' EXIT
+mkdir -p "$migration_supervise_case_dir/logs" "$migration_supervise_case_dir/phase-loop-legacy-migration.lock"
+set +e
+PHASE_LOOP_STATE_DIR="$migration_supervise_case_dir" STATE_DIR="$migration_supervise_case_dir" ROOT_DIR="$ROOT_DIR" bash -c '
+  set -u
+  source "$ROOT_DIR/phase-loop.sh" status >/dev/null 2>&1
+  printf "%s\n" "$$" > "$STATE_DIR/phase-loop-legacy-migration.lock/pid"
+  write_status() { touch "$STATE_DIR/status-write-called"; }
+  supervise
+' bash
+migration_supervise_status=$?
+set -e
+[ "$migration_supervise_status" -eq 75 ]
+[ ! -e "$migration_supervise_case_dir/status-write-called" ]
+printf '%s\n' 'phase-loop supervisor does not write status while migration owns the state'
+
 stale_migration_lock_case_dir="$(mktemp -d "${TMPDIR:-/tmp}/brownie-watchdog-stale-migration-lock.XXXXXX")"
 trap 'rm -rf "$stale_migration_lock_case_dir"' EXIT
 mkdir -p "$stale_migration_lock_case_dir/logs" "$stale_migration_lock_case_dir/phase-loop-legacy-migration.lock"

@@ -428,6 +428,12 @@ export function inspectLegacyPhaseLoopState({
   const foreignStateDirRecords = sameRootRecords.filter((record) => (
     reportedSupervisorStateDir(record) && !supervisorStateDirMatches(record, stateDir, rootDir)
   ));
+  const foreignRootStateDirRecords = liveRecords.filter((record) => (
+    commandLooksLikeSupervisor(record.command || '')
+      && !supervisorCommandMatchesRoot(record.command || '', rootDir)
+      && reportedSupervisorStateDir(record)
+      && supervisorStateDirMatches(record, stateDir, rootDir)
+  ));
   const foreignRecords = liveRecords.filter((record) => (
     commandLooksLikeSupervisor(record.command || '') && !supervisorCommandMatchesRoot(record.command || '', rootDir)
   ));
@@ -441,7 +447,10 @@ export function inspectLegacyPhaseLoopState({
   const associatedSameRootRecords = sameRootRecords.filter((record) => (
     referencedPids.has(record.pid) || supervisorStateDirMatches(record, stateDir, rootDir)
   ));
-  const associatedForeignStateDirRecords = foreignStateDirRecords.filter((record) => referencedPids.has(record.pid));
+  const associatedForeignStateDirRecords = [...new Map([
+    ...foreignStateDirRecords.filter((record) => referencedPids.has(record.pid)),
+    ...foreignRootStateDirRecords
+  ].map((record) => [record.pid, record])).values()];
   const associatedForeignRecords = foreignRecords.filter((record) => referencedPids.has(record.pid));
   const ownership = inspectSupervisorOwnership({
     stateDir,
@@ -525,6 +534,7 @@ export function inspectLegacyPhaseLoopState({
     associated_same_root_supervisors: associatedSameRootRecords,
     state_dir_supervisors: stateDirRecords,
     foreign_state_dir_supervisors: foreignStateDirRecords,
+    foreign_root_state_dir_supervisors: foreignRootStateDirRecords,
     associated_foreign_state_dir_supervisors: associatedForeignStateDirRecords,
     foreign_supervisors: foreignRecords,
     associated_foreign_supervisors: associatedForeignRecords,

@@ -42,6 +42,7 @@ PHASE_LOOP_DEFERRED_SIGNAL_PENDING=0
 PHASE_LOOP_DEFERRED_SIGNAL_CODE=""
 PHASE_LOOP_FINALIZING=0
 PHASE_LOOP_LAST_CLAIM_ARCHIVE=""
+PHASE_LOOP_LOCK_BLOCKER=""
 
 BROWNIE_BIN="${BROWNIE_BIN:-"$ROOT_DIR/target/debug/brownie"}"
 PHASE_LOOP_DEFAULT_BROWNIE_BIN="$ROOT_DIR/target/debug/brownie"
@@ -11907,7 +11908,9 @@ PY
 }
 
 acquire_lock() {
+  PHASE_LOOP_LOCK_BLOCKER=""
   if phase_loop_legacy_migration_lock_active; then
+    PHASE_LOOP_LOCK_BLOCKER="legacy_migration"
     return 1
   fi
   if mkdir "$LOCK_DIR" 2>/dev/null; then
@@ -11915,6 +11918,7 @@ acquire_lock() {
     trap 'rm -rf "$LOCK_DIR"' EXIT INT TERM
     return 0
   fi
+  PHASE_LOOP_LOCK_BLOCKER="supervisor"
   local lock_pid
   lock_pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
   if [ -n "$lock_pid" ] && ! kill -0 "$lock_pid" 2>/dev/null; then
@@ -14205,6 +14209,9 @@ PY
 supervise() {
   load_env
   if ! acquire_lock; then
+    if [ "${PHASE_LOOP_LOCK_BLOCKER:-}" = "legacy_migration" ]; then
+      exit 75
+    fi
     write_status "already_running" "Another phase-loop.sh instance holds the lock." "" "" 0
     exit 0
   fi
