@@ -8,6 +8,7 @@
     "scripts/guard-todo-decomposition.mjs",
     "scripts/phase-loop-actor-preflight.mjs",
     "scripts/phase-loop-admit-existing-contract-rebaseline.mjs",
+    "scripts/phase-loop-claim-rebaseline.mjs",
     "scripts/phase-loop-decomposition-adversarial-real-llm.mjs",
     "scripts/phase-loop-delivery-reconcile.mjs",
     "scripts/phase-loop-pr-actor-guard.mjs",

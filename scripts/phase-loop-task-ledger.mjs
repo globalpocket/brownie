@@ -16,6 +16,14 @@ export function taskLedgerPath(repoRoot) {
   return path.join(repoRoot, '.brownie/private/phase-loop/task-ledger.jsonl');
 }
 
+function readJson(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 export function isTerminalTaskState(state) {
   return TERMINAL_STATES.has(state);
 }
@@ -252,11 +260,22 @@ export function recordTerminalFailureRecovery(repoRoot, {
   controller_fingerprint = null,
   recovery_id = null,
   claim_absent = false,
+  execution_evidence = null,
   blocked_reason = 'terminal_runtime_failure',
   at
 }) {
   if (typeof selected_todo !== 'string' || !selected_todo.trim()) {
     return { ok: false, code: 'terminal_failure_selected_todo_missing' };
+  }
+  const executionEvidence = typeof execution_evidence === 'string' ? readJson(execution_evidence) : execution_evidence;
+  if (!executionEvidence || executionEvidence.kind !== 'phase_loop_terminal_failure_execution_evidence' || executionEvidence.task_execution_confirmed !== true) {
+    return { ok: false, code: 'terminal_failure_execution_evidence_missing' };
+  }
+  if (executionEvidence.claim_id !== (claim_id ?? null) || executionEvidence.selected_todo_sha256 !== crypto.createHash('sha256').update(selected_todo).digest('hex')) {
+    return { ok: false, code: 'terminal_failure_execution_evidence_mismatch' };
+  }
+  if (Number(retry_cap) === 0) {
+    return { ok: false, code: 'terminal_failure_retry_cap_zero_requires_redelegation' };
   }
   let resolvedRecoveryId = recovery_id || crypto.createHash('sha256')
     .update(JSON.stringify({
@@ -325,6 +344,7 @@ export function recordTerminalFailureRecovery(repoRoot, {
     claim_absent: Boolean(claim_absent),
     terminal_failure: true,
     blocked_evidence: true,
+    execution_evidence: executionEvidence,
     at: timestamp
   };
   const eventsToWrite = [];
@@ -639,6 +659,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
     provider_failure_fingerprint: args.get('provider-failure-fingerprint') || null,
     retry_cap: args.get('retry-cap') || 0,
     controller_fingerprint: args.get('controller-fingerprint') || null,
+    execution_evidence: args.get('execution-evidence') || null,
     recovery_id: args.get('recovery-id') || null,
     claim_absent: args.get('claim-absent') === 'true',
     blocked_reason: args.get('blocked-reason') || 'terminal_runtime_failure'

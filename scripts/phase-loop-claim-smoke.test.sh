@@ -1173,24 +1173,104 @@ status = json.load(open(sys.argv[1], encoding="utf-8"))
 progress = json.load(open(sys.argv[2], encoding="utf-8"))
 claim = json.load(open(sys.argv[3], encoding="utf-8"))
 feedback = json.load(open(sys.argv[4], encoding="utf-8"))
-blocked = [json.loads(line) for line in pathlib.Path(sys.argv[5]).read_text(encoding="utf-8").splitlines() if line.strip()]
-ledger = pathlib.Path(sys.argv[6]).read_text(encoding="utf-8")
+blocked_path = pathlib.Path(sys.argv[5])
+blocked = [json.loads(line) for line in blocked_path.read_text(encoding="utf-8").splitlines() if line.strip()] if blocked_path.exists() else []
+ledger_path = pathlib.Path(sys.argv[6])
+ledger = ledger_path.read_text(encoding="utf-8") if ledger_path.exists() else ""
 assert status["status"] == "blocked", status
-assert "terminal_task_failed" in status["detail"], status
+assert "retry_cap=0" in status["detail"], status
 assert progress["classification"] == "terminal_failure", progress
 assert progress["meaningful_progress"] is False, progress
 assert progress["progress_projection"]["blocked_by_terminal_task_failure"] is True, progress
 assert progress["progress_projection"]["provider_failure_fingerprint"] == "sha256:provider-terminal-no-content", progress
 assert progress["workspace_changed"] is False, progress
-assert claim["status"] == "failed", claim
-assert claim["status_history"][-1]["status"] == "failed", claim
+assert claim["status"] == "in_progress", claim
+assert claim["status_history"][-1]["status"] == "in_progress", claim
+assert feedback["kind"] == "phase_loop_terminal_failure_redelegation_required", feedback
 assert feedback["claim_id"] == claim["claim_id"], feedback
-assert feedback["reason"] == "runtime_terminal_failure", feedback
-assert blocked and blocked[-1]["block_reason"] == "terminal_runtime_failure", blocked
-assert blocked[-1]["terminal_failure"] is True, blocked
-assert blocked[-1]["retry_cap"] == 0, blocked
-assert "terminal_failure_transaction" in ledger, ledger
-assert '"retry_cap":0' in ledger, ledger
+assert feedback["recovery_state"] == "redelegatable", feedback
+assert not blocked, blocked
+assert "terminal_failure_transaction" not in ledger, ledger
+PY
+
+# A stale terminal-looking claim must be isolated before a retry-cap-zero run.
+# The fresh claim is allowed to execute once, but the old claim identity and
+# terminal projection may not be inherited or re-recorded as a terminal block.
+state_stale_r3="$(mktemp -d)"
+prompt_stale_r3="$(mktemp)"
+todo_stale_r3="$(mktemp)"
+stale_r3_workspace="$(mktemp -d)"
+git -C "$stale_r3_workspace" init -b main >/dev/null
+git -C "$stale_r3_workspace" -c user.name=Brownie -c user.email=brownie@example.invalid commit --allow-empty -m init >/dev/null
+printf 'base prompt\n' > "$prompt_stale_r3"
+printf -- '- [ ] E-stale-r3: Patch only `scripts/stale-r3.mjs`:\n  Route: implementation.\n  Verification: run `node --check scripts/stale-r3.mjs`.\n' > "$todo_stale_r3"
+mkdir -p "$state_stale_r3/todo-claims" "$state_stale_r3/runs"
+python3 - "$state_stale_r3" "$todo_stale_r3" <<'PY'
+import json
+import pathlib
+import sys
+
+state = pathlib.Path(sys.argv[1])
+selected = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8").rstrip("\n")
+def write(path, value):
+    path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+write(state / "todo-claims/current.json", {
+    "schema_version": 1,
+    "claim_id": "todo-g541-stale-r3",
+    "status": "in_progress",
+    "selected_todo": selected,
+    "queue_generation": 541,
+    "queue_fingerprint": "old-queue",
+    "run_stamp": "20261019T071825Z",
+    "retry_cap": 0,
+})
+write(state / "status.json", {"status": "no_progress", "run_id": "old-run", "supervisor_pid": 86793})
+write(state / "progress-state.json", {
+    "classification": "terminal_failure",
+    "run_stamp": "20261019T071825Z",
+    "progress_projection": {
+        "claim_id": "todo-g541-stale-r3",
+        "selected_todo": selected,
+        "stop_class": "terminal_failure",
+        "stop_reason": "terminal_task_failed",
+        "cli_status": "no_eligible_task",
+    },
+})
+write(state / "todo-claims/todo-queue-state.json", {"generation": 541, "fingerprint": "new-queue"})
+PY
+set +e
+PHASE_LOOP_STATE_DIR="$state_stale_r3" \
+PHASE_LOOP_PROMPT="$prompt_stale_r3" \
+PHASE_LOOP_TODO="$todo_stale_r3" \
+BROWNIE_BIN="$fake_brownie_terminal_no_eligible" \
+PHASE_LOOP_WORKSPACE_ROOT="$stale_r3_workspace" \
+PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP=0 \
+PHASE_LOOP_TEST_HEADLESS_ONLY=1 \
+PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null
+stale_r3_exit="$?"
+set -e
+test "$stale_r3_exit" = "76"
+python3 - "$state_stale_r3" <<'PY'
+import json
+import pathlib
+import sys
+
+state = pathlib.Path(sys.argv[1])
+claim_dir = state / "todo-claims"
+claim = json.loads((claim_dir / "current.json").read_text(encoding="utf-8"))
+archives = sorted(claim_dir.glob("stale-rebaseline-*.json"))
+assert len(archives) == 1, archives
+archived = json.loads(archives[0].read_text(encoding="utf-8"))
+assert archived["claim_id"] == "todo-g541-stale-r3", archived
+assert archived["retry_eligible"] is True, archived
+assert archived["recovery_state"] == "redelegatable", archived
+assert claim["claim_id"] != "todo-g541-stale-r3", claim
+assert claim["status"] == "in_progress", claim
+assert claim["retry_cap"] == 0, claim
+feedback = json.loads((claim_dir / "repair-feedback.json").read_text(encoding="utf-8"))
+assert feedback["kind"] == "phase_loop_terminal_failure_redelegation_required", feedback
+assert feedback["recovery_state"] == "redelegatable", feedback
 PY
 
 # A positive terminal-failure retry cap permits the configured number of
