@@ -1,10 +1,20 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { appendTaskTransition, readTaskLedger, recordTerminalFailureRecovery, recordTrajectory, replanTaskWithChildren, taskAttemptId, taskIsExecutable, taskProjection, validateTaskLedger } from './phase-loop-task-ledger.mjs';
+
+function terminalEvidence(selectedTodo, claimId) {
+  return {
+    kind: 'phase_loop_terminal_failure_execution_evidence',
+    task_execution_confirmed: true,
+    claim_id: claimId,
+    selected_todo_sha256: crypto.createHash('sha256').update(selectedTodo).digest('hex')
+  };
+}
 
 test('task ledger enforces a terminal state machine', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-task-ledger-'));
@@ -233,7 +243,8 @@ test('binds terminal failure recovery identity to controller and execution attem
     provider_failure_fingerprint: 'provider-retry',
     retry_cap: 1,
     controller_fingerprint: 'controller-old',
-    at: '2026-10-19T08:00:00Z'
+    at: '2026-10-19T08:00:00Z',
+    execution_evidence: terminalEvidence(selectedTodo, 'claim-retry')
   };
 
   const first = recordTerminalFailureRecovery(repo, base);
@@ -264,7 +275,8 @@ test('re-records an explicitly replayed terminal block after controller rebaseli
     run_id: 'run-old',
     retry_cap: 1,
     controller_fingerprint: 'controller-old',
-    recovery_id: 'persisted-recovery-id'
+    recovery_id: 'persisted-recovery-id',
+    execution_evidence: terminalEvidence(selectedTodo, 'claim-rebaseline')
   });
   const rebased = recordTerminalFailureRecovery(repo, {
     selected_todo: selectedTodo,
@@ -272,7 +284,8 @@ test('re-records an explicitly replayed terminal block after controller rebaseli
     run_id: 'run-new',
     retry_cap: 1,
     controller_fingerprint: 'controller-new',
-    recovery_id: 'persisted-recovery-id'
+    recovery_id: 'persisted-recovery-id',
+    execution_evidence: terminalEvidence(selectedTodo, 'claim-rebaseline')
   });
   assert.equal(first.ok, true);
   assert.equal(rebased.ok, true);

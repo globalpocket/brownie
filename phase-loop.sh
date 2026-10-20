@@ -47,6 +47,10 @@ PHASE_LOOP_DEFERRED_SIGNAL_CODE=""
 PHASE_LOOP_FINALIZING=0
 PHASE_LOOP_LAST_CLAIM_ARCHIVE=""
 PHASE_LOOP_LOCK_BLOCKER=""
+PHASE_LOOP_REBASELINED_CLAIM=0
+PHASE_LOOP_REBASELINE_RETRY_ALLOWED=0
+PHASE_LOOP_RUNTIME_EXECUTION_EVIDENCE=""
+PHASE_LOOP_RUNTIME_EXECUTION_CONFIRMED=0
 
 BROWNIE_BIN="${BROWNIE_BIN:-"$ROOT_DIR/target/debug/brownie"}"
 PHASE_LOOP_DEFAULT_BROWNIE_BIN="$ROOT_DIR/target/debug/brownie"
@@ -597,7 +601,7 @@ todo_first_pending_item() {
     if [ -z "$selected_todo" ]; then
       return 0
     fi
-    if ! terminal_failure_retry_suppressed_for_todo "$selected_todo"; then
+    if [ "$PHASE_LOOP_REBASELINE_RETRY_ALLOWED" -eq 1 ] || ! terminal_failure_retry_suppressed_for_todo "$selected_todo"; then
       printf '%s\n' "$selected_todo"
       return 0
     fi
@@ -1663,13 +1667,19 @@ PY
 record_terminal_failure_todo_claim() {
   local run_stamp="$1"
   local progress_file="$2"
-  local context selected_todo claim_id queue_generation queue_fingerprint provider_failure_fingerprint claim_absent recovery_output recovery_status recovery_id controller_fingerprint retry_cap
+  local context selected_todo claim_id queue_generation queue_fingerprint provider_failure_fingerprint claim_absent recovery_output recovery_status recovery_id controller_fingerprint retry_cap execution_evidence
   if ! validate_terminal_failure_retry_cap; then
     PHASE_LOOP_TASK_LEDGER_FAILURE=1
     PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL="Invalid terminal failure retry cap before durable recovery recording: ${PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP_VALIDATION_DETAIL:-unknown validation failure}"
     return 78
   fi
   retry_cap="$PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP"
+  execution_evidence="${PHASE_LOOP_RUNTIME_EXECUTION_EVIDENCE:-$(claim_field terminal_failure_execution_evidence_path 2>/dev/null || true)}"
+  if [ -z "$execution_evidence" ] || [ ! -f "$execution_evidence" ]; then
+    PHASE_LOOP_TASK_LEDGER_FAILURE=1
+    PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL="Terminal failure recovery requires current-run execution evidence; refusing to terminalize claim without it."
+    return 78
+  fi
   context="$(python3 - "$TODO_CLAIM_FILE" "$progress_file" "$PHASE_LOOP_TODO" "$TODO_QUEUE_STATE_FILE" "$RUN_DIR/$run_stamp.claim.before-runtime.json" <<'PY'
 import json
 import pathlib
@@ -1753,6 +1763,7 @@ PY
         --provider-failure-fingerprint "$provider_failure_fingerprint" \
         --retry-cap "$retry_cap" \
         --controller-fingerprint "$controller_fingerprint" \
+        --execution-evidence "$execution_evidence" \
         --claim-absent "$claim_absent" \
         --blocked-reason terminal_runtime_failure 2>&1
     )"
@@ -10392,7 +10403,7 @@ claim_first_pending_todo() {
     if [ -z "$selected_todo" ]; then
       return 1
     fi
-    if terminal_failure_retry_suppressed_for_todo "$selected_todo"; then
+    if [ "$PHASE_LOOP_REBASELINE_RETRY_ALLOWED" -ne 1 ] && terminal_failure_retry_suppressed_for_todo "$selected_todo"; then
       printf '%s terminal_failure_retry_suppressed=true selected_todo=%s\n' "$(now_utc)" "$selected_todo" >> "$SUPERVISOR_LOG"
       return 1
     fi
@@ -12601,6 +12612,95 @@ phase_loop_require_approved_controller_baseline() {
   return 0
 }
 
+phase_loop_rebaseline_stale_claim() {
+  local run_stamp="$1"
+  local output status rebaselined
+  if [ ! -f "$ROOT_DIR/scripts/phase-loop-claim-rebaseline.mjs" ]; then
+    printf '%s run=%s stale_claim_rebaseline_guard_missing=true\n' "$(now_utc)" "$run_stamp" >> "$SUPERVISOR_LOG"
+    return 78
+  fi
+  set +e
+  output="$(
+    cd "$ROOT_DIR" || exit 70
+    node scripts/phase-loop-claim-rebaseline.mjs rebaseline \
+      --repo "$ROOT_DIR" \
+      --state-dir "$STATE_DIR" \
+      --claim "$TODO_CLAIM_FILE" \
+      --status "$STATUS_FILE" \
+      --progress "$PROGRESS_STATE_FILE" \
+      --queue "$TODO_QUEUE_STATE_FILE" \
+      --ledger "$STATE_DIR/task-ledger.jsonl" \
+      --runs "$RUN_DIR" \
+      --todo "$PHASE_LOOP_TODO" \
+      --run-stamp "$run_stamp" \
+      --baseline-ref "$PHASE_LOOP_APPROVED_CONTROLLER_BASELINE" 2>&1
+  )"
+  status=$?
+  set -e
+  printf '%s run=%s stale_claim_rebaseline_exit=%s result=%s\n' "$(now_utc)" "$run_stamp" "$status" "${output:-<no output>}" >> "$SUPERVISOR_LOG"
+  if [ "$status" -ne 0 ]; then
+    return 78
+  fi
+  rebaselined="$(printf '%s' "$output" | python3 -c 'import json,sys; print("1" if json.load(sys.stdin).get("rebaselined") else "0")' 2>/dev/null || true)"
+  if [ "$rebaselined" = "1" ]; then
+    PHASE_LOOP_REBASELINED_CLAIM=1
+    PHASE_LOOP_REBASELINE_RETRY_ALLOWED=1
+  fi
+  return 0
+}
+
+write_runtime_execution_evidence() {
+  local run_stamp="$1"
+  local stdout_log="$2"
+  local claim_snapshot="$3"
+  local workspace_before="$4"
+  local workspace_after="$5"
+  local evidence_path="$RUN_DIR/$run_stamp.execution-evidence.json"
+  local output status confirmed
+  set +e
+  output="$(
+    cd "$ROOT_DIR" || exit 70
+    node scripts/phase-loop-claim-rebaseline.mjs terminal-evidence \
+      --stdout "$stdout_log" \
+      --claim-snapshot "$claim_snapshot" \
+      --output "$evidence_path" \
+      --run-stamp "$run_stamp" \
+      --workspace-before "$workspace_before" \
+      --workspace-after "$workspace_after" 2>&1
+  )"
+  status=$?
+  set -e
+  PHASE_LOOP_RUNTIME_EXECUTION_EVIDENCE="$evidence_path"
+  confirmed="$(printf '%s' "$output" | python3 -c 'import json,sys; print("1" if json.load(sys.stdin).get("task_execution_confirmed") else "0")' 2>/dev/null || true)"
+  PHASE_LOOP_RUNTIME_EXECUTION_CONFIRMED="${confirmed:-0}"
+  if [ "$PHASE_LOOP_RUNTIME_EXECUTION_CONFIRMED" -eq 1 ] && [ -f "$TODO_CLAIM_FILE" ]; then
+    python3 - "$TODO_CLAIM_FILE" "$evidence_path" "$(now_utc)" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+try:
+    claim = json.loads(path.read_text(encoding='utf-8'))
+except Exception:
+    raise SystemExit(0)
+claim['terminal_failure_execution_evidence_path'] = sys.argv[2]
+claim['updated_at'] = sys.argv[3]
+tmp = path.with_suffix('.execution-evidence.tmp')
+with open(tmp, 'w', encoding='utf-8') as handle:
+    json.dump(claim, handle, ensure_ascii=False, sort_keys=True, indent=2)
+    handle.write('\n')
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(tmp, 0o600)
+os.replace(tmp, path)
+PY
+  fi
+  printf '%s run=%s terminal_execution_evidence_exit=%s confirmed=%s result=%s path=%s\n' "$(now_utc)" "$run_stamp" "$status" "$PHASE_LOOP_RUNTIME_EXECUTION_CONFIRMED" "${output:-<no output>}" "$evidence_path" >> "$SUPERVISOR_LOG"
+  return 0
+}
+
 is_running() {
   if [ ! -f "$PID_FILE" ]; then
     return 1
@@ -13194,6 +13294,10 @@ _run_brownie_once() {
   local CLAIM_REPLACED_BLOCKED=0
   started_at="$(now_utc)"
   run_stamp="$(date -u +"%Y%m%dT%H%M%SZ")"
+  PHASE_LOOP_REBASELINED_CLAIM=0
+  PHASE_LOOP_REBASELINE_RETRY_ALLOWED=0
+  PHASE_LOOP_RUNTIME_EXECUTION_EVIDENCE=""
+  PHASE_LOOP_RUNTIME_EXECUTION_CONFIRMED=0
   stdout_log="$RUN_DIR/$run_stamp.stdout.log"
   stderr_log="$RUN_DIR/$run_stamp.stderr.log"
   effective_prompt="$RUN_DIR/$run_stamp.prompt.md"
@@ -13234,6 +13338,13 @@ _run_brownie_once() {
     detail="A durable terminal source-transition obligation could not be restored; refusing Runtime restart. marker=$TERMINAL_FAILURE_SOURCE_TRANSITION_PENDING_FILE"
     printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
     write_status "blocked" "$detail" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-1}"
+    return 78
+  fi
+
+  if ! phase_loop_rebaseline_stale_claim "$run_stamp"; then
+    detail="A stale active claim could not be safely isolated and rebaselined before Runtime start; refusing to inherit its claim identity, retry policy, or terminal state."
+    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+    write_status "blocked" "$detail" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-0}"
     return 78
   fi
 
@@ -14410,6 +14521,7 @@ PY
     fi
   fi
   workspace_after="$(git_workspace_fingerprint)"
+  write_runtime_execution_evidence "$run_stamp" "$stdout_log" "$claim_snapshot_before_runtime" "$workspace_before" "$workspace_after"
   if phase_value_manifest_repair_output="$(json_target_parse_violation_repair "$phase_value_manifest_before" "$PHASE_LOOP_WORKSPACE_ROOT/docs/architecture/phase-value-manifest.json" "$run_stamp" "phase_value_manifest" 2>&1)"; then
     phase_value_manifest_repair_status=0
   else
@@ -15156,6 +15268,81 @@ PY
 
     case "$progress_classification" in
       terminal_failure)
+        if [ "$PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP" -eq 0 ]; then
+          python3 - "$TODO_REPAIR_FEEDBACK_FILE" "$run_stamp" "$run_id" "$PHASE_LOOP_RUNTIME_EXECUTION_EVIDENCE" "$(claim_field claim_id 2>/dev/null || true)" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+feedback = {
+    "schema_version": 1,
+    "kind": "phase_loop_terminal_failure_redelegation_required",
+    "completed": False,
+    "reason": "terminal_failure_retry_cap_zero_redelegation_required",
+    "run_stamp": sys.argv[2],
+    "run_id": sys.argv[3],
+    "claim_id": sys.argv[5],
+    "execution_evidence_path": sys.argv[4],
+    "recovery_state": "redelegatable",
+    "retry_cap": 0,
+    "repair_hint": "Retry cap zero is not permission to terminalize the TODO. Preserve the current target and verification causality, then re-delegate to an owner or a fresh bounded recovery attempt.",
+}
+path.parent.mkdir(parents=True, exist_ok=True)
+tmp = path.with_suffix('.tmp')
+with open(tmp, 'w', encoding='utf-8') as handle:
+    json.dump(feedback, handle, ensure_ascii=False, sort_keys=True, indent=2)
+    handle.write('\n')
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(tmp, 0o600)
+os.replace(tmp, path)
+PY
+          write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+          detail="Brownie reported a terminal failure while retry_cap=0; preserved the current claim as redelegatable recovery instead of terminalizing it. evidence=$PHASE_LOOP_RUNTIME_EXECUTION_EVIDENCE stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+          write_status "blocked" "$detail" "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+          printf '%s run=%s terminal_retry_cap_zero_redelegation=true recovery_state=redelegatable evidence=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$PHASE_LOOP_RUNTIME_EXECUTION_EVIDENCE" "$PROGRESS_STATE_FILE" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+          write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"retry_cap_zero_redelegation_required","recovery_state":"redelegatable"}'
+          return 76
+        fi
+        if [ "$PHASE_LOOP_RUNTIME_EXECUTION_CONFIRMED" -ne 1 ]; then
+          python3 - "$TODO_REPAIR_FEEDBACK_FILE" "$run_stamp" "$run_id" "$PHASE_LOOP_RUNTIME_EXECUTION_EVIDENCE" "$(claim_field claim_id 2>/dev/null || true)" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+feedback = {
+    "schema_version": 1,
+    "kind": "phase_loop_terminal_execution_evidence_missing",
+    "completed": False,
+    "reason": "terminal_failure_without_current_run_task_execution_evidence",
+    "run_stamp": sys.argv[2],
+    "run_id": sys.argv[3],
+    "claim_id": sys.argv[5],
+    "execution_evidence_path": sys.argv[4],
+    "recovery_state": "redelegatable",
+    "repair_hint": "The Runtime returned a terminal/no-eligible signal without proving that the current run executed the selected task. Keep the claim recoverable and re-delegate only after a fresh claim and current target/verification evidence are bound.",
+}
+path.parent.mkdir(parents=True, exist_ok=True)
+tmp = path.with_suffix('.tmp')
+with open(tmp, 'w', encoding='utf-8') as handle:
+    json.dump(feedback, handle, ensure_ascii=False, sort_keys=True, indent=2)
+    handle.write('\n')
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(tmp, 0o600)
+os.replace(tmp, path)
+PY
+          write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+          detail="Brownie reported a terminal/no-eligible result without current-run task execution evidence; kept the claim recoverable and refused terminalization. evidence=$PHASE_LOOP_RUNTIME_EXECUTION_EVIDENCE stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+          write_status "blocked" "$detail" "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+          printf '%s run=%s terminal_execution_evidence_missing=true recovery_state=redelegatable evidence=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$PHASE_LOOP_RUNTIME_EXECUTION_EVIDENCE" "$PROGRESS_STATE_FILE" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+          write_bdk_trajectory_event "$run_stamp" "todo.replanned" '{"reason":"terminal_execution_evidence_missing","recovery_state":"redelegatable"}'
+          return 76
+        fi
         local terminal_failure_recovery_output terminal_failure_recovery_status
         if terminal_failure_recovery_output="$(record_terminal_failure_todo_claim "$run_stamp" "$PROGRESS_STATE_FILE" 2>&1)"; then
           terminal_failure_recovery_status=0
