@@ -115,6 +115,7 @@ test('accepts a workspace TODO snapshot and records source, fingerprint, and que
     todo: snapshotTodo,
     breakdown,
     snapshotSource: sourceTodo,
+    controllerFingerprint: `sha256:${'a'.repeat(64)}`,
     skipCommands: true
   });
   assert.equal(result.valid, true, JSON.stringify(result.errors));
@@ -122,6 +123,7 @@ test('accepts a workspace TODO snapshot and records source, fingerprint, and que
   assert.equal(result.snapshot_audit.snapshot_path, snapshotTodo);
   assert.equal(result.snapshot_audit.source_sha256, result.snapshot_audit.snapshot_sha256);
   assert.match(result.snapshot_audit.queue_cas, /^sha256:[0-9a-f]{64}$/u);
+  assert.equal(result.snapshot_audit.controller_source_fingerprint, `sha256:${'a'.repeat(64)}`);
   fs.rmSync(sourceTodo);
 });
 
@@ -141,8 +143,67 @@ test('runs the TODO guard against the configured snapshot path and rejects malfo
     /TODO decomposition guard failed/u
   );
   const preflight = fs.readFileSync(path.join(repositoryRoot, 'scripts/phase-loop-preflight.mjs'), 'utf8');
-  assert.match(preflight, /guard-todo-decomposition\.mjs', '--todo', todoPath, '--breakdown', breakdownPath/u);
-  assert.match(preflight, /phase-loop-todo-queue-integrity\.mjs', '--repo', repoRoot, '--todo', todoPath, '--breakdown', breakdownPath/u);
+  assert.match(preflight, /guard-todo-decomposition\.mjs'\), '--repo', repoRoot, '--todo', todoPath, '--breakdown', breakdownPath/u);
+  assert.match(preflight, /phase-loop-todo-queue-integrity\.mjs'\), '--repo', repoRoot, '--todo', todoPath, '--breakdown', breakdownPath/u);
+});
+
+test('snapshot audit rejection preserves claim, ledger, status, and runtime state', () => {
+  const repo = makeRepo();
+  const sourceTodo = path.join(os.tmpdir(), `brownie-snapshot-protected-${Date.now()}.md`);
+  const snapshotTodo = path.join(repo, '.brownie', 'todo-snapshot.md');
+  const breakdown = path.join(repo, '.brownie', 'todo-breakdown.md');
+  const stateDir = path.join(repo, '.brownie', 'private', 'phase-loop');
+  fs.mkdirSync(path.join(stateDir, 'todo-claims'), { recursive: true });
+  fs.mkdirSync(path.join(stateDir, 'runs'), { recursive: true });
+  const protectedFiles = [
+    path.join(stateDir, 'todo-claims', 'current.json'),
+    path.join(stateDir, 'status.json'),
+    path.join(stateDir, 'task-ledger.jsonl'),
+    path.join(stateDir, 'runs', 'runtime.bin')
+  ];
+  for (const file of protectedFiles) fs.writeFileSync(file, `protected:${path.basename(file)}\n`);
+  const sourceText = fs.readFileSync(path.join(repo, '.brownie/todo.md'), 'utf8');
+  fs.writeFileSync(sourceTodo, sourceText);
+  fs.writeFileSync(snapshotTodo, `${sourceText}\nmalformed audited mutation\n`);
+  fs.writeFileSync(breakdown, '# snapshot breakdown\n');
+  const digestFiles = () => protectedFiles.map((file) => createHash('sha256').update(fs.readFileSync(file)).digest('hex'));
+  const before = digestFiles();
+  const result = validatePhaseLoopPreflight({
+    repo,
+    todo: snapshotTodo,
+    breakdown,
+    snapshotSource: sourceTodo,
+    snapshotAudit: path.join(repo, '.brownie', 'missing-snapshot-audit.json'),
+    controllerFingerprint: `sha256:${'b'.repeat(64)}`,
+    skipCommands: true
+  });
+  assert.equal(result.valid, false, JSON.stringify(result.errors));
+  assert(result.errors.some((error) => error.code === 'todo_snapshot_mutation_audit_missing'), JSON.stringify(result.errors));
+  assert.deepEqual(digestFiles(), before);
+  fs.rmSync(sourceTodo);
+});
+
+test('runs required preflight commands from the controller root when the workspace has older scripts', () => {
+  const repo = makeRepo();
+  const workspaceScriptNames = [
+    'guard-todo-decomposition.mjs',
+    'phase-loop-todo-queue-integrity.mjs',
+    'guard-release-contract.mjs',
+    'guard-runtime-release-readiness.mjs'
+  ];
+  for (const name of workspaceScriptNames) {
+    fs.writeFileSync(path.join(repo, 'scripts', name), 'process.exit(91);\n');
+  }
+  execFileSync('git', ['add', '.'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'old workspace control scripts'], { cwd: repo, stdio: 'ignore' });
+  const controlPlaneRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-controller-root-'));
+  fs.mkdirSync(path.join(controlPlaneRoot, 'scripts'), { recursive: true });
+  for (const name of workspaceScriptNames) {
+    fs.writeFileSync(path.join(controlPlaneRoot, 'scripts', name), '#!/usr/bin/env node\nprocess.exit(0);\n');
+  }
+  const result = validatePhaseLoopPreflight({ repo, controlPlaneRoot });
+  assert.equal(result.valid, true, JSON.stringify(result, null, 2));
+  assert.deepEqual(result.command_results.map((entry) => entry.exit_code), [0, 0, 0, 0]);
 });
 
 test('accepts sequential controller-owned completion mutations for multiple TODOs', () => {
