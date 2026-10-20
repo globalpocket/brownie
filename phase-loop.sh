@@ -35,6 +35,7 @@ PHASE_LOOP_ACTIVE_RUN_STAMP=""
 PHASE_LOOP_ACTIVE_RUN_ID=""
 PHASE_LOOP_ACTIVE_STDOUT_LOG=""
 PHASE_LOOP_ACTIVE_STDERR_LOG=""
+PHASE_LOOP_CONTROL_PLANE_FINGERPRINT=""
 PHASE_LOOP_BOOTSTRAP_DIAGNOSTIC=""
 PHASE_LOOP_ENV_SOURCES="process environment"
 PHASE_LOOP_RUNTIME_PATH_SOURCE="cli-delegated"
@@ -278,12 +279,12 @@ evaluate_bdk_public_harness_feedback() {
   if [ "$terminal_event" = "todo.repair_feedback" ]; then
     output="$(
       cd "$ROOT_DIR" || exit 70
-      node scripts/bdk-public-harness-evaluate.mjs --trajectory "$trajectory_path" --output "$BDK_HARNESS_FEEDBACK_FILE" --allow-partial 2>&1
+      node "$ROOT_DIR/scripts/bdk-public-harness-evaluate.mjs" --trajectory "$trajectory_path" --output "$BDK_HARNESS_FEEDBACK_FILE" --allow-partial 2>&1
     )"
   else
     output="$(
       cd "$ROOT_DIR" || exit 70
-      node scripts/bdk-public-harness-evaluate.mjs --trajectory "$trajectory_path" --output "$BDK_HARNESS_FEEDBACK_FILE" 2>&1
+      node "$ROOT_DIR/scripts/bdk-public-harness-evaluate.mjs" --trajectory "$trajectory_path" --output "$BDK_HARNESS_FEEDBACK_FILE" 2>&1
     )"
   fi
   local status=$?
@@ -2285,11 +2286,11 @@ PY
     *)
       ;;
   esac
-  if [ -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/phase-loop-progress-integrity.mjs" ]; then
+  if [ -f "$ROOT_DIR/scripts/phase-loop-progress-integrity.mjs" ]; then
     local completion_record_output
     if ! completion_record_output="$(
       cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-      node scripts/phase-loop-progress-integrity.mjs \
+      node "$ROOT_DIR/scripts/phase-loop-progress-integrity.mjs" \
         --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
         --claim "$TODO_CLAIM_FILE" \
         --todo "$PHASE_LOOP_TODO" \
@@ -2408,16 +2409,16 @@ except ValueError:
 print(relative.as_posix())
 PY
   )" || todo_guard_path=""
-  if [ -n "$todo_guard_path" ] && [ -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/guard-todo-decomposition.mjs" ]; then
+  if [ -n "$todo_guard_path" ] && [ -f "$ROOT_DIR/scripts/guard-todo-decomposition.mjs" ]; then
     if ! todo_guard_output="$(
       cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-      node scripts/guard-todo-decomposition.mjs "$todo_guard_path" --breakdown "$PHASE_LOOP_TODO_BREAKDOWN" 2>&1
+      node "$ROOT_DIR/scripts/guard-todo-decomposition.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" --todo "$todo_guard_path" --breakdown "$PHASE_LOOP_TODO_BREAKDOWN" 2>&1
     )"; then
       local todo_repair_output todo_repair_guard_output
       if todo_repair_output="$(try_deterministic_todo_decomposition_repair "$run_stamp" 2>&1)"; then
         if todo_repair_guard_output="$(
           cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-          node scripts/guard-todo-decomposition.mjs "$todo_guard_path" --breakdown "$PHASE_LOOP_TODO_BREAKDOWN" 2>&1
+          node "$ROOT_DIR/scripts/guard-todo-decomposition.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" --todo "$todo_guard_path" --breakdown "$PHASE_LOOP_TODO_BREAKDOWN" 2>&1
         )"; then
           printf '%s run=%s completed_todo_removal_guard_repaired=true repair=%s guard=%s\n' "$(now_utc)" "$run_stamp" "$todo_repair_output" "$todo_repair_guard_output" >> "$SUPERVISOR_LOG"
           finalize_phase_loop_todo_snapshot_removal "$run_stamp" "$todo_backup"
@@ -2428,13 +2429,13 @@ PY
         printf '%s run=%s completed_todo_removal_repair_not_applied=true result=%s\n' "$(now_utc)" "$run_stamp" "${todo_repair_output:-<no output>}" >> "$SUPERVISOR_LOG"
       fi
       local release_ops_blocker_output release_ops_blocker_guard_output
-      if [ -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/phase-loop-release-ops-blocker.mjs" ] && release_ops_blocker_output="$(
+      if [ -f "$ROOT_DIR/scripts/phase-loop-release-ops-blocker.mjs" ] && release_ops_blocker_output="$(
         cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-        node scripts/phase-loop-release-ops-blocker.mjs "$TODO_CLAIM_FILE" "$todo_backup" "$PHASE_LOOP_TODO" "$run_stamp" "$(now_utc)"
+        node "$ROOT_DIR/scripts/phase-loop-release-ops-blocker.mjs" "$TODO_CLAIM_FILE" "$todo_backup" "$PHASE_LOOP_TODO" "$run_stamp" "$(now_utc)"
       )"; then
         if release_ops_blocker_guard_output="$(
           cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-          node scripts/guard-todo-decomposition.mjs "$todo_guard_path" --breakdown "$PHASE_LOOP_TODO_BREAKDOWN" 2>&1
+          node "$ROOT_DIR/scripts/guard-todo-decomposition.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" --todo "$todo_guard_path" --breakdown "$PHASE_LOOP_TODO_BREAKDOWN" 2>&1
         )"; then
           printf '%s run=%s completed_release_ops_replaced_with_blocker=true result=%s guard=%s\n' "$(now_utc)" "$run_stamp" "$release_ops_blocker_output" "$release_ops_blocker_guard_output" >> "$SUPERVISOR_LOG"
           finalize_phase_loop_todo_snapshot_removal "$run_stamp" "$todo_backup"
@@ -2453,7 +2454,7 @@ PY
       printf '%s run=%s completed_todo_removal_integrated_supervisor_control=true exit=%s result=%s\n' "$(now_utc)" "$run_stamp" "$integrated_supervisor_status" "${integrated_supervisor_output:-<no output>}" >> "$SUPERVISOR_LOG"
       if integrated_supervisor_guard_output="$(
         cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-        node scripts/guard-todo-decomposition.mjs "$todo_guard_path" --breakdown "$PHASE_LOOP_TODO_BREAKDOWN" 2>&1
+        node "$ROOT_DIR/scripts/guard-todo-decomposition.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" --todo "$todo_guard_path" --breakdown "$PHASE_LOOP_TODO_BREAKDOWN" 2>&1
       )"; then
         printf '%s run=%s completed_todo_removal_guard_repaired_by_integrated_supervisor=true guard=%s\n' "$(now_utc)" "$run_stamp" "$integrated_supervisor_guard_output" >> "$SUPERVISOR_LOG"
         finalize_phase_loop_todo_snapshot_removal "$run_stamp" "$todo_backup"
@@ -2612,7 +2613,7 @@ PY
   guard_stderr="$(mktemp)"
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-    pnpm --workspace-root guard:runtime-release-readiness >"$guard_stdout" 2>"$guard_stderr"
+    node "$ROOT_DIR/scripts/guard-runtime-release-readiness.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" >"$guard_stdout" 2>"$guard_stderr"
   )
   guard_status=$?
   if [ "$guard_status" -eq 0 ]; then
@@ -2656,7 +2657,7 @@ audit.safety_readiness_evidence_invalidation = {
 };
 fs.writeFileSync(auditPath, `${JSON.stringify(audit, null, 2)}\n`);
 NODE
-    pnpm --workspace-root guard:runtime-release-readiness >/tmp/brownie-runtime-readiness-fingerprint-fallback.out 2>/tmp/brownie-runtime-readiness-fingerprint-fallback.err
+    node "$ROOT_DIR/scripts/guard-runtime-release-readiness.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" >/tmp/brownie-runtime-readiness-fingerprint-fallback.out 2>/tmp/brownie-runtime-readiness-fingerprint-fallback.err
   )
   local status=$?
   if [ "$status" -ne 0 ]; then
@@ -2702,7 +2703,7 @@ PY
   guard_stderr="$(mktemp)"
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-    pnpm --workspace-root guard:release-contract >"$guard_stdout" 2>"$guard_stderr"
+    node "$ROOT_DIR/scripts/guard-release-contract.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" >"$guard_stdout" 2>"$guard_stderr"
   )
   guard_status=$?
   if [ "$guard_status" -eq 0 ]; then
@@ -2759,7 +2760,7 @@ console.log(JSON.stringify({
   readiness_audit_content_sha256: nextHash
 }, null, 2));
 NODE
-    pnpm --workspace-root guard:release-contract >/tmp/brownie-release-contract-readiness-audit-hash-fallback.out 2>/tmp/brownie-release-contract-readiness-audit-hash-fallback.err
+    node "$ROOT_DIR/scripts/guard-release-contract.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" >/tmp/brownie-release-contract-readiness-audit-hash-fallback.out 2>/tmp/brownie-release-contract-readiness-audit-hash-fallback.err
   )
   local status=$?
   if [ "$status" -ne 0 ]; then
@@ -2810,7 +2811,7 @@ PY
   esac
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-    pnpm --workspace-root guard:runtime-release-readiness >/tmp/brownie-runtime-readiness-verified-completion.out 2>/tmp/brownie-runtime-readiness-verified-completion.err
+    node "$ROOT_DIR/scripts/guard-runtime-release-readiness.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" >/tmp/brownie-runtime-readiness-verified-completion.out 2>/tmp/brownie-runtime-readiness-verified-completion.err
   )
   local status=$?
   if [ "$status" -ne 0 ]; then
@@ -6294,12 +6295,12 @@ PY
 try_deterministic_todo_decomposition_repair() {
   local run_stamp="$1"
   local claim_path="${2:-$TODO_CLAIM_FILE}"
-  if [ ! -f "$claim_path" ] || [ ! -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/repair-todo-decomposition.mjs" ]; then
+  if [ ! -f "$claim_path" ] || [ ! -f "$ROOT_DIR/scripts/repair-todo-decomposition.mjs" ]; then
     return 2
   fi
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-    node scripts/repair-todo-decomposition.mjs \
+    BROWNIE_REPAIR_TODO_REPO_ROOT="$PHASE_LOOP_WORKSPACE_ROOT" node "$ROOT_DIR/scripts/repair-todo-decomposition.mjs" \
       --claim "$claim_path" \
       --todo "$PHASE_LOOP_TODO" \
       --breakdown "$PHASE_LOOP_TODO_BREAKDOWN" \
@@ -6313,13 +6314,13 @@ run_integrated_supervisor_control() {
   if [ "${PHASE_LOOP_SUPERVISOR_CONTROL_ACTIVE:-0}" = "1" ]; then
     return 2
   fi
-  if [ ! -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/phase-loop-supervisor-control.mjs" ]; then
+  if [ ! -f "$ROOT_DIR/scripts/phase-loop-supervisor-control.mjs" ]; then
     return 2
   fi
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
     PHASE_LOOP_SUPERVISOR_CONTROL_ACTIVE=1 \
-      node scripts/phase-loop-supervisor-control.mjs \
+      node "$ROOT_DIR/scripts/phase-loop-supervisor-control.mjs" \
         --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
         --repair \
         --no-start \
@@ -6743,7 +6744,7 @@ PY
   guard_stderr="$(mktemp "${TMPDIR:-/tmp}/brownie-todo-decomposition-guard.stderr.XXXXXX")"
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-    pnpm --workspace-root guard:todo-decomposition
+    node "$ROOT_DIR/scripts/guard-todo-decomposition.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" --todo "$PHASE_LOOP_TODO" --breakdown "$PHASE_LOOP_TODO_BREAKDOWN"
   ) > "$guard_stdout" 2> "$guard_stderr"
   guard_status=$?
   if [ "$guard_status" -eq 0 ]; then
@@ -6788,12 +6789,12 @@ PY
 
 validate_phase_loop_progress_integrity_after_runtime_apply() {
   local run_stamp="$1"
-  if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/phase-loop-progress-integrity.mjs" ]; then
+  if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$ROOT_DIR/scripts/phase-loop-progress-integrity.mjs" ]; then
     return 0
   fi
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-    node scripts/phase-loop-progress-integrity.mjs \
+    node "$ROOT_DIR/scripts/phase-loop-progress-integrity.mjs" \
       --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
       --claim "$TODO_CLAIM_FILE" \
       --todo "$PHASE_LOOP_TODO" \
@@ -6944,13 +6945,13 @@ validate_todo_queue_integrity_before_claim() {
   local run_stamp="${1:-unknown}"
   PHASE_LOOP_TODO_QUEUE_INTEGRITY_FAILED=0
   PHASE_LOOP_TODO_QUEUE_INTEGRITY_DETAIL=""
-  if [ ! -f "$PHASE_LOOP_TODO" ] || [ ! -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/phase-loop-todo-queue-integrity.mjs" ]; then
+  if [ ! -f "$PHASE_LOOP_TODO" ] || [ ! -f "$ROOT_DIR/scripts/phase-loop-todo-queue-integrity.mjs" ]; then
     return 0
   fi
   local validation_output
   if ! validation_output="$(
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-    node scripts/phase-loop-todo-queue-integrity.mjs \
+    node "$ROOT_DIR/scripts/phase-loop-todo-queue-integrity.mjs" \
       --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
       --todo "$PHASE_LOOP_TODO" 2>&1
   )"; then
@@ -6959,7 +6960,7 @@ validate_todo_queue_integrity_before_claim() {
       printf '%s todo_replan_record_reconstructed_before_claim=true result=%s\n' "$(now_utc)" "$replan_repair_output" >> "$SUPERVISOR_LOG"
       if revalidation_output="$(
         cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-        node scripts/phase-loop-todo-queue-integrity.mjs \
+        node "$ROOT_DIR/scripts/phase-loop-todo-queue-integrity.mjs" \
           --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
           --todo "$PHASE_LOOP_TODO" 2>&1
       )"; then
@@ -6972,7 +6973,7 @@ validate_todo_queue_integrity_before_claim() {
       printf '%s todo_contract_repaired_before_claim=true result=%s\n' "$(now_utc)" "$todo_contract_repair_output" >> "$SUPERVISOR_LOG"
       if revalidation_output="$(
         cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-        node scripts/phase-loop-todo-queue-integrity.mjs \
+        node "$ROOT_DIR/scripts/phase-loop-todo-queue-integrity.mjs" \
           --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
           --todo "$PHASE_LOOP_TODO" 2>&1
       )"; then
@@ -6989,7 +6990,7 @@ validate_todo_queue_integrity_before_claim() {
     printf '%s todo_queue_integrity_integrated_supervisor_control=true exit=%s result=%s\n' "$(now_utc)" "$integrated_supervisor_status" "${integrated_supervisor_output:-<no output>}" >> "$SUPERVISOR_LOG"
     if revalidation_output="$(
       cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-      node scripts/phase-loop-todo-queue-integrity.mjs \
+      node "$ROOT_DIR/scripts/phase-loop-todo-queue-integrity.mjs" \
         --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
         --todo "$PHASE_LOOP_TODO" 2>&1
     )"; then
@@ -8059,7 +8060,7 @@ PY
   fi
   if (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-    pnpm --workspace-root guard:todo-decomposition >/dev/null 2>&1
+    node "$ROOT_DIR/scripts/guard-todo-decomposition.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" --todo "$PHASE_LOOP_TODO" --breakdown "$PHASE_LOOP_TODO_BREAKDOWN" >/dev/null 2>&1
   ); then
     clear_repair_feedback
     printf '%s todo_repair_feedback_cleared reason=todo_decomposition_guard_passed\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
@@ -9608,7 +9609,7 @@ PY
 }
 
 phase_loop_require_implementation_pr_actor() {
-  local guard_script="$PHASE_LOOP_WORKSPACE_ROOT/scripts/phase-loop-pr-actor-guard.mjs"
+  local guard_script="$ROOT_DIR/scripts/phase-loop-pr-actor-guard.mjs"
   if [ ! -f "$guard_script" ]; then
     printf '%s implementation_pr_actor_guard_missing=true path=%s\n' "$(now_utc)" "$guard_script" >> "$SUPERVISOR_LOG"
     return 1
@@ -9635,7 +9636,7 @@ phase_loop_create_pr_for_progress() {
   fi
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-    pnpm --workspace-root phase-loop:implementation-preflight >/dev/null
+    node "$ROOT_DIR/scripts/phase-loop-actor-preflight.mjs" --role implementation >/dev/null
   ) || {
     printf '%s pr_create_skipped reason=implementation_preflight_failed\n' "$(now_utc)" >> "$SUPERVISOR_LOG"
     return 1
@@ -12778,6 +12779,31 @@ phase_loop_require_approved_controller_baseline() {
     return 78
   fi
   printf '%s controller_source_baseline_guard_passed=true baseline=%s result=%s\n' "$(now_utc)" "$PHASE_LOOP_APPROVED_CONTROLLER_BASELINE" "${output:-<no output>}" >> "$SUPERVISOR_LOG"
+  local control_plane_guard="$ROOT_DIR/scripts/phase-loop-control-plane-guard.mjs"
+  if [ ! -f "$control_plane_guard" ]; then
+    PHASE_LOOP_SOURCE_BASELINE_GUARD_OUTPUT="missing control-plane guard script: $control_plane_guard"
+    printf '%s controller_control_plane_guard_failed=true reason=guard_missing path=%s\n' "$(now_utc)" "$control_plane_guard" >> "$SUPERVISOR_LOG"
+    return 78
+  fi
+  set +e
+  output="$(
+    cd "$ROOT_DIR" || exit 70
+    node "$control_plane_guard" --repo "$ROOT_DIR" --baseline-ref "$PHASE_LOOP_APPROVED_CONTROLLER_BASELINE" 2>&1
+  )"
+  status=$?
+  set -e
+  if [ "$status" -ne 0 ]; then
+    PHASE_LOOP_SOURCE_BASELINE_GUARD_OUTPUT="$output"
+    printf '%s controller_control_plane_guard_failed=true baseline=%s result=%s\n' "$(now_utc)" "$PHASE_LOOP_APPROVED_CONTROLLER_BASELINE" "${output:-<no output>}" >> "$SUPERVISOR_LOG"
+    return 78
+  fi
+  PHASE_LOOP_CONTROL_PLANE_FINGERPRINT="$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["source_fingerprint"])' 2>/dev/null || true)"
+  if [[ ! "$PHASE_LOOP_CONTROL_PLANE_FINGERPRINT" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    PHASE_LOOP_SOURCE_BASELINE_GUARD_OUTPUT="control-plane guard returned no valid source fingerprint: ${output:-<no output>}"
+    printf '%s controller_control_plane_guard_failed=true reason=fingerprint_missing result=%s\n' "$(now_utc)" "${output:-<no output>}" >> "$SUPERVISOR_LOG"
+    return 78
+  fi
+  printf '%s controller_control_plane_guard_passed=true baseline=%s fingerprint=%s result=%s\n' "$(now_utc)" "$PHASE_LOOP_APPROVED_CONTROLLER_BASELINE" "$PHASE_LOOP_CONTROL_PLANE_FINGERPRINT" "${output:-<no output>}" >> "$SUPERVISOR_LOG"
   return 0
 }
 
@@ -12791,7 +12817,7 @@ phase_loop_rebaseline_stale_claim() {
   set +e
   output="$(
     cd "$ROOT_DIR" || exit 70
-    node scripts/phase-loop-claim-rebaseline.mjs rebaseline \
+    node "$ROOT_DIR/scripts/phase-loop-claim-rebaseline.mjs" rebaseline \
       --repo "$ROOT_DIR" \
       --state-dir "$STATE_DIR" \
       --claim "$TODO_CLAIM_FILE" \
@@ -12829,7 +12855,7 @@ write_runtime_execution_evidence() {
   set +e
   output="$(
     cd "$ROOT_DIR" || exit 70
-    node scripts/phase-loop-claim-rebaseline.mjs terminal-evidence \
+    node "$ROOT_DIR/scripts/phase-loop-claim-rebaseline.mjs" terminal-evidence \
       --stdout "$stdout_log" \
       --claim-snapshot "$claim_snapshot" \
       --output "$evidence_path" \
@@ -13337,8 +13363,9 @@ run_phase_loop_preflight() {
   local stage="${2:-general}"
   local output status
   local -a snapshot_args=()
-  if [ ! -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/phase-loop-preflight.mjs" ]; then
-    return 0
+  if [ ! -f "$ROOT_DIR/scripts/phase-loop-preflight.mjs" ]; then
+    printf '%s run=%s phase_loop_preflight_missing=true path=%s\n' "$(now_utc)" "$run_stamp" "$ROOT_DIR/scripts/phase-loop-preflight.mjs" >> "$SUPERVISOR_LOG"
+    return 78
   fi
   if [ -n "${PHASE_LOOP_TODO_SNAPSHOT_SOURCE:-}" ]; then
     snapshot_args=(--snapshot-source "$PHASE_LOOP_TODO_SNAPSHOT_SOURCE" --snapshot-audit "$PHASE_LOOP_TODO_SNAPSHOT_AUDIT_FILE")
@@ -13346,10 +13373,12 @@ run_phase_loop_preflight() {
   set +e
   output="$(
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-    node scripts/phase-loop-preflight.mjs \
+    node "$ROOT_DIR/scripts/phase-loop-preflight.mjs" \
       --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
       --todo "$PHASE_LOOP_TODO" \
       --breakdown "$PHASE_LOOP_TODO_BREAKDOWN" \
+      --control-plane-root "$ROOT_DIR" \
+      --controller-fingerprint "$PHASE_LOOP_CONTROL_PLANE_FINGERPRINT" \
       --claim "$TODO_CLAIM_FILE" \
       --stage "$stage" \
       "${snapshot_args[@]}"
@@ -13366,12 +13395,12 @@ raise SystemExit(0 if payload.get("valid", True) else 1)
     status=1
   fi
   if [ "$status" -ne 0 ]; then
-    if [ "$stage" = "pre-claim" ] && [ "${PHASE_LOOP_PRECLAIM_RECOVERY_ACTIVE:-0}" != "1" ] && [ -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/phase-loop-preclaim-recovery.mjs" ]; then
+    if [ "$stage" = "pre-claim" ] && [ "${PHASE_LOOP_PRECLAIM_RECOVERY_ACTIVE:-0}" != "1" ] && [ -f "$ROOT_DIR/scripts/phase-loop-preclaim-recovery.mjs" ]; then
       local recovery_output recovery_status
       set +e
       recovery_output="$(
         cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-        node scripts/phase-loop-preclaim-recovery.mjs \
+        node "$ROOT_DIR/scripts/phase-loop-preclaim-recovery.mjs" \
           --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
           --todo "$PHASE_LOOP_TODO" \
           --breakdown "$PHASE_LOOP_TODO_BREAKDOWN" \
@@ -14514,14 +14543,14 @@ PY
     local pre_guard_validator_schema_output pre_guard_validator_schema_status
     pre_guard_validator_schema_output="$(
       cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-      pnpm --workspace-root guard:validator-schema-assumptions 2>&1
+      node "$ROOT_DIR/scripts/guard-validator-schema-assumptions.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" 2>&1
     )"
     pre_guard_validator_schema_status=$?
     if [ "$pre_guard_validator_schema_status" -ne 0 ]; then
       local pre_guard_validator_repair_output pre_guard_validator_repair_status pre_guard_validator_repair_feedback
       pre_guard_validator_repair_output="$(
         cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-        node scripts/repair-validator-schema-assumptions.mjs 2>&1
+        node "$ROOT_DIR/scripts/repair-validator-schema-assumptions.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" 2>&1
       )"
       pre_guard_validator_repair_status=$?
       if [ "$pre_guard_validator_repair_status" -eq 0 ]; then
@@ -14598,7 +14627,7 @@ PY
   fi
   if ! (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-    pnpm --workspace-root guard:todo-decomposition >/dev/null 2>&1
+    node "$ROOT_DIR/scripts/guard-todo-decomposition.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" --todo "$PHASE_LOOP_TODO" --breakdown "$PHASE_LOOP_TODO_BREAKDOWN" >/dev/null 2>&1
   ); then
     local pre_runtime_todo_normalization
     if pre_runtime_todo_normalization="$(normalize_todo_decomposition_after_guard_failure 2>&1)"; then
@@ -14685,7 +14714,7 @@ PY
   }; then
     active_target_json_output="$(
       cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-      node scripts/guard-json-parse.mjs "$active_target_path" 2>&1
+      node "$ROOT_DIR/scripts/guard-json-parse.mjs" "$active_target_path" 2>&1
     )"
     active_target_json_status=$?
     if [ "$active_target_json_status" -ne 0 ]; then
@@ -14775,13 +14804,13 @@ PY
         local syntax_schema_guard_output syntax_schema_guard_status syntax_schema_repair_output syntax_schema_repair_status
         syntax_schema_guard_output="$(
           cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-          pnpm --workspace-root guard:validator-schema-assumptions 2>&1
+          node "$ROOT_DIR/scripts/guard-validator-schema-assumptions.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" 2>&1
         )"
         syntax_schema_guard_status=$?
         if [ "$syntax_schema_guard_status" -ne 0 ]; then
           syntax_schema_repair_output="$(
             cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-            node scripts/repair-validator-schema-assumptions.mjs 2>&1
+            node "$ROOT_DIR/scripts/repair-validator-schema-assumptions.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" 2>&1
           )"
           syntax_schema_repair_status=$?
           if [ "$syntax_schema_repair_status" -eq 0 ]; then
@@ -14836,10 +14865,10 @@ PY
       archive_stale_todo_claim "$run_stamp"
       return 76
     fi
-    if [ -f "$PHASE_LOOP_WORKSPACE_ROOT/scripts/guard-js-duplicate-exports.mjs" ]; then
+    if [ -f "$ROOT_DIR/scripts/guard-js-duplicate-exports.mjs" ]; then
       active_target_duplicate_exports_output="$(
         cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-        node scripts/guard-js-duplicate-exports.mjs "$active_target_path" 2>&1
+        node "$ROOT_DIR/scripts/guard-js-duplicate-exports.mjs" "$active_target_path" 2>&1
       )"
       active_target_duplicate_exports_status=$?
       if [ "$active_target_duplicate_exports_status" -ne 0 ]; then
@@ -15256,7 +15285,7 @@ PY
           local validator_schema_assumption_output validator_schema_assumption_status
           if validator_schema_assumption_output="$(
             cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-            pnpm --workspace-root guard:validator-schema-assumptions 2>&1
+            node "$ROOT_DIR/scripts/guard-validator-schema-assumptions.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" 2>&1
           )"; then
             validator_schema_assumption_status=0
           else
@@ -15266,7 +15295,7 @@ PY
             local validator_schema_repair_output validator_schema_repair_status
             if validator_schema_repair_output="$(
               cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-              node scripts/repair-validator-schema-assumptions.mjs 2>&1
+              node "$ROOT_DIR/scripts/repair-validator-schema-assumptions.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" 2>&1
             )"; then
               validator_schema_repair_status=0
             else
@@ -15336,7 +15365,7 @@ PY
       local todo_breakdown_patch_guard_output
       if todo_breakdown_patch_guard_output="$(
         cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-        pnpm --workspace-root guard:todo-decomposition 2>&1
+        node "$ROOT_DIR/scripts/guard-todo-decomposition.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" --todo "$PHASE_LOOP_TODO" --breakdown "$PHASE_LOOP_TODO_BREAKDOWN" 2>&1
       )"; then
         workspace_after="$(git_workspace_fingerprint)"
         clear_repair_feedback
@@ -15387,7 +15416,7 @@ PY
       local todo_patch_guard_output
       if todo_patch_guard_output="$(
         cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-        pnpm --workspace-root guard:todo-decomposition 2>&1
+        node "$ROOT_DIR/scripts/guard-todo-decomposition.mjs" --repo "$PHASE_LOOP_WORKSPACE_ROOT" --todo "$PHASE_LOOP_TODO" --breakdown "$PHASE_LOOP_TODO_BREAKDOWN" 2>&1
       )"; then
         workspace_after="$(git_workspace_fingerprint)"
         clear_repair_feedback

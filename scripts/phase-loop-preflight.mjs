@@ -22,6 +22,8 @@ function parseArgs(argv) {
     claim: '.brownie/private/phase-loop/todo-claims/current.json',
     todo: '.brownie/todo.md',
     breakdown: '.brownie/todo-breakdown.md',
+    controlPlaneRoot: null,
+    controllerFingerprint: null,
     snapshotSource: null,
     snapshotAudit: null,
     skipCommands: false
@@ -38,6 +40,10 @@ function parseArgs(argv) {
       args.todo = argv[++index];
     } else if (arg === '--breakdown') {
       args.breakdown = argv[++index];
+    } else if (arg === '--control-plane-root') {
+      args.controlPlaneRoot = argv[++index];
+    } else if (arg === '--controller-fingerprint') {
+      args.controllerFingerprint = argv[++index];
     } else if (arg === '--snapshot-source') {
       args.snapshotSource = argv[++index];
     } else if (arg === '--snapshot-audit') {
@@ -119,7 +125,7 @@ function sha256Text(text) {
   return `sha256:${crypto.createHash('sha256').update(text).digest('hex')}`;
 }
 
-function todoSnapshotAudit({ repoRoot, todoPath, todoText, breakdownPath, breakdownText, snapshotSource, snapshotAuditPath, errors }) {
+function todoSnapshotAudit({ repoRoot, todoPath, todoText, breakdownPath, breakdownText, snapshotSource, snapshotAuditPath, controllerFingerprint, errors }) {
   if (!snapshotSource) {
     return null;
   }
@@ -156,6 +162,7 @@ function todoSnapshotAudit({ repoRoot, todoPath, todoText, breakdownPath, breakd
       && audit.snapshot_path === path.resolve(repoRoot, todoPath)
       && audit.snapshot_sha256 === snapshotSha256
       && audit.queue_cas === queueCas
+      && (!controllerFingerprint || audit.controller_source_fingerprint === controllerFingerprint)
       && Number.isInteger(audit.generation)
       && audit.generation > 0
       && audit.mutation?.kind === 'completed_todo_removal'
@@ -185,6 +192,7 @@ function todoSnapshotAudit({ repoRoot, todoPath, todoText, breakdownPath, breakd
     breakdown_path: path.resolve(repoRoot, breakdownPath),
     breakdown_sha256: breakdownSha256,
     queue_cas: queueCas,
+    controller_source_fingerprint: controllerFingerprint ?? null,
     generation,
     ...(mutation ? { mutation } : {})
   };
@@ -425,12 +433,13 @@ function validateDirtyDelivery(repoRoot, todoText, errors) {
   }
 }
 
-function validateRequiredCommands(repoRoot, todoPath, breakdownPath, errors) {
+function validateRequiredCommands(repoRoot, todoPath, breakdownPath, controlPlaneRoot, errors) {
+  const controlScripts = path.join(controlPlaneRoot, 'scripts');
   const commands = [
-    ['node', ['scripts/guard-todo-decomposition.mjs', '--todo', todoPath, '--breakdown', breakdownPath]],
-    ['node', ['scripts/phase-loop-todo-queue-integrity.mjs', '--repo', repoRoot, '--todo', todoPath, '--breakdown', breakdownPath]],
-    ['node', ['scripts/guard-release-contract.mjs']],
-    ['node', ['scripts/guard-runtime-release-readiness.mjs']]
+    ['node', [path.join(controlScripts, 'guard-todo-decomposition.mjs'), '--repo', repoRoot, '--todo', todoPath, '--breakdown', breakdownPath]],
+    ['node', [path.join(controlScripts, 'phase-loop-todo-queue-integrity.mjs'), '--repo', repoRoot, '--todo', todoPath, '--breakdown', breakdownPath]],
+    ['node', [path.join(controlScripts, 'guard-release-contract.mjs'), '--repo', repoRoot]],
+    ['node', [path.join(controlScripts, 'guard-runtime-release-readiness.mjs'), '--repo', repoRoot]]
   ];
   const results = [];
   for (const [command, args] of commands) {
@@ -452,6 +461,7 @@ function validateRequiredCommands(repoRoot, todoPath, breakdownPath, errors) {
 
 export function validatePhaseLoopPreflight(options = {}) {
   const repoRoot = path.resolve(options.repo ?? defaultRepoRoot);
+  const controlPlaneRoot = path.resolve(options.controlPlaneRoot ?? repoRoot);
   const errors = [];
   const warnings = [];
   const todoPath = options.todo ?? '.brownie/todo.md';
@@ -470,11 +480,12 @@ export function validatePhaseLoopPreflight(options = {}) {
       breakdownText,
       snapshotSource: options.snapshotSource,
       snapshotAuditPath: options.snapshotAudit,
+      controllerFingerprint: options.controllerFingerprint,
       errors
     });
   validateReleaseEvidence(repoRoot, errors);
   validateDirtyDelivery(repoRoot, todoText, errors);
-  const commandResults = options.skipCommands ? [] : validateRequiredCommands(repoRoot, todoPath, breakdownPath, errors);
+  const commandResults = options.skipCommands ? [] : validateRequiredCommands(repoRoot, todoPath, breakdownPath, controlPlaneRoot, errors);
 
   return {
     schema_version: 1,

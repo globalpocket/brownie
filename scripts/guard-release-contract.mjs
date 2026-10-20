@@ -406,7 +406,11 @@ function isMainModule() {
 }
 
 if (isMainModule()) {
-  const result = runReleaseContractGuard();
+  const argv = process.argv.slice(2);
+  const repoIndex = argv.indexOf('--repo');
+  const result = runReleaseContractGuard({
+    repoRoot: repoIndex >= 0 ? argv[repoIndex + 1] : undefined
+  });
   if (result.errors.length > 0) {
     console.error('Runtime release contract guard failed:');
     for (const error of result.errors) {

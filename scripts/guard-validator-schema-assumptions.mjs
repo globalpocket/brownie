@@ -51,9 +51,13 @@ export function validateValidatorSchemaAssumptions({
 }
 
 if (process.argv[1] === __filename) {
+  const argv = process.argv.slice(2);
+  const repoIndex = argv.indexOf('--repo');
+  const positional = argv.filter((value, index) => value !== '--repo' && index !== repoIndex + 1);
   const errors = validateValidatorSchemaAssumptions({
-    validatorPath: process.argv[2] ?? 'scripts/validate-audit-schema.mjs',
-    targetPath: process.argv[3] ?? 'docs/architecture/runtime-release-readiness-audit.json'
+    repoRoot: repoIndex >= 0 ? argv[repoIndex + 1] : defaultRepoRoot,
+    validatorPath: positional[0] ?? 'scripts/validate-audit-schema.mjs',
+    targetPath: positional[1] ?? 'docs/architecture/runtime-release-readiness-audit.json'
   });
   if (errors.length > 0) {
     console.error('Validator schema assumption guard failed:');

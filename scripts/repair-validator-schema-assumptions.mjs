@@ -179,9 +179,13 @@ export function repairValidatorSchemaAssumptions({
 }
 
 if (process.argv[1] === __filename) {
+  const argv = process.argv.slice(2);
+  const repoIndex = argv.indexOf('--repo');
+  const positional = argv.filter((value, index) => value !== '--repo' && index !== repoIndex + 1);
   const result = repairValidatorSchemaAssumptions({
-    validatorPath: process.argv[2] ?? 'scripts/validate-audit-schema.mjs',
-    targetPath: process.argv[3] ?? 'docs/architecture/runtime-release-readiness-audit.json'
+    repoRoot: repoIndex >= 0 ? argv[repoIndex + 1] : defaultRepoRoot,
+    validatorPath: positional[0] ?? 'scripts/validate-audit-schema.mjs',
+    targetPath: positional[1] ?? 'docs/architecture/runtime-release-readiness-audit.json'
   });
   console.log(JSON.stringify(result, null, 2));
   process.exit(result.repairable ? 0 : 1);

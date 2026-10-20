@@ -944,13 +944,16 @@ export function validateTodoDecomposition(repoRoot = defaultRepoRoot, todoPath =
 
 if (process.argv[1] === __filename) {
   const argv = process.argv.slice(2);
+  let repoRoot = defaultRepoRoot;
   let positionalTodo = null;
   let explicitTodo = null;
   let breakdownPath = defaultBreakdownPath;
   let scoreMode = false;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === '--todo') {
+    if (arg === '--repo') {
+      repoRoot = argv[++index] ?? defaultRepoRoot;
+    } else if (arg === '--todo') {
       explicitTodo = argv[++index] ?? defaultTodoPath;
     } else if (arg === '--breakdown') {
       breakdownPath = argv[++index] ?? defaultBreakdownPath;
@@ -962,10 +965,10 @@ if (process.argv[1] === __filename) {
   }
   const actualTodoPath = explicitTodo ?? positionalTodo ?? defaultTodoPath;
   if (scoreMode) {
-    console.log(JSON.stringify(scoreTodoDecompositionText(fs.readFileSync(path.resolve(defaultRepoRoot, actualTodoPath), 'utf8')), null, 2));
+    console.log(JSON.stringify(scoreTodoDecompositionText(fs.readFileSync(path.resolve(repoRoot, actualTodoPath), 'utf8')), null, 2));
     process.exit(0);
   }
-  const errors = validateTodoDecomposition(defaultRepoRoot, actualTodoPath, breakdownPath);
+  const errors = validateTodoDecomposition(repoRoot, actualTodoPath, breakdownPath);
   if (errors.length > 0) {
     console.error('TODO decomposition guard failed:');
     for (const error of errors) {

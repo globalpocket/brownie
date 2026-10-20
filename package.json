@@ -55,6 +55,7 @@
     "guard:phase-loop-pr-author:test": "node --test scripts/phase-loop-pr-author-guard.test.mjs",
     "guard:phase-loop-source-baseline": "node scripts/phase-loop-source-baseline-guard.mjs",
     "guard:phase-loop-source-baseline:test": "node --test scripts/phase-loop-source-baseline-guard.test.mjs",
+    "guard:phase-loop-control-plane:test": "node --test scripts/phase-loop-control-plane-guard.test.mjs",
     "guard:phase-loop-embedded-python": "node scripts/guard-phase-loop-embedded-python.mjs",
     "guard:phase-loop-embedded-python:test": "node --test scripts/guard-phase-loop-embedded-python.test.mjs",
     "guard:brownie-work-product": "node scripts/guard-brownie-work-product.mjs",
