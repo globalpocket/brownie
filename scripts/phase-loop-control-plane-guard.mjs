@@ -30,26 +30,35 @@ function gitShow(repoRoot, baselineRef, relativePath) {
 
 function readManifest(repoRoot) {
   const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, manifestPath), 'utf8'));
-  const paths = manifest.control_plane_paths;
-  if (!Array.isArray(paths) || paths.length === 0) {
-    throw new Error(`${manifestPath}.control_plane_paths must be a non-empty array`);
-  }
-  const unique = new Set(paths);
-  if (unique.size !== paths.length) {
-    throw new Error(`${manifestPath}.control_plane_paths must not contain duplicates`);
-  }
-  if (paths.some((value) => typeof value !== 'string' || !value || value.startsWith('/') || value.includes('..'))) {
-    throw new Error(`${manifestPath}.control_plane_paths must contain repository-relative paths`);
-  }
-  if (paths.some((value, index) => index > 0 && paths[index - 1].localeCompare(value) >= 0)) {
-    throw new Error(`${manifestPath}.control_plane_paths must be sorted`);
-  }
-  const sourcePaths = new Set(manifest.controller_source_paths ?? []);
+  const validatePaths = (field) => {
+    const paths = manifest[field];
+    if (!Array.isArray(paths) || paths.length === 0) {
+      throw new Error(`${manifestPath}.${field} must be a non-empty array`);
+    }
+    const unique = new Set(paths);
+    if (unique.size !== paths.length) {
+      throw new Error(`${manifestPath}.${field} must not contain duplicates`);
+    }
+    if (paths.some((value) => typeof value !== 'string' || !value || value.startsWith('/') || value.includes('..'))) {
+      throw new Error(`${manifestPath}.${field} must contain repository-relative paths`);
+    }
+    if (paths.some((value, index) => index > 0 && paths[index - 1].localeCompare(value) >= 0)) {
+      throw new Error(`${manifestPath}.${field} must be sorted`);
+    }
+    return paths;
+  };
+  const sourcePaths = new Set(validatePaths('controller_source_paths'));
+  const paths = validatePaths('control_plane_paths');
   const unmanifested = paths.filter((value) => !sourcePaths.has(value));
   if (unmanifested.length > 0) {
     throw new Error(`${manifestPath}.control_plane_paths must be covered by controller_source_paths: ${unmanifested.join(', ')}`);
   }
   return paths;
+}
+
+export function validateManifestOrdering({ repoRoot = defaultRepoRoot } = {}) {
+  readManifest(path.resolve(repoRoot));
+  return { ok: true, manifest_path: manifestPath };
 }
 
 export function inspectControlPlaneSource({
@@ -108,6 +117,15 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename
   const baselineIndex = argv.indexOf('--baseline-ref');
   const repoRoot = repoIndex >= 0 ? argv[repoIndex + 1] : defaultRepoRoot;
   const baselineRef = baselineIndex >= 0 ? argv[baselineIndex + 1] : 'origin/main';
+  if (argv.includes('--validate-manifest-order-only')) {
+    try {
+      console.log(JSON.stringify(validateManifestOrdering({ repoRoot }), null, 2));
+      process.exit(0);
+    } catch (error) {
+      console.error(String(error.message ?? error));
+      process.exit(78);
+    }
+  }
   const result = inspectControlPlaneSource({ repoRoot, baselineRef });
   const output = JSON.stringify(result, null, 2);
   if (result.ok) {

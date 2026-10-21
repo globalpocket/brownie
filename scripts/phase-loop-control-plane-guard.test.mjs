@@ -68,6 +68,20 @@ test('fails closed when a control-plane path is absent from the approved baselin
   assert(result.errors.some((error) => error.includes('missing-control-plane.mjs')), JSON.stringify(result));
 });
 
+test('fails closed when either production manifest path list is unsorted', () => {
+  for (const field of ['controller_source_paths', 'control_plane_paths']) {
+    const repo = makeRepository();
+    const manifestPath = path.join(repo, controllerSourceManifestPath);
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    manifest[field] = [...manifest[field]].reverse();
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+    const result = inspectControlPlaneSource({ repoRoot: repo, baselineRef: 'origin/main' });
+    assert.equal(result.ok, false);
+    assert(result.errors.some((error) => error.includes(`${controllerSourceManifestPath}.${field} must be sorted`)), JSON.stringify(result));
+  }
+});
+
 test('controller routes control-plane execution through ROOT_DIR and never workspace scripts', () => {
   const controller = fs.readFileSync(path.join(repositoryRoot, 'phase-loop.sh'), 'utf8');
   const preflight = controller.indexOf('run_phase_loop_preflight()');
