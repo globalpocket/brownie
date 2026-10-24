@@ -512,6 +512,31 @@ impl FakeLlm {
                 ),
             };
         }
+        // A selected Patch-only leaf is also an explicit runtime contract.
+        // Keep the fake provider's deterministic proposal within the selected
+        // target set instead of allowing generic recovery to read or write
+        // README.md. The runtime records this as a proposal; it is not an
+        // immediate filesystem mutation.
+        if let Some(paths) = extract_selected_patch_only_targets(&prompt_text) {
+            let intent = serde_json::json!({
+                "tool_requests": paths.into_iter().map(|path| serde_json::json!({
+                    "tool_id": "workspace.write",
+                    "reason": "Propose a change only for the selected bounded Patch-only leaf target.",
+                    "input": {
+                        "path": path,
+                        "operation": "replace_file",
+                        "content": "// Brownie bounded Patch-only proposal.\n"
+                    }
+                })).collect::<Vec<_>>()
+            });
+            return LlmResponse {
+                content: format!(
+                    "Fake LLM bounded Patch-only leaf request with {} messages.\n\n```brownie-tool-intent\n{}\n```",
+                    request.messages.len(),
+                    serde_json::to_string_pretty(&intent).expect("fake intent serializes")
+                ),
+            };
+        }
         if prompt.contains("tool execution:")
             && prompt.contains("mcp.github.search_code")
             && prompt.contains("completed")
@@ -743,6 +768,14 @@ impl FakeLlm {
 }
 
 fn extract_selected_create_only_targets(prompt_text: &str) -> Option<Vec<String>> {
+    extract_selected_bounded_targets(prompt_text, "create only")
+}
+
+fn extract_selected_patch_only_targets(prompt_text: &str) -> Option<Vec<String>> {
+    extract_selected_bounded_targets(prompt_text, "patch only")
+}
+
+fn extract_selected_bounded_targets(prompt_text: &str, marker: &str) -> Option<Vec<String>> {
     // Runtime requests combine multiple messages. The stable instruction
     // message can mention this heading before the effective prompt, so select
     // the last occurrence, which is the concrete invocation contract.
@@ -757,7 +790,6 @@ fn extract_selected_create_only_targets(prompt_text: &str) -> Option<Vec<String>
             return None;
         }
         let lowered = line.to_ascii_lowercase();
-        let marker = "create only";
         let start = lowered.find(marker)? + marker.len();
         let remainder = &line[start..];
         let paths = remainder
@@ -1431,6 +1463,26 @@ mod tests {
 
         assert!(content.contains("scripts/release-artifact-roundtrip-e2e.test.mjs"));
         assert!(content.contains("create_file"));
+        assert!(!content.contains("README.md"));
+        assert!(!content.contains("workspace.read"));
+    }
+
+    #[test]
+    fn fake_llm_honors_selected_patch_only_leaf_targets_over_repair_feedback() {
+        let request = LlmRequest {
+            model: FAKE_LLM_MODEL.into(),
+            messages: vec![LlmMessage {
+                role: "user".into(),
+                content: "Tool Execution:\n- workspace.read: Completed bytes_read=42\n\n## Previous Repair Feedback\n- invalid_patch_proposal_0: path=README.md\n\n## Selected TODO\n\n- [ ] E-23b-target: Patch only `scripts/release-artifact-roundtrip-e2e.test.mjs`:\n  Route: implementation."
+                    .into(),
+            }],
+        };
+
+        let content = FakeLlm::complete(&request).content;
+
+        assert!(content.contains("workspace.write"));
+        assert!(content.contains("replace_file"));
+        assert!(content.contains("scripts/release-artifact-roundtrip-e2e.test.mjs"));
         assert!(!content.contains("README.md"));
         assert!(!content.contains("workspace.read"));
     }
