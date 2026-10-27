@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { recordDelegationAdmission } from './phase-loop-delegation-admission.mjs';
+import { delegationAdmissionStatus, recordDelegationAdmission } from './phase-loop-delegation-admission.mjs';
 
 function fixture(feedback) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-delegation-admission-'));
@@ -26,6 +26,16 @@ test('admits an existing brownie-agent controller-maintenance handoff without a 
   assert.equal(result.record.required_actor, 'brownie-agent');
   assert.equal(result.record.alternative_unavailable, true);
   assert.equal(result.record.authority, 'existing_controller_maintenance_implementation_policy');
+  assert.equal(result.record.acknowledgement_due_at, '2026-10-18T03:30:00.000Z');
+  assert.deepEqual(delegationAdmissionStatus({ ...paths, now: '2026-10-18T03:10:00.000Z' }), {
+    ok: true,
+    pending: true,
+    state: 'awaiting_acknowledgement',
+    required_actor: 'brownie-agent',
+    acknowledgement_due_at: '2026-10-18T03:30:00.000Z',
+    admission_id: result.record.admission_id
+  });
+  assert.equal(delegationAdmissionStatus({ ...paths, now: '2026-10-18T03:30:00.000Z' }).state, 'overdue');
   const second = recordDelegationAdmission({ ...paths, now: '2026-10-18T03:01:00.000Z' });
   assert.deepEqual(second, { ok: true, recorded: false, reason: 'already_received', record: result.record });
 });
@@ -45,4 +55,7 @@ test('controller records handoff admission before preserving the fail-closed pen
   assert.match(controller, /phase-loop-delegation-admission\.mjs.*record/us);
   assert.match(controller, /delegation_admission_failed/u);
   assert.match(controller, /required_actor.*brownie-agent/u);
+  assert.match(controller, /phase_loop_delegation_blocker_detail\(\)/u);
+  assert.match(controller, /brownie-agent implementation delegation is \{phase\}/u);
+  assert.match(controller, /brownie-agent-delegation-\$run_stamp/u);
 });

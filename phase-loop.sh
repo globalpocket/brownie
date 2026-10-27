@@ -727,6 +727,31 @@ raise SystemExit(0 if pending else 1)
 PY
 }
 
+phase_loop_delegation_blocker_detail() {
+  local delegation_status
+  if ! delegation_status="$(node "$ROOT_DIR/scripts/phase-loop-delegation-admission.mjs" status --feedback "$TODO_REPAIR_FEEDBACK_FILE" --audit "$TODO_CLAIM_DIR/delegation-admission.jsonl" 2>&1)"; then
+    printf 'brownie-agent delegation state is unreadable; fail closed until its admission record is repaired. detail=%s' "${delegation_status:-<no output>}"
+    return 0
+  fi
+  python3 - "$delegation_status" <<'PY'
+import json
+import sys
+
+try:
+    state = json.loads(sys.argv[1])
+except Exception:
+    print("brownie-agent delegation state is malformed; fail closed until its admission record is repaired.")
+    raise SystemExit(0)
+
+if state.get("ok") and state.get("pending"):
+    phase = state.get("state", "awaiting_acknowledgement")
+    due = state.get("acknowledgement_due_at", "unknown")
+    print(f"brownie-agent implementation delegation is {phase}; acknowledgement with implementation PR URL or concrete blocker is required by {due}. Phase-loop will not retry this TODO.")
+else:
+    print("brownie-agent delegation is pending but its admission state is unavailable; fail closed until repaired.")
+PY
+}
+
 todo_contract_replan_feedback_pending_item() {
   if [ ! -f "$PHASE_LOOP_TODO" ] || [ ! -f "$TODO_REPAIR_FEEDBACK_FILE" ]; then
     return 0
@@ -14758,6 +14783,12 @@ PY
       printf '%s brownie_owned_blocker_refinement_request_created todo=%s breakdown=%s\n' "$(now_utc)" "$PHASE_LOOP_TODO" "$PHASE_LOOP_TODO_BREAKDOWN" >> "$SUPERVISOR_LOG"
     elif todo_queue_has_release_ops_blockers && ensure_release_ops_blocker_decomposition_request && claim_first_pending_todo "$run_stamp"; then
       printf '%s release_ops_blocker_decomposition_request_created todo=%s breakdown=%s\n' "$(now_utc)" "$PHASE_LOOP_TODO" "$PHASE_LOOP_TODO_BREAKDOWN" >> "$SUPERVISOR_LOG"
+    elif phase_loop_delegation_pending; then
+      detail="$(phase_loop_delegation_blocker_detail)"
+      printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+      write_status "blocked" "$detail" "brownie-agent-delegation-$run_stamp" "0" "${CONSECUTIVE_FAILURES:-0}"
+      write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"brownie_agent_delegation_pending"}'
+      return 65
     elif todo_queue_only_explicit_blockers; then
       detail="No implementable TODO remains; pending queue contains only explicit owner-controlled blocker TODOs. Phase-loop is stopped until owner/review evidence changes."
       printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
