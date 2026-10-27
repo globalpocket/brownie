@@ -36,8 +36,21 @@ test('admits an existing brownie-agent controller-maintenance handoff without a 
     admission_id: result.record.admission_id
   });
   assert.equal(delegationAdmissionStatus({ ...paths, now: '2026-10-18T03:30:00.000Z' }).state, 'overdue');
+  // Compatibility for an audit record written before deadline persistence was
+  // introduced: the receipt timestamp remains the authoritative clock.
+  const legacy = { ...result.record };
+  delete legacy.acknowledgement_due_at;
+  fs.writeFileSync(paths.auditPath, `${JSON.stringify(legacy)}\n`);
+  assert.deepEqual(delegationAdmissionStatus({ ...paths, now: '2026-10-18T03:10:00.000Z' }), {
+    ok: true,
+    pending: true,
+    state: 'awaiting_acknowledgement',
+    required_actor: 'brownie-agent',
+    acknowledgement_due_at: '2026-10-18T03:30:00.000Z',
+    admission_id: result.record.admission_id
+  });
   const second = recordDelegationAdmission({ ...paths, now: '2026-10-18T03:01:00.000Z' });
-  assert.deepEqual(second, { ok: true, recorded: false, reason: 'already_received', record: result.record });
+  assert.deepEqual(second, { ok: true, recorded: false, reason: 'already_received', record: legacy });
 });
 
 test('does not admit unrelated or malformed handoffs as implementation work', () => {

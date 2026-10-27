@@ -92,7 +92,15 @@ export function delegationAdmissionStatus({ feedbackPath, auditPath, now = new D
     entry?.phase === 'received' && entry?.feedback_sha256 === delegationFingerprint(feedback)
   ));
   if (!record) return { ok: false, code: 'delegation_admission_missing', pending: true };
-  const dueAt = Date.parse(record.acknowledgement_due_at ?? '');
+  const receivedAt = Date.parse(record.at ?? '');
+  // Admission records existed before acknowledgement deadlines were added.
+  // Derive their deadline from the immutable receipt timestamp instead of
+  // treating a valid in-flight handoff as an unrepairable controller error.
+  // New records always persist this value; this branch is a read-only,
+  // deterministic migration for the existing audit trail.
+  const dueAt = record.acknowledgement_due_at
+    ? Date.parse(record.acknowledgement_due_at)
+    : (Number.isNaN(receivedAt) ? Number.NaN : receivedAt + DEFAULT_ACKNOWLEDGEMENT_TIMEOUT_MS);
   const observedAt = Date.parse(now);
   if (Number.isNaN(dueAt) || Number.isNaN(observedAt)) {
     return { ok: false, code: 'delegation_admission_clock_invalid', pending: true };
