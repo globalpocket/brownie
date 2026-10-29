@@ -127,3 +127,18 @@ jobs:
           BROWNIE_RELEASE_ROUNDTRIP_DOWNLOAD_ROOT: roundtrip-download
           BROWNIE_RELEASE_ROUNDTRIP_TARGET: ${{ matrix.target }}
         run: corepack pnpm --workspace-root release:artifact-roundtrip:test
+
+      - name: Run downloaded artifact Runtime journey
+        env:
+          BROWNIE_RELEASE_RUNTIME_JOURNEY_DOWNLOAD_ROOT: roundtrip-download
+          BROWNIE_RELEASE_RUNTIME_JOURNEY_TARGET: ${{ matrix.target }}
+          BROWNIE_RELEASE_RUNTIME_JOURNEY_EVIDENCE_PATH: roundtrip-download/runtime-journey-evidence.json
+        run: corepack pnpm --workspace-root release:artifact-runtime-journey:test
+
+      - name: Upload Runtime journey evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-journey-${{ matrix.target }}
+          path: roundtrip-download/runtime-journey-evidence.json
+          if-no-files-found: error
+          retention-days: 7
