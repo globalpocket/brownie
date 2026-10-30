@@ -4713,6 +4713,104 @@ assert "E-exact" not in todo, todo
 assert "  fixture_path: fixtureRoot,\n  lifecycle_evidence: lifecycleEvidence,\n  commands," in target, target
 PY
 
+# A GitHub squash merge deliberately creates different commit identities for
+# the reviewed baseline and the implementation branch while preserving their
+# full tracked trees.  The controller must audit that exact equivalence,
+# preserve the branch and dirty state, and still deliver the selected TODO.
+tree_equivalent_liveness_root="$(mktemp -d)"
+tree_equivalent_liveness_workspace="$tree_equivalent_liveness_root/workspace"
+tree_equivalent_liveness_remote="$tree_equivalent_liveness_root/origin.git"
+tree_equivalent_liveness_state="$(mktemp -d)"
+tree_equivalent_liveness_prompt="$(mktemp)"
+tree_equivalent_liveness_todo="$(mktemp)"
+git init --bare "$tree_equivalent_liveness_remote" >/dev/null
+git init -b main "$tree_equivalent_liveness_workspace" >/dev/null
+git -C "$tree_equivalent_liveness_workspace" config user.name Brownie
+git -C "$tree_equivalent_liveness_workspace" config user.email brownie@example.invalid
+mkdir -p "$tree_equivalent_liveness_workspace/docs" "$tree_equivalent_liveness_workspace/scripts"
+printf '{"scripts":{}}\n' > "$tree_equivalent_liveness_workspace/package.json"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$tree_equivalent_liveness_workspace/phase-loop.sh"
+cat > "$tree_equivalent_liveness_workspace/scripts/phase-loop-controller-source-manifest.json" <<'EOF'
+{
+  "schema_version": 1,
+  "controller_source_paths": ["phase-loop.sh"]
+}
+EOF
+cat > "$tree_equivalent_liveness_workspace/docs/golden.js" <<'EOF'
+export const evidence = {
+  status: 'failed',
+  release_blocking: true,
+  fixture_path: fixtureRoot,
+  commands,
+};
+EOF
+git -C "$tree_equivalent_liveness_workspace" add .
+git -C "$tree_equivalent_liveness_workspace" commit -m fixture-baseline >/dev/null
+git -C "$tree_equivalent_liveness_workspace" remote add origin "$tree_equivalent_liveness_remote"
+git -C "$tree_equivalent_liveness_workspace" push -u origin main >/dev/null
+git -C "$tree_equivalent_liveness_workspace" checkout -qb squash-equivalent-worker
+printf 'equivalent controller lineage\n' > "$tree_equivalent_liveness_workspace/lineage.txt"
+git -C "$tree_equivalent_liveness_workspace" add lineage.txt
+git -C "$tree_equivalent_liveness_workspace" commit -m implementation-branch-lineage >/dev/null
+git -C "$tree_equivalent_liveness_workspace" checkout -q main
+printf 'equivalent controller lineage\n' > "$tree_equivalent_liveness_workspace/lineage.txt"
+git -C "$tree_equivalent_liveness_workspace" add lineage.txt
+git -C "$tree_equivalent_liveness_workspace" commit -m reviewed-squash-equivalent-lineage >/dev/null
+git -C "$tree_equivalent_liveness_workspace" push origin main >/dev/null
+git -C "$tree_equivalent_liveness_workspace" checkout -q squash-equivalent-worker
+if git -C "$tree_equivalent_liveness_workspace" merge-base --is-ancestor origin/main HEAD; then
+  echo "tree-equivalent fixture must not have an ancestry relationship" >&2
+  exit 1
+fi
+test "$(git -C "$tree_equivalent_liveness_workspace" rev-parse 'HEAD^{tree}')" = "$(git -C "$tree_equivalent_liveness_workspace" rev-parse 'origin/main^{tree}')"
+
+printf 'base prompt\n' > "$tree_equivalent_liveness_prompt"
+cat > "$tree_equivalent_liveness_todo" <<'EOF'
+- [ ] E-tree-equivalent-liveness: Patch only `docs/golden.js`.
+  In the return object, add exactly one line
+  `  lifecycle_evidence: lifecycleEvidence,`
+  immediately after the exact line `  fixture_path: fixtureRoot,`. Do not edit
+  any other line.
+EOF
+
+(
+  export PHASE_LOOP_APPROVED_CONTROLLER_BASELINE=origin/main
+  export PHASE_LOOP_STATE_DIR="$tree_equivalent_liveness_state"
+  export PHASE_LOOP_PROMPT="$tree_equivalent_liveness_prompt"
+  export PHASE_LOOP_TODO="$tree_equivalent_liveness_todo"
+  export BROWNIE_BIN="$fake_brownie_should_not_run"
+  export PHASE_LOOP_WORKSPACE_ROOT="$tree_equivalent_liveness_workspace"
+  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+)
+
+if git -C "$tree_equivalent_liveness_workspace" diff --quiet -- docs/golden.js; then
+  echo "tree-equivalent rebaseline liveness did not produce the selected TODO diff" >&2
+  exit 1
+fi
+python3 - "$tree_equivalent_liveness_state/status.json" "$tree_equivalent_liveness_state/todo-claims/current.json" "$tree_equivalent_liveness_state/workspace-baseline-rebaseline" "$tree_equivalent_liveness_todo" "$tree_equivalent_liveness_workspace/docs/golden.js" <<'PY'
+import json
+import pathlib
+import sys
+
+status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+claim = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+audits = sorted(pathlib.Path(sys.argv[3]).glob("*.json"))
+todo = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8")
+target = pathlib.Path(sys.argv[5]).read_text(encoding="utf-8")
+assert status["status"] == "last_run_succeeded", status
+assert claim["status"] == "completed", claim
+assert "E-tree-equivalent-liveness" not in todo, todo
+assert "  fixture_path: fixtureRoot,\n  lifecycle_evidence: lifecycleEvidence,\n  commands," in target, target
+assert len(audits) == 1, audits
+audit = json.loads(audits[0].read_text(encoding="utf-8"))
+assert audit["status"] == "applied_tree_equivalence", audit
+assert audit["reconciliation_mode"] == "tree_equivalent_history", audit
+assert audit["workspace_tree"] == audit["baseline_tree"], audit
+assert audit["workspace_head_before"] != audit["baseline_commit"], audit
+assert audit["workspace_head_after"] == audit["workspace_head_before"], audit
+assert audit["dirty_status_fingerprint_before"] == audit["dirty_status_fingerprint_after"], audit
+PY
+
 empty_queue_guard_workspace="$(mktemp -d)"
 git -C "$empty_queue_guard_workspace" init -b main >/dev/null
 git -C "$empty_queue_guard_workspace" config user.name Brownie

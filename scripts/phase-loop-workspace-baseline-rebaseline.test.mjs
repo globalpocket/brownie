@@ -46,6 +46,24 @@ function advanceApprovedBaseline(root, file = 'approved.txt') {
   return { oldHead, approvedHead };
 }
 
+function createTreeEquivalentDivergence(root) {
+  const baseHead = git(root, ['rev-parse', 'HEAD']);
+  git(root, ['checkout', '-qb', 'tree-equivalent-worker']);
+  fs.writeFileSync(path.join(root, 'tree-equivalent.txt'), 'identical tracked content\n');
+  git(root, ['add', 'tree-equivalent.txt']);
+  git(root, ['commit', '-qm', 'worker content commit']);
+  const workerHead = git(root, ['rev-parse', 'HEAD']);
+
+  git(root, ['checkout', '-qB', 'approved', baseHead]);
+  fs.writeFileSync(path.join(root, 'tree-equivalent.txt'), 'identical tracked content\n');
+  git(root, ['add', 'tree-equivalent.txt']);
+  git(root, ['commit', '-qm', 'approved squash-equivalent commit']);
+  const approvedHead = git(root, ['rev-parse', 'HEAD']);
+  git(root, ['update-ref', 'refs/remotes/origin/main', approvedHead]);
+  git(root, ['checkout', '-q', 'tree-equivalent-worker']);
+  return { workerHead, approvedHead };
+}
+
 function stateDir(root) {
   return path.join(root, '.brownie/private/phase-loop');
 }
@@ -167,6 +185,57 @@ test('refuses diverged history instead of merging or resetting it', () => {
   assert.equal(git(root, ['rev-parse', 'HEAD']), workerHead);
 });
 
+test('audits a squash-equivalent divergent history without rewriting the branch or dirty workspace', () => {
+  const root = makeRepository();
+  const { workerHead, approvedHead } = createTreeEquivalentDivergence(root);
+  fs.writeFileSync(path.join(root, 'operator-notes.txt'), 'preserve this dirty file\n');
+
+  const result = rebaselineWorkspaceToApprovedBaseline({
+    repoRoot: root,
+    stateDir: stateDir(root),
+    runStamp: 'test-tree-equivalence',
+    refreshBaseline: false,
+    now: () => new Date('2026-10-30T10:00:00.000Z')
+  });
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.rebaselined, false);
+  assert.equal(result.history_reconciled, true);
+  assert.equal(result.baseline_equivalent, true);
+  assert.equal(result.reason, 'workspace_tree_equivalent_to_approved_baseline');
+  assert.equal(result.workspace_head_before, workerHead);
+  assert.equal(result.workspace_head_after, workerHead);
+  assert.equal(result.baseline_commit, approvedHead);
+  assert.equal(result.workspace_tree, result.baseline_tree);
+  assert.equal(git(root, ['rev-parse', 'HEAD']), workerHead);
+  assert.equal(fs.readFileSync(path.join(root, 'operator-notes.txt'), 'utf8'), 'preserve this dirty file\n');
+  assert.equal(git(root, ['status', '--porcelain']).trim(), '?? operator-notes.txt');
+  const audit = JSON.parse(fs.readFileSync(result.audit_path, 'utf8'));
+  assert.equal(audit.status, 'applied_tree_equivalence');
+  assert.equal(audit.reconciliation_mode, 'tree_equivalent_history');
+  assert.equal(audit.workspace_tree, audit.baseline_tree);
+  assert.equal(audit.workspace_head_before, workerHead);
+  assert.equal(audit.workspace_head_after, workerHead);
+  assert.equal(audit.dirty_status_fingerprint_before, audit.dirty_status_fingerprint_after);
+});
+
+test('refuses a tree-equivalent history when controller source is dirty', () => {
+  const root = makeRepository();
+  const { workerHead } = createTreeEquivalentDivergence(root);
+  fs.writeFileSync(path.join(root, 'phase-loop.sh'), '#!/usr/bin/env bash\necho local override\n');
+
+  const result = rebaselineWorkspaceToApprovedBaseline({
+    repoRoot: root,
+    stateDir: stateDir(root),
+    refreshBaseline: false
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'dirty_controller_source_refuses_rebaseline');
+  assert.deepEqual(result.dirty_controller_paths, ['phase-loop.sh']);
+  assert.equal(git(root, ['rev-parse', 'HEAD']), workerHead);
+});
+
 test('is a no-op when the workspace already contains the approved baseline', () => {
   const root = makeRepository();
   const result = rebaselineWorkspaceToApprovedBaseline({
@@ -200,7 +269,7 @@ test('controller reloads its process before using a fast-forwarded phase-loop sh
 test('controller carries a requested reload in-band instead of returning it as errexit-sensitive failure', () => {
   const controller = fs.readFileSync(new URL('../phase-loop.sh', import.meta.url), 'utf8');
   const helperStart = controller.indexOf('phase_loop_rebaseline_workspace_to_approved_baseline() {');
-  const helperEnd = controller.indexOf('\nphase_loop_rebaseline_stale_claim()', helperStart);
+  const helperEnd = controller.indexOf('\nphase_loop_restore_admission_backed_stale_claim()', helperStart);
   assert(helperStart >= 0 && helperEnd > helperStart, 'workspace rebaseline shell helper must remain extractable');
   const helper = controller.slice(helperStart, helperEnd);
 
@@ -293,7 +362,7 @@ test('workspace rebaseline preserves an ambient errexit setting', () => {
 
   const controller = fs.readFileSync(new URL('../phase-loop.sh', import.meta.url), 'utf8');
   const start = controller.indexOf('phase_loop_rebaseline_workspace_to_approved_baseline() {');
-  const end = controller.indexOf('\nphase_loop_rebaseline_stale_claim()', start);
+  const end = controller.indexOf('\nphase_loop_restore_admission_backed_stale_claim()', start);
   const helper = controller.slice(start, end);
   const output = execFileSync('bash', ['-ceu', `${helper}\nnow_utc() { printf \'2026-10-29T00:00:00Z\'; }\nphase_loop_rebaseline_workspace_to_approved_baseline test-run\ncase "$-" in *e*) printf \'errexit-preserved\\n\' ;; *) exit 1 ;; esac`], {
     encoding: 'utf8',
@@ -326,7 +395,7 @@ test('controller reload detection canonicalizes an aliased workspace root', () =
 
   const controller = fs.readFileSync(new URL('../phase-loop.sh', import.meta.url), 'utf8');
   const start = controller.indexOf('phase_loop_rebaseline_workspace_to_approved_baseline() {');
-  const end = controller.indexOf('\nphase_loop_rebaseline_stale_claim()', start);
+  const end = controller.indexOf('\nphase_loop_restore_admission_backed_stale_claim()', start);
   assert(start >= 0 && end > start, 'workspace rebaseline shell helper must be extractable');
   const helper = controller.slice(start, end);
   const workspaceAlias = `${controllerRoot}${path.sep}..${path.sep}controller`;

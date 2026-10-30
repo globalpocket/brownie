@@ -23,6 +23,23 @@ function makeRepository() {
   return root;
 }
 
+function createTreeEquivalentDivergence(root) {
+  const baseHead = git(root, ['rev-parse', 'HEAD']);
+  git(root, ['checkout', '-qb', 'tree-equivalent-worker']);
+  fs.writeFileSync(path.join(root, 'tree-equivalent.txt'), 'identical tracked content\n');
+  git(root, ['add', 'tree-equivalent.txt']);
+  git(root, ['commit', '-qm', 'worker content commit']);
+
+  git(root, ['checkout', '-qB', 'approved', baseHead]);
+  fs.writeFileSync(path.join(root, 'tree-equivalent.txt'), 'identical tracked content\n');
+  git(root, ['add', 'tree-equivalent.txt']);
+  git(root, ['commit', '-qm', 'approved squash-equivalent commit']);
+  const approvedHead = git(root, ['rev-parse', 'HEAD']);
+  git(root, ['update-ref', 'refs/remotes/origin/main', approvedHead]);
+  git(root, ['checkout', '-q', 'tree-equivalent-worker']);
+  return approvedHead;
+}
+
 test('accepts a workspace whose HEAD contains approved origin/main', () => {
   const root = makeRepository();
   fs.writeFileSync(path.join(root, 'README.md'), 'baseline\nnew work\n');
@@ -45,6 +62,17 @@ test('fails closed when workspace HEAD predates approved origin/main', () => {
   assert.equal(result.ok, false);
   assert.equal(result.baseline_is_ancestor, false);
   assert(result.errors.some((error) => error.includes('snapshot and explicitly rebaseline the workspace before claim')));
+});
+
+test('accepts a divergent squash-equivalent workspace tree while reporting the non-ancestor relationship', () => {
+  const root = makeRepository();
+  const approvedHead = createTreeEquivalentDivergence(root);
+  const result = inspectWorkspaceBaseline({ workspaceRoot: root, refreshBaseline: false });
+  assert.equal(result.ok, true, JSON.stringify(result, null, 2));
+  assert.equal(result.baseline_is_ancestor, false);
+  assert.equal(result.baseline_tree_equivalent, true);
+  assert.equal(result.baseline_commit, approvedHead);
+  assert.equal(result.workspace_tree, result.baseline_tree);
 });
 
 test('fails closed when the workspace baseline cannot be resolved', () => {

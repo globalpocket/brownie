@@ -125,6 +125,10 @@ function changedPathsBetween(repoRoot, fromRef, toRef) {
   return [...new Set(raw.split('\0').filter(Boolean).map(normalizePath))].sort();
 }
 
+function commitTreeId(repoRoot, commit) {
+  return gitTrimmed(repoRoot, ['rev-parse', '--verify', `${commit}^{tree}`]);
+}
+
 function timestampForFile(now) {
   return now.toISOString().replace(/[-:]/gu, '').replace(/\.\d{3}Z$/u, 'Z');
 }
@@ -221,13 +225,32 @@ export function rebaselineWorkspaceToApprovedBaseline({
       baseline_refresh: baselineRefresh
     };
   }
-  if (!isAncestor(resolvedRepoRoot, workspaceHead, baselineCommit)) {
-    return errorResult('workspace_history_diverged_from_approved_baseline', {
-      workspace_head: workspaceHead,
-      baseline_ref: baselineRef,
-      baseline_commit: baselineCommit,
-      baseline_refresh: baselineRefresh
-    });
+  const workspaceIsAncestorOfBaseline = isAncestor(resolvedRepoRoot, workspaceHead, baselineCommit);
+  let workspaceTree = null;
+  let baselineTree = null;
+  if (!workspaceIsAncestorOfBaseline) {
+    try {
+      workspaceTree = commitTreeId(resolvedRepoRoot, workspaceHead);
+      baselineTree = commitTreeId(resolvedRepoRoot, baselineCommit);
+    } catch (error) {
+      return errorResult('workspace_tree_unavailable', {
+        workspace_head: workspaceHead,
+        baseline_ref: baselineRef,
+        baseline_commit: baselineCommit,
+        baseline_refresh: baselineRefresh,
+        error: String(error?.message ?? error)
+      });
+    }
+    if (workspaceTree !== baselineTree) {
+      return errorResult('workspace_history_diverged_from_approved_baseline', {
+        workspace_head: workspaceHead,
+        baseline_ref: baselineRef,
+        baseline_commit: baselineCommit,
+        baseline_refresh: baselineRefresh,
+        workspace_tree: workspaceTree,
+        baseline_tree: baselineTree
+      });
+    }
   }
 
   const branch = workspaceBranch(resolvedRepoRoot);
@@ -308,6 +331,7 @@ export function rebaselineWorkspaceToApprovedBaseline({
   const currentTime = now();
   const normalizedRunStamp = safeRunStamp(runStamp, currentTime);
   const controllerShellSourceChanged = baselineDeltaPaths.includes('phase-loop.sh');
+  const historyTreeEquivalent = !workspaceIsAncestorOfBaseline;
   const auditId = `workspace-baseline-rebaseline-${normalizedRunStamp}-${sha256(`${workspaceHead}:${baselineCommit}:${dirtyBefore.fingerprint}`).slice(-12)}`;
   const auditPath = path.join(resolvedStateDir, 'workspace-baseline-rebaseline', `${auditId}.json`);
   const audit = {
@@ -315,7 +339,6 @@ export function rebaselineWorkspaceToApprovedBaseline({
     kind: 'brownie_phase_loop_workspace_baseline_rebaseline',
     audit_id: auditId,
     created_at: currentTime.toISOString(),
-    status: 'started',
     run_stamp: normalizedRunStamp,
     workspace_root: resolvedRepoRoot,
     branch,
@@ -323,12 +346,71 @@ export function rebaselineWorkspaceToApprovedBaseline({
     baseline_commit: baselineCommit,
     baseline_refresh: baselineRefresh,
     workspace_head_before: workspaceHead,
+    workspace_tree: workspaceTree,
+    baseline_tree: baselineTree,
     dirty_status_fingerprint_before: dirtyBefore.fingerprint,
     dirty_paths_before: dirtyBefore.paths,
     baseline_delta_paths: baselineDeltaPaths,
-    controller_shell_source_changed: controllerShellSourceChanged
+    controller_shell_source_changed: controllerShellSourceChanged,
+    reconciliation_mode: historyTreeEquivalent ? 'tree_equivalent_history' : 'fast_forward',
+    status: historyTreeEquivalent ? 'tree_equivalence_verifying' : 'started'
   };
   writeAtomically(auditPath, `${JSON.stringify(audit, null, 2)}\n`);
+
+  if (historyTreeEquivalent) {
+    let workspaceHeadAfter;
+    let dirtyAfter;
+    try {
+      workspaceHeadAfter = gitTrimmed(resolvedRepoRoot, ['rev-parse', '--verify', 'HEAD^{commit}']);
+      dirtyAfter = workspaceStatus(resolvedRepoRoot);
+    } catch (error) {
+      audit.status = 'failed';
+      audit.failure_reason = 'tree_equivalence_post_verification_failed';
+      audit.error = String(error?.message ?? error).slice(0, 1_000);
+      audit.completed_at = now().toISOString();
+      writeAtomically(auditPath, `${JSON.stringify(audit, null, 2)}\n`);
+      return errorResult('tree_equivalence_post_verification_failed', { audit_path: auditPath });
+    }
+    audit.workspace_head_after = workspaceHeadAfter;
+    audit.dirty_status_fingerprint_after = dirtyAfter.fingerprint;
+    audit.dirty_paths_after = dirtyAfter.paths;
+    audit.completed_at = now().toISOString();
+    if (workspaceHeadAfter !== workspaceHead || dirtyAfter.fingerprint !== dirtyBefore.fingerprint) {
+      audit.status = 'verification_failed';
+      audit.failure_reason = workspaceHeadAfter !== workspaceHead
+        ? 'workspace_head_changed_during_tree_equivalence_reconciliation'
+        : 'dirty_workspace_changed_during_tree_equivalence_reconciliation';
+      writeAtomically(auditPath, `${JSON.stringify(audit, null, 2)}\n`);
+      return errorResult(audit.failure_reason, {
+        workspace_head_before: workspaceHead,
+        workspace_head_after: workspaceHeadAfter,
+        baseline_ref: baselineRef,
+        baseline_commit: baselineCommit,
+        branch,
+        audit_path: auditPath
+      });
+    }
+    audit.status = 'applied_tree_equivalence';
+    writeAtomically(auditPath, `${JSON.stringify(audit, null, 2)}\n`);
+    return {
+      ok: true,
+      schema_version: 1,
+      rebaselined: false,
+      history_reconciled: true,
+      baseline_equivalent: true,
+      reason: 'workspace_tree_equivalent_to_approved_baseline',
+      workspace_head_before: workspaceHead,
+      workspace_head_after: workspaceHeadAfter,
+      workspace_tree: workspaceTree,
+      baseline_tree: baselineTree,
+      baseline_ref: baselineRef,
+      baseline_commit: baselineCommit,
+      baseline_refresh: baselineRefresh,
+      branch,
+      controller_shell_reload_required: false,
+      audit_path: auditPath
+    };
+  }
 
   try {
     git(resolvedRepoRoot, ['merge', '--ff-only', '--no-overwrite-ignore', baselineCommit]);

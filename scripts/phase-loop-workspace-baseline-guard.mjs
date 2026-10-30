@@ -33,6 +33,10 @@ function refreshRemoteTrackingBaseline(workspaceRoot, baselineRef) {
   }
 }
 
+function commitTreeId(workspaceRoot, commit) {
+  return git(workspaceRoot, ['rev-parse', '--verify', `${commit}^{tree}`]);
+}
+
 export function inspectWorkspaceBaseline({
   workspaceRoot = defaultWorkspaceRoot,
   baselineRef = 'origin/main',
@@ -42,6 +46,8 @@ export function inspectWorkspaceBaseline({
   const resolvedWorkspaceRoot = path.resolve(workspaceRoot);
   let workspaceHead = '';
   let baselineCommit = '';
+  let workspaceTree = '';
+  let baselineTree = '';
   let baselineRefresh = { required: false, refreshed: false };
 
   try {
@@ -62,6 +68,7 @@ export function inspectWorkspaceBaseline({
   }
 
   let baselineIsAncestor = false;
+  let baselineTreeEquivalent = false;
   if (workspaceHead && baselineCommit) {
     try {
       execFileSync('git', ['-C', resolvedWorkspaceRoot, 'merge-base', '--is-ancestor', baselineCommit, workspaceHead], {
@@ -69,7 +76,16 @@ export function inspectWorkspaceBaseline({
       });
       baselineIsAncestor = true;
     } catch {
-      errors.push(`workspace HEAD ${workspaceHead} does not contain approved baseline ${baselineRef} (${baselineCommit}); snapshot and explicitly rebaseline the workspace before claim`);
+      try {
+        workspaceTree = commitTreeId(resolvedWorkspaceRoot, workspaceHead);
+        baselineTree = commitTreeId(resolvedWorkspaceRoot, baselineCommit);
+        baselineTreeEquivalent = workspaceTree === baselineTree;
+      } catch (error) {
+        errors.push(`workspace history equivalence could not be resolved: ${error.message}`);
+      }
+      if (!baselineTreeEquivalent) {
+        errors.push(`workspace HEAD ${workspaceHead} neither contains nor is tree-equivalent to approved baseline ${baselineRef} (${baselineCommit}); snapshot and explicitly rebaseline the workspace before claim`);
+      }
     }
   }
 
@@ -82,6 +98,9 @@ export function inspectWorkspaceBaseline({
     baseline_commit: baselineCommit,
     baseline_refresh: baselineRefresh,
     baseline_is_ancestor: baselineIsAncestor,
+    baseline_tree_equivalent: baselineTreeEquivalent,
+    workspace_tree: workspaceTree,
+    baseline_tree: baselineTree,
     errors
   };
 }
