@@ -87,3 +87,17 @@ test('journey rejects a package whose signed runtime binding was tampered', () =
     /package integrity mismatch/u
   );
 });
+
+test('journey rejects a package whose signed CLI binding was tampered', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-runtime-journey-tamper-'));
+  const archivePath = createFixtureArchive(root);
+  const unpacked = path.join(root, 'unpacked');
+  fs.mkdirSync(unpacked);
+  assert.equal(spawnSync('tar', ['-xzf', archivePath, '-C', unpacked], { encoding: 'utf8' }).status, 0);
+  fs.appendFileSync(path.join(unpacked, 'brownie'), 'tamper\n');
+  assert.equal(spawnSync('tar', ['-czf', archivePath, '-C', unpacked, 'brownie', 'brownie-runtime', 'artifact-evidence.json', 'SHA256SUMS'], { encoding: 'utf8' }).status, 0);
+  assert.throws(
+    () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath, workspaceRoot: path.join(root, 'workspace') }),
+    /package integrity mismatch/u
+  );
+});
