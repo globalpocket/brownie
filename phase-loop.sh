@@ -5817,7 +5817,11 @@ PY
 try_terminal_multitarget_leaf_split_fallback() {
   local run_stamp="$1"
   if [ ! -f "$PROGRESS_STATE_FILE" ]; then
-    printf '%s\n' '{"applied":false,"eligible":false,"operation":"terminal_multitarget_leaf_split_fallback","reason":"progress_state_missing"}'
+    # Keep the established fail-closed public reason for an incomplete
+    # recovery input. A missing current claim may be reconstructed only by
+    # the exact immutable-snapshot branch below; without progress there is no
+    # evidence with which to bind that reconstruction.
+    printf '%s\n' '{"applied":false,"eligible":false,"operation":"terminal_multitarget_leaf_split_fallback","reason":"claim_or_progress_state_missing"}'
     return 2
   fi
   python3 - "$TODO_CLAIM_FILE" "$TODO_REPAIR_FEEDBACK_FILE" "$PROGRESS_STATE_FILE" "$PHASE_LOOP_TODO" "$PHASE_LOOP_TODO_BREAKDOWN" "$PHASE_LOOP_WORKSPACE_ROOT" "$STATE_DIR" "$RUN_DIR" "$PHASE_LOOP_BROWNIE_STORE_ROOT" "$run_stamp" "$(now_utc)" <<'PY'

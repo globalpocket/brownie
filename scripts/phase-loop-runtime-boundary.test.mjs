@@ -120,6 +120,9 @@ test('terminal evidence gaps terminalize the immutable source before any retry-c
   const fallback = controller.slice(fallbackStart, fallbackEnd);
   assert.match(fallback, /expected_claim_path = \(claim_root \/ "current\.json"\)\.resolve\(\)/);
   assert.match(fallback, /resolved_claim_path != expected_claim_path/);
+  assert.match(controller, /terminal_completion_evidence_missing_without_objective_apply/);
+  assert.match(controller, /claim_missing_without_terminal_evidence_gap/);
+  assert.match(controller, /"reason":"claim_or_progress_state_missing"/);
 });
 
 test('objective-apply replay budget follows the selected TODO across replacement claims', () => {
