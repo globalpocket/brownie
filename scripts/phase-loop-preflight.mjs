@@ -13,6 +13,7 @@ import {
   protectedContract,
   readContractRebaselineRecords
 } from './phase-loop-todo-contract-rebaseline.mjs';
+import { readAllTodoReplanRecords, resolveTodoState } from './phase-loop-todo-state.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -376,14 +377,27 @@ function completedTodoIds(todoText) {
   return ids;
 }
 
-function validateCompletedParentPendingChildren(todoText, errors) {
-  const completed = completedTodoIds(todoText);
-  if (completed.size === 0) return;
+function validateCompletedParentPendingChildren(todoText, errors, todoState = null) {
+  const checked = completedTodoIds(todoText);
+  if (checked.size === 0) return;
+  const supersededIds = todoState?.supersededIds instanceof Set
+    ? todoState.supersededIds
+    : new Set();
+  const childrenByParent = todoState?.childrenByParent instanceof Map
+    ? todoState.childrenByParent
+    : new Map();
   for (const block of uncheckedTodoBlocks(todoText)) {
     const firstLine = block.split('\n')[0] ?? '';
     const child = /^(?:[-*]|\d+[.)])\s+\[\s\]\s+([A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*):/u.exec(firstLine)?.[1];
     const parent = /^\s*Source TODO:\s*([A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)*)\.?\s*$/mu.exec(block)?.[1];
-    if (!child || !parent || !completed.has(parent)) continue;
+    if (!child || !parent || !checked.has(parent)) continue;
+    // A checked parent normally closes every derived child.  The sole
+    // exception is a durable, exact replan record: it represents a
+    // superseded parent rather than a completed one, and it must name this
+    // specific live child.  Do not allow a broad parent-only waiver.
+    if (supersededIds.has(parent) && childrenByParent.get(parent)?.has(child)) {
+      continue;
+    }
     errors.push({
       code: 'completed_parent_pending_child',
       parent_todo: parent,
@@ -950,7 +964,13 @@ export function validatePhaseLoopPreflight(options = {}) {
   // Claim-smoke fixtures intentionally model intermediate controller-owned
   // completion mutations. Production queues must never carry that shape.
   if (!fixtureProfile) {
-    validateCompletedParentPendingChildren(todoText, errors);
+    const replanState = resolveTodoState({
+      todoText,
+      replanRecords: readAllTodoReplanRecords(repoRoot, {
+        breakdownPath: path.resolve(repoRoot, breakdownPath)
+      })
+    });
+    validateCompletedParentPendingChildren(todoText, errors, replanState);
   }
   const commandResults = options.skipCommands ? [] : validateRequiredCommands(repoRoot, todoPath, breakdownPath, controlPlaneRoot, profile, errors);
   // A pre-claim boundary can authorize preservation of an ownerless active

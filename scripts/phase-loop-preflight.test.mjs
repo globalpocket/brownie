@@ -499,6 +499,51 @@ test('rejects an unchecked child whose parent TODO is already complete', () => {
   assert.equal(failure.child_todo, 'E-child');
 });
 
+test('accepts only an audited replan child of a checked superseded parent', () => {
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, '.brownie/todo.md'), [
+    '- [x] E-parent: Superseded by bounded children.',
+    '- [ ] E-child: Patch only `scripts/target.mjs`:',
+    '  Route: implementation.',
+    '  Source TODO: E-parent.',
+    '  Verification: run `node --test scripts/target.test.mjs`.'
+  ].join('\n') + '\n');
+  writeJson(path.join(repo, '.brownie/private/phase-loop/todo-replans/terminal-replan.json'), {
+    schema_version: 1,
+    record_type: 'todo_replan',
+    operation: 'split_parent_into_children',
+    parent_status: 'superseded_by_children',
+    parent_todo_id: 'E-parent',
+    generated_child_ids: ['E-child']
+  });
+  const result = validatePhaseLoopPreflight({ repo, expectedActor: 'fixture-implementation', skipCommands: true });
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+  assert.equal(result.errors.some((error) => error.code === 'completed_parent_pending_child'), false);
+});
+
+test('rejects an unchecked child omitted from a checked parent replan record', () => {
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, '.brownie/todo.md'), [
+    '- [x] E-parent: Superseded by bounded children.',
+    '- [ ] E-child-unbound: Patch only `scripts/target.mjs`:',
+    '  Route: implementation.',
+    '  Source TODO: E-parent.',
+    '  Verification: run `node --test scripts/target.test.mjs`.'
+  ].join('\n') + '\n');
+  writeJson(path.join(repo, '.brownie/private/phase-loop/todo-replans/terminal-replan.json'), {
+    schema_version: 1,
+    record_type: 'todo_replan',
+    operation: 'split_parent_into_children',
+    parent_status: 'superseded_by_children',
+    parent_todo_id: 'E-parent',
+    generated_child_ids: ['E-other-child']
+  });
+  const result = validatePhaseLoopPreflight({ repo, skipCommands: true });
+  const failure = result.errors.find((error) => error.code === 'completed_parent_pending_child');
+  assert(failure, JSON.stringify(result.errors));
+  assert.equal(failure.child_todo, 'E-child-unbound');
+});
+
 test('accepts Brownie-managed state changes when only an owner blocker remains', () => {
   const repo = makeRepo();
   fs.writeFileSync(path.join(repo, '.brownie/todo.md'), '- [ ] E-owner: Owner must provide release credentials:\n  Route: owner.\n  Verification: external owner handoff.\n');
