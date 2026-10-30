@@ -5422,18 +5422,56 @@ PHASE_LOOP_TODO_BREAKDOWN="$terminal_write_split_workspace/.brownie/todo-breakdo
 PHASE_LOOP_WORKSPACE_ROOT="$terminal_write_split_workspace" \
 PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
 BROWNIE_BIN="$fake_brownie_terminal_unproposed_workspace_write" \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null || true
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null || true
 
-python3 - "$terminal_write_split_state/status.json" "$terminal_write_split_workspace/.brownie/todo.md" <<'PY'
+python3 - "$terminal_write_split_state/status.json" "$terminal_write_split_state/progress-state.json" "$terminal_write_split_workspace/.brownie/todo.md" <<'PY'
 import json
 import pathlib
 import sys
 
 status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-todo = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
-assert status["status"] == "blocked_todo_recorded", status
+progress = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+todo = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
+# A task-executed Runtime result with a terminal-evidence gap is a causeful
+# controller failure, not an external-control boundary.  Keep the selected
+# TODO/claim available for the bounded recovery path rather than hiding it in
+# blocked.jsonl and skipping to unrelated work.
+assert status["status"] == "blocked", status
+assert status["exit_code"] == "76", status
+assert "redelegatable recovery" in status["detail"], status
+assert progress["classification"] == "terminal_failure", progress
+assert progress["progress_projection"]["terminal_completion_evidence_missing_without_objective_apply"] is True, progress
+assert progress["workspace_changed"] is False, progress
 assert "- [ ] E-20g-final-judgment-sync:" in todo, todo
 assert "E-20g-final-judgment-sync-target-01" not in todo, todo
+PY
+
+# Compatibility/liveness gate: records produced before the stdout snapshot
+# hash was added must still recover only when the immutable claim-before-
+# runtime snapshot proves an exact selected TODO match. This simulates the
+# production incident's rebaselined claim without weakening the lineage gate.
+python3 - "$terminal_write_split_state" <<'PY'
+import json
+import os
+import pathlib
+import tempfile
+import sys
+
+state_dir = pathlib.Path(sys.argv[1])
+logs = sorted((state_dir / "runs").glob("*.stdout.log"))
+assert len(logs) == 1, logs
+path = logs[0]
+payload = json.loads(path.read_text(encoding="utf-8"))
+run = payload.get("run")
+assert isinstance(run, dict), payload
+assert run.pop("phase_loop_selected_todo_sha256", None), run
+with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+    json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
+    handle.write("\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+    temporary = pathlib.Path(handle.name)
+os.replace(temporary, path)
 PY
 
 PHASE_LOOP_STATE_DIR="$terminal_write_split_state" \
@@ -5468,6 +5506,7 @@ assert records, "missing terminal-write replan record"
 record_text = "\n".join(path.read_text(encoding="utf-8") for path in records)
 assert "terminal_unproposed_workspace_write_multitarget_split" in record_text, record_text
 assert "prior_terminal_unproposed_workspace_write_ledger" in record_text, record_text
+assert '"claim_snapshot_path"' in record_text, record_text
 assert archives, "missing replanned terminal-write claim archive"
 archived_claim = json.loads(archives[-1].read_text(encoding="utf-8"))
 assert archived_claim["status"] == "replanned"
@@ -5519,7 +5558,7 @@ PHASE_LOOP_WORKSPACE_ROOT="$terminal_write_unrelated_workspace" \
 PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
 PHASE_LOOP_TEST_TERMINAL_UNPROPOSED_MODE=unrelated \
 BROWNIE_BIN="$fake_brownie_terminal_unproposed_workspace_write" \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null || true
 
 PHASE_LOOP_STATE_DIR="$terminal_write_unrelated_state" \
 PHASE_LOOP_PROMPT="$terminal_write_unrelated_prompt" \
@@ -5529,7 +5568,7 @@ PHASE_LOOP_WORKSPACE_ROOT="$terminal_write_unrelated_workspace" \
 PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
 PHASE_LOOP_TEST_TERMINAL_UNPROPOSED_MODE=unrelated \
 BROWNIE_BIN="$fake_brownie_terminal_unproposed_workspace_write" \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null || true
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null || true
 
 python3 - "$terminal_write_unrelated_state/status.json" "$terminal_write_unrelated_workspace/.brownie/todo.md" "$terminal_write_unrelated_workspace/.brownie/private/phase-loop/todo-replans" <<'PY'
 import json

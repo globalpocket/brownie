@@ -5763,24 +5763,90 @@ TERMINAL_UNPROPOSED_WORKSPACE_WRITE_SUMMARY = (
     "LLM tool intent did not produce a valid workspace.write proposal for a workspace edit task"
 )
 
-def terminal_unproposed_workspace_write_evidence(run, expected_claim_id, expected_selected_first, stamp, candidate):
+def admitted_claim_snapshot_for_prior_run(run_claim_id, expected_selected, stamp):
+    """Find the immutable admitted snapshot for an earlier Runtime result.
+
+    A terminal recovery can rebaseline the active claim before its next
+    invocation. The public stdout from the earlier invocation is therefore
+    bound to the *prior* claim ID, while the current claim can legitimately
+    have a retry suffix. Do not bridge that boundary by first-line matching:
+    require a durable prior-claim snapshot whose complete selected TODO is
+    byte-for-byte identical to the active selected TODO.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,191}", run_claim_id):
+        return None
+    try:
+        expected_sha256 = hashlib.sha256(expected_selected.encode("utf-8")).hexdigest()
+        state_root = state_dir.resolve()
+        claim_dir = (state_root / "todo-claims").resolve()
+        candidates = [runs_dir / f"{stamp}.claim.before-runtime.json"]
+        if claim_dir.is_dir() and claim_dir.is_relative_to(state_root):
+            candidates.extend(sorted(claim_dir.glob("*.json"))[:256])
+    except Exception:
+        return None
+
+    seen = set()
+    for candidate in candidates:
+        try:
+            if candidate in seen or candidate.is_symlink() or not candidate.is_file():
+                continue
+            seen.add(candidate)
+            resolved = candidate.resolve()
+            if not resolved.is_relative_to(state_root) or candidate.stat().st_size > 512 * 1024:
+                continue
+            snapshot = json.loads(candidate.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(snapshot, dict) or snapshot.get("claim_id") != run_claim_id:
+            continue
+        snapshot_selected = snapshot.get("selected_todo")
+        if not isinstance(snapshot_selected, str) or snapshot_selected != expected_selected:
+            continue
+        declared_sha256 = snapshot.get("selected_todo_sha256")
+        if declared_sha256 not in (None, "", expected_sha256):
+            continue
+        return {
+            "path": str(candidate),
+            "selected_todo_sha256": expected_sha256,
+        }
+    return None
+
+def terminal_unproposed_workspace_write_evidence(run, expected_selected, stamp, candidate):
     """Return only a claim-bound, Runtime-authored terminal write failure.
 
     The public headless envelope may say ``task_executed`` plus ``resume`` even
     when the Runtime ledger has already terminalized the agent loop.  Do not
     infer this from a generic failed run: require the exact Runtime completion
-    invariant, a matching admitted claim store, and the selected TODO snapshot.
+    invariant, the prior run's admitted claim store, and the complete selected
+    TODO snapshot. The active claim ID may differ only because a bounded
+    rebaseline preserved that exact immutable TODO contract.
     """
-    if not expected_claim_id or run.get("status") != "task_executed":
+    if run.get("status") != "task_executed" or not isinstance(expected_selected, str):
         return None
+    expected_selected_first = expected_selected.splitlines()[0] if expected_selected.splitlines() else ""
+    expected_selected_sha256 = hashlib.sha256(expected_selected.encode("utf-8")).hexdigest()
     if run.get("phase_loop_selected_todo_first_line") != expected_selected_first:
         return None
+    run_claim_id = str(run.get("phase_loop_claim_id") or "")
+    admitted_snapshot = admitted_claim_snapshot_for_prior_run(
+        run_claim_id,
+        expected_selected,
+        stamp,
+    )
+    if not admitted_snapshot:
+        return None
+    run_selected_sha256 = run.get("phase_loop_selected_todo_sha256")
+    if run_selected_sha256 not in (None, ""):
+        if not isinstance(run_selected_sha256, str) or not re.fullmatch(r"[a-f0-9]{64}", run_selected_sha256):
+            return None
+        if run_selected_sha256 != expected_selected_sha256:
+            return None
     run_id = str(run.get("run_id") or (run.get("automation") or {}).get("run_id") or "")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", run_id):
         return None
     try:
         root = store_root.resolve()
-        claim_digest = hashlib.sha256(expected_claim_id.encode("utf-8")).hexdigest()
+        claim_digest = hashlib.sha256(run_claim_id.encode("utf-8")).hexdigest()
         ledger_path = root / "phase-loop-claims" / claim_digest / "runs" / run_id / "ledger.jsonl"
         resolved_ledger = ledger_path.resolve()
         if not resolved_ledger.is_relative_to(root) or not ledger_path.is_file() or ledger_path.is_symlink():
@@ -5820,20 +5886,24 @@ def terminal_unproposed_workspace_write_evidence(run, expected_claim_id, expecte
         "run_stamp": stamp,
         "run_id": run_id,
         "path": str(candidate),
+        "claim_id": run_claim_id,
+        "claim_snapshot_path": admitted_snapshot["path"],
+        "selected_todo_sha256": admitted_snapshot["selected_todo_sha256"],
         "ledger_path": str(ledger_path),
         "terminal_summary_sha256": hashlib.sha256(
             TERMINAL_UNPROPOSED_WORKSPACE_WRITE_SUMMARY.encode("utf-8")
         ).hexdigest(),
     }
 
-def prior_terminal_multitarget_split_evidence(expected_claim_id, expected_selected_first):
-    """Return the newest earlier, auditable split cause for this exact claim.
+def prior_terminal_multitarget_split_evidence(expected_selected):
+    """Return the newest earlier, auditable split cause for this exact TODO.
 
-    The current invocation has already retained its claim, while terminal repair
-    feedback is normally written only after Runtime returns.  A prior result can
-    therefore justify a narrowly-scoped queue replan, but only if it proves one
-    of the two stable causes below rather than merely reporting no progress.
+    The current invocation can have a rebaselined claim ID, while terminal
+    repair feedback is normally written only after Runtime returns. A prior
+    result can therefore justify a narrowly-scoped queue replan only when its
+    admitted immutable selected TODO snapshot exactly matches the current one.
     """
+    expected_selected_first = expected_selected.splitlines()[0] if expected_selected.splitlines() else ""
     candidates = []
     try:
         candidates = sorted(runs_dir.glob("*.stdout.log"), reverse=True)
@@ -5867,8 +5937,7 @@ def prior_terminal_multitarget_split_evidence(expected_claim_id, expected_select
             return {"source": "prior_terminal_no_eligible_stdout", "run_stamp": stamp, "path": str(candidate)}
         evidence = terminal_unproposed_workspace_write_evidence(
             run,
-            expected_claim_id,
-            expected_selected_first,
+            expected_selected,
             stamp,
             candidate,
         )
@@ -5914,7 +5983,7 @@ selected_first = selected.splitlines()[0] if selected.splitlines() else ""
 selected_id = todo_id_from_first_line(selected_first)
 if not selected_id:
     skip("selected_todo_id_missing")
-prior_terminal_evidence = prior_terminal_multitarget_split_evidence(claim.get("claim_id"), selected_first)
+prior_terminal_evidence = prior_terminal_multitarget_split_evidence(selected)
 feedback_claim_id = feedback.get("claim_id")
 feedback_first_line = feedback.get("selected_todo_first_line")
 if feedback and (not feedback_claim_id or not feedback_first_line):
@@ -10855,6 +10924,25 @@ if todo_md_only_apply or selected_first_line_still_pending:
     accepted = False
     finalized = False
     workspace_changed = False
+# A Runtime may report a resumable outer envelope after it has executed the
+# claimed task but failed to emit either a valid objective apply or terminal
+# completion evidence.  That is not an owner/external-control boundary: it is
+# an execution failure that needs the existing claim-bound repair or
+# redelegation path.  Keep this classification independent of the Runtime's
+# lossy `unknown_nonterminal` closure so the controller cannot hide a failed
+# implementation attempt by merely marking the TODO blocked.  Evaluate after
+# completion normalization so TODO-only applies cannot look like a delivery.
+terminal_completion_evidence_missing_without_objective_apply = (
+    exit_code == 0
+    and progress_projection["stop_reason"] == "terminal_completion_evidence_missing"
+    and not completed
+    and not accepted
+    and not finalized
+    and not applied
+)
+progress_projection["terminal_completion_evidence_missing_without_objective_apply"] = (
+    terminal_completion_evidence_missing_without_objective_apply
+)
 progress_projection["todo_md_only_apply_blocked_as_progress"] = todo_md_only_apply
 progress_projection["selected_todo_first_line_still_pending_after_todo_md_apply"] = selected_first_line_still_pending
 progress_projection["selected_todo_still_pending_in_queue"] = selected_todo_still_pending_in_queue
@@ -10891,7 +10979,7 @@ terminal_non_progress = (
             )
         )
     )
-)
+) or terminal_completion_evidence_missing_without_objective_apply
 continuation_required = (
     exit_code == 0
     and not workspace_changed
@@ -16375,6 +16463,7 @@ PY
 bind_runtime_stdout_to_active_claim() {
   local stdout_log="$1"
   python3 - "$stdout_log" "$TODO_CLAIM_FILE" <<'PY'
+import hashlib
 import json
 import os
 import pathlib
@@ -16396,6 +16485,7 @@ if not isinstance(payload, dict):
 selected = str(claim.get("selected_todo") or "")
 payload["phase_loop_claim_id"] = str(claim.get("claim_id") or "")
 payload["phase_loop_selected_todo_first_line"] = selected.splitlines()[0] if selected.splitlines() else ""
+payload["phase_loop_selected_todo_sha256"] = hashlib.sha256(selected.encode("utf-8")).hexdigest()
 payload["phase_loop_queue_fingerprint"] = str(claim.get("queue_fingerprint") or "")
 tmp_fd, tmp_name = tempfile.mkstemp(prefix=stdout_path.name + ".", dir=str(stdout_path.parent))
 try:
@@ -18792,6 +18882,20 @@ status = str(payload.get("status") or "")
 closure = str(payload.get("completion_closure_status") or "")
 next_action = str(payload.get("next_action") or "")
 controller_action = str(payload.get("controller_action") or "")
+objective_apply = payload.get("objective_apply_applied")
+if objective_apply is None:
+    objective_apply = payload.get("objective_apply_apply_status")
+objective_apply_applied = objective_apply is True or str(objective_apply).lower() == "applied"
+# `unknown_nonterminal` is only an external-control boundary when Runtime did
+# not already prove that its claimed task reached a terminal-evidence gap.  A
+# missing objective apply is a controller-owned execution failure, not a
+# reason to skip the selected TODO or silently advance the queue.
+if (
+    stop_reason == "terminal_completion_evidence_missing"
+    and payload.get("completed") is not True
+    and not objective_apply_applied
+):
+    sys.exit(1)
 if (
     stop_class == "terminal_failure"
     or stop_reason == "terminal_task_failed"
@@ -18827,6 +18931,16 @@ else:
 stop_class = str(payload.get("stop_class") or "")
 stop_reason = str(payload.get("stop_reason") or "")
 status = str(payload.get("status") or "")
+objective_apply = payload.get("objective_apply_applied")
+if objective_apply is None:
+    objective_apply = payload.get("objective_apply_apply_status")
+objective_apply_applied = objective_apply is True or str(objective_apply).lower() == "applied"
+if (
+    stop_reason == "terminal_completion_evidence_missing"
+    and payload.get("completed") is not True
+    and not objective_apply_applied
+):
+    sys.exit(1)
 if (
     stop_class == "terminal_failure"
     or stop_reason == "terminal_task_failed"

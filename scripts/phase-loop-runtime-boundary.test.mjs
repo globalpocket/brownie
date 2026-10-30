@@ -54,6 +54,45 @@ test('pending claims with zero runtime candidates are terminal even when legacy 
   assert.match(controller, /classification = \(\n    "terminal_failure"\n    if terminal_non_progress/);
 });
 
+test('a task-executed terminal-evidence gap cannot be recorded as an external blocked TODO', () => {
+  const marker = 'terminal_completion_evidence_missing_without_objective_apply = (';
+  const classification = controller.indexOf(marker);
+  const externalBoundaryDetail = controller.indexOf(
+    'Brownie run reached a blocked external-control boundary',
+  );
+  const terminalBranch = controller.indexOf('case "$progress_classification"');
+  assert.ok(
+    classification >= 0 && externalBoundaryDetail > classification && terminalBranch > externalBoundaryDetail,
+    'terminal-evidence gaps must be classified before either blocked-boundary return and then reach terminal recovery',
+  );
+
+  const externalBoundaryStart = controller.lastIndexOf('elif python3 - "$stdout_log"', externalBoundaryDetail);
+  const externalBoundary = controller.slice(externalBoundaryStart, externalBoundaryDetail);
+  assert.match(externalBoundary, /stop_reason == "terminal_completion_evidence_missing"/);
+  assert.match(externalBoundary, /and not objective_apply_applied/);
+  assert.match(externalBoundary, /sys\.exit\(1\)/);
+  assert.match(
+    controller,
+    /\) or terminal_completion_evidence_missing_without_objective_apply\ncontinuation_required = \(/,
+  );
+});
+
+test('terminal recovery resolves a rebaselined claim through its immutable selected-TODO snapshot', () => {
+  const recoveryStart = controller.indexOf('def admitted_claim_snapshot_for_prior_run(');
+  const recoveryEnd = controller.indexOf('def controller_replan_dir()', recoveryStart);
+  const recovery = controller.slice(recoveryStart, recoveryEnd);
+  assert.ok(recoveryStart >= 0 && recoveryEnd > recoveryStart);
+  assert.match(recovery, /snapshot_selected != expected_selected/);
+  assert.match(recovery, /phase_loop_selected_todo_sha256/);
+  assert.match(recovery, /claim_digest = hashlib\.sha256\(run_claim_id\.encode\("utf-8"\)\)\.hexdigest\(\)/);
+  assert.match(recovery, /admitted_claim_snapshot_for_prior_run\(/);
+  assert.doesNotMatch(recovery, /expected_claim_id/);
+  assert.match(
+    controller,
+    /payload\["phase_loop_selected_todo_sha256"\] = hashlib\.sha256\(selected\.encode\("utf-8"\)\)\.hexdigest\(\)/,
+  );
+});
+
 test('objective-apply replay budget follows the selected TODO across replacement claims', () => {
   assert.match(controller, /objective_apply_target_scope = json\.dumps/);
   assert.match(controller, /same_objective_apply_target_scope = \(/);
