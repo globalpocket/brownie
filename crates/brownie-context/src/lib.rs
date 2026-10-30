@@ -792,8 +792,15 @@ fn format_tool_execution_summary(events: &[LedgerEvent]) -> Vec<String> {
 }
 
 fn compact_next_workspace_read_output_for_prompt_budget(summary: &mut [String]) -> bool {
-    let Some(entry) = summary.iter_mut().find(|entry| {
-        entry.starts_with("workspace.read: Completed")
+    let Some(latest_workspace_read_index) = summary
+        .iter()
+        .rposition(|entry| entry.starts_with("workspace.read: Completed"))
+    else {
+        return false;
+    };
+    let Some((_, entry)) = summary.iter_mut().enumerate().find(|(index, entry)| {
+        *index != latest_workspace_read_index
+            && entry.starts_with("workspace.read: Completed")
             && entry.contains(" output_preview=")
             && !entry.contains(PROMPT_BUDGET_OMITTED_WORKSPACE_READ_OUTPUT)
     }) else {
@@ -3316,6 +3323,58 @@ mod tests {
         );
         let prompt = PromptBuilder::build(materialized);
         assert!(prompt_char_count(&prompt) <= budget);
+    }
+
+    #[test]
+    fn context_materializer_keeps_the_newest_workspace_read_when_it_cannot_fit_the_prompt_budget() {
+        let latest_body = "b".repeat(60_000);
+        let latest_preview = format!(
+            "[workspace.read path=latest.rs bytes_total=60000]\\n{}",
+            latest_body
+        );
+        let events = vec![LedgerEvent {
+            event_id: "event_latest".into(),
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            kind: LedgerEventKind::ToolExecutionCompleted,
+            timestamp: "2026-01-01T00:00:01Z".into(),
+            payload: Some(serde_json::json!({
+                "tool_id": "workspace.read",
+                "status": "Completed",
+                "bytes_read": 60000,
+                "truncated": false,
+                "output_preview": latest_preview,
+            })),
+            payload_envelope: None,
+        }];
+        let base_prompt =
+            PromptBuilder::build(ContextMaterializer::materialize(ContextMaterializerInput {
+                task: task_record(),
+                ledger_events: vec![],
+                child_completion_summaries: vec![],
+                selected_index_context: None,
+                verification_recovery_context: None,
+                context_budget: None,
+            }));
+        let budget = prompt_char_count(&base_prompt) + 8_000;
+
+        let materialized = ContextMaterializer::materialize(ContextMaterializerInput {
+            task: task_record(),
+            ledger_events: events,
+            child_completion_summaries: vec![],
+            selected_index_context: None,
+            verification_recovery_context: None,
+            context_budget: Some(ContextBudget {
+                max_prompt_chars: budget,
+                max_ledger_events: 1,
+                max_selected_index_chars: 0,
+            }),
+        });
+
+        assert!(!materialized.context_budget.prompt_within_budget);
+        assert!(materialized.tool_execution_summary[0].contains(&latest_body));
+        assert!(!materialized.tool_execution_summary[0]
+            .contains(PROMPT_BUDGET_OMITTED_WORKSPACE_READ_OUTPUT));
     }
 
     #[test]
