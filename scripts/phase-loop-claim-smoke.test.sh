@@ -5424,14 +5424,17 @@ PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
 BROWNIE_BIN="$fake_brownie_terminal_unproposed_workspace_write" \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null || true
 
-python3 - "$terminal_write_split_state/status.json" "$terminal_write_split_state/progress-state.json" "$terminal_write_split_workspace/.brownie/todo.md" <<'PY'
+python3 - "$terminal_write_split_state/status.json" "$terminal_write_split_state/progress-state.json" "$terminal_write_split_workspace/.brownie/todo.md" "$terminal_write_split_state/todo-claims/current.json" "$terminal_write_split_workspace/.brownie/private/phase-loop/task-ledger.jsonl" <<'PY'
 import json
 import pathlib
+import re
 import sys
 
 status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 progress = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
 todo = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
+claim = json.loads(pathlib.Path(sys.argv[4]).read_text(encoding="utf-8"))
+ledger = [json.loads(line) for line in pathlib.Path(sys.argv[5]).read_text(encoding="utf-8").splitlines() if line.strip()]
 # A task-executed Runtime result with a terminal-evidence gap is a causeful
 # controller failure, not an external-control boundary.  Keep the selected
 # TODO/claim available for the bounded recovery path rather than hiding it in
@@ -5444,6 +5447,15 @@ assert progress["progress_projection"]["terminal_completion_evidence_missing_wit
 assert progress["workspace_changed"] is False, progress
 assert "- [ ] E-20g-final-judgment-sync:" in todo, todo
 assert "E-20g-final-judgment-sync-target-01" not in todo, todo
+# Retry cap zero must not erase the source task's causal terminal state or
+# mint an unrelated retry claim.  The follow-up split needs this exact source
+# attempt to be durably failed before it can replace the parent TODO.
+assert claim["status"] == "failed", claim
+assert progress["progress_projection"]["claim_id"] == claim["claim_id"], progress
+assert not list(pathlib.Path(sys.argv[1]).parent.glob("todo-claims/stale-rebaseline-*.json"))
+todo_id = re.match(r"^\s*- \[ \]\s+([^:\s]+)", claim["selected_todo"].splitlines()[0]).group(1)
+source_task = f"{todo_id}@{claim['claim_id']}"
+assert any(record.get("task_id") == source_task and record.get("to_state") == "failed" for record in ledger), ledger
 PY
 
 # Compatibility/liveness gate: records produced before the stdout snapshot

@@ -450,7 +450,7 @@ PY
 record_terminal_multitarget_replan_transition() {
   local run_stamp="$1"
   local fallback_result="$2"
-  local evidence_source transition_output transition_status
+  local evidence_source ledger_claim_path source_state source_transition_output transition_output transition_status
   if ! evidence_source="$(python3 - "$fallback_result" <<'PY'
 import json
 import re
@@ -472,7 +472,114 @@ PY
     PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL="terminal multi-target replan evidence source was missing or malformed"
     return 78
   fi
-  if transition_output="$(node "$ROOT_DIR/scripts/phase-loop-task-ledger.mjs" record-terminal-replan --repo "$PHASE_LOOP_WORKSPACE_ROOT" --claim "$TODO_CLAIM_FILE" --todo "$PHASE_LOOP_TODO" --run "$run_stamp" --reason "terminal_multitarget_leaf_split" --evidence-source "$evidence_source" 2>&1)"; then
+  # The active claim can have been audibly rebaselined after Runtime returned
+  # its terminal envelope.  The terminal task ledger belongs to the immutable
+  # source claim named by the evidence, not necessarily to current.json.
+  # Resolve that source snapshot fail-closed instead of treating a retry suffix
+  # as permission to attach a replan to a different task attempt.
+  if ! ledger_claim_path="$(python3 - "$fallback_result" "$TODO_CLAIM_FILE" "$STATE_DIR" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+try:
+    fallback = json.loads(sys.argv[1])
+except Exception:
+    raise SystemExit(1)
+current_claim = pathlib.Path(sys.argv[2])
+state_root = pathlib.Path(sys.argv[3])
+evidence = fallback.get("evidence_source")
+if not isinstance(evidence, dict) or evidence.get("source") != "prior_terminal_unproposed_workspace_write_ledger":
+    if not current_claim.is_file() or current_claim.is_symlink():
+        raise SystemExit(1)
+    print(current_claim)
+    raise SystemExit(0)
+snapshot_raw = evidence.get("claim_snapshot_path")
+claim_id = evidence.get("claim_id")
+if not isinstance(snapshot_raw, str) or not isinstance(claim_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,191}", claim_id):
+    raise SystemExit(1)
+try:
+    root = state_root.resolve()
+    snapshot = pathlib.Path(snapshot_raw)
+    resolved = snapshot.resolve()
+    if (
+        snapshot.is_symlink()
+        or not snapshot.is_file()
+        or snapshot.stat().st_size > 512 * 1024
+        or not resolved.is_relative_to(root)
+        or not resolved.name.endswith(".claim.before-runtime.json")
+    ):
+        raise ValueError("snapshot escapes controller state")
+    value = json.loads(snapshot.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or value.get("claim_id") != claim_id or not isinstance(value.get("selected_todo"), str):
+        raise ValueError("snapshot identity mismatch")
+except Exception:
+    raise SystemExit(1)
+print(snapshot)
+PY
+)"; then
+    PHASE_LOOP_TASK_LEDGER_FAILURE=1
+    PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL="terminal multi-target replan source claim snapshot was missing or did not satisfy the immutable evidence binding"
+    return 78
+  fi
+  if [ "$evidence_source" = "prior_terminal_unproposed_workspace_write_ledger" ]; then
+    if ! source_state="$(python3 - "$ledger_claim_path" "$PHASE_LOOP_WORKSPACE_ROOT/.brownie/private/phase-loop/task-ledger.jsonl" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+ledger_path = pathlib.Path(sys.argv[2])
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+    claim_id = claim.get("claim_id")
+    selected = claim.get("selected_todo")
+    first = selected.splitlines()[0] if isinstance(selected, str) and selected.splitlines() else ""
+    match = re.match(r"^\s*(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+([^:\s]+)", first)
+    task_id = f"{match.group(1)}@{claim_id}" if match and isinstance(claim_id, str) else ""
+except Exception:
+    task_id = ""
+if not task_id:
+    raise SystemExit(1)
+state = ""
+try:
+    for line in ledger_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        value = json.loads(line)
+        events = value.get("events") if isinstance(value, dict) and isinstance(value.get("events"), list) else [value]
+        for event in events:
+            if isinstance(event, dict) and event.get("task_id") == task_id and isinstance(event.get("to_state"), str):
+                state = event["to_state"]
+except FileNotFoundError:
+    pass
+except Exception:
+    raise SystemExit(1)
+print(state)
+PY
+)"; then
+      PHASE_LOOP_TASK_LEDGER_FAILURE=1
+      PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL="terminal multi-target replan could not project the immutable source task state"
+      return 78
+    fi
+    if [ "$source_state" = "running" ]; then
+      if source_transition_output="$(node "$ROOT_DIR/scripts/phase-loop-task-ledger.mjs" record-trajectory --repo "$PHASE_LOOP_WORKSPACE_ROOT" --claim "$ledger_claim_path" --todo "$PHASE_LOOP_TODO" --type "todo.failed" --payload '{"reason":"terminal_unproposed_workspace_write","terminal_failure":true,"recovery_state":"claim_bound_multitarget_split"}' --run "$run_stamp" 2>&1)"; then
+        printf '%s task_ledger_terminal_multitarget_source_failed run=%s result=%s\n' "$(now_utc)" "$run_stamp" "$source_transition_output" >> "$SUPERVISOR_LOG"
+      else
+        PHASE_LOOP_TASK_LEDGER_FAILURE=1
+        PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL="terminal multi-target replan could not terminalize its immutable source task: ${source_transition_output:-<no output>}"
+        printf '%s task_ledger_terminal_multitarget_source_failed_error run=%s detail=%s\n' "$(now_utc)" "$run_stamp" "$PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL" >> "$SUPERVISOR_LOG"
+        return 78
+      fi
+    elif [ "$source_state" != "failed" ] && [ "$source_state" != "blocked" ]; then
+      PHASE_LOOP_TASK_LEDGER_FAILURE=1
+      PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL="terminal multi-target replan requires a running or terminal immutable source task, found=${source_state:-<absent>}"
+      return 78
+    fi
+  fi
+  if transition_output="$(node "$ROOT_DIR/scripts/phase-loop-task-ledger.mjs" record-terminal-replan --repo "$PHASE_LOOP_WORKSPACE_ROOT" --claim "$ledger_claim_path" --todo "$PHASE_LOOP_TODO" --run "$run_stamp" --reason "terminal_multitarget_leaf_split" --evidence-source "$evidence_source" 2>&1)"; then
     printf '%s task_ledger_terminal_replan_result run=%s result=%s\n' "$(now_utc)" "$run_stamp" "$transition_output" >> "$SUPERVISOR_LOG"
     printf '%s\n' "$transition_output"
     return 0
@@ -480,7 +587,7 @@ PY
     transition_status=$?
   fi
   PHASE_LOOP_TASK_LEDGER_FAILURE=1
-  PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL="terminal multi-target replan ledger transaction failed: exit=$transition_status result=${transition_output:-<no output>} claim=$TODO_CLAIM_FILE"
+  PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL="terminal multi-target replan ledger transaction failed: exit=$transition_status result=${transition_output:-<no output>} claim=$ledger_claim_path"
   printf '%s task_ledger_terminal_replan_failed run=%s %s\n' "$(now_utc)" "$run_stamp" "$PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL" >> "$SUPERVISOR_LOG"
   return 78
 }
@@ -5709,8 +5816,8 @@ PY
 
 try_terminal_multitarget_leaf_split_fallback() {
   local run_stamp="$1"
-  if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$PROGRESS_STATE_FILE" ]; then
-    printf '%s\n' '{"applied":false,"eligible":false,"operation":"terminal_multitarget_leaf_split_fallback","reason":"claim_or_progress_state_missing"}'
+  if [ ! -f "$PROGRESS_STATE_FILE" ]; then
+    printf '%s\n' '{"applied":false,"eligible":false,"operation":"terminal_multitarget_leaf_split_fallback","reason":"progress_state_missing"}'
     return 2
   fi
   python3 - "$TODO_CLAIM_FILE" "$TODO_REPAIR_FEEDBACK_FILE" "$PROGRESS_STATE_FILE" "$PHASE_LOOP_TODO" "$PHASE_LOOP_TODO_BREAKDOWN" "$PHASE_LOOP_WORKSPACE_ROOT" "$STATE_DIR" "$RUN_DIR" "$PHASE_LOOP_BROWNIE_STORE_ROOT" "$run_stamp" "$(now_utc)" <<'PY'
@@ -5976,9 +6083,27 @@ def skip(reason):
 claim = read_json(claim_path)
 feedback = read_json(feedback_path)
 progress = read_json(progress_path)
-selected = claim.get("selected_todo")
-if not isinstance(selected, str) or not selected.strip():
-    skip("selected_todo_missing")
+progress_projection = progress.get("progress_projection") if isinstance(progress.get("progress_projection"), dict) else {}
+claim_selected = claim.get("selected_todo")
+restoring_prior_claim = False
+restored_prior_claim_snapshot_path = None
+if isinstance(claim_selected, str) and claim_selected.strip():
+    selected = claim_selected
+elif not claim_path.exists():
+    # A retry-cap/rebaseline transition may have retired the live claim before
+    # the next invocation.  Reconstruct it only from the persisted projection
+    # after the later lineage checks prove an exact admitted Runtime snapshot.
+    selected = progress_projection.get("selected_todo")
+    if not isinstance(selected, str) or not selected.strip():
+        skip("selected_todo_missing")
+    if (
+        progress.get("classification") != "terminal_failure"
+        or progress_projection.get("terminal_completion_evidence_missing_without_objective_apply") is not True
+    ):
+        skip("claim_missing_without_terminal_evidence_gap")
+    restoring_prior_claim = True
+else:
+    skip("claim_unreadable_or_missing_selected_todo")
 selected_first = selected.splitlines()[0] if selected.splitlines() else ""
 selected_id = todo_id_from_first_line(selected_first)
 if not selected_id:
@@ -6005,8 +6130,8 @@ if (
     and not prior_terminal_evidence
 ):
     skip("progress_projection_claim_id_mismatch")
-projection_selected = str(progress_projection.get("selected_todo") or "")
-if not projection_selected or projection_selected.splitlines()[0] != selected_first:
+projection_selected = progress_projection.get("selected_todo")
+if not isinstance(projection_selected, str) or projection_selected != selected:
     skip("progress_projection_selected_todo_mismatch")
 combined = " ".join(
     str(value)
@@ -6446,6 +6571,41 @@ def rollback_todo_and_breakdown():
     atomic_replace(todo_path, original_todo_text, "terminal-multitarget-rollback-todo")
     atomic_replace(breakdown_path, original_breakdown_text, "terminal-multitarget-rollback-breakdown")
 
+if restoring_prior_claim:
+    snapshot_path_raw = evidence_source.get("claim_snapshot_path") if isinstance(evidence_source, dict) else None
+    source_claim_id = evidence_source.get("claim_id") if isinstance(evidence_source, dict) else None
+    if not isinstance(snapshot_path_raw, str) or not isinstance(source_claim_id, str) or not source_claim_id:
+        skip("prior_claim_snapshot_identity_missing")
+    try:
+        state_root = state_dir.resolve()
+        claim_root = (state_root / "todo-claims").resolve()
+        expected_claim_path = (claim_root / "current.json").resolve()
+        snapshot_path = pathlib.Path(snapshot_path_raw)
+        resolved_snapshot = snapshot_path.resolve()
+        resolved_claim_path = claim_path.resolve()
+        if (
+            snapshot_path.is_symlink()
+            or not snapshot_path.is_file()
+            or snapshot_path.stat().st_size > 512 * 1024
+            or not resolved_snapshot.is_relative_to(state_root)
+            or not resolved_snapshot.name.endswith(".claim.before-runtime.json")
+            or claim_path.exists()
+            or resolved_claim_path != expected_claim_path
+        ):
+            raise ValueError("claim snapshot path is outside the controller state")
+        prior_claim = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        if (
+            not isinstance(prior_claim, dict)
+            or prior_claim.get("claim_id") != source_claim_id
+            or prior_claim.get("selected_todo") != selected
+        ):
+            raise ValueError("claim snapshot does not match the admitted terminal source")
+        atomic_replace(claim_path, json.dumps(prior_claim, ensure_ascii=False, sort_keys=True, indent=2) + "\n", "terminal-multitarget-claim-restore")
+        claim = prior_claim
+        restored_prior_claim_snapshot_path = str(snapshot_path)
+    except Exception:
+        skip("prior_claim_snapshot_restore_failed")
+
 for path, content, suffix in (
     (todo_path, updated_todo, "terminal-multitarget-todo"),
     (breakdown_path, breakdown_text, "terminal-multitarget-breakdown"),
@@ -6491,6 +6651,7 @@ record = {
     "selected_scopes": targets,
     "replan_record_reason": replan_record_reason,
     "evidence_source": evidence_source,
+    "restored_prior_claim_snapshot_path": restored_prior_claim_snapshot_path,
     "controller_store": controller_store,
     "generated_leaf_ids": leaf_ids,
     "generated_child_ids": leaf_ids,
@@ -6637,6 +6798,7 @@ print(json.dumps({
     "run_stamp": run_stamp,
     "replan_record_reason": replan_record_reason,
     "evidence_source": evidence_source,
+    "restored_prior_claim_snapshot_path": restored_prior_claim_snapshot_path,
     "controller_store": controller_store,
 }, ensure_ascii=False, sort_keys=True))
 PY
@@ -18962,6 +19124,51 @@ PY
     case "$progress_classification" in
       terminal_failure)
         if [ "$PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP" -eq 0 ] && [ "$PHASE_LOOP_RUNTIME_EXECUTION_CONFIRMED" -eq 1 ]; then
+          # A resumable envelope with a terminal-completion evidence gap is a
+          # controller-owned failed execution, not an invitation to mint a
+          # retry claim.  First terminalize the immutable source trajectory;
+          # the next invocation can then perform its narrowly proven
+          # multi-target recovery against that source rather than lose causal
+          # lineage in a retry-cap rebaseline.
+          if python3 - "$PROGRESS_STATE_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+try:
+    progress = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+projection = progress.get("progress_projection") if isinstance(progress.get("progress_projection"), dict) else {}
+raise SystemExit(0 if (
+    progress.get("classification") == "terminal_failure"
+    and projection.get("terminal_completion_evidence_missing_without_objective_apply") is True
+) else 1)
+PY
+          then
+            local terminal_gap_source_transition_output terminal_gap_source_transition_status
+            if terminal_gap_source_transition_output="$(write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"terminal_completion_evidence_missing_without_objective_apply","terminal_failure":true,"recovery_state":"claim_bound_terminal_multitarget_recovery"}' "todo.failed" 2>&1)"; then
+              terminal_gap_source_transition_status=0
+            else
+              terminal_gap_source_transition_status=$?
+            fi
+            if [ "$terminal_gap_source_transition_status" -ne 0 ] || [ "${PHASE_LOOP_TASK_LEDGER_FAILURE:-0}" -eq 1 ]; then
+              detail="Terminal completion-evidence gap could not be recorded as a failed source task; preserving the active claim and refusing a retry-cap rebaseline. ledger=${PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL:-$terminal_gap_source_transition_output} stdout=$stdout_log stderr=$stderr_log"
+              write_status "blocked" "$detail" "$run_id" "78" "${CONSECUTIVE_FAILURES:-0}"
+              printf '%s run=%s terminal_completion_evidence_gap_source_transition_failed=true detail=%s\n' "$(now_utc)" "$run_id" "$detail" >> "$SUPERVISOR_LOG"
+              return 78
+            fi
+            if ! write_todo_claim "$(claim_field claim_id)" "failed" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"; then
+              detail="Terminal completion-evidence gap source task was recorded as failed, but the failed claim state could not be persisted; refusing a retry-cap rebaseline. stdout=$stdout_log stderr=$stderr_log"
+              write_status "blocked" "$detail" "$run_id" "78" "${CONSECUTIVE_FAILURES:-0}"
+              return 78
+            fi
+            write_runtime_terminal_repair_feedback "$run_stamp" "$stdout_log" "$stderr_log" || true
+            detail="Brownie reported a terminal completion-evidence gap; preserved the failed source claim for a claim-bound redelegatable recovery instead of rebaselining it. evidence=$PHASE_LOOP_RUNTIME_EXECUTION_EVIDENCE stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+            write_status "blocked" "$detail" "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+            printf '%s run=%s terminal_completion_evidence_gap_source_terminalized=true recovery_state=claim_bound_terminal_multitarget_recovery evidence=%s progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$PHASE_LOOP_RUNTIME_EXECUTION_EVIDENCE" "$PROGRESS_STATE_FILE" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+            return 76
+          fi
           python3 - "$TODO_REPAIR_FEEDBACK_FILE" "$run_stamp" "$run_id" "$PHASE_LOOP_RUNTIME_EXECUTION_EVIDENCE" "$(claim_field claim_id 2>/dev/null || true)" <<'PY'
 import json
 import os
