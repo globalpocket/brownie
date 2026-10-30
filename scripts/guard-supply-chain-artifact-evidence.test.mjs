@@ -357,7 +357,7 @@ test('smoke: guard rejects evidence with empty fail_closed_reasons when sections
   assert.ok(errors.some((error) => error.includes('fail_closed_reasons must include')), 'should require fail_closed_reasons to include missing sections');
 });
 
-test('smoke: guard rejects evidence missing required sections', () => {
+test('smoke: guard rejects evidence with a null required section', () => {
   const evidence = validEvidence();
   evidence.sections.sbom = null;
   const errors = validate({ evidence });
