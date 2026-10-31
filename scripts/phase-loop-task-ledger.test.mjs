@@ -612,6 +612,21 @@ test('isolates a review-rework execution from an erroneous terminal attempt of t
 
   assert.equal(recordTrajectory(repo, { claimPath: claim, todoPath: todo, type: 'todo.claimed', runId: 'fresh-run' }).ok, true);
   assert.equal(recordTrajectory(repo, { claimPath: claim, todoPath: todo, type: 'workflow.routed', runId: 'fresh-run' }).ok, true);
+  // Review feedback can be replayed while the same reimplementation is
+  // continuing. It is observability for an existing attempt, never a request
+  // to replace or terminalize that attempt.
+  for (const runId of ['fresh-run', 'continuation-run']) {
+    const feedback = recordTrajectory(repo, {
+      claimPath: claim,
+      todoPath: todo,
+      type: 'todo.repair_feedback',
+      payloadRaw: JSON.stringify({ reason: 'review_rework_reimplementation_required' }),
+      runId
+    });
+    assert.equal(feedback.ok, true, JSON.stringify(feedback));
+  }
+  const isolatedTaskId = reviewReworkClaim.review_rework_ledger_attempt.ledger_attempt_id;
+  assert.equal(taskProjection(readTaskLedger(repo)).get(isolatedTaskId).to_state, 'running');
   const replanned = recordTrajectory(repo, {
     claimPath: claim,
     todoPath: todo,
@@ -620,7 +635,6 @@ test('isolates a review-rework execution from an erroneous terminal attempt of t
     runId: 'fresh-run'
   });
   assert.equal(replanned.ok, true, JSON.stringify(replanned));
-  const isolatedTaskId = reviewReworkClaim.review_rework_ledger_attempt.ledger_attempt_id;
   const projection = taskProjection(readTaskLedger(repo));
   assert.equal(projection.get(sourceTaskId).to_state, 'completed');
   assert.equal(projection.get(isolatedTaskId).to_state, 'replanned');

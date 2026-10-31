@@ -210,6 +210,16 @@ test('review-rework recovery invalidates a stale Runtime continuation until an a
   );
 });
 
+test('review-rework repair feedback never terminalizes a replayed isolated attempt', () => {
+  const repairFeedback = 'write_bdk_trajectory_event "$run_stamp" "todo.repair_feedback" \'{"reason":"verified_noop_dirty_baseline_repair_feedback_recorded"}\'';
+  assert.match(controller, new RegExp(repairFeedback.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.doesNotMatch(
+    controller,
+    /write_bdk_trajectory_event "\$run_stamp" "todo\.repair_feedback" '\{"reason":"verified_noop_dirty_baseline_repair_feedback_recorded"\}' "todo\.replanned"/,
+    'repair feedback is observational; only an explicit replacement transaction may terminalize a task attempt',
+  );
+});
+
 test('controller defers only the selected-target integrity finding for a verified Runtime resume continuation', () => {
   const helperStart = controller.indexOf('phase_loop_can_defer_selected_target_change_for_continuation()');
   const helperEnd = controller.indexOf('\ntry_reconstruct_missing_todo_replan_records()', helperStart);
