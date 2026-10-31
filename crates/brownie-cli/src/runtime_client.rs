@@ -362,16 +362,49 @@ impl RuntimeClient {
             RuntimeRequestClass::ObjectiveExecution,
         )?;
         validate_headless_run_drive_result(&result)?;
-        let result = self.follow_parent_join_routes_if_available(result)?;
-        let result = self.follow_objective_proposal_preflight_route_if_available(result)?;
-        let result = self.follow_objective_proposal_apply_route_if_available(result, None)?;
+        // `headless.run.advance` can consume the normal continuation decision
+        // before it reaches a durable objective-proposal preflight checkpoint.
+        // Detect that deliberately lossy projection before the ordinary route
+        // pipeline: its apply parser correctly rejects the missing preflight
+        // material, but the checkpoint can safely re-expose it under a distinct
+        // continuation lock.
+        let result = if requires_resumed_authorized_preflight(&result)? {
+            self.resume_authorized_preflight_apply_if_needed(result, resume_candidate)?
+        } else {
+            let result = self.follow_parent_join_routes_if_available(result)?;
+            let result = self.follow_objective_proposal_preflight_route_if_available(result)?;
+            let result = self.follow_objective_proposal_apply_route_if_available(result, None)?;
+            let result = self.follow_objective_apply_verification_route_if_available(result)?;
+            let result = self.follow_objective_completion_acceptance_route_if_available(result)?;
+            let result = self.follow_parent_join_routes_if_available(result)?;
+            let result = self.close_and_finalize_objective_completion_if_available(result)?;
+            self.accept_and_finalize_completed_run_if_available(result)?
+        };
+        let result = merge_resume_drive_result(&advance_result, result)?;
+        attach_resume_route_candidate_context(result, resume_candidate)
+    }
+
+    fn resume_authorized_preflight_apply_if_needed(
+        &self,
+        result: Value,
+        resume_candidate: &CliResumeRouteCandidate,
+    ) -> Result<Value, RuntimeClientError> {
+        if !requires_resumed_authorized_preflight(&result)? {
+            return Ok(result);
+        }
+
+        let preflight = self.call_runtime_value(
+            HEADLESS_CONTINUE_ONCE_METHOD,
+            Some(cli_resume_authorized_preflight_params(resume_candidate)),
+            RuntimeRequestClass::ObjectiveExecution,
+        )?;
+        validate_headless_continue_once_result(&preflight)?;
+        let result = self.follow_objective_proposal_apply_route_if_available(preflight, None)?;
         let result = self.follow_objective_apply_verification_route_if_available(result)?;
         let result = self.follow_objective_completion_acceptance_route_if_available(result)?;
         let result = self.follow_parent_join_routes_if_available(result)?;
         let result = self.close_and_finalize_objective_completion_if_available(result)?;
-        let result = self.accept_and_finalize_completed_run_if_available(result)?;
-        let result = merge_resume_drive_result(&advance_result, result)?;
-        attach_resume_route_candidate_context(result, resume_candidate)
+        self.accept_and_finalize_completed_run_if_available(result)
     }
 
     fn runtime_status(&self, json_output: bool) -> Result<String, RuntimeClientError> {
@@ -2360,6 +2393,21 @@ fn cli_run_payload(result: &Value) -> Result<Value, RuntimeClientError> {
             }
         }
     }
+    if let Some(outcome) = object.get("execution_outcome") {
+        payload.insert(
+            "execution_outcome".to_string(),
+            bounded_json_execution_outcome(outcome)?,
+        );
+    }
+    append_objective_route_evidence(&mut payload, object)?;
+    add_external_loop_contract(&mut payload)?;
+    Ok(Value::Object(payload))
+}
+
+fn append_objective_route_evidence(
+    payload: &mut serde_json::Map<String, Value>,
+    object: &serde_json::Map<String, Value>,
+) -> Result<(), RuntimeClientError> {
     if let Some(preflight) = object
         .get("objective_proposal_authorization_preflight_result")
         .and_then(Value::as_object)
@@ -2479,14 +2527,7 @@ fn cli_run_payload(result: &Value) -> Result<Value, RuntimeClientError> {
             }
         }
     }
-    if let Some(outcome) = object.get("execution_outcome") {
-        payload.insert(
-            "execution_outcome".to_string(),
-            bounded_json_execution_outcome(outcome)?,
-        );
-    }
-    add_external_loop_contract(&mut payload)?;
-    Ok(Value::Object(payload))
+    Ok(())
 }
 
 fn cli_run_or_advance_payload(result: &Value) -> Result<Value, RuntimeClientError> {
@@ -2602,6 +2643,7 @@ fn cli_resume_payload(result: &Value) -> Result<Value, RuntimeClientError> {
             bounded_json_execution_outcome(outcome)?,
         );
     }
+    append_objective_route_evidence(&mut payload, object)?;
     add_external_loop_contract(&mut payload)?;
     Ok(Value::Object(payload))
 }
@@ -3063,6 +3105,58 @@ fn cli_resume_advance_params(
         }
     });
     Ok(Some((params, candidate)))
+}
+
+fn cli_resume_authorized_preflight_params(candidate: &CliResumeRouteCandidate) -> Value {
+    let continuation_id = format!(
+        "{}.objective-preflight",
+        stable_cli_resume_id(
+            &candidate.progress_fingerprint,
+            candidate.aggregate_sequence
+        )
+    );
+    json!({
+        "authorize": true,
+        "expected_progress_fingerprint": candidate.progress_fingerprint,
+        "expected_aggregate_sequence": candidate.aggregate_sequence,
+        "continuation_id": continuation_id,
+        "max_steps": CLI_RESUME_MAX_STEPS,
+        "continuation_scope": {
+            "session_id": candidate.session_id,
+            "journey_id": candidate.journey_id,
+            "task_id": candidate.task_id,
+            "run_id": candidate.run_id
+        }
+    })
+}
+
+fn requires_resumed_authorized_preflight(result: &Value) -> Result<bool, RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    if object.get("next_action").and_then(Value::as_str)
+        != Some("apply_authorized_objective_proposal")
+    {
+        return Ok(false);
+    }
+
+    // If the normal route retained the preflight material, the regular apply
+    // path can inspect it (or deliberately decline it for a safety reason).
+    // Do not invoke that strict parser here: this predicate identifies the
+    // exact lossy runtime projection whose missing material makes the parser
+    // fail closed. All other shapes stay on the regular validation path.
+    if object
+        .get("objective_proposal_authorization_preflight_result")
+        .is_some_and(|value| !value.is_null())
+    {
+        return Ok(false);
+    }
+    Ok(object
+        .get("next_route")
+        .and_then(Value::as_object)
+        .and_then(|route| route.get("kind"))
+        .and_then(Value::as_str)
+        == Some("apply_authorized_objective_proposal_explicitly"))
 }
 
 fn resumed_cli_drive_params(advance_result: &Value) -> Result<Option<Value>, RuntimeClientError> {
@@ -6547,6 +6641,76 @@ mod tests {
         );
         assert!(params.get("verification_recovery_source").is_none());
         assert!(params.get("objective_proposal_apply_target").is_none());
+    }
+
+    #[test]
+    fn resumed_authorized_preflight_uses_a_distinct_exact_scope_lock() {
+        let candidate = CliResumeRouteCandidate {
+            session_id: "cli.run.target".to_string(),
+            journey_id: "cli.run.target.journey".to_string(),
+            task_id: "task-target".to_string(),
+            run_id: "run-target".to_string(),
+            next_session_sequence: 4,
+            progress_fingerprint:
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .to_string(),
+            aggregate_sequence: 12,
+        };
+
+        let params = cli_resume_authorized_preflight_params(&candidate);
+        assert_eq!(params["authorize"], true);
+        assert_eq!(params["expected_aggregate_sequence"], 12);
+        assert_eq!(params["max_steps"], 1);
+        assert!(params["continuation_id"]
+            .as_str()
+            .unwrap()
+            .ends_with(".objective-preflight"));
+        let normal_lock = stable_cli_resume_id(
+            &candidate.progress_fingerprint,
+            candidate.aggregate_sequence,
+        );
+        assert_ne!(params["continuation_id"], Value::String(normal_lock));
+        assert!(params["continuation_id"].as_str().unwrap().len() <= 80);
+        assert_eq!(
+            params["continuation_scope"],
+            json!({
+                "session_id": "cli.run.target",
+                "journey_id": "cli.run.target.journey",
+                "task_id": "task-target",
+                "run_id": "run-target"
+            })
+        );
+    }
+
+    #[test]
+    fn resumed_authorized_preflight_only_bridges_lossy_apply_projection() {
+        let lossy = json!({
+            "next_action": "apply_authorized_objective_proposal",
+            "next_route": {
+                "kind": "apply_authorized_objective_proposal_explicitly"
+            }
+        });
+        assert!(requires_resumed_authorized_preflight(&lossy).unwrap());
+
+        let materialized = json!({
+            "next_action": "apply_authorized_objective_proposal",
+            "objective_proposal_authorization_preflight_result": {
+                "run_id": "run-target",
+                "proposal_id": "proposal-target"
+            }
+        });
+        assert!(!requires_resumed_authorized_preflight(&materialized).unwrap());
+        assert!(!requires_resumed_authorized_preflight(&json!({
+            "next_action": "inspect_progress_overview"
+        }))
+        .unwrap());
+        // The recovery is deliberately narrow: an incomplete or unrelated
+        // route remains on the regular strict-validation path.
+        assert!(!requires_resumed_authorized_preflight(&json!({
+            "next_action": "apply_authorized_objective_proposal",
+            "next_route": {"kind": "inspect_progress_overview"}
+        }))
+        .unwrap());
     }
 
     #[test]
