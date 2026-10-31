@@ -445,28 +445,112 @@ export function attestLegacyMergedCompletion({
   };
 }
 
-function isRearmableReviewReworkCompletionRefusal(currentClaim) {
-  if (currentClaim?.status !== 'integrity_blocked') return false;
-  if (currentClaim?.delivery_review?.merged === true) return false;
-  if (currentClaim?.completion_certificate != null) return false;
+function reviewReworkRearmEvidence({ root, stateRoot, currentClaim }) {
+  if (currentClaim?.delivery_review?.merged === true || currentClaim?.completion_certificate != null) return null;
   const terminalTransition = Array.isArray(currentClaim?.status_history)
     ? currentClaim.status_history.at(-1)
     : null;
   if (
-    terminalTransition?.status !== 'integrity_blocked'
-    || terminalTransition?.requested_status !== 'completed'
-  ) return false;
-  const refusals = Array.isArray(currentClaim?.completion_promotion_rejections)
-    ? currentClaim.completion_promotion_rejections
-    : [];
-  return refusals.some((refusal) => (
-    refusal?.requested_status === 'completed'
-    && typeof refusal?.reason === 'string'
-    && refusal.reason.startsWith('completed_requires_claim_bound_')
-  ));
+    currentClaim?.status === 'integrity_blocked'
+    && terminalTransition?.status === 'integrity_blocked'
+    && terminalTransition?.requested_status === 'completed'
+  ) {
+    const refusals = Array.isArray(currentClaim?.completion_promotion_rejections)
+      ? currentClaim.completion_promotion_rejections
+      : [];
+    if (refusals.some((refusal) => (
+      refusal?.requested_status === 'completed'
+      && typeof refusal?.reason === 'string'
+      && refusal.reason.startsWith('completed_requires_claim_bound_')
+    ))) {
+      return {
+        reason: 'completion_promotion_refused_for_changes_requested_root_claim',
+        audit: { terminal_status: 'integrity_blocked', requested_status: 'completed' }
+      };
+    }
+  }
+
+  // Older controllers could terminalize a directly executed, authorized
+  // objective preflight before they reached the apply route, solely because a
+  // stale replay budget was carried into the fresh dispatch. Rearm only this
+  // auditable, unapplied shape once; every other failure remains fail-closed.
+  if (
+    currentClaim?.status !== 'failed'
+    || currentClaim?.review_rework_fresh_dispatch_pending !== false
+    || typeof currentClaim?.review_rework_fresh_dispatch_activated_run_stamp !== 'string'
+    || !/^[0-9]{8}T[0-9]{6}Z$/u.test(currentClaim.review_rework_fresh_dispatch_activated_run_stamp)
+    || typeof currentClaim?.terminal_failure_execution_evidence_path !== 'string'
+  ) return null;
+  const activatedRunStamp = currentClaim.review_rework_fresh_dispatch_activated_run_stamp;
+  const failedTransition = [...(Array.isArray(currentClaim.status_history) ? currentClaim.status_history : [])]
+    .reverse()
+    .find((entry) => entry?.requested_status === 'failed' && entry?.status === 'failed');
+  if (failedTransition?.run_stamp !== activatedRunStamp) return null;
+  try {
+    const executionRelative = existingPathInsideRoot(
+      root,
+      currentClaim.terminal_failure_execution_evidence_path,
+      'review_rework_unapplied_objective_apply_execution_evidence'
+    );
+    const execution = readJson(path.resolve(root, executionRelative));
+    const stdoutPath = path.join(stateRoot, 'runs', `${activatedRunStamp}.stdout.log`);
+    const stdoutRelative = existingPathInsideRoot(
+      root,
+      path.relative(root, stdoutPath),
+      'review_rework_unapplied_objective_apply_stdout'
+    );
+    const stdout = readJson(path.resolve(root, stdoutRelative));
+    const payload = stdout?.run;
+    const unconsumed = (value) => value == null || value === false || value === '';
+    const selectedTodoSha256 = sha256(currentClaim.selected_todo);
+    if (
+      execution?.claim_id !== currentClaim.claim_id
+      || execution?.runtime_claim_id !== currentClaim.claim_id
+      || execution?.selected_todo_sha256 !== selectedTodoSha256
+      || execution?.task_execution_confirmed !== true
+      || execution?.signals?.payload_status !== 'task_executed'
+      || execution?.signals?.task_execution_confirmed !== true
+      || !Number.isSafeInteger(execution?.signals?.reported_executed_count)
+      || execution.signals.reported_executed_count < 1
+      || execution?.signals?.stop_class !== 'continuation_required'
+      || execution?.signals?.stop_reason !== 'objective_proposal_candidate_ready'
+      || stdout?.command !== 'run'
+      || stdout?.ok !== true
+      || stdout?.exit_code !== 0
+      || payload?.status !== 'task_executed'
+      || payload?.task_execution_confirmed !== true
+      || !Number.isSafeInteger(payload?.executed_count)
+      || payload.executed_count < 1
+      || payload?.next_action !== 'apply_authorized_objective_proposal'
+      || payload?.objective_proposal_preflight_status !== 'authorized_preflight_ready'
+      || payload?.completed !== false
+      || payload?.blocked !== false
+      || payload?.terminal_failure !== false
+      || !unconsumed(payload?.objective_apply_authorization_consumed)
+      || !unconsumed(payload?.objective_apply_applied)
+      || !unconsumed(payload?.objective_apply_path)
+      || !unconsumed(payload?.objective_apply_verification_status)
+    ) return null;
+    return {
+      reason: 'unapplied_authorized_objective_preflight_failed_before_apply',
+      audit: {
+        run_stamp: activatedRunStamp,
+        execution_evidence_path: executionRelative,
+        stdout_path: stdoutRelative,
+        task_id: payload.task_id ?? null,
+        runtime_run_id: payload.run_id ?? null
+      }
+    };
+  } catch {
+    return null;
+  }
 }
 
-function isLiveMatchingReviewReworkClaim({ currentClaim, claimId, selected, recoveryId }) {
+function isRearmableReviewReworkCompletionRefusal({ root, stateRoot, currentClaim }) {
+  return reviewReworkRearmEvidence({ root, stateRoot, currentClaim }) != null;
+}
+
+function isLiveMatchingReviewReworkClaim({ root, stateRoot, currentClaim, claimId, selected, recoveryId }) {
   return Boolean(
     currentClaim
     && currentClaim.claim_id === claimId
@@ -477,7 +561,7 @@ function isLiveMatchingReviewReworkClaim({ currentClaim, claimId, selected, reco
     && sha256(currentClaim.selected_todo) === sha256(selected)
     && (
       ['claimed', 'in_progress'].includes(currentClaim.status)
-      || isRearmableReviewReworkCompletionRefusal(currentClaim)
+      || isRearmableReviewReworkCompletionRefusal({ root, stateRoot, currentClaim })
     )
   );
 }
@@ -1080,6 +1164,8 @@ export function reconcilePersistedReviewRework({
   const currentClaimPath = path.join(stateRoot, 'todo-claims', 'current.json');
   let currentClaim = fs.existsSync(currentClaimPath) ? readJson(currentClaimPath) : null;
   if (currentClaim && isLiveMatchingReviewReworkClaim({
+    root,
+    stateRoot,
     currentClaim,
     claimId: identity.claimId,
     selected: currentClaim.selected_todo,
@@ -1322,7 +1408,7 @@ function ensureReviewReworkFreshDispatch({
   reviewer,
   now
 }) {
-  const sameRecoveredClaim = isLiveMatchingReviewReworkClaim({ currentClaim, claimId, selected, recoveryId });
+  const sameRecoveredClaim = isLiveMatchingReviewReworkClaim({ root, stateRoot, currentClaim, claimId, selected, recoveryId });
   if (!sameRecoveredClaim) {
     throw new Error('idempotent_recovery_requires_live_matching_review_rework_claim');
   }
@@ -1341,7 +1427,8 @@ function ensureReviewReworkFreshDispatch({
     review_rework_ledger_attempt_id: ledgerAttempt.ledger_attempt_id,
     review_rework_ledger_attempt_audit_path: ledgerAttempt.audit_path
   } : { review_rework_ledger_attempt_isolated: false };
-  if (isRearmableReviewReworkCompletionRefusal(currentClaim)) {
+  const rearmEvidence = reviewReworkRearmEvidence({ root, stateRoot, currentClaim });
+  if (rearmEvidence) {
     const rearmHistory = Array.isArray(currentClaim.review_rework_fresh_dispatch_rearm_history)
       ? currentClaim.review_rework_fresh_dispatch_rearm_history
       : [];
@@ -1370,7 +1457,8 @@ function ensureReviewReworkFreshDispatch({
       reviewer,
       dispatch_attempt: dispatchAttempt,
       prior_activated_run_stamp: currentClaim.review_rework_fresh_dispatch_activated_run_stamp ?? null,
-      reason: 'completion_promotion_refused_for_changes_requested_root_claim',
+      reason: rearmEvidence.reason,
+      evidence: rearmEvidence.audit,
       rearmed_at: now
     };
     if (!fs.existsSync(auditPath)) atomicJson(auditPath, audit);
@@ -1380,7 +1468,7 @@ function ensureReviewReworkFreshDispatch({
       status: 'in_progress',
       review_rework_fresh_dispatch_pending: true,
       review_rework_fresh_dispatch_recovery_id: recoveryId,
-      review_rework_fresh_dispatch_reason: 'completion_promotion_refused_for_changes_requested_root_claim',
+      review_rework_fresh_dispatch_reason: rearmEvidence.reason,
       review_rework_fresh_dispatch_requested_at: now,
       review_rework_fresh_dispatch_attempt: dispatchAttempt,
       review_rework_fresh_dispatch_rearm_history: [...rearmHistory, {
@@ -1388,14 +1476,15 @@ function ensureReviewReworkFreshDispatch({
         dispatch_attempt: dispatchAttempt,
         prior_activated_run_stamp: currentClaim.review_rework_fresh_dispatch_activated_run_stamp ?? null,
         audit_path: path.relative(root, auditPath),
-        reason: 'completion_promotion_refused_for_changes_requested_root_claim'
+        reason: rearmEvidence.reason,
+        evidence: rearmEvidence.audit
       }],
       status_history: [
         ...(Array.isArray(currentClaim.status_history) ? currentClaim.status_history : []),
         {
           status: 'in_progress',
           updated_at: now,
-          note: 'review-rework completion promotion refusal rearmed one fresh Runtime dispatch'
+          note: `review-rework ${rearmEvidence.reason} rearmed one fresh Runtime dispatch`
         }
       ],
       updated_at: now
@@ -1405,6 +1494,7 @@ function ensureReviewReworkFreshDispatch({
       fresh_runtime_dispatch_required: true,
       fresh_runtime_dispatch_marker_restored: true,
       fresh_runtime_dispatch_rearmed: true,
+      fresh_runtime_dispatch_rearm_reason: rearmEvidence.reason,
       fresh_runtime_dispatch_attempt: dispatchAttempt,
       fresh_runtime_dispatch_rearm_audit_path: path.relative(root, auditPath),
       ...ledgerAttemptEvidence
@@ -1551,6 +1641,8 @@ export function recoverLegacyRejectedCompletion({
     if (alreadyRecovered) {
       const currentClaim = fs.existsSync(currentClaimPath) ? readJson(currentClaimPath) : null;
       if (!isLiveMatchingReviewReworkClaim({
+        root,
+        stateRoot,
         currentClaim,
         claimId: preliminaryClaimId,
         selected: preliminarySelected,
@@ -1639,6 +1731,8 @@ export function recoverLegacyRejectedCompletion({
     recoveryId
   });
   if (alreadyInvalidated && !isLiveMatchingReviewReworkClaim({
+    root,
+    stateRoot,
     currentClaim,
     claimId: input.claimId,
     selected: input.selected,
@@ -1709,6 +1803,8 @@ export function recoverLegacyRejectedCompletion({
   const invalidationPath = path.join(stateRoot, 'todo-completion-invalidations', `${input.claimId}-${recoveryId}.json`);
   const displacedClaimDigest = currentClaim ? sha256(JSON.stringify(currentClaim)).slice(0, 16) : null;
   const idempotentDisplacement = alreadyInvalidated && currentClaim != null && !partialInitialRecovery && !isLiveMatchingReviewReworkClaim({
+    root,
+    stateRoot,
     currentClaim,
     claimId: input.claimId,
     selected: input.selected,
