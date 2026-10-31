@@ -1111,6 +1111,7 @@ PY
   printf '\nexport const phaseLoopRetryFixtureCompleted = true;\n' >> "\$PHASE_LOOP_WORKSPACE_ROOT/\$target_path"
   task_execution_json="\$(python3 - "\$target_path" <<'PY'
 import json
+import hashlib
 import sys
 
 target = sys.argv[1]
@@ -3350,16 +3351,17 @@ BROWNIE_BIN="$fake_brownie_objective_apply_legacy_resume" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
-set +e
-PHASE_LOOP_STATE_DIR="$state_objective_apply_stalled" \
-PHASE_LOOP_PROMPT="$prompt_objective_apply_stalled" \
-PHASE_LOOP_TODO="$todo_objective_apply_stalled" \
-PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_objective_apply_stalled" \
-BROWNIE_BIN="$fake_brownie_objective_apply_legacy_resume" \
-PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
-objective_apply_stalled_exit="$?"
-set -e
+if PHASE_LOOP_STATE_DIR="$state_objective_apply_stalled" \
+  PHASE_LOOP_PROMPT="$prompt_objective_apply_stalled" \
+  PHASE_LOOP_TODO="$todo_objective_apply_stalled" \
+  PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_objective_apply_stalled" \
+  BROWNIE_BIN="$fake_brownie_objective_apply_legacy_resume" \
+  PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
+  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null; then
+  objective_apply_stalled_exit=0
+else
+  objective_apply_stalled_exit="$?"
+fi
 test "$objective_apply_stalled_exit" = "76"
 python3 - "$state_objective_apply_stalled/status.json" "$state_objective_apply_stalled/progress-state.json" "$state_objective_apply_stalled/todo-claims" "$state_objective_apply_stalled/todo-claims/repair-feedback.json" "$todo_objective_apply_stalled" "$todo_breakdown_objective_apply_stalled" <<'PY'
 import json
@@ -3423,7 +3425,39 @@ cat > "$fake_brownie_fresh_authorized_apply" <<'SH'
 set -eu
 printf '%s\n' "$*" >> "${PHASE_LOOP_LIVENESS_ARGV:?}"
 if [[ " $* " == *" resume "* ]]; then
-  printf '%s\n' 'fresh authorized apply marker' >> "${PHASE_LOOP_WORKSPACE_ROOT:?}/README.md"
+  # The first resume consumes the authorized apply.  A later continuation is
+  # verification-only and must not repeat that workspace write.
+  if [ "$(grep -c -- '--json resume' "${PHASE_LOOP_LIVENESS_ARGV:?}")" -gt 1 ]; then
+    cat <<'JSON'
+{
+  "command": "resume",
+  "ok": true,
+  "resume": {
+    "automation": {"schema_version": 1, "status": "continuation_required", "controller_action": "resume", "stop_class": "continuation_required", "stop_reason": "objective_proposal_verification_in_progress", "completed": false, "blocked": false, "retryable": true, "terminal_failure": false, "task_id": "task-fresh-authorized-apply", "run_id": "run-fresh-authorized-apply", "journey_id": "journey-fresh-authorized-apply", "next_action": "verify_objective_apply", "next_invocation": {"command": "resume", "arguments": []}},
+    "status": "task_executed",
+    "session_id": "session-fresh-authorized-apply",
+    "drive_id": "drive-fresh-authorized-apply",
+    "task_id": "task-fresh-authorized-apply",
+    "run_id": "run-fresh-authorized-apply",
+    "journey_id": "journey-fresh-authorized-apply",
+    "executed_count": 1,
+    "task_execution_confirmed": true,
+    "objective_apply_authorization_consumed": true,
+    "objective_apply_verification_status": "Verified",
+    "next_action": "verify_objective_apply",
+    "completed": false,
+    "blocked": false,
+    "retryable": true,
+    "terminal_failure": false,
+    "controller_action": "resume",
+    "stop_class": "continuation_required",
+    "stop_reason": "objective_proposal_verification_in_progress",
+    "next_invocation": {"command": "resume", "arguments": []}
+  }
+}
+JSON
+  else
+    printf '%s\n' 'fresh authorized apply marker' >> "${PHASE_LOOP_WORKSPACE_ROOT:?}/README.md"
   cat <<'JSON'
 {
   "command": "resume",
@@ -3455,6 +3489,7 @@ if [[ " $* " == *" resume "* ]]; then
   }
 }
 JSON
+  fi
 else
   cat <<'JSON'
 {
@@ -3523,16 +3558,27 @@ BROWNIE_BIN="$fake_brownie_fresh_authorized_apply" \
 PHASE_LOOP_WORKSPACE_ROOT="$fresh_authorized_workspace" \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
-python3 - "$state_fresh_authorized_apply/progress-state.json" <<'PY'
+python3 - "$state_fresh_authorized_apply/progress-state.json" "$state_fresh_authorized_apply/todo-claims/current.json" <<'PY'
+import hashlib
 import json
 import sys
 
 progress = json.load(open(sys.argv[1], encoding="utf-8"))
 projection = progress["progress_projection"]
+claim = json.load(open(sys.argv[2], encoding="utf-8"))
+scope = claim["objective_apply_resume_scope"]
 assert progress["classification"] == "continuation_required", progress
 assert projection["objective_apply_budget_reset_by_fresh_execution"] is True, projection
 assert projection["objective_apply_target_replay_count"] == 0, projection
 assert projection["objective_apply_terminal_failure"] is False, projection
+assert scope["state"] == "pending", scope
+assert scope["claim_id"] == claim["claim_id"], scope
+assert scope["selected_todo_sha256"] == hashlib.sha256(claim["selected_todo"].encode("utf-8")).hexdigest(), scope
+assert scope["session_id"] == "session-fresh-authorized-apply", scope
+assert scope["journey_id"] == "journey-fresh-authorized-apply", scope
+assert scope["task_id"] == "task-fresh-authorized-apply", scope
+assert scope["run_id"] == "run-fresh-authorized-apply", scope
+assert scope["source_kind"] == "direct_runtime", scope
 PY
 
 PHASE_LOOP_STATE_DIR="$state_fresh_authorized_apply" \
@@ -3544,7 +3590,7 @@ BROWNIE_BIN="$fake_brownie_fresh_authorized_apply" \
 PHASE_LOOP_WORKSPACE_ROOT="$fresh_authorized_workspace" \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
-python3 - "$state_fresh_authorized_apply/progress-state.json" "$fresh_authorized_workspace/README.md" "$fresh_authorized_argv" <<'PY'
+python3 - "$state_fresh_authorized_apply/progress-state.json" "$fresh_authorized_workspace/README.md" "$fresh_authorized_argv" "$state_fresh_authorized_apply/todo-claims/current.json" <<'PY'
 import json
 import pathlib
 import sys
@@ -3553,6 +3599,7 @@ progress = json.load(open(sys.argv[1], encoding="utf-8"))
 projection = progress["progress_projection"]
 readme = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 argv = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
+claim = json.load(open(sys.argv[4], encoding="utf-8"))
 stdout = json.loads(pathlib.Path(progress["stdout_log"]).read_text(encoding="utf-8"))
 payload = stdout["resume"]
 assert progress["classification"] == "progress", progress
@@ -3563,6 +3610,98 @@ assert payload["objective_apply_verification_status"] == "Verified", payload
 assert "fresh authorized apply marker" in readme, readme
 assert "--json run --file" in argv, argv
 assert "--json resume" in argv, argv
+assert "--json resume --session-id session-fresh-authorized-apply --journey-id journey-fresh-authorized-apply --task-id task-fresh-authorized-apply --run-id run-fresh-authorized-apply" in argv, argv
+scope = claim["objective_apply_resume_scope"]
+assert scope["state"] == "applied_pending_verification", scope
+assert scope["consumed_reason"] == "objective_apply_applied", scope
+PY
+
+# A claim/queue mismatch may never silently downgrade to the generic
+# no-argument `resume` path.  The fake Runtime records every invocation, so
+# this checks both the fail-closed controller status and that no third Runtime
+# execution was attempted with a forged scope.
+fresh_authorized_argv_before_tamper="$(wc -l < "$fresh_authorized_argv" | tr -d ' ')"
+python3 - "$state_fresh_authorized_apply/todo-claims/current.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+claim = json.loads(path.read_text(encoding="utf-8"))
+scope = claim["objective_apply_resume_scope"]
+scope["state"] = "pending"
+scope["queue_fingerprint"] = "forged-queue-fingerprint"
+claim["objective_apply_resume_scope"] = scope
+# The direct preflight remains the only permitted recovery evidence; this
+# makes the scope mandatory while the forged queue binding must reject it.
+claim["review_rework_fresh_dispatch_activated_run_stamp"] = scope["source_run_stamp"]
+path.write_text(json.dumps(claim, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+PY
+if PHASE_LOOP_STATE_DIR="$state_fresh_authorized_apply" \
+  PHASE_LOOP_PROMPT="$prompt_fresh_authorized_apply" \
+  PHASE_LOOP_TODO="$fresh_authorized_workspace/.brownie/todo.md" \
+  PHASE_LOOP_TODO_BREAKDOWN="$fresh_authorized_workspace/.brownie/todo-breakdown.md" \
+  PHASE_LOOP_LIVENESS_ARGV="$fresh_authorized_argv" \
+  BROWNIE_BIN="$fake_brownie_fresh_authorized_apply" \
+  PHASE_LOOP_WORKSPACE_ROOT="$fresh_authorized_workspace" \
+  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null; then
+  objective_apply_tampered_scope_exit=0
+else
+  objective_apply_tampered_scope_exit="$?"
+fi
+test "$objective_apply_tampered_scope_exit" = "76"
+python3 - "$state_fresh_authorized_apply/status.json" "$fresh_authorized_argv" "$fresh_authorized_argv_before_tamper" <<'PY'
+import json
+import pathlib
+import sys
+
+status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+argv_lines = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8").splitlines()
+assert status["status"] == "blocked", status
+assert "claim-bound session/journey/task/run scope" in status["detail"], status
+assert len(argv_lines) == int(sys.argv[3]), argv_lines
+PY
+
+# After the forged pending scope is rejected, the original authorization is
+# still bound to a verification-only continuation.  That continuation keeps
+# the immutable journey route, without reapplying the mutation or treating the
+# consumed authorization as fresh.
+python3 - "$state_fresh_authorized_apply/todo-claims/current.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+claim = json.loads(path.read_text(encoding="utf-8"))
+scope = claim["objective_apply_resume_scope"]
+scope["state"] = "applied_pending_verification"
+scope["queue_fingerprint"] = claim["queue_fingerprint"]
+claim["objective_apply_resume_scope"] = scope
+path.write_text(json.dumps(claim, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+PY
+PHASE_LOOP_STATE_DIR="$state_fresh_authorized_apply" \
+  PHASE_LOOP_PROMPT="$prompt_fresh_authorized_apply" \
+  PHASE_LOOP_TODO="$fresh_authorized_workspace/.brownie/todo.md" \
+  PHASE_LOOP_TODO_BREAKDOWN="$fresh_authorized_workspace/.brownie/todo-breakdown.md" \
+  PHASE_LOOP_LIVENESS_ARGV="$fresh_authorized_argv" \
+  BROWNIE_BIN="$fake_brownie_fresh_authorized_apply" \
+  PHASE_LOOP_WORKSPACE_ROOT="$fresh_authorized_workspace" \
+  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+python3 - "$state_fresh_authorized_apply/progress-state.json" "$fresh_authorized_workspace/README.md" "$fresh_authorized_argv" <<'PY'
+import json
+import pathlib
+import sys
+
+progress = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+readme = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
+argv = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8").splitlines()
+stdout = json.loads(pathlib.Path(progress["stdout_log"]).read_text(encoding="utf-8"))
+payload = stdout["resume"]
+assert progress["classification"] == "continuation_required", progress
+assert payload["next_action"] == "verify_objective_apply", payload
+assert payload.get("objective_apply_applied") is not True, payload
+assert readme.count("fresh authorized apply marker") == 1, readme
+assert argv[-1] == "--json resume --session-id session-fresh-authorized-apply --journey-id journey-fresh-authorized-apply --task-id task-fresh-authorized-apply --run-id run-fresh-authorized-apply", argv
 PY
 git -C "$queue_objective_workspace" restore --worktree -- .brownie
 test_workspace="$queue_workspace"
