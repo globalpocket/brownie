@@ -311,6 +311,53 @@ export function rebaselineStaleClaim({
     // An unreadable queue is not evidence that a continuation remains valid.
     selectedTodoStillPending = false;
   }
+  // A changes-requested completion recovery deliberately reuses the exact
+  // rejected claim root.  Its fresh-dispatch marker invalidates the old
+  // Runtime session, but does not invalidate the claim contract itself.  A
+  // controller-only queue-generation bump must therefore not send that
+  // review-directed rework through the generic stale-claim path: doing so
+  // creates a replacement root before the required fresh Runtime admission
+  // and breaks the review-to-rework lineage.
+  //
+  // This is intentionally narrower than a general queue-drift exemption. It
+  // requires the recovery's durable identity, a same-root claim, an exact
+  // still-pending TODO, and an unchanged non-empty queue fingerprint. A TODO
+  // contract/fingerprint change, a non-CHANGES_REQUESTED review state, or an
+  // unrecognized recovery record remains subject to normal fail-closed
+  // rebaseline.
+  const reviewRework = claim.review_rework && typeof claim.review_rework === 'object'
+    ? claim.review_rework
+    : {};
+  const legacyCompletionRecovery = claim.legacy_completion_recovery
+    && typeof claim.legacy_completion_recovery === 'object'
+    ? claim.legacy_completion_recovery
+    : {};
+  const reviewReworkFreshDispatchClaim = claim.review_rework_fresh_dispatch_pending === true
+    && typeof claim.claim_id === 'string'
+    && claim.claim_id.length > 0
+    && claim.root_claim_id === claim.claim_id
+    && reviewRework.required === true
+    && reviewRework.state === 'CHANGES_REQUESTED'
+    && typeof claim.review_rework_fresh_dispatch_recovery_id === 'string'
+    && claim.review_rework_fresh_dispatch_recovery_id.length > 0
+    && legacyCompletionRecovery.recovery_id === claim.review_rework_fresh_dispatch_recovery_id
+    && selectedTodoStillPending
+    && typeof claim.queue_fingerprint === 'string'
+    && claim.queue_fingerprint.length > 0
+    && claim.queue_fingerprint === queue.fingerprint;
+  if (reviewReworkFreshDispatchClaim) {
+    return {
+      ok: true,
+      rebaselined: false,
+      reason: 'review_rework_fresh_dispatch_claim_preserved_for_same_root_admission',
+      claim_id: claim.claim_id,
+      root_claim_id: claim.root_claim_id,
+      recovery_id: claim.review_rework_fresh_dispatch_recovery_id,
+      queue_generation_drift: claim.queue_generation != null
+        && queue.generation != null
+        && String(claim.queue_generation) !== String(queue.generation),
+    };
+  }
   // A contract-boundary rejection happens before Runtime can produce a
   // terminal task event.  Leaving its old in-progress claim resumable makes
   // every later run replay an authorization whose target snapshot is already

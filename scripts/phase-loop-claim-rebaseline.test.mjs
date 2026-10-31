@@ -216,6 +216,93 @@ test('preserves an ownerless same-queue continuation claim for resume despite hi
   assert.equal(fs.existsSync(f.claimPath), true);
 });
 
+test('preserves the same rejected-review root for a fresh admission despite queue-generation drift', () => {
+  const f = fixture();
+  const claim = JSON.parse(fs.readFileSync(f.claimPath, 'utf8'));
+  Object.assign(claim, {
+    root_claim_id: claim.claim_id,
+    review_rework: { required: true, state: 'CHANGES_REQUESTED' },
+    review_rework_fresh_dispatch_pending: true,
+    review_rework_fresh_dispatch_recovery_id: 'review-rework-recovery',
+    legacy_completion_recovery: { recovery_id: 'review-rework-recovery' },
+  });
+  writeJson(f.claimPath, claim);
+  writeJson(path.join(f.stateDir, 'status.json'), {
+    status: 'integrity_blocked',
+    run_id: 'old-run',
+  });
+  writeJson(path.join(f.stateDir, 'progress-state.json'), {
+    classification: 'terminal_failure',
+    progress_projection: {
+      claim_id: claim.claim_id,
+      stop_class: 'terminal_failure',
+      stop_reason: 'terminal_task_failed',
+    },
+  });
+  // The TODO contract/fingerprint is unchanged; only controller bookkeeping
+  // advanced its generation.  Historical completion evidence is exactly what
+  // the review-rework recovery invalidated, so it must not replace this root.
+  writeJson(path.join(f.claims, 'todo-queue-state.json'), { generation: 542, fingerprint: 'old-queue' });
+  fs.writeFileSync(path.join(f.stateDir, 'task-ledger.jsonl'), `${JSON.stringify({
+    claim_id: claim.claim_id, to_state: 'completed',
+  })}\n`);
+
+  const result = rebaselineStaleClaim({
+    repo: repositoryRoot,
+    stateDir: f.stateDir,
+    claimPath: f.claimPath,
+    statusPath: path.join(f.stateDir, 'status.json'),
+    progressPath: path.join(f.stateDir, 'progress-state.json'),
+    queuePath: path.join(f.claims, 'todo-queue-state.json'),
+    ledgerPath: path.join(f.stateDir, 'task-ledger.jsonl'),
+    runsDir: f.runs,
+    todoPath: path.join(f.root, 'todo.md'),
+    runStamp: '20261020T090000Z',
+    baselineRef: 'origin/main',
+  });
+
+  assert.equal(result.rebaselined, false, JSON.stringify(result));
+  assert.equal(result.reason, 'review_rework_fresh_dispatch_claim_preserved_for_same_root_admission');
+  assert.equal(result.root_claim_id, claim.claim_id);
+  assert.equal(result.queue_generation_drift, true);
+  const preserved = JSON.parse(fs.readFileSync(f.claimPath, 'utf8'));
+  assert.equal(preserved.claim_id, claim.claim_id);
+  assert.equal(preserved.root_claim_id, claim.claim_id);
+  assert.equal(preserved.review_rework_fresh_dispatch_pending, true);
+});
+
+test('does not exempt a non-changes-requested review claim from stale rebaseline', () => {
+  const f = fixture();
+  const claim = JSON.parse(fs.readFileSync(f.claimPath, 'utf8'));
+  Object.assign(claim, {
+    root_claim_id: claim.claim_id,
+    review_rework: { required: true, state: 'APPROVED' },
+    review_rework_fresh_dispatch_pending: true,
+    review_rework_fresh_dispatch_recovery_id: 'review-rework-recovery',
+    legacy_completion_recovery: { recovery_id: 'review-rework-recovery' },
+  });
+  writeJson(f.claimPath, claim);
+  writeJson(path.join(f.stateDir, 'status.json'), { status: 'integrity_blocked' });
+  writeJson(path.join(f.claims, 'todo-queue-state.json'), { generation: 542, fingerprint: 'old-queue' });
+
+  const result = rebaselineStaleClaim({
+    repo: repositoryRoot,
+    stateDir: f.stateDir,
+    claimPath: f.claimPath,
+    statusPath: path.join(f.stateDir, 'status.json'),
+    progressPath: path.join(f.stateDir, 'progress-state.json'),
+    queuePath: path.join(f.claims, 'todo-queue-state.json'),
+    ledgerPath: path.join(f.stateDir, 'task-ledger.jsonl'),
+    runsDir: f.runs,
+    todoPath: path.join(f.root, 'todo.md'),
+    runStamp: '20261020T090000Z',
+    baselineRef: 'origin/main',
+  });
+
+  assert.equal(result.rebaselined, true, JSON.stringify(result));
+  assert.equal(fs.existsSync(f.claimPath), false);
+});
+
 test('isolates a stale pre-claim materialized-scope boundary claim even when its queue is unchanged', () => {
   const f = fixture();
   fs.writeFileSync(path.join(f.root, 'todo.md'), '- [ ] E-replacement: Patch only `scripts/replacement.mjs`:\n  Route: implementation.\n');

@@ -6596,6 +6596,8 @@ argv = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 claim = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
 assert "--json run --file" in argv, argv
 assert "--json resume" not in argv, argv
+assert claim["claim_id"] == "todo-g1-review-rework", claim
+assert claim["root_claim_id"] == "todo-g1-review-rework", claim
 assert claim["review_rework_fresh_dispatch_pending"] is False, claim
 assert claim["review_rework_fresh_dispatch_activated_run_stamp"], claim
 assert claim["review_rework_fresh_dispatch_activated_at"], claim
