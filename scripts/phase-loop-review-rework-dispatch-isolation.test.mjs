@@ -108,6 +108,48 @@ test('fails closed for coexisting stores when the primary isolation audit does n
   assert.equal(fs.existsSync(f.activeStore), true);
 });
 
+test('rolls back its new interrupted-store audit when claim persistence fails before commit', () => {
+  const f = fixture();
+  const first = isolateReviewReworkFreshDispatchRuntimeStore({ ...f, now: '2026-10-31T00:00:00.000Z' });
+  const claim = JSON.parse(fs.readFileSync(f.claimPath, 'utf8'));
+  delete claim.review_rework_fresh_dispatch_store_isolation;
+  writeJson(f.claimPath, claim);
+  fs.mkdirSync(f.activeStore, { recursive: true });
+  fs.writeFileSync(path.join(f.activeStore, 'interrupted-fresh-dispatch.json'), '{"continuation":"fresh-but-interrupted"}\n');
+
+  const originalRenameSync = fs.renameSync;
+  let failClaimCommit = true;
+  fs.renameSync = (source, destination) => {
+    if (failClaimCommit && path.resolve(destination) === path.resolve(f.claimPath)) {
+      failClaimCommit = false;
+      throw new Error('injected_claim_commit_failure');
+    }
+    return originalRenameSync(source, destination);
+  };
+  try {
+    assert.throws(
+      () => isolateReviewReworkFreshDispatchRuntimeStore({ ...f, now: '2026-10-31T00:01:00.000Z' }),
+      /injected_claim_commit_failure/
+    );
+  } finally {
+    fs.renameSync = originalRenameSync;
+  }
+
+  const recoveryDigest = crypto.createHash('sha256').update('recovery-123').digest('hex').slice(0, 16);
+  const interruptedAudit = path.join(
+    f.stateDir,
+    'recovery-audits',
+    `${recoveryDigest}-review-rework-dispatch-2-interrupted-store-`
+  );
+  assert.equal(fs.existsSync(f.activeStore), true);
+  assert.equal(fs.readdirSync(path.dirname(interruptedAudit)).some((name) => name.startsWith(path.basename(interruptedAudit))), false);
+  const recoveredClaim = JSON.parse(fs.readFileSync(f.claimPath, 'utf8'));
+  assert.equal(recoveredClaim.review_rework_fresh_dispatch_store_isolation, undefined);
+
+  const recovered = isolateReviewReworkFreshDispatchRuntimeStore({ ...f, now: '2026-10-31T00:02:00.000Z' });
+  assert.equal(recovered.recovered_after_interruption, true, JSON.stringify(recovered));
+});
+
 test('does not isolate a runtime store without a pending CHANGES_REQUESTED fresh dispatch', () => {
   const f = fixture();
   const claim = JSON.parse(fs.readFileSync(f.claimPath, 'utf8'));

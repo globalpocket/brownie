@@ -163,8 +163,30 @@ function recoverInterruptedPostIsolationStore({ claim, claimPath, stateDir, iden
       },
     });
   } catch (error) {
-    if (!fs.existsSync(activeStore) && fs.existsSync(interruptedStore)) {
-      fs.renameSync(interruptedStore, activeStore);
+    // `writeJsonAtomically` can fail while committing the claim after the
+    // interrupted-store audit has already been persisted.  Restore the exact
+    // pre-transaction layout in that case; otherwise the retained audit would
+    // collide with the deterministic archive name and turn a transient I/O
+    // failure into a permanent blocked claim.  If the claim was actually
+    // committed before a post-rename failure (for example chmod), preserve
+    // the completed transaction and let the normal idempotency branch verify
+    // it on the next invocation.
+    let claimCommitted = false;
+    try {
+      const persistedClaim = readJson(claimPath);
+      const persistedIsolation = persistedClaim?.review_rework_fresh_dispatch_store_isolation;
+      claimCommitted = matchingIsolation(persistedIsolation, identity)
+        && persistedIsolation?.interrupted_active_store_archive === interruptedStore
+        && persistedIsolation?.interrupted_active_store_audit_path === interruptedAuditPath
+        && persistedIsolation?.interrupted_active_store_sha256 === `sha256:${activeDigest}`;
+    } catch {
+      claimCommitted = false;
+    }
+    if (!claimCommitted) {
+      if (fs.existsSync(interruptedAuditPath)) fs.rmSync(interruptedAuditPath, { force: true });
+      if (!fs.existsSync(activeStore) && fs.existsSync(interruptedStore)) {
+        fs.renameSync(interruptedStore, activeStore);
+      }
     }
     throw error;
   }
