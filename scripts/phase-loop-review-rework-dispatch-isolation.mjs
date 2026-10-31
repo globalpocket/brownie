@@ -57,6 +57,152 @@ function activeStorePaths(storeRoot, identity) {
   return { claimDigest, recoveryDigest, activeStore, archiveDir, archiveStore };
 }
 
+function directoryFingerprint(root) {
+  const hash = crypto.createHash('sha256');
+  const visit = (directory, relative) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+      const child = path.join(directory, entry.name);
+      const childRelative = relative ? path.join(relative, entry.name) : entry.name;
+      const stat = fs.lstatSync(child);
+      if (stat.isDirectory()) {
+        hash.update(`directory\0${childRelative}\0`);
+        visit(child, childRelative);
+      } else if (stat.isFile()) {
+        hash.update(`file\0${childRelative}\0`);
+        hash.update(sha256(fs.readFileSync(child)));
+        hash.update('\0');
+      } else {
+        throw new Error('review_rework_runtime_store_contains_unsupported_entry');
+      }
+    }
+  };
+  hash.update('brownie-review-rework-runtime-store-v1\0');
+  visit(root, '');
+  return hash.digest('hex');
+}
+
+function matchesPrimaryIsolationAudit({ auditPath, identity, claimDigest, activeStore, archiveStore }) {
+  let audit;
+  try {
+    audit = readJson(auditPath);
+  } catch {
+    return false;
+  }
+  return audit?.schema_version === 1
+    && audit.kind === 'phase_loop_review_rework_fresh_dispatch_runtime_store_isolation'
+    && audit.claim_id === identity.claimId
+    && audit.claim_sha256 === `sha256:${claimDigest}`
+    && audit.recovery_id === identity.recoveryId
+    && audit.dispatch_attempt === identity.dispatchAttempt
+    && path.resolve(audit.active_store || '') === path.resolve(activeStore)
+    && path.resolve(audit.archived_store || '') === path.resolve(archiveStore)
+    && audit.recovery_policy === 'archive_prior_claim_runtime_store_then_require_same-claim-fresh-run';
+}
+
+function recoverInterruptedPostIsolationStore({ claim, claimPath, stateDir, identity, paths, now }) {
+  const { claimDigest, recoveryDigest, activeStore, archiveStore } = paths;
+  const primaryAuditPath = path.join(
+    stateDir,
+    'recovery-audits',
+    `${recoveryDigest}-review-rework-dispatch-${identity.dispatchAttempt}-runtime-store-isolation.json`
+  );
+  // A pair of stores is recoverable only when the primary archive is already
+  // proven to be this claim's prior state. Otherwise it could be an unrelated
+  // or partially copied Runtime store and must remain fail-closed.
+  if (!matchesPrimaryIsolationAudit({
+    auditPath: primaryAuditPath,
+    identity,
+    claimDigest,
+    activeStore,
+    archiveStore,
+  })) {
+    return null;
+  }
+
+  const activeDigest = directoryFingerprint(activeStore);
+  const interruptedStore = `${archiveStore}.interrupted-${activeDigest.slice(0, 16)}`;
+  const interruptedAuditPath = path.join(
+    stateDir,
+    'recovery-audits',
+    `${recoveryDigest}-review-rework-dispatch-${identity.dispatchAttempt}-interrupted-store-${activeDigest.slice(0, 16)}.json`
+  );
+  if (fs.existsSync(interruptedStore) || fs.existsSync(interruptedAuditPath)) {
+    throw new Error('review_rework_runtime_store_interrupted_archive_collision');
+  }
+
+  const interruptedAudit = {
+    schema_version: 1,
+    kind: 'phase_loop_review_rework_interrupted_post_isolation_runtime_store_archive',
+    recorded_at: now,
+    claim_id: identity.claimId,
+    claim_sha256: `sha256:${claimDigest}`,
+    recovery_id: identity.recoveryId,
+    dispatch_attempt: identity.dispatchAttempt,
+    primary_isolation_audit_path: primaryAuditPath,
+    source_store: activeStore,
+    archived_store: interruptedStore,
+    store_sha256: `sha256:${activeDigest}`,
+    recovery_policy: 'preserve_interrupted_post_isolation_store_then_require_same-claim-fresh-run',
+  };
+  fs.renameSync(activeStore, interruptedStore);
+  try {
+    writeJsonAtomically(interruptedAuditPath, interruptedAudit);
+    writeJsonAtomically(claimPath, {
+      ...claim,
+      review_rework_fresh_dispatch_store_isolation: {
+        schema_version: 2,
+        recovery_id: identity.recoveryId,
+        dispatch_attempt: identity.dispatchAttempt,
+        audit_path: primaryAuditPath,
+        archived_store: archiveStore,
+        interrupted_active_store_archive: interruptedStore,
+        interrupted_active_store_audit_path: interruptedAuditPath,
+        interrupted_active_store_sha256: `sha256:${activeDigest}`,
+        isolated_at: now,
+        recovered_after_interruption: true,
+      },
+    });
+  } catch (error) {
+    // `writeJsonAtomically` can fail while committing the claim after the
+    // interrupted-store audit has already been persisted.  Restore the exact
+    // pre-transaction layout in that case; otherwise the retained audit would
+    // collide with the deterministic archive name and turn a transient I/O
+    // failure into a permanent blocked claim.  If the claim was actually
+    // committed before a post-rename failure (for example chmod), preserve
+    // the completed transaction and let the normal idempotency branch verify
+    // it on the next invocation.
+    let claimCommitted = false;
+    try {
+      const persistedClaim = readJson(claimPath);
+      const persistedIsolation = persistedClaim?.review_rework_fresh_dispatch_store_isolation;
+      claimCommitted = matchingIsolation(persistedIsolation, identity)
+        && persistedIsolation?.interrupted_active_store_archive === interruptedStore
+        && persistedIsolation?.interrupted_active_store_audit_path === interruptedAuditPath
+        && persistedIsolation?.interrupted_active_store_sha256 === `sha256:${activeDigest}`;
+    } catch {
+      claimCommitted = false;
+    }
+    if (!claimCommitted) {
+      if (fs.existsSync(interruptedAuditPath)) fs.rmSync(interruptedAuditPath, { force: true });
+      if (!fs.existsSync(activeStore) && fs.existsSync(interruptedStore)) {
+        fs.renameSync(interruptedStore, activeStore);
+      }
+    }
+    throw error;
+  }
+  return {
+    ok: true,
+    isolated: true,
+    claim_id: identity.claimId,
+    dispatch_attempt: identity.dispatchAttempt,
+    audit_path: primaryAuditPath,
+    archived_store: archiveStore,
+    interrupted_active_store_archive: interruptedStore,
+    interrupted_active_store_audit_path: interruptedAuditPath,
+    recovered_after_interruption: true,
+  };
+}
+
 function replayRepairIdentity(claim) {
   const review = claim?.review_rework;
   const claimId = typeof claim?.claim_id === 'string' ? claim.claim_id : '';
@@ -245,7 +391,8 @@ export function isolateReviewReworkFreshDispatchRuntimeStore({ storeRoot, stateD
   const identity = dispatchIdentity(claim);
   if (!identity) return { ok: true, isolated: false, reason: 'review_rework_fresh_dispatch_not_pending' };
 
-  const { claimDigest, recoveryDigest, activeStore, archiveDir, archiveStore } = activeStorePaths(storeRoot, identity);
+  const paths = activeStorePaths(storeRoot, identity);
+  const { claimDigest, recoveryDigest, activeStore, archiveDir, archiveStore } = paths;
   const auditPath = path.join(
     stateDir,
     'recovery-audits',
@@ -274,7 +421,18 @@ export function isolateReviewReworkFreshDispatchRuntimeStore({ storeRoot, stateD
 
   const activeExists = fs.statSync(activeStore, { throwIfNoEntry: false })?.isDirectory() === true;
   const archiveExists = fs.statSync(archiveStore, { throwIfNoEntry: false })?.isDirectory() === true;
-  if (activeExists && archiveExists) throw new Error('review_rework_runtime_store_isolation_ambiguous');
+  if (activeExists && archiveExists) {
+    const recovered = recoverInterruptedPostIsolationStore({
+      claim,
+      claimPath,
+      stateDir,
+      identity,
+      paths,
+      now,
+    });
+    if (recovered) return recovered;
+    throw new Error('review_rework_runtime_store_isolation_ambiguous');
+  }
   // An unstarted fresh dispatch has no store to inherit, which is already the
   // safe empty-store state.  Record that fact on the claim so a later resume
   // cannot reinterpret it as an unfinished archive transaction.
