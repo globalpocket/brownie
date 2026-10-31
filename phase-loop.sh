@@ -17342,9 +17342,10 @@ identity_keys = (
     "session_id", "journey_id", "task_id", "run_id",
 )
 if isinstance(existing, dict):
-    if existing.get("state") == "consumed":
-        # A denied/failed apply may consume its authorization without writing.
-        # Only a new direct preflight (validated above) can replace that
+    if existing.get("state") in ("consumed", "invalidated"):
+        # A denied/failed apply consumes its authorization without writing, and
+        # an expired approval invalidates its claim-local Runtime session.
+        # Only a new direct preflight (validated above) can replace either
         # terminal scope; an unscoped resume can never do so.
         history = claim.setdefault("objective_apply_resume_scope_history", [])
         if not isinstance(history, list):
@@ -17352,7 +17353,7 @@ if isinstance(existing, dict):
             claim["objective_apply_resume_scope_history"] = history
         history.append({
             "at": timestamp,
-            "event": "superseded_by_fresh_preflight",
+            "event": "superseded_by_fresh_preflight_after_" + str(existing.get("state") or "terminal"),
             "prior_source_run_stamp": existing.get("source_run_stamp"),
             "source_run_stamp": source_run_stamp,
         })
@@ -17557,10 +17558,11 @@ PY
 # prevents an absent/corrupt scope from silently falling back to `resume`
 # without arguments and recreating the lossy legacy projection.
 objective_apply_resume_scope_required() {
-  python3 - "$TODO_CLAIM_FILE" "$PROGRESS_STATE_FILE" <<'PY'
+  python3 - "$TODO_CLAIM_FILE" "$PROGRESS_STATE_FILE" "$RUN_DIR" <<'PY'
 import hashlib
 import json
 import pathlib
+import re
 import sys
 
 try:
@@ -17573,7 +17575,47 @@ selected_todo = str(claim.get("selected_todo") or "")
 selected_sha256 = str(claim.get("selected_todo_sha256") or hashlib.sha256(selected_todo.encode("utf-8")).hexdigest())
 scope = claim.get("objective_apply_resume_scope")
 scope_state = scope.get("state") if isinstance(scope, dict) else ""
-activated = bool(claim.get("review_rework_fresh_dispatch_activated_run_stamp") or claim.get("runtime_authorization_rebaseline_activated_run_stamp"))
+
+# An activated fresh-dispatch stamp proves only that the controller invoked
+# `run`; it does not prove that Runtime reached an authorized apply preflight.
+# Require a scope after a marker only when that exact direct-run envelope
+# contains the same claim-bound authorization.  This preserves ordinary
+# rework/authorization continuations instead of misclassifying them as a
+# lossy objective-apply resume.
+def activated_authorized_preflight():
+    run_dir = pathlib.Path(sys.argv[3]).resolve()
+    identifier_pattern = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
+    for field in ("review_rework_fresh_dispatch_activated_run_stamp", "runtime_authorization_rebaseline_activated_run_stamp"):
+        stamp = str(claim.get(field) or "")
+        if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", stamp):
+            continue
+        source = run_dir / f"{stamp}.stdout.log"
+        try:
+            source.resolve().relative_to(run_dir)
+            root = json.loads(source.read_text(encoding="utf-8"))
+            payload = root.get("run") if isinstance(root, dict) else None
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        identifiers = [str(payload.get(key) or "") for key in ("session_id", "journey_id", "task_id", "run_id")]
+        try:
+            executed_count = int(payload.get("executed_count") or 0)
+        except (TypeError, ValueError):
+            continue
+        if (
+            payload.get("next_action") == "apply_authorized_objective_proposal"
+            and payload.get("objective_proposal_preflight_status") == "authorized_preflight_ready"
+            and payload.get("task_execution_confirmed") is True
+            and executed_count > 0
+            and payload.get("phase_loop_claim_id") == claim.get("claim_id")
+            and payload.get("phase_loop_selected_todo_sha256") == selected_sha256
+            and all(identifier_pattern.fullmatch(value) for value in identifiers)
+        ):
+            return True
+    return False
+
+activated = activated_authorized_preflight()
 try:
     progress = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
     projection = progress.get("progress_projection") if isinstance(progress, dict) else {}

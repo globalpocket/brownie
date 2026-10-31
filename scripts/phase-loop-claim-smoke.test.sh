@@ -3703,6 +3703,104 @@ assert payload.get("objective_apply_applied") is not True, payload
 assert readme.count("fresh authorized apply marker") == 1, readme
 assert argv[-1] == "--json resume --session-id session-fresh-authorized-apply --journey-id journey-fresh-authorized-apply --task-id task-fresh-authorized-apply --run-id run-fresh-authorized-apply", argv
 PY
+
+# A review-rework fresh dispatch can legitimately stop before it reaches an
+# authorized objective-apply preflight.  Its activation marker is evidence of
+# a direct Runtime invocation, not permission to require an apply scope.  The
+# following continuation must therefore use the ordinary no-argument resume
+# route; older controller code incorrectly blocked it merely because an
+# activation stamp existed.
+ordinary_continuation_stamp="20261031T235959Z"
+python3 - "$state_fresh_authorized_apply/todo-claims/current.json" "$state_fresh_authorized_apply/runs/$ordinary_continuation_stamp.stdout.log" "$state_fresh_authorized_apply/progress-state.json" "$ordinary_continuation_stamp" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+stdout_path = pathlib.Path(sys.argv[2])
+progress_path = pathlib.Path(sys.argv[3])
+stamp = sys.argv[4]
+claim = json.loads(claim_path.read_text(encoding="utf-8"))
+selected = claim["selected_todo"]
+selected_sha = str(claim.get("selected_todo_sha256") or hashlib.sha256(selected.encode("utf-8")).hexdigest())
+stdout_path.parent.mkdir(parents=True, exist_ok=True)
+stdout_path.write_text(json.dumps({
+    "command": "run",
+    "ok": True,
+    "run": {
+        "automation": {
+            "schema_version": 1,
+            "status": "continuation_required",
+            "controller_action": "resume",
+            "stop_class": "continuation_required",
+            "stop_reason": "review_authorization_in_progress",
+            "completed": False,
+            "blocked": False,
+            "retryable": True,
+            "terminal_failure": False,
+            "task_id": "task-ordinary-review-continuation",
+            "run_id": "run-ordinary-review-continuation",
+            "journey_id": "journey-ordinary-review-continuation",
+            "next_action": "review_and_authorize_objective_proposal",
+            "next_invocation": {"command": "resume", "arguments": []},
+        },
+        "status": "task_executed",
+        "session_id": "session-ordinary-review-continuation",
+        "task_id": "task-ordinary-review-continuation",
+        "run_id": "run-ordinary-review-continuation",
+        "journey_id": "journey-ordinary-review-continuation",
+        "executed_count": 1,
+        "task_execution_confirmed": True,
+        "phase_loop_claim_id": claim["claim_id"],
+        "phase_loop_selected_todo_sha256": selected_sha,
+        "next_action": "review_and_authorize_objective_proposal",
+        "completed": False,
+        "blocked": False,
+        "retryable": True,
+        "terminal_failure": False,
+        "controller_action": "resume",
+        "stop_class": "continuation_required",
+        "stop_reason": "review_authorization_in_progress",
+        "next_invocation": {"command": "resume", "arguments": []},
+    },
+}, sort_keys=True) + "\n", encoding="utf-8")
+claim.pop("objective_apply_resume_scope", None)
+claim["review_rework_fresh_dispatch_activated_run_stamp"] = stamp
+claim["review_rework_fresh_dispatch_activated_at"] = "2026-10-31T23:59:59Z"
+claim_path.write_text(json.dumps(claim, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+progress = json.loads(progress_path.read_text(encoding="utf-8"))
+projection = progress.get("progress_projection")
+if not isinstance(projection, dict):
+    projection = {}
+    progress["progress_projection"] = projection
+projection["next_action"] = "review_and_authorize_objective_proposal"
+projection["objective_apply_pending"] = False
+projection["objective_apply_authorized"] = False
+progress_path.write_text(json.dumps(progress, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+PY
+ordinary_continuation_argv_before="$(wc -l < "$fresh_authorized_argv" | tr -d ' ')"
+PHASE_LOOP_STATE_DIR="$state_fresh_authorized_apply" \
+  PHASE_LOOP_PROMPT="$prompt_fresh_authorized_apply" \
+  PHASE_LOOP_TODO="$fresh_authorized_workspace/.brownie/todo.md" \
+  PHASE_LOOP_TODO_BREAKDOWN="$fresh_authorized_workspace/.brownie/todo-breakdown.md" \
+  PHASE_LOOP_LIVENESS_ARGV="$fresh_authorized_argv" \
+  BROWNIE_BIN="$fake_brownie_fresh_authorized_apply" \
+  PHASE_LOOP_WORKSPACE_ROOT="$fresh_authorized_workspace" \
+  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+python3 - "$state_fresh_authorized_apply/status.json" "$fresh_authorized_argv" "$ordinary_continuation_argv_before" <<'PY'
+import json
+import pathlib
+import sys
+
+status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+argv = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8").splitlines()
+before = int(sys.argv[3])
+assert len(argv) == before + 1, argv
+assert argv[-1] == "--json resume", argv
+assert status["status"] != "blocked", status
+assert "claim-bound session/journey/task/run scope" not in status.get("detail", ""), status
+PY
 git -C "$queue_objective_workspace" restore --worktree -- .brownie
 test_workspace="$queue_workspace"
 fi
