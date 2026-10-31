@@ -11174,6 +11174,19 @@ direct_objective_apply_authorization = (
     progress_projection["next_action"] == "apply_authorized_objective_proposal"
     and text(payload.get("objective_proposal_preflight_status")) == "authorized_preflight_ready"
 )
+# A direct preflight produced by a freshly executed, claim-admitted Runtime
+# task is a new authorized apply attempt.  It is not equivalent to a lossy
+# `resume` projection from an earlier attempt, even when the selected TODO
+# and review-rework store generation are unchanged.  Without this boundary a
+# prior replay counter can terminalize the new attempt before the controller
+# ever invokes the authorized apply route.
+fresh_authorized_objective_execution = (
+    direct_objective_apply_authorization
+    and payload.get("task_execution_confirmed") is True
+    and count(payload.get("executed_count")) > 0
+    and bool(text(payload.get("task_id")))
+    and bool(text(payload.get("run_id")))
+)
 # Only an authorization captured for the exact claim/queue snapshot may
 # survive the lossy legacy resume projection.  A legacy response is never an
 # authorization by itself: without a matching durable authorization we stop
@@ -11197,10 +11210,13 @@ if not objective_apply_pending:
     objective_apply_target_replay_count = 0
 elif direct_objective_apply_authorization:
     # The preflight itself has not replayed anything.  Keep an exhausted
-    # target budget when a replacement claim offers the same target again,
-    # but do not charge a newly authorized first attempt.
+    # target budget when a replacement claim merely replays a prior response,
+    # but reset it for a fresh executed task: that current Runtime execution
+    # supplies a new, admitted authorization to apply.
     objective_apply_target_replay_count = (
-        previous_objective_apply_target_replay_count
+        0
+        if fresh_authorized_objective_execution
+        else previous_objective_apply_target_replay_count
         if (
             same_objective_apply_target_scope
             and previous_projection.get("objective_apply_pending") is True
@@ -11232,6 +11248,7 @@ progress_projection["objective_apply_target_replay_count"] = objective_apply_tar
 progress_projection["objective_apply_target_replay_exhausted"] = objective_apply_target_replay_exhausted
 progress_projection["objective_apply_authorized"] = objective_apply_pending
 progress_projection["objective_apply_authorization_lost"] = objective_apply_authorization_lost
+progress_projection["objective_apply_budget_reset_by_fresh_execution"] = fresh_authorized_objective_execution
 progress_projection["objective_apply_pending"] = objective_apply_pending
 completed = bool(payload.get("completed")) or bool(automation.get("completed")) or no_actionable_after_apply
 if todo_md_only_apply or selected_first_line_still_pending:
