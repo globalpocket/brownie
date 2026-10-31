@@ -783,6 +783,136 @@ test('reconciliation rearms exactly one fresh dispatch when a changes-requested 
   }), /review_rework_fresh_dispatch_rearm_limit_exceeded/);
 });
 
+test('reconciliation rearms exactly one un-applied direct objective preflight failed by a prior controller replay budget', () => {
+  const value = fixture();
+  const first = recoverLegacyRejectedCompletion({
+    repoRoot: value.root,
+    statePath: value.state,
+    completionPath: value.completion,
+    snapshotPath: value.snapshot,
+    reviewReceiptPath: value.review,
+    actorDeployment: value.actorDeployment,
+    now: '2026-10-31T00:00:00.000Z'
+  });
+  const currentPath = path.join(value.root, first.current_claim_path);
+  const failedClaim = JSON.parse(fs.readFileSync(currentPath, 'utf8'));
+  const runStamp = '20261031T000010Z';
+  const evidencePath = path.join(value.root, value.state, 'runs', `${runStamp}.execution-evidence.json`);
+  const stdoutPath = path.join(value.root, value.state, 'runs', `${runStamp}.stdout.log`);
+  const selectedTodoSha256 = crypto.createHash('sha256').update(target).digest('hex');
+  writeJson(evidencePath, {
+    claim_id: 'legacy-claim',
+    runtime_claim_id: 'legacy-claim',
+    selected_todo_sha256: selectedTodoSha256,
+    task_execution_confirmed: true,
+    signals: {
+      payload_status: 'task_executed',
+      task_execution_confirmed: true,
+      reported_executed_count: 1,
+      stop_class: 'continuation_required',
+      stop_reason: 'objective_proposal_candidate_ready'
+    }
+  });
+  writeJson(stdoutPath, {
+    command: 'run',
+    ok: true,
+    exit_code: 0,
+    run: {
+      status: 'task_executed',
+      task_execution_confirmed: true,
+      executed_count: 1,
+      task_id: 'task-fresh-preflight',
+      run_id: 'runtime-run-fresh-preflight',
+      next_action: 'apply_authorized_objective_proposal',
+      objective_proposal_preflight_status: 'authorized_preflight_ready',
+      completed: false,
+      blocked: false,
+      terminal_failure: false
+    }
+  });
+  failedClaim.status = 'failed';
+  failedClaim.review_rework_fresh_dispatch_pending = false;
+  failedClaim.review_rework_fresh_dispatch_activated_run_stamp = runStamp;
+  failedClaim.terminal_failure_execution_evidence_path = evidencePath;
+  failedClaim.status_history.push({
+    requested_status: 'failed',
+    status: 'failed',
+    run_stamp: runStamp,
+    updated_at: '2026-10-31T00:00:10.000Z'
+  });
+  writeJson(currentPath, failedClaim);
+
+  const rearmed = reconcilePersistedReviewRework({
+    repoRoot: value.root,
+    statePath: value.state,
+    actorDeployment: value.actorDeployment,
+    now: '2026-10-31T00:01:00.000Z'
+  });
+  assert.equal(rearmed.applicable, false, JSON.stringify(rearmed));
+  assert.equal(rearmed.reason, 'review_rework_live_root_preserved');
+  assert.equal(rearmed.fresh_runtime_dispatch_rearmed, true);
+  assert.equal(rearmed.fresh_runtime_dispatch_rearm_reason, 'unapplied_authorized_objective_preflight_failed_before_apply');
+  const current = JSON.parse(fs.readFileSync(currentPath, 'utf8'));
+  assert.equal(current.status, 'in_progress');
+  assert.equal(current.review_rework_fresh_dispatch_pending, true);
+  assert.equal(current.review_rework_fresh_dispatch_attempt, 2);
+  assert.equal(current.review_rework_fresh_dispatch_rearm_history.length, 1);
+  const audit = JSON.parse(fs.readFileSync(path.join(value.root, rearmed.fresh_runtime_dispatch_rearm_audit_path), 'utf8'));
+  assert.equal(audit.reason, 'unapplied_authorized_objective_preflight_failed_before_apply');
+  assert.equal(audit.evidence.run_stamp, runStamp);
+
+  current.status = 'failed';
+  current.review_rework_fresh_dispatch_pending = false;
+  current.review_rework_fresh_dispatch_activated_run_stamp = runStamp;
+  current.status_history.push({
+    requested_status: 'failed',
+    status: 'failed',
+    run_stamp: runStamp,
+    updated_at: '2026-10-31T00:01:10.000Z'
+  });
+  writeJson(currentPath, current);
+  assert.throws(() => reconcilePersistedReviewRework({
+    repoRoot: value.root,
+    statePath: value.state,
+    actorDeployment: value.actorDeployment,
+    now: '2026-10-31T00:02:00.000Z'
+  }), /review_rework_fresh_dispatch_rearm_limit_exceeded/);
+});
+
+test('reconciliation refuses an unproven failed review-rework root instead of rearming it', () => {
+  const value = fixture();
+  const first = recoverLegacyRejectedCompletion({
+    repoRoot: value.root,
+    statePath: value.state,
+    completionPath: value.completion,
+    snapshotPath: value.snapshot,
+    reviewReceiptPath: value.review,
+    actorDeployment: value.actorDeployment,
+    now: '2026-10-31T00:00:00.000Z'
+  });
+  const currentPath = path.join(value.root, first.current_claim_path);
+  const failedClaim = JSON.parse(fs.readFileSync(currentPath, 'utf8'));
+  const runStamp = '20261031T000010Z';
+  failedClaim.status = 'failed';
+  failedClaim.review_rework_fresh_dispatch_pending = false;
+  failedClaim.review_rework_fresh_dispatch_activated_run_stamp = runStamp;
+  failedClaim.terminal_failure_execution_evidence_path = path.join(value.root, value.state, 'runs', `${runStamp}.execution-evidence.json`);
+  failedClaim.status_history.push({
+    requested_status: 'failed',
+    status: 'failed',
+    run_stamp: runStamp,
+    updated_at: '2026-10-31T00:00:10.000Z'
+  });
+  writeJson(currentPath, failedClaim);
+
+  assert.throws(() => reconcilePersistedReviewRework({
+    repoRoot: value.root,
+    statePath: value.state,
+    actorDeployment: value.actorDeployment,
+    now: '2026-10-31T00:01:00.000Z'
+  }), /idempotent_recovery_requires_proven_terminal_displacement/);
+});
+
 test('reconciliation resolves review feedback only after same-root merged semantic delivery and durable TODO removal', () => {
   const value = fixture();
   const first = recoverLegacyRejectedCompletion({
