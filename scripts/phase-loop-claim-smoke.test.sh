@@ -1266,6 +1266,8 @@ cat <<'JSON'
     "task_id": "task-objective-apply",
     "run_id": "run-objective-apply",
     "journey_id": "journey-objective-apply",
+    "executed_count": 1,
+    "task_execution_confirmed": true,
     "completion_closure_status": "routed_explicit_action",
     "next_action": "apply_authorized_objective_proposal",
     "completed": false,
@@ -3295,6 +3297,35 @@ printf 'base prompt\n' > "$prompt_objective_apply_stalled"
 printf -- '- [ ] E-99-objective-apply: Patch only `README.md` to exercise objective apply stall recovery.\n' > "$todo_objective_apply_stalled"
 test_workspace="$queue_objective_workspace"
 
+# A previous lossy resume may already have exhausted the target-level replay
+# budget.  A newly admitted Runtime task that carries a direct authorized
+# preflight must start a new apply attempt rather than being terminalized
+# before its apply route is invoked.
+python3 - "$state_objective_apply_stalled/progress-state.json" "$todo_objective_apply_stalled" <<'PY'
+import json
+import pathlib
+import sys
+
+todo = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8").strip()
+scope = json.dumps({
+    "selected_todo": todo,
+    "runtime_store_generation": "",
+}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+path = pathlib.Path(sys.argv[1])
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps({
+    "schema_version": 1,
+    "last_progress_fingerprint": "sha256:stale-objective-apply-budget",
+    "same_progress_count": 3,
+    "stagnation_threshold": 3,
+    "progress_projection": {
+        "objective_apply_pending": True,
+        "objective_apply_target_replay_count": 3,
+        "objective_apply_target_scope": scope,
+    },
+}, sort_keys=True) + "\n", encoding="utf-8")
+PY
+
 PHASE_LOOP_STATE_DIR="$state_objective_apply_stalled" \
 PHASE_LOOP_PROMPT="$prompt_objective_apply_stalled" \
 PHASE_LOOP_TODO="$todo_objective_apply_stalled" \
@@ -3367,6 +3398,171 @@ assert feedback["selected_todo_first_line"].startswith("- [ ] E-99-objective-app
 assert todo.startswith("- [ ] E-99-objective-apply:"), todo
 assert breakdown.startswith("# queue fixture breakdown\n"), breakdown
 assert "E-99-replan-stalled-leaf-" in breakdown, breakdown
+PY
+
+# Liveness acceptance: an exhausted legacy replay budget must not suppress a
+# later claim-admitted Runtime execution that has a direct authorization. The
+# next invocation must consume that authorization, mutate only the claimed
+# target, and publish apply plus verification evidence.
+state_fresh_authorized_apply="$(mktemp -d)"
+prompt_fresh_authorized_apply="$(mktemp)"
+fresh_authorized_workspace="$(mktemp -d)"
+fresh_authorized_argv="$(mktemp)"
+git -C "$fresh_authorized_workspace" init -b main >/dev/null
+mkdir -p "$fresh_authorized_workspace/.brownie"
+printf '%s\n' '{"name":"brownie-claim-smoke-fresh-authorized-apply","private":true,"scripts":{"guard:todo-decomposition":"node scripts/guard-todo-decomposition.mjs","phase-loop:todo-queue-integrity":"node scripts/phase-loop-todo-queue-integrity.mjs"}}' > "$fresh_authorized_workspace/package.json"
+printf '%s\n' '# before apply' > "$fresh_authorized_workspace/README.md"
+printf '%s\n' '- [ ] E-100-fresh-authorized-apply: Patch only `README.md` to prove that a fresh authorized objective apply consumes an exhausted legacy replay budget.\n  Route: implementation.\n  Source TODO: E-100-fresh-authorized-apply.\n  Completion condition: write a bounded marker to README.md.\n  Verification: inspect the applied README marker.' > "$fresh_authorized_workspace/.brownie/todo.md"
+printf '# fresh authorized apply fixture breakdown\n' > "$fresh_authorized_workspace/.brownie/todo-breakdown.md"
+git -C "$fresh_authorized_workspace" add package.json README.md .brownie/todo.md .brownie/todo-breakdown.md
+git -C "$fresh_authorized_workspace" -c user.name=Brownie -c user.email=brownie@example.invalid commit -m init >/dev/null
+printf 'base prompt\n' > "$prompt_fresh_authorized_apply"
+fake_brownie_fresh_authorized_apply="$(mktemp)"
+cat > "$fake_brownie_fresh_authorized_apply" <<'SH'
+#!/usr/bin/env bash
+set -eu
+printf '%s\n' "$*" >> "${PHASE_LOOP_LIVENESS_ARGV:?}"
+if [[ " $* " == *" resume "* ]]; then
+  printf '%s\n' 'fresh authorized apply marker' >> "${PHASE_LOOP_WORKSPACE_ROOT:?}/README.md"
+  cat <<'JSON'
+{
+  "command": "resume",
+  "ok": true,
+  "resume": {
+    "automation": {"schema_version": 1, "status": "continuation_required", "controller_action": "resume", "stop_class": "continuation_required", "stop_reason": "objective_proposal_apply_ready_for_verification", "completed": false, "blocked": false, "retryable": true, "terminal_failure": false, "task_id": "task-fresh-authorized-apply", "run_id": "run-fresh-authorized-apply", "journey_id": "journey-fresh-authorized-apply", "next_action": "verify_objective_apply", "next_invocation": {"command": "resume", "arguments": []}},
+    "status": "task_executed",
+    "session_id": "session-fresh-authorized-apply",
+    "drive_id": "drive-fresh-authorized-apply",
+    "task_id": "task-fresh-authorized-apply",
+    "run_id": "run-fresh-authorized-apply",
+    "journey_id": "journey-fresh-authorized-apply",
+    "executed_count": 1,
+    "task_execution_confirmed": true,
+    "objective_apply_applied": true,
+    "objective_apply_apply_status": "Applied",
+    "objective_apply_path": "README.md",
+    "objective_apply_authorization_consumed": true,
+    "objective_apply_verification_status": "Verified",
+    "next_action": "verify_objective_apply",
+    "completed": false,
+    "blocked": false,
+    "retryable": true,
+    "terminal_failure": false,
+    "controller_action": "resume",
+    "stop_class": "continuation_required",
+    "stop_reason": "objective_proposal_apply_ready_for_verification",
+    "next_invocation": {"command": "resume", "arguments": []}
+  }
+}
+JSON
+else
+  cat <<'JSON'
+{
+  "command": "run",
+  "ok": true,
+  "run": {
+    "automation": {"schema_version": 1, "status": "continuation_required", "controller_action": "resume", "stop_class": "continuation_required", "stop_reason": "objective_proposal_candidate_ready", "completed": false, "blocked": false, "retryable": true, "terminal_failure": false, "task_id": "task-fresh-authorized-apply", "run_id": "run-fresh-authorized-apply", "journey_id": "journey-fresh-authorized-apply", "next_action": "apply_authorized_objective_proposal", "next_invocation": {"command": "resume", "arguments": []}},
+    "status": "task_executed",
+    "session_id": "session-fresh-authorized-apply",
+    "drive_id": "drive-fresh-authorized-apply",
+    "task_id": "task-fresh-authorized-apply",
+    "run_id": "run-fresh-authorized-apply",
+    "journey_id": "journey-fresh-authorized-apply",
+    "executed_count": 1,
+    "task_execution_confirmed": true,
+    "completion_closure_status": "routed_explicit_action",
+    "next_action": "apply_authorized_objective_proposal",
+    "completed": false,
+    "blocked": false,
+    "retryable": true,
+    "terminal_failure": false,
+    "controller_action": "resume",
+    "stop_class": "continuation_required",
+    "stop_reason": "objective_proposal_candidate_ready",
+    "objective_proposal_preflight_status": "authorized_preflight_ready",
+    "objective_proposal_preflight_operation": "patch_file",
+    "objective_proposal_preflight_next_action": "apply_authorized_objective_proposal",
+    "next_invocation": {"command": "resume", "arguments": []}
+  }
+}
+JSON
+fi
+SH
+chmod +x "$fake_brownie_fresh_authorized_apply"
+python3 - "$state_fresh_authorized_apply/progress-state.json" "$fresh_authorized_workspace/.brownie/todo.md" <<'PY'
+import json
+import pathlib
+import sys
+
+todo = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8").strip()
+scope = json.dumps({
+    "selected_todo": todo,
+    "runtime_store_generation": "",
+}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+path = pathlib.Path(sys.argv[1])
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps({
+    "schema_version": 1,
+    "last_progress_fingerprint": "sha256:stale-liveness-budget",
+    "same_progress_count": 3,
+    "stagnation_threshold": 3,
+    "progress_projection": {
+        "objective_apply_pending": True,
+        "objective_apply_target_replay_count": 3,
+        "objective_apply_target_scope": scope,
+    },
+}, sort_keys=True) + "\n", encoding="utf-8")
+PY
+
+PHASE_LOOP_STATE_DIR="$state_fresh_authorized_apply" \
+PHASE_LOOP_PROMPT="$prompt_fresh_authorized_apply" \
+PHASE_LOOP_TODO="$fresh_authorized_workspace/.brownie/todo.md" \
+PHASE_LOOP_TODO_BREAKDOWN="$fresh_authorized_workspace/.brownie/todo-breakdown.md" \
+PHASE_LOOP_LIVENESS_ARGV="$fresh_authorized_argv" \
+BROWNIE_BIN="$fake_brownie_fresh_authorized_apply" \
+PHASE_LOOP_WORKSPACE_ROOT="$fresh_authorized_workspace" \
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+
+python3 - "$state_fresh_authorized_apply/progress-state.json" <<'PY'
+import json
+import sys
+
+progress = json.load(open(sys.argv[1], encoding="utf-8"))
+projection = progress["progress_projection"]
+assert progress["classification"] == "continuation_required", progress
+assert projection["objective_apply_budget_reset_by_fresh_execution"] is True, projection
+assert projection["objective_apply_target_replay_count"] == 0, projection
+assert projection["objective_apply_terminal_failure"] is False, projection
+PY
+
+PHASE_LOOP_STATE_DIR="$state_fresh_authorized_apply" \
+PHASE_LOOP_PROMPT="$prompt_fresh_authorized_apply" \
+PHASE_LOOP_TODO="$fresh_authorized_workspace/.brownie/todo.md" \
+PHASE_LOOP_TODO_BREAKDOWN="$fresh_authorized_workspace/.brownie/todo-breakdown.md" \
+PHASE_LOOP_LIVENESS_ARGV="$fresh_authorized_argv" \
+BROWNIE_BIN="$fake_brownie_fresh_authorized_apply" \
+PHASE_LOOP_WORKSPACE_ROOT="$fresh_authorized_workspace" \
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+
+python3 - "$state_fresh_authorized_apply/progress-state.json" "$fresh_authorized_workspace/README.md" "$fresh_authorized_argv" <<'PY'
+import json
+import pathlib
+import sys
+
+progress = json.load(open(sys.argv[1], encoding="utf-8"))
+projection = progress["progress_projection"]
+readme = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
+argv = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
+stdout = json.loads(pathlib.Path(progress["stdout_log"]).read_text(encoding="utf-8"))
+payload = stdout["resume"]
+assert progress["classification"] == "progress", progress
+assert progress["meaningful_progress"] is True, progress
+assert projection["applied"].lower() == "true", projection
+assert projection["applied_path"] == "README.md", projection
+assert payload["objective_apply_verification_status"] == "Verified", payload
+assert "fresh authorized apply marker" in readme, readme
+assert "--json run --file" in argv, argv
+assert "--json resume" in argv, argv
 PY
 git -C "$queue_objective_workspace" restore --worktree -- .brownie
 test_workspace="$queue_workspace"
