@@ -362,22 +362,24 @@ impl RuntimeClient {
             RuntimeRequestClass::ObjectiveExecution,
         )?;
         validate_headless_run_drive_result(&result)?;
-        let result = self.follow_parent_join_routes_if_available(result)?;
-        let result = self.follow_objective_proposal_preflight_route_if_available(result)?;
-        let result = self.follow_objective_proposal_apply_route_if_available(result, None)?;
-        let result = self.follow_objective_apply_verification_route_if_available(result)?;
-        let result = self.follow_objective_completion_acceptance_route_if_available(result)?;
-        let result = self.follow_parent_join_routes_if_available(result)?;
-        let result = self.close_and_finalize_objective_completion_if_available(result)?;
-        let result = self.accept_and_finalize_completed_run_if_available(result)?;
         // `headless.run.advance` can consume the normal continuation decision
         // before it reaches a durable objective-proposal preflight checkpoint.
-        // In that shape the drive result still asks for an explicit apply, but
-        // no longer carries the preflight material the CLI needs to inspect and
-        // apply it. Re-open that exact checkpoint under a distinct continuation
-        // lock, then continue through the same checked apply pipeline. Reusing
-        // the advance lock would only replay the old decision again.
-        let result = self.resume_authorized_preflight_apply_if_needed(result, resume_candidate)?;
+        // Detect that deliberately lossy projection before the ordinary route
+        // pipeline: its apply parser correctly rejects the missing preflight
+        // material, but the checkpoint can safely re-expose it under a distinct
+        // continuation lock.
+        let result = if requires_resumed_authorized_preflight(&result)? {
+            self.resume_authorized_preflight_apply_if_needed(result, resume_candidate)?
+        } else {
+            let result = self.follow_parent_join_routes_if_available(result)?;
+            let result = self.follow_objective_proposal_preflight_route_if_available(result)?;
+            let result = self.follow_objective_proposal_apply_route_if_available(result, None)?;
+            let result = self.follow_objective_apply_verification_route_if_available(result)?;
+            let result = self.follow_objective_completion_acceptance_route_if_available(result)?;
+            let result = self.follow_parent_join_routes_if_available(result)?;
+            let result = self.close_and_finalize_objective_completion_if_available(result)?;
+            self.accept_and_finalize_completed_run_if_available(result)?
+        };
         let result = merge_resume_drive_result(&advance_result, result)?;
         attach_resume_route_candidate_context(result, resume_candidate)
     }
@@ -3139,9 +3141,22 @@ fn requires_resumed_authorized_preflight(result: &Value) -> Result<bool, Runtime
     }
 
     // If the normal route retained the preflight material, the regular apply
-    // path already inspected it (or deliberately declined it for a safety
-    // reason). Only bridge the lossy advance projection that has no material.
-    Ok(objective_proposal_inspect_params(result)?.is_none())
+    // path can inspect it (or deliberately decline it for a safety reason).
+    // Do not invoke that strict parser here: this predicate identifies the
+    // exact lossy runtime projection whose missing material makes the parser
+    // fail closed. All other shapes stay on the regular validation path.
+    if object
+        .get("objective_proposal_authorization_preflight_result")
+        .is_some_and(|value| !value.is_null())
+    {
+        return Ok(false);
+    }
+    Ok(object
+        .get("next_route")
+        .and_then(Value::as_object)
+        .and_then(|route| route.get("kind"))
+        .and_then(Value::as_str)
+        == Some("apply_authorized_objective_proposal_explicitly"))
 }
 
 fn resumed_cli_drive_params(advance_result: &Value) -> Result<Option<Value>, RuntimeClientError> {
@@ -6669,7 +6684,12 @@ mod tests {
 
     #[test]
     fn resumed_authorized_preflight_only_bridges_lossy_apply_projection() {
-        let lossy = json!({"next_action": "apply_authorized_objective_proposal"});
+        let lossy = json!({
+            "next_action": "apply_authorized_objective_proposal",
+            "next_route": {
+                "kind": "apply_authorized_objective_proposal_explicitly"
+            }
+        });
         assert!(requires_resumed_authorized_preflight(&lossy).unwrap());
 
         let materialized = json!({
@@ -6682,6 +6702,13 @@ mod tests {
         assert!(!requires_resumed_authorized_preflight(&materialized).unwrap());
         assert!(!requires_resumed_authorized_preflight(&json!({
             "next_action": "inspect_progress_overview"
+        }))
+        .unwrap());
+        // The recovery is deliberately narrow: an incomplete or unrelated
+        // route remains on the regular strict-validation path.
+        assert!(!requires_resumed_authorized_preflight(&json!({
+            "next_action": "apply_authorized_objective_proposal",
+            "next_route": {"kind": "inspect_progress_overview"}
         }))
         .unwrap());
     }
