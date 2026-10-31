@@ -62,6 +62,52 @@ test('is idempotent after an interruption once the audit and claim isolation mar
   assert.equal(fs.existsSync(f.activeStore), false);
 });
 
+test('recovers an evidenced interrupted post-isolation store without discarding either Runtime store', () => {
+  const f = fixture();
+  const first = isolateReviewReworkFreshDispatchRuntimeStore({ ...f, now: '2026-10-31T00:00:00.000Z' });
+  // Simulate a legacy reconciliation that restored the same claim without its
+  // isolation marker after a new Runtime store had already been initialized.
+  const claim = JSON.parse(fs.readFileSync(f.claimPath, 'utf8'));
+  delete claim.review_rework_fresh_dispatch_store_isolation;
+  writeJson(f.claimPath, claim);
+  fs.mkdirSync(f.activeStore, { recursive: true });
+  fs.writeFileSync(path.join(f.activeStore, 'interrupted-fresh-dispatch.json'), '{"continuation":"fresh-but-interrupted"}\n');
+
+  const result = isolateReviewReworkFreshDispatchRuntimeStore({ ...f, now: '2026-10-31T00:01:00.000Z' });
+  assert.equal(result.isolated, true, JSON.stringify(result));
+  assert.equal(result.recovered_after_interruption, true, JSON.stringify(result));
+  assert.equal(fs.existsSync(f.activeStore), false);
+  assert.equal(fs.readFileSync(path.join(first.archived_store, 'stale-continuation.json'), 'utf8'), '{"continuation":"rejected"}\n');
+  assert.equal(
+    fs.readFileSync(path.join(result.interrupted_active_store_archive, 'interrupted-fresh-dispatch.json'), 'utf8'),
+    '{"continuation":"fresh-but-interrupted"}\n'
+  );
+  const recoveredClaim = JSON.parse(fs.readFileSync(f.claimPath, 'utf8'));
+  assert.equal(recoveredClaim.review_rework_fresh_dispatch_store_isolation.archived_store, first.archived_store);
+  assert.equal(
+    recoveredClaim.review_rework_fresh_dispatch_store_isolation.interrupted_active_store_archive,
+    result.interrupted_active_store_archive
+  );
+  assert.equal(fs.existsSync(result.interrupted_active_store_audit_path), true);
+});
+
+test('fails closed for coexisting stores when the primary isolation audit does not prove their lineage', () => {
+  const f = fixture();
+  const first = isolateReviewReworkFreshDispatchRuntimeStore({ ...f, now: '2026-10-31T00:00:00.000Z' });
+  const claim = JSON.parse(fs.readFileSync(f.claimPath, 'utf8'));
+  delete claim.review_rework_fresh_dispatch_store_isolation;
+  writeJson(f.claimPath, claim);
+  fs.mkdirSync(f.activeStore, { recursive: true });
+  fs.writeFileSync(path.join(f.activeStore, 'unproven.json'), '{}\n');
+  writeJson(first.audit_path, { kind: 'untrusted' });
+
+  assert.throws(
+    () => isolateReviewReworkFreshDispatchRuntimeStore(f),
+    /review_rework_runtime_store_isolation_ambiguous/
+  );
+  assert.equal(fs.existsSync(f.activeStore), true);
+});
+
 test('does not isolate a runtime store without a pending CHANGES_REQUESTED fresh dispatch', () => {
   const f = fixture();
   const claim = JSON.parse(fs.readFileSync(f.claimPath, 'utf8'));
