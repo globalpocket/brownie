@@ -4,10 +4,12 @@ import { applyReviewReconciliation, reconcileReviewSnapshot } from './phase-loop
 import {
   completionConditionSha256,
   selectedTodoSha256,
+  terminalCompletionEvidenceSha256,
   validateCompletionCertificate
 } from './phase-loop-delivery-integrity.mjs';
 
 const selectedTodo = '- [ ] T-1: implementation\n  Completion condition: the bounded implementation is independently delivered.';
+const terminalCompletionEvidence = { final_state: 'Succeeded', completion_result_fingerprint: 'sha256:review-reconcile-fixture' };
 const claim = {
   claim_id: 'claim-1',
   root_claim_id: 'claim-1',
@@ -19,6 +21,13 @@ const claim = {
       selected_todo_sha256: selectedTodoSha256({ selected_todo: selectedTodo }),
       completion_condition_sha256: completionConditionSha256({ selected_todo: selectedTodo }),
       verification_results: [{ command: 'node --test scripts/bounded-journey.test.mjs', exit_code: 0 }],
+      terminal: {
+        completed: true,
+        continuation_required: false,
+        trajectory_failed: false,
+        terminal_completion_evidence: terminalCompletionEvidence,
+        terminal_completion_evidence_sha256: terminalCompletionEvidenceSha256(terminalCompletionEvidence)
+      },
       observables: [{ kind: 'bounded_journey', sha256: 'a'.repeat(64) }]
     }
   }

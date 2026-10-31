@@ -6,7 +6,7 @@
   "description": "Brownie Code-OSS extension and Rust runtime workspace.",
   "scripts": {
     "build": "pnpm --filter brownie-vsix build",
-    "check": "pnpm --filter brownie-vsix check && pnpm guard:phase-loop-control-plane && pnpm guard:phase-loop-completion-certificate && pnpm guard:runtime-release-readiness:freshness && pnpm phase-loop:run-state:test && pnpm phase-loop:watchdog:errexit:test && pnpm phase-loop:claim-lifecycle:test && pnpm phase-loop:delivery-integrity:test && pnpm phase-loop:legacy-completion-recovery:test && pnpm phase-loop:review-rework-dispatch-isolation:test && pnpm phase-loop:review-reconcile:test && pnpm phase-loop:delegation-admission:test && pnpm phase-loop:materialized-scope-publication-guard:test && pnpm phase-loop:bootstrap:test && pnpm guard:phase-loop-pr-author:test && pnpm guard:release-contract && pnpm guard:trace-binding && pnpm guard:js-added-function-reachability",
+    "check": "pnpm --filter brownie-vsix check && pnpm guard:phase-loop-control-plane && pnpm guard:phase-loop-completion-certificate && pnpm guard:runtime-release-readiness:freshness && pnpm phase-loop:run-state:test && pnpm phase-loop:watchdog:errexit:test && pnpm phase-loop:claim-lifecycle:test && pnpm phase-loop:delivery-integrity:test && pnpm phase-loop:delivery-liveness:test && pnpm phase-loop:legacy-completion-recovery:test && pnpm phase-loop:review-rework-dispatch-isolation:test && pnpm phase-loop:review-reconcile:test && pnpm phase-loop:delegation-admission:test && pnpm phase-loop:materialized-scope-publication-guard:test && pnpm phase-loop:bootstrap:test && pnpm guard:phase-loop-pr-author:test && pnpm guard:release-contract && pnpm guard:trace-binding && pnpm guard:js-added-function-reachability",
     "guard:control-plane-authority": "node scripts/guard-control-plane-authority.mjs",
     "guard:control-plane-authority:test": "node --test scripts/guard-control-plane-authority.test.mjs",
     "guard:diagnostics": "node scripts/guard-diagnostics-api.mjs",
@@ -120,6 +120,7 @@
     "phase-loop:delivery-reconcile": "node scripts/phase-loop-delivery-reconcile.mjs",
     "phase-loop:delivery-reconcile:test": "node --test scripts/phase-loop-delivery-reconcile.test.mjs",
     "phase-loop:delivery-integrity:test": "node --test scripts/phase-loop-delivery-integrity.test.mjs",
+    "phase-loop:delivery-liveness:test": "node --test scripts/phase-loop-delivery-liveness.test.mjs",
     "phase-loop:review-reconcile:test": "node --test scripts/phase-loop-review-reconcile.test.mjs",
     "phase-loop:claim-smoke": "bash scripts/phase-loop-claim-smoke-scheduler.test.sh && bash scripts/phase-loop-claim-smoke.test.sh",
     "phase-loop:claim-smoke:scheduler:test": "bash scripts/phase-loop-claim-smoke-scheduler.test.sh",

@@ -79,6 +79,37 @@ test('allows a TODO checked in the live queue to serve as durable completion evi
   assert(result.completed_todo_ids.includes('E-20a-golden-journey-workspace-mutation'));
 });
 
+test('rejects a live TODO whose prerequisite vanished from both queue and durable state', () => {
+  const dangling = e20b.replace(
+    'E-20a-golden-journey-workspace-mutation',
+    'E-20a-missing-prerequisite'
+  );
+  const result = validateTodoQueueIntegrity({
+    todoBefore: queue(dangling),
+    todoAfter: queue(dangling),
+    knownTodoIds: []
+  });
+
+  assert.equal(result.valid, false);
+  assert.deepEqual(result.errors.find((error) => error.code === 'todo_dependency_unknown_or_unresolved'), {
+    code: 'todo_dependency_unknown_or_unresolved',
+    message: 'A live TODO references a prerequisite that is absent from both the queue and durable completion/replan state.',
+    todo_id: 'E-20b-stateful-soak-real-workload',
+    dependency_todo_ids: ['E-20a-missing-prerequisite']
+  });
+});
+
+test('allows an absent prerequisite only when durable state resolves its exact TODO id', () => {
+  const result = validateTodoQueueIntegrity({
+    todoBefore: queue(e20b),
+    todoAfter: queue(e20b),
+    knownTodoIds: ['E-20a-golden-journey-workspace-mutation'],
+    resolvedTodoIds: ['E-20a-golden-journey-workspace-mutation']
+  });
+
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+});
+
 test('blocks a descendant when its erased dependency has only a legacy completion record', () => {
   const dependent = e20b;
   const result = validateTodoQueueIntegrity({

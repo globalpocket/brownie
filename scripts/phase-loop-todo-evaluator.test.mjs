@@ -887,6 +887,27 @@ test('selects a locally queued stalled-leaf replan before its blocked dependency
   assert(selected.startsWith('- [ ] TODO-decompose-blocked-queue-stalled-abc123def456:'), selected);
 });
 
+test('selects a stalled-leaf replan even when its durable E-series id sorts after the source TODO', () => {
+  const source = `- [ ] E-23c-release-artifact-linux-arm64-target-02: Patch only \`scripts/release-linux-arm64.mjs\`:
+  Route: implementation.
+  Source TODO: E-23c-release-artifact-linux-arm64.
+  Depends on: E-23c-release-artifact-linux-arm64-target-01.
+  Completion condition: artifact journey records an applied mutation and replay rejection.
+  Forbidden changes: do not claim completion from a green CI result alone.
+  Verification: run \`node --test scripts/release-linux-arm64.test.mjs\`.`;
+  const replan = `- [ ] E-23c-replan-stalled-leaf-2428108ecd17: Replace the stalled target-02 contract with bounded, independently verifiable leaf TODOs:
+  Route: todo-decomposition.
+  Source TODO: E-23c-release-artifact-linux-arm64-target-02.
+  Depends on: <none>.
+  Completion condition: the stalled TODO is superseded by linked leaves without marking it complete.
+  Forbidden changes: do not retry or mark the source TODO complete.
+  Verification: run \`pnpm --workspace-root guard:todo-decomposition\`.`;
+
+  const selected = selectFirstSchedulableTodo(`${source}\n\n${replan}`);
+
+  assert(selected.startsWith('- [ ] E-23c-replan-stalled-leaf-2428108ecd17:'), selected);
+});
+
 test('does not let later decomposition requests jump ahead of ready leaf TODOs', () => {
   const text = `- [ ] E-15d-soak-section-collector: Patch only \`scripts/release-runtime-operational-evidence.mjs\`:
   Route: implementation.

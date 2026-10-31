@@ -69,6 +69,21 @@ function routeValue(block) {
   return line?.slice('Route:'.length).trim().replace(/[.]$/, '').toLowerCase() ?? '';
 }
 
+// A stalled leaf is not retryable merely because a controller generated a new
+// run.  The replan leaf is the durable recovery work: select it before the
+// source leaf it replaces, regardless of which historical naming convention
+// created it.  Keep the matcher narrow so ordinary later decomposition work
+// cannot preempt an unrelated ready TODO.
+function stalledReplanSourceId(block) {
+  if (routeValue(block) !== 'todo-decomposition') return '';
+  const id = todoId(block);
+  const lower = block.toLowerCase();
+  const isExplicitStalledReplan = id.startsWith('TODO-decompose-blocked-queue-stalled-')
+    || id.includes('-replan-stalled-leaf-')
+    || (lower.includes('stalled todo') && (lower.includes('replaced') || lower.includes('superseded')));
+  return isExplicitStalledReplan ? sourceTodoId(block) : '';
+}
+
 function boundedScopes(block) {
   const firstLine = block.split('\n')[0]?.trim() ?? '';
   return boundedScopesFromFirstLine(firstLine);
@@ -343,6 +358,7 @@ export function selectFirstSchedulableTodo(text, options = {}) {
   const queueFingerprint = sha256Text(text);
   const blocked = readBlockedClaims(options.blockedPath, queueFingerprint, options.controllerFingerprint ?? '');
   const blockedQueueDecompositionQueued = blocks.some((block) => todoId(block).startsWith('TODO-decompose-blocked-queue-'));
+  const stalledReplanSourceIds = new Set(blocks.map(stalledReplanSourceId).filter(Boolean));
   let fallbackParentForRedecomposition = '';
   const derivedPrefixes = new Set(
     blocks
@@ -371,6 +387,13 @@ export function selectFirstSchedulableTodo(text, options = {}) {
       continue;
     }
     if (blockedQueueDecompositionQueued && !id.startsWith('TODO-decompose-blocked-queue-')) {
+      continue;
+    }
+    if (stalledReplanSourceIds.has(id)) {
+      // The selected source has a pending recovery contract.  Mark it as a
+      // dependency barrier rather than returning it, so descendants stay
+      // blocked and the later replan leaf is selected in this same pass.
+      dependencyBlockedIds.add(id);
       continue;
     }
     const prefix = productPrefix(id);

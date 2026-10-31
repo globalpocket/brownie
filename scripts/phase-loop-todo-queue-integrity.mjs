@@ -282,6 +282,8 @@ export function validateTodoQueueIntegrity({
   beforeBreakdownText = null,
   afterBreakdownText = null,
   completedTodoIds: completedIdsInput = [],
+  resolvedTodoIds: resolvedIdsInput = [],
+  knownTodoIds: knownIdsInput = undefined,
   unverifiedArchivedCompletionRecords = [],
   todoReplanRecords: todoReplanRecordsInput = [],
   contractRebaselineRecords: contractRebaselineRecordsInput = []
@@ -291,6 +293,9 @@ export function validateTodoQueueIntegrity({
   const before = blockMap(todoBefore ?? '');
   const after = blockMap(todoAfter ?? '');
   const completedIds = new Set([...completedIdsInput, ...checkedTodoIds(todoAfter)]);
+  const resolvedIds = new Set([...resolvedIdsInput, ...completedIds]);
+  const hasDurableKnownIds = Array.isArray(knownIdsInput);
+  const knownIds = new Set([...(knownIdsInput ?? []), ...before.keys(), ...after.keys(), ...completedIds]);
   const replanByParent = replanRecordsByParent(todoReplanRecordsInput);
   const removedTodoIds = [];
   const changedTodoIds = [];
@@ -309,6 +314,23 @@ export function validateTodoQueueIntegrity({
   }
 
   for (const [id, block] of after.entries()) {
+    const todoDependencies = normalizedDependencies(lineValue(block, 'Depends on'));
+    // An unresolved live prerequisite is normal queue state; an absent
+    // prerequisite is not.  The latter previously let a rewritten TODO point
+    // at a vanished target and later appear schedulable after controller
+    // churn.  A dependency may be absent from the live file only when durable
+    // completion or supersession state still knows and resolves it.
+    const missingDependencies = hasDurableKnownIds
+      ? todoDependencies.filter((dependency) => !knownIds.has(dependency) && !resolvedIds.has(dependency))
+      : [];
+    if (missingDependencies.length > 0) {
+      errors.push({
+        code: 'todo_dependency_unknown_or_unresolved',
+        message: 'A live TODO references a prerequisite that is absent from both the queue and durable completion/replan state.',
+        todo_id: id,
+        dependency_todo_ids: missingDependencies
+      });
+    }
     const unsafeDependencies = normalizedDependencies(lineValue(block, 'Depends on'))
       .filter((dependency) => legacyCompletionByTodoId.has(dependency));
     if (unsafeDependencies.length > 0) {
@@ -321,7 +343,6 @@ export function validateTodoQueueIntegrity({
       });
     }
     if (!breakdownDependenciesByTodo.has(id)) continue;
-    const todoDependencies = normalizedDependencies(lineValue(block, 'Depends on'));
     const ledgerDependencyEntries = breakdownDependenciesByTodo.get(id);
     if (ledgerDependencyEntries.some((ledgerDependencies) => !sameArray(todoDependencies, ledgerDependencies))) {
       errors.push({
@@ -493,6 +514,8 @@ export function loadCliInput(args) {
     beforeBreakdownText: breakdownBefore,
     afterBreakdownText: breakdownAfter,
     completedTodoIds: [...todoState.completedIds],
+    resolvedTodoIds: [...todoState.resolvedIds],
+    knownTodoIds: [...todoState.knownIds],
     unverifiedArchivedCompletionRecords: todoState.unverifiedCompletionRecords
       .filter((record) => todoState.unverifiedArchivedCompletionIds.has(record.selected_todo_id)),
     todoReplanRecords: replanRecords,

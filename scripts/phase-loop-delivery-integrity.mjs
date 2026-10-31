@@ -86,6 +86,15 @@ export function semanticCompletionEvidenceSha256(evidence) {
   return sha256(canonicalJson(asObject(evidence)));
 }
 
+export function terminalCompletionEvidenceSha256(evidence) {
+  return sha256(canonicalJson(evidence));
+}
+
+function hasTerminalCompletionEvidence(evidence) {
+  if (typeof evidence === 'string') return evidence.trim().length > 0;
+  return Boolean(evidence && typeof evidence === 'object' && !Array.isArray(evidence) && Object.keys(evidence).length > 0);
+}
+
 /**
  * The runtime deliberately does not know an owner's controller claim.  The
  * controller therefore binds the already-executed, selected-TODO verification
@@ -105,11 +114,25 @@ export function produceSemanticCompletionEvidence({ claim, stdoutPayload, verifi
   const runtime = runDeliveryView(stdoutPayload);
   const payload = asObject(stdoutPayload);
   const run = asObject(payload.run);
+  const terminalCompletionEvidence = run.terminal_completion_evidence
+    ?? payload.terminal_completion_evidence
+    ?? null;
+  // A successful process envelope is intentionally insufficient.  Preserve
+  // the concrete terminal fact in the receipt so a later review reconcile
+  // cannot turn a patch/CI result into a synthetic completed run.
+  if (
+    runtime.completed !== true
+    || runtime.continuation_required === true
+    || runtime.terminal_completion_evidence_missing === true
+    || runtime.trajectory_failed === true
+    || !hasTerminalCompletionEvidence(terminalCompletionEvidence)
+  ) {
+    return null;
+  }
   const terminalPayload = {
     completed: runtime.completed,
-    terminal_completion_evidence: run.terminal_completion_evidence
-      ?? payload.terminal_completion_evidence
-      ?? null,
+    continuation_required: runtime.continuation_required,
+    terminal_completion_evidence: terminalCompletionEvidence,
     stop_reason: run.stop_reason ?? payload.stop_reason ?? null,
     execution_outcome: run.execution_outcome ?? payload.execution_outcome ?? null
   };
@@ -119,6 +142,13 @@ export function produceSemanticCompletionEvidence({ claim, stdoutPayload, verifi
     selected_todo_sha256: selectedTodoSha256(claim),
     completion_condition_sha256: completionConditionSha256(claim),
     verification_results: verificationResults,
+    terminal: {
+      completed: true,
+      continuation_required: false,
+      trajectory_failed: false,
+      terminal_completion_evidence: terminalCompletionEvidence,
+      terminal_completion_evidence_sha256: terminalCompletionEvidenceSha256(terminalCompletionEvidence)
+    },
     observables: [
       { kind: 'controller_verification_result', sha256: sha256(canonicalJson(verificationPayload)) },
       { kind: 'runtime_terminal_payload', sha256: sha256(canonicalJson(terminalPayload)) }
@@ -148,6 +178,17 @@ export function validateSemanticCompletionEvidence({ claim, evidence }) {
   const observables = asArray(proof.observables);
   if (observables.length === 0 || observables.some((observable) => !asObject(observable).kind || !asObject(observable).sha256)) {
     errors.push('semantic_evidence_observable_missing');
+  }
+  const terminal = asObject(proof.terminal);
+  if (!hasTerminalCompletionEvidence(terminal.terminal_completion_evidence)) {
+    errors.push('semantic_evidence_terminal_missing');
+  } else {
+    if (terminal.completed !== true) errors.push('semantic_evidence_terminal_not_completed');
+    if (terminal.continuation_required !== false) errors.push('semantic_evidence_terminal_continuation_required');
+    if (terminal.trajectory_failed !== false) errors.push('semantic_evidence_terminal_trajectory_failed');
+    if (terminal.terminal_completion_evidence_sha256 !== terminalCompletionEvidenceSha256(terminal.terminal_completion_evidence)) {
+      errors.push('semantic_evidence_terminal_evidence_hash_mismatch');
+    }
   }
   return { valid: errors.length === 0, errors };
 }

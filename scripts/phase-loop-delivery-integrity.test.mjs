@@ -6,6 +6,7 @@ import {
   evaluateDeliveryHandoff,
   produceSemanticCompletionEvidence,
   selectedTodoSha256,
+  terminalCompletionEvidenceSha256,
   validateCompletionCertificate,
   validateTerminalDeliveryReceipt,
   validateClaimLifecycleTransition
@@ -21,6 +22,7 @@ function completedRun(evidence) {
     ok: true,
     run: {
       completed: true,
+      terminal_completion_evidence: { final_state: 'Succeeded', completion_result_fingerprint: 'sha256:terminal-fixture' },
       automation: { continuation_required: false },
       semantic_completion_evidence: evidence
     }
@@ -28,12 +30,20 @@ function completedRun(evidence) {
 }
 
 function validEvidence() {
+  const terminalCompletionEvidence = { final_state: 'Succeeded', completion_result_fingerprint: 'sha256:terminal-fixture' };
   return {
     schema_version: 1,
     root_claim_id: 'claim-02',
     selected_todo_sha256: selectedTodoSha256(claim),
     completion_condition_sha256: completionConditionSha256(claim),
     verification_results: [{ command: 'node --test scripts/artifact-journey.test.mjs', exit_code: 0 }],
+    terminal: {
+      completed: true,
+      continuation_required: false,
+      trajectory_failed: false,
+      terminal_completion_evidence: terminalCompletionEvidence,
+      terminal_completion_evidence_sha256: terminalCompletionEvidenceSha256(terminalCompletionEvidence)
+    },
     observables: [{ kind: 'artifact_journey', sha256: 'a'.repeat(64) }]
   };
 }
@@ -109,6 +119,30 @@ test('the producer cannot manufacture evidence without a successful executed ver
     verification: { completed: true, results: [] }
   });
   assert.equal(evidence, null);
+});
+
+test('the producer rejects a successful process envelope that still requires continuation', () => {
+  const evidence = produceSemanticCompletionEvidence({
+    claim,
+    stdoutPayload: {
+      ok: true,
+      run: {
+        completed: false,
+        terminal_completion_evidence_missing: true,
+        automation: { continuation_required: true }
+      }
+    },
+    verification: { completed: true, results: [{ command: 'node --test scripts/artifact-journey.test.mjs', exit_code: 0 }] }
+  });
+  assert.equal(evidence, null);
+});
+
+test('a receipt with terminal facts that do not bind its embedded evidence is rejected', () => {
+  const evidence = validEvidence();
+  evidence.terminal.terminal_completion_evidence.final_state = 'Forged';
+  const result = evaluateDeliveryHandoff({ claim, stdoutPayload: completedRun(evidence) });
+  assert.equal(result.pr_handoff_allowed, false);
+  assert(result.reasons.includes('semantic_evidence_terminal_evidence_hash_mismatch'));
 });
 
 test('irrelevant or stale proof cannot be reused for another TODO fingerprint', () => {

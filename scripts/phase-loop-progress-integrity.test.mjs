@@ -9,6 +9,7 @@ import {
   durableDeliveryReceiptForClaim,
   validatePhaseLoopProgressIntegrity
 } from './phase-loop-progress-integrity.mjs';
+import { terminalCompletionEvidenceSha256 } from './phase-loop-delivery-integrity.mjs';
 
 const e20a = `- [ ] E-20a-golden-journey-workspace-mutation: Patch only \`scripts/release-runtime-operational-evidence.mjs\` and \`scripts/guard-runtime-operational-evidence.test.mjs\`: make Golden Journey require mutation.
   Route: implementation.
@@ -46,6 +47,7 @@ function queue(...blocks) {
 function completedClaim(claimId, selectedTodo, extra = {}) {
   const completionCondition = selectedTodo.match(/^\s*Completion condition:\s*(.+?)\s*$/mu)?.[1] ?? '';
   const sha256 = (value) => createHash('sha256').update(value, 'utf8').digest('hex');
+  const terminalCompletionEvidence = { final_state: 'Succeeded', completion_result_fingerprint: `sha256:${claimId}` };
   return {
     schema_version: 1,
     claim_id: claimId,
@@ -65,6 +67,13 @@ function completedClaim(claimId, selectedTodo, extra = {}) {
         selected_todo_sha256: sha256(selectedTodo),
         completion_condition_sha256: sha256(completionCondition),
         verification_results: [{ command: 'node --test fixture.mjs', exit_code: 0 }],
+        terminal: {
+          completed: true,
+          continuation_required: false,
+          trajectory_failed: false,
+          terminal_completion_evidence: terminalCompletionEvidence,
+          terminal_completion_evidence_sha256: terminalCompletionEvidenceSha256(terminalCompletionEvidence)
+        },
         observables: [{ kind: 'fixture', sha256: 'a'.repeat(64) }]
       }
     },
