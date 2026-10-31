@@ -18246,7 +18246,13 @@ PY
       fi
       write_bdk_trajectory_prompt_routing_event "$run_stamp" "$effective_prompt"
       printf '%s %s; continuing into Brownie repair with embedded feedback instead of repeating pre-guard verified-noop.\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
-      write_bdk_trajectory_event "$run_stamp" "todo.repair_feedback" '{"reason":"verified_noop_dirty_baseline_repair_feedback_recorded"}' "todo.replanned"
+      # Repair feedback records the rejected baseline and the next delegated
+      # obligation; it does not replace the selected TODO.  In particular a
+      # replay of a review-rework claim may already have an immutable
+      # isolated ledger attempt.  Mapping this non-terminal event to
+      # `todo.replanned` would try to terminalize that attempt a second time
+      # and prevent the actual reimplementation from reaching Runtime.
+      write_bdk_trajectory_event "$run_stamp" "todo.repair_feedback" '{"reason":"verified_noop_dirty_baseline_repair_feedback_recorded"}'
     else
       printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
       write_status "no_progress" "$detail" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-1}"
