@@ -358,6 +358,60 @@ test('recovery isolates an already-terminal same-root task attempt without reope
   assert.deepEqual(unchanged.review_rework_ledger_attempt, binding);
 });
 
+test('review-rework reconciliation accepts an equivalent persisted ledger binding with legacy key ordering', () => {
+  const value = fixture();
+  const sourceTaskId = taskAttemptId('E-target', 'legacy-claim');
+  const specHash = crypto.createHash('sha256').update(target).digest('hex');
+  for (const to_state of ['queued', 'claimed', 'running', 'completed']) {
+    assert.equal(appendTaskTransition(value.root, {
+      task_id: sourceTaskId,
+      to_state,
+      claim_id: 'legacy-claim',
+      task_spec_sha256: specHash,
+      run_id: 'historical-run'
+    }).ok, true);
+  }
+  const recovered = recoverLegacyRejectedCompletion({
+    repoRoot: value.root,
+    statePath: value.state,
+    completionPath: value.completion,
+    snapshotPath: value.snapshot,
+    reviewReceiptPath: value.review,
+    actorDeployment: value.actorDeployment,
+    now: '2026-10-31T00:00:00.000Z'
+  });
+  const currentPath = path.join(value.root, recovered.current_claim_path);
+  const current = JSON.parse(fs.readFileSync(currentPath, 'utf8'));
+  const binding = current.review_rework_ledger_attempt;
+  // This is the historical serialization shape that triggered a false
+  // conflict in production: all attested values are equal, only key order
+  // differs from the current writer.
+  current.review_rework_ledger_attempt = {
+    audit_path: binding.audit_path,
+    audit_sha256: binding.audit_sha256,
+    kind: binding.kind,
+    ledger_attempt_id: binding.ledger_attempt_id,
+    recovery_id: binding.recovery_id,
+    root_claim_id: binding.root_claim_id,
+    schema_version: binding.schema_version,
+    selected_todo_sha256: binding.selected_todo_sha256,
+    source_task_id: binding.source_task_id,
+    source_task_spec_sha256: binding.source_task_spec_sha256,
+    source_terminal_event_id: binding.source_terminal_event_id,
+    source_terminal_event_sha256: binding.source_terminal_event_sha256
+  };
+  writeJson(currentPath, current);
+
+  const reconciled = reconcilePersistedReviewRework({
+    repoRoot: value.root,
+    statePath: value.state,
+    actorDeployment: value.actorDeployment,
+    now: '2026-10-31T00:01:00.000Z'
+  });
+  assert.equal(reconciled.reason, 'review_rework_live_root_preserved');
+  assert.equal(reconciled.review_rework_ledger_attempt_id, binding.ledger_attempt_id);
+});
+
 test('idempotent recovery reclaims a terminal claim that displaced its review-rework root without duplicating the target', () => {
   const value = fixture();
   const first = recoverLegacyRejectedCompletion({

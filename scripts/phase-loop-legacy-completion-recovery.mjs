@@ -55,6 +55,26 @@ function atomicJson(filePath, value, mode = 0o600) {
   atomicWrite(filePath, `${JSON.stringify(value, null, 2)}\n`, mode);
 }
 
+// Bindings and audit records are JSON values, not byte-for-byte serialized
+// payloads.  Older controller versions may have written the same attested
+// fields in a different key order.  Comparing JSON.stringify output would
+// reject that valid historical evidence and make an otherwise resumable
+// CHANGES_REQUESTED claim permanently unstartable.  Arrays remain ordered;
+// object keys do not.
+function canonicalJson(value) {
+  if (Array.isArray(value)) return value.map((entry) => canonicalJson(entry));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((key) => [key, canonicalJson(value[key])])
+    );
+  }
+  return value;
+}
+
+function jsonStructurallyEqual(left, right) {
+  return JSON.stringify(canonicalJson(left)) === JSON.stringify(canonicalJson(right));
+}
+
 function todoBlocks(text) {
   const source = String(text ?? '');
   const starts = [...source.matchAll(/^(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+/gmu)].map((match) => match.index);
@@ -1256,7 +1276,7 @@ function establishReviewReworkLedgerAttempt({ root, stateRoot, currentClaim, cla
   const auditPath = path.join(stateRoot, 'review-rework-ledger-attempts', `${auditId}.json`);
   if (fs.existsSync(auditPath)) {
     const persisted = readJson(auditPath);
-    if (JSON.stringify(persisted) !== JSON.stringify(audit)) {
+    if (!jsonStructurallyEqual(persisted, audit)) {
       throw new Error('review_rework_ledger_attempt_audit_conflict');
     }
   } else {
@@ -1277,7 +1297,7 @@ function establishReviewReworkLedgerAttempt({ root, stateRoot, currentClaim, cla
     audit_path: auditRelativePath,
     audit_sha256: sha256(readText(auditPath))
   };
-  if (existing != null && JSON.stringify(existing) !== JSON.stringify(binding)) {
+  if (existing != null && !jsonStructurallyEqual(existing, binding)) {
     throw new Error('review_rework_ledger_attempt_binding_conflict');
   }
   return {
