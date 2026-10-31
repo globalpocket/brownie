@@ -2187,6 +2187,76 @@ fn resume_uses_runtime_owned_route_candidate_for_scoped_run_advance() {
 }
 
 #[test]
+fn resume_reopens_lossy_authorized_preflight_under_distinct_scope_and_applies_proposal() {
+    let runtime = fake_runtime_sequence(
+        "resume-lossy-authorized-preflight",
+        &[
+            r#"{"jsonrpc":"2.0","id":1,"result":{"tasks":[{"task_id":"task-recover","run_id":"run-recover","status":"Created"}],"progress_overview":{"source_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"task_count":1,"root_task_ids":["task-recover"],"runnable_task_ids":["task-recover"],"blocked_task_ids":[],"terminal_task_ids":[],"parent_join_ready_task_ids":[],"status_counts":{"created":1,"queued":0,"running":0,"completed":0,"failed":0,"cancelled":0},"stage_counts":[],"next_action_sets":[],"blocked_sets":[],"selected_headless_route":{"kind":"headless_continue_once","reason":"resume selected route","task_id":"task-recover","run_id":"run-recover","journey_id":"cli.run.recover.journey","session_id":"cli.run.recover","journey_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","next_session_sequence":2,"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"route_fingerprint":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","priority":80,"next_action":"headless_continue_once"},"headless_route_candidates":[],"nodes":[],"edges":[]}}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","session_id":"cli.run.recover","advance_id":"cli.resume.advance","session_sequence":2,"replayed":false,"start_progress":{"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7},"post_progress":{"progress_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","aggregate_sequence":8},"max_steps":1,"step_count":1,"executed_count":1,"replayed_count":0,"stop_reason":"step executed","checkpoint_fingerprint":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","terminal_completion_evidence":null,"next_route":null,"steps":[{"step_index":1,"status":"task_executed","decision_id":"decision-recover","continuation_id":"cli.resume.advance","selected_task_id":"task-recover","selected_run_id":"run-recover","candidate_count":1,"current_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","current_aggregate_sequence":7,"post_progress_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","post_aggregate_sequence":8,"replayed":false,"next_route":null,"next_action":"inspect_progress_overview"}],"next_action":"inspect_progress_overview"}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_in_progress","session_id":"cli.run.recover","drive_id":"cli.run.recover.resume.drive","next_action":"apply_authorized_objective_proposal"}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","decision_id":"decision-preflight","continuation_id":"cli.resume.objective-preflight","selected_task_id":"task-recover","selected_run_id":"run-recover","candidate_count":1,"expected_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expected_aggregate_sequence":7,"current_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","current_aggregate_sequence":7,"post_progress_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","post_aggregate_sequence":8,"stale":false,"replayed":false,"objective_proposal_authorization_preflight_result":{"status":"authorized_preflight_ready","session_id":"cli.run.recover","run_id":"run-recover","proposal_id":"proposal-recover"},"next_action":"apply_authorized_objective_proposal"}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"proposal":{"proposal_id":"proposal-recover","operation":"replace_file","path":"README.md","validation_status":"Valid","approval_status":"Approved","truncated":false,"diff_redacted":false,"content_preview":"Brownie\n","content_chars":8,"latest_snapshot":{"file_sha256":"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"},"latest_apply_plan":{"status":"Ready"}}}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"apply_result":{"operation":"replace_file","path":"README.md","apply_status":"Applied","applied":true,"authorization_consumed":true,"failed_checks":[],"blocked_checks":[],"post_write_sha256":"sha256:9999999999999999999999999999999999999999999999999999999999999999"}}}"#,
+        ],
+    );
+    let capture = runtime.with_file_name("requests.ndjson");
+
+    let output = Command::new(brownie())
+        .args(["--json", "resume"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["resume"]["objective_apply_applied"], true);
+    assert_eq!(payload["resume"]["objective_apply_apply_status"], "Applied");
+
+    let requests: Vec<serde_json::Value> = fs::read_to_string(capture)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(requests.len(), 6);
+    assert_eq!(requests[0]["method"], "task.list");
+    assert_eq!(requests[1]["method"], "headless.run.advance");
+    assert_eq!(requests[2]["method"], "headless.run.drive");
+    assert_eq!(requests[3]["method"], "headless.continue_once");
+    assert_eq!(requests[3]["params"]["authorize"], true);
+    assert!(requests[3]["params"]["continuation_id"]
+        .as_str()
+        .unwrap()
+        .ends_with(".objective-preflight"));
+    assert_ne!(
+        requests[3]["params"]["continuation_id"],
+        requests[1]["params"]["advance_id"]
+    );
+    assert_eq!(
+        requests[3]["params"]["continuation_scope"],
+        serde_json::json!({
+            "session_id": "cli.run.recover",
+            "journey_id": "cli.run.recover.journey",
+            "task_id": "task-recover",
+            "run_id": "run-recover"
+        })
+    );
+    assert_eq!(requests[4]["method"], "proposal.inspect");
+    assert_eq!(requests[5]["method"], "proposal.apply");
+    assert_eq!(requests[5]["params"]["run_id"], "run-recover");
+    assert_eq!(requests[5]["params"]["proposal_id"], "proposal-recover");
+}
+
+#[test]
 fn json_resume_uses_objective_timeout_for_initial_task_list_and_outputs_bounded_cli_projection() {
     let runtime = fake_runtime_sequence(
         "resume-json",
