@@ -1,5 +1,6 @@
 [package]
 name = "brownie-runtime"
+build = "../../build-provenance.rs"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -30,6 +31,9 @@ time.workspace = true
 uuid.workspace = true
 reqwest.workspace = true
 url.workspace = true
+
+[build-dependencies]
+sha2.workspace = true
 
 [lib]
 path = "src/lib.rs"

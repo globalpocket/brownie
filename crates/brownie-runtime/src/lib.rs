@@ -613,6 +613,14 @@ pub fn runtime_status() -> RuntimeStatus {
     }
 }
 
+pub fn build_provenance() -> serde_json::Value {
+    json!({
+        "schema_version": 1,
+        "component": "brownie-runtime",
+        "source_fingerprint": env!("BROWNIE_BUILD_SOURCE_FINGERPRINT"),
+    })
+}
+
 pub fn handle_jsonrpc_input_line(line: &str) -> Option<String> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
@@ -19865,6 +19873,16 @@ modes:
         let status = runtime_status();
         assert_eq!(status.name, "brownie-runtime");
         assert_eq!(status.status, RuntimeState::Ready);
+    }
+
+    #[test]
+    fn build_provenance_is_non_secret_and_fingerprinted() {
+        let provenance = build_provenance();
+        assert_eq!(provenance["schema_version"], 1);
+        assert_eq!(provenance["component"], "brownie-runtime");
+        assert!(provenance["source_fingerprint"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("sha256:") && value.len() == 71));
     }
 
     #[test]

@@ -66,6 +66,18 @@ fn execute(cli: Cli) -> CliOutput {
             stdout: format!("brownie {}\n", env!("CARGO_PKG_VERSION")),
             stderr: String::new(),
         },
+        CliCommand::BuildProvenance => CliOutput {
+            exit_code: ExitCode::Success,
+            stdout: format!(
+                "{}\n",
+                serde_json::json!({
+                    "schema_version": 1,
+                    "component": "brownie-cli",
+                    "source_fingerprint": env!("BROWNIE_BUILD_SOURCE_FINGERPRINT"),
+                })
+            ),
+            stderr: String::new(),
+        },
         CliCommand::RunFile { path } => match read_run_file_objective(&path) {
             Ok(objective) => {
                 let client = RuntimeClient::default();
@@ -440,6 +452,7 @@ fn command_name(command: &CliCommand) -> &'static str {
         } => "mode list",
         CliCommand::Help { .. } => "help",
         CliCommand::Version => "version",
+        CliCommand::BuildProvenance => "build-provenance",
     }
 }
 
@@ -463,6 +476,19 @@ mod tests {
         assert!(help.contains("resume"));
         assert!(help.contains("status"));
         assert!(!help.contains("develop"));
+    }
+
+    #[test]
+    fn build_provenance_is_local_bounded_and_does_not_contact_runtime() {
+        let output = run_cli(["brownie", "--json", "build-provenance"]);
+        assert_eq!(output.exit_code, ExitCode::Success);
+        assert!(output.stderr.is_empty());
+        let payload: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(payload["schema_version"], 1);
+        assert_eq!(payload["component"], "brownie-cli");
+        assert!(payload["source_fingerprint"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("sha256:") && value.len() == 71));
     }
 
     #[test]

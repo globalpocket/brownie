@@ -2257,6 +2257,59 @@ fn resume_reopens_lossy_authorized_preflight_under_distinct_scope_and_applies_pr
 }
 
 #[test]
+fn resume_applies_replayed_authorized_preflight_without_selected_route() {
+    // A terminalized task has no selected headless route, so `resume` takes
+    // the direct `headless.continue_once` path. The runtime can still recover
+    // an approved, durable preflight checkpoint on that path; it must be
+    // inspected and applied, rather than projected as a replay-only success.
+    let runtime = fake_runtime_sequence(
+        "resume-replayed-authorized-preflight-direct",
+        &[
+            r#"{"jsonrpc":"2.0","id":1,"result":{"tasks":[],"progress_overview":{"source_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"task_count":0,"root_task_ids":[],"runnable_task_ids":[],"blocked_task_ids":[],"terminal_task_ids":["task-recover"],"parent_join_ready_task_ids":[],"status_counts":{"created":0,"queued":0,"running":0,"completed":1,"failed":0,"cancelled":0},"stage_counts":[],"next_action_sets":[],"blocked_sets":[],"headless_route_candidates":[],"nodes":[],"edges":[]}}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","decision_id":"decision-replay","continuation_id":"cli.resume.replay","selected_task_id":null,"selected_run_id":null,"candidate_count":1,"expected_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expected_aggregate_sequence":7,"current_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","current_aggregate_sequence":7,"post_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","post_aggregate_sequence":7,"stale":false,"replayed":true,"task_run_result":null,"proposal_apply_result":null,"objective_proposal_authorization_preflight_result":{"status":"authorized_preflight_ready","session_id":"cli.run.recover","run_id":"run-recover","proposal_id":"proposal-recover","operation":"replace_file","validation_status":"Valid","approval_status":"Approved","next_action":"apply_authorized_objective_proposal"},"next_route":{"kind":"apply_authorized_objective_proposal_explicitly","reason":"replayed approved checkpoint","task_id":"task-recover","run_id":"run-recover","proposal_id":"proposal-recover","next_action":"apply_authorized_objective_proposal"},"next_action":"apply_authorized_objective_proposal"}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"proposal":{"proposal_id":"proposal-recover","operation":"replace_file","path":"README.md","validation_status":"Valid","approval_status":"Approved","truncated":false,"diff_redacted":false,"content_preview":"Brownie\n","content_chars":8,"latest_snapshot":{"file_sha256":"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"},"latest_apply_plan":{"status":"Ready"}}}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"apply_result":{"operation":"replace_file","path":"README.md","apply_status":"Applied","applied":true,"authorization_consumed":true,"failed_checks":[],"blocked_checks":[],"post_write_sha256":"sha256:9999999999999999999999999999999999999999999999999999999999999999"}}}"#,
+        ],
+    );
+    let capture = runtime.with_file_name("requests.ndjson");
+
+    let output = Command::new(brownie())
+        .args(["--json", "resume"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["resume"]["replayed"], true);
+    assert_eq!(payload["resume"]["objective_apply_applied"], true);
+    assert_eq!(payload["resume"]["objective_apply_apply_status"], "Applied");
+
+    let requests: Vec<serde_json::Value> = fs::read_to_string(capture)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(requests.len(), 4);
+    assert_eq!(requests[0]["method"], "task.list");
+    assert_eq!(requests[1]["method"], "headless.continue_once");
+    assert_eq!(requests[2]["method"], "proposal.inspect");
+    assert_eq!(requests[3]["method"], "proposal.apply");
+    assert_eq!(requests[3]["params"]["run_id"], "run-recover");
+    assert_eq!(requests[3]["params"]["proposal_id"], "proposal-recover");
+}
+
+#[test]
 fn json_resume_uses_objective_timeout_for_initial_task_list_and_outputs_bounded_cli_projection() {
     let runtime = fake_runtime_sequence(
         "resume-json",

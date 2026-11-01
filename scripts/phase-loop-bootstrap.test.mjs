@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,6 +13,37 @@ const controllerPath = path.join(repoRoot, 'phase-loop.sh');
 function executableFixture(directory, name) {
   const filePath = path.join(directory, name);
   fs.writeFileSync(filePath, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  fs.chmodSync(filePath, 0o755);
+  return filePath;
+}
+
+function workspaceBuildFingerprint(workspace) {
+  const listed = spawnSync('git', ['ls-files', '-z'], { cwd: workspace, encoding: 'buffer' });
+  assert.equal(listed.status, 0, listed.stderr?.toString());
+  const files = listed.stdout.toString('utf8').split('\0').filter(Boolean).filter((relative) => (
+    relative === 'Cargo.lock'
+    || relative === 'Cargo.toml'
+    || relative === 'build-provenance.rs'
+    || (relative.startsWith('crates/') && (relative.endsWith('.rs') || relative.endsWith('/Cargo.toml')))
+  )).sort();
+  const digest = crypto.createHash('sha256');
+  digest.update('brownie-build-provenance-v1\0');
+  for (const relative of files) {
+    digest.update(relative);
+    digest.update('\0');
+    digest.update(fs.readFileSync(path.join(workspace, relative)));
+    digest.update('\0');
+  }
+  return `sha256:${digest.digest('hex')}`;
+}
+
+function provenanceExecutableFixture(directory, name, component, sourceFingerprint) {
+  const filePath = path.join(directory, name);
+  fs.writeFileSync(filePath, [
+    '#!/usr/bin/env node',
+    "if (!(process.argv[2] === '--build-provenance' || process.argv.includes('build-provenance'))) process.exit(64);",
+    `process.stdout.write(${JSON.stringify(`${JSON.stringify({ schema_version: 1, component, source_fingerprint: sourceFingerprint })}\n`)});`
+  ].join('\n'), { mode: 0o755 });
   fs.chmodSync(filePath, 0o755);
   return filePath;
 }
@@ -303,6 +335,7 @@ test('checks explicit binaries against an explicitly selected workspace', () => 
     fs.mkdirSync(path.join(fixture, 'crates', 'fixture', 'src'), { recursive: true });
     fs.writeFileSync(path.join(fixture, 'Cargo.toml'), '[workspace]\nmembers = []\n');
     fs.writeFileSync(path.join(fixture, 'Cargo.lock'), '# fixture\n');
+    fs.writeFileSync(path.join(fixture, 'build-provenance.rs'), 'fn main() {}\n');
     fs.writeFileSync(path.join(fixture, 'crates', 'fixture', 'Cargo.toml'), '[package]\nname = "fixture"\nversion = "0.0.0"\n');
     fs.writeFileSync(path.join(fixture, 'crates', 'fixture', 'src', 'lib.rs'), 'pub fn fixture() {}\n');
     spawnSync('git', ['init'], { cwd: fixture, stdio: 'ignore' });
@@ -312,8 +345,24 @@ test('checks explicit binaries against an explicitly selected workspace', () => 
     spawnSync('git', ['commit', '-m', 'fixture'], { cwd: fixture, stdio: 'ignore' });
     const binDir = path.join(fixture, 'bin');
     fs.mkdirSync(binDir);
-    const cli = executableFixture(binDir, 'cli');
-    const runtime = executableFixture(binDir, 'runtime');
+    const missingProvenance = executableFixture(binDir, 'missing-provenance');
+    const sourceFingerprint = workspaceBuildFingerprint(fixture);
+    const cli = provenanceExecutableFixture(binDir, 'cli', 'brownie-cli', sourceFingerprint);
+    const runtime = provenanceExecutableFixture(binDir, 'runtime', 'brownie-runtime', sourceFingerprint);
+    const missingResult = spawnSync('bash', [controllerPath, 'check-binary-freshness'], {
+      cwd: repoRoot,
+      env: {
+        ...baseEnvironment(),
+        PHASE_LOOP_WORKSPACE_ROOT: fixture,
+        PHASE_LOOP_STATE_DIR: path.join(fixture, 'state-missing-provenance'),
+        BROWNIE_BIN: missingProvenance,
+        BROWNIE_RUNTIME_PATH: runtime,
+        PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK: '0'
+      },
+      encoding: 'utf8'
+    });
+    assert.equal(missingResult.status, 1, missingResult.stderr);
+    assert.match(missingResult.stdout, /brownie CLI build provenance is unavailable/u);
     const result = spawnSync('bash', [controllerPath, 'check-binary-freshness'], {
       cwd: repoRoot,
       env: {
@@ -326,7 +375,23 @@ test('checks explicit binaries against an explicitly selected workspace', () => 
       },
       encoding: 'utf8'
     });
-    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+
+    fs.writeFileSync(path.join(fixture, 'build-provenance.rs'), 'fn main() { println!("changed"); }\n');
+    const changedGeneratorResult = spawnSync('bash', [controllerPath, 'check-binary-freshness'], {
+      cwd: repoRoot,
+      env: {
+        ...baseEnvironment(),
+        PHASE_LOOP_WORKSPACE_ROOT: fixture,
+        PHASE_LOOP_STATE_DIR: path.join(fixture, 'state-changed-generator'),
+        BROWNIE_BIN: cli,
+        BROWNIE_RUNTIME_PATH: runtime,
+        PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK: '0'
+      },
+      encoding: 'utf8'
+    });
+    assert.equal(changedGeneratorResult.status, 1, `${changedGeneratorResult.stderr}\n${changedGeneratorResult.stdout}`);
+    assert.match(changedGeneratorResult.stdout, /build provenance does not match the selected source/u);
   } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
   }
