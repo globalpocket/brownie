@@ -1677,14 +1677,22 @@ function maybeRepairNonLiveTodoResidue(repoRoot, diagnostic) {
   }
 
   const removedBlocks = removeTodoBlocksById(todoText, idsToRemove);
-  const prunedDepends = pruneDependsOn(removedBlocks.text, idsToRemove);
+  // A completed TODO may disappear from the live queue, but it remains a
+  // durable prerequisite for every descendant.  Keep those dependency edges:
+  // the queue-integrity guard resolves them through the exact completion
+  // record.  Pruning them would rewrite a surviving TODO's contract to
+  // `<none>`, which is neither necessary nor a safe recovery action.
+  const dependencyIdsToPrune = new Set(
+    [...idsToRemove].filter((todoId) => !completedIds.has(todoId))
+  );
+  const prunedDepends = pruneDependsOn(removedBlocks.text, dependencyIdsToPrune);
   let breakdownRemoved = [];
   let prunedBreakdown = { text: null, changed: false, pruned: [] };
   let nextBreakdown = null;
   if (fs.existsSync(breakdownPath)) {
     const breakdownText = fs.readFileSync(breakdownPath, 'utf8');
     const removed = removeBreakdownRepairSections(breakdownText, idsToRemove);
-    prunedBreakdown = pruneBreakdownDependencies(removed.text, idsToRemove);
+    prunedBreakdown = pruneBreakdownDependencies(removed.text, dependencyIdsToPrune);
     nextBreakdown = prunedBreakdown.text;
     breakdownRemoved = removed.removed;
   }

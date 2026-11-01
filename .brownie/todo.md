@@ -46,39 +46,15 @@
   Forbidden changes: do not publish a GitHub Release, do not require credentials, do not omit the Runtime companion, and do not claim Product Ready.
   Verification: run `pnpm --workspace-root release:local-artifact:test`, `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`, and the Release Workflow matrix.
 
-- [ ] E-23a-release-artifact-portable-archive-target-01: Patch only `scripts/release-local-artifact.mjs` to complete one bounded slice of E-23a-release-artifact-portable-archive:
-  Route: implementation.
-  Source TODO: E-23a-release-artifact-portable-archive.
-  Depends on: <none>.
-  Completion condition: Patch only `scripts/release-local-artifact.mjs` so this slice satisfies the parent TODO intent: each platform produces a portable archive containing the CLI, Runtime companion, checksums, and evidence; Unix archives preserve executable permissions and Windows uses an equivalent deterministic package shape.
-  Forbidden changes: do not publish a GitHub Release, do not require credentials, do not omit the Runtime companion, and do not claim Product Ready; do not edit unrelated files or sibling split targets `scripts/release-local-artifact.test.mjs`, `.github/workflows/release.yml`.
-  Verification: run `pnpm --workspace-root release:local-artifact:test`, `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`, and the Release Workflow matrix.
-
-- [ ] E-23a-release-artifact-portable-archive-target-02: Patch only `scripts/release-local-artifact.test.mjs` to complete one bounded slice of E-23a-release-artifact-portable-archive:
-  Route: implementation.
-  Source TODO: E-23a-release-artifact-portable-archive.
-  Depends on: E-23a-release-artifact-portable-archive-target-01.
-  Completion condition: Patch only `scripts/release-local-artifact.test.mjs` so this slice satisfies the parent TODO intent: each platform produces a portable archive containing the CLI, Runtime companion, checksums, and evidence; Unix archives preserve executable permissions and Windows uses an equivalent deterministic package shape.
-  Forbidden changes: do not publish a GitHub Release, do not require credentials, do not omit the Runtime companion, and do not claim Product Ready; do not edit unrelated files or sibling split targets `scripts/release-local-artifact.mjs`, `.github/workflows/release.yml`.
-  Verification: run `pnpm --workspace-root release:local-artifact:test`, `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`, and the Release Workflow matrix.
-
-- [ ] E-23a-release-artifact-portable-archive-target-03: Patch only `.github/workflows/release.yml` to complete one bounded slice of E-23a-release-artifact-portable-archive:
-  Route: implementation.
-  Source TODO: E-23a-release-artifact-portable-archive.
-  Depends on: E-23a-release-artifact-portable-archive-target-02.
-  Completion condition: Patch only `.github/workflows/release.yml` so this slice satisfies the parent TODO intent: each platform produces a portable archive containing the CLI, Runtime companion, checksums, and evidence; Unix archives preserve executable permissions and Windows uses an equivalent deterministic package shape.
-  Forbidden changes: do not publish a GitHub Release, do not require credentials, do not omit the Runtime companion, and do not claim Product Ready; do not edit unrelated files or sibling split targets `scripts/release-local-artifact.mjs`, `scripts/release-local-artifact.test.mjs`.
-  Verification: run `pnpm --workspace-root release:local-artifact:test`, `pnpm --workspace-root guard:supply-chain-artifact-evidence:test`, and the Release Workflow matrix.
-
-- [ ] E-23b-release-artifact-download-roundtrip: Patch only `scripts/release-artifact-roundtrip-e2e.test.mjs` and `.github/workflows/release.yml` to execute the downloaded artifact roundtrip:
+- [x] E-23b-release-artifact-download-roundtrip: Create only `scripts/release-artifact-roundtrip-e2e.mjs` and `scripts/release-artifact-roundtrip-e2e.test.mjs`, then patch only `package.json` and `.github/workflows/release.yml` to invoke them:
   Route: implementation.
   Source TODO: 2026-10-06 external review: CI executes the pre-upload file but does not download, extract, checksum, and execute the uploaded artifact.
-  Depends on: E-23a-release-artifact-portable-archive-target-03.
+  Depends on: E-23a-release-artifact-portable-archive.
   Completion condition: CI downloads the uploaded package into a fresh directory, verifies package and binary SHA bindings, extracts it, and successfully starts the packaged CLI with its Runtime companion on Linux, macOS, and Windows.
   Forbidden changes: do not validate the original build directory in place of the downloaded package, do not bypass checksum failures, and do not require publication credentials.
   Verification: run `node --test scripts/release-artifact-roundtrip-e2e.test.mjs` and the Release Workflow matrix.
 
-- [ ] E-23c-release-artifact-runtime-journey: Patch only `scripts/release-artifact-runtime-journey.test.mjs` and `scripts/release-artifact-runtime-journey.mjs`, then patch only `package.json` and `.github/workflows/release.yml` to invoke them:
+- [x] E-23c-release-artifact-runtime-journey: Patch only `scripts/release-artifact-runtime-journey.test.mjs` and `scripts/release-artifact-runtime-journey.mjs`, then patch only `package.json` and `.github/workflows/release.yml` to invoke them:
   Route: implementation.
   Source TODO: 2026-10-06 external review: downloaded artifacts have not demonstrated Mode Pack load, minimal task execution, ledger generation, forced stop/resume, or stale/replay rejection.
   Depends on: E-23b-release-artifact-download-roundtrip.

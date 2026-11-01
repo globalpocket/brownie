@@ -12,6 +12,7 @@ import {
   inspectWorkerLaunchReceipt,
   registerWorkerLaunchReceipt
 } from './phase-loop-supervisor-control.mjs';
+import { selectFirstSchedulableTodo } from './phase-loop-todo-evaluator.mjs';
 import { readTrackedBreakdownReplanRecords } from './phase-loop-todo-state.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1336,7 +1337,7 @@ test('does not treat stale same-id blocked record as current stalled TODO incarn
   assert.equal(blocked[1].selected_todo_first_line, runtimeEvidenceTodo.split('\n')[0]);
 });
 
-test('removes completed TODO residue and stale stalled-leaf replan before restart', () => {
+test('removes completed TODO residue without erasing a dependent TODO contract or claimability', () => {
   const repo = makeRepo();
   writeTodo(repo);
   const replanTodo = `- [ ] E-21c-replan-stalled-leaf-${'a'.repeat(12)}: Patch only \`.brownie/todo.md\` and \`.brownie/todo-breakdown.md\` to replan stalled Brownie TODO leaf into implementable child TODOs:
@@ -1409,14 +1410,21 @@ Parent TODO: E-21c-runtime-operational-evidence-impl-2-target-02
   );
   assert.doesNotMatch(todo, /E-21c-replan-stalled-leaf-/u);
   assert.doesNotMatch(todo, /E-21c-runtime-operational-evidence-impl-2-target-02: Patch only/u);
-  assert.match(todo, /Depends on: <none>/u);
+  assert.match(todo, /Depends on: E-21c-runtime-operational-evidence-impl-2-target-02\./u);
   assert.match(todo, /E-21c-runtime-operational-evidence-impl-2-target-03/u);
   assert.doesNotMatch(breakdown, /TODO-repair-E-21c-replan-stalled-leaf-/u);
-  assert.ok(result.repair.non_live_todo_residue.dependency_rebaseline_receipt, JSON.stringify(result, null, 2));
-  const receipt = JSON.parse(fs.readFileSync(path.join(repo, result.repair.non_live_todo_residue.dependency_rebaseline_receipt), 'utf8'));
-  assert.equal(receipt.record_type, 'completed_dependency_pruned_rebaseline');
-  assert.deepEqual(receipt.pruned_dependency_lines[0].pruned_dependency_ids, ['E-21c-runtime-operational-evidence-impl-2-target-02']);
-  assert.equal(result.repair.post_repair_validation.ok, true, JSON.stringify(result, null, 2));
+  assert.match(breakdown, /E-21c-runtime-operational-evidence-impl-2-target-03: E-21c-runtime-operational-evidence-impl-2-target-02/u);
+  assert.equal(result.repair.non_live_todo_residue.dependency_rebaseline_receipt, null);
+  assert.deepEqual(result.repair.non_live_todo_residue.pruned_dependency_lines, []);
+  const selected = selectFirstSchedulableTodo(todo, { repoRoot: repo });
+  assert.match(selected ?? '', /E-21c-runtime-operational-evidence-impl-2-target-03/u);
+  // The fixture intentionally has only a legacy completion record.  The
+  // repair must therefore preserve the descendant contract and fail in this
+  // one stable, actionable state rather than silently making the descendant
+  // runnable by erasing its prerequisite.
+  assert.equal(result.repair.post_repair_validation.ok, false, JSON.stringify(result, null, 2));
+  assert.deepEqual(result.repair.post_repair_validation.failed_steps, ['phase-loop-todo-queue-integrity']);
+  assert.match(JSON.stringify(result.final_issues), /legacy_completion_dependency_requires_recovery/u);
 });
 
 test('preserves todo preamble and checked items when pruning generated TODO residue', () => {
