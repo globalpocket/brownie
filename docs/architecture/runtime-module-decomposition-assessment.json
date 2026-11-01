@@ -89,9 +89,9 @@
         "diagnostics_mentions": 2
       },
       "crates/brownie-runtime/src/headless_journey.rs": {
-        "line_count": 6191,
+        "line_count": 6227,
         "public_items": 16,
-        "private_items": 62,
+        "private_items": 66,
         "state_mutation_mentions": 18,
         "durable_write_mentions": 17,
         "permission_decision_mentions": 2,

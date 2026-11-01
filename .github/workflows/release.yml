@@ -135,10 +135,25 @@ jobs:
           BROWNIE_RELEASE_RUNTIME_JOURNEY_EVIDENCE_PATH: roundtrip-download/runtime-journey-evidence.json
         run: corepack pnpm --workspace-root release:artifact-runtime-journey:test
 
+      - name: Run downloaded artifact stateful soak
+        env:
+          BROWNIE_RELEASE_ARTIFACT_SOAK_DOWNLOAD_ROOT: roundtrip-download
+          BROWNIE_RELEASE_ARTIFACT_SOAK_TARGET: ${{ matrix.target }}
+          BROWNIE_RELEASE_ARTIFACT_SOAK_EVIDENCE_PATH: roundtrip-download/runtime-stateful-soak-evidence.json
+        run: corepack pnpm --workspace-root release:artifact-stateful-soak:test
+
       - name: Upload Runtime journey evidence
         uses: actions/upload-artifact@v4
         with:
           name: runtime-journey-${{ matrix.target }}
           path: roundtrip-download/runtime-journey-evidence.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Runtime stateful soak evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-stateful-soak-${{ matrix.target }}
+          path: roundtrip-download/runtime-stateful-soak-evidence.json
           if-no-files-found: error
           retention-days: 7
