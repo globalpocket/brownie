@@ -9,7 +9,7 @@ Parent source: 2026-10-06 external review of main `7a993f0`.
 
 Dependency graph:
 - E-23a-release-artifact-portable-archive: <none>
-- E-23b-release-artifact-download-roundtrip: E-23a-release-artifact-portable-archive-target-03
+- E-23b-release-artifact-download-roundtrip: E-23a-release-artifact-portable-archive
 - E-23c-release-artifact-runtime-journey: E-23b-release-artifact-download-roundtrip
 - E-23d-release-artifact-stateful-soak: E-23c-release-artifact-runtime-journey
 - E-23e-release-evidence-roundtrip-collector: E-23d-release-artifact-stateful-soak
