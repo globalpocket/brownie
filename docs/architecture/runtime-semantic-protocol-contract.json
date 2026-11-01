@@ -6928,10 +6928,10 @@
         "session_id",
         "expected_start_session_sequence"
       ],
-      "result_recursive_schema_fingerprint": "shape-fnv1a64:49046197ec6b9e2d",
+      "result_recursive_schema_fingerprint": "shape-fnv1a64:9bade3d4724bb827",
       "result_schema": {
         "deny_unknown_fields": false,
-        "field_shape_fingerprint": "shape-fnv1a64:a47189c01d1aa8c9",
+        "field_shape_fingerprint": "shape-fnv1a64:4e3750ece1045a34",
         "fields": [
           {
             "name": "status",
@@ -7126,6 +7126,14 @@
             "semantic_type": "object_or_enum_ref"
           },
           {
+            "name": "objective_proposal_authorization_preflight_result",
+            "nullable": true,
+            "repeated": false,
+            "required": false,
+            "rust_type": "Option<HeadlessRunObjectiveProposalAuthorizationPreflight>",
+            "semantic_type": "object_or_enum_ref"
+          },
+          {
             "name": "advances",
             "nullable": false,
             "repeated": true,
@@ -7184,6 +7192,7 @@
           "post_progress",
           "next_route",
           "objective_proposal_candidate",
+          "objective_proposal_authorization_preflight_result",
           "journey_route_resume",
           "journey_closure",
           "journey",
@@ -7199,6 +7208,7 @@
           "post_progress",
           "next_route",
           "objective_proposal_candidate",
+          "objective_proposal_authorization_preflight_result",
           "advances",
           "journey_route_resume",
           "journey_closure",
@@ -7228,7 +7238,7 @@
       "result_schema_ref": "#/type_schemas/HeadlessRunDriveResult",
       "result_semantics": "HeadlessRunDriveResult",
       "result_type": "HeadlessRunDriveResult",
-      "schema_fingerprint": "shape-fnv1a64:e4b8496f88d22870",
+      "schema_fingerprint": "shape-fnv1a64:0636128d8168ae6e",
       "trace_binding_validation": {
         "request_schema_status": "valid",
         "result_schema_status": "valid",
@@ -21602,6 +21612,107 @@
           ],
           "type": "object"
         },
+        "HeadlessRunObjectiveProposalAuthorizationPreflight": {
+          "properties": {
+            "apply_plan": {
+              "$ref": "#/$defs/WorkspacePatchApplyPlanSummary"
+            },
+            "approval_status": {
+              "type": "string"
+            },
+            "approved_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "authorization_preflight_fingerprint": {
+              "type": "string"
+            },
+            "authorization_token_fingerprint": {
+              "type": "string"
+            },
+            "candidate_fingerprint": {
+              "type": "string"
+            },
+            "journey_id": {
+              "type": "string"
+            },
+            "next_action": {
+              "type": "string"
+            },
+            "objective_context_fingerprint": {
+              "type": "string"
+            },
+            "operation": {
+              "type": "string"
+            },
+            "path_fingerprint": {
+              "type": "string"
+            },
+            "preflight_snapshot": {
+              "$ref": "#/$defs/WorkspacePatchPreflightSnapshotSummary"
+            },
+            "proposal_id": {
+              "type": "string"
+            },
+            "replayed": {
+              "type": "boolean"
+            },
+            "run_id": {
+              "type": "string"
+            },
+            "selected_context_fingerprint": {
+              "type": "string"
+            },
+            "session_id": {
+              "type": "string"
+            },
+            "source_drive_id": {
+              "type": "string"
+            },
+            "source_event_id": {
+              "type": "string"
+            },
+            "source_event_kind": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "validation_status": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "apply_plan",
+            "approval_status",
+            "authorization_preflight_fingerprint",
+            "authorization_token_fingerprint",
+            "candidate_fingerprint",
+            "journey_id",
+            "next_action",
+            "objective_context_fingerprint",
+            "operation",
+            "path_fingerprint",
+            "preflight_snapshot",
+            "proposal_id",
+            "replayed",
+            "run_id",
+            "selected_context_fingerprint",
+            "session_id",
+            "source_drive_id",
+            "source_event_id",
+            "source_event_kind",
+            "status",
+            "task_id",
+            "validation_status"
+          ],
+          "type": "object"
+        },
         "HeadlessRunObjectiveProposalCandidate": {
           "properties": {
             "approval_status": {
@@ -22526,6 +22637,119 @@
             "target_capability"
           ],
           "type": "object"
+        },
+        "WorkspacePatchApplyCheckSummary": {
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "status"
+          ],
+          "type": "object"
+        },
+        "WorkspacePatchApplyPlanSummary": {
+          "properties": {
+            "checklist": {
+              "items": {
+                "$ref": "#/$defs/WorkspacePatchApplyCheckSummary"
+              },
+              "type": "array"
+            },
+            "plan_id": {
+              "type": "string"
+            },
+            "proposal_id": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "checklist",
+            "plan_id",
+            "proposal_id",
+            "status"
+          ],
+          "type": "object"
+        },
+        "WorkspacePatchPreflightSnapshotSummary": {
+          "properties": {
+            "canonical_path_hash": {
+              "type": "string"
+            },
+            "captured_at": {
+              "type": "string"
+            },
+            "file_exists": {
+              "type": "boolean"
+            },
+            "file_kind": {
+              "type": "string"
+            },
+            "file_modified_unix_ms": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "file_sha256": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "file_size_bytes": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "proposal_id": {
+              "type": "string"
+            },
+            "snapshot_id": {
+              "type": "string"
+            },
+            "stale": {
+              "type": "boolean"
+            },
+            "stale_reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "canonical_path_hash",
+            "captured_at",
+            "file_exists",
+            "file_kind",
+            "path",
+            "proposal_id",
+            "snapshot_id",
+            "stale"
+          ],
+          "type": "object"
         }
       },
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -22642,6 +22866,17 @@
               "type": "null"
             }
           ]
+        },
+        "objective_proposal_authorization_preflight_result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HeadlessRunObjectiveProposalAuthorizationPreflight"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The durable authorization checkpoint required for a controlled proposal apply.  A route alone is intentionally insufficient: callers must carry this value through inspect/events/apply validation rather than treating a resumable route as completed work."
         },
         "objective_proposal_candidate": {
           "anyOf": [

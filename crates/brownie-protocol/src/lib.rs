@@ -2804,6 +2804,13 @@ pub struct HeadlessRunDriveResult {
     pub next_route: Option<HeadlessContinueRoute>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub objective_proposal_candidate: Option<HeadlessRunObjectiveProposalCandidate>,
+    /// The durable authorization checkpoint required for a controlled proposal
+    /// apply.  A route alone is intentionally insufficient: callers must carry
+    /// this value through inspect/events/apply validation rather than treating a
+    /// resumable route as completed work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective_proposal_authorization_preflight_result:
+        Option<HeadlessRunObjectiveProposalAuthorizationPreflight>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub advances: Vec<HeadlessRunAdvanceResult>,
     #[serde(skip_serializing_if = "Option::is_none")]

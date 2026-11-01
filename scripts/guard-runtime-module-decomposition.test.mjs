@@ -84,3 +84,16 @@ test('metric tampering fails closed', () => {
     /production_line_count drifted/,
   );
 });
+
+test('test-line ceiling reduction fails closed even when metrics are current', () => {
+  const temp = copyFixture();
+  const assessmentPath = path.join(temp, 'docs/architecture/runtime-module-decomposition-assessment.json');
+  const assessment = JSON.parse(fs.readFileSync(assessmentPath, 'utf8'));
+  const measuredTestLines = assessment.metrics.files['crates/brownie-runtime/src/lib.rs'].test_line_count;
+  assessment.thresholds.lib_rs_test_line_ceiling = measuredTestLines - 1;
+  fs.writeFileSync(assessmentPath, JSON.stringify(assessment, null, 2) + '\n');
+  assert.throws(
+    () => validateRuntimeModuleDecompositionAssessment(temp),
+    /test lines .* exceed ceiling/,
+  );
+});

@@ -26201,6 +26201,7 @@ modes:
             }),
             next_route: None,
             objective_proposal_candidate: None,
+            objective_proposal_authorization_preflight_result: None,
             advances: Vec::new(),
             journey_route_resume: None,
             journey_closure: None,
@@ -26352,6 +26353,7 @@ modes:
             }),
             next_route: None,
             objective_proposal_candidate: None,
+            objective_proposal_authorization_preflight_result: None,
             advances: Vec::new(),
             journey_route_resume: None,
             journey_closure: None,
@@ -26624,6 +26626,7 @@ modes:
             }),
             next_route: None,
             objective_proposal_candidate: None,
+            objective_proposal_authorization_preflight_result: None,
             advances: Vec::new(),
             journey_route_resume: None,
             journey_closure: None,
@@ -26772,6 +26775,7 @@ modes:
             }),
             next_route: None,
             objective_proposal_candidate: None,
+            objective_proposal_authorization_preflight_result: None,
             advances: Vec::new(),
             journey_route_resume: None,
             journey_closure: None,
@@ -28856,6 +28860,34 @@ modes:
             std::fs::read_to_string(temp.path().join("README.md")).expect("readme"),
             "original README"
         );
+
+        // The route must retain the exact authorization checkpoint.  The
+        // headless journey drive serializes this pair so the CLI can perform
+        // its mandatory inspect/events/apply validation instead of treating
+        // the route label itself as a completion signal.
+        let tasks = store.tasks().list_tasks().expect("list tasks");
+        let progress_overview =
+            task_list_progress_overview(&store, &tasks).expect("progress overview");
+        let (route, recovered_authorization) = headless_continue_authorized_preflight_resume_route(
+            &store,
+            &progress_overview,
+            &HeadlessContinueScope {
+                session_id: Some("m56.auth".to_string()),
+                session_id_prefix: None,
+                journey_id: None,
+                task_id: None,
+                run_id: None,
+                latest_matching_session: false,
+            },
+        )
+        .expect("recover scoped preflight route")
+        .expect("scoped preflight route");
+        assert_eq!(
+            route.kind,
+            HeadlessContinueRouteKind::ApplyAuthorizedObjectiveProposalExplicitly
+        );
+        assert_eq!(recovered_authorization.proposal_id, proposal_id);
+        assert_eq!(recovered_authorization.status, "authorized_preflight_ready");
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         clear_llm_env_for_test();
@@ -55856,6 +55888,7 @@ modes:
             }),
             next_route: None,
             objective_proposal_candidate: None,
+            objective_proposal_authorization_preflight_result: None,
             advances: vec![],
             journey_route_resume: None,
             journey_closure: None,
@@ -57303,6 +57336,7 @@ modes:
                 }),
                 next_route: None,
                 objective_proposal_candidate: None,
+                objective_proposal_authorization_preflight_result: None,
                 advances: Vec::new(),
                 journey_route_resume: None,
                 journey_closure: None,

@@ -2,7 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { collectRuntimeModuleMetrics } from './guard-runtime-module-decomposition.mjs';
+import {
+  collectRuntimeModuleMetrics,
+  validateRuntimeModuleDecompositionAssessment,
+} from './guard-runtime-module-decomposition.mjs';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const assessmentRelativePath = 'docs/architecture/runtime-module-decomposition-assessment.json';
@@ -42,6 +45,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
     const result = syncRuntimeModuleDecompositionAssessment(repositoryRoot, {
       check: process.argv.slice(2).includes('--check')
     });
+    if (process.argv.slice(2).includes('--check')) {
+      validateRuntimeModuleDecompositionAssessment(repositoryRoot);
+    }
     console.log(result.changed ? `updated ${assessmentRelativePath}` : `current ${assessmentRelativePath}`);
   } catch (error) {
     console.error(error?.message ?? error);
