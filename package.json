@@ -123,7 +123,7 @@
     "phase-loop:delivery-integrity:test": "node --test scripts/phase-loop-delivery-integrity.test.mjs",
     "phase-loop:delivery-liveness:test": "node --test scripts/phase-loop-delivery-liveness.test.mjs",
     "phase-loop:review-reconcile:test": "node --test scripts/phase-loop-review-reconcile.test.mjs",
-    "phase-loop:claim-smoke": "bash scripts/phase-loop-claim-smoke-scheduler.test.sh && bash scripts/phase-loop-claim-smoke.test.sh",
+    "phase-loop:claim-smoke": "node --test scripts/phase-loop-claim-smoke-fixture-dependencies.test.mjs && bash scripts/phase-loop-claim-smoke-scheduler.test.sh && bash scripts/phase-loop-claim-smoke.test.sh",
     "phase-loop:claim-smoke:scheduler:test": "bash scripts/phase-loop-claim-smoke-scheduler.test.sh",
     "phase-loop:binary-freshness": "./phase-loop.sh check-binary-freshness",
     "phase-loop:binary-freshness:test": "bash scripts/phase-loop-binary-freshness.test.sh",
