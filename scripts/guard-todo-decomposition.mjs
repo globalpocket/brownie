@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   readAllTodoReplanRecords,
@@ -35,6 +36,42 @@ const todoContractSectionNames = [
   'required_before_release',
   'safety_readiness_evidence_invalidation'
 ];
+
+function gitPathExistsAt(repoRoot, revision, target) {
+  const result = spawnSync('git', ['cat-file', '-e', `${revision}:${target}`], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: 'ignore'
+  });
+  return result.status === 0;
+}
+
+function gitRevision(repoRoot, args) {
+  const result = spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
+function createTargetIsNewInCurrentChange(repoRoot, target) {
+  // A checked-out PR necessarily contains files created by its live Create
+  // only TODO. Validate those files against the baseline, not against the
+  // current worktree alone. A later baseline that still exposes the same
+  // unchecked Create only TODO fails closed again.
+  if (!gitRevision(repoRoot, ['rev-parse', '--verify', 'HEAD'])) return false;
+  if (!gitPathExistsAt(repoRoot, 'HEAD', target)) return true;
+
+  const baseRef = process.env.GITHUB_BASE_REF ? `origin/${process.env.GITHUB_BASE_REF}` : null;
+  const mergeBase = baseRef ? gitRevision(repoRoot, ['merge-base', 'HEAD', baseRef]) : null;
+  // actions/checkout deliberately uses a shallow PR merge checkout.  In that
+  // shape the base ref can be present while the merge commit's parent objects
+  // are not, so merge-base and HEAD^ both fail.  The fetched base ref remains
+  // a safe conservative baseline: if it already contains the target, reject;
+  // otherwise accept only this current-change Create-only target.  A base that
+  // advanced to contain the target also rejects, requiring the PR to rebase.
+  const baseline = mergeBase
+    ?? (baseRef && gitRevision(repoRoot, ['rev-parse', '--verify', baseRef]))
+    ?? gitRevision(repoRoot, ['rev-parse', 'HEAD^']);
+  return baseline !== null && !gitPathExistsAt(repoRoot, baseline, target);
+}
 
 function hasUncheckedImplementationOrBlockerTodo(blocks) {
   for (const block of blocks) {
@@ -573,7 +610,7 @@ function validateLeafBlock(block, errors, options = {}) {
     }
   }
   for (const target of createScopes) {
-    if (options.repoRoot && fs.existsSync(path.join(options.repoRoot, target))) {
+    if (options.repoRoot && fs.existsSync(path.join(options.repoRoot, target)) && !createTargetIsNewInCurrentChange(options.repoRoot, target)) {
       errors.push(`${owner}: Create only target already exists: ${target}. Use Patch only for existing files.`);
     }
   }
