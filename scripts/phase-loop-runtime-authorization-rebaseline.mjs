@@ -37,6 +37,64 @@ function parsePositiveInteger(raw) {
   return value;
 }
 
+function retireObjectiveApplyScopeForExpiredAuthorization(claim, { timestamp, runStamp }) {
+  const scope = claim?.objective_apply_resume_scope;
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)) {
+    return { claimPatch: {}, audit: { retired: false } };
+  }
+
+  // Preserve the old binding in both the claim history and recovery audit.  A
+  // proposal approval is only valid in its original Runtime session, so an
+  // archived expired session must never leave a `pending` scope that can
+  // conflict with the replacement session's direct preflight.
+  const prior = {
+    state: typeof scope.state === 'string' ? scope.state : '',
+    claim_id: typeof scope.claim_id === 'string' ? scope.claim_id : '',
+    selected_todo_sha256: typeof scope.selected_todo_sha256 === 'string' ? scope.selected_todo_sha256 : '',
+    queue_fingerprint: typeof scope.queue_fingerprint === 'string' ? scope.queue_fingerprint : '',
+    queue_generation: scope.queue_generation ?? null,
+    session_id: typeof scope.session_id === 'string' ? scope.session_id : '',
+    journey_id: typeof scope.journey_id === 'string' ? scope.journey_id : '',
+    task_id: typeof scope.task_id === 'string' ? scope.task_id : '',
+    run_id: typeof scope.run_id === 'string' ? scope.run_id : '',
+    source_run_stamp: typeof scope.source_run_stamp === 'string' ? scope.source_run_stamp : '',
+    source_stdout_sha256: typeof scope.source_stdout_sha256 === 'string' ? scope.source_stdout_sha256 : '',
+  };
+  const invalidatedScope = {
+    ...scope,
+    state: 'invalidated',
+    invalidated_at: timestamp,
+    invalidated_run_stamp: String(runStamp),
+    invalidated_reason: 'runtime_proposal_apply_approval_expired',
+  };
+  const history = Array.isArray(claim.objective_apply_resume_scope_history)
+    ? [...claim.objective_apply_resume_scope_history]
+    : [];
+  history.push({
+    at: timestamp,
+    event: 'invalidated_by_runtime_authorization_rebaseline',
+    run_stamp: String(runStamp),
+    reason: 'runtime_proposal_apply_approval_expired',
+    prior_state: prior.state,
+    prior_source_run_stamp: prior.source_run_stamp,
+    prior_session_id: prior.session_id,
+    prior_journey_id: prior.journey_id,
+    prior_task_id: prior.task_id,
+    prior_run_id: prior.run_id,
+  });
+  return {
+    claimPatch: {
+      objective_apply_resume_scope: invalidatedScope,
+      objective_apply_resume_scope_history: history.slice(-12),
+    },
+    audit: {
+      retired: true,
+      reason: 'runtime_proposal_apply_approval_expired',
+      prior_scope: prior,
+    },
+  };
+}
+
 export function rebaselineExpiredRuntimeAuthorization({ storeRoot, stateDir, claimPath, stdoutPath, runStamp, cap }) {
   const normalizedCap = parsePositiveInteger(cap);
   const claim = readJson(claimPath);
@@ -69,6 +127,7 @@ export function rebaselineExpiredRuntimeAuthorization({ storeRoot, stateDir, cla
   if (fs.existsSync(archiveStore)) throw new Error('runtime_authorization_archive_collision');
   const auditPath = path.join(stateDir, 'recovery-audits', `${runStamp}-runtime-authorization-rebaseline.json`);
   const timestamp = new Date().toISOString();
+  const retiredObjectiveApplyScope = retireObjectiveApplyScopeForExpiredAuthorization(claim, { timestamp, runStamp });
   const audit = {
     schema_version: 1,
     kind: 'phase_loop_runtime_authorization_rebaseline',
@@ -83,6 +142,7 @@ export function rebaselineExpiredRuntimeAuthorization({ storeRoot, stateDir, cla
     active_store: activeStore,
     archived_store: archiveStore,
     recovery_policy: 'archive_expired_runtime_session_then_require_fresh_run',
+    objective_apply_scope_retirement: retiredObjectiveApplyScope.audit,
   };
   fs.mkdirSync(archiveDir, { recursive: true, mode: 0o700 });
   fs.renameSync(activeStore, archiveStore);
@@ -94,6 +154,7 @@ export function rebaselineExpiredRuntimeAuthorization({ storeRoot, stateDir, cla
       runtime_authorization_rebaseline_audit_path: auditPath,
       runtime_authorization_rebaseline_reason: 'proposal_apply_approval_expired',
       runtime_authorization_rebaseline_updated_at: timestamp,
+      ...retiredObjectiveApplyScope.claimPatch,
     };
     writeJsonAtomically(auditPath, audit);
     writeJsonAtomically(claimPath, updatedClaim);

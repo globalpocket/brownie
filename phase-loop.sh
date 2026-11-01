@@ -72,6 +72,8 @@ PHASE_LOOP_ACTIVE_RUN_ID=""
 PHASE_LOOP_ACTIVE_STDOUT_LOG=""
 PHASE_LOOP_ACTIVE_STDERR_LOG=""
 PHASE_LOOP_CONTROL_PLANE_FINGERPRINT=""
+PHASE_LOOP_OBJECTIVE_APPLY_RESUME_ARGS=()
+PHASE_LOOP_OBJECTIVE_APPLY_RESUME_SCOPE_SOURCE=""
 PHASE_LOOP_PREFLIGHT_PROFILE="${PHASE_LOOP_PREFLIGHT_PROFILE:-}"
 PHASE_LOOP_BOOTSTRAP_DIAGNOSTIC=""
 PHASE_LOOP_ENV_SOURCES="process environment"
@@ -11023,6 +11025,7 @@ progress_projection = {
     "route": text(payload.get("next_invocation")) or text(automation.get("next_invocation")),
     "closure": text(payload.get("completion_closure_status")),
     "applied": text(payload.get("objective_apply_applied")) or text(payload.get("objective_apply_apply_status")),
+    "objective_apply_authorization_consumed": payload.get("objective_apply_authorization_consumed") is True,
     "applied_path": text(payload.get("objective_apply_path")),
     "apply_reason": text(payload.get("objective_apply_apply_reason")),
     "apply_failed_checks": text(payload.get("objective_apply_failed_checks")),
@@ -17229,6 +17232,475 @@ except Exception:
 PY
 }
 
+# An authorized objective proposal belongs to one immutable Runtime journey.
+# The public `resume` command is deliberately allowed to omit that identity
+# for ordinary continuations, but doing so for an already-authorized apply can
+# collapse a terminalized journey into a generic legacy replay.  Persist the
+# four runtime identifiers only after a fresh, claim-admitted direct preflight
+# and bind them to the exact claim/queue snapshot and the source stdout digest.
+# This is controller metadata, never an authorization minted by the shell.
+capture_objective_apply_resume_scope() {
+  local stdout_log="$1"
+  local source_run_stamp="$2"
+  local source_kind="${3:-direct_runtime}"
+  python3 - "$TODO_CLAIM_FILE" "$stdout_log" "$source_run_stamp" "$source_kind" "$(now_utc)" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import re
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+stdout_path = pathlib.Path(sys.argv[2])
+source_run_stamp = sys.argv[3]
+source_kind = sys.argv[4]
+timestamp = sys.argv[5]
+
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+except FileNotFoundError:
+    # Terminal completion can retire the claim before this post-runtime audit
+    # hook runs.  There is then no active apply authorization to preserve.
+    print(json.dumps({"captured": False, "reason": "claim_absent_after_runtime"}, sort_keys=True))
+    raise SystemExit(0)
+except Exception as error:
+    print(json.dumps({"captured": False, "reason": "claim_unreadable", "detail": str(error)[:512]}, sort_keys=True))
+    raise SystemExit(1)
+try:
+    root = json.loads(stdout_path.read_text(encoding="utf-8"))
+except Exception as error:
+    print(json.dumps({"captured": False, "reason": "scope_inputs_unreadable", "detail": str(error)[:512]}, sort_keys=True))
+    raise SystemExit(1)
+
+if not isinstance(claim, dict) or not isinstance(root, dict):
+    print(json.dumps({"captured": False, "reason": "scope_inputs_invalid"}, sort_keys=True))
+    raise SystemExit(1)
+
+# Capture only the direct `run` envelope.  A `resume` projection can repeat a
+# prior next_action without carrying the source identities or the preflight.
+payload = root.get("run") if isinstance(root.get("run"), dict) else None
+if not isinstance(payload, dict):
+    print(json.dumps({"captured": False, "reason": "not_direct_runtime_preflight"}, sort_keys=True))
+    raise SystemExit(0)
+
+is_authorized_preflight = (
+    payload.get("next_action") == "apply_authorized_objective_proposal"
+    and payload.get("objective_proposal_preflight_status") == "authorized_preflight_ready"
+)
+if not is_authorized_preflight:
+    print(json.dumps({"captured": False, "reason": "no_authorized_objective_preflight"}, sort_keys=True))
+    raise SystemExit(0)
+
+try:
+    executed_count = int(payload.get("executed_count") or 0)
+except (TypeError, ValueError):
+    executed_count = 0
+if payload.get("task_execution_confirmed") is not True or executed_count <= 0:
+    print(json.dumps({"captured": False, "reason": "preflight_not_fresh_execution"}, sort_keys=True))
+    raise SystemExit(1)
+
+claim_id = str(claim.get("claim_id") or "")
+selected_todo = str(claim.get("selected_todo") or "")
+selected_sha256 = str(claim.get("selected_todo_sha256") or hashlib.sha256(selected_todo.encode("utf-8")).hexdigest())
+if not claim_id or not selected_todo or len(selected_sha256) != 64:
+    print(json.dumps({"captured": False, "reason": "claim_identity_missing"}, sort_keys=True))
+    raise SystemExit(1)
+if payload.get("phase_loop_claim_id") != claim_id or payload.get("phase_loop_selected_todo_sha256") != selected_sha256:
+    print(json.dumps({"captured": False, "reason": "preflight_claim_binding_mismatch"}, sort_keys=True))
+    raise SystemExit(1)
+if payload.get("objective_apply_applied") is True or payload.get("objective_apply_authorization_consumed") is True:
+    print(json.dumps({"captured": False, "reason": "preflight_already_consumed"}, sort_keys=True))
+    raise SystemExit(1)
+
+identifier_pattern = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
+identifiers = {key: str(payload.get(key) or "") for key in ("session_id", "journey_id", "task_id", "run_id")}
+if any(not identifier_pattern.fullmatch(value) for value in identifiers.values()):
+    print(json.dumps({"captured": False, "reason": "preflight_scope_identifier_invalid"}, sort_keys=True))
+    raise SystemExit(1)
+
+scope = {
+    "schema_version": 1,
+    "state": "pending",
+    "claim_id": claim_id,
+    "selected_todo_sha256": selected_sha256,
+    "queue_fingerprint": str(claim.get("queue_fingerprint") or ""),
+    "queue_generation": claim.get("queue_generation"),
+    "session_id": identifiers["session_id"],
+    "journey_id": identifiers["journey_id"],
+    "task_id": identifiers["task_id"],
+    "run_id": identifiers["run_id"],
+    "source_run_stamp": source_run_stamp,
+    "source_kind": source_kind,
+    "source_stdout_log": str(stdout_path.resolve()),
+    "source_stdout_sha256": hashlib.sha256(stdout_path.read_bytes()).hexdigest(),
+    "captured_at": timestamp,
+}
+existing = claim.get("objective_apply_resume_scope")
+identity_keys = (
+    "claim_id", "selected_todo_sha256", "queue_fingerprint", "queue_generation",
+    "session_id", "journey_id", "task_id", "run_id",
+)
+if isinstance(existing, dict):
+    if existing.get("state") in ("consumed", "invalidated"):
+        # A denied/failed apply consumes its authorization without writing, and
+        # an expired approval invalidates its claim-local Runtime session.
+        # Only a new direct preflight (validated above) can replace either
+        # terminal scope; an unscoped resume can never do so.
+        history = claim.setdefault("objective_apply_resume_scope_history", [])
+        if not isinstance(history, list):
+            history = []
+            claim["objective_apply_resume_scope_history"] = history
+        history.append({
+            "at": timestamp,
+            "event": "superseded_by_fresh_preflight_after_" + str(existing.get("state") or "terminal"),
+            "prior_source_run_stamp": existing.get("source_run_stamp"),
+            "source_run_stamp": source_run_stamp,
+        })
+        claim["objective_apply_resume_scope_history"] = history[-12:]
+    elif existing.get("state") != "pending":
+        print(json.dumps({"captured": False, "reason": "existing_scope_not_pending"}, sort_keys=True))
+        raise SystemExit(1)
+    elif all(existing.get(key) == scope.get(key) for key in identity_keys):
+        print(json.dumps({"captured": False, "reason": "scope_already_captured"}, sort_keys=True))
+        raise SystemExit(0)
+    else:
+        rejections = claim.setdefault("objective_apply_resume_scope_rejections", [])
+        if not isinstance(rejections, list):
+            rejections = []
+            claim["objective_apply_resume_scope_rejections"] = rejections
+        rejections.append({
+            "at": timestamp,
+            "reason": "conflicting_authorized_scope",
+            "source_run_stamp": source_run_stamp,
+            "existing_scope_source_run_stamp": existing.get("source_run_stamp"),
+        })
+        claim["objective_apply_resume_scope_rejections"] = rejections[-12:]
+        tmp = claim_path.with_name(f"{claim_path.name}.{os.getpid()}.scope-rejection.tmp")
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(claim, handle, ensure_ascii=False, sort_keys=True, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, claim_path)
+        os.chmod(claim_path, 0o600)
+        print(json.dumps({"captured": False, "reason": "conflicting_authorized_scope"}, sort_keys=True))
+        raise SystemExit(1)
+
+claim["objective_apply_resume_scope"] = scope
+history = claim.setdefault("objective_apply_resume_scope_history", [])
+if not isinstance(history, list):
+    history = []
+    claim["objective_apply_resume_scope_history"] = history
+history.append({
+    "at": timestamp,
+    "event": "captured",
+    "source_run_stamp": source_run_stamp,
+    "source_kind": source_kind,
+    "session_id": scope["session_id"],
+    "journey_id": scope["journey_id"],
+    "task_id": scope["task_id"],
+    "run_id": scope["run_id"],
+})
+claim["objective_apply_resume_scope_history"] = history[-12:]
+claim["updated_at"] = timestamp
+tmp = claim_path.with_name(f"{claim_path.name}.{os.getpid()}.objective-apply-scope.tmp")
+with open(tmp, "w", encoding="utf-8") as handle:
+    json.dump(claim, handle, ensure_ascii=False, sort_keys=True, indent=2)
+    handle.write("\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(tmp, 0o600)
+os.replace(tmp, claim_path)
+os.chmod(claim_path, 0o600)
+print(json.dumps({"captured": True, "claim_id": claim_id, "source_run_stamp": source_run_stamp}, sort_keys=True))
+PY
+  local status=$?
+  if [ "$status" -eq 0 ]; then
+    sync_parent_dir "$TODO_CLAIM_DIR"
+  fi
+  return "$status"
+}
+
+# Releases before this guard did not persist the direct preflight identity.
+# A review-rework fresh-dispatch marker is an auditable reference to that one
+# direct invocation, so it is the only legacy source we may reconstruct.  No
+# task-list search, implicit session discovery, or credential/configuration
+# lookup is permitted here.
+restore_objective_apply_resume_scope_from_claim_evidence() {
+  local activation_stamp activation_log
+  if [ ! -f "$TODO_CLAIM_FILE" ]; then
+    return 0
+  fi
+  if python3 - "$TODO_CLAIM_FILE" <<'PY'
+import json
+import pathlib
+import sys
+try:
+    scope = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")).get("objective_apply_resume_scope")
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if isinstance(scope, dict) else 1)
+PY
+  then
+    return 0
+  fi
+  activation_stamp="$(python3 - "$TODO_CLAIM_FILE" <<'PY'
+import json
+import pathlib
+import re
+import sys
+try:
+    claim = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+for field in ("review_rework_fresh_dispatch_activated_run_stamp", "runtime_authorization_rebaseline_activated_run_stamp"):
+    value = str(claim.get(field) or "")
+    if re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", value):
+        print(value)
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+)" || return 0
+  activation_log="$RUN_DIR/$activation_stamp.stdout.log"
+  if [ ! -s "$activation_log" ]; then
+    printf '%s objective_apply_scope_restore_missing_evidence=true claim=%s run_stamp=%s stdout=%s\n' "$(now_utc)" "$(claim_field claim_id 2>/dev/null || true)" "$activation_stamp" "$activation_log" >> "$SUPERVISOR_LOG"
+    return 1
+  fi
+  capture_objective_apply_resume_scope "$activation_log" "$activation_stamp" "claim_evidence_recovery"
+}
+
+# Emit a complete CLI recovery scope only when it still proves the exact
+# claim, queue, stdout evidence, and direct-preflight identifiers.  The same
+# journey identity may remain necessary for its verification continuation,
+# but it never re-authorizes a second apply.
+objective_apply_resume_scope_args() {
+  python3 - "$TODO_CLAIM_FILE" "$RUN_DIR" "$PROGRESS_STATE_FILE" <<'PY'
+import hashlib
+import json
+import pathlib
+import re
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+run_dir = pathlib.Path(sys.argv[2]).resolve()
+progress_path = pathlib.Path(sys.argv[3])
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+if not isinstance(claim, dict):
+    raise SystemExit(1)
+scope = claim.get("objective_apply_resume_scope")
+if not isinstance(scope, dict):
+    raise SystemExit(1)
+scope_state = scope.get("state")
+if scope_state == "consumed":
+    raise SystemExit(1)
+if scope_state not in ("pending", "applied_pending_verification"):
+    raise SystemExit(2)
+selected_todo = str(claim.get("selected_todo") or "")
+selected_sha256 = str(claim.get("selected_todo_sha256") or hashlib.sha256(selected_todo.encode("utf-8")).hexdigest())
+bound = {
+    "claim_id": str(claim.get("claim_id") or ""),
+    "selected_todo_sha256": selected_sha256,
+    "queue_fingerprint": str(claim.get("queue_fingerprint") or ""),
+    "queue_generation": claim.get("queue_generation"),
+}
+if not all(scope.get(key) == value for key, value in bound.items()):
+    raise SystemExit(2)
+if scope_state == "applied_pending_verification":
+    try:
+        progress = json.loads(progress_path.read_text(encoding="utf-8"))
+        projection = progress.get("progress_projection") if isinstance(progress, dict) else None
+    except Exception:
+        projection = None
+    if not isinstance(projection, dict) or (
+        projection.get("claim_id") != bound["claim_id"]
+        or projection.get("selected_todo") != selected_todo
+        or projection.get("next_action") != "verify_objective_apply"
+        or projection.get("objective_apply_authorization_consumed") is not True
+    ):
+        raise SystemExit(2)
+identifier_pattern = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
+identifiers = {key: str(scope.get(key) or "") for key in ("session_id", "journey_id", "task_id", "run_id")}
+if any(not identifier_pattern.fullmatch(value) for value in identifiers.values()):
+    raise SystemExit(2)
+try:
+    stdout_path = pathlib.Path(str(scope.get("source_stdout_log") or "")).resolve(strict=True)
+    stdout_path.relative_to(run_dir)
+    source_bytes = stdout_path.read_bytes()
+    if hashlib.sha256(source_bytes).hexdigest() != scope.get("source_stdout_sha256"):
+        raise ValueError("source digest mismatch")
+    root = json.loads(source_bytes.decode("utf-8"))
+    payload = root.get("run") if isinstance(root, dict) and isinstance(root.get("run"), dict) else None
+    if not isinstance(payload, dict):
+        raise ValueError("source is not direct run")
+except Exception:
+    raise SystemExit(2)
+if (
+    payload.get("next_action") != "apply_authorized_objective_proposal"
+    or payload.get("objective_proposal_preflight_status") != "authorized_preflight_ready"
+    or payload.get("task_execution_confirmed") is not True
+    or payload.get("phase_loop_claim_id") != bound["claim_id"]
+    or payload.get("phase_loop_selected_todo_sha256") != bound["selected_todo_sha256"]
+    or any(str(payload.get(key) or "") != identifiers[key] for key in identifiers)
+):
+    raise SystemExit(2)
+for flag, value in (("--session-id", identifiers["session_id"]), ("--journey-id", identifiers["journey_id"]), ("--task-id", identifiers["task_id"]), ("--run-id", identifiers["run_id"])):
+    print(flag)
+    print(value)
+PY
+}
+
+# A direct authorization makes a scope mandatory on the next resume.  This
+# prevents an absent/corrupt scope from silently falling back to `resume`
+# without arguments and recreating the lossy legacy projection.
+objective_apply_resume_scope_required() {
+  python3 - "$TODO_CLAIM_FILE" "$PROGRESS_STATE_FILE" "$RUN_DIR" <<'PY'
+import hashlib
+import json
+import pathlib
+import re
+import sys
+
+try:
+    claim = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+if not isinstance(claim, dict) or claim.get("status") not in ("claimed", "in_progress", "running"):
+    raise SystemExit(1)
+selected_todo = str(claim.get("selected_todo") or "")
+selected_sha256 = str(claim.get("selected_todo_sha256") or hashlib.sha256(selected_todo.encode("utf-8")).hexdigest())
+scope = claim.get("objective_apply_resume_scope")
+scope_state = scope.get("state") if isinstance(scope, dict) else ""
+
+# An activated fresh-dispatch stamp proves only that the controller invoked
+# `run`; it does not prove that Runtime reached an authorized apply preflight.
+# Require a scope after a marker only when that exact direct-run envelope
+# contains the same claim-bound authorization.  This preserves ordinary
+# rework/authorization continuations instead of misclassifying them as a
+# lossy objective-apply resume.
+def activated_authorized_preflight():
+    run_dir = pathlib.Path(sys.argv[3]).resolve()
+    identifier_pattern = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
+    for field in ("review_rework_fresh_dispatch_activated_run_stamp", "runtime_authorization_rebaseline_activated_run_stamp"):
+        stamp = str(claim.get(field) or "")
+        if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", stamp):
+            continue
+        source = run_dir / f"{stamp}.stdout.log"
+        try:
+            source.resolve().relative_to(run_dir)
+            root = json.loads(source.read_text(encoding="utf-8"))
+            payload = root.get("run") if isinstance(root, dict) else None
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        identifiers = [str(payload.get(key) or "") for key in ("session_id", "journey_id", "task_id", "run_id")]
+        try:
+            executed_count = int(payload.get("executed_count") or 0)
+        except (TypeError, ValueError):
+            continue
+        if (
+            payload.get("next_action") == "apply_authorized_objective_proposal"
+            and payload.get("objective_proposal_preflight_status") == "authorized_preflight_ready"
+            and payload.get("task_execution_confirmed") is True
+            and executed_count > 0
+            and payload.get("phase_loop_claim_id") == claim.get("claim_id")
+            and payload.get("phase_loop_selected_todo_sha256") == selected_sha256
+            and all(identifier_pattern.fullmatch(value) for value in identifiers)
+        ):
+            return True
+    return False
+
+activated = activated_authorized_preflight()
+try:
+    progress = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+    projection = progress.get("progress_projection") if isinstance(progress, dict) else {}
+except Exception:
+    projection = {}
+pending = isinstance(projection, dict) and projection.get("objective_apply_pending") is True
+same_claim = isinstance(projection, dict) and projection.get("claim_id") == claim.get("claim_id")
+same_todo = isinstance(projection, dict) and projection.get("selected_todo") == selected_todo
+if scope_state == "applied_pending_verification":
+    verifying = isinstance(projection, dict) and projection.get("next_action") == "verify_objective_apply"
+    if verifying and same_claim and same_todo:
+        raise SystemExit(0)
+    raise SystemExit(1)
+if scope_state == "consumed":
+    raise SystemExit(1)
+if activated or (pending and same_claim and same_todo and selected_sha256):
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+# Once the runtime reports a write, advance the scope to a verification-only
+# state.  It retains the journey identity while prohibiting a second apply;
+# an authorization consumed without an applied write is terminal for this
+# scope and needs a fresh direct preflight.
+consume_objective_apply_resume_scope_if_consumed() {
+  local stdout_log="$1"
+  local run_stamp="$2"
+  python3 - "$TODO_CLAIM_FILE" "$stdout_log" "$run_stamp" "$(now_utc)" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+stdout_path = pathlib.Path(sys.argv[2])
+run_stamp = sys.argv[3]
+timestamp = sys.argv[4]
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+    root = json.loads(stdout_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+if not isinstance(claim, dict) or not isinstance(root, dict):
+    raise SystemExit(0)
+scope = claim.get("objective_apply_resume_scope")
+payload = root.get("run") if isinstance(root.get("run"), dict) else root.get("resume") if isinstance(root.get("resume"), dict) else root
+if not isinstance(scope, dict) or not isinstance(payload, dict):
+    raise SystemExit(0)
+applied = payload.get("objective_apply_applied") is True or str(payload.get("objective_apply_apply_status") or "").lower() == "applied"
+consumed = payload.get("objective_apply_authorization_consumed") is True
+if scope.get("state") == "applied_pending_verification":
+    if applied:
+        print(json.dumps({"ok": False, "reason": "verification_replayed_objective_apply"}, sort_keys=True))
+        raise SystemExit(1)
+    raise SystemExit(0)
+if scope.get("state") != "pending" or not (applied or consumed):
+    raise SystemExit(0)
+scope["state"] = "applied_pending_verification" if applied else "consumed"
+scope["consumed_at"] = timestamp
+scope["consumed_run_stamp"] = run_stamp
+scope["consumed_reason"] = "objective_apply_applied" if applied else "objective_apply_authorization_consumed"
+history = claim.setdefault("objective_apply_resume_scope_history", [])
+if isinstance(history, list):
+    history.append({"at": timestamp, "event": "consumed", "run_stamp": run_stamp, "reason": scope["consumed_reason"]})
+    claim["objective_apply_resume_scope_history"] = history[-12:]
+claim["objective_apply_resume_scope"] = scope
+claim["updated_at"] = timestamp
+tmp = claim_path.with_name(f"{claim_path.name}.{os.getpid()}.objective-apply-scope-consumed.tmp")
+with open(tmp, "w", encoding="utf-8") as handle:
+    json.dump(claim, handle, ensure_ascii=False, sort_keys=True, indent=2)
+    handle.write("\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(tmp, 0o600)
+os.replace(tmp, claim_path)
+os.chmod(claim_path, 0o600)
+PY
+  local status=$?
+  if [ "$status" -eq 0 ]; then
+    sync_parent_dir "$TODO_CLAIM_DIR"
+  fi
+  return "$status"
+}
+
 _run_brownie_once() {
   load_env
   if ! phase_loop_require_operational_configuration; then
@@ -17250,6 +17722,8 @@ _run_brownie_once() {
   local phase_value_manifest_before phase_value_manifest_repair_output phase_value_manifest_repair_status
   local workspace_status_before
   local active_target_path active_target_snapshot active_target_snapshots active_target_syntax_output active_target_syntax_status claim_snapshot_before_runtime runtime_admission_snapshot runtime_admission_validation runtime_admission_status delegated_scope_backup delegated_scope_output delegated_scope_status
+  local objective_apply_scope_argument objective_apply_scope_capture_output objective_apply_scope_restore_output objective_apply_scope_args_output objective_apply_scope_status
+  local -a objective_apply_resume_args
   local use_resume=0
   local CLAIM_CREATED_THIS_RUN=0
   local CLAIM_REPLACED_BLOCKED=0
@@ -18481,6 +18955,53 @@ PY
     write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"runtime_admission_snapshot_mismatch","owner_blocked":true}'
     return 78
   fi
+  objective_apply_resume_args=()
+  PHASE_LOOP_OBJECTIVE_APPLY_RESUME_ARGS=()
+  PHASE_LOOP_OBJECTIVE_APPLY_RESUME_SCOPE_SOURCE=""
+  if [ "$use_resume" -eq 1 ]; then
+    if objective_apply_scope_restore_output="$(restore_objective_apply_resume_scope_from_claim_evidence 2>&1)"; then
+      :
+    else
+      objective_apply_scope_status=$?
+      detail="An authorized objective apply cannot restore its claim-bound resume evidence; refusing an unscoped legacy resume. result=${objective_apply_scope_restore_output:-<no output>}"
+      printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+      write_status "blocked" "$detail" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-0}"
+      write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"objective_apply_resume_scope_restore_failed","owner_blocked":true}'
+      return 78
+    fi
+    if objective_apply_scope_args_output="$(objective_apply_resume_scope_args 2>/dev/null)"; then
+      while IFS= read -r objective_apply_scope_argument; do
+        [ -n "$objective_apply_scope_argument" ] && objective_apply_resume_args+=("$objective_apply_scope_argument")
+      done <<< "$objective_apply_scope_args_output"
+      if [ "${#objective_apply_resume_args[@]}" -ne 8 ]; then
+        detail="Claim-bound objective apply resume scope emitted an incomplete CLI argument set; refusing resume."
+        printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+        write_status "blocked" "$detail" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-0}"
+        write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"objective_apply_resume_scope_argument_shape_invalid","owner_blocked":true}'
+        return 78
+      fi
+      PHASE_LOOP_OBJECTIVE_APPLY_RESUME_ARGS=("${objective_apply_resume_args[@]}")
+      PHASE_LOOP_OBJECTIVE_APPLY_RESUME_SCOPE_SOURCE="claim_bound_authorized_preflight"
+      printf '%s objective_apply_scoped_resume=true claim=%s source=%s\n' "$(now_utc)" "$(claim_field claim_id 2>/dev/null || true)" "${objective_apply_resume_args[1]}" >> "$SUPERVISOR_LOG"
+      write_bdk_trajectory_event "$run_stamp" "workflow.routed" '{"source":"phase-loop","bdk_state":"resume","resume_scope":"claim_bound_authorized_preflight"}'
+    else
+      objective_apply_scope_status=$?
+      if objective_apply_resume_scope_required; then
+        detail="An authorized objective apply requires an exact claim-bound session/journey/task/run scope, but the retained scope is missing, consumed, or mismatched; refusing an unscoped legacy resume."
+        printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+        write_status "blocked" "$detail" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-0}"
+        write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"objective_apply_resume_scope_required_but_unavailable","owner_blocked":true}'
+        return 76
+      fi
+      if [ "$objective_apply_scope_status" -gt 1 ]; then
+        detail="A non-objective resume scope is malformed; refusing to downgrade it to an unscoped legacy resume."
+        printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+        write_status "blocked" "$detail" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-0}"
+        write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"objective_apply_resume_scope_malformed","owner_blocked":true}'
+        return 78
+      fi
+    fi
+  fi
   # Runtime uses its process status to distinguish a failed apply from a
   # successful continuation. Capture it explicitly: helper functions invoked
   # earlier may have enabled errexit, and otherwise bash exits before the
@@ -18522,7 +19043,14 @@ PY
       brownie_timeout_seconds="$(phase_loop_timeout_for_prompt "$effective_prompt")"
     fi
     if [ "$use_resume" -eq 1 ]; then
-      run_with_portable_timeout "$brownie_timeout_seconds" "$BROWNIE_BIN" --json resume
+      # Bash 3 with `set -u` treats an empty array expansion as unset.  Keep
+      # the intentionally ordinary verification resume explicit instead of
+      # conflating that portable-shell edge case with a Runtime failure.
+      if [ "${#objective_apply_resume_args[@]}" -gt 0 ]; then
+        run_with_portable_timeout "$brownie_timeout_seconds" "$BROWNIE_BIN" --json resume "${objective_apply_resume_args[@]}"
+      else
+        run_with_portable_timeout "$brownie_timeout_seconds" "$BROWNIE_BIN" --json resume
+      fi
     else
       run_with_portable_timeout "$brownie_timeout_seconds" "$BROWNIE_BIN" --json run --file "$effective_prompt"
     fi
@@ -18953,6 +19481,31 @@ PY
       write_status "blocked" "$detail" "$run_id" "74" "${CONSECUTIVE_FAILURES:-1}"
       printf '%s run=%s exit=%s invalid_json=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$exit_code" "$validation" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
       return 74
+    fi
+
+    # Capture and retire objective-apply scope only after the Runtime envelope
+    # has passed the ordinary JSON/schema boundary.  Invalid output must keep
+    # its established fail-closed classification; it must never be promoted
+    # into a scope-persistence failure merely because it cannot be parsed.
+    if [ "$use_resume" -ne 1 ]; then
+      if objective_apply_scope_capture_output="$(capture_objective_apply_resume_scope "$stdout_log" "$run_stamp" "direct_runtime" 2>&1)"; then
+        if printf '%s' "$objective_apply_scope_capture_output" | rg -q '"captured": true'; then
+          printf '%s objective_apply_resume_scope_captured=true claim=%s run=%s\n' "$(now_utc)" "$(claim_field claim_id 2>/dev/null || true)" "$run_stamp" >> "$SUPERVISOR_LOG"
+        fi
+      else
+        detail="Runtime emitted an authorized objective preflight whose claim-bound resume scope could not be persisted; refusing to continue with an ambiguous resume. result=${objective_apply_scope_capture_output:-<no output>}"
+        printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+        write_status "blocked" "$detail" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-1}"
+        write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"objective_apply_resume_scope_capture_failed","owner_blocked":true}'
+        return 78
+      fi
+    fi
+    if ! consume_objective_apply_resume_scope_if_consumed "$stdout_log" "$run_stamp"; then
+      detail="Runtime apply outcome could not durably retire its claim-bound resume scope; refusing a later replay."
+      printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+      write_status "blocked" "$detail" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-1}"
+      write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"objective_apply_resume_scope_consumption_record_failed","owner_blocked":true}'
+      return 78
     fi
 
     progress_summary="$(write_progress_state "$stdout_log" "$run_stamp" "$exit_code" "$workspace_before" "$workspace_after" "$head_commit")"
