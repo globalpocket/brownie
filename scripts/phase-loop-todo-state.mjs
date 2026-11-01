@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import { validateHistoricalDerivedDeliveryReceipt } from './phase-loop-historical-derived-delivery-integrity.mjs';
 
 function checkboxBlocks(text) {
   const starts = [...String(text ?? '').matchAll(/^(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+/gmu)].map((match) => match.index);
@@ -159,6 +160,10 @@ export function readTodoCompletionRecords(repoRoot) {
 // schedulable for a later TODO.  Keep this verifier local and data-only so
 // state loading cannot accidentally depend on mutable current-claim state.
 export function durableCompletionRecordReceipt(record) {
+  const derived = validateHistoricalDerivedDeliveryReceipt(record);
+  if (derived.valid) {
+    return derived;
+  }
   const receipt = record?.delivery_receipt;
   const semantic = receipt?.semantic_completion_evidence;
   const verificationResults = Array.isArray(semantic?.verification_results)

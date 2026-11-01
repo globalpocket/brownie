@@ -766,15 +766,25 @@ impl RuntimeClient {
         } else {
             None
         };
-        let Some(params) = objective_proposal_apply_params_with_patch_material(
+        let preparation = objective_proposal_apply_params_with_patch_material(
             &result,
             &proposal,
             patch_material.as_ref(),
             objective_scope,
         )
-        .map_err(|error| debug_invalid_response("objective_proposal_apply_params", error))?
-        else {
-            return Ok(result);
+        .map_err(|error| debug_invalid_response("objective_proposal_apply_params", error))?;
+        let params = match preparation {
+            ObjectiveProposalApplyPreparation::Apply(params) => params,
+            ObjectiveProposalApplyPreparation::Skip => return Ok(result),
+            ObjectiveProposalApplyPreparation::Blocked(apply_result) => {
+                let outcome =
+                    classify_direct_proposal_apply_result(&apply_result).map_err(|error| {
+                        debug_invalid_response("classify_dirty_workspace_proposal_apply", error)
+                    })?;
+                return merge_direct_proposal_apply_result(result, apply_result, outcome).map_err(
+                    |error| debug_invalid_response("merge_dirty_workspace_proposal_apply", error),
+                );
+            }
         };
 
         let apply_result = self.call_runtime_value(
@@ -3602,17 +3612,36 @@ fn normalize_objective_scoped_path(path: &str) -> String {
         .to_string()
 }
 
+enum ObjectiveProposalApplyPreparation {
+    Apply(Value),
+    Skip,
+    // A pre-existing target change must never turn a durable authorization
+    // into an ordinary successful continuation. The caller reports this as a
+    // bounded pre-write denial without issuing proposal.apply.
+    Blocked(Value),
+}
+
+impl ObjectiveProposalApplyPreparation {
+    #[cfg(test)]
+    fn into_apply_params(self) -> Option<Value> {
+        match self {
+            Self::Apply(params) => Some(params),
+            Self::Skip | Self::Blocked(_) => None,
+        }
+    }
+}
+
 fn objective_proposal_apply_params_with_patch_material(
     result: &Value,
     proposal_inspect: &Value,
     patch_material_events: Option<&Value>,
     objective_scope: Option<&str>,
-) -> Result<Option<Value>, RuntimeClientError> {
+) -> Result<ObjectiveProposalApplyPreparation, RuntimeClientError> {
     let authorization = match result.get("objective_proposal_authorization_preflight_result") {
         Some(value) if !value.is_null() => {
             object_field(result, "objective_proposal_authorization_preflight_result")?
         }
-        _ => return Ok(None),
+        _ => return Ok(ObjectiveProposalApplyPreparation::Skip),
     };
     let proposal = object_field(proposal_inspect, "proposal")?;
 
@@ -3627,14 +3656,7 @@ fn objective_proposal_apply_params_with_patch_material(
             "objective_proposal_apply_params",
             "proposal path is outside objective-scoped target paths; skipping automatic apply",
         );
-        return Ok(None);
-    }
-    if !workspace_path_is_clean_for_automatic_apply(&proposal_path) {
-        debug_invalid_response_note(
-            "objective_proposal_apply_params",
-            "proposal target is dirty, untracked, or workspace status is unavailable; skipping automatic apply",
-        );
-        return Ok(None);
+        return Ok(ObjectiveProposalApplyPreparation::Skip);
     }
     let operation = display_string(proposal, "operation")?;
     if !matches!(
@@ -3667,7 +3689,7 @@ fn objective_proposal_apply_params_with_patch_material(
             "objective_proposal_apply_params",
             "proposal content is truncated; skipping automatic apply",
         );
-        return Ok(None);
+        return Ok(ObjectiveProposalApplyPreparation::Skip);
     }
     if json_bool(
         proposal
@@ -3679,6 +3701,24 @@ fn objective_proposal_apply_params_with_patch_material(
             "proposal diff is redacted",
         );
         return Err(RuntimeClientError::InvalidResponse);
+    }
+    if !workspace_path_is_clean_for_automatic_apply(&proposal_path) {
+        debug_invalid_response_note(
+            "objective_proposal_apply_params",
+            "proposal target is dirty, untracked, or workspace status is unavailable; returning an explicit pre-write block",
+        );
+        return Ok(ObjectiveProposalApplyPreparation::Blocked(json!({
+            "apply_result": {
+                "operation": operation,
+                "path": proposal_path,
+                "apply_status": "Denied",
+                "apply_reason": "automatic proposal.apply refused because the target is dirty, untracked, or its Git status is unavailable",
+                "applied": false,
+                "authorization_consumed": false,
+                "failed_checks": [],
+                "blocked_checks": ["workspace_target_clean_for_automatic_apply"]
+            }
+        })));
     }
     let apply_material = if matches!(operation.as_str(), "replace_file" | "create_file") {
         let replacement_content = required_workspace_write_content(proposal, "content_preview")
@@ -3780,7 +3820,9 @@ fn objective_proposal_apply_params_with_patch_material(
             Value::String(expected_target_sha256),
         );
     }
-    Ok(Some(Value::Object(params)))
+    Ok(ObjectiveProposalApplyPreparation::Apply(Value::Object(
+        params,
+    )))
 }
 
 fn workspace_path_is_clean_for_automatic_apply(path: &str) -> bool {
@@ -5783,10 +5825,12 @@ mod tests {
         let params =
             objective_proposal_apply_params_with_patch_material(&authorized, &proposal, None, None)
                 .unwrap()
+                .into_apply_params()
                 .expect("apply params");
         let second =
             objective_proposal_apply_params_with_patch_material(&authorized, &proposal, None, None)
                 .unwrap()
+                .into_apply_params()
                 .expect("stable apply params");
         assert_eq!(params, second);
         assert_eq!(params["authorize"], true);
@@ -5873,6 +5917,7 @@ mod tests {
         let params =
             objective_proposal_apply_params_with_patch_material(&authorized, &proposal, None, None)
                 .unwrap()
+                .into_apply_params()
                 .expect("create apply params");
         assert_eq!(params["authorize"], true);
         assert_eq!(params["run_id"], "run_1");
@@ -5888,6 +5933,7 @@ mod tests {
             Some("Create only `./notes/new.md` and do not read or modify other files."),
         )
         .unwrap()
+        .into_apply_params()
         .expect("scoped create apply params");
         assert_eq!(scoped_params["proposal_id"], "proposal_create");
 
@@ -5898,7 +5944,7 @@ mod tests {
             Some("Create only `.brownie/release-evidence/pr435-hygiene-evidence.json`."),
         )
         .unwrap();
-        assert!(skipped.is_none());
+        assert!(skipped.into_apply_params().is_none());
     }
 
     #[test]
@@ -6239,6 +6285,7 @@ mod tests {
             None,
         )
         .unwrap()
+        .into_apply_params()
         .expect("apply params");
         assert_eq!(params["authorize"], true);
         assert_eq!(params["run_id"], "run_1");
@@ -6313,6 +6360,7 @@ mod tests {
             None,
         )
         .unwrap()
+        .into_apply_params()
         .expect("occurrence apply params");
         assert_eq!(
             occurrence_params["patch_hunks"][0]["old_text"],

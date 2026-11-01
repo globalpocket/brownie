@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "record_type": "historical_derived_delivery_dossier",
+  "parent_claim_snapshot_path": ".brownie/private/phase-loop/runs/20261028T200253Z.claim.before-runtime.json",
+  "replan_record_path": ".brownie/private/phase-loop/todo-replans/todo-g624-76d1cb0e2aa4-r2.json",
+  "child_todo_id": "E-23c-release-artifact-runtime-journey-target-02",
+  "delivery": {
+    "pr_url": "https://github.com/globalpocket/brownie/pull/767",
+    "expected_head_sha": "5686046d03a1cc34882a98c5631d21f2e08c19be",
+    "expected_merge_commit": "3417f9140c728ed9d0503176d13b3ee2fe403eae",
+    "expected_changed_files": [
+      ".brownie/todo.md",
+      ".github/workflows/release.yml",
+      "package.json",
+      "scripts/release-artifact-runtime-journey.mjs",
+      "scripts/release-artifact-runtime-journey.test.mjs"
+    ],
+    "required_delivery_source_paths": [
+      "scripts/release-artifact-runtime-journey.mjs"
+    ],
+    "release_workflow_runs": [
+      {
+        "id": 40831531685,
+        "workflow_name": "Release Workflow"
+      }
+    ],
+    "artifact_journeys": [
+      {
+        "name": "runtime-journey-linux-x64",
+        "workflow_run_id": 40831531685,
+        "target": "linux-x64"
+      },
+      {
+        "name": "runtime-journey-darwin-arm64",
+        "workflow_run_id": 40831531685,
+        "target": "darwin-arm64"
+      },
+      {
+        "name": "runtime-journey-win32-x64",
+        "workflow_run_id": 40831531685,
+        "target": "win32-x64"
+      }
+    ]
+  }
+}

@@ -65,6 +65,25 @@ test('refuses unrelated local content without changing HEAD or files', () => {
   assert.equal(fs.readFileSync(path.join(repo, 'tracked.txt'), 'utf8'), 'user-owned\n');
 });
 
+test('reports an untracked directory as a fail-closed reconciliation blocker without mutating it', () => {
+  const { repo, base } = fixture();
+  const runtimeDir = path.join(repo, '.brownie', 'headless-continuations');
+  fs.mkdirSync(runtimeDir, { recursive: true });
+  fs.writeFileSync(path.join(runtimeDir, 'session.json'), '{"owner":"runtime"}\n');
+
+  const diagnosis = diagnoseDeliveryReconciliation({ repoRoot: repo, target: 'target' });
+  assert.equal(diagnosis.safe_to_reconcile, false, JSON.stringify(diagnosis, null, 2));
+  assert(diagnosis.files.some((file) => (
+    file.path === '.brownie/' && file.entry_kind === 'directory' && file.classification === 'untracked_directory'
+  )), JSON.stringify(diagnosis.files, null, 2));
+  assert(diagnosis.blockers.some((blocker) => blocker.code === 'unrelated_local_change' && blocker.path === '.brownie/'));
+
+  const result = reconcileDelivery({ repoRoot: repo, target: 'target', write: true });
+  assert.equal(result.applied, false);
+  assert.equal(git(repo, ['rev-parse', 'HEAD']), base);
+  assert.equal(fs.readFileSync(path.join(runtimeDir, 'session.json'), 'utf8'), '{"owner":"runtime"}\n');
+});
+
 test('recognizes working files already identical to the merge tree', () => {
   const { repo } = fixture();
   fs.writeFileSync(path.join(repo, 'tracked.txt'), 'delivery-v2\n');

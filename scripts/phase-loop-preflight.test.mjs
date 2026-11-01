@@ -1046,6 +1046,50 @@ test('objective apply rejection becomes exact-target structured repair feedback 
   assert.ok(feedbackRoute < integrityRoute);
 });
 
+test('dirty authorized target is projected as one bounded pre-write denial', () => {
+  const controller = fs.readFileSync(path.join(repositoryRoot, 'phase-loop.sh'), 'utf8');
+  const helperStart = controller.indexOf('runtime_stdout_objective_apply_rejection_feedback()');
+  const marker = '  python3 - "$stdout_log" "$active_target_path" <<\'PY\'\n';
+  const start = controller.indexOf(marker, helperStart);
+  const end = controller.indexOf('\nPY\n}', start);
+  assert.ok(helperStart >= 0);
+  assert.ok(start > helperStart);
+  assert.ok(end > start);
+  const feedbackBuilder = controller.slice(start + marker.length, end);
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-objective-apply-dirty-target-'));
+  const stdoutPath = path.join(fixtureDir, 'run.stdout.json');
+  writeJson(stdoutPath, {
+    resume: {
+      status: 'objective_proposal_apply_rejected',
+      objective_apply_operation: 'patch_file',
+      objective_apply_path: 'scripts/release-artifact-runtime-journey.mjs',
+      objective_apply_apply_status: 'Denied',
+      objective_apply_apply_reason: 'automatic proposal.apply refused because the target is dirty, untracked, or its Git status is unavailable',
+      objective_apply_applied: false,
+      objective_apply_authorization_consumed: false,
+      objective_apply_failed_checks: [],
+      objective_apply_blocked_checks: ['workspace_target_clean_for_automatic_apply']
+    }
+  });
+
+  const feedback = JSON.parse(execFileSync('python3', [
+    '-c',
+    feedbackBuilder,
+    stdoutPath,
+    'scripts/release-artifact-runtime-journey.mjs'
+  ], { encoding: 'utf8' }));
+
+  assert.equal(feedback.reason, 'objective_apply_rejected_before_write');
+  assert.equal(feedback.selected_target_path, 'scripts/release-artifact-runtime-journey.mjs');
+  assert.deepEqual(feedback.objective_apply.failed_checks, []);
+  assert.deepEqual(
+    feedback.objective_apply.blocked_checks,
+    ['workspace_target_clean_for_automatic_apply']
+  );
+  assert(feedback.semantic_repair_policy.forbidden_next_actions.includes('retry the same rejected candidate'));
+  assert(feedback.semantic_repair_policy.forbidden_next_actions.includes('mark the TODO complete without a successful new candidate and verification'));
+});
+
 test('expands optional snapshot arguments safely and rejects incomplete snapshot configuration', () => {
   const controller = fs.readFileSync(path.join(repositoryRoot, 'phase-loop.sh'), 'utf8');
   const preflightFunction = controller.indexOf('run_phase_loop_preflight()');

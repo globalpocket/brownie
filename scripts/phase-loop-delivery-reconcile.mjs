@@ -49,8 +49,17 @@ function blobAt(repoRoot, revision, filePath) {
 }
 
 function worktreeBlob(repoRoot, filePath) {
-  if (!fs.existsSync(path.join(repoRoot, filePath))) return null;
+  const absolutePath = path.join(repoRoot, filePath);
+  if (!fs.existsSync(absolutePath) || fs.lstatSync(absolutePath).isDirectory()) return null;
   return git(repoRoot, ['hash-object', '--', filePath]).trim();
+}
+
+function worktreeEntryKind(repoRoot, filePath) {
+  try {
+    return fs.lstatSync(path.join(repoRoot, filePath)).isDirectory() ? 'directory' : 'file';
+  } catch {
+    return 'absent';
+  }
 }
 
 function indexBlob(repoRoot, filePath) {
@@ -84,17 +93,27 @@ export function diagnoseDeliveryReconciliation({ repoRoot, target = 'origin/main
   const headIsAncestor = tryGit(repoRoot, ['merge-base', '--is-ancestor', head, targetCommit], { quiet: true }) !== null;
   const headTreeMatchesTarget = treesMatch(repoRoot, head, targetCommit);
   const files = statusEntries(repoRoot).map((entry) => {
+    const entryKind = worktreeEntryKind(repoRoot, entry.path);
     const worktree = worktreeBlob(repoRoot, entry.path);
     const index = indexBlob(repoRoot, entry.path);
     const targetBlob = blobAt(repoRoot, targetCommit, entry.path);
     let classification = 'unrelated_local_change';
-    const indexSafe = isDeliveredBlob({ blob: index, targetBlob, repoRoot, head, targetCommit, filePath: entry.path });
-    const worktreeSafe = isDeliveredBlob({ blob: worktree, targetBlob, repoRoot, head, targetCommit, filePath: entry.path });
-    if (!index && !worktree && !targetBlob) classification = 'absent_both';
-    else if (index === targetBlob && worktree === targetBlob) classification = 'merged_identical';
-    else if (indexSafe && worktreeSafe) classification = 'known_delivery_history';
+    if (entryKind === 'directory') {
+      // Git reports an untracked directory as one porcelain entry.  A
+      // directory has no blob, so treating it as absent would allow a later
+      // reconciliation to mutate HEAD while leaving user/runtime state behind.
+      // It must be visible as a blocker, never an exception or a safe path.
+      classification = 'untracked_directory';
+    } else {
+      const indexSafe = isDeliveredBlob({ blob: index, targetBlob, repoRoot, head, targetCommit, filePath: entry.path });
+      const worktreeSafe = isDeliveredBlob({ blob: worktree, targetBlob, repoRoot, head, targetCommit, filePath: entry.path });
+      if (!index && !worktree && !targetBlob) classification = 'absent_both';
+      else if (index === targetBlob && worktree === targetBlob) classification = 'merged_identical';
+      else if (indexSafe && worktreeSafe) classification = 'known_delivery_history';
+    }
     return {
       ...entry,
+      entry_kind: entryKind,
       index_blob: index,
       worktree_blob: worktree,
       target_blob: targetBlob,

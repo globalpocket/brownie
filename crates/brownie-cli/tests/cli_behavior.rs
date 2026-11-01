@@ -2290,6 +2290,78 @@ fn resume_applies_replayed_authorized_preflight_without_selected_route() {
 }
 
 #[test]
+fn resume_reports_dirty_authorized_target_without_proposal_apply() {
+    // A retained authorization may point at a review-rework baseline. It is
+    // unsafe to overwrite that file, but treating the checkpoint as a normal
+    // continuation loses the only actionable cause. Emit one bounded denial
+    // and prove that no proposal.apply request was sent.
+    let repository = ordinary_git_repository("resume-replayed-authorized-preflight-dirty-target");
+    fs::write(
+        repository.join("README.md"),
+        "# Ordinary repository\n\nretained review-rework baseline\n",
+    )
+    .unwrap();
+    let runtime = fake_runtime_sequence(
+        "resume-replayed-authorized-preflight-dirty-target",
+        &[
+            r#"{"jsonrpc":"2.0","id":1,"result":{"tasks":[],"progress_overview":{"source_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"task_count":0,"root_task_ids":[],"runnable_task_ids":[],"blocked_task_ids":[],"terminal_task_ids":["task-recover"],"parent_join_ready_task_ids":[],"status_counts":{"created":0,"queued":0,"running":0,"completed":1,"failed":0,"cancelled":0},"stage_counts":[],"next_action_sets":[],"blocked_sets":[],"headless_route_candidates":[],"nodes":[],"edges":[]}}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","decision_id":"decision-replay","continuation_id":"cli.resume.replay","selected_task_id":null,"selected_run_id":null,"candidate_count":1,"expected_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expected_aggregate_sequence":7,"current_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","current_aggregate_sequence":7,"post_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","post_aggregate_sequence":7,"stale":false,"replayed":true,"task_run_result":null,"proposal_apply_result":null,"objective_proposal_authorization_preflight_result":{"status":"authorized_preflight_ready","session_id":"cli.run.recover","run_id":"run-recover","proposal_id":"proposal-recover","operation":"replace_file","validation_status":"Valid","approval_status":"Approved","next_action":"apply_authorized_objective_proposal"},"next_route":{"kind":"apply_authorized_objective_proposal_explicitly","reason":"replayed approved checkpoint","task_id":"task-recover","run_id":"run-recover","proposal_id":"proposal-recover","next_action":"apply_authorized_objective_proposal"},"next_action":"apply_authorized_objective_proposal"}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"proposal":{"proposal_id":"proposal-recover","operation":"replace_file","path":"README.md","validation_status":"Valid","approval_status":"Approved","truncated":false,"diff_redacted":false}}}"#,
+        ],
+    );
+    let capture = runtime.with_file_name("requests.ndjson");
+
+    let output = Command::new(brownie())
+        .args(["--json", "resume"])
+        .current_dir(&repository)
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        payload["resume"]["status"],
+        "objective_proposal_apply_rejected"
+    );
+    assert_eq!(payload["resume"]["objective_apply_path"], "README.md");
+    assert_eq!(payload["resume"]["objective_apply_apply_status"], "Denied");
+    assert_eq!(payload["resume"]["objective_apply_applied"], false);
+    assert_eq!(
+        payload["resume"]["objective_apply_authorization_consumed"],
+        false
+    );
+    assert_eq!(
+        payload["resume"]["objective_apply_blocked_checks"],
+        serde_json::json!(["workspace_target_clean_for_automatic_apply"])
+    );
+    assert_eq!(payload["resume"]["continuation_required"], false);
+
+    let requests: Vec<serde_json::Value> = fs::read_to_string(capture)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[0]["method"], "task.list");
+    assert_eq!(requests[1]["method"], "headless.continue_once");
+    assert_eq!(requests[2]["method"], "proposal.inspect");
+    assert!(requests
+        .iter()
+        .all(|request| request["method"] != "proposal.apply"));
+}
+
+#[test]
 fn json_resume_uses_objective_timeout_for_initial_task_list_and_outputs_bounded_cli_projection() {
     let runtime = fake_runtime_sequence(
         "resume-json",
