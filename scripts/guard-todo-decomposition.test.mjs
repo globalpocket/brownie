@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { nextSchedulableTodoId, validateTodoDecomposition, validateTodoDecompositionText } from './guard-todo-decomposition.mjs';
 
 const validLeaf = `- [ ] E-15b-child: Patch only \`scripts/example.mjs\`:
@@ -267,6 +268,88 @@ test('rejects create-only targets already present in the baseline but accepts pa
   );
   assert.deepEqual(validateTodoDecompositionText(validLeaf, options), []);
   fs.rmSync(repoRoot, { recursive: true, force: true });
+});
+
+test('accepts a Create only target newly introduced by the current change but rejects it after it becomes baseline', () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-todo-decomposition-create-change-'));
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  try {
+    git('init', '--quiet');
+    git('config', 'user.email', 'fixture@example.invalid');
+    git('config', 'user.name', 'Fixture');
+    fs.writeFileSync(path.join(repoRoot, 'README.md'), 'fixture\n');
+    git('add', 'README.md');
+    git('commit', '--quiet', '-m', 'baseline');
+    fs.mkdirSync(path.join(repoRoot, 'scripts'));
+    fs.writeFileSync(path.join(repoRoot, 'scripts/example.mjs'), 'export {};\n');
+    const createLeaf = validLeaf.replace('Patch only `scripts/example.mjs`', 'Create only `scripts/example.mjs`');
+    const options = { repoRoot, packageScripts: new Set(['guard:release-contract:test']) };
+    assert.deepEqual(validateTodoDecompositionText(createLeaf, options), []);
+    git('add', 'scripts/example.mjs');
+    git('commit', '--quiet', '-m', 'create target');
+    assert.deepEqual(validateTodoDecompositionText(createLeaf, options), []);
+    fs.writeFileSync(path.join(repoRoot, 'README.md'), 'later baseline\n');
+    git('add', 'README.md');
+    git('commit', '--quiet', '-m', 'advance baseline');
+    const errors = validateTodoDecompositionText(createLeaf, options);
+    assert(errors.some((error) => error.includes('Create only target already exists: scripts/example.mjs')), errors.join('\n'));
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('accepts a current-change Create only target in a shallow PR merge checkout with a fetched base ref', () => {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-todo-decomposition-shallow-pr-'));
+  const sourceRoot = path.join(fixtureRoot, 'source');
+  const remoteRoot = path.join(fixtureRoot, 'remote.git');
+  const shallowRoot = path.join(fixtureRoot, 'shallow');
+  const git = (cwd, ...args) => {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  const previousBaseRef = process.env.GITHUB_BASE_REF;
+  try {
+    fs.mkdirSync(sourceRoot);
+    git(sourceRoot, 'init', '--quiet', '--initial-branch=main');
+    git(sourceRoot, 'config', 'user.email', 'fixture@example.invalid');
+    git(sourceRoot, 'config', 'user.name', 'Fixture');
+    fs.writeFileSync(path.join(sourceRoot, 'README.md'), 'baseline\n');
+    git(sourceRoot, 'add', 'README.md');
+    git(sourceRoot, 'commit', '--quiet', '-m', 'baseline');
+    git(fixtureRoot, 'clone', '--quiet', '--bare', sourceRoot, remoteRoot);
+
+    git(sourceRoot, 'checkout', '--quiet', '-b', 'feature');
+    fs.mkdirSync(path.join(sourceRoot, 'scripts'));
+    fs.writeFileSync(path.join(sourceRoot, 'scripts/example.mjs'), 'export {};\n');
+    git(sourceRoot, 'add', 'scripts/example.mjs');
+    git(sourceRoot, 'commit', '--quiet', '-m', 'create target');
+    git(sourceRoot, 'checkout', '--quiet', 'main');
+    git(sourceRoot, 'merge', '--quiet', '--no-ff', 'feature', '-m', 'synthetic PR merge');
+    git(sourceRoot, 'push', '--quiet', `file://${remoteRoot}`, 'HEAD:refs/pull/1/merge');
+
+    fs.mkdirSync(shallowRoot);
+    git(shallowRoot, 'init', '--quiet');
+    git(shallowRoot, 'remote', 'add', 'origin', `file://${remoteRoot}`);
+    git(shallowRoot, 'fetch', '--quiet', '--depth=1', 'origin', 'refs/pull/1/merge');
+    git(shallowRoot, 'checkout', '--quiet', '--detach', 'FETCH_HEAD');
+    git(shallowRoot, 'fetch', '--quiet', '--depth=1', 'origin', 'main:refs/remotes/origin/main');
+    assert.equal(spawnSync('git', ['merge-base', 'HEAD', 'origin/main'], { cwd: shallowRoot }).status, 1);
+
+    process.env.GITHUB_BASE_REF = 'main';
+    const createLeaf = validLeaf.replace('Patch only `scripts/example.mjs`', 'Create only `scripts/example.mjs`');
+    assert.deepEqual(validateTodoDecompositionText(createLeaf, {
+      repoRoot: shallowRoot,
+      packageScripts: new Set(['guard:release-contract:test'])
+    }), []);
+  } finally {
+    if (previousBaseRef === undefined) delete process.env.GITHUB_BASE_REF;
+    else process.env.GITHUB_BASE_REF = previousBaseRef;
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
 });
 
 test('requires decomposition ledger when validating repo text with breakdown text option', () => {
