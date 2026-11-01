@@ -346,6 +346,21 @@ function buildRecord({ dossier, dossierPath, dossierSha256, observed, lineage, a
   };
 }
 
+function buildAuditRecord({ record, root, durablePath, now }) {
+  return {
+    schema_version: 1,
+    record_type: 'historical_derived_delivery_attestation_audit',
+    claim_id: record.claim_id,
+    root_claim_id: record.root_claim_id,
+    selected_todo_id: record.selected_todo_id,
+    durable_record_path: relative(root, durablePath),
+    pr_url: record.delivery_receipt.pr_url,
+    merge_commit: record.delivery_receipt.merge_commit,
+    reviewer: record.delivery_receipt.reviewer,
+    attested_at: now
+  };
+}
+
 export function attestHistoricalDerivedDelivery({
   repoRoot,
   dossierPath,
@@ -398,6 +413,18 @@ export function attestHistoricalDerivedDelivery({
   if (!write) {
     return { attested: false, ready_to_attest: true, claim_id: record.claim_id, selected_todo_id: record.selected_todo_id, durable_record_path: relative(root, durablePath), audit_path: relative(root, auditPath) };
   }
+  const audit = buildAuditRecord({ record, root, durablePath, now });
+  if (fs.existsSync(auditPath)) {
+    const existingAudit = readJson(auditPath);
+    if (canonicalSha256(existingAudit) !== canonicalSha256(audit)) {
+      return { attested: false, errors: ['derived_historical_attestation_audit_path_conflict'] };
+    }
+  } else {
+    // The audit is intentionally durable before the completion record.  A
+    // process loss can leave an orphaned audit, which a repeat safely repairs;
+    // it must never leave an effective completion without its audit trail.
+    atomicJson(auditPath, audit);
+  }
   if (fs.existsSync(durablePath)) {
     const existing = readJson(durablePath);
     if (canonicalSha256(existing) !== canonicalSha256(record)) {
@@ -406,18 +433,6 @@ export function attestHistoricalDerivedDelivery({
     return { attested: false, idempotent_attestation: true, claim_id: record.claim_id, selected_todo_id: record.selected_todo_id, durable_record_path: relative(root, durablePath), audit_path: relative(root, auditPath) };
   }
   atomicJson(durablePath, record);
-  atomicJson(auditPath, {
-    schema_version: 1,
-    record_type: 'historical_derived_delivery_attestation_audit',
-    claim_id: record.claim_id,
-    root_claim_id: record.root_claim_id,
-    selected_todo_id: record.selected_todo_id,
-    durable_record_path: relative(root, durablePath),
-    pr_url: record.delivery_receipt.pr_url,
-    merge_commit: record.delivery_receipt.merge_commit,
-    reviewer: record.delivery_receipt.reviewer,
-    attested_at: now
-  });
   return { attested: true, claim_id: record.claim_id, selected_todo_id: record.selected_todo_id, durable_record_path: relative(root, durablePath), audit_path: relative(root, auditPath) };
 }
 

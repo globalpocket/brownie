@@ -160,6 +160,24 @@ test('requires direct release-artifact evidence before it may attest a parent de
   assert.equal(durableCompletionRecordReceipt(record).valid, true);
 });
 
+test('repairs an interrupted attestation without leaving an effective completion unaudited', () => {
+  const value = fixture();
+  const committed = attest(value, { write: true });
+  const durablePath = path.join(value.root, committed.durable_record_path);
+  const auditPath = path.join(value.root, committed.audit_path);
+
+  fs.rmSync(auditPath);
+  const repairedAudit = attest(value, { write: true });
+  assert.equal(repairedAudit.idempotent_attestation, true, JSON.stringify(repairedAudit));
+  assert.equal(fs.existsSync(auditPath), true);
+
+  fs.rmSync(durablePath);
+  const repairedCompletion = attest(value, { write: true });
+  assert.equal(repairedCompletion.attested, true, JSON.stringify(repairedCompletion));
+  assert.equal(fs.existsSync(durablePath), true);
+  assert.equal(fs.existsSync(auditPath), true);
+});
+
 test('fails closed when the current selected source target diverges from the canonical merged delivery', () => {
   const value = fixture();
   fs.appendFileSync(path.join(value.root, 'scripts/target.mjs'), 'export const later = true;\n');
