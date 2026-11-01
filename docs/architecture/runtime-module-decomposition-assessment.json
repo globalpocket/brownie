@@ -25,17 +25,17 @@
     "crates/brownie-runtime/src/verification_recovery.rs"
   ],
   "thresholds": {
-    "lib_rs_production_line_ceiling": 16181,
-    "lib_rs_test_line_ceiling": 54098
+    "lib_rs_production_line_ceiling": 16189,
+    "lib_rs_test_line_ceiling": 54108
   },
   "metrics": {
     "files": {
       "crates/brownie-runtime/src/lib.rs": {
-        "line_count": 70279,
-        "public_items": 3,
+        "line_count": 70297,
+        "public_items": 4,
         "private_items": 540,
-        "production_line_count": 16181,
-        "test_line_count": 54098,
+        "production_line_count": 16189,
+        "test_line_count": 54108,
         "state_mutation_mentions": 317,
         "durable_write_mentions": 235,
         "permission_decision_mentions": 271,
@@ -409,7 +409,8 @@
     "PR pending refreshes measured Runtime metrics and bounded lib.rs ceilings after rejected TODO decomposition writes are returned to the bounded Runtime repair loop; ownership boundaries and Runtime authority remain unchanged.",
     "PR #616 resynchronizes controlled_tool_execution metrics after removing the oversized bounded-leaf TODO-rewrite exception; module-decomposition closure status remains unchanged.",
     "PR pending: resynchronized lib.rs test metrics and headless_continue metrics after continuation lock preflight and concurrency recovery regression coverage; production boundary and Runtime authority remain unchanged.",
-    "PR pending: bounded lib.rs ceilings are synchronized to the measured workspace.write parser-repair liveness implementation; the guard remains fail-closed for any subsequent growth."
+    "PR pending: bounded lib.rs ceilings are synchronized to the measured workspace.write parser-repair liveness implementation; the guard remains fail-closed for any subsequent growth.",
+    "PR #824 synchronizes measured lib.rs metrics and exact ceilings after adding build provenance reporting; Runtime authority and module ownership remain unchanged."
   ],
   "history": [
     "PR #462 updated runtime-module-decomposition metrics after Brownie loop harness and protected-read recovery hardening; closure status remains unchanged."

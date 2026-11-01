@@ -897,6 +897,8 @@ check_brownie_binary_freshness() {
     return 78
   fi
   python3 - "$source_root" "$BROWNIE_BIN" "$runtime_bin" <<'PY'
+import hashlib
+import json
 import pathlib
 import subprocess
 import sys
@@ -940,6 +942,61 @@ def is_runtime_input(relative):
         )
     )
 
+def is_provenance_input(relative):
+    return (
+        relative in {"Cargo.lock", "Cargo.toml"}
+        or (
+            relative.startswith("crates/")
+            and (relative.endswith(".rs") or relative.endswith("/Cargo.toml"))
+        )
+    )
+
+def source_fingerprint():
+    digest = hashlib.sha256()
+    digest.update(b"brownie-build-provenance-v1\0")
+    for relative in sorted(item for item in tracked if is_provenance_input(item)):
+        path = repo_root / relative
+        if not path.is_file():
+            raise RuntimeError(f"tracked build provenance input is unavailable: {relative}")
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return "sha256:" + digest.hexdigest()
+
+def build_provenance_error(label, binary, component, expected_fingerprint):
+    try:
+        completed = subprocess.run(
+            (
+                [str(binary), "--json", "build-provenance"]
+                if component == "brownie-cli"
+                else [str(binary), "--build-provenance"]
+            ),
+            cwd=repo_root,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+    except Exception:
+        return f"{label} build provenance is unavailable"
+    if completed.returncode != 0 or len(completed.stdout) > 4096:
+        return f"{label} build provenance is unavailable"
+    try:
+        payload = json.loads(completed.stdout.decode("utf-8"))
+    except Exception:
+        return f"{label} build provenance is unavailable"
+    if not isinstance(payload, dict):
+        return f"{label} build provenance is malformed"
+    if payload.get("schema_version") != 1 or isinstance(payload.get("schema_version"), bool):
+        return f"{label} build provenance is malformed"
+    if payload.get("component") != component:
+        return f"{label} build provenance component does not match"
+    if payload.get("source_fingerprint") != expected_fingerprint:
+        return f"{label} build provenance does not match the selected source"
+    return None
+
 def newer_inputs(binary, predicate):
     binary_mtime = mtime(binary)
     if binary_mtime is None:
@@ -962,7 +1019,22 @@ for label, binary, predicate in [
     if newer:
         stale.append((label, binary, newer))
 
-if stale:
+try:
+    expected_fingerprint = source_fingerprint()
+except Exception as error:
+    print(f"failed to derive Brownie build provenance: {error}")
+    sys.exit(3)
+
+provenance_failures = []
+for label, binary, component in [
+    ("brownie CLI", cli_binary, "brownie-cli"),
+    ("brownie Runtime", runtime_binary, "brownie-runtime"),
+]:
+    failure = build_provenance_error(label, binary, component, expected_fingerprint)
+    if failure:
+        provenance_failures.append(failure)
+
+if stale or provenance_failures:
     parts = []
     for label, binary, newer in stale:
         parts.append(
@@ -970,6 +1042,7 @@ if stale:
             + ", ".join(newer[:8])
             + (" ..." if len(newer) > 8 else "")
         )
+    parts.extend(provenance_failures)
     print(
         "Brownie binary freshness check failed; run "
         "`cargo build -p brownie-cli --bin brownie -p brownie-runtime --bin brownie-runtime` "

@@ -10,6 +10,7 @@ pub struct Cli {
 pub enum CliCommand {
     Help { topic: Option<HelpTopic> },
     Version,
+    BuildProvenance,
     Run { objective: String },
     RunFile { path: String },
     Resume { scope: Option<ResumeScope> },
@@ -118,6 +119,7 @@ impl Cli {
             "run" => parse_run(&args[1..])?,
             "resume" => parse_resume(&args[1..])?,
             "status" => no_args(args, CliCommand::Status)?,
+            "build-provenance" => no_args(args, CliCommand::BuildProvenance)?,
             "inspect" => parse_inspect(&args[1..])?,
             "list" => parse_list(&args[1..])?,
             "mode" => parse_mode(&args[1..])?,
@@ -141,6 +143,7 @@ impl Cli {
             "  run --file <path>        Run an objective loaded from a UTF-8 file",
             "  resume                   Resume the latest interrupted objective",
             "  status                   Show current runtime status",
+            "  build-provenance         Show non-secret compiled source provenance",
             "  inspect task <task-id>   Inspect a task",
             "  inspect run <run-id>     Inspect a run",
             "  inspect recovery <session-id> <drive-id> <journey-id> <objective-fingerprint>",
