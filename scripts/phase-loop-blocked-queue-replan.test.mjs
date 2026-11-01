@@ -89,6 +89,57 @@ test('archives a blocked active claim and selects its unblocked replan leaf', ()
   assert.ok(fs.existsSync(path.join(claims, 'stale-test-run-1.json')));
 });
 
+test('preempts a stale continuation when its durable stalled replan is already queued', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-durable-replan-handoff-'));
+  const todo = path.join(dir, 'todo.md');
+  const breakdown = path.join(dir, 'todo-breakdown.md');
+  const state = path.join(dir, 'state');
+  const claims = path.join(state, 'todo-claims');
+  const ledger = path.join(state, 'task-ledger.jsonl');
+  const original = '- [ ] E-23c-release-artifact-runtime-journey-target-02: Patch only `scripts/release-artifact-runtime-journey.mjs`:\n  Route: implementation.\n  Source TODO: E-23c-release-artifact-runtime-journey.\n  Depends on: <none>.\n  Completion condition: the extracted package records an applied workspace mutation and stale replay rejection.\n  Forbidden changes: do not claim completion from a continuation alone.\n  Verification: run `node --test scripts/release-artifact-runtime-journey.test.mjs`.';
+  const replan = '- [ ] E-23c-replan-stalled-leaf-2428108ecd17: Replan the stalled target-02 into bounded children:\n  Route: todo-decomposition.\n  Source TODO: E-23c-release-artifact-runtime-journey-target-02.\n  Depends on: <none>.\n  Completion condition: the stalled source is superseded without being marked complete.\n  Forbidden changes: do not retry the source continuation or mark it complete.\n  Verification: run `pnpm --workspace-root guard:todo-decomposition`.';
+  const claim = {
+    claim_id: 'e23c-stale-claim',
+    selected_todo: original,
+    queue_fingerprint: 'old',
+    queue_generation: 1,
+    status: 'in_progress'
+  };
+  fs.mkdirSync(claims, { recursive: true });
+  fs.writeFileSync(todo, `${original}\n${replan}\n`);
+  fs.writeFileSync(breakdown, '# Breakdown\n');
+  fs.writeFileSync(path.join(claims, 'current.json'), JSON.stringify(claim));
+  fs.writeFileSync(ledger, `${JSON.stringify({
+    schema_version: 1,
+    kind: 'replan_transaction',
+    events: [{
+      task_id: 'E-23c-release-artifact-runtime-journey-target-02@e23c-stale-claim',
+      claim_id: claim.claim_id,
+      task_spec_sha256: crypto.createHash('sha256').update(original).digest('hex'),
+      to_state: 'replanned',
+      replaces: ['E-23c-replan-stalled-leaf-2428108ecd17']
+    }]
+  })}\n`);
+
+  const output = execFileSync('bash', [
+    '-c',
+    'script=$1; set --; source "$script" >/dev/null; claim_first_pending_todo test-run >/dev/null; python3 - "$TODO_CLAIM_FILE" <<\'PY\'\nimport json, sys\nprint(json.load(open(sys.argv[1]))["selected_todo"])\nPY\nprintf "REPLACED=%s\\n" "$CLAIM_REPLACED_STALLED_REPLAN"',
+    '_',
+    phaseLoop
+  ], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: { ...process.env, PHASE_LOOP_STATE_DIR: state, PHASE_LOOP_TODO: todo, PHASE_LOOP_TODO_BREAKDOWN: breakdown }
+  });
+
+  assert.match(output, /E-23c-replan-stalled-leaf-2428108ecd17/);
+  assert.match(output, /REPLACED=1/);
+  const archived = JSON.parse(fs.readFileSync(path.join(claims, 'stale-test-run.json'), 'utf8'));
+  assert.equal(archived.claim_id, claim.claim_id);
+  assert.equal(archived.status, 'stale_snapshot_rejected');
+  assert.equal(archived.selected_todo, original);
+});
+
 test('archives a claim whose mutable snapshot no longer matches its ledger attempt', () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-immutable-claim-refresh-'));
   const state = path.join(workspace, '.brownie/private/phase-loop-state');

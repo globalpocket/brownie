@@ -2888,6 +2888,101 @@ raise SystemExit(1)
 PY
 }
 
+# A stalled-source replan is a durable hand-off, not a reason to keep an old
+# claim's continuation alive.  Require both an unchecked, exact-source replan
+# leaf and its immutable task-ledger transition before retiring the active
+# claim.  This preserves the dirty claim as an audit snapshot while allowing
+# the scheduler to select the recovery work it already recorded.
+active_claim_has_durable_queued_stalled_replan() {
+  if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$PHASE_LOOP_TODO" ] || [ ! -f "$STATE_DIR/task-ledger.jsonl" ]; then
+    return 1
+  fi
+  python3 - "$TODO_CLAIM_FILE" "$PHASE_LOOP_TODO" "$STATE_DIR/task-ledger.jsonl" <<'PY'
+import hashlib
+import json
+import pathlib
+import re
+import sys
+
+claim_path, todo_path, ledger_path = map(pathlib.Path, sys.argv[1:])
+
+def todo_id(first_line):
+    match = re.match(r"^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ \t]\][ \t]+([^:\s]+)", first_line)
+    return match.group(1).strip() if match else ""
+
+def field(block, name):
+    for line in block.splitlines():
+        line = line.strip()
+        if line.startswith(name):
+            return line[len(name):].strip().rstrip(".,;")
+    return ""
+
+def unchecked_blocks(text):
+    starts = list(re.finditer(r"(?m)^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ \t]\][ \t]+[^\n]+", text))
+    for index, start in enumerate(starts):
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(text)
+        yield text[start.start():end]
+
+def ledger_events(value):
+    if isinstance(value, dict):
+        events = value.get("events")
+        if isinstance(events, list):
+            for event in events:
+                if isinstance(event, dict):
+                    yield event
+        else:
+            yield value
+
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+    todo_text = todo_path.read_text(encoding="utf-8")
+except Exception:
+    raise SystemExit(1)
+selected = claim.get("selected_todo")
+claim_id = claim.get("claim_id")
+if not isinstance(selected, str) or not selected.strip() or not isinstance(claim_id, str) or not claim_id:
+    raise SystemExit(1)
+selected_id = todo_id(selected.splitlines()[0] if selected.splitlines() else "")
+if not selected_id:
+    raise SystemExit(1)
+selected_sha = hashlib.sha256(selected.encode("utf-8")).hexdigest()
+replan_ids = set()
+for block in unchecked_blocks(todo_text):
+    first_line = block.splitlines()[0] if block.splitlines() else ""
+    candidate_id = todo_id(first_line)
+    if not candidate_id or field(block, "Route:").lower() != "todo-decomposition":
+        continue
+    if not (candidate_id.startswith("TODO-decompose-blocked-queue-stalled-") or "-replan-stalled-leaf-" in candidate_id):
+        continue
+    if field(block, "Source TODO:") == selected_id:
+        replan_ids.add(candidate_id)
+if not replan_ids:
+    raise SystemExit(1)
+
+try:
+    lines = ledger_path.read_text(encoding="utf-8").splitlines()
+except Exception:
+    raise SystemExit(1)
+for line in lines:
+    try:
+        record = json.loads(line)
+    except Exception:
+        continue
+    for event in ledger_events(record):
+        replaces = event.get("replaces")
+        if not isinstance(replaces, list) or not any(value in replan_ids for value in replaces):
+            continue
+        if (
+            event.get("to_state") == "replanned"
+            and event.get("claim_id") == claim_id
+            and event.get("task_spec_sha256") == selected_sha
+        ):
+            print(next(value for value in replaces if value in replan_ids))
+            raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 record_stably_blocked_todo_claim() {
   local run_stamp="$1"
   local detail
@@ -12838,7 +12933,7 @@ publish_pending_completed_todo_pr() {
 
 claim_first_pending_todo() {
   local run_stamp="$1"
-  local selected_todo queue_fingerprint queue_generation queue_state selected_hash claim_id claim_retry_suffix reread_fingerprint attempt
+  local selected_todo queue_fingerprint queue_generation queue_state selected_hash claim_id claim_retry_suffix reread_fingerprint attempt durable_replan_id active_claim_id
   if ! validate_todo_queue_integrity_before_claim "$run_stamp"; then
     return 76
   fi
@@ -12850,6 +12945,15 @@ claim_first_pending_todo() {
     if selected_todo_was_stably_blocked; then
       archive_stale_todo_claim "$run_stamp"
       CLAIM_REPLACED_BLOCKED=1
+    elif durable_replan_id="$(active_claim_has_durable_queued_stalled_replan 2>/dev/null)"; then
+      # The source task was already re-planned in the immutable ledger.  Its
+      # current continuation cannot legitimately preempt the recovery leaf,
+      # especially when its target is a preserved review-rework baseline.
+      active_claim_id="$(claim_field claim_id 2>/dev/null || true)"
+      archive_stale_todo_claim "$run_stamp"
+      CLAIM_REPLACED_STALLED_REPLAN=1
+      printf '%s active_claim_replaced_by_durable_stalled_replan=true claim=%s replan=%s archive=%s\n' \
+        "$(now_utc)" "$active_claim_id" "$durable_replan_id" "$PHASE_LOOP_LAST_CLAIM_ARCHIVE" >> "$SUPERVISOR_LOG"
     else
       CLAIM_CREATED_THIS_RUN=0
       refresh_active_todo_claim_from_live_queue "$run_stamp"
@@ -17799,6 +17903,7 @@ _run_brownie_once() {
   local use_resume=0
   local CLAIM_CREATED_THIS_RUN=0
   local CLAIM_REPLACED_BLOCKED=0
+  local CLAIM_REPLACED_STALLED_REPLAN=0
   started_at="$(now_utc)"
   run_stamp="$(date -u +"%Y%m%dT%H%M%SZ")"
   PHASE_LOOP_REBASELINED_CLAIM=0
@@ -18268,7 +18373,7 @@ PY
       return 75
     fi
   fi
-  if [ "$CLAIM_REPLACED_BLOCKED" -eq 1 ]; then
+  if [ "$CLAIM_REPLACED_BLOCKED" -eq 1 ] || [ "$CLAIM_REPLACED_STALLED_REPLAN" -eq 1 ]; then
     # The archived claim's resume route and target snapshot belong only to the
     # displaced TODO. Start the replacement with its own prompt and baseline.
     use_resume=0
