@@ -4885,7 +4885,9 @@ pub(super) fn handle_headless_run_drive(
             Ok(route) => route,
             Err(message) => return error_response(id, -32602, &message),
         };
-        if let Some(next_route) = preflight_route {
+        if let Some((next_route, objective_proposal_authorization_preflight_result)) =
+            preflight_route
+        {
             let status = HeadlessContinueOnceStatus::TaskExecuted;
             let stop_reason = "authorized_preflight_recovery".to_string();
             let next_action = next_route.next_action.clone();
@@ -4916,6 +4918,7 @@ pub(super) fn handle_headless_run_drive(
                 "terminal_completion_evidence": terminal_completion_evidence,
                 "completion_closure": completion_closure,
                 "next_route": next_route,
+                "objective_proposal_authorization_preflight_result": objective_proposal_authorization_preflight_result,
                 "next_action": next_action
             });
             let result = HeadlessRunDriveResult {
@@ -4946,6 +4949,9 @@ pub(super) fn handle_headless_run_drive(
                 post_progress,
                 next_route: Some(next_route),
                 objective_proposal_candidate: None,
+                objective_proposal_authorization_preflight_result: Some(
+                    objective_proposal_authorization_preflight_result,
+                ),
                 advances: Vec::new(),
                 journey_route_resume: None,
                 journey_closure: None,
@@ -4996,6 +5002,7 @@ pub(super) fn handle_headless_run_drive(
             post_progress: post_progress.clone(),
             next_route: None,
             objective_proposal_candidate: None,
+            objective_proposal_authorization_preflight_result: None,
             advances: Vec::new(),
             journey_route_resume: None,
             journey_closure: None,
@@ -5074,6 +5081,7 @@ pub(super) fn handle_headless_run_drive(
             post_progress,
             next_route: None,
             objective_proposal_candidate: None,
+            objective_proposal_authorization_preflight_result: None,
             advances: Vec::new(),
             journey_route_resume: None,
             journey_closure: Some(journey_closure_metadata),
@@ -5400,6 +5408,7 @@ pub(super) fn handle_headless_run_drive(
         post_progress: post_progress.clone(),
         next_route: next_route.clone(),
         objective_proposal_candidate: objective_proposal_candidate.clone(),
+        objective_proposal_authorization_preflight_result: None,
         advances: advances.clone(),
         journey_route_resume: journey_route_resume_metadata.clone(),
         journey_closure: None,
@@ -5494,6 +5503,7 @@ pub(super) fn handle_headless_run_drive(
         post_progress,
         next_route,
         objective_proposal_candidate,
+        objective_proposal_authorization_preflight_result: None,
         advances,
         journey_route_resume: journey_route_resume_metadata,
         journey_closure: None,

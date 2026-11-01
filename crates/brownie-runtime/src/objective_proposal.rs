@@ -808,7 +808,13 @@ pub(super) fn headless_continue_authorized_preflight_resume_route(
     store: &BrownieStore,
     progress_overview: &TaskListProgressOverview,
     scope: &HeadlessContinueScope,
-) -> Result<Option<HeadlessContinueRoute>, String> {
+) -> Result<
+    Option<(
+        HeadlessContinueRoute,
+        HeadlessRunObjectiveProposalAuthorizationPreflight,
+    )>,
+    String,
+> {
     let mut checkpoints =
         headless_continue_resumable_authorized_preflight_checkpoints(store, scope)?;
     if checkpoints.is_empty() {
@@ -838,19 +844,20 @@ pub(super) fn headless_continue_authorized_preflight_resume_route(
         .pop()
         .expect("non-empty authorization/preflight checkpoint list")
         .result;
-    Ok(Some(HeadlessContinueRoute {
+    let next_route = HeadlessContinueRoute {
         kind: HeadlessContinueRouteKind::ApplyAuthorizedObjectiveProposalExplicitly,
         reason: "Recovered a scoped, authorized, and still-valid objective proposal preflight checkpoint; controlled apply remains an explicit next step.".to_string(),
-        task_id: Some(authorization_result.task_id),
-        run_id: Some(authorization_result.run_id),
-        proposal_id: Some(authorization_result.proposal_id),
+        task_id: Some(authorization_result.task_id.clone()),
+        run_id: Some(authorization_result.run_id.clone()),
+        proposal_id: Some(authorization_result.proposal_id.clone()),
         apply_id: None,
         failure_fingerprint: None,
-        apply_fingerprint: Some(authorization_result.authorization_preflight_fingerprint),
+        apply_fingerprint: Some(authorization_result.authorization_preflight_fingerprint.clone()),
         progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
         aggregate_sequence: Some(progress_overview.aggregate_sequence),
         next_action: "apply_authorized_objective_proposal".to_string(),
-    }))
+    };
+    Ok(Some((next_route, authorization_result)))
 }
 
 /// Re-exposes a persisted, still-valid authorization/preflight result to a scoped
