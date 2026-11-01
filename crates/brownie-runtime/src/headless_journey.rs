@@ -164,6 +164,25 @@ fn sleep_after_headless_journey_started_for_test() {
     }
 }
 
+const RELEASE_ARTIFACT_SOAK_PROCESS_LOSS_ENV: &str =
+    "BROWNIE_RELEASE_ARTIFACT_SOAK_PROCESS_LOSS_AFTER_JOURNEY_STARTED";
+
+fn release_artifact_soak_process_loss_requested(value: Option<std::ffi::OsString>) -> bool {
+    value.as_deref() == Some(std::ffi::OsStr::new("1"))
+}
+
+fn exit_after_durable_headless_journey_started_for_release_artifact_soak() {
+    // This hook is deliberately opt-in and occurs only after both the durable
+    // start checkpoint and HeadlessJourneyStarted ledger event are committed.
+    // It gives the packaged-artifact soak a real process-loss boundary without
+    // changing ordinary runtime behavior or configuration selection.
+    if release_artifact_soak_process_loss_requested(std::env::var_os(
+        RELEASE_ARTIFACT_SOAK_PROCESS_LOSS_ENV,
+    )) {
+        std::process::exit(75);
+    }
+}
+
 fn append_headless_journey_started_event_if_missing(
     store: &BrownieStore,
     checkpoint: &HeadlessJourneyStartCheckpoint,
@@ -1143,8 +1162,25 @@ fn headless_journey_start_checkpoint_for_admission_locked(
                 error_response(id.clone(), -32603, &message)
             })?;
         sleep_after_headless_journey_started_for_test();
+        exit_after_durable_headless_journey_started_for_release_artifact_soak();
     }
     Ok(checkpoint)
+}
+
+#[cfg(test)]
+mod release_artifact_soak_process_loss_tests {
+    use super::*;
+
+    #[test]
+    fn only_the_explicit_opt_in_value_enables_process_loss() {
+        assert!(release_artifact_soak_process_loss_requested(Some(
+            std::ffi::OsString::from("1"),
+        )));
+        assert!(!release_artifact_soak_process_loss_requested(None));
+        assert!(!release_artifact_soak_process_loss_requested(Some(
+            std::ffi::OsString::from("true"),
+        )));
+    }
 }
 
 fn headless_journey_metadata(
