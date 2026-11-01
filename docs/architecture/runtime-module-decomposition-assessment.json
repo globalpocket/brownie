@@ -31,11 +31,11 @@
   "metrics": {
     "files": {
       "crates/brownie-runtime/src/lib.rs": {
-        "line_count": 70297,
+        "line_count": 70331,
         "public_items": 4,
         "private_items": 540,
         "production_line_count": 16189,
-        "test_line_count": 54108,
+        "test_line_count": 54142,
         "state_mutation_mentions": 317,
         "durable_write_mentions": 235,
         "permission_decision_mentions": 271,
@@ -89,7 +89,7 @@
         "diagnostics_mentions": 2
       },
       "crates/brownie-runtime/src/headless_journey.rs": {
-        "line_count": 6181,
+        "line_count": 6191,
         "public_items": 16,
         "private_items": 62,
         "state_mutation_mentions": 18,
@@ -145,7 +145,7 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/objective_proposal.rs": {
-        "line_count": 1673,
+        "line_count": 1680,
         "public_items": 9,
         "private_items": 25,
         "state_mutation_mentions": 3,
