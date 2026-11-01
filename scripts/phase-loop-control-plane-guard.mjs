@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { controllerSourceReadMaxBufferBytes } from './phase-loop-source-baseline-guard.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,6 +25,10 @@ function git(repoRoot, args) {
 function gitShow(repoRoot, baselineRef, relativePath) {
   return execFileSync('git', ['-C', repoRoot, 'show', '--format=', `${baselineRef}:${relativePath}`], {
     encoding: null,
+    // Keep every controller-baseline reader on the shared, finite allowance.
+    // phase-loop.sh is intentionally larger than Node's 1 MiB default, and a
+    // guard must compare it rather than misreport a buffer overflow as drift.
+    maxBuffer: controllerSourceReadMaxBufferBytes,
     stdio: ['ignore', 'pipe', 'pipe']
   });
 }

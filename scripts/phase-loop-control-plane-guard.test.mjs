@@ -15,7 +15,7 @@ function git(root, args) {
   return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
-function makeRepository() {
+function makeRepository({ phaseLoopBytes = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-control-plane-'));
   git(root, ['init', '-q']);
   git(root, ['config', 'user.name', 'Brownie control-plane test']);
@@ -23,7 +23,10 @@ function makeRepository() {
   for (const relativePath of approvedControllerSourcePaths) {
     const target = path.join(root, relativePath);
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, `baseline source: ${relativePath}\n`);
+    const source = relativePath === 'phase-loop.sh' && phaseLoopBytes !== null
+      ? `#!/usr/bin/env bash\n# approved large controller fixture\n${'x'.repeat(phaseLoopBytes)}\n`
+      : `baseline source: ${relativePath}\n`;
+    fs.writeFileSync(target, source);
   }
   fs.copyFileSync(path.join(repositoryRoot, controllerSourceManifestPath), path.join(root, controllerSourceManifestPath));
   git(root, ['add', '.']);
@@ -40,6 +43,15 @@ test('accepts every manifest-listed control-plane script at the approved baselin
   assert(result.fingerprint_paths.includes('phase-loop.sh'));
   assert(result.fingerprint_paths.includes('scripts/phase-loop-controller-source-manifest.json'));
   assert(result.files.length > 0);
+});
+
+test('compares an approved phase-loop.sh above Node default output buffer', () => {
+  const repo = makeRepository({ phaseLoopBytes: (1024 * 1024) + 256 });
+  const result = inspectControlPlaneSource({ repoRoot: repo, baselineRef: 'origin/main' });
+  assert.equal(result.ok, true, JSON.stringify(result, null, 2));
+  const controller = result.files.find((file) => file.relative_path === 'phase-loop.sh');
+  assert(controller);
+  assert.equal(controller.current_sha256, controller.baseline_sha256);
 });
 
 test('fails closed when a manifest-listed control-plane script diverges', () => {
