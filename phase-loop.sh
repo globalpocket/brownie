@@ -2894,10 +2894,15 @@ PY
 # claim.  This preserves the dirty claim as an audit snapshot while allowing
 # the scheduler to select the recovery work it already recorded.
 active_claim_has_durable_queued_stalled_replan() {
-  if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$PHASE_LOOP_TODO" ] || [ ! -f "$STATE_DIR/task-ledger.jsonl" ]; then
+  # `phase-loop-task-ledger.mjs` owns the task-ledger location.  It always
+  # resolves it below the selected workspace (rather than STATE_DIR), so this
+  # reader must use that same canonical path when a deployment keeps controller
+  # state outside the workspace.
+  local task_ledger_path="$PHASE_LOOP_WORKSPACE_ROOT/.brownie/private/phase-loop/task-ledger.jsonl"
+  if [ -z "${PHASE_LOOP_WORKSPACE_ROOT:-}" ] || [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$PHASE_LOOP_TODO" ] || [ ! -f "$task_ledger_path" ]; then
     return 1
   fi
-  python3 - "$TODO_CLAIM_FILE" "$PHASE_LOOP_TODO" "$STATE_DIR/task-ledger.jsonl" <<'PY'
+  python3 - "$TODO_CLAIM_FILE" "$PHASE_LOOP_TODO" "$task_ledger_path" <<'PY'
 import hashlib
 import json
 import pathlib

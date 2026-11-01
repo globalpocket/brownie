@@ -91,11 +91,12 @@ test('archives a blocked active claim and selects its unblocked replan leaf', ()
 
 test('preempts a stale continuation when its durable stalled replan is already queued', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-durable-replan-handoff-'));
+  const workspace = path.join(dir, 'workspace');
   const todo = path.join(dir, 'todo.md');
   const breakdown = path.join(dir, 'todo-breakdown.md');
   const state = path.join(dir, 'state');
   const claims = path.join(state, 'todo-claims');
-  const ledger = path.join(state, 'task-ledger.jsonl');
+  const ledger = path.join(workspace, '.brownie/private/phase-loop/task-ledger.jsonl');
   const original = '- [ ] E-23c-release-artifact-runtime-journey-target-02: Patch only `scripts/release-artifact-runtime-journey.mjs`:\n  Route: implementation.\n  Source TODO: E-23c-release-artifact-runtime-journey.\n  Depends on: <none>.\n  Completion condition: the extracted package records an applied workspace mutation and stale replay rejection.\n  Forbidden changes: do not claim completion from a continuation alone.\n  Verification: run `node --test scripts/release-artifact-runtime-journey.test.mjs`.';
   const replan = '- [ ] E-23c-replan-stalled-leaf-2428108ecd17: Replan the stalled target-02 into bounded children:\n  Route: todo-decomposition.\n  Source TODO: E-23c-release-artifact-runtime-journey-target-02.\n  Depends on: <none>.\n  Completion condition: the stalled source is superseded without being marked complete.\n  Forbidden changes: do not retry the source continuation or mark it complete.\n  Verification: run `pnpm --workspace-root guard:todo-decomposition`.';
   const claim = {
@@ -106,6 +107,7 @@ test('preempts a stale continuation when its durable stalled replan is already q
     status: 'in_progress'
   };
   fs.mkdirSync(claims, { recursive: true });
+  fs.mkdirSync(path.dirname(ledger), { recursive: true });
   fs.writeFileSync(todo, `${original}\n${replan}\n`);
   fs.writeFileSync(breakdown, '# Breakdown\n');
   fs.writeFileSync(path.join(claims, 'current.json'), JSON.stringify(claim));
@@ -129,7 +131,13 @@ test('preempts a stale continuation when its durable stalled replan is already q
   ], {
     cwd: repoRoot,
     encoding: 'utf8',
-    env: { ...process.env, PHASE_LOOP_STATE_DIR: state, PHASE_LOOP_TODO: todo, PHASE_LOOP_TODO_BREAKDOWN: breakdown }
+    env: {
+      ...process.env,
+      PHASE_LOOP_STATE_DIR: state,
+      PHASE_LOOP_TODO: todo,
+      PHASE_LOOP_TODO_BREAKDOWN: breakdown,
+      PHASE_LOOP_WORKSPACE_ROOT: workspace
+    }
   });
 
   assert.match(output, /E-23c-replan-stalled-leaf-2428108ecd17/);
