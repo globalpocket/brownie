@@ -9,6 +9,7 @@ import {
   readTodoCompletionRecords,
   resolveTodoState
 } from './phase-loop-todo-state.mjs';
+import { readGitMaterializedScopeRebaselineRecords } from './phase-loop-admit-materialized-scope-rebaseline.mjs';
 import { boundedScopeEntries, boundedScopeValues, boundedScopes as boundedScopesFromFirstLine } from './phase-loop-bounded-scope.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -874,6 +875,15 @@ export function validateTodoDecompositionText(text, options = {}) {
   const leafIds = [];
   const derivedBlocks = [];
   validateTodoFileShape(text, errors, options);
+  if (options.repoRoot) {
+    try {
+      // This validates only explicit public Create-to-Patch receipts. A TODO
+      // with no receipt follows the ordinary Create/Patch rule unchanged.
+      readGitMaterializedScopeRebaselineRecords(options.repoRoot, text);
+    } catch (error) {
+      errors.push(`${options.path ?? defaultTodoPath}: ${error?.message ?? String(error)}`);
+    }
+  }
   const blocks = uncheckedTodoBlocks(text);
   const liveWork = validateTodoHasLiveWork(
     text,
