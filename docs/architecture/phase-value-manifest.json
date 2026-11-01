@@ -200,7 +200,7 @@
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "RRP-8.7 and the deployment-injection hardening change release/readiness guard engines and package scripts. Review must confirm owner-governance evidence remains bounded, deployment values remain external and explicit, owner-controlled settings are not self-approved, fail-closed statuses remain release-blocking, and runtime_release_ready remains false.",
+    "review_intent": "RRP-8.7 and the deployment-injection hardening change release/readiness guard engines and package scripts. The scoped-preflight repair also makes runtime module-assessment freshness fail closed on a breached measured ceiling. Review must confirm owner-governance evidence remains bounded, deployment values remain external and explicit, owner-controlled settings are not self-approved, fail-closed statuses remain release-blocking, and runtime_release_ready remains false.",
     "changed_files": [
       ".github/workflows/ci.yml",
       ".github/workflows/release.yml",
@@ -219,6 +219,7 @@
       "scripts/guard-release-contract.test.mjs",
       "scripts/guard-runtime-release-readiness.mjs",
       "scripts/guard-runtime-release-readiness.test.mjs",
+      "scripts/guard-runtime-module-decomposition.test.mjs",
       "scripts/release-gate.mjs",
       "scripts/release-dependency-security-license-audit.mjs",
       "scripts/release-integrity-verify.mjs",
