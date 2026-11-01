@@ -23,6 +23,7 @@ function workspaceBuildFingerprint(workspace) {
   const files = listed.stdout.toString('utf8').split('\0').filter(Boolean).filter((relative) => (
     relative === 'Cargo.lock'
     || relative === 'Cargo.toml'
+    || relative === 'build-provenance.rs'
     || (relative.startsWith('crates/') && (relative.endsWith('.rs') || relative.endsWith('/Cargo.toml')))
   )).sort();
   const digest = crypto.createHash('sha256');
@@ -334,6 +335,7 @@ test('checks explicit binaries against an explicitly selected workspace', () => 
     fs.mkdirSync(path.join(fixture, 'crates', 'fixture', 'src'), { recursive: true });
     fs.writeFileSync(path.join(fixture, 'Cargo.toml'), '[workspace]\nmembers = []\n');
     fs.writeFileSync(path.join(fixture, 'Cargo.lock'), '# fixture\n');
+    fs.writeFileSync(path.join(fixture, 'build-provenance.rs'), 'fn main() {}\n');
     fs.writeFileSync(path.join(fixture, 'crates', 'fixture', 'Cargo.toml'), '[package]\nname = "fixture"\nversion = "0.0.0"\n');
     fs.writeFileSync(path.join(fixture, 'crates', 'fixture', 'src', 'lib.rs'), 'pub fn fixture() {}\n');
     spawnSync('git', ['init'], { cwd: fixture, stdio: 'ignore' });
@@ -374,6 +376,22 @@ test('checks explicit binaries against an explicitly selected workspace', () => 
       encoding: 'utf8'
     });
     assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+
+    fs.writeFileSync(path.join(fixture, 'build-provenance.rs'), 'fn main() { println!("changed"); }\n');
+    const changedGeneratorResult = spawnSync('bash', [controllerPath, 'check-binary-freshness'], {
+      cwd: repoRoot,
+      env: {
+        ...baseEnvironment(),
+        PHASE_LOOP_WORKSPACE_ROOT: fixture,
+        PHASE_LOOP_STATE_DIR: path.join(fixture, 'state-changed-generator'),
+        BROWNIE_BIN: cli,
+        BROWNIE_RUNTIME_PATH: runtime,
+        PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK: '0'
+      },
+      encoding: 'utf8'
+    });
+    assert.equal(changedGeneratorResult.status, 1, `${changedGeneratorResult.stderr}\n${changedGeneratorResult.stdout}`);
+    assert.match(changedGeneratorResult.stdout, /build provenance does not match the selected source/u);
   } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
   }

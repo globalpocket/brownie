@@ -68,7 +68,9 @@ fn tracked_provenance_inputs(workspace_root: &Path) -> Vec<String> {
 }
 
 fn is_provenance_input(relative: &str) -> bool {
-    matches!(relative, "Cargo.lock" | "Cargo.toml")
-        || (relative.starts_with("crates/")
-            && (relative.ends_with(".rs") || relative.ends_with("/Cargo.toml")))
+    matches!(
+        relative,
+        "Cargo.lock" | "Cargo.toml" | "build-provenance.rs"
+    ) || (relative.starts_with("crates/")
+        && (relative.ends_with(".rs") || relative.ends_with("/Cargo.toml")))
 }

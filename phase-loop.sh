@@ -909,11 +909,10 @@ runtime_binary = pathlib.Path(sys.argv[3]).resolve()
 
 try:
     tracked = subprocess.check_output(
-        ["git", "ls-files", "Cargo.lock", "Cargo.toml", "crates/**/*.rs", "crates/**/Cargo.toml"],
+        ["git", "ls-files", "-z"],
         cwd=repo_root,
-        text=True,
         stderr=subprocess.DEVNULL,
-    ).splitlines()
+    ).decode("utf-8").split("\0")
 except Exception as error:
     print(f"failed to inspect tracked Rust sources for binary freshness: {error}")
     sys.exit(3)
@@ -944,7 +943,7 @@ def is_runtime_input(relative):
 
 def is_provenance_input(relative):
     return (
-        relative in {"Cargo.lock", "Cargo.toml"}
+        relative in {"Cargo.lock", "Cargo.toml", "build-provenance.rs"}
         or (
             relative.startswith("crates/")
             and (relative.endswith(".rs") or relative.endswith("/Cargo.toml"))
