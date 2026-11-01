@@ -6,6 +6,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const controllerSourceManifestPath = 'scripts/phase-loop-controller-source-manifest.json';
+// `execFileSync` defaults to a 1 MiB output buffer. The controller itself is
+// intentionally a single auditable state-machine script and has crossed that
+// size, so reading an approved baseline through `git show` must use an
+// explicit, bounded allowance instead of failing with ENOBUFS. Keep the cap
+// finite: an unexpectedly large controller source remains fail-closed.
+export const controllerSourceReadMaxBufferBytes = 4 * 1024 * 1024;
 
 function readJsonFile(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -58,6 +64,7 @@ function sha256(value) {
 function readBaselineFile(repoRoot, baselineRef, relativePath) {
   return execFileSync('git', ['-C', repoRoot, 'show', '--format=', `${baselineRef}:${relativePath}`], {
     encoding: 'utf8',
+    maxBuffer: controllerSourceReadMaxBufferBytes,
     stdio: ['ignore', 'pipe', 'pipe']
   });
 }

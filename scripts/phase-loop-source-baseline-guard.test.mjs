@@ -8,6 +8,7 @@ import test from 'node:test';
 
 import {
   approvedControllerSourcePaths,
+  controllerSourceReadMaxBufferBytes,
   controllerSourceManifestPath,
   guardPhaseLoopSourceBaseline
 } from './phase-loop-source-baseline-guard.mjs';
@@ -44,6 +45,23 @@ test('accepts controller source matching approved origin/main baseline', () => {
   assert.equal(result.ok, true, JSON.stringify(result, null, 2));
   assert.equal(result.files.every((file) => file.matches), true);
   assert.match(result.source_fingerprint, /^sha256:[0-9a-f]{64}$/u);
+});
+
+test('accepts an approved controller source larger than Node child-process default output buffer', () => {
+  const root = makeRepository();
+  // Node's default maxBuffer is 1 MiB.  The real controller can legitimately
+  // exceed it, while the guard must still compare the exact baseline bytes.
+  const controller = path.join(root, 'phase-loop.sh');
+  fs.writeFileSync(controller, 'controller source\n'.repeat(70_000));
+  assert(fs.statSync(controller).size > 1024 * 1024);
+  assert(fs.statSync(controller).size < controllerSourceReadMaxBufferBytes);
+  git(root, ['add', 'phase-loop.sh']);
+  git(root, ['commit', '-qm', 'large approved controller baseline']);
+  git(root, ['update-ref', 'refs/remotes/origin/main', 'HEAD']);
+
+  const result = guardPhaseLoopSourceBaseline({ repoRoot: root, refreshBaseline: false });
+  assert.equal(result.ok, true, JSON.stringify(result, null, 2));
+  assert.equal(result.files.find((file) => file.relative_path === 'phase-loop.sh')?.matches, true);
 });
 
 test('fails closed when a controller source diverges from approved origin/main', () => {
