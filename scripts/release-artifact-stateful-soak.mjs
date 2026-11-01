@@ -98,18 +98,52 @@ function runJson(binaryPath, args, environment) {
 
 function stableWorkspaceSnapshot(workspaceRoot) {
   const rows = [];
-  const visit = (current, relative = '') => {
-    if (!fs.existsSync(current)) return;
+  const visitDirectory = (current, relative, activeDirectories) => {
+    const canonicalDirectory = fs.realpathSync(current);
+    if (activeDirectories.has(canonicalDirectory)) {
+      // A symlink can point back to an ancestor.  Keep this stable marker so
+      // cycles cannot recurse forever, while the ancestor remains snapshotted.
+      rows.push(`${relative}:directory-cycle`);
+      return;
+    }
+    const nextActiveDirectories = new Set(activeDirectories);
+    nextActiveDirectories.add(canonicalDirectory);
     for (const entry of fs.readdirSync(current, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
       const childRelative = relative ? `${relative}/${entry.name}` : entry.name;
-      const child = path.join(current, entry.name);
-      if (entry.isDirectory()) visit(child, childRelative);
-      else if (entry.isFile()) rows.push(`${childRelative}:${sha256File(child)}`);
-      else if (entry.isSymbolicLink()) rows.push(`${childRelative}:symlink:${fs.readlinkSync(child)}`);
-      else throw new Error(`workspace snapshot does not support ${childRelative}`);
+      visitPath(path.join(current, entry.name), childRelative, nextActiveDirectories);
     }
   };
-  visit(workspaceRoot);
+  const visitPath = (current, relative, activeDirectories) => {
+    const metadata = fs.lstatSync(current);
+    if (metadata.isDirectory()) {
+      visitDirectory(current, relative, activeDirectories);
+      return;
+    }
+    if (metadata.isFile()) {
+      rows.push(`${relative}:file:${sha256File(current)}`);
+      return;
+    }
+    if (!metadata.isSymbolicLink()) throw new Error(`workspace snapshot does not support ${relative}`);
+
+    // The link text alone is insufficient: a replay can mutate a target that
+    // lies outside the workspace without altering the link itself. Snapshot
+    // all reachable target contents under the link's logical workspace path.
+    rows.push(`${relative}:symlink:${fs.readlinkSync(current)}`);
+    let targetMetadata;
+    try {
+      targetMetadata = fs.statSync(current);
+    } catch (error) {
+      throw new Error(`workspace snapshot cannot resolve symbolic link ${relative}: ${error.message}`);
+    }
+    if (targetMetadata.isDirectory()) {
+      visitDirectory(current, `${relative}:target`, activeDirectories);
+    } else if (targetMetadata.isFile()) {
+      rows.push(`${relative}:target:file:${sha256File(current)}`);
+    } else {
+      throw new Error(`workspace snapshot does not support symbolic link target ${relative}`);
+    }
+  };
+  if (fs.existsSync(workspaceRoot)) visitDirectory(workspaceRoot, '', new Set());
   return sha256Value(rows.join('\n'));
 }
 

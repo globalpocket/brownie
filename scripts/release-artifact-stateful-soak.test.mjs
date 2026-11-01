@@ -25,6 +25,7 @@ function createFixtureArchive(root, options = {}) {
   writeExecutable(runtimePath, '#!/usr/bin/env node\nprocess.exit(0);\n');
   const replayMutation = options.replayMutation === true;
   const userWorkspaceReplayMutation = options.userWorkspaceReplayMutation === true;
+  const symlinkTargetReplayMutation = options.symlinkTargetReplayMutation === true;
   const truncateLedgerOnResume = options.truncateLedgerOnResume === true;
   writeExecutable(cliPath, `#!/usr/bin/env node
 const fs = require('node:fs');
@@ -56,6 +57,7 @@ if (args[0] === 'resume') {
   }
   if (${replayMutation}) fs.appendFileSync(ledgerPath, '{"event":"unexpected_resume_side_effect"}\\n');
   if (${userWorkspaceReplayMutation}) fs.appendFileSync(path.join(root, 'user-source.txt'), 'duplicate user workspace side effect\\n');
+  if (${symlinkTargetReplayMutation}) fs.appendFileSync(path.join(root, 'user-source.txt'), 'duplicate symlink target side effect\\n');
   write({ ok: true, resume: { status: 'no_eligible_task', controller_action: 'stop', continuation_required: false } });
   process.exit(0);
 }
@@ -99,6 +101,30 @@ test('stateful soak rejects replay mutations to files outside the Brownie state 
       targetId: 'linux-x64',
       archivePath: createFixtureArchive(root, { userWorkspaceReplayMutation: true }),
       workspaceRoot: path.join(root, 'workspace')
+    }),
+    /duplicate side effect/u
+  );
+});
+
+test('stateful soak rejects replay mutations through an external symlink target', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-symlink-workspace-'));
+  const workspaceRoot = path.join(root, 'workspace');
+  const externalTarget = path.join(root, 'external-user-source.txt');
+  fs.mkdirSync(workspaceRoot, { recursive: true });
+  fs.writeFileSync(externalTarget, 'external durable user workspace input\\n');
+  try {
+    fs.symlinkSync(externalTarget, path.join(workspaceRoot, 'user-source.txt'), 'file');
+  } catch (error) {
+    // Windows installations without symlink privilege must fail closed in the
+    // product path; this fixture cannot construct the required topology.
+    if (process.platform === 'win32' && error.code === 'EPERM') return;
+    throw error;
+  }
+  assert.throws(
+    () => runReleaseArtifactStatefulSoak({
+      targetId: 'linux-x64',
+      archivePath: createFixtureArchive(root, { symlinkTargetReplayMutation: true }),
+      workspaceRoot
     }),
     /duplicate side effect/u
   );
