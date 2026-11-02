@@ -7,6 +7,7 @@ import test from 'node:test';
 const scriptsDirectory = path.dirname(fileURLToPath(import.meta.url));
 const claimSmokeFixture = path.join(scriptsDirectory, 'phase-loop-claim-smoke.test.sh');
 const todoStateEntry = path.join(scriptsDirectory, 'phase-loop-todo-state.mjs');
+const todoGuardEntry = path.join(scriptsDirectory, 'guard-todo-decomposition.mjs');
 
 function localDependencyClosure(entry, visited = new Set()) {
   const absoluteEntry = path.resolve(entry);
@@ -26,18 +27,19 @@ function localDependencyClosure(entry, visited = new Set()) {
   return visited;
 }
 
-test('claim-smoke isolated TODO-state fixtures copy their local dependency closure', () => {
-  const source = fs.readFileSync(claimSmokeFixture, 'utf8');
-  const dependencyNames = [...localDependencyClosure(todoStateEntry)]
-    .filter((file) => file !== todoStateEntry)
+function assertFixtureCopiesDependencyClosure(source, entry, entryName) {
+  const dependencyNames = [...localDependencyClosure(entry)]
+    .filter((file) => file !== entry)
     .map((file) => path.relative(scriptsDirectory, file))
     .sort();
-  assert.notEqual(dependencyNames.length, 0, 'the TODO-state dependency closure must not be silently empty');
+  assert.notEqual(dependencyNames.length, 0, `the ${entryName} dependency closure must not be silently empty`);
 
-  const fixtureCopies = [...source.matchAll(
-    /cp "\$REPO_ROOT\/scripts\/phase-loop-todo-state\.mjs" "(\$[A-Za-z_][A-Za-z0-9_]*\/scripts)\/phase-loop-todo-state\.mjs"/gu
-  )];
-  assert.notEqual(fixtureCopies.length, 0, 'expected at least one isolated TODO-state fixture');
+  const entryPattern = entryName.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const fixtureCopies = [...source.matchAll(new RegExp(
+    `cp "\\$REPO_ROOT/scripts/${entryPattern}" "(\\$[A-Za-z_][A-Za-z0-9_]*\\/scripts)\\/${entryPattern}"`,
+    'gu'
+  ))];
+  assert.notEqual(fixtureCopies.length, 0, `expected at least one isolated ${entryName} fixture`);
 
   for (const [, fixtureScripts] of fixtureCopies) {
     for (const dependency of dependencyNames) {
@@ -45,8 +47,14 @@ test('claim-smoke isolated TODO-state fixtures copy their local dependency closu
       assert.equal(
         source.includes(expectedCopy),
         true,
-        `isolated fixture ${fixtureScripts} must copy TODO-state dependency ${dependency}`
+        `isolated fixture ${fixtureScripts} must copy ${entryName} dependency ${dependency}`
       );
     }
   }
+}
+
+test('claim-smoke isolated TODO fixtures copy every static dependency closure', () => {
+  const source = fs.readFileSync(claimSmokeFixture, 'utf8');
+  assertFixtureCopiesDependencyClosure(source, todoStateEntry, 'phase-loop-todo-state.mjs');
+  assertFixtureCopiesDependencyClosure(source, todoGuardEntry, 'guard-todo-decomposition.mjs');
 });

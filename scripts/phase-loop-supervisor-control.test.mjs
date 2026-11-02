@@ -120,6 +120,10 @@ function makeRepo() {
     path.join(repo, 'scripts/phase-loop-todo-contract-rebaseline.mjs')
   );
   fs.copyFileSync(
+    path.join(__dirname, 'phase-loop-admit-materialized-scope-rebaseline.mjs'),
+    path.join(repo, 'scripts/phase-loop-admit-materialized-scope-rebaseline.mjs')
+  );
+  fs.copyFileSync(
     path.join(__dirname, 'guard-todo-decomposition.mjs'),
     path.join(repo, 'scripts/guard-todo-decomposition.mjs')
   );
@@ -136,7 +140,7 @@ function makeRepo() {
   execFileSync('git', ['init'], { cwd: repo, stdio: 'ignore' });
   execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo });
   execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo });
-  execFileSync('git', ['add', 'package.json', 'scripts/guard-runtime-operational-evidence.test.mjs', 'scripts/phase-loop-todo-queue-integrity.mjs', 'scripts/phase-loop-bounded-scope.mjs', 'scripts/phase-loop-todo-state.mjs', 'scripts/phase-loop-historical-derived-delivery-integrity.mjs', 'scripts/phase-loop-todo-contract-rebaseline.mjs', 'scripts/guard-todo-decomposition.mjs', 'scripts/repair-todo-decomposition.mjs', 'scripts/phase-loop-preclaim-recovery.mjs', 'scripts/phase-loop-todo-completion-reconcile.mjs', 'scripts/phase-loop-todo-breakdown-reconcile.mjs'], { cwd: repo });
+  execFileSync('git', ['add', 'package.json', 'scripts/guard-runtime-operational-evidence.test.mjs', 'scripts/phase-loop-todo-queue-integrity.mjs', 'scripts/phase-loop-bounded-scope.mjs', 'scripts/phase-loop-todo-state.mjs', 'scripts/phase-loop-historical-derived-delivery-integrity.mjs', 'scripts/phase-loop-todo-contract-rebaseline.mjs', 'scripts/phase-loop-admit-materialized-scope-rebaseline.mjs', 'scripts/guard-todo-decomposition.mjs', 'scripts/repair-todo-decomposition.mjs', 'scripts/phase-loop-preclaim-recovery.mjs', 'scripts/phase-loop-todo-completion-reconcile.mjs', 'scripts/phase-loop-todo-breakdown-reconcile.mjs'], { cwd: repo });
   execFileSync('git', ['commit', '-m', 'init'], { cwd: repo, stdio: 'ignore' });
   return repo;
 }
