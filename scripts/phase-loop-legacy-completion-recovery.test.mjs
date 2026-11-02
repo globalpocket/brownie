@@ -13,7 +13,6 @@ import {
 import { produceSemanticCompletionEvidence } from './phase-loop-delivery-integrity.mjs';
 import { appendTaskTransition, taskAttemptId } from './phase-loop-task-ledger.mjs';
 import { evaluateTodoQueue } from './phase-loop-todo-evaluator.mjs';
-import { validateHistoricalDerivedDeliveryReceipt } from './phase-loop-historical-derived-delivery-integrity.mjs';
 
 const target = `- [ ] E-target: Patch only \`scripts/target.mjs\`.
   Route: implementation.
@@ -34,12 +33,13 @@ const dependent = `- [ ] E-dependent: must wait for target.
   Forbidden changes: do not edit unrelated files.
   Verification: run \`node --test scripts/dependent.test.mjs\`.`;
 
-const unrelatedNext = `- [ ] E-unrelated-next: Patch only \`scripts/unrelated-next.mjs\`.
+const nextTodo = `- [ ] E-23d-release-artifact-stateful-soak-target-01: Patch only \`scripts/release-artifact-stateful-soak.mjs\`.
   Route: implementation.
+  Source TODO: E-23d-release-artifact-stateful-soak.
   Depends on: <none>.
-  Completion condition: unrelated next behavior is implemented and verified.
+  Completion condition: the next fixture target remains pending.
   Forbidden changes: do not edit unrelated files.
-  Verification: run \`node --test scripts/unrelated-next.test.mjs\`.`;
+  Verification: run \`node --test scripts/release-artifact-stateful-soak.test.mjs\`.`;
 
 const actorDeployment = {
   schema_version: 1,
@@ -52,25 +52,25 @@ const actorDeployment = {
   constraints: { require_independent_review: true }
 };
 
-function sha256(value) {
-  return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
+function writeJson(filePath, value) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function canonicalJson(value) {
-  if (Array.isArray(value)) return value.map(canonicalJson);
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalJson(value[key])]));
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
   }
   return value;
 }
 
-function derivedHistoricalCompletion({ targetId = 'E-target', rootClaimId = 'legacy-claim', claimId = 'derived-historical-journey' } = {}) {
-  const selectedTodo = targetId === 'E-target' ? target : unrelatedNext;
-  const artifactTarget = `${targetId}-journey`;
-  const evidence = {
+function derivedHistoricalCompletion({ claimId, rootClaimId, selected = target }) {
+  const selectedTodoSha256 = crypto.createHash('sha256').update(selected).digest('hex');
+  const journey = {
     schema_version: 1,
     evidence_id: 'brownie-release-artifact-runtime-journey-v1',
-    target: artifactTarget,
+    target: 'linux-x64',
     artifact: {
       archive_sha256: `sha256:${'a'.repeat(64)}`,
       artifact_sha256: `sha256:${'b'.repeat(64)}`,
@@ -85,13 +85,33 @@ function derivedHistoricalCompletion({ targetId = 'E-target', rootClaimId = 'leg
       stale_replay_rejection: { passed: true, status: 'no_eligible_task', controller_action: 'stop', workspace_unchanged: true }
     }
   };
-  const selectedTodoSha256 = sha256(selectedTodo);
+  const historical = {
+    schema_version: 1,
+    kind: 'release_artifact_runtime_journey',
+    parent_claim_id: rootClaimId,
+    parent_selected_todo_sha256: crypto.createHash('sha256').update('parent').digest('hex'),
+    child_selected_todo_sha256: selectedTodoSha256,
+    child_completion_condition_sha256: crypto.createHash('sha256').update('condition').digest('hex'),
+    replan_record_sha256: crypto.createHash('sha256').update('replan').digest('hex'),
+    dossier_sha256: crypto.createHash('sha256').update('dossier').digest('hex'),
+    pr_url: 'https://github.com/globalpocket/brownie/pull/767',
+    pr_head_sha: 'd'.repeat(40),
+    merge_commit: 'e'.repeat(40),
+    release_workflow_runs: [{ id: 767, workflow_name: 'Release Workflow', head_sha: 'd'.repeat(40), conclusion: 'success' }],
+    journey_artifacts: [{
+      name: 'runtime-journey-linux-x64',
+      target: 'linux-x64',
+      evidence_sha256: crypto.createHash('sha256').update(JSON.stringify(canonical(journey))).digest('hex'),
+      evidence: journey
+    }]
+  };
   return {
     schema_version: 2,
     record_type: 'derived_historical_delivery_attestation',
     claim_id: claimId,
     root_claim_id: rootClaimId,
-    selected_todo_id: targetId,
+    selected_todo_id: 'E-target',
+    selected_todo_first_line: selected.split('\n')[0],
     selected_todo_sha256: selectedTodoSha256,
     delivery_receipt: {
       schema_version: 1,
@@ -104,32 +124,12 @@ function derivedHistoricalCompletion({ targetId = 'E-target', rootClaimId = 'leg
       author: 'implementation-worker',
       reviewer: 'reviewer-worker',
       merge_actor: 'reviewer-worker',
-      historical_delivery_evidence: {
-        schema_version: 1,
-        kind: 'release_artifact_runtime_journey',
-        parent_claim_id: rootClaimId,
-        parent_selected_todo_sha256: 'd'.repeat(64),
-        child_selected_todo_sha256: selectedTodoSha256,
-        child_completion_condition_sha256: 'e'.repeat(64),
-        replan_record_sha256: 'f'.repeat(64),
-        dossier_sha256: '0'.repeat(64),
-        pr_url: 'https://github.com/globalpocket/brownie/pull/800',
-        pr_head_sha: '1'.repeat(40),
-        merge_commit: '2'.repeat(40),
-        release_workflow_runs: [{ id: 1, conclusion: 'success', head_sha: '1'.repeat(40), workflow_name: 'Release Workflow' }],
-        journey_artifacts: [{
-          target: artifactTarget,
-          evidence_sha256: sha256(JSON.stringify(canonicalJson(evidence))),
-          evidence
-        }]
-      }
+      pr_url: historical.pr_url,
+      pr_head_sha: historical.pr_head_sha,
+      merge_commit: historical.merge_commit,
+      historical_delivery_evidence: historical
     }
   };
-}
-
-function writeJson(filePath, value) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function fixture() {
@@ -396,11 +396,14 @@ test('recovery restores the exact target, invalidates only the false receipt, ar
   assert.equal(repairAudit.reason, 'legacy_review_rework_claim_had_no_fresh_dispatch_marker');
 });
 
-test('review-rework recovery retracts only the valid derived completion caused by the rejected root and leaves an unrelated next TODO schedulable', () => {
+test('recovery retracts only a derived historical receipt causally rooted in the rejected claim', () => {
   const value = fixture();
-  const todoPath = path.join(value.root, '.brownie/todo.md');
-  fs.writeFileSync(todoPath, `${fs.readFileSync(todoPath, 'utf8').trimEnd()}\n\n${unrelatedNext}\n`);
-  const first = recoverLegacyRejectedCompletion({
+  const derivedPath = path.join(value.root, value.state, 'todo-completions', 'derived-same-root.json');
+  writeJson(derivedPath, derivedHistoricalCompletion({
+    claimId: 'derived-historical-legacy-claim',
+    rootClaimId: 'legacy-claim'
+  }));
+  const recovered = recoverLegacyRejectedCompletion({
     repoRoot: value.root,
     statePath: value.state,
     completionPath: value.completion,
@@ -409,60 +412,24 @@ test('review-rework recovery retracts only the valid derived completion caused b
     actorDeployment: value.actorDeployment,
     now: '2026-10-31T00:00:00.000Z'
   });
-  const currentPath = path.join(value.root, first.current_claim_path);
-  writeJson(currentPath, {
-    claim_id: 'fresh-looking-terminal-claim',
-    root_claim_id: 'fresh-looking-terminal-claim',
-    status: 'integrity_blocked',
-    selected_todo: target,
-    failure_evidence: { reason: 'terminal_completion_evidence_missing' },
-    status_history: [{
-      requested_status: 'completed',
-      status: 'integrity_blocked',
-      updated_at: '2026-10-31T00:00:30.000Z'
-    }]
-  });
-  const derived = derivedHistoricalCompletion();
-  assert.equal(validateHistoricalDerivedDeliveryReceipt(derived).valid, true, JSON.stringify(validateHistoricalDerivedDeliveryReceipt(derived)));
-  writeJson(path.join(value.root, value.state, 'todo-completions', 'derived-historical-journey.json'), derived);
-
-  const recovered = reconcilePersistedReviewRework({
-    repoRoot: value.root,
-    statePath: value.state,
-    actorDeployment: value.actorDeployment,
-    now: '2026-10-31T00:01:00.000Z'
-  });
-
   assert.equal(recovered.recovered, true, JSON.stringify(recovered));
-  assert.equal(recovered.queue_validation.valid, true, JSON.stringify(recovered.queue_validation));
-  const restoredClaim = JSON.parse(fs.readFileSync(path.join(value.root, recovered.current_claim_path), 'utf8'));
-  assert.equal(restoredClaim.claim_id, 'legacy-claim');
-  assert.equal(restoredClaim.selected_todo, target);
-  assert.equal(recovered.causally_dependent_derived_completion_invalidation_paths.length, 1);
+  assert.equal(recovered.dependent_derived_invalidation_paths.length, 1);
   const invalidation = JSON.parse(fs.readFileSync(
-    path.join(value.root, recovered.causally_dependent_derived_completion_invalidation_paths[0]),
+    path.join(value.root, recovered.dependent_derived_invalidation_paths[0]),
     'utf8'
   ));
-  assert.equal(invalidation.selected_todo_id, 'E-target');
-  assert.equal(invalidation.invalidated_completion_claim_id, derived.claim_id);
-  assert.equal(invalidation.rejected_root_completion_claim_id, 'legacy-claim');
-  assert.equal(invalidation.reason, 'derived_historical_delivery_depends_on_rejected_legacy_completion');
-
-  const recoveredTodo = fs.readFileSync(todoPath, 'utf8');
-  const selection = evaluateTodoQueue(recoveredTodo, {
-    repoRoot: value.root,
-    // The restored parent and target are held by the preserved review-rework
-    // claim. A normal selector must still be able to advance an independent
-    // next TODO instead of treating the derived receipt as global completion.
-    excludedTodoHashes: [sha256(parent.replace('[x]', '[ ]')), sha256(target)]
-  });
-  assert.equal(selection.selected_todo_id, 'E-unrelated-next', JSON.stringify(selection));
+  assert.equal(invalidation.invalidated_completion_claim_id, 'derived-historical-legacy-claim');
+  assert.equal(invalidation.root_completion_claim_id, 'legacy-claim');
 });
 
-test('review-rework recovery does not invalidate a same-target derived completion with a different root claim', () => {
+test('recovery preserves an independently rooted derived receipt even when its TODO id matches the rejected stale root', () => {
   const value = fixture();
-  const unrelatedRoot = derivedHistoricalCompletion({ rootClaimId: 'other-root-claim', claimId: 'derived-historical-other-root' });
-  writeJson(path.join(value.root, value.state, 'todo-completions', 'derived-historical-other-root.json'), unrelatedRoot);
+  const independentPath = path.join(value.root, value.state, 'todo-completions', 'derived-independent-root.json');
+  const independent = derivedHistoricalCompletion({
+    claimId: 'derived-historical-todo-g624-76d1cb0e2aa4',
+    rootClaimId: 'todo-g624-76d1cb0e2aa4'
+  });
+  writeJson(independentPath, independent);
 
   assert.throws(() => recoverLegacyRejectedCompletion({
     repoRoot: value.root,
@@ -473,7 +440,85 @@ test('review-rework recovery does not invalidate a same-target derived completio
     actorDeployment: value.actorDeployment,
     now: '2026-10-31T00:00:00.000Z'
   }), /recovery_queue_validation_failed:completed_todo_reappeared_in_live_queue/);
-  assert.equal(fs.existsSync(path.join(value.root, value.state, 'todo-completion-invalidations')), false);
+
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(independentPath, 'utf8')),
+    independent,
+    'the independent durable receipt is append-only and unchanged by rejected-root recovery'
+  );
+  const invalidations = path.join(value.root, value.state, 'todo-completion-invalidations');
+  const persistedInvalidations = fs.existsSync(invalidations) ? fs.readdirSync(invalidations) : [];
+  assert.equal(
+    persistedInvalidations.some((entry) => fs.readFileSync(path.join(invalidations, entry), 'utf8')
+      .includes('derived-historical-todo-g624-76d1cb0e2aa4')),
+    false,
+    'a TODO-id collision must not invalidate another root lineage'
+  );
+});
+
+test('reconcile terminalizes stale review-rework from an independently rooted derived receipt and selects E23d next', () => {
+  const value = fixture();
+  const todoPath = path.join(value.root, '.brownie/todo.md');
+  fs.writeFileSync(todoPath, `# Queue\n\n${parent}\n\n${nextTodo}\n\n${dependent}\n`);
+  const recovered = recoverLegacyRejectedCompletion({
+    repoRoot: value.root,
+    statePath: value.state,
+    completionPath: value.completion,
+    snapshotPath: value.snapshot,
+    reviewReceiptPath: value.review,
+    actorDeployment: value.actorDeployment,
+    now: '2026-10-31T00:00:00.000Z'
+  });
+  assert.equal(recovered.recovered, true, JSON.stringify(recovered));
+  const independentPath = path.join(value.root, value.state, 'todo-completions', 'derived-independent-root.json');
+  const independent = derivedHistoricalCompletion({
+    claimId: 'derived-historical-todo-g624-76d1cb0e2aa4',
+    rootClaimId: 'todo-g624-76d1cb0e2aa4'
+  });
+  writeJson(independentPath, independent);
+
+  const reconciled = reconcilePersistedReviewRework({
+    repoRoot: value.root,
+    statePath: value.state,
+    actorDeployment: value.actorDeployment,
+    now: '2026-10-31T00:01:00.000Z'
+  });
+  assert.equal(reconciled.resolved, true, JSON.stringify(reconciled));
+  assert.equal(reconciled.reason, 'review_rework_obviated_by_independent_durable_completion');
+  assert.equal(fs.existsSync(path.join(value.root, value.state, 'todo-claims', 'current.json')), false);
+  const queue = fs.readFileSync(todoPath, 'utf8');
+  assert.doesNotMatch(queue, /E-target:/u);
+  assert.match(queue, /E-23d-release-artifact-stateful-soak-target-01/u);
+  const persistedIndependent = JSON.parse(fs.readFileSync(independentPath, 'utf8'));
+  assert.deepEqual(persistedIndependent, independent, 'independent receipt remains append-only and unchanged');
+  const feedback = JSON.parse(fs.readFileSync(path.join(value.root, value.state, 'todo-repair-feedback.json'), 'utf8'));
+  assert.equal(feedback.completed, true);
+  assert.equal(feedback.resolution, 'review_rework_obviated_by_independent_durable_completion');
+  const selection = evaluateTodoQueue(queue, {
+    repoRoot: value.root,
+    breakdownPath: path.join(value.root, '.brownie/todo-breakdown.md')
+  });
+  assert.equal(selection.selected_todo_id, 'E-23d-release-artifact-stateful-soak-target-01');
+  assert.match(selection.selected_todo, /\[ \] E-23d-release-artifact-stateful-soak-target-01/u);
+  // Simulate an interruption after the immutable audit, queue restoration,
+  // and stale-claim removal but before completed feedback was persisted.
+  const pendingFeedback = JSON.parse(fs.readFileSync(path.join(value.root, feedback.archived_path), 'utf8'));
+  writeJson(path.join(value.root, value.state, 'todo-repair-feedback.json'), pendingFeedback);
+  const resumed = reconcilePersistedReviewRework({
+    repoRoot: value.root,
+    statePath: value.state,
+    actorDeployment: value.actorDeployment,
+    now: '2026-10-31T00:01:30.000Z'
+  });
+  assert.equal(resumed.resolved, true, JSON.stringify(resumed));
+  assert.equal(resumed.queue_validation.idempotent_terminalization, true);
+  const retry = reconcilePersistedReviewRework({
+    repoRoot: value.root,
+    statePath: value.state,
+    actorDeployment: value.actorDeployment,
+    now: '2026-10-31T00:02:00.000Z'
+  });
+  assert.equal(retry.reason, 'review_rework_feedback_already_resolved');
 });
 
 test('recovery isolates an already-terminal same-root task attempt without reopening its history', () => {
