@@ -2613,7 +2613,10 @@ fn cli_resume_payload(result: &Value) -> Result<Value, RuntimeClientError> {
         if let Some(count) = executed_count {
             let confirmed = count.as_u64().map(|value| value > 0).unwrap_or(false);
             payload.insert("executed_count".to_string(), count);
-            payload.insert("task_execution_confirmed".to_string(), Value::Bool(confirmed));
+            payload.insert(
+                "task_execution_confirmed".to_string(),
+                Value::Bool(confirmed),
+            );
         }
     }
     for key in [
@@ -6888,7 +6891,10 @@ mod tests {
         assert_eq!(payload["task_execution_confirmed"], true);
         assert_eq!(payload["executed_count"], 1);
         assert_eq!(payload["objective_apply_applied"], true);
-        assert_eq!(payload["objective_apply_path"], "scripts/bounded-target.mjs");
+        assert_eq!(
+            payload["objective_apply_path"],
+            "scripts/bounded-target.mjs"
+        );
         assert_eq!(payload["objective_apply_apply_status"], "applied");
     }
 
