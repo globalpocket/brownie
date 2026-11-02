@@ -927,6 +927,8 @@ function main() {
     process.exit(result.ok ? 0 : 78);
   }
   if (command === 'terminal-evidence') {
+    const workspaceRoot = args.get('workspace-root');
+    if (!workspaceRoot) throw new Error('terminal-evidence requires --workspace-root');
     const result = writeTerminalExecutionEvidence({
       stdoutPath: path.resolve(args.get('stdout')),
       claimSnapshotPath: path.resolve(args.get('claim-snapshot')),
@@ -934,6 +936,7 @@ function main() {
       runStamp: args.get('run-stamp'),
       workspaceBefore: args.get('workspace-before') ?? '',
       workspaceAfter: args.get('workspace-after') ?? '',
+      repoRoot: path.resolve(workspaceRoot),
     });
     process.stdout.write(`${JSON.stringify(result)}\n`);
     process.exit(result.task_execution_confirmed ? 0 : 1);

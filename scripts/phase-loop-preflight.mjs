@@ -666,6 +666,7 @@ function validateRequiredCommands(repoRoot, todoPath, breakdownPath, controlPlan
   const guardArguments = [path.join(controlScripts, 'guard-todo-decomposition.mjs'), '--repo', policyRoot, '--todo', absoluteTodoPath, '--breakdown', absoluteBreakdownPath];
   if (['pre-claim-boundary', 'pre-claim', 'pre-completion'].includes(stage) && stateRoot && claimPath) {
     guardArguments.push('--state', stateRoot, '--claim', claimPath, '--stage', stage);
+    queueIntegrityCommand[1].push('--state', stateRoot, '--claim', claimPath, '--stage', stage);
   }
   const commands = fixtureProfile
     ? [queueIntegrityCommand]

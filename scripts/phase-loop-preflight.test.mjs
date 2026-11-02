@@ -205,6 +205,76 @@ function appendActiveClaimMaterialization(repo, fixture, { runStamp, target }) {
   return { runStamp, evidencePath, stdoutPath, target };
 }
 
+function materializedActiveClaimPreflightFixture() {
+  const repo = makeRepo();
+  const id = 'E-materialized-active';
+  const target = 'scripts/materialized-target.mjs';
+  const beforeTodo = [
+    `- [ ] ${id}: Create only \`${target}\`:`,
+    '  Route: implementation.',
+    '  Depends on: <none>.',
+    '  Completion condition: continue only the exact admitted Runtime claim.',
+    '  Forbidden changes: do not change unrelated paths.',
+    '  Verification: run `node --test scripts/materialized-target.test.mjs`.'
+  ].join('\n');
+  fs.writeFileSync(path.join(repo, '.brownie/todo.md'), `${beforeTodo}\n`);
+  execFileSync('git', ['add', '.brownie/todo.md'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'materialized fixture baseline'], { cwd: repo, stdio: 'ignore' });
+  const baseBranch = execFileSync('git', ['branch', '--show-current'], { cwd: repo, encoding: 'utf8' }).trim();
+  execFileSync('git', ['checkout', '-b', 'implementation'], { cwd: repo, stdio: 'ignore' });
+  fs.writeFileSync(path.join(repo, target), 'export const historicalMaterialization = true;\n');
+  execFileSync('git', ['add', target], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'implement E-materialized-active'], { cwd: repo, stdio: 'ignore' });
+  const prHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  execFileSync('git', ['checkout', baseBranch], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['merge', '--no-ff', '-m', 'merge materialized fixture', 'implementation'], { cwd: repo, stdio: 'ignore' });
+  const mergeCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  const blob = execFileSync('git', ['rev-parse', `HEAD:${target}`], { cwd: repo, encoding: 'utf8' }).trim();
+  const afterTodo = beforeTodo.replace(`Create only \`${target}\``, `Patch only \`${target}\``);
+  const selectedTodo = `${afterTodo}\n  Materialization receipt: Git merged Create-to-Patch v1; TODO ${id}; PR #999; merge commit ${mergeCommit}; PR head ${prHead}; targets \`${target}@${blob}\`.`;
+  fs.writeFileSync(path.join(repo, '.brownie/todo.md'), `${selectedTodo}\n`);
+  const runtimeBytes = 'export const runtimeApplied = true;\n';
+  fs.writeFileSync(path.join(repo, target), runtimeBytes);
+  const stateRoot = path.join(repo, '.brownie/private/phase-loop');
+  const claimPath = path.join(stateRoot, 'todo-claims/current.json');
+  const runStamp = 'fixture-materialized-apply';
+  const claimId = 'todo-g999-materialized-r1';
+  const queue = { generation: 999, fingerprint: 'fixture-materialized-queue' };
+  const selectedHash = createHash('sha256').update(selectedTodo).digest('hex');
+  const stdoutPath = path.join(stateRoot, 'runs', `${runStamp}.stdout.log`);
+  const evidencePath = path.join(stateRoot, 'runs', `${runStamp}.execution-evidence.json`);
+  writeJson(claimPath, {
+    schema_version: 1, claim_id: claimId, status: 'in_progress', selected_todo: selectedTodo,
+    queue_generation: queue.generation, queue_fingerprint: queue.fingerprint, run_stamp: runStamp,
+    terminal_failure_execution_evidence_path: evidencePath
+  });
+  writeJson(path.join(stateRoot, 'todo-claims/todo-queue-state.json'), queue);
+  writeJson(path.join(stateRoot, 'runs', `${runStamp}.runtime-admission.json`), {
+    schema_version: 1, kind: 'phase_loop_runtime_admission', status: 'admitted', claim_id: claimId,
+    selected_todo_id: id, selected_todo_sha256: selectedHash,
+    queue_generation: queue.generation, queue_fingerprint: queue.fingerprint
+  });
+  writeJson(stdoutPath, { resume: {
+    status: 'objective_proposal_applied', task_execution_confirmed: true,
+    phase_loop_claim_id: claimId, phase_loop_selected_todo_sha256: selectedHash,
+    phase_loop_queue_generation: queue.generation, phase_loop_queue_fingerprint: queue.fingerprint,
+    objective_apply_applied: true, objective_apply_path: target
+  } });
+  writeJson(evidencePath, {
+    schema_version: 1, kind: 'phase_loop_terminal_failure_execution_evidence', run_stamp: runStamp,
+    claim_id: claimId, runtime_claim_id: claimId, claim_matches: true,
+    selected_todo_id: id, selected_todo_sha256: selectedHash, task_execution_confirmed: true,
+    target_files: [target], stdout_path: stdoutPath,
+    durable_apply_evidence: {
+      schema_version: 1, claim_id: claimId, runtime_claim_id: claimId,
+      selected_todo_id: id, selected_todo_sha256: selectedHash, runtime_run_stamp: runStamp,
+      queue_generation: queue.generation, queue_fingerprint: queue.fingerprint, target_path: target,
+      post_write_target_sha256: createHash('sha256').update(runtimeBytes).digest('hex')
+    }
+  });
+  return { repo, stateRoot, claimPath, target };
+}
+
 test('detects duplicate JSON keys outside JSON.parse visibility', () => {
   const duplicates = duplicateJsonKeys('{ "a": 1, "nested": { "b": 1, "b": 2 }, "a": 3 }', 'fixture.json');
   assert.equal(duplicates.length, 2);
@@ -317,6 +387,31 @@ test('keeps a legacy active claim without a durable post-write hash fail-closed'
   });
   assert.equal(result.valid, false);
   assert(result.errors.some((error) => error.code === 'contract_unsatisfiable_dirty_scope' && error.target === fixture.target), JSON.stringify(result.errors));
+});
+
+test('pre-completion runs queue integrity with the exact active durable proof instead of skipping the public receipt', () => {
+  const fixture = materializedActiveClaimPreflightFixture();
+  const previous = process.env.PHASE_LOOP_CLAIM_SMOKE_TEST_ONLY;
+  process.env.PHASE_LOOP_CLAIM_SMOKE_TEST_ONLY = '1';
+  try {
+    const result = validatePhaseLoopPreflight({
+      repo: fixture.repo,
+      controlPlaneRoot: repositoryRoot,
+      profile: 'claim-smoke-fixture',
+      stateRoot: fixture.stateRoot,
+      claim: fixture.claimPath,
+      stage: 'pre-completion',
+      expectedActor: 'fixture-implementation',
+      skipCommands: false
+    });
+    assert.equal(result.valid, true, JSON.stringify(result.errors));
+    assert.equal(result.command_results.length, 1);
+    assert.equal(result.command_results[0].exit_code, 0, JSON.stringify(result.command_results[0]));
+    assert.match(result.command_results[0].command, /phase-loop-todo-queue-integrity\.mjs .*--state .*--claim .*--stage pre-completion/u);
+  } finally {
+    if (previous === undefined) delete process.env.PHASE_LOOP_CLAIM_SMOKE_TEST_ONLY;
+    else process.env.PHASE_LOOP_CLAIM_SMOKE_TEST_ONLY = previous;
+  }
 });
 
 test('admits an active claim whose selected TODO is followed by a completed TODO entry', () => {

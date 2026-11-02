@@ -145,8 +145,23 @@ function isPathInside(root, candidate) {
 
 function stateArtifactPath(stateRoot, candidate) {
   if (typeof candidate !== 'string' || candidate.length === 0) return null;
-  const resolved = path.resolve(path.isAbsolute(candidate) ? candidate : path.join(stateRoot, candidate));
-  return isPathInside(stateRoot, resolved) ? resolved : null;
+  const lexicalRoot = path.resolve(stateRoot);
+  const resolved = path.resolve(path.isAbsolute(candidate) ? candidate : path.join(lexicalRoot, candidate));
+  // State evidence is private-but-untrusted input.  A lexical containment
+  // check alone lets a state-root symlink read a file outside that root.  Only
+  // consume existing artifacts whose resolved inode remains under the
+  // resolved state root.
+  try {
+    const realRoot = fs.realpathSync(lexicalRoot);
+    // macOS can expose the same inode through /var and /private/var.  Permit
+    // that already-canonical spelling only after proving it remains within
+    // the real state root; neither spelling may reach elsewhere.
+    if (!isPathInside(lexicalRoot, resolved) && !isPathInside(realRoot, resolved)) return null;
+    const realCandidate = fs.realpathSync(resolved);
+    return isPathInside(realRoot, realCandidate) ? realCandidate : null;
+  } catch {
+    return null;
+  }
 }
 
 function readJsonInside(stateRoot, candidate) {
@@ -179,8 +194,8 @@ function activeClaimEvidencePaths(stateRoot, claim) {
   const candidates = new Set();
   const pointed = stateArtifactPath(stateRoot, claim.terminal_failure_execution_evidence_path);
   if (pointed) candidates.add(pointed);
-  const runsDirectory = path.join(stateRoot, 'runs');
-  if (!isPathInside(stateRoot, runsDirectory)) return [...candidates].sort();
+  const runsDirectory = stateArtifactPath(stateRoot, path.join(stateRoot, 'runs'));
+  if (!runsDirectory) return [...candidates].sort();
   try {
     for (const entry of fs.readdirSync(runsDirectory, { withFileTypes: true })) {
       if (entry.isFile() && /^[A-Za-z0-9_.-]+\.execution-evidence\.json$/u.test(entry.name)) {

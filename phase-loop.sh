@@ -15993,6 +15993,7 @@ write_runtime_execution_evidence() {
       --claim-snapshot "$claim_snapshot" \
       --output "$evidence_path" \
       --run-stamp "$run_stamp" \
+      --workspace-root "$PHASE_LOOP_WORKSPACE_ROOT" \
       --workspace-before "$workspace_before" \
       --workspace-after "$workspace_after" 2>&1
   )"

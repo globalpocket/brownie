@@ -216,6 +216,23 @@ test('liveness admits only an exact active-claim durable apply over an unchanged
   evidence.stdout_path = stdoutPath;
   writeJson(evidencePath, evidence);
 
+  const outsideStateArtifact = path.join(os.tmpdir(), `brownie-state-artifact-escape-${process.pid}.json`);
+  fs.writeFileSync(outsideStateArtifact, fs.readFileSync(stdoutPath));
+  fs.rmSync(stdoutPath);
+  fs.symlinkSync(outsideStateArtifact, stdoutPath);
+  assert.equal(
+    readVerifiedActiveClaimDurableApply({ repoRoot: root, stateRoot, claimPath, stage: 'pre-completion', todoText: selectedTodo }),
+    null,
+    'a lexical in-state path may not dereference a state-root escape symlink'
+  );
+  fs.unlinkSync(stdoutPath);
+  writeJson(stdoutPath, { run: {
+    status: 'objective_proposal_applied', task_execution_confirmed: true, phase_loop_claim_id: claimId,
+    phase_loop_selected_todo_sha256: selectedTodoSha256, phase_loop_queue_generation: queue.generation,
+    phase_loop_queue_fingerprint: queue.fingerprint, objective_apply_applied: true, objective_apply_path: target
+  } });
+  fs.rmSync(outsideStateArtifact, { force: true });
+
   fs.writeFileSync(path.join(root, target), 'export const journey = "manual-drift";\n');
   assert.equal(readVerifiedActiveClaimDurableApply({ repoRoot: root, stateRoot, claimPath, stage: 'pre-completion', todoText: selectedTodo }), null);
   assert.throws(() => readGitMaterializedScopeRebaselineRecords(root, selectedTodo), /digest mismatch in current worktree/u);

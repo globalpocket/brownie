@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import { rebaselineStaleClaim, restoreAdmissionBackedStaleClaim, writeTerminalExecutionEvidence } from './phase-loop-claim-rebaseline.mjs';
 import { recordTerminalFailureRecovery } from './phase-loop-task-ledger.mjs';
@@ -840,6 +841,39 @@ test('records an exact post-write hash only for an applied bounded target', () =
     target_path: target,
     post_write_target_sha256: crypto.createHash('sha256').update('export const applied = true;\n').digest('hex')
   });
+});
+
+test('terminal-evidence hashes the explicit workspace root instead of the controller cwd', () => {
+  const f = fixture();
+  const target = 'scripts/roundtrip.test.mjs';
+  const workspaceBytes = 'export const workspaceApplied = true;\n';
+  fs.mkdirSync(path.join(f.root, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(f.root, target), workspaceBytes);
+  const controllerRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-controller-cwd-'));
+  fs.mkdirSync(path.join(controllerRoot, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(controllerRoot, target), 'export const controllerBytes = true;\n');
+  const snapshot = path.join(f.runs, 'claim.before-runtime.json');
+  const stdout = path.join(f.runs, 'run.stdout.log');
+  const evidence = path.join(f.runs, 'run.execution-evidence.json');
+  writeJson(snapshot, { claim: JSON.parse(fs.readFileSync(f.claimPath, 'utf8')) });
+  writeJson(stdout, { resume: {
+    status: 'objective_proposal_applied', task_execution_confirmed: true,
+    phase_loop_claim_id: 'todo-g541-roundtrip-r3', objective_apply_applied: true,
+    phase_loop_selected_todo_sha256: crypto.createHash('sha256').update(f.selected).digest('hex'),
+    phase_loop_queue_generation: 541, phase_loop_queue_fingerprint: 'old-queue', objective_apply_path: target
+  } });
+  const output = execFileSync('node', [
+    path.join(repositoryRoot, 'scripts/phase-loop-claim-rebaseline.mjs'), 'terminal-evidence',
+    '--stdout', stdout,
+    '--claim-snapshot', snapshot,
+    '--output', evidence,
+    '--run-stamp', 'workspace-root-fixture',
+    '--workspace-root', f.root
+  ], { cwd: controllerRoot, encoding: 'utf8' });
+  const written = JSON.parse(output);
+  const expectedHash = crypto.createHash('sha256').update(workspaceBytes).digest('hex');
+  assert.equal(written.durable_apply_evidence.post_write_target_sha256, expectedHash);
+  assert.equal(JSON.parse(fs.readFileSync(evidence, 'utf8')).durable_apply_evidence.post_write_target_sha256, expectedHash);
 });
 
 test('preserves admitted execution for terminal no-eligible closure without workspace change', () => {
