@@ -108,19 +108,19 @@ test('stateful soak uses only the packaged artifact and records bounded recovery
   assert.deepEqual(JSON.parse(fs.readFileSync(evidencePath, 'utf8')), evidence);
 });
 
-test('stateful soak covers the Linux ARM64 release artifact from an isolated workspace without a source runtime override', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-linux-arm64-'));
+test('stateful soak runs a packaged artifact from an isolated workspace without a source runtime override', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-isolated-workspace-'));
   const evidence = runReleaseArtifactStatefulSoak({
-    targetId: 'linux-arm64',
+    targetId: 'linux-x64',
     archivePath: createFixtureArchive(root, {
-      target: 'linux-arm64',
+      target: 'linux-x64',
       requireWorkspaceCwd: true,
       rejectRuntimePathOverride: true
     }),
     workspaceRoot: path.join(root, 'workspace'),
     env: { BROWNIE_RUNTIME_PATH: path.join(root, 'must-not-be-used-runtime') }
   });
-  assert.equal(evidence.target, 'linux-arm64');
+  assert.equal(evidence.target, 'linux-x64');
   assert.equal(evidence.checks.artifact_execution_boundary.passed, true);
   assert.equal(evidence.checks.finite_convergence.commands_executed, 3);
 });

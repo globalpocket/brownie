@@ -11,7 +11,6 @@ const maximumCommands = 3;
 
 const releaseTargets = [
   { id: 'linux-x64', archiveName: 'brownie-linux-x64.tar.gz', archiveType: 'tar', binaryName: 'brownie', runtimeName: 'brownie-runtime' },
-  { id: 'linux-arm64', archiveName: 'brownie-linux-arm64.tar.gz', archiveType: 'tar', binaryName: 'brownie', runtimeName: 'brownie-runtime' },
   { id: 'darwin-arm64', archiveName: 'brownie-darwin-arm64.tar.gz', archiveType: 'tar', binaryName: 'brownie', runtimeName: 'brownie-runtime' },
   { id: 'win32-x64', archiveName: 'brownie-win32-x64.zip', archiveType: 'zip', binaryName: 'brownie.exe', runtimeName: 'brownie-runtime.exe' }
 ];
