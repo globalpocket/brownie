@@ -113,7 +113,14 @@ function activeClaimPlaceholderFixture(repo, options = {}) {
     selected_todo_sha256: selectedHash,
     target_files: ['scripts/active.test.mjs', target],
     task_execution_confirmed: true,
-    stdout_path: stdoutPath
+    stdout_path: stdoutPath,
+    durable_apply_evidence: {
+      schema_version: 1, claim_id: claimId, runtime_claim_id: claimId,
+      selected_todo_id: 'E-active', selected_todo_sha256: selectedHash,
+      runtime_run_stamp: runStamp, queue_generation: queueGeneration,
+      queue_fingerprint: queueFingerprint, target_path: target,
+      post_write_target_sha256: createHash('sha256').update('// Brownie bounded Patch-only proposal.\n').digest('hex')
+    }
   });
   writeJson(stdoutPath, {
     run: {
@@ -122,6 +129,7 @@ function activeClaimPlaceholderFixture(repo, options = {}) {
       phase_loop_selected_todo_sha256: selectedHash,
       phase_loop_queue_generation: queueGeneration,
       phase_loop_queue_fingerprint: queueFingerprint,
+      task_execution_confirmed: true,
       objective_apply_applied: true,
       objective_apply_path: target
     }
@@ -145,6 +153,10 @@ function appendActiveClaimMaterialization(repo, fixture, { runStamp, target }) {
   const selectedHash = createHash('sha256').update(selectedTodo).digest('hex');
   const evidencePath = path.join(fixture.stateRoot, 'runs', `${runStamp}.execution-evidence.json`);
   const stdoutPath = path.join(fixture.stateRoot, 'runs', `${runStamp}.stdout.log`);
+  const targetPath = path.join(repo, target);
+  const postWriteTargetSha256 = createHash('sha256').update(
+    fs.existsSync(targetPath) ? fs.readFileSync(targetPath) : '// absent fixture target\n'
+  ).digest('hex');
   writeJson(path.join(fixture.stateRoot, 'runs', `${runStamp}.runtime-admission.json`), {
     schema_version: 1,
     kind: 'phase_loop_runtime_admission',
@@ -166,7 +178,14 @@ function appendActiveClaimMaterialization(repo, fixture, { runStamp, target }) {
     selected_todo_sha256: selectedHash,
     target_files: ['scripts/active.test.mjs', fixture.target],
     task_execution_confirmed: true,
-    stdout_path: stdoutPath
+    stdout_path: stdoutPath,
+    durable_apply_evidence: {
+      schema_version: 1, claim_id: fixture.claimId, runtime_claim_id: fixture.claimId,
+      selected_todo_id: 'E-active', selected_todo_sha256: selectedHash,
+      runtime_run_stamp: runStamp, queue_generation: 624,
+      queue_fingerprint: 'fixture-active-queue', target_path: target,
+      post_write_target_sha256: postWriteTargetSha256
+    }
   });
   writeJson(stdoutPath, {
     run: {
@@ -175,6 +194,7 @@ function appendActiveClaimMaterialization(repo, fixture, { runStamp, target }) {
       phase_loop_selected_todo_sha256: selectedHash,
       phase_loop_queue_generation: 624,
       phase_loop_queue_fingerprint: 'fixture-active-queue',
+      task_execution_confirmed: true,
       objective_apply_applied: true,
       objective_apply_path: target
     }
@@ -259,7 +279,8 @@ test('admits an exact active-claim placeholder only for the authenticated resume
     }],
     materializations: [{
       materialization_run_stamp: fixture.runStamp,
-      materialized_target: fixture.target
+      materialized_target: fixture.target,
+      post_write_target_sha256: createHash('sha256').update('// Brownie bounded Patch-only proposal.\n').digest('hex')
     }]
   });
 });
@@ -278,6 +299,24 @@ test('admits an exact active-claim placeholder during same-claim pre-completion 
   assert.equal(result.valid, true, JSON.stringify(result.errors));
   assert.equal(result.warnings.filter((warning) => warning.code === 'active_claim_owned_dirty_target_placeholder').length, 1);
   assert.equal(result.active_claim_resume_admission, undefined);
+});
+
+test('keeps a legacy active claim without a durable post-write hash fail-closed', () => {
+  const repo = makeRepo();
+  const fixture = activeClaimPlaceholderFixture(repo);
+  const evidence = JSON.parse(fs.readFileSync(fixture.evidencePath, 'utf8'));
+  delete evidence.durable_apply_evidence;
+  writeJson(fixture.evidencePath, evidence);
+  const result = validatePhaseLoopPreflight({
+    repo,
+    stateRoot: fixture.stateRoot,
+    claim: fixture.claimPath,
+    stage: 'pre-completion',
+    expectedActor: 'fixture-implementation',
+    skipCommands: true
+  });
+  assert.equal(result.valid, false);
+  assert(result.errors.some((error) => error.code === 'contract_unsatisfiable_dirty_scope' && error.target === fixture.target), JSON.stringify(result.errors));
 });
 
 test('admits an active claim whose selected TODO is followed by a completed TODO entry', () => {

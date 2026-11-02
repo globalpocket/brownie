@@ -9,7 +9,7 @@ import {
   readTodoCompletionRecords,
   resolveTodoState
 } from './phase-loop-todo-state.mjs';
-import { readGitMaterializedScopeRebaselineRecords } from './phase-loop-admit-materialized-scope-rebaseline.mjs';
+import { readGitMaterializedScopeRebaselineRecords, readVerifiedActiveClaimDurableApply } from './phase-loop-admit-materialized-scope-rebaseline.mjs';
 import { boundedScopeEntries, boundedScopeValues, boundedScopes as boundedScopesFromFirstLine } from './phase-loop-bounded-scope.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -879,7 +879,16 @@ export function validateTodoDecompositionText(text, options = {}) {
     try {
       // This validates only explicit public Create-to-Patch receipts. A TODO
       // with no receipt follows the ordinary Create/Patch rule unchanged.
-      readGitMaterializedScopeRebaselineRecords(options.repoRoot, text);
+      const activeClaimMaterialization = options.stateRoot && options.claimPath && options.stage
+        ? readVerifiedActiveClaimDurableApply({
+            repoRoot: options.repoRoot,
+            stateRoot: options.stateRoot,
+            claimPath: options.claimPath,
+            stage: options.stage,
+            todoText: text
+          })
+        : null;
+      readGitMaterializedScopeRebaselineRecords(options.repoRoot, text, { activeClaimMaterialization });
     } catch (error) {
       errors.push(`${options.path ?? defaultTodoPath}: ${error?.message ?? String(error)}`);
     }
@@ -997,7 +1006,10 @@ export function validateTodoDecompositionCandidate(
     completedTodoIds: todoState.resolvedIds,
     invalidCheckedTodoIds: unresolvedSupersededIds,
     productReady: state.productReady,
-    releaseBlockersRemaining: state.releaseBlockersRemaining
+    releaseBlockersRemaining: state.releaseBlockersRemaining,
+    stateRoot: candidate.stateRoot,
+    claimPath: candidate.claimPath,
+    stage: candidate.stage
   });
 }
 
@@ -1011,6 +1023,9 @@ if (process.argv[1] === __filename) {
   let positionalTodo = null;
   let explicitTodo = null;
   let breakdownPath = defaultBreakdownPath;
+  let stateRoot = null;
+  let claimPath = null;
+  let stage = null;
   let scoreMode = false;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -1020,6 +1035,12 @@ if (process.argv[1] === __filename) {
       explicitTodo = argv[++index] ?? defaultTodoPath;
     } else if (arg === '--breakdown') {
       breakdownPath = argv[++index] ?? defaultBreakdownPath;
+    } else if (arg === '--state') {
+      stateRoot = argv[++index] ?? null;
+    } else if (arg === '--claim') {
+      claimPath = argv[++index] ?? null;
+    } else if (arg === '--stage') {
+      stage = argv[++index] ?? null;
     } else if (arg === '--score') {
       scoreMode = true;
     } else if (!arg.startsWith('--') && positionalTodo === null) {
@@ -1031,7 +1052,7 @@ if (process.argv[1] === __filename) {
     console.log(JSON.stringify(scoreTodoDecompositionText(fs.readFileSync(path.resolve(repoRoot, actualTodoPath), 'utf8')), null, 2));
     process.exit(0);
   }
-  const errors = validateTodoDecomposition(repoRoot, actualTodoPath, breakdownPath);
+  const errors = validateTodoDecompositionCandidate(repoRoot, actualTodoPath, breakdownPath, { stateRoot, claimPath, stage });
   if (errors.length > 0) {
     console.error('TODO decomposition guard failed:');
     for (const error of errors) {

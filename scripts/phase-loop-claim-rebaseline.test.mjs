@@ -807,6 +807,41 @@ test('requires current-run task execution evidence before terminal failure recor
   assert.equal(rejected.code, 'terminal_failure_retry_cap_zero_requires_redelegation');
 });
 
+test('records an exact post-write hash only for an applied bounded target', () => {
+  const f = fixture();
+  const target = 'scripts/roundtrip.test.mjs';
+  fs.mkdirSync(path.join(f.root, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(f.root, target), 'export const applied = true;\n');
+  const snapshot = path.join(f.runs, 'claim.before-runtime.json');
+  const evidence = path.join(f.runs, 'run.execution-evidence.json');
+  const stdout = path.join(f.runs, 'run.stdout.log');
+  writeJson(snapshot, { claim: JSON.parse(fs.readFileSync(f.claimPath, 'utf8')) });
+  writeJson(stdout, { run: {
+    status: 'objective_proposal_applied', task_execution_confirmed: true,
+    phase_loop_claim_id: 'todo-g541-roundtrip-r3', objective_apply_applied: true,
+    phase_loop_selected_todo_sha256: crypto.createHash('sha256').update(f.selected).digest('hex'),
+    phase_loop_queue_generation: 541,
+    phase_loop_queue_fingerprint: 'old-queue',
+    objective_apply_path: target
+  } });
+  const result = writeTerminalExecutionEvidence({
+    stdoutPath: stdout, claimSnapshotPath: snapshot, outputPath: evidence,
+    runStamp: 'run-applied', repoRoot: f.root
+  });
+  assert.deepEqual(result.durable_apply_evidence, {
+    schema_version: 1,
+    claim_id: 'todo-g541-roundtrip-r3',
+    selected_todo_id: 'E-23b-roundtrip-target-02',
+    selected_todo_sha256: crypto.createHash('sha256').update(f.selected).digest('hex'),
+    runtime_run_stamp: 'run-applied',
+    runtime_claim_id: 'todo-g541-roundtrip-r3',
+    queue_generation: 541,
+    queue_fingerprint: 'old-queue',
+    target_path: target,
+    post_write_target_sha256: crypto.createHash('sha256').update('export const applied = true;\n').digest('hex')
+  });
+});
+
 test('preserves admitted execution for terminal no-eligible closure without workspace change', () => {
   const f = fixture();
   const snapshot = path.join(f.runs, 'claim.before-runtime.json');

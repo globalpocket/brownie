@@ -138,12 +138,158 @@ function worktreeBlob(repoRoot, target) {
   return gitValue(repoRoot, ['hash-object', '--path', target, target]);
 }
 
+function isPathInside(root, candidate) {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+}
+
+function stateArtifactPath(stateRoot, candidate) {
+  if (typeof candidate !== 'string' || candidate.length === 0) return null;
+  const resolved = path.resolve(path.isAbsolute(candidate) ? candidate : path.join(stateRoot, candidate));
+  return isPathInside(stateRoot, resolved) ? resolved : null;
+}
+
+function readJsonInside(stateRoot, candidate) {
+  const resolved = stateArtifactPath(stateRoot, candidate);
+  if (!resolved) return null;
+  try {
+    return JSON.parse(fs.readFileSync(resolved, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function validClaimTarget(target) {
+  if (typeof target !== 'string' || !target || path.posix.isAbsolute(target)) return false;
+  const parts = target.split('/');
+  return !parts.includes('..') && !parts.includes('.') && !parts.includes('');
+}
+
+function phaseLoopPayload(value) {
+  if (value?.run && typeof value.run === 'object') return value.run;
+  if (value?.resume && typeof value.resume === 'object') return value.resume;
+  return value && typeof value === 'object' ? value : {};
+}
+
+function payloadValue(payload, automation, field) {
+  return payload?.[field] ?? automation?.[field] ?? null;
+}
+
+function activeClaimEvidencePaths(stateRoot, claim) {
+  const candidates = new Set();
+  const pointed = stateArtifactPath(stateRoot, claim.terminal_failure_execution_evidence_path);
+  if (pointed) candidates.add(pointed);
+  const runsDirectory = path.join(stateRoot, 'runs');
+  if (!isPathInside(stateRoot, runsDirectory)) return [...candidates].sort();
+  try {
+    for (const entry of fs.readdirSync(runsDirectory, { withFileTypes: true })) {
+      if (entry.isFile() && /^[A-Za-z0-9_.-]+\.execution-evidence\.json$/u.test(entry.name)) {
+        candidates.add(path.join(runsDirectory, entry.name));
+      }
+    }
+  } catch {
+    // The pointed evidence remains sufficient when the immutable run directory is absent.
+  }
+  return [...candidates].sort();
+}
+
+function activeClaimMaterializationFromEvidence({ repoRoot, stateRoot, evidencePath, claim, selectedTodoId, selectedTodoSha256, selectedTargets }) {
+  const evidence = readJsonInside(stateRoot, evidencePath);
+  const runStamp = typeof evidence?.run_stamp === 'string' ? evidence.run_stamp : '';
+  const claimId = typeof claim?.claim_id === 'string' ? claim.claim_id : '';
+  const queueFingerprint = typeof claim?.queue_fingerprint === 'string' ? claim.queue_fingerprint : '';
+  if (!evidence || !runStamp || !claimId || !queueFingerprint
+    || evidence.claim_id !== claimId || evidence.runtime_claim_id !== claimId || evidence.claim_matches !== true
+    || evidence.selected_todo_id !== selectedTodoId || evidence.selected_todo_sha256 !== selectedTodoSha256
+    || evidence.task_execution_confirmed !== true || !Array.isArray(evidence.target_files)) return null;
+  const admission = readJsonInside(stateRoot, path.join(stateRoot, 'runs', `${runStamp}.runtime-admission.json`));
+  if (!admission || admission.status !== 'admitted' || admission.claim_id !== claimId
+    || admission.selected_todo_id !== selectedTodoId || admission.selected_todo_sha256 !== selectedTodoSha256
+    || String(admission.queue_generation ?? '') !== String(claim.queue_generation)
+    || String(admission.queue_fingerprint ?? '') !== queueFingerprint) return null;
+  const stdout = readJsonInside(stateRoot, evidence.stdout_path);
+  const payload = phaseLoopPayload(stdout);
+  const automation = payload.automation && typeof payload.automation === 'object' ? payload.automation : {};
+  const target = typeof payload.objective_apply_path === 'string' ? payload.objective_apply_path : '';
+  const durable = evidence.durable_apply_evidence;
+  const durableTarget = typeof durable?.target_path === 'string' ? durable.target_path : '';
+  const durableHash = typeof durable?.post_write_target_sha256 === 'string' ? durable.post_write_target_sha256 : '';
+  if (payloadValue(payload, automation, 'phase_loop_claim_id') !== claimId
+    || payloadValue(payload, automation, 'phase_loop_selected_todo_sha256') !== selectedTodoSha256
+    || String(payloadValue(payload, automation, 'phase_loop_queue_generation') ?? '') !== String(claim.queue_generation)
+    || String(payloadValue(payload, automation, 'phase_loop_queue_fingerprint') ?? '') !== queueFingerprint
+    || payload.task_execution_confirmed !== true || payload.objective_apply_applied !== true
+    || payload.status !== 'objective_proposal_applied' || !validClaimTarget(target)
+    || !selectedTargets.includes(target) || !evidence.target_files.includes(target)
+    || durable?.schema_version !== 1 || durable.claim_id !== claimId || durable.runtime_claim_id !== claimId
+    || durable.selected_todo_id !== selectedTodoId || durable.selected_todo_sha256 !== selectedTodoSha256
+    || durable.runtime_run_stamp !== runStamp
+    || String(durable.queue_generation ?? '') !== String(claim.queue_generation)
+    || String(durable.queue_fingerprint ?? '') !== queueFingerprint
+    || durableTarget !== target || !selectedTargets.includes(durableTarget)
+    || !/^[a-f0-9]{64}$/u.test(durableHash)) return null;
+  const absoluteTarget = path.resolve(repoRoot, durableTarget);
+  if (!isPathInside(repoRoot, absoluteTarget)) return null;
+  try {
+    if (sha256File(absoluteTarget) !== durableHash) return null;
+  } catch {
+    return null;
+  }
+  return { materialization_run_stamp: runStamp, materialized_target: durableTarget, post_write_target_sha256: durableHash };
+}
+
+// A public receipt still proves the historical Create-to-Patch transition.
+// This helper only proves the current dirty bytes belong to one in-progress,
+// admitted claim and its immutable post-write digest. It deliberately has no
+// completion or rebaseline side effect.
+export function readVerifiedActiveClaimDurableApply({ repoRoot, stateRoot, claimPath, stage, todoText }) {
+  if (!['pre-claim-boundary', 'pre-claim', 'pre-completion'].includes(stage)) return null;
+  const resolvedStateRoot = path.resolve(stateRoot ?? '');
+  const resolvedClaimPath = stateArtifactPath(resolvedStateRoot, claimPath);
+  if (!resolvedClaimPath) return null;
+  const claim = readJsonInside(resolvedStateRoot, resolvedClaimPath);
+  if (!claim || claim.status !== 'in_progress' || typeof claim.claim_id !== 'string'
+    || typeof claim.selected_todo !== 'string' || typeof claim.run_stamp !== 'string'
+    || typeof claim.queue_fingerprint !== 'string' || claim.queue_generation == null) return null;
+  const selectedTodo = claim.selected_todo;
+  if (!todoBlocks(todoText).some((block) => block === selectedTodo && /^\s*(?:[-*]|\d+[.)])\s+\[ \]\s+/u.test(block))) return null;
+  const selectedTargets = boundedScopeEntries(selectedTodo.split('\n')[0] ?? '')
+    .map((entry) => entry.path).filter(validClaimTarget);
+  if (selectedTargets.length === 0) return null;
+  const queue = readJsonInside(resolvedStateRoot, path.join(resolvedStateRoot, 'todo-claims', 'todo-queue-state.json'));
+  if (!queue || String(queue.generation ?? '') !== String(claim.queue_generation)
+    || String(queue.fingerprint ?? '') !== claim.queue_fingerprint) return null;
+  const selectedTodoSha256 = sha256Text(selectedTodo);
+  const byTarget = new Map();
+  for (const evidencePath of activeClaimEvidencePaths(resolvedStateRoot, claim)) {
+    const materialization = activeClaimMaterializationFromEvidence({
+      repoRoot, stateRoot: resolvedStateRoot, evidencePath, claim,
+      selectedTodoId: todoId(selectedTodo), selectedTodoSha256, selectedTargets
+    });
+    if (materialization) byTarget.set(materialization.materialized_target, materialization);
+  }
+  const materializations = [...byTarget.values()].sort((left, right) => left.materialized_target.localeCompare(right.materialized_target)
+    || left.materialization_run_stamp.localeCompare(right.materialization_run_stamp));
+  if (materializations.length === 0) return null;
+  return {
+    claim_id: claim.claim_id,
+    claim_run_stamp: claim.run_stamp,
+    selected_todo: selectedTodo,
+    selected_todo_id: todoId(selectedTodo),
+    selected_todo_sha256: selectedTodoSha256,
+    selected_todo_first_line: selectedTodo.split('\n')[0] ?? '',
+    queue_generation: claim.queue_generation,
+    queue_fingerprint: claim.queue_fingerprint,
+    materializations
+  };
+}
+
 // Public, source-controlled receipts are intentionally separate from the
 // private preclaim receipts. They only admit a historical Create-to-Patch
 // conversion when the recorded merged PR head is the merge commit's second
 // parent and every target is absent from the first parent yet byte-identical
 // to both the merge tree and current worktree.
-export function readGitMaterializedScopeRebaselineRecords(repoRoot, todoText = null) {
+export function readGitMaterializedScopeRebaselineRecords(repoRoot, todoText = null, options = {}) {
   const text = todoText ?? fs.readFileSync(path.join(repoRoot, '.brownie/todo.md'), 'utf8');
   const records = [];
   for (const block of todoBlocks(text)) {
@@ -172,7 +318,21 @@ export function readGitMaterializedScopeRebaselineRecords(repoRoot, todoText = n
       if (!target.path || path.isAbsolute(target.path) || target.path.includes('..')) throw new Error(`${id}: receipt target path is invalid: ${target.path}`);
       if (gitBlob(repoRoot, firstParent, target.path) !== null) throw new Error(`${id}: receipt target exists in merge first parent: ${target.path}`);
       if (gitBlob(repoRoot, receipt.merge_commit, target.path) !== target.blob) throw new Error(`${id}: receipt target digest mismatch at merge commit: ${target.path}`);
-      if (worktreeBlob(repoRoot, target.path) !== target.blob) throw new Error(`${id}: receipt target digest mismatch in current worktree: ${target.path}`);
+      if (worktreeBlob(repoRoot, target.path) !== target.blob) {
+        let currentSha256 = null;
+        try {
+          currentSha256 = sha256File(path.join(repoRoot, target.path));
+        } catch {
+          throw new Error(`${id}: receipt target is absent in current worktree: ${target.path}`);
+        }
+        const activeMaterialization = options.activeClaimMaterialization?.materializations?.find((candidate) => (
+          candidate?.materialized_target === target.path
+          && candidate?.post_write_target_sha256 === currentSha256
+          && options.activeClaimMaterialization?.selected_todo_id === id
+          && options.activeClaimMaterialization?.selected_todo_sha256 === sha256Text(block)
+        ));
+        if (!activeMaterialization) throw new Error(`${id}: receipt target digest mismatch in current worktree: ${target.path}`);
+      }
     }
     records.push({
       schema_version: 1,
