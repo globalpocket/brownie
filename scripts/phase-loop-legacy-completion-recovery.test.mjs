@@ -8,7 +8,8 @@ import {
   detectLegacyCompletionRecovery,
   attestLegacyMergedCompletion,
   recoverLegacyRejectedCompletion,
-  reconcilePersistedReviewRework
+  reconcilePersistedReviewRework,
+  verifyReviewReworkDeliveryStableLock
 } from './phase-loop-legacy-completion-recovery.mjs';
 import { produceSemanticCompletionEvidence } from './phase-loop-delivery-integrity.mjs';
 import { appendTaskTransition, taskAttemptId } from './phase-loop-task-ledger.mjs';
@@ -584,12 +585,28 @@ test('reconcile terminalizes an interrupted stale root without requiring unrelat
   assert.equal(feedback.completed, true);
   assert.ok(fs.existsSync(path.join(value.root, reconciled.audit_path)));
   assert.ok(fs.existsSync(path.join(value.root, reconciled.stale_claim_archive_path)));
+  assert.ok(feedback.delivery_stable_lock, 'terminalization must persist delivery evidence, not only controller artifacts');
   const selection = evaluateTodoQueue(queue, {
     repoRoot: value.root,
     breakdownPath: path.join(value.root, '.brownie/todo-breakdown.md')
   });
   assert.equal(selection.selected_todo_id, 'E-23d-release-artifact-stateful-soak-target-01');
   assert.match(selection.selected_todo, /after queue consolidation/u);
+  const stable = verifyReviewReworkDeliveryStableLock({
+    repoRoot: value.root,
+    statePath: value.state,
+    lockPath: feedback.delivery_stable_lock.path
+  });
+  assert.equal(stable.next_selection.selected_todo_id, 'E-23d-release-artifact-stateful-soak-target-01');
+  const mismatchedLockPath = path.join(value.root, value.state, 'review-rework-delivery-stable-locks', 'fingerprint-mismatch.json');
+  const mismatchedLock = JSON.parse(fs.readFileSync(path.join(value.root, feedback.delivery_stable_lock.path), 'utf8'));
+  mismatchedLock.delivery_evidence.next_selection.selected_todo_sha256 = '0'.repeat(64);
+  writeJson(mismatchedLockPath, mismatchedLock);
+  assert.throws(() => verifyReviewReworkDeliveryStableLock({
+    repoRoot: value.root,
+    statePath: value.state,
+    lockPath: path.relative(value.root, mismatchedLockPath)
+  }), /review_rework_delivery_stable_lock_evidence_mismatch/);
   // The archive write is durable before the audit and completed-feedback
   // writes.  Simulate that interruption shape and require a later invocation
   // to validate the archive and finish the same terminalization.
@@ -611,6 +628,35 @@ test('reconcile terminalizes an interrupted stale root without requiring unrelat
     now: '2026-10-31T00:02:00.000Z'
   });
   assert.equal(retry.reason, 'review_rework_feedback_already_resolved');
+});
+
+test('delivery stable lock rejects CI, merge, rebaseline, and claim-refresh evidence without delivery binding', () => {
+  const value = fixture();
+  const lockPath = path.join(value.root, value.state, 'review-rework-delivery-stable-locks', 'controller-only.json');
+  writeJson(lockPath, {
+    schema_version: 1,
+    record_type: 'review_rework_delivery_stable_lock',
+    locked_selected_todo: {
+      claim_id: 'legacy-claim',
+      root_claim_id: 'legacy-claim',
+      recovery_id: 'controller-only-recovery',
+      selected_todo_id: 'E-target',
+      selected_todo_sha256: crypto.createHash('sha256').update(target).digest('hex')
+    },
+    controller_only_evidence: {
+      ci_green: true,
+      pr_merged: true,
+      run_id: 'controller-refresh-2',
+      rebaseline_id: 'rebaseline-2',
+      refreshed_claim_id: 'legacy-claim',
+      reconciliation_audit: true
+    }
+  });
+  assert.throws(() => verifyReviewReworkDeliveryStableLock({
+    repoRoot: value.root,
+    statePath: value.state,
+    lockPath: path.relative(value.root, lockPath)
+  }), /review_rework_delivery_stable_lock_evidence_mismatch/);
 });
 
 test('interrupted stale-root terminalization fails closed when the legacy child reappears', () => {
