@@ -114,7 +114,15 @@ function gitMergedMaterializationFixture() {
   execFileSync('git', ['commit', '-qm', 'advance main'], { cwd: root });
   execFileSync('git', ['merge', '--no-ff', '-qm', 'merge followup', 'followup'], { cwd: root });
   const laterMerge = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  execFileSync('git', ['branch', '-f', 'materialization', merge], { cwd: root });
   return { root, id, target, merge, head, blob, laterMerge, followupHead };
+}
+
+function shallowCloneWithReceipt(sourceRoot, branch, todoText) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-git-materialization-shallow-'));
+  execFileSync('git', ['clone', '--quiet', '--depth', '1', '--branch', branch, `file://${sourceRoot}`, root]);
+  fs.writeFileSync(path.join(root, '.brownie/todo.md'), todoText);
+  return root;
 }
 
 test('admits a public Git-merged Create-to-Patch receipt only for the exact target and TODO', () => {
@@ -145,4 +153,34 @@ test('rejects a Git materialization receipt when parent presence, digest, or TOD
   // Keep the fixture target referenced above so a future parser cannot ignore
   // an otherwise valid target list while accepting a mismatched binding.
   assert.equal(fs.existsSync(path.join(root, target)), true);
+});
+
+test('fails closed with an actionable full-history error when a public materialization receipt is unavailable in a shallow checkout', () => {
+  const { root, merge } = gitMergedMaterializationFixture();
+  const todoText = fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8');
+  const missingParents = shallowCloneWithReceipt(root, 'materialization', todoText);
+  const missingCommit = shallowCloneWithReceipt(root, 'main', todoText);
+
+  assert.throws(
+    () => readGitMaterializedScopeRebaselineRecords(missingParents),
+    new RegExp(`Git history unavailable for merge parents of ${merge}; fetch complete history \\(for example actions/checkout with fetch-depth: 0\\)`, 'u')
+  );
+  assert.throws(
+    () => readGitMaterializedScopeRebaselineRecords(missingCommit),
+    new RegExp(`Git history unavailable for merge commit ${merge}; fetch complete history \\(for example actions/checkout with fetch-depth: 0\\)`, 'u')
+  );
+});
+
+test('CI check job retains complete history for public materialization receipt validation', () => {
+  const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+  const workflow = fs.readFileSync(path.join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+  const checkStart = workflow.indexOf('  check:');
+  const checkEnd = workflow.indexOf('\n  runtime-platform:', checkStart);
+  const checkJob = workflow.slice(checkStart, checkEnd);
+  const checkoutPin = 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4';
+
+  assert(checkStart >= 0 && checkEnd > checkStart, 'CI check job must exist');
+  assert(checkJob.includes(`uses: ${checkoutPin}`), 'CI check job must retain the pinned checkout action');
+  assert.match(checkJob, /uses: actions\/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n\s+with:\n(?:\s*#.*\n)*\s+fetch-depth: 0/u);
+  assert.match(checkJob, /git fetch --no-tags origin main:refs\/remotes\/origin\/main/u);
 });

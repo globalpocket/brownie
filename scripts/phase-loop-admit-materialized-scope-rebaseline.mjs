@@ -53,6 +53,10 @@ function gitValue(repoRoot, args) {
   }
 }
 
+function gitHistoryUnavailable(id, subject, revision) {
+  return new Error(`${id}: receipt Git history unavailable for ${subject} ${revision}; fetch complete history (for example actions/checkout with fetch-depth: 0)`);
+}
+
 function sha256Text(value) {
   return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
 }
@@ -148,8 +152,15 @@ export function readGitMaterializedScopeRebaselineRecords(repoRoot, todoText = n
     const id = todoId(block);
     if (receipt.error) throw new Error(`${id || '<missing>'}: ${receipt.error}`);
     if (id !== receipt.todo_id) throw new Error(`${id}: receipt TODO binding mismatch`);
-    const parents = gitValue(repoRoot, ['rev-list', '--parents', '-n', '1', receipt.merge_commit])?.split(/\s+/u) ?? [];
-    if (parents.length !== 3) throw new Error(`${id}: receipt merge commit must have exactly two parents`);
+    const parentLine = gitValue(repoRoot, ['rev-list', '--parents', '-n', '1', receipt.merge_commit]);
+    if (!parentLine) throw gitHistoryUnavailable(id, 'merge commit', receipt.merge_commit);
+    const parents = parentLine.split(/\s+/u);
+    if (parents.length !== 3) {
+      if (gitValue(repoRoot, ['rev-parse', '--is-shallow-repository']) === 'true') {
+        throw gitHistoryUnavailable(id, 'merge parents of', receipt.merge_commit);
+      }
+      throw new Error(`${id}: receipt merge commit must have exactly two parents`);
+    }
     const [, firstParent, secondParent] = parents;
     if (secondParent !== receipt.pr_head) throw new Error(`${id}: receipt PR head is not the merged implementation parent`);
     const targetPaths = receipt.targets.map((target) => target.path);
