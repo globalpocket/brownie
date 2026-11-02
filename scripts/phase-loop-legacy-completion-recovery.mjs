@@ -15,9 +15,9 @@ import {
   readAllTodoReplanRecords,
   readTodoCompletionInvalidationRecords,
   readTodoCompletionRecords,
-  resolveTodoState
+  resolveTodoState,
+  durableCompletionRecordReceipt
 } from './phase-loop-todo-state.mjs';
-import { validateHistoricalDerivedDeliveryReceipt } from './phase-loop-historical-derived-delivery-integrity.mjs';
 import { loadPhaseLoopActorDeployment, roleActor } from './phase-loop-actor-deployment.mjs';
 import { completionConditionSha256, validateTerminalDeliveryReceipt } from './phase-loop-delivery-integrity.mjs';
 import {
@@ -120,6 +120,17 @@ function insertAfterBlock(text, block, addition) {
     .replace(/\s*$/u, '\n');
 }
 
+function removeExactBlock(text, block) {
+  const index = text.indexOf(block);
+  if (index < 0 || text.indexOf(block, index + block.length) >= 0) {
+    throw new Error('review_rework_independent_completion_target_not_unique');
+  }
+  const end = index + block.length;
+  return `${text.slice(0, index).replace(/\n*$/u, '')}\n\n${text.slice(end).replace(/^\n*/u, '')}`
+    .replace(/\n{3,}/gu, '\n\n')
+    .replace(/\s*$/u, '\n');
+}
+
 function reviewRejectionValid(review, expectedAuthor, expectedReviewer) {
   const latest = review?.latest_review;
   const valid = (
@@ -134,61 +145,6 @@ function reviewRejectionValid(review, expectedAuthor, expectedReviewer) {
     && typeof latest.body === 'string' && latest.body.trim()
   );
   return { valid, reason: valid ? null : 'review_rejection_receipt_invalid' };
-}
-
-// A historical derived delivery is normally a valid, durable completion of a
-// target. It ceases to be valid when (and only when) its exact parent/root
-// completion has been rejected. The normal invalidation key deliberately
-// contains the completed claim id, so a root invalidation cannot retract this
-// separate schema-v2 receipt by TODO id alone. Build an additional append-only
-// invalidation only after proving the dependency from the receipt itself. This
-// keeps unrelated completions for the same target untouched.
-function causallyDependentDerivedCompletionInvalidations({
-  completionRecords,
-  completionInvalidationRecords,
-  targetId,
-  rejectedRootClaimId,
-  recoveryId,
-  now
-}) {
-  const invalidatedKeys = new Set(completionInvalidationRecords.map((record) => (
-    `${record.selected_todo_id.trim()}\u0000${record.invalidated_completion_claim_id.trim()}`
-  )));
-  const candidates = completionRecords.filter((record) => {
-    const receipt = record?.delivery_receipt;
-    const evidence = receipt?.historical_delivery_evidence;
-    return record?.record_type === 'derived_historical_delivery_attestation'
-      && record?.selected_todo_id === targetId
-      && record?.root_claim_id === rejectedRootClaimId
-      && evidence?.parent_claim_id === rejectedRootClaimId;
-  });
-  const activeCandidates = candidates.filter((record) => {
-    const claimId = String(record?.claim_id ?? '').trim();
-    return !claimId || !invalidatedKeys.has(`${targetId}\u0000${claimId}`);
-  });
-  const invalid = activeCandidates.find((record) => !validateHistoricalDerivedDeliveryReceipt(record).valid);
-  if (invalid) {
-    throw new Error('causally_dependent_derived_completion_receipt_invalid');
-  }
-  return activeCandidates
-    .map((record) => ({
-      record,
-      claimId: String(record.claim_id ?? '').trim()
-    }))
-    .filter(({ claimId }) => claimId && claimId !== rejectedRootClaimId)
-    .filter(({ claimId }) => !invalidatedKeys.has(`${targetId}\u0000${claimId}`))
-    .map(({ record, claimId }) => ({
-      schema_version: 1,
-      record_type: 'todo_completion_invalidation',
-      selected_todo_id: targetId,
-      invalidated_completion_claim_id: claimId,
-      reason: 'derived_historical_delivery_depends_on_rejected_legacy_completion',
-      rejected_root_completion_claim_id: rejectedRootClaimId,
-      source_record_type: record.record_type,
-      source_completion_record_sha256: sha256(JSON.stringify(canonicalJson(record))),
-      recovery_id: recoveryId,
-      invalidated_at: now
-    }));
 }
 
 function verificationCommands(block) {
@@ -767,6 +723,52 @@ function resolvePersistedReviewReworkFeedback({ root, stateRoot, feedbackPath, f
 }
 
 function completedReviewReworkFeedbackValid({ root, feedback, identity }) {
+  if (feedback?.resolution === 'review_rework_obviated_by_independent_durable_completion') {
+    const delivery = feedback?.resolution_delivery;
+    if (
+      feedback?.completed !== true
+      || typeof feedback?.resolved_at !== 'string' || !feedback.resolved_at
+      || delivery?.stale_claim_id !== identity.claimId
+      || typeof delivery?.independent_completion_claim_id !== 'string' || !delivery.independent_completion_claim_id
+      || typeof delivery?.independent_root_claim_id !== 'string' || !delivery.independent_root_claim_id
+      || delivery.independent_root_claim_id === identity.claimId
+      || delivery.selected_todo_sha256 !== identity.selectedTodoSha256
+      || typeof feedback?.independent_completion_reconciliation?.audit_path !== 'string'
+      || typeof feedback?.independent_completion_reconciliation?.audit_sha256 !== 'string'
+    ) {
+      throw new Error('review_rework_lineage_completed_feedback_invalid');
+    }
+    const archivePath = existingRepositoryRelativePath(root, feedback.archived_path, 'completed_feedback_archive');
+    const archived = readJson(path.resolve(root, archivePath));
+    let archivedIdentity;
+    try {
+      archivedIdentity = reviewReworkFeedbackIdentity(archived);
+    } catch {
+      throw new Error('review_rework_lineage_completed_feedback_archive_invalid');
+    }
+    if (archived?.completed !== false || archivedIdentity.claimId !== identity.claimId
+      || archivedIdentity.recoveryId !== identity.recoveryId
+      || archivedIdentity.selectedFirstLine !== identity.selectedFirstLine) {
+      throw new Error('review_rework_lineage_completed_feedback_archive_invalid');
+    }
+    const auditPath = existingRepositoryRelativePath(
+      root,
+      feedback.independent_completion_reconciliation.audit_path,
+      'independent_completion_reconciliation'
+    );
+    if (sha256(readText(path.resolve(root, auditPath))) !== feedback.independent_completion_reconciliation.audit_sha256) {
+      throw new Error('review_rework_independent_completion_audit_digest_mismatch');
+    }
+    const audit = readJson(path.resolve(root, auditPath));
+    if (audit?.record_type !== 'review_rework_independent_completion_reconciliation'
+      || audit?.stale_claim_id !== identity.claimId
+      || audit?.independent_completion?.claim_id !== delivery.independent_completion_claim_id
+      || audit?.independent_completion?.root_claim_id !== delivery.independent_root_claim_id
+      || audit?.selected_todo_sha256 !== identity.selectedTodoSha256) {
+      throw new Error('review_rework_independent_completion_audit_invalid');
+    }
+    return;
+  }
   if (
     feedback?.completed !== true
     || feedback?.resolution !== 'independent_review_ci_merge_and_semantic_delivery_verified'
@@ -797,6 +799,194 @@ function completedReviewReworkFeedbackValid({ root, feedback, identity }) {
   ) {
     throw new Error('review_rework_lineage_completed_feedback_archive_invalid');
   }
+}
+
+// A matching TODO id is not causality.  An independently delivered historical
+// child may legitimately share the same id as a rejected stale root.  Only a
+// verified receipt whose claim lineage and exact selected-TODO digest differ
+// from the rejected root can obviate that root's review-rework obligation.
+function independentDurableCompletion({ root, stateRoot, identity, source }) {
+  const targetId = todoId(source.selected_todo);
+  const selectedTodoSha256 = sha256(source.selected_todo);
+  if (!targetId || selectedTodoSha256 !== identity.selectedTodoSha256) {
+    throw new Error('review_rework_independent_completion_source_invalid');
+  }
+  const invalidated = new Set(readTodoCompletionInvalidationRecords(root).map((record) => (
+    `${record.selected_todo_id}\u0000${record.invalidated_completion_claim_id}`
+  )));
+  const matches = readTodoCompletionRecords(root).filter((record) => {
+    const receipt = durableCompletionRecordReceipt(record);
+    const receiptRoot = record?.delivery_receipt?.root_claim_id;
+    const historicalParent = record?.delivery_receipt?.historical_delivery_evidence?.parent_claim_id;
+    const rootClaimId = typeof record?.root_claim_id === 'string' ? record.root_claim_id : record?.claim_id;
+    return (
+      receipt.valid
+      && record?.selected_todo_id === targetId
+      && record?.selected_todo_sha256 === selectedTodoSha256
+      && record?.delivery_receipt?.selected_todo_sha256 === selectedTodoSha256
+      && typeof record?.claim_id === 'string' && record.claim_id
+      && typeof rootClaimId === 'string' && rootClaimId
+      && rootClaimId !== identity.claimId
+      && receiptRoot === rootClaimId
+      && !invalidated.has(`${targetId}\u0000${record.claim_id}`)
+      // Derived historical attestations have a second causal pointer.  It
+      // must agree with the receipt root; otherwise this is not admissible.
+      && (record.record_type !== 'derived_historical_delivery_attestation'
+        || historicalParent === rootClaimId)
+    );
+  });
+  if (matches.length > 1) throw new Error('review_rework_independent_completion_ambiguous');
+  if (matches.length === 0) return null;
+  const record = matches[0];
+  return {
+    record,
+    target_id: targetId,
+    selected_todo_sha256: selectedTodoSha256,
+    receipt_sha256: sha256(JSON.stringify(record)),
+    root_claim_id: record.root_claim_id ?? record.claim_id,
+    historical_parent_claim_id: record.delivery_receipt?.historical_delivery_evidence?.parent_claim_id ?? null,
+    replan_record_sha256: record.delivery_receipt?.historical_delivery_evidence?.replan_record_sha256 ?? null
+  };
+}
+
+function terminalizeReviewReworkObviatedByIndependentCompletion({
+  root, stateRoot, feedbackPath, feedback, identity, source, currentClaim, todoText, independent,
+  todoPath = defaultTodo, breakdownPath = defaultBreakdown, now
+}) {
+  const snapshotPath = path.join(stateRoot, 'legacy-completion-recoveries', `${identity.recoveryId}.todo-before.md`);
+  if (!fs.existsSync(snapshotPath)) throw new Error('review_rework_independent_completion_pre_recovery_snapshot_missing');
+  const todoBefore = readText(snapshotPath);
+  const targetId = independent.target_id;
+  const restoredTarget = findBlock(todoText, targetId);
+  const priorTarget = findBlock(todoBefore, targetId);
+  const parentId = sourceTodoId(source.selected_todo);
+  const currentParent = findBlock(todoText, parentId);
+  const priorParent = findBlock(todoBefore, parentId);
+  const reconciliationId = sha256(`${identity.recoveryId}\n${independent.record.claim_id}\n${independent.receipt_sha256}`).slice(0, 24);
+  const archivePath = path.join(stateRoot, 'todo-claims', `review-rework-independent-completion-${reconciliationId}.json`);
+  const auditPath = path.join(stateRoot, 'review-rework-independent-completion-reconciliations', `${reconciliationId}.json`);
+  const feedbackArchivePath = path.join(stateRoot, 'todo-repair-feedback-archive', `review-rework-${identity.recoveryId}-independent-completion-obviated.json`);
+  const completeFeedback = (validation) => {
+    const completedFeedback = {
+      ...feedback,
+      completed: true,
+      resolved_at: now,
+      resolution: 'review_rework_obviated_by_independent_durable_completion',
+      resolution_delivery: {
+        stale_claim_id: identity.claimId,
+        independent_completion_claim_id: independent.record.claim_id,
+        independent_root_claim_id: independent.root_claim_id,
+        selected_todo_sha256: independent.selected_todo_sha256
+      },
+      independent_completion_reconciliation: {
+        audit_path: path.relative(root, auditPath),
+        audit_sha256: sha256(readText(auditPath))
+      },
+      archived_path: path.relative(root, feedbackArchivePath)
+    };
+    atomicJson(feedbackPath, completedFeedback);
+    return {
+      schema_version: 1,
+      applicable: false,
+      resolved: true,
+      reason: 'review_rework_obviated_by_independent_durable_completion',
+      audit_path: path.relative(root, auditPath),
+      stale_claim_archive_path: path.relative(root, archivePath),
+      feedback_path: path.relative(root, feedbackPath),
+      queue_validation: validation
+    };
+  };
+  // An interruption after queue restoration and stale-claim removal must not
+  // resurrect the root.  Resume only from the deterministic audit/artifacts
+  // and only if the queue already equals the pre-recovery form.
+  if (!currentClaim) {
+    if (!fs.existsSync(auditPath) || !fs.existsSync(archivePath) || !fs.existsSync(feedbackArchivePath)
+      || restoredTarget || !currentParent || !priorParent || currentParent.trimEnd() !== priorParent.trimEnd()) {
+      throw new Error('review_rework_independent_completion_current_claim_identity_mismatch');
+    }
+    const audit = readJson(auditPath);
+    if (audit?.record_type !== 'review_rework_independent_completion_reconciliation'
+      || audit?.stale_claim_id !== identity.claimId
+      || audit?.independent_completion?.claim_id !== independent.record.claim_id
+      || audit?.independent_completion?.root_claim_id !== independent.root_claim_id
+      || audit?.selected_todo_sha256 !== independent.selected_todo_sha256) {
+      throw new Error('review_rework_independent_completion_audit_invalid');
+    }
+    return completeFeedback({ valid: true, idempotent_terminalization: true });
+  }
+  if (!currentClaimMatchesReviewReworkFeedback({ currentClaim, identity })
+    || currentClaim?.review_rework?.required !== true
+    || currentClaim?.review_rework?.state !== 'CHANGES_REQUESTED') {
+    throw new Error('review_rework_independent_completion_current_claim_identity_mismatch');
+  }
+  if (priorTarget || restoredTarget?.trimEnd() !== source.selected_todo.trimEnd()
+    || !currentParent || !priorParent
+    || currentParent.trimEnd() !== replaceCheckbox(priorParent, false).trimEnd()) {
+    throw new Error('review_rework_independent_completion_queue_lineage_mismatch');
+  }
+  const restoredQueue = removeExactBlock(todoText, restoredTarget)
+    .replace(currentParent, priorParent)
+    .replace(/\n{3,}/gu, '\n\n');
+  const todoFile = path.resolve(root, todoPath);
+  const breakdownFile = path.resolve(root, breakdownPath);
+  const replanRecords = readAllTodoReplanRecords(root, { breakdownPath: breakdownFile });
+  const stateAfter = resolveTodoState({
+    todoText: restoredQueue,
+    replanRecords,
+    completionRecords: readTodoCompletionRecords(root),
+    completionInvalidationRecords: readTodoCompletionInvalidationRecords(root)
+  });
+  const validation = validateTodoQueueIntegrity({
+    todoBefore: todoText,
+    todoAfter: restoredQueue,
+    afterBreakdownText: fs.existsSync(breakdownFile) ? readText(breakdownFile) : null,
+    completedTodoIds: [...stateAfter.completedIds],
+    unverifiedArchivedCompletionRecords: stateAfter.unverifiedCompletionRecords
+      .filter((record) => stateAfter.unverifiedArchivedCompletionIds.has(record.selected_todo_id)),
+    todoReplanRecords: replanRecords
+  });
+  if (!validation.valid) {
+    throw new Error(`review_rework_independent_completion_queue_validation_failed:${validation.errors.map((error) => error.code).join(',')}`);
+  }
+  const archivedClaim = {
+    ...currentClaim,
+    status: 'review_rework_obviated_by_independent_completion',
+    archive_reason: 'changes_requested_stale_root_obviated_by_independent_durable_completion',
+    independent_completion: {
+      claim_id: independent.record.claim_id,
+      root_claim_id: independent.root_claim_id,
+      selected_todo_sha256: independent.selected_todo_sha256,
+      receipt_sha256: independent.receipt_sha256
+    },
+    terminalized_at: now
+  };
+  const audit = {
+    schema_version: 1,
+    record_type: 'review_rework_independent_completion_reconciliation',
+    reconciliation_id: reconciliationId,
+    stale_claim_id: identity.claimId,
+    recovery_id: identity.recoveryId,
+    selected_todo_id: targetId,
+    selected_todo_sha256: independent.selected_todo_sha256,
+    stale_claim_archive_path: path.relative(root, archivePath),
+    stale_claim_archive_sha256: sha256(JSON.stringify(archivedClaim)),
+    pre_recovery_todo_snapshot_path: path.relative(root, snapshotPath),
+    pre_recovery_todo_snapshot_sha256: sha256(todoBefore),
+    independent_completion: {
+      claim_id: independent.record.claim_id,
+      root_claim_id: independent.root_claim_id,
+      historical_parent_claim_id: independent.historical_parent_claim_id,
+      replan_record_sha256: independent.replan_record_sha256,
+      record_sha256: independent.receipt_sha256
+    },
+    reconciled_at: now
+  };
+  if (!fs.existsSync(archivePath)) atomicJson(archivePath, archivedClaim);
+  if (!fs.existsSync(auditPath)) atomicJson(auditPath, audit);
+  if (!fs.existsSync(feedbackArchivePath)) atomicJson(feedbackArchivePath, feedback);
+  atomicWrite(todoFile, restoredQueue, 0o600);
+  fs.unlinkSync(path.join(stateRoot, 'todo-claims', 'current.json'));
+  return completeFeedback(validation);
 }
 
 function reviewReworkImmutableInputs({ root, feedback, identity }) {
@@ -1219,6 +1409,46 @@ export function reconcilePersistedReviewRework({
   }
   const currentClaimPath = path.join(stateRoot, 'todo-claims', 'current.json');
   let currentClaim = fs.existsSync(currentClaimPath) ? readJson(currentClaimPath) : null;
+  const todoText = readText(path.resolve(root, todoPath));
+  const resolvedDelivery = currentClaim
+    ? resolvedReviewReworkDelivery({ currentClaim, identity, todoText })
+    : { valid: false };
+  if (resolvedDelivery.valid) {
+    return resolvePersistedReviewReworkFeedback({
+      root,
+      stateRoot,
+      feedbackPath,
+      feedback,
+      identity,
+      currentClaim,
+      now
+    });
+  }
+  const source = persistedReviewReworkSource({
+    root,
+    stateRoot,
+    feedbackPath,
+    feedback,
+    identity,
+    now
+  });
+  const independent = independentDurableCompletion({ root, stateRoot, identity, source });
+  if (independent) {
+    return terminalizeReviewReworkObviatedByIndependentCompletion({
+      root,
+      stateRoot,
+      feedbackPath,
+      feedback,
+      identity,
+      source,
+      currentClaim,
+      todoText,
+      independent,
+      todoPath,
+      breakdownPath,
+      now
+    });
+  }
   if (currentClaim && isLiveMatchingReviewReworkClaim({
     root,
     stateRoot,
@@ -1247,29 +1477,6 @@ export function reconcilePersistedReviewRework({
       ...freshDispatch
     };
   }
-  const todoText = readText(path.resolve(root, todoPath));
-  const resolvedDelivery = currentClaim
-    ? resolvedReviewReworkDelivery({ currentClaim, identity, todoText })
-    : { valid: false };
-  if (resolvedDelivery.valid) {
-    return resolvePersistedReviewReworkFeedback({
-      root,
-      stateRoot,
-      feedbackPath,
-      feedback,
-      identity,
-      currentClaim,
-      now
-    });
-  }
-  const source = persistedReviewReworkSource({
-    root,
-    stateRoot,
-    feedbackPath,
-    feedback,
-    identity,
-    now
-  });
   let derivativePreemption = null;
   if (currentClaim && sha256(currentClaim.selected_todo) !== sha256(source.selected_todo)) {
     derivativePreemption = preemptUnappliedReviewReworkDerivative({
@@ -1835,25 +2042,42 @@ export function recoverLegacyRejectedCompletion({
     invalidated_at: now
   };
   const completionRecords = readTodoCompletionRecords(root);
+  // The original schema-v1 completion and a derived historical receipt are
+  // different append-only records.  Retract the latter only when its durable
+  // receipt explicitly names this rejected root as its historical parent;
+  // matching a TODO id alone is never sufficient.
+  const dependentDerivedInvalidations = completionRecords
+    .filter((record) => (
+      record?.record_type === 'derived_historical_delivery_attestation'
+      && record?.selected_todo_id === input.targetId
+      && record?.root_claim_id === input.claimId
+      && record?.delivery_receipt?.historical_delivery_evidence?.parent_claim_id === input.claimId
+      && durableCompletionRecordReceipt(record).valid
+    ))
+    .map((record) => ({
+      schema_version: 1,
+      record_type: 'todo_completion_invalidation',
+      selected_todo_id: input.targetId,
+      invalidated_completion_claim_id: record.claim_id,
+      reason: 'legacy_completion_rejected_causally_dependent_derived_receipt',
+      recovery_id: recoveryId,
+      root_completion_claim_id: input.claimId,
+      pr_url: review.pr_url,
+      review_state: review.latest_review.state,
+      review_head_sha: review.head_sha,
+      invalidated_at: now
+    }));
+  const proposedInvalidations = [proposedInvalidation, ...dependentDerivedInvalidations];
+  const newInvalidations = proposedInvalidations.filter((proposal) => !invalidations.some((record) => (
+    record.selected_todo_id === proposal.selected_todo_id
+    && record.invalidated_completion_claim_id === proposal.invalidated_completion_claim_id
+  )));
   const replanRecords = readAllTodoReplanRecords(root, { breakdownPath: breakdownFile });
-  const derivedInvalidations = causallyDependentDerivedCompletionInvalidations({
-    completionRecords,
-    completionInvalidationRecords: invalidations,
-    targetId: input.targetId,
-    rejectedRootClaimId: input.claimId,
-    recoveryId,
-    now
-  });
-  const recoveryInvalidations = [
-    ...invalidations,
-    ...(!alreadyInvalidated ? [proposedInvalidation] : []),
-    ...derivedInvalidations
-  ];
   const stateAfter = resolveTodoState({
     todoText: restoredTodo,
     replanRecords,
     completionRecords,
-    completionInvalidationRecords: recoveryInvalidations
+    completionInvalidationRecords: [...invalidations, ...newInvalidations]
   });
   const queueValidation = validateTodoQueueIntegrity({
     todoBefore: todoText,
@@ -1870,10 +2094,10 @@ export function recoverLegacyRejectedCompletion({
 
   const recoveryDir = path.join(stateRoot, 'legacy-completion-recoveries');
   const invalidationPath = path.join(stateRoot, 'todo-completion-invalidations', `${input.claimId}-${recoveryId}.json`);
-  const derivedInvalidationPaths = derivedInvalidations.map((invalidation) => path.join(
+  const dependentInvalidationPaths = dependentDerivedInvalidations.map((proposal) => path.join(
     stateRoot,
     'todo-completion-invalidations',
-    `${input.claimId}-derived-${sha256(invalidation.invalidated_completion_claim_id).slice(0, 16)}-${recoveryId}.json`
+    `${proposal.invalidated_completion_claim_id}-${recoveryId}.json`
   ));
   const displacedClaimDigest = currentClaim ? sha256(JSON.stringify(currentClaim)).slice(0, 16) : null;
   const idempotentDisplacement = alreadyInvalidated && currentClaim != null && !partialInitialRecovery && !isLiveMatchingReviewReworkClaim({
@@ -2049,12 +2273,6 @@ export function recoverLegacyRejectedCompletion({
     todo_after_sha256: sha256(restoredTodo),
     archived_current_claim_path: currentClaim ? path.relative(root, currentArchivePath) : null,
     invalidation_path: path.relative(root, invalidationPath),
-    causally_dependent_derived_completion_invalidations: derivedInvalidations.map((invalidation, index) => ({
-      selected_todo_id: invalidation.selected_todo_id,
-      invalidated_completion_claim_id: invalidation.invalidated_completion_claim_id,
-      source_completion_record_sha256: invalidation.source_completion_record_sha256,
-      invalidation_path: path.relative(root, derivedInvalidationPaths[index])
-    })),
     fresh_runtime_dispatch_required: true,
     review_rework_ledger_attempt_isolated: ledgerAttempt.required,
     review_rework_ledger_attempt_id: ledgerAttempt.ledger_attempt_id ?? null,
@@ -2075,8 +2293,10 @@ export function recoverLegacyRejectedCompletion({
   if (!fs.existsSync(todoSnapshotPath)) atomicWrite(todoSnapshotPath, todoText, 0o600);
   if (currentClaim && !fs.existsSync(currentArchivePath)) atomicJson(currentArchivePath, currentClaim);
   if (!alreadyInvalidated) atomicJson(invalidationPath, proposedInvalidation);
-  for (let index = 0; index < derivedInvalidations.length; index += 1) {
-    atomicJson(derivedInvalidationPaths[index], derivedInvalidations[index]);
+  for (let index = 0; index < dependentDerivedInvalidations.length; index += 1) {
+    const proposal = dependentDerivedInvalidations[index];
+    const proposalPath = dependentInvalidationPaths[index];
+    if (!fs.existsSync(proposalPath)) atomicJson(proposalPath, proposal);
   }
   atomicJson(auditPath, audit);
   atomicJson(currentClaimPath, restoredClaim);
@@ -2100,8 +2320,7 @@ export function recoverLegacyRejectedCompletion({
     actor_deployment_path: actors.deploymentPath ? path.relative(root, actors.deploymentPath) : null,
     audit_path: path.relative(root, auditPath),
     invalidation_path: path.relative(root, invalidationPath),
-    causally_dependent_derived_completion_invalidation_paths: derivedInvalidationPaths
-      .map((filePath) => path.relative(root, filePath)),
+    dependent_derived_invalidation_paths: dependentInvalidationPaths.map((entry) => path.relative(root, entry)),
     current_claim_path: path.relative(root, currentClaimPath),
     displaced_claim_archive_path: currentClaim ? path.relative(root, currentArchivePath) : null,
     idempotent_displacement: idempotentDisplacement,
