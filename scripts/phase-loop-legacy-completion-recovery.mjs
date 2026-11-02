@@ -28,6 +28,7 @@ import {
   taskProjection
 } from './phase-loop-task-ledger.mjs';
 import { validateTodoQueueIntegrity } from './phase-loop-todo-queue-integrity.mjs';
+import { evaluateTodoQueue } from './phase-loop-todo-evaluator.mjs';
 
 const defaultTodo = '.brownie/todo.md';
 const defaultBreakdown = '.brownie/todo-breakdown.md';
@@ -107,6 +108,122 @@ function findBlock(text, id) {
 
 function replaceCheckbox(block, checked) {
   return String(block).replace(/^(\s*(?:[-*]|\d+[.)])\s+)\[[ xX]\]/u, `$1[${checked ? 'x' : ' '}]`);
+}
+
+function todoBlockIsCompleted(block) {
+  return /^(?:\s*(?:[-*]|\d+[.)])\s+)\[[xX]\]/u.test(String(block ?? ''));
+}
+
+function deliveryStableLockMismatch() {
+  throw new Error('review_rework_delivery_stable_lock_evidence_mismatch');
+}
+
+function deliveryStableLockLivenessUnavailable() {
+  throw new Error('review_rework_delivery_stable_lock_liveness_unavailable');
+}
+
+function selectedTodoIdentity(selected) {
+  const selectedId = todoId(selected);
+  const selectedSha256 = sha256(selected);
+  if (!selectedId || !selected || typeof selected !== 'string') deliveryStableLockLivenessUnavailable();
+  return { selected_todo_id: selectedId, selected_todo_sha256: selectedSha256 };
+}
+
+function evaluateDeliveryStableNextSelection({ root, todoText, breakdownPath, lockedSelectedTodoSha256 }) {
+  let selection;
+  try {
+    selection = evaluateTodoQueue(todoText, {
+      repoRoot: root,
+      breakdownPath: path.resolve(root, breakdownPath)
+    });
+  } catch {
+    deliveryStableLockLivenessUnavailable();
+  }
+  const next = selectedTodoIdentity(selection?.selected_todo);
+  if (next.selected_todo_sha256 === lockedSelectedTodoSha256) deliveryStableLockLivenessUnavailable();
+  return next;
+}
+
+// This is deliberately a delivery guard, not a controller-health marker.  It
+// does not consider CI, PR state, run IDs, rebaselines, claim refreshes, or
+// controller audits as proof.  The lock is released only by a durable receipt
+// for the exact selected TODO, its consumed queue state, and a live next-TODO
+// selection whose immutable fingerprint is recorded here.
+export function verifyReviewReworkDeliveryStableLock({
+  repoRoot,
+  todoPath = defaultTodo,
+  breakdownPath = defaultBreakdown,
+  lockPath
+}) {
+  const root = path.resolve(repoRoot);
+  const resolvedLockPath = path.resolve(root, lockPath);
+  const relativeLockPath = path.relative(root, resolvedLockPath);
+  if (!relativeLockPath || relativeLockPath.startsWith(`..${path.sep}`) || path.isAbsolute(relativeLockPath)
+    || !fs.existsSync(resolvedLockPath)) {
+    deliveryStableLockMismatch();
+  }
+  const lock = readJson(resolvedLockPath);
+  const locked = lock?.locked_selected_todo;
+  const evidence = lock?.delivery_evidence;
+  if (
+    lock?.schema_version !== 1
+    || lock?.record_type !== 'review_rework_delivery_stable_lock'
+    || typeof locked?.claim_id !== 'string' || !locked.claim_id
+    || locked.root_claim_id !== locked.claim_id
+    || typeof locked?.recovery_id !== 'string' || !locked.recovery_id
+    || typeof locked?.selected_todo_id !== 'string' || !locked.selected_todo_id
+    || !/^[a-f0-9]{64}$/u.test(String(locked?.selected_todo_sha256 ?? ''))
+    || evidence?.stale_claim_absent !== true
+    || typeof evidence?.stale_claim_current_path !== 'string' || !evidence.stale_claim_current_path
+    || evidence?.todo_consumed?.selected_todo_absent !== true
+    || evidence?.todo_consumed?.source_parent_completed !== true
+    || typeof evidence?.todo_consumed?.source_parent_todo_id !== 'string'
+    || typeof evidence?.verified_completion?.claim_id !== 'string' || !evidence.verified_completion.claim_id
+    || typeof evidence?.verified_completion?.root_claim_id !== 'string' || !evidence.verified_completion.root_claim_id
+    || evidence.verified_completion.root_claim_id === locked.claim_id
+    || !/^[a-f0-9]{64}$/u.test(String(evidence?.verified_completion?.receipt_sha256 ?? ''))
+    || typeof evidence?.next_selection?.selected_todo_id !== 'string' || !evidence.next_selection.selected_todo_id
+    || !/^[a-f0-9]{64}$/u.test(String(evidence?.next_selection?.selected_todo_sha256 ?? ''))
+  ) {
+    deliveryStableLockMismatch();
+  }
+  const todoText = readText(path.resolve(root, todoPath));
+  const currentClaimPath = path.resolve(root, evidence.stale_claim_current_path);
+  const currentClaimRelative = path.relative(root, currentClaimPath);
+  if (!currentClaimRelative || currentClaimRelative.startsWith(`..${path.sep}`) || path.isAbsolute(currentClaimRelative)) {
+    deliveryStableLockMismatch();
+  }
+  if (fs.existsSync(currentClaimPath)) {
+    const currentClaim = readJson(currentClaimPath);
+    if (currentClaim?.claim_id === locked.claim_id || currentClaim?.root_claim_id === locked.claim_id) {
+      deliveryStableLockMismatch();
+    }
+  }
+  if (findBlock(todoText, locked.selected_todo_id) || !todoBlockIsCompleted(findBlock(todoText, evidence.todo_consumed.source_parent_todo_id))) {
+    deliveryStableLockMismatch();
+  }
+  const receipts = readTodoCompletionRecords(root).filter((record) => {
+    const receipt = durableCompletionRecordReceipt(record);
+    const rootClaimId = record?.root_claim_id ?? record?.claim_id;
+    return receipt.valid
+      && record?.selected_todo_id === locked.selected_todo_id
+      && record?.selected_todo_sha256 === locked.selected_todo_sha256
+      && record?.claim_id === evidence.verified_completion.claim_id
+      && rootClaimId === evidence.verified_completion.root_claim_id
+      && sha256(JSON.stringify(record)) === evidence.verified_completion.receipt_sha256;
+  });
+  if (receipts.length !== 1) deliveryStableLockMismatch();
+  const next = evaluateDeliveryStableNextSelection({
+    root,
+    todoText,
+    breakdownPath,
+    lockedSelectedTodoSha256: locked.selected_todo_sha256
+  });
+  if (next.selected_todo_id !== evidence.next_selection.selected_todo_id
+    || next.selected_todo_sha256 !== evidence.next_selection.selected_todo_sha256) {
+    deliveryStableLockMismatch();
+  }
+  return { lock, next_selection: next };
 }
 
 function insertAfterBlock(text, block, addition) {
@@ -735,6 +852,8 @@ function completedReviewReworkFeedbackValid({ root, feedback, identity }) {
       || delivery.selected_todo_sha256 !== identity.selectedTodoSha256
       || typeof feedback?.independent_completion_reconciliation?.audit_path !== 'string'
       || typeof feedback?.independent_completion_reconciliation?.audit_sha256 !== 'string'
+      || typeof feedback?.delivery_stable_lock?.path !== 'string'
+      || typeof feedback?.delivery_stable_lock?.sha256 !== 'string'
     ) {
       throw new Error('review_rework_lineage_completed_feedback_invalid');
     }
@@ -766,6 +885,30 @@ function completedReviewReworkFeedbackValid({ root, feedback, identity }) {
       || audit?.independent_completion?.root_claim_id !== delivery.independent_root_claim_id
       || audit?.selected_todo_sha256 !== identity.selectedTodoSha256) {
       throw new Error('review_rework_independent_completion_audit_invalid');
+    }
+    const stableLockPath = existingRepositoryRelativePath(
+      root,
+      feedback.delivery_stable_lock.path,
+      'delivery_stable_lock'
+    );
+    if (sha256(readText(path.resolve(root, stableLockPath))) !== feedback.delivery_stable_lock.sha256) {
+      throw new Error('review_rework_delivery_stable_lock_digest_mismatch');
+    }
+    const stableLock = readJson(path.resolve(root, stableLockPath));
+    if (stableLock?.record_type !== 'review_rework_delivery_stable_lock'
+      || stableLock?.locked_selected_todo?.claim_id !== identity.claimId
+      || stableLock?.locked_selected_todo?.recovery_id !== identity.recoveryId
+      || stableLock?.locked_selected_todo?.selected_todo_sha256 !== identity.selectedTodoSha256
+      || stableLock?.delivery_evidence?.verified_completion?.claim_id !== delivery.independent_completion_claim_id
+      || stableLock?.delivery_evidence?.verified_completion?.root_claim_id !== delivery.independent_root_claim_id
+      || stableLock?.delivery_evidence?.verified_completion?.receipt_sha256 !== audit.independent_completion?.record_sha256
+      || stableLock?.delivery_evidence?.stale_claim_absent !== true
+      || stableLock?.delivery_evidence?.todo_consumed?.selected_todo_absent !== true
+      || stableLock?.delivery_evidence?.todo_consumed?.source_parent_completed !== true
+      || typeof stableLock?.delivery_evidence?.todo_consumed?.source_parent_todo_id !== 'string'
+      || typeof stableLock?.delivery_evidence?.next_selection?.selected_todo_id !== 'string'
+      || !/^[a-f0-9]{64}$/u.test(String(stableLock?.delivery_evidence?.next_selection?.selected_todo_sha256 ?? ''))) {
+      throw new Error('review_rework_delivery_stable_lock_invalid');
     }
     return;
   }
@@ -866,7 +1009,65 @@ function terminalizeReviewReworkObviatedByIndependentCompletion({
   const archivePath = path.join(stateRoot, 'todo-claims', `review-rework-independent-completion-${reconciliationId}.json`);
   const auditPath = path.join(stateRoot, 'review-rework-independent-completion-reconciliations', `${reconciliationId}.json`);
   const feedbackArchivePath = path.join(stateRoot, 'todo-repair-feedback-archive', `review-rework-${identity.recoveryId}-independent-completion-obviated.json`);
-  const completeFeedback = (validation) => {
+  const stableLockPath = path.join(stateRoot, 'review-rework-delivery-stable-locks', `${reconciliationId}.json`);
+  const staleCurrentClaimPath = path.join(stateRoot, 'todo-claims', 'current.json');
+  const establishDeliveryStableLock = () => {
+    const nextSelection = evaluateDeliveryStableNextSelection({
+      root,
+      todoText: readText(path.resolve(root, todoPath)),
+      breakdownPath,
+      lockedSelectedTodoSha256: independent.selected_todo_sha256
+    });
+    const lock = {
+      schema_version: 1,
+      record_type: 'review_rework_delivery_stable_lock',
+      lock_id: reconciliationId,
+      locked_selected_todo: {
+        claim_id: identity.claimId,
+        root_claim_id: identity.claimId,
+        recovery_id: identity.recoveryId,
+        selected_todo_id: targetId,
+        selected_todo_sha256: independent.selected_todo_sha256
+      },
+      delivery_evidence: {
+        // This is intentionally not a controller-progress field.  The
+        // receipt is independently validated delivery for this exact leaf.
+        verified_completion: {
+          claim_id: independent.record.claim_id,
+          root_claim_id: independent.root_claim_id,
+          receipt_sha256: independent.receipt_sha256
+        },
+        todo_consumed: {
+          selected_todo_absent: true,
+          source_parent_todo_id: parentId,
+          source_parent_completed: true
+        },
+        stale_claim_absent: true,
+        stale_claim_current_path: path.relative(root, staleCurrentClaimPath),
+        next_selection: nextSelection
+      },
+      locked_at: now
+    };
+    if (!fs.existsSync(stableLockPath)) atomicJson(stableLockPath, lock);
+    const verified = verifyReviewReworkDeliveryStableLock({
+      repoRoot: root,
+      todoPath,
+      breakdownPath,
+      lockPath: path.relative(root, stableLockPath)
+    });
+    if (verified.lock?.locked_selected_todo?.claim_id !== identity.claimId
+      || verified.lock?.locked_selected_todo?.recovery_id !== identity.recoveryId
+      || verified.lock?.delivery_evidence?.verified_completion?.claim_id !== independent.record.claim_id
+      || verified.lock?.delivery_evidence?.verified_completion?.root_claim_id !== independent.root_claim_id) {
+      deliveryStableLockMismatch();
+    }
+    return {
+      path: path.relative(root, stableLockPath),
+      sha256: sha256(readText(stableLockPath))
+    };
+  };
+  const completeFeedback = (validation, stableLock) => {
+    if (!stableLock?.path || !stableLock?.sha256) deliveryStableLockMismatch();
     const completedFeedback = {
       ...feedback,
       completed: true,
@@ -882,6 +1083,7 @@ function terminalizeReviewReworkObviatedByIndependentCompletion({
         audit_path: path.relative(root, auditPath),
         audit_sha256: sha256(readText(auditPath))
       },
+      delivery_stable_lock: stableLock,
       archived_path: path.relative(root, feedbackArchivePath)
     };
     atomicJson(feedbackPath, completedFeedback);
@@ -896,8 +1098,8 @@ function terminalizeReviewReworkObviatedByIndependentCompletion({
       queue_validation: validation
     };
   };
-  const terminalizationAuditValid = () => {
-    if (!fs.existsSync(auditPath) || !fs.existsSync(archivePath) || !fs.existsSync(feedbackArchivePath)) {
+  const reconciliationAuditMatchesArchive = () => {
+    if (!fs.existsSync(auditPath) || !fs.existsSync(archivePath)) {
       return false;
     }
     const audit = readJson(auditPath);
@@ -911,9 +1113,25 @@ function terminalizeReviewReworkObviatedByIndependentCompletion({
       // atomic writer's whitespace cannot block an interrupted transaction.
       && audit?.stale_claim_archive_sha256 === sha256(JSON.stringify(readJson(archivePath)));
   };
+  const terminalizationAuditValid = () => reconciliationAuditMatchesArchive()
+    && fs.existsSync(feedbackArchivePath);
   const queueAlreadyRestored = !priorTarget
     && !restoredTarget
     && currentParent?.trimEnd() === priorParent?.trimEnd();
+  // A controller can be interrupted after it has restored the semantic queue
+  // and removed the stale claim, but before it has written any reconciliation
+  // artifacts.  Later, unrelated queue consolidation may legitimately alter
+  // an executable downstream TODO.  Do not require that downstream text to
+  // be byte-identical: bind this recovery only to the stale leaf's exact
+  // source parent, both snapshots' completed parent state, and absence of
+  // that leaf.  Any claim or partial artifact remains fail-closed below.
+  const semanticallyRestoredWithoutStaleClaim = !priorTarget
+    && !restoredTarget
+    && Boolean(parentId)
+    && todoId(priorParent) === parentId
+    && todoId(currentParent) === parentId
+    && todoBlockIsCompleted(priorParent)
+    && todoBlockIsCompleted(currentParent);
   // The queue write is intentionally before unlink.  If the process is
   // interrupted in that narrow window, the append-only audit proves the
   // exact queue restoration and permits this run to finish only the stale
@@ -925,19 +1143,154 @@ function terminalizeReviewReworkObviatedByIndependentCompletion({
         || currentClaim?.review_rework?.state !== 'CHANGES_REQUESTED') {
         throw new Error('review_rework_independent_completion_current_claim_identity_mismatch');
       }
-      unlinkCurrentClaim(path.join(stateRoot, 'todo-claims', 'current.json'));
-      return completeFeedback({ valid: true, resumed_after_queue_restore: true });
+      unlinkCurrentClaim(staleCurrentClaimPath);
+      return completeFeedback({ valid: true, resumed_after_queue_restore: true }, establishDeliveryStableLock());
     }
-    return completeFeedback({ valid: true, idempotent_terminalization: true });
+    return completeFeedback({ valid: true, idempotent_terminalization: true }, establishDeliveryStableLock());
   }
   // An interruption after queue restoration and stale-claim removal must not
   // resurrect the root.  Resume only from the deterministic audit/artifacts
   // and only if the queue already equals the pre-recovery form.
   if (!currentClaim) {
+    if (semanticallyRestoredWithoutStaleClaim) {
+      const archivedClaim = {
+        schema_version: 1,
+        record_type: 'review_rework_stale_root_terminalization_archive',
+        claim_id: identity.claimId,
+        root_claim_id: identity.claimId,
+        status: 'review_rework_obviated_by_independent_completion',
+        archive_reason: 'changes_requested_stale_root_absent_after_semantic_queue_restoration',
+        selected_todo: source.selected_todo,
+        selected_todo_sha256: independent.selected_todo_sha256,
+        legacy_completion_recovery: {
+          recovery_id: identity.recoveryId,
+          pre_recovery_todo_snapshot_path: path.relative(root, snapshotPath),
+          pre_recovery_todo_snapshot_sha256: sha256(todoBefore)
+        },
+        review_rework: {
+          required: true,
+          state: 'CHANGES_REQUESTED',
+          pr_url: identity.prUrl,
+          reviewer: identity.reviewer
+        },
+        independent_completion: {
+          claim_id: independent.record.claim_id,
+          root_claim_id: independent.root_claim_id,
+          selected_todo_sha256: independent.selected_todo_sha256,
+          receipt_sha256: independent.receipt_sha256
+        },
+        terminalized_at: now
+      };
+      const breakdownFile = path.resolve(root, breakdownPath);
+      const replanRecords = readAllTodoReplanRecords(root, { breakdownPath: breakdownFile });
+      const stateAfter = resolveTodoState({
+        todoText,
+        replanRecords,
+        completionRecords: readTodoCompletionRecords(root),
+        completionInvalidationRecords: readTodoCompletionInvalidationRecords(root)
+      });
+      const validation = validateTodoQueueIntegrity({
+        todoBefore: todoText,
+        todoAfter: todoText,
+        afterBreakdownText: fs.existsSync(breakdownFile) ? readText(breakdownFile) : null,
+        completedTodoIds: [...stateAfter.completedIds],
+        unverifiedArchivedCompletionRecords: stateAfter.unverifiedCompletionRecords
+          .filter((record) => stateAfter.unverifiedArchivedCompletionIds.has(record.selected_todo_id)),
+        todoReplanRecords: replanRecords
+      });
+      if (!validation.valid) {
+        throw new Error(`review_rework_independent_completion_queue_validation_failed:${validation.errors.map((error) => error.code).join(',')}`);
+      }
+      const archivedClaimMatches = () => {
+        if (!fs.existsSync(archivePath)) return false;
+        const archived = readJson(archivePath);
+        return archived?.record_type === 'review_rework_stale_root_terminalization_archive'
+          && archived?.claim_id === identity.claimId
+          && archived?.root_claim_id === identity.claimId
+          && archived?.selected_todo === source.selected_todo
+          && archived?.selected_todo_sha256 === independent.selected_todo_sha256
+          && archived?.legacy_completion_recovery?.recovery_id === identity.recoveryId
+          && archived?.independent_completion?.claim_id === independent.record.claim_id
+          && archived?.independent_completion?.root_claim_id === independent.root_claim_id
+          && archived?.independent_completion?.receipt_sha256 === independent.receipt_sha256;
+      };
+      const pendingFeedbackArchiveMatches = () => {
+        if (!fs.existsSync(feedbackArchivePath)) return false;
+        const archivedFeedback = readJson(feedbackArchivePath);
+        try {
+          const archivedIdentity = reviewReworkFeedbackIdentity(archivedFeedback);
+          return archivedFeedback?.completed === false
+            && archivedIdentity.claimId === identity.claimId
+            && archivedIdentity.recoveryId === identity.recoveryId
+            && archivedIdentity.selectedFirstLine === identity.selectedFirstLine
+            && archivedIdentity.selectedTodoSha256 === identity.selectedTodoSha256;
+        } catch {
+          return false;
+        }
+      };
+      // There is no cross-file rename primitive.  Each append-only artifact is
+      // atomically written, and a later invocation may finish a partial write
+      // only after validating every artifact that already exists.  This keeps
+      // the absent-claim recovery resumable without accepting foreign state.
+      if (fs.existsSync(archivePath) && !archivedClaimMatches()) {
+        throw new Error('review_rework_independent_completion_terminalization_artifact_mismatch');
+      }
+      if (!fs.existsSync(archivePath)) atomicJson(archivePath, archivedClaim);
+      // The archive is the durable source for the audit digest.  In particular,
+      // a retry must not substitute a newly constructed terminalized_at value
+      // for an archive that was atomically written by an interrupted attempt.
+      // Re-validate after a local write as well, so both paths consume only a
+      // provenance-checked on-disk artifact.
+      if (!archivedClaimMatches()) {
+        throw new Error('review_rework_independent_completion_terminalization_artifact_mismatch');
+      }
+      const archivedClaimForAudit = readJson(archivePath);
+      const audit = {
+        schema_version: 1,
+        record_type: 'review_rework_independent_completion_reconciliation',
+        reconciliation_id: reconciliationId,
+        stale_claim_id: identity.claimId,
+        recovery_id: identity.recoveryId,
+        selected_todo_id: targetId,
+        selected_todo_sha256: independent.selected_todo_sha256,
+        stale_claim_archive_path: path.relative(root, archivePath),
+        stale_claim_archive_sha256: sha256(JSON.stringify(archivedClaimForAudit)),
+        pre_recovery_todo_snapshot_path: path.relative(root, snapshotPath),
+        pre_recovery_todo_snapshot_sha256: sha256(todoBefore),
+        queue_terminalization: {
+          stale_claim_absent: true,
+          source_parent_todo_id: parentId,
+          source_parent_completed_in_snapshot: true,
+          source_parent_completed_in_current_queue: true,
+          selected_todo_absent_in_snapshot: true,
+          selected_todo_absent_in_current_queue: true
+        },
+        independent_completion: {
+          claim_id: independent.record.claim_id,
+          root_claim_id: independent.root_claim_id,
+          historical_parent_claim_id: independent.historical_parent_claim_id,
+          replan_record_sha256: independent.replan_record_sha256,
+          record_sha256: independent.receipt_sha256
+        },
+        reconciled_at: now
+      };
+      if (fs.existsSync(auditPath) && !reconciliationAuditMatchesArchive()) {
+        throw new Error('review_rework_independent_completion_terminalization_artifact_mismatch');
+      }
+      if (!fs.existsSync(auditPath)) atomicJson(auditPath, audit);
+      if (fs.existsSync(feedbackArchivePath) && !pendingFeedbackArchiveMatches()) {
+        throw new Error('review_rework_independent_completion_terminalization_artifact_mismatch');
+      }
+      if (!fs.existsSync(feedbackArchivePath)) atomicJson(feedbackArchivePath, feedback);
+      return completeFeedback(
+        { valid: true, terminalized_after_interrupted_stale_claim_removal: true },
+        establishDeliveryStableLock()
+      );
+    }
     if (!terminalizationAuditValid() || restoredTarget || !currentParent || !priorParent || currentParent.trimEnd() !== priorParent.trimEnd()) {
       throw new Error('review_rework_independent_completion_current_claim_identity_mismatch');
     }
-    return completeFeedback({ valid: true, idempotent_terminalization: true });
+    return completeFeedback({ valid: true, idempotent_terminalization: true }, establishDeliveryStableLock());
   }
   if (!currentClaimMatchesReviewReworkFeedback({ currentClaim, identity })
     || currentClaim?.review_rework?.required !== true
@@ -1010,8 +1363,8 @@ function terminalizeReviewReworkObviatedByIndependentCompletion({
   if (!fs.existsSync(auditPath)) atomicJson(auditPath, audit);
   if (!fs.existsSync(feedbackArchivePath)) atomicJson(feedbackArchivePath, feedback);
   atomicWrite(todoFile, restoredQueue, 0o600);
-  unlinkCurrentClaim(path.join(stateRoot, 'todo-claims', 'current.json'));
-  return completeFeedback(validation);
+  unlinkCurrentClaim(staleCurrentClaimPath);
+  return completeFeedback(validation, establishDeliveryStableLock());
 }
 
 function reviewReworkImmutableInputs({ root, feedback, identity }) {
