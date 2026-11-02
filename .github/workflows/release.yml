@@ -16,6 +16,9 @@ jobs:
           - os: ubuntu-latest
             target: linux-x64
             archive_name: brownie-linux-x64.tar.gz
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            archive_name: brownie-linux-arm64.tar.gz
           - os: macos-latest
             target: darwin-arm64
             archive_name: brownie-darwin-arm64.tar.gz
@@ -105,6 +108,9 @@ jobs:
           - os: ubuntu-latest
             target: linux-x64
             archive_name: brownie-linux-x64.tar.gz
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            archive_name: brownie-linux-arm64.tar.gz
           - os: macos-latest
             target: darwin-arm64
             archive_name: brownie-darwin-arm64.tar.gz

@@ -18,6 +18,7 @@ function writeExecutable(filePath, source) {
 }
 
 function createFixtureArchive(root, options = {}) {
+  const target = options.target ?? 'linux-x64';
   const packageRoot = path.join(root, 'package');
   fs.mkdirSync(packageRoot, { recursive: true });
   const runtimePath = path.join(packageRoot, 'brownie-runtime');
@@ -27,12 +28,22 @@ function createFixtureArchive(root, options = {}) {
   const userWorkspaceReplayMutation = options.userWorkspaceReplayMutation === true;
   const symlinkTargetReplayMutation = options.symlinkTargetReplayMutation === true;
   const truncateLedgerOnResume = options.truncateLedgerOnResume === true;
+  const requireWorkspaceCwd = options.requireWorkspaceCwd === true;
+  const rejectRuntimePathOverride = options.rejectRuntimePathOverride === true;
   writeExecutable(cliPath, `#!/usr/bin/env node
 const fs = require('node:fs');
 const path = require('node:path');
 const root = process.env.BROWNIE_WORKSPACE_ROOT;
 const args = process.argv.slice(2).filter((value) => value !== '--json');
 const write = (value) => process.stdout.write(JSON.stringify(value));
+if (${requireWorkspaceCwd} && fs.realpathSync(process.cwd()) !== fs.realpathSync(root)) {
+  process.stderr.write('packaged CLI was not started in the isolated workspace\\n');
+  process.exit(91);
+}
+if (${rejectRuntimePathOverride} && process.env.BROWNIE_RUNTIME_PATH) {
+  process.stderr.write('packaged CLI received a runtime path override\\n');
+  process.exit(92);
+}
 if (args[0] === 'mode' && args[1] === 'list') {
   write({ ok: true, mode_list: { modes: [{ mode_id: 'fixture', display_name: 'Fixture' }] } });
   process.exit(0);
@@ -63,10 +74,10 @@ if (args[0] === 'resume') {
 }
 process.exit(64);
 `);
-  const artifact = { schema_version: 1, target: 'linux-x64', artifact: { path: 'brownie', sha256: sha256File(cliPath) }, runtime_companion: { path: 'brownie-runtime', sha256: sha256File(runtimePath) } };
+  const artifact = { schema_version: 1, target, artifact: { path: 'brownie', sha256: sha256File(cliPath) }, runtime_companion: { path: 'brownie-runtime', sha256: sha256File(runtimePath) } };
   fs.writeFileSync(path.join(packageRoot, 'artifact-evidence.json'), `${JSON.stringify(artifact)}\n`);
   fs.writeFileSync(path.join(packageRoot, 'SHA256SUMS'), `${artifact.artifact.sha256.slice(7)}  brownie\n${artifact.runtime_companion.sha256.slice(7)}  brownie-runtime\n`);
-  const archivePath = path.join(root, 'brownie-linux-x64.tar.gz');
+  const archivePath = path.join(root, `brownie-${target}.tar.gz`);
   const archive = spawnSync('tar', ['-czf', archivePath, '-C', packageRoot, 'brownie', 'brownie-runtime', 'artifact-evidence.json', 'SHA256SUMS'], { encoding: 'utf8' });
   assert.equal(archive.status, 0, archive.stderr);
   return archivePath;
@@ -83,6 +94,9 @@ test('stateful soak uses only the packaged artifact and records bounded recovery
   });
   assert.equal(evidence.bounds.commands_executed, 3);
   assert.equal(evidence.checks.process_loss_recovery.fresh_process_resume, true);
+  assert.equal(evidence.checks.artifact_execution_boundary.packaged_cli_only, true);
+  assert.equal(evidence.checks.artifact_execution_boundary.isolated_workspace_cwd, true);
+  assert.equal(evidence.checks.artifact_execution_boundary.runtime_path_override_removed, true);
   assert.equal(evidence.checks.process_loss_recovery.initial_command_exit_code, 75);
   assert.equal(evidence.checks.duplicate_side_effect_rejection.ledger_unchanged, true);
   assert.equal(evidence.checks.ledger_workspace_consistency.full_workspace_snapshot, true);
@@ -92,6 +106,23 @@ test('stateful soak uses only the packaged artifact and records bounded recovery
   assert.equal(evidence.checks.finite_convergence.terminal_status, 'no_eligible_task');
   assert.equal(evidence.checks.evidence_chain_integrity.passed, true);
   assert.deepEqual(JSON.parse(fs.readFileSync(evidencePath, 'utf8')), evidence);
+});
+
+test('stateful soak covers the Linux ARM64 release artifact from an isolated workspace without a source runtime override', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-linux-arm64-'));
+  const evidence = runReleaseArtifactStatefulSoak({
+    targetId: 'linux-arm64',
+    archivePath: createFixtureArchive(root, {
+      target: 'linux-arm64',
+      requireWorkspaceCwd: true,
+      rejectRuntimePathOverride: true
+    }),
+    workspaceRoot: path.join(root, 'workspace'),
+    env: { BROWNIE_RUNTIME_PATH: path.join(root, 'must-not-be-used-runtime') }
+  });
+  assert.equal(evidence.target, 'linux-arm64');
+  assert.equal(evidence.checks.artifact_execution_boundary.passed, true);
+  assert.equal(evidence.checks.finite_convergence.commands_executed, 3);
 });
 
 test('stateful soak rejects replay mutations to files outside the Brownie state directory', () => {

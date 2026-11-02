@@ -11,6 +11,7 @@ const maximumCommands = 3;
 
 const releaseTargets = [
   { id: 'linux-x64', archiveName: 'brownie-linux-x64.tar.gz', archiveType: 'tar', binaryName: 'brownie', runtimeName: 'brownie-runtime' },
+  { id: 'linux-arm64', archiveName: 'brownie-linux-arm64.tar.gz', archiveType: 'tar', binaryName: 'brownie', runtimeName: 'brownie-runtime' },
   { id: 'darwin-arm64', archiveName: 'brownie-darwin-arm64.tar.gz', archiveType: 'tar', binaryName: 'brownie', runtimeName: 'brownie-runtime' },
   { id: 'win32-x64', archiveName: 'brownie-win32-x64.zip', archiveType: 'zip', binaryName: 'brownie.exe', runtimeName: 'brownie-runtime.exe' }
 ];
@@ -86,8 +87,8 @@ function assertPackageIntegrity(target, extractionRoot) {
   return { artifact_sha256: artifactEvidence.artifact.sha256, runtime_sha256: artifactEvidence.runtime_companion.sha256 };
 }
 
-function runJson(binaryPath, args, environment) {
-  const result = run(binaryPath, ['--json', ...args], { env: environment });
+function runJson(binaryPath, args, environment, cwd) {
+  const result = run(binaryPath, ['--json', ...args], { env: environment, cwd });
   if (result.status !== 0) throw new Error(`packaged CLI ${args.join(' ')} failed: ${result.stderr || result.stdout}`);
   try {
     return JSON.parse(result.stdout);
@@ -220,10 +221,11 @@ export function runReleaseArtifactStatefulSoak(options = {}) {
   if (process.platform !== 'win32') fs.accessSync(packagedCli, fs.constants.X_OK);
 
   const workspaceRoot = options.workspaceRoot ?? fs.mkdtempSync(path.join(os.tmpdir(), `brownie-release-artifact-soak-workspace-${target.id}-`));
+  fs.mkdirSync(workspaceRoot, { recursive: true });
   const environment = { ...process.env, ...(options.env ?? {}), BROWNIE_WORKSPACE_ROOT: workspaceRoot };
   delete environment.BROWNIE_RUNTIME_PATH;
   const beforeRun = stableWorkspaceSnapshot(workspaceRoot);
-  const modeList = runJson(packagedCli, ['mode', 'list'], environment);
+  const modeList = runJson(packagedCli, ['mode', 'list'], environment, workspaceRoot);
   if (!Array.isArray(modeList?.mode_list?.modes) || modeList.mode_list.modes.length === 0) {
     throw new Error('packaged CLI did not load a Mode Pack');
   }
@@ -236,7 +238,7 @@ export function runReleaseArtifactStatefulSoak(options = {}) {
     ...environment,
     BROWNIE_RELEASE_ARTIFACT_SOAK_PROCESS_LOSS_AFTER_JOURNEY_STARTED: '1'
   };
-  const interrupted = run(packagedCli, ['--json', 'run', soakObjective], { env: interruptionEnvironment });
+  const interrupted = run(packagedCli, ['--json', 'run', soakObjective], { env: interruptionEnvironment, cwd: workspaceRoot });
   if (interrupted.status === 0) throw new Error('runtime run did not lose its process after the durable journey boundary');
   const interruptedRun = discoverInterruptedRun(workspaceRoot);
   const ledgerPath = interruptedRun.ledgerPath;
@@ -247,7 +249,7 @@ export function runReleaseArtifactStatefulSoak(options = {}) {
   const afterRun = stableWorkspaceSnapshot(workspaceRoot);
   if (afterRun === beforeRun) throw new Error('runtime run did not make a durable workspace mutation');
 
-  const resumed = requireObject(runJson(packagedCli, ['resume'], environment).resume, 'runtime process-loss recovery result');
+  const resumed = requireObject(runJson(packagedCli, ['resume'], environment, workspaceRoot).resume, 'runtime process-loss recovery result');
   if (resumed.status !== 'no_eligible_task' || resumed.controller_action !== 'resume' || resumed.continuation_required !== true) {
     throw new Error('runtime did not expose the expected bounded recovery continuation after process loss');
   }
@@ -255,7 +257,7 @@ export function runReleaseArtifactStatefulSoak(options = {}) {
   const ledgerAfterRecovery = readDurableLedger(ledgerPath);
   assertLedgerPreserved(ledgerAfterRun, ledgerAfterRecovery);
 
-  const replay = requireObject(runJson(packagedCli, ['resume'], environment).resume, 'runtime replay result');
+  const replay = requireObject(runJson(packagedCli, ['resume'], environment, workspaceRoot).resume, 'runtime replay result');
   const afterReplay = stableWorkspaceSnapshot(workspaceRoot);
   const ledgerAfterReplay = readDurableLedger(ledgerPath);
   if (replay.status !== 'no_eligible_task' || replay.controller_action !== 'stop' || replay.continuation_required !== false) {
@@ -272,6 +274,7 @@ export function runReleaseArtifactStatefulSoak(options = {}) {
     bounds: { maximum_commands: maximumCommands, commands_executed: maximumCommands, per_command_timeout_ms: 60_000 },
     artifact: { archive_sha256: sha256File(archivePath), ...packageIntegrity },
     checks: {
+      artifact_execution_boundary: { passed: true, packaged_cli_only: true, isolated_workspace_cwd: true, runtime_path_override_removed: true },
       process_loss_recovery: { passed: true, fresh_process_resume: true, initial_command_exit_code: interrupted.status, durable_journey_event: true, recovery_status: resumed.status },
       duplicate_side_effect_rejection: { passed: true, replay_status: replay.status, workspace_unchanged: true, ledger_unchanged: true },
       ledger_workspace_consistency: { passed: true, full_workspace_snapshot: true, ledger_prefix_preserved: true, ledger_after_run: ledgerAfterRun.sha256, ledger_after_recovery: ledgerAfterRecovery.sha256, workspace_after_run: afterRun, workspace_after_recovery: afterRecovery },
