@@ -17,6 +17,7 @@ import {
   readTodoCompletionRecords,
   resolveTodoState
 } from './phase-loop-todo-state.mjs';
+import { validateHistoricalDerivedDeliveryReceipt } from './phase-loop-historical-derived-delivery-integrity.mjs';
 import { loadPhaseLoopActorDeployment, roleActor } from './phase-loop-actor-deployment.mjs';
 import { completionConditionSha256, validateTerminalDeliveryReceipt } from './phase-loop-delivery-integrity.mjs';
 import {
@@ -133,6 +134,61 @@ function reviewRejectionValid(review, expectedAuthor, expectedReviewer) {
     && typeof latest.body === 'string' && latest.body.trim()
   );
   return { valid, reason: valid ? null : 'review_rejection_receipt_invalid' };
+}
+
+// A historical derived delivery is normally a valid, durable completion of a
+// target. It ceases to be valid when (and only when) its exact parent/root
+// completion has been rejected. The normal invalidation key deliberately
+// contains the completed claim id, so a root invalidation cannot retract this
+// separate schema-v2 receipt by TODO id alone. Build an additional append-only
+// invalidation only after proving the dependency from the receipt itself. This
+// keeps unrelated completions for the same target untouched.
+function causallyDependentDerivedCompletionInvalidations({
+  completionRecords,
+  completionInvalidationRecords,
+  targetId,
+  rejectedRootClaimId,
+  recoveryId,
+  now
+}) {
+  const invalidatedKeys = new Set(completionInvalidationRecords.map((record) => (
+    `${record.selected_todo_id.trim()}\u0000${record.invalidated_completion_claim_id.trim()}`
+  )));
+  const candidates = completionRecords.filter((record) => {
+    const receipt = record?.delivery_receipt;
+    const evidence = receipt?.historical_delivery_evidence;
+    return record?.record_type === 'derived_historical_delivery_attestation'
+      && record?.selected_todo_id === targetId
+      && record?.root_claim_id === rejectedRootClaimId
+      && evidence?.parent_claim_id === rejectedRootClaimId;
+  });
+  const activeCandidates = candidates.filter((record) => {
+    const claimId = String(record?.claim_id ?? '').trim();
+    return !claimId || !invalidatedKeys.has(`${targetId}\u0000${claimId}`);
+  });
+  const invalid = activeCandidates.find((record) => !validateHistoricalDerivedDeliveryReceipt(record).valid);
+  if (invalid) {
+    throw new Error('causally_dependent_derived_completion_receipt_invalid');
+  }
+  return activeCandidates
+    .map((record) => ({
+      record,
+      claimId: String(record.claim_id ?? '').trim()
+    }))
+    .filter(({ claimId }) => claimId && claimId !== rejectedRootClaimId)
+    .filter(({ claimId }) => !invalidatedKeys.has(`${targetId}\u0000${claimId}`))
+    .map(({ record, claimId }) => ({
+      schema_version: 1,
+      record_type: 'todo_completion_invalidation',
+      selected_todo_id: targetId,
+      invalidated_completion_claim_id: claimId,
+      reason: 'derived_historical_delivery_depends_on_rejected_legacy_completion',
+      rejected_root_completion_claim_id: rejectedRootClaimId,
+      source_record_type: record.record_type,
+      source_completion_record_sha256: sha256(JSON.stringify(canonicalJson(record))),
+      recovery_id: recoveryId,
+      invalidated_at: now
+    }));
 }
 
 function verificationCommands(block) {
@@ -1780,11 +1836,24 @@ export function recoverLegacyRejectedCompletion({
   };
   const completionRecords = readTodoCompletionRecords(root);
   const replanRecords = readAllTodoReplanRecords(root, { breakdownPath: breakdownFile });
+  const derivedInvalidations = causallyDependentDerivedCompletionInvalidations({
+    completionRecords,
+    completionInvalidationRecords: invalidations,
+    targetId: input.targetId,
+    rejectedRootClaimId: input.claimId,
+    recoveryId,
+    now
+  });
+  const recoveryInvalidations = [
+    ...invalidations,
+    ...(!alreadyInvalidated ? [proposedInvalidation] : []),
+    ...derivedInvalidations
+  ];
   const stateAfter = resolveTodoState({
     todoText: restoredTodo,
     replanRecords,
     completionRecords,
-    completionInvalidationRecords: alreadyInvalidated ? invalidations : [...invalidations, proposedInvalidation]
+    completionInvalidationRecords: recoveryInvalidations
   });
   const queueValidation = validateTodoQueueIntegrity({
     todoBefore: todoText,
@@ -1801,6 +1870,11 @@ export function recoverLegacyRejectedCompletion({
 
   const recoveryDir = path.join(stateRoot, 'legacy-completion-recoveries');
   const invalidationPath = path.join(stateRoot, 'todo-completion-invalidations', `${input.claimId}-${recoveryId}.json`);
+  const derivedInvalidationPaths = derivedInvalidations.map((invalidation) => path.join(
+    stateRoot,
+    'todo-completion-invalidations',
+    `${input.claimId}-derived-${sha256(invalidation.invalidated_completion_claim_id).slice(0, 16)}-${recoveryId}.json`
+  ));
   const displacedClaimDigest = currentClaim ? sha256(JSON.stringify(currentClaim)).slice(0, 16) : null;
   const idempotentDisplacement = alreadyInvalidated && currentClaim != null && !partialInitialRecovery && !isLiveMatchingReviewReworkClaim({
     root,
@@ -1975,6 +2049,12 @@ export function recoverLegacyRejectedCompletion({
     todo_after_sha256: sha256(restoredTodo),
     archived_current_claim_path: currentClaim ? path.relative(root, currentArchivePath) : null,
     invalidation_path: path.relative(root, invalidationPath),
+    causally_dependent_derived_completion_invalidations: derivedInvalidations.map((invalidation, index) => ({
+      selected_todo_id: invalidation.selected_todo_id,
+      invalidated_completion_claim_id: invalidation.invalidated_completion_claim_id,
+      source_completion_record_sha256: invalidation.source_completion_record_sha256,
+      invalidation_path: path.relative(root, derivedInvalidationPaths[index])
+    })),
     fresh_runtime_dispatch_required: true,
     review_rework_ledger_attempt_isolated: ledgerAttempt.required,
     review_rework_ledger_attempt_id: ledgerAttempt.ledger_attempt_id ?? null,
@@ -1995,6 +2075,9 @@ export function recoverLegacyRejectedCompletion({
   if (!fs.existsSync(todoSnapshotPath)) atomicWrite(todoSnapshotPath, todoText, 0o600);
   if (currentClaim && !fs.existsSync(currentArchivePath)) atomicJson(currentArchivePath, currentClaim);
   if (!alreadyInvalidated) atomicJson(invalidationPath, proposedInvalidation);
+  for (let index = 0; index < derivedInvalidations.length; index += 1) {
+    atomicJson(derivedInvalidationPaths[index], derivedInvalidations[index]);
+  }
   atomicJson(auditPath, audit);
   atomicJson(currentClaimPath, restoredClaim);
   atomicJson(feedbackPath, feedback);
@@ -2017,6 +2100,8 @@ export function recoverLegacyRejectedCompletion({
     actor_deployment_path: actors.deploymentPath ? path.relative(root, actors.deploymentPath) : null,
     audit_path: path.relative(root, auditPath),
     invalidation_path: path.relative(root, invalidationPath),
+    causally_dependent_derived_completion_invalidation_paths: derivedInvalidationPaths
+      .map((filePath) => path.relative(root, filePath)),
     current_claim_path: path.relative(root, currentClaimPath),
     displaced_claim_archive_path: currentClaim ? path.relative(root, currentArchivePath) : null,
     idempotent_displacement: idempotentDisplacement,

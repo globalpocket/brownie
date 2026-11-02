@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import {
   buildContractRebaselineReceipt,
   contractChanges,
+  protectedContract,
   readContractRebaselineRecords,
   writeContractRebaselineReceipt
 } from './phase-loop-todo-contract-rebaseline.mjs';
@@ -42,6 +43,155 @@ function scopeMap(firstLine) {
     result.set(entry.path, entry.operation);
   }
   return result;
+}
+
+function gitValue(repoRoot, args) {
+  try {
+    return execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function gitHistoryUnavailable(id, subject, revision) {
+  return new Error(`${id}: receipt Git history unavailable for ${subject} ${revision}; fetch complete history (for example actions/checkout with fetch-depth: 0)`);
+}
+
+function sha256Text(value) {
+  return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
+}
+
+function todoBlocks(text) {
+  const source = String(text ?? '');
+  const starts = [...source.matchAll(/^(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+/gmu)].map((match) => match.index);
+  return starts.map((start, index) => source.slice(start, starts[index + 1] ?? source.length).trimEnd());
+}
+
+function todoId(block) {
+  return String(block ?? '').split('\n')[0]
+    .trim()
+    .replace(/^(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+/u, '')
+    .split(':')[0]
+    ?.trim() ?? '';
+}
+
+function receiptLine(block) {
+  const lines = String(block ?? '').split('\n').map((line) => line.trim()).filter((line) => line.startsWith('Materialization receipt:'));
+  if (lines.length !== 1) return null;
+  const match = lines[0].match(/^Materialization receipt: Git merged Create-to-Patch v1; TODO ([A-Za-z][A-Za-z0-9_.-]*); PR #([1-9][0-9]*); merge commit ([a-f0-9]{40}); PR head ([a-f0-9]{40}); targets (.+)\.$/u);
+  if (!match) return { error: 'malformed Git merged Create-to-Patch receipt' };
+  const targets = [...match[5].matchAll(/`([^`@]+)@([a-f0-9]{40})`/gu)].map((entry) => ({ path: entry[1], blob: entry[2] }));
+  const canonicalTargets = targets.map((target) => `\`${target.path}@${target.blob}\``).join(', ');
+  if (targets.length === 0 || canonicalTargets !== match[5] || new Set(targets.map((target) => target.path)).size !== targets.length) {
+    return { error: 'malformed Git merged Create-to-Patch target evidence' };
+  }
+  return { todo_id: match[1], pr_number: match[2], merge_commit: match[3], pr_head: match[4], targets };
+}
+
+function operationClauses(firstLine) {
+  const matches = [...String(firstLine ?? '').matchAll(/\b(Patch|Create) only\s+/giu)];
+  return matches.map((match, index) => {
+    const end = matches[index + 1]?.index ?? String(firstLine).length;
+    const clause = String(firstLine).slice(match.index, end);
+    return {
+      start: match.index,
+      operation: match[1].toLowerCase(),
+      paths: [...clause.matchAll(/`([^`]+)`/gu)].map((entry) => entry[1])
+    };
+  });
+}
+
+function restoreCreateOnlyFirstLine(afterFirstLine, targets) {
+  const targetSet = new Set(targets);
+  const clauses = operationClauses(afterFirstLine);
+  const conversionStarts = new Set();
+  for (const target of targetSet) {
+    const clause = clauses.find((candidate) => candidate.operation === 'patch' && candidate.paths.includes(target));
+    if (!clause) throw new Error(`receipt target is not a Patch-only scope: ${target}`);
+    if (clause.paths.some((path) => !targetSet.has(path))) {
+      throw new Error(`receipt must cover the complete Patch-only clause: ${target}`);
+    }
+    conversionStarts.add(clause.start);
+  }
+  let offset = 0;
+  let before = String(afterFirstLine);
+  for (const start of [...conversionStarts].sort((left, right) => left - right)) {
+    const at = start + offset;
+    if (before.slice(at, at + 11).toLowerCase() !== 'patch only ') throw new Error('receipt Patch-only clause is not stable');
+    before = `${before.slice(0, at)}Create only ${before.slice(at + 11)}`;
+    offset += 1;
+  }
+  return before;
+}
+
+function replaceFirstLine(block, firstLine) {
+  const lines = String(block).split('\n');
+  lines[0] = firstLine;
+  return lines.filter((line) => !line.trim().startsWith('Materialization receipt:')).join('\n');
+}
+
+function gitBlob(repoRoot, revision, target) {
+  return gitValue(repoRoot, ['rev-parse', `${revision}:${target}`]);
+}
+
+function worktreeBlob(repoRoot, target) {
+  return gitValue(repoRoot, ['hash-object', '--path', target, target]);
+}
+
+// Public, source-controlled receipts are intentionally separate from the
+// private preclaim receipts. They only admit a historical Create-to-Patch
+// conversion when the recorded merged PR head is the merge commit's second
+// parent and every target is absent from the first parent yet byte-identical
+// to both the merge tree and current worktree.
+export function readGitMaterializedScopeRebaselineRecords(repoRoot, todoText = null) {
+  const text = todoText ?? fs.readFileSync(path.join(repoRoot, '.brownie/todo.md'), 'utf8');
+  const records = [];
+  for (const block of todoBlocks(text)) {
+    const receipt = receiptLine(block);
+    if (!receipt) continue;
+    const id = todoId(block);
+    if (receipt.error) throw new Error(`${id || '<missing>'}: ${receipt.error}`);
+    if (id !== receipt.todo_id) throw new Error(`${id}: receipt TODO binding mismatch`);
+    const parentLine = gitValue(repoRoot, ['rev-list', '--parents', '-n', '1', receipt.merge_commit]);
+    if (!parentLine) throw gitHistoryUnavailable(id, 'merge commit', receipt.merge_commit);
+    const parents = parentLine.split(/\s+/u);
+    if (parents.length !== 3) {
+      if (gitValue(repoRoot, ['rev-parse', '--is-shallow-repository']) === 'true') {
+        throw gitHistoryUnavailable(id, 'merge parents of', receipt.merge_commit);
+      }
+      throw new Error(`${id}: receipt merge commit must have exactly two parents`);
+    }
+    const [, firstParent, secondParent] = parents;
+    if (secondParent !== receipt.pr_head) throw new Error(`${id}: receipt PR head is not the merged implementation parent`);
+    const targetPaths = receipt.targets.map((target) => target.path);
+    const beforeFirstLine = restoreCreateOnlyFirstLine(protectedContract(block).first_line, targetPaths);
+    const beforeBlock = replaceFirstLine(block, beforeFirstLine);
+    const beforeContract = protectedContract(beforeBlock);
+    const afterContract = protectedContract(block);
+    for (const target of receipt.targets) {
+      if (!target.path || path.isAbsolute(target.path) || target.path.includes('..')) throw new Error(`${id}: receipt target path is invalid: ${target.path}`);
+      if (gitBlob(repoRoot, firstParent, target.path) !== null) throw new Error(`${id}: receipt target exists in merge first parent: ${target.path}`);
+      if (gitBlob(repoRoot, receipt.merge_commit, target.path) !== target.blob) throw new Error(`${id}: receipt target digest mismatch at merge commit: ${target.path}`);
+      if (worktreeBlob(repoRoot, target.path) !== target.blob) throw new Error(`${id}: receipt target digest mismatch in current worktree: ${target.path}`);
+    }
+    records.push({
+      schema_version: 1,
+      record_type: 'todo_contract_rebaseline',
+      status: 'approved',
+      approval: 'git_merged_create_to_patch_materialization',
+      parent_todo_ids: [],
+      target_todo_ids: [id],
+      // `bounded_scopes` intentionally projects paths, not operations. The
+      // operation-only Create→Patch change is therefore represented by the
+      // immutable rendered first line alone.
+      contract_changes: [{ todo_id: id, changed_fields: ['first_line'], before_contract: beforeContract, after_contract: afterContract }],
+      cause_run: { run_stamp: `git-merge-${receipt.merge_commit.slice(0, 12)}`, event_key: `pr-${receipt.pr_number}`, diagnostic_sha256: sha256Text(JSON.stringify(receipt)) },
+      verification: { repair_command: 'node scripts/phase-loop-admit-materialized-scope-rebaseline.mjs', guard_command: 'node scripts/guard-todo-decomposition.mjs', integrity_command: 'pnpm -s phase-loop:todo-queue-integrity', guard_passed: true },
+      target_snapshots: receipt.targets.map((target) => ({ operation: 'Create', path: target.path, exists_before: false, sha256_before: null, exists_after: true, sha256_after: sha256File(path.join(repoRoot, target.path)) })),
+      target_capture: { mode: 'git_merged_create_materialization', implementation_pr: Number(receipt.pr_number), implementation_pr_head: receipt.pr_head, implementation_merge_commit: receipt.merge_commit }
+    });
+  }
+  return records;
 }
 
 function capturedPlaceholder(records, todoId, targetPath, targetSha256Candidates) {

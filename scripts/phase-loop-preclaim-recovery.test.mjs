@@ -16,7 +16,15 @@ function makeFixture({ repairableCycle = true } = {}) {
   fs.mkdirSync(path.join(root, '.github/workflows'), { recursive: true });
   fs.mkdirSync(path.join(root, '.brownie/private/phase-loop/todo-claims'), { recursive: true });
   fs.mkdirSync(path.join(root, '.brownie/private/phase-loop/todo-replans'), { recursive: true });
-  for (const file of ['guard-todo-decomposition.mjs', 'phase-loop-todo-state.mjs', 'phase-loop-historical-derived-delivery-integrity.mjs', 'phase-loop-bounded-scope.mjs', 'repair-todo-decomposition.mjs']) {
+  for (const file of [
+    'guard-todo-decomposition.mjs',
+    'phase-loop-admit-materialized-scope-rebaseline.mjs',
+    'phase-loop-todo-contract-rebaseline.mjs',
+    'phase-loop-todo-state.mjs',
+    'phase-loop-historical-derived-delivery-integrity.mjs',
+    'phase-loop-bounded-scope.mjs',
+    'repair-todo-decomposition.mjs'
+  ]) {
     fs.copyFileSync(path.join(repositoryRoot, 'scripts', file), path.join(root, 'scripts', file));
   }
   fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({

@@ -62,13 +62,14 @@
   Forbidden changes: do not substitute help/version smoke for the journey, do not use source-tree binaries, do not access production credentials, and do not mark unavailable checks satisfied.
   Verification: run `node --test scripts/release-artifact-runtime-journey.test.mjs`, `pnpm --workspace-root guard:runtime-operational-evidence:test`, and the Release Workflow matrix.
 
-- [ ] E-23d-release-artifact-stateful-soak: Create only `scripts/release-artifact-stateful-soak.mjs` and `scripts/release-artifact-stateful-soak.test.mjs`, then patch only `package.json` and `.github/workflows/release.yml` to invoke them:
+- [ ] E-23d-release-artifact-stateful-soak: Patch only `scripts/release-artifact-stateful-soak.mjs` and `scripts/release-artifact-stateful-soak.test.mjs`, then patch only `package.json` and `.github/workflows/release.yml` to invoke them:
   Route: implementation.
   Source TODO: 2026-10-06 external review: stateful soak remains not_executed for the distributable artifact.
   Depends on: E-23c-release-artifact-runtime-journey.
   Completion condition: a bounded artifact-based soak verifies process-loss recovery, duplicate side-effect rejection, ledger/workspace consistency, resume/replay behavior, finite convergence, and evidence-chain integrity without unbounded CI runtime.
   Forbidden changes: do not count repeated version/help calls as soak, do not weaken convergence bounds, do not use source-tree binaries, and do not declare Product Ready.
   Verification: run `node --test scripts/release-artifact-stateful-soak.test.mjs`, `pnpm --workspace-root guard:runtime-operational-evidence:test`, and the Release Workflow matrix.
+  Materialization receipt: Git merged Create-to-Patch v1; TODO E-23d-release-artifact-stateful-soak; PR #830; merge commit 5de315291e099ab60efb11b7136bcf10396e931f; PR head 7f08df296b089546b363d2905ddaf65fc58f5d46; targets `scripts/release-artifact-stateful-soak.mjs@15a669a6701e70ae2356ac5f41333fcd58f9d2c0`, `scripts/release-artifact-stateful-soak.test.mjs@72e7204830cb2b750c68cbabc73e2d680e29591d`.
 
 - [ ] E-23e-release-evidence-roundtrip-collector: Patch only `scripts/release-runtime-operational-evidence.mjs` and `scripts/release-supply-chain-artifact-evidence.mjs`:
   Route: implementation.

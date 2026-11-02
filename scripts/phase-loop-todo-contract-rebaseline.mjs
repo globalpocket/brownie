@@ -201,16 +201,24 @@ export function buildContractRebaselineReceipt({
 }
 
 function validApprovedRebaselineRecord(record) {
+  const gitMergedMaterialization = record?.approval === 'git_merged_create_to_patch_materialization'
+    && record?.target_capture?.mode === 'git_merged_create_materialization'
+    && /^[a-f0-9]{40}$/u.test(String(record.target_capture?.implementation_merge_commit ?? ''))
+    && /^[a-f0-9]{40}$/u.test(String(record.target_capture?.implementation_pr_head ?? ''))
+    && Number.isSafeInteger(record.target_capture?.implementation_pr)
+    && record.target_capture.implementation_pr > 0;
   return record?.schema_version === 1
     && record.record_type === 'todo_contract_rebaseline'
     && record.status === 'approved'
-    && record.approval === 'preclaim_deterministic_repair_guard_passed'
+    && (record.approval === 'preclaim_deterministic_repair_guard_passed' || gitMergedMaterialization)
     && Array.isArray(record.target_todo_ids)
     && Array.isArray(record.parent_todo_ids)
-    && /^[a-f0-9]{64}$/u.test(String(record.before_todo_sha256 ?? ''))
-    && /^[a-f0-9]{64}$/u.test(String(record.after_todo_sha256 ?? ''))
-    && ((record.before_breakdown_sha256 ?? null) === null || /^[a-f0-9]{64}$/u.test(String(record.before_breakdown_sha256)))
-    && ((record.after_breakdown_sha256 ?? null) === null || /^[a-f0-9]{64}$/u.test(String(record.after_breakdown_sha256)))
+    && (gitMergedMaterialization || (
+      /^[a-f0-9]{64}$/u.test(String(record.before_todo_sha256 ?? ''))
+      && /^[a-f0-9]{64}$/u.test(String(record.after_todo_sha256 ?? ''))
+      && ((record.before_breakdown_sha256 ?? null) === null || /^[a-f0-9]{64}$/u.test(String(record.before_breakdown_sha256)))
+      && ((record.after_breakdown_sha256 ?? null) === null || /^[a-f0-9]{64}$/u.test(String(record.after_breakdown_sha256)))
+    ))
     && Boolean(record.cause_run?.run_stamp && record.cause_run?.event_key && record.cause_run?.diagnostic_sha256)
     && Boolean(record.verification?.repair_command && record.verification?.guard_command && record.verification?.integrity_command && record.verification.guard_passed === true);
 }

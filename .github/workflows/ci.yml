@@ -12,6 +12,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Public materialization receipts validate a historical merge and
+          # both of its parents; the default shallow checkout cannot do so.
+          fetch-depth: 0
 
       - name: Fetch approved phase-loop controller baseline
         run: git fetch --no-tags origin main:refs/remotes/origin/main

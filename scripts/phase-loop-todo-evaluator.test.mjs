@@ -49,12 +49,60 @@ test('CLI isolates phase-loop workspace lineage from the evaluator controller ch
   for (const file of [
     'phase-loop-todo-evaluator.mjs',
     'phase-loop-bounded-scope.mjs',
+    'phase-loop-todo-contract-rebaseline.mjs',
+    'phase-loop-admit-materialized-scope-rebaseline.mjs',
     'phase-loop-todo-state.mjs',
     'phase-loop-historical-derived-delivery-integrity.mjs',
     'guard-todo-decomposition.mjs'
   ]) {
     fs.copyFileSync(path.join('scripts', file), path.join(controllerScripts, file));
   }
+
+  // Keep a self-contained controller Git history: the receipt reader must
+  // prove its merge/parent/blob rules from this checkout, never from the
+  // separately supplied evaluator workspace.
+  const controllerTodoPath = path.join(controllerRoot, '.brownie/todo.md');
+  const controllerTodoBefore = `- [ ] E-controller-materialization: Create only \`scripts/controller-materialization.mjs\`:
+  Route: implementation.
+  Source TODO: E-controller.
+  Depends on: <none>.
+  Completion condition: the bounded controller fixture is verified.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`pnpm --workspace-root check\`.
+`;
+  fs.mkdirSync(path.dirname(controllerTodoPath), { recursive: true });
+  fs.writeFileSync(controllerTodoPath, controllerTodoBefore);
+  const runControllerGit = (...args) => {
+    const result = spawnSync('git', args, { cwd: controllerRoot, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  runControllerGit('init', '--quiet', '--initial-branch=main');
+  runControllerGit('config', 'user.name', 'Brownie test');
+  runControllerGit('config', 'user.email', 'brownie@example.invalid');
+  runControllerGit('add', 'scripts', '.brownie/todo.md');
+  runControllerGit('commit', '--quiet', '-m', 'controller baseline');
+  runControllerGit('checkout', '--quiet', '-b', 'implementation');
+  const controllerTarget = 'scripts/controller-materialization.mjs';
+  fs.writeFileSync(path.join(controllerRoot, controllerTarget), 'export const controllerMaterialization = true;\n');
+  runControllerGit('add', controllerTarget);
+  runControllerGit('commit', '--quiet', '-m', 'implement E-controller-materialization');
+  const implementationHead = runControllerGit('rev-parse', 'HEAD');
+  runControllerGit('checkout', '--quiet', 'main');
+  runControllerGit('merge', '--no-ff', '--quiet', '-m', 'merge implementation', 'implementation');
+  const mergeCommit = runControllerGit('rev-parse', 'HEAD');
+  const targetBlob = runControllerGit('rev-parse', `HEAD:${controllerTarget}`);
+  const controllerTodoAfter = controllerTodoBefore.replace(
+    `Create only \`${controllerTarget}\``,
+    `Patch only \`${controllerTarget}\``
+  ) + `  Materialization receipt: Git merged Create-to-Patch v1; TODO E-controller-materialization; PR #1; merge commit ${mergeCommit}; PR head ${implementationHead}; targets \`${controllerTarget}@${targetBlob}\`.\n`;
+  fs.writeFileSync(controllerTodoPath, controllerTodoAfter);
+  const receiptValidation = spawnSync(process.execPath, [
+    '--input-type=module',
+    '--eval',
+    "import { readGitMaterializedScopeRebaselineRecords } from './scripts/phase-loop-admit-materialized-scope-rebaseline.mjs'; const records = readGitMaterializedScopeRebaselineRecords(process.cwd()); if (records.length !== 1) process.exit(1);"
+  ], { cwd: controllerRoot, encoding: 'utf8' });
+  assert.equal(receiptValidation.status, 0, receiptValidation.stderr);
 
   fs.mkdirSync(path.join(controllerRoot, '.brownie/private/phase-loop/todo-replans'), { recursive: true });
   fs.writeFileSync(path.join(controllerRoot, '.brownie/private/phase-loop/todo-replans', 'first.json'), `${JSON.stringify({
@@ -86,6 +134,11 @@ test('CLI isolates phase-loop workspace lineage from the evaluator controller ch
   });
   assert.equal(controllerSelection.status, 0, controllerSelection.stderr);
   assert.equal(controllerSelection.stdout, '');
+  // The evaluator's decomposition module now statically imports the public
+  // Git-materialization validator. This controller-only launch therefore
+  // proves the complete local import closure is present; it must not fall
+  // back to the separately supplied workspace checkout.
+  assert.doesNotMatch(controllerSelection.stderr, /ERR_MODULE_NOT_FOUND/u);
 
   const workspaceSelection = spawnSync(process.execPath, args, {
     encoding: 'utf8',

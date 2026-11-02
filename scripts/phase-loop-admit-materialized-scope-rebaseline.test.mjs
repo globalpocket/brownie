@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import test from 'node:test';
-import { admitMaterializedScopeRebaseline, validateMaterializedScopeRebaseline } from './phase-loop-admit-materialized-scope-rebaseline.mjs';
+import { admitMaterializedScopeRebaseline, readGitMaterializedScopeRebaselineRecords, validateMaterializedScopeRebaseline } from './phase-loop-admit-materialized-scope-rebaseline.mjs';
+import { validateTodoDecompositionText } from './guard-todo-decomposition.mjs';
 
 function contract(firstLine) {
   return { id: 'E-fixture', first_line: firstLine, route: 'implementation', depends_on: '<none>', completion_condition: 'complete', forbidden_changes: 'none', verification: 'run `node --test`' };
@@ -76,4 +77,110 @@ test('writes an exact receipt for a captured Create-to-Patch contract drift', ()
   assert.equal(result.applied, true);
   assert.equal(result.target_snapshots[0].path, target);
   assert.equal(fs.existsSync(path.join(root, result.receipt_path)), true);
+});
+
+function gitMergedMaterializationFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-git-materialization-'));
+  const id = 'E-fixture';
+  const target = 'scripts/journey.mjs';
+  const baseTodo = `- [ ] ${id}: Create only \`${target}\`:\n  Route: implementation.\n  Source TODO: E-parent.\n  Depends on: <none>.\n  Completion condition: the bounded implementation is complete and independently verified.\n  Forbidden changes: do not edit unrelated release evidence files.\n  Verification: run \`pnpm --workspace-root guard:release-contract:test\`.\n`;
+  fs.mkdirSync(path.join(root, '.brownie'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.brownie/todo.md'), baseTodo);
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
+  execFileSync('git', ['config', 'user.name', 'Brownie'], { cwd: root });
+  execFileSync('git', ['config', 'user.email', 'brownie@example.invalid'], { cwd: root });
+  execFileSync('git', ['add', '.brownie/todo.md'], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'baseline'], { cwd: root });
+  execFileSync('git', ['checkout', '-qb', 'implementation'], { cwd: root });
+  fs.mkdirSync(path.join(root, 'scripts'));
+  fs.writeFileSync(path.join(root, target), 'export const journey = true;\n');
+  execFileSync('git', ['add', target], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'implement fixture TODO E-fixture'], { cwd: root });
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  execFileSync('git', ['checkout', '-q', 'main'], { cwd: root });
+  execFileSync('git', ['merge', '--no-ff', '-qm', 'merge implementation', 'implementation'], { cwd: root });
+  const merge = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  const blob = execFileSync('git', ['rev-parse', `HEAD:${target}`], { cwd: root, encoding: 'utf8' }).trim();
+  const receipt = `  Materialization receipt: Git merged Create-to-Patch v1; TODO ${id}; PR #123; merge commit ${merge}; PR head ${head}; targets \`${target}@${blob}\`.\n`;
+  fs.writeFileSync(path.join(root, '.brownie/todo.md'), baseTodo.replace(`Create only \`${target}\``, `Patch only \`${target}\``) + receipt);
+  execFileSync('git', ['checkout', '-qb', 'followup'], { cwd: root });
+  fs.writeFileSync(path.join(root, 'followup.txt'), 'followup\n');
+  execFileSync('git', ['add', 'followup.txt'], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'followup'], { cwd: root });
+  const followupHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  execFileSync('git', ['checkout', '-q', 'main'], { cwd: root });
+  fs.writeFileSync(path.join(root, 'main.txt'), 'main advance\n');
+  execFileSync('git', ['add', 'main.txt'], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'advance main'], { cwd: root });
+  execFileSync('git', ['merge', '--no-ff', '-qm', 'merge followup', 'followup'], { cwd: root });
+  const laterMerge = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  execFileSync('git', ['branch', '-f', 'materialization', merge], { cwd: root });
+  return { root, id, target, merge, head, blob, laterMerge, followupHead };
+}
+
+function shallowCloneWithReceipt(sourceRoot, branch, todoText) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-git-materialization-shallow-'));
+  execFileSync('git', ['clone', '--quiet', '--depth', '1', '--branch', branch, `file://${sourceRoot}`, root]);
+  fs.writeFileSync(path.join(root, '.brownie/todo.md'), todoText);
+  return root;
+}
+
+test('admits a public Git-merged Create-to-Patch receipt only for the exact target and TODO', () => {
+  const { root, id, target } = gitMergedMaterializationFixture();
+  const records = readGitMaterializedScopeRebaselineRecords(root);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].target_todo_ids[0], id);
+  assert.equal(records[0].contract_changes[0].before_contract.first_line.includes(`Create only \`${target}\``), true);
+  const text = fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8');
+  assert.deepEqual(validateTodoDecompositionText(text, {
+    repoRoot: root,
+    packageScripts: new Set(['guard:release-contract:test'])
+  }), []);
+});
+
+test('rejects a Git materialization receipt when parent presence, digest, or TODO binding is wrong', () => {
+  const { root, target, merge, head, blob, laterMerge, followupHead } = gitMergedMaterializationFixture();
+  const todoPath = path.join(root, '.brownie/todo.md');
+  const original = fs.readFileSync(todoPath, 'utf8');
+  fs.writeFileSync(todoPath, original.replace(`merge commit ${merge}; PR head ${head}`, `merge commit ${laterMerge}; PR head ${followupHead}`));
+  assert.throws(() => readGitMaterializedScopeRebaselineRecords(root), /exists in merge first parent/u);
+  fs.writeFileSync(todoPath, original.replace(`PR head ${head}`, `PR head ${merge}`));
+  assert.throws(() => readGitMaterializedScopeRebaselineRecords(root), /not the merged implementation parent/u);
+  fs.writeFileSync(todoPath, original.replace(blob, '0000000000000000000000000000000000000000'));
+  assert.throws(() => readGitMaterializedScopeRebaselineRecords(root), /digest mismatch/u);
+  fs.writeFileSync(todoPath, original.replace('TODO E-fixture', 'TODO E-other'));
+  assert.throws(() => readGitMaterializedScopeRebaselineRecords(root), /TODO binding mismatch/u);
+  // Keep the fixture target referenced above so a future parser cannot ignore
+  // an otherwise valid target list while accepting a mismatched binding.
+  assert.equal(fs.existsSync(path.join(root, target)), true);
+});
+
+test('fails closed with an actionable full-history error when a public materialization receipt is unavailable in a shallow checkout', () => {
+  const { root, merge } = gitMergedMaterializationFixture();
+  const todoText = fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8');
+  const missingParents = shallowCloneWithReceipt(root, 'materialization', todoText);
+  const missingCommit = shallowCloneWithReceipt(root, 'main', todoText);
+
+  assert.throws(
+    () => readGitMaterializedScopeRebaselineRecords(missingParents),
+    new RegExp(`Git history unavailable for merge parents of ${merge}; fetch complete history \\(for example actions/checkout with fetch-depth: 0\\)`, 'u')
+  );
+  assert.throws(
+    () => readGitMaterializedScopeRebaselineRecords(missingCommit),
+    new RegExp(`Git history unavailable for merge commit ${merge}; fetch complete history \\(for example actions/checkout with fetch-depth: 0\\)`, 'u')
+  );
+});
+
+test('CI check job retains complete history for public materialization receipt validation', () => {
+  const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+  const workflow = fs.readFileSync(path.join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+  const checkStart = workflow.indexOf('  check:');
+  const checkEnd = workflow.indexOf('\n  runtime-platform:', checkStart);
+  const checkJob = workflow.slice(checkStart, checkEnd);
+  const checkoutPin = 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4';
+
+  assert(checkStart >= 0 && checkEnd > checkStart, 'CI check job must exist');
+  assert(checkJob.includes(`uses: ${checkoutPin}`), 'CI check job must retain the pinned checkout action');
+  assert.match(checkJob, /uses: actions\/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n\s+with:\n(?:\s*#.*\n)*\s+fetch-depth: 0/u);
+  assert.match(checkJob, /git fetch --no-tags origin main:refs\/remotes\/origin\/main/u);
 });

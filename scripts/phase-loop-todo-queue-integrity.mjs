@@ -16,6 +16,7 @@ import {
   matchesContractRebaselineRecord,
   readContractRebaselineRecords
 } from './phase-loop-todo-contract-rebaseline.mjs';
+import { readGitMaterializedScopeRebaselineRecords } from './phase-loop-admit-materialized-scope-rebaseline.mjs';
 
 export { readTrackedBreakdownReplanRecords as trackedBreakdownReplanRecords };
 
@@ -519,7 +520,10 @@ export function loadCliInput(args) {
     unverifiedArchivedCompletionRecords: todoState.unverifiedCompletionRecords
       .filter((record) => todoState.unverifiedArchivedCompletionIds.has(record.selected_todo_id)),
     todoReplanRecords: replanRecords,
-    contractRebaselineRecords: readContractRebaselineRecords(repoRoot)
+    contractRebaselineRecords: [
+      ...readContractRebaselineRecords(repoRoot),
+      ...readGitMaterializedScopeRebaselineRecords(repoRoot, todoAfter)
+    ]
   };
 }
 
