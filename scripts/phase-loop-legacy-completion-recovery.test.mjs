@@ -621,6 +621,24 @@ test('reconcile terminalizes an interrupted stale root without requiring unrelat
   });
   assert.equal(resumed.queue_validation.terminalized_after_interrupted_stale_claim_removal, true);
   assert.ok(fs.existsSync(path.join(value.root, resumed.audit_path)));
+  const resumedAudit = JSON.parse(fs.readFileSync(path.join(value.root, resumed.audit_path), 'utf8'));
+  const archivedClaim = JSON.parse(fs.readFileSync(path.join(value.root, resumed.stale_claim_archive_path), 'utf8'));
+  assert.equal(
+    resumedAudit.stale_claim_archive_sha256,
+    crypto.createHash('sha256').update(JSON.stringify(archivedClaim)).digest('hex'),
+    'an audit created after an archive-only interruption must digest the durable archive, not retry time'
+  );
+  // Now model the next interruption boundary: the archive and audit both
+  // exist, but completed feedback has not yet been persisted.  A different
+  // retry time must validate the same archive/audit pair and finish feedback.
+  writeJson(path.join(value.root, value.state, 'todo-repair-feedback.json'), pendingFeedback);
+  const auditOnlyResume = reconcilePersistedReviewRework({
+    repoRoot: value.root,
+    statePath: value.state,
+    actorDeployment: value.actorDeployment,
+    now: '2026-10-31T00:01:45.000Z'
+  });
+  assert.equal(auditOnlyResume.queue_validation.idempotent_terminalization, true);
   const retry = reconcilePersistedReviewRework({
     repoRoot: value.root,
     statePath: value.state,

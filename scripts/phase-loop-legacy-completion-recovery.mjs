@@ -1201,35 +1201,6 @@ function terminalizeReviewReworkObviatedByIndependentCompletion({
       if (!validation.valid) {
         throw new Error(`review_rework_independent_completion_queue_validation_failed:${validation.errors.map((error) => error.code).join(',')}`);
       }
-      const audit = {
-        schema_version: 1,
-        record_type: 'review_rework_independent_completion_reconciliation',
-        reconciliation_id: reconciliationId,
-        stale_claim_id: identity.claimId,
-        recovery_id: identity.recoveryId,
-        selected_todo_id: targetId,
-        selected_todo_sha256: independent.selected_todo_sha256,
-        stale_claim_archive_path: path.relative(root, archivePath),
-        stale_claim_archive_sha256: sha256(JSON.stringify(archivedClaim)),
-        pre_recovery_todo_snapshot_path: path.relative(root, snapshotPath),
-        pre_recovery_todo_snapshot_sha256: sha256(todoBefore),
-        queue_terminalization: {
-          stale_claim_absent: true,
-          source_parent_todo_id: parentId,
-          source_parent_completed_in_snapshot: true,
-          source_parent_completed_in_current_queue: true,
-          selected_todo_absent_in_snapshot: true,
-          selected_todo_absent_in_current_queue: true
-        },
-        independent_completion: {
-          claim_id: independent.record.claim_id,
-          root_claim_id: independent.root_claim_id,
-          historical_parent_claim_id: independent.historical_parent_claim_id,
-          replan_record_sha256: independent.replan_record_sha256,
-          record_sha256: independent.receipt_sha256
-        },
-        reconciled_at: now
-      };
       const archivedClaimMatches = () => {
         if (!fs.existsSync(archivePath)) return false;
         const archived = readJson(archivePath);
@@ -1265,6 +1236,44 @@ function terminalizeReviewReworkObviatedByIndependentCompletion({
         throw new Error('review_rework_independent_completion_terminalization_artifact_mismatch');
       }
       if (!fs.existsSync(archivePath)) atomicJson(archivePath, archivedClaim);
+      // The archive is the durable source for the audit digest.  In particular,
+      // a retry must not substitute a newly constructed terminalized_at value
+      // for an archive that was atomically written by an interrupted attempt.
+      // Re-validate after a local write as well, so both paths consume only a
+      // provenance-checked on-disk artifact.
+      if (!archivedClaimMatches()) {
+        throw new Error('review_rework_independent_completion_terminalization_artifact_mismatch');
+      }
+      const archivedClaimForAudit = readJson(archivePath);
+      const audit = {
+        schema_version: 1,
+        record_type: 'review_rework_independent_completion_reconciliation',
+        reconciliation_id: reconciliationId,
+        stale_claim_id: identity.claimId,
+        recovery_id: identity.recoveryId,
+        selected_todo_id: targetId,
+        selected_todo_sha256: independent.selected_todo_sha256,
+        stale_claim_archive_path: path.relative(root, archivePath),
+        stale_claim_archive_sha256: sha256(JSON.stringify(archivedClaimForAudit)),
+        pre_recovery_todo_snapshot_path: path.relative(root, snapshotPath),
+        pre_recovery_todo_snapshot_sha256: sha256(todoBefore),
+        queue_terminalization: {
+          stale_claim_absent: true,
+          source_parent_todo_id: parentId,
+          source_parent_completed_in_snapshot: true,
+          source_parent_completed_in_current_queue: true,
+          selected_todo_absent_in_snapshot: true,
+          selected_todo_absent_in_current_queue: true
+        },
+        independent_completion: {
+          claim_id: independent.record.claim_id,
+          root_claim_id: independent.root_claim_id,
+          historical_parent_claim_id: independent.historical_parent_claim_id,
+          replan_record_sha256: independent.replan_record_sha256,
+          record_sha256: independent.receipt_sha256
+        },
+        reconciled_at: now
+      };
       if (fs.existsSync(auditPath) && !reconciliationAuditMatchesArchive()) {
         throw new Error('review_rework_independent_completion_terminalization_artifact_mismatch');
       }
