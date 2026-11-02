@@ -109,6 +109,10 @@ function replaceCheckbox(block, checked) {
   return String(block).replace(/^(\s*(?:[-*]|\d+[.)])\s+)\[[ xX]\]/u, `$1[${checked ? 'x' : ' '}]`);
 }
 
+function todoBlockIsCompleted(block) {
+  return /^(?:\s*(?:[-*]|\d+[.)])\s+)\[[xX]\]/u.test(String(block ?? ''));
+}
+
 function insertAfterBlock(text, block, addition) {
   const index = text.indexOf(block);
   if (index < 0 || text.indexOf(block, index + block.length) >= 0) {
@@ -896,8 +900,8 @@ function terminalizeReviewReworkObviatedByIndependentCompletion({
       queue_validation: validation
     };
   };
-  const terminalizationAuditValid = () => {
-    if (!fs.existsSync(auditPath) || !fs.existsSync(archivePath) || !fs.existsSync(feedbackArchivePath)) {
+  const reconciliationAuditMatchesArchive = () => {
+    if (!fs.existsSync(auditPath) || !fs.existsSync(archivePath)) {
       return false;
     }
     const audit = readJson(auditPath);
@@ -911,9 +915,25 @@ function terminalizeReviewReworkObviatedByIndependentCompletion({
       // atomic writer's whitespace cannot block an interrupted transaction.
       && audit?.stale_claim_archive_sha256 === sha256(JSON.stringify(readJson(archivePath)));
   };
+  const terminalizationAuditValid = () => reconciliationAuditMatchesArchive()
+    && fs.existsSync(feedbackArchivePath);
   const queueAlreadyRestored = !priorTarget
     && !restoredTarget
     && currentParent?.trimEnd() === priorParent?.trimEnd();
+  // A controller can be interrupted after it has restored the semantic queue
+  // and removed the stale claim, but before it has written any reconciliation
+  // artifacts.  Later, unrelated queue consolidation may legitimately alter
+  // an executable downstream TODO.  Do not require that downstream text to
+  // be byte-identical: bind this recovery only to the stale leaf's exact
+  // source parent, both snapshots' completed parent state, and absence of
+  // that leaf.  Any claim or partial artifact remains fail-closed below.
+  const semanticallyRestoredWithoutStaleClaim = !priorTarget
+    && !restoredTarget
+    && Boolean(parentId)
+    && todoId(priorParent) === parentId
+    && todoId(currentParent) === parentId
+    && todoBlockIsCompleted(priorParent)
+    && todoBlockIsCompleted(currentParent);
   // The queue write is intentionally before unlink.  If the process is
   // interrupted in that narrow window, the append-only audit proves the
   // exact queue restoration and permits this run to finish only the stale
@@ -934,6 +954,129 @@ function terminalizeReviewReworkObviatedByIndependentCompletion({
   // resurrect the root.  Resume only from the deterministic audit/artifacts
   // and only if the queue already equals the pre-recovery form.
   if (!currentClaim) {
+    if (semanticallyRestoredWithoutStaleClaim) {
+      const archivedClaim = {
+        schema_version: 1,
+        record_type: 'review_rework_stale_root_terminalization_archive',
+        claim_id: identity.claimId,
+        root_claim_id: identity.claimId,
+        status: 'review_rework_obviated_by_independent_completion',
+        archive_reason: 'changes_requested_stale_root_absent_after_semantic_queue_restoration',
+        selected_todo: source.selected_todo,
+        selected_todo_sha256: independent.selected_todo_sha256,
+        legacy_completion_recovery: {
+          recovery_id: identity.recoveryId,
+          pre_recovery_todo_snapshot_path: path.relative(root, snapshotPath),
+          pre_recovery_todo_snapshot_sha256: sha256(todoBefore)
+        },
+        review_rework: {
+          required: true,
+          state: 'CHANGES_REQUESTED',
+          pr_url: identity.prUrl,
+          reviewer: identity.reviewer
+        },
+        independent_completion: {
+          claim_id: independent.record.claim_id,
+          root_claim_id: independent.root_claim_id,
+          selected_todo_sha256: independent.selected_todo_sha256,
+          receipt_sha256: independent.receipt_sha256
+        },
+        terminalized_at: now
+      };
+      const breakdownFile = path.resolve(root, breakdownPath);
+      const replanRecords = readAllTodoReplanRecords(root, { breakdownPath: breakdownFile });
+      const stateAfter = resolveTodoState({
+        todoText,
+        replanRecords,
+        completionRecords: readTodoCompletionRecords(root),
+        completionInvalidationRecords: readTodoCompletionInvalidationRecords(root)
+      });
+      const validation = validateTodoQueueIntegrity({
+        todoBefore: todoText,
+        todoAfter: todoText,
+        afterBreakdownText: fs.existsSync(breakdownFile) ? readText(breakdownFile) : null,
+        completedTodoIds: [...stateAfter.completedIds],
+        unverifiedArchivedCompletionRecords: stateAfter.unverifiedCompletionRecords
+          .filter((record) => stateAfter.unverifiedArchivedCompletionIds.has(record.selected_todo_id)),
+        todoReplanRecords: replanRecords
+      });
+      if (!validation.valid) {
+        throw new Error(`review_rework_independent_completion_queue_validation_failed:${validation.errors.map((error) => error.code).join(',')}`);
+      }
+      const audit = {
+        schema_version: 1,
+        record_type: 'review_rework_independent_completion_reconciliation',
+        reconciliation_id: reconciliationId,
+        stale_claim_id: identity.claimId,
+        recovery_id: identity.recoveryId,
+        selected_todo_id: targetId,
+        selected_todo_sha256: independent.selected_todo_sha256,
+        stale_claim_archive_path: path.relative(root, archivePath),
+        stale_claim_archive_sha256: sha256(JSON.stringify(archivedClaim)),
+        pre_recovery_todo_snapshot_path: path.relative(root, snapshotPath),
+        pre_recovery_todo_snapshot_sha256: sha256(todoBefore),
+        queue_terminalization: {
+          stale_claim_absent: true,
+          source_parent_todo_id: parentId,
+          source_parent_completed_in_snapshot: true,
+          source_parent_completed_in_current_queue: true,
+          selected_todo_absent_in_snapshot: true,
+          selected_todo_absent_in_current_queue: true
+        },
+        independent_completion: {
+          claim_id: independent.record.claim_id,
+          root_claim_id: independent.root_claim_id,
+          historical_parent_claim_id: independent.historical_parent_claim_id,
+          replan_record_sha256: independent.replan_record_sha256,
+          record_sha256: independent.receipt_sha256
+        },
+        reconciled_at: now
+      };
+      const archivedClaimMatches = () => {
+        if (!fs.existsSync(archivePath)) return false;
+        const archived = readJson(archivePath);
+        return archived?.record_type === 'review_rework_stale_root_terminalization_archive'
+          && archived?.claim_id === identity.claimId
+          && archived?.root_claim_id === identity.claimId
+          && archived?.selected_todo === source.selected_todo
+          && archived?.selected_todo_sha256 === independent.selected_todo_sha256
+          && archived?.legacy_completion_recovery?.recovery_id === identity.recoveryId
+          && archived?.independent_completion?.claim_id === independent.record.claim_id
+          && archived?.independent_completion?.root_claim_id === independent.root_claim_id
+          && archived?.independent_completion?.receipt_sha256 === independent.receipt_sha256;
+      };
+      const pendingFeedbackArchiveMatches = () => {
+        if (!fs.existsSync(feedbackArchivePath)) return false;
+        const archivedFeedback = readJson(feedbackArchivePath);
+        try {
+          const archivedIdentity = reviewReworkFeedbackIdentity(archivedFeedback);
+          return archivedFeedback?.completed === false
+            && archivedIdentity.claimId === identity.claimId
+            && archivedIdentity.recoveryId === identity.recoveryId
+            && archivedIdentity.selectedFirstLine === identity.selectedFirstLine
+            && archivedIdentity.selectedTodoSha256 === identity.selectedTodoSha256;
+        } catch {
+          return false;
+        }
+      };
+      // There is no cross-file rename primitive.  Each append-only artifact is
+      // atomically written, and a later invocation may finish a partial write
+      // only after validating every artifact that already exists.  This keeps
+      // the absent-claim recovery resumable without accepting foreign state.
+      if (fs.existsSync(archivePath) && !archivedClaimMatches()) {
+        throw new Error('review_rework_independent_completion_terminalization_artifact_mismatch');
+      }
+      if (!fs.existsSync(archivePath)) atomicJson(archivePath, archivedClaim);
+      if (fs.existsSync(auditPath) && !reconciliationAuditMatchesArchive()) {
+        throw new Error('review_rework_independent_completion_terminalization_artifact_mismatch');
+      }
+      if (!fs.existsSync(auditPath)) atomicJson(auditPath, audit);
+      if (fs.existsSync(feedbackArchivePath) && !pendingFeedbackArchiveMatches()) {
+        throw new Error('review_rework_independent_completion_terminalization_artifact_mismatch');
+      }
+      if (!fs.existsSync(feedbackArchivePath)) atomicJson(feedbackArchivePath, feedback);
+      return completeFeedback({ valid: true, terminalized_after_interrupted_stale_claim_removal: true });
+    }
     if (!terminalizationAuditValid() || restoredTarget || !currentParent || !priorParent || currentParent.trimEnd() !== priorParent.trimEnd()) {
       throw new Error('review_rework_independent_completion_current_claim_identity_mismatch');
     }

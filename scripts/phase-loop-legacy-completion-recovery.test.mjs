@@ -534,6 +534,117 @@ test('reconcile terminalizes stale review-rework from an independently rooted de
   assert.equal(retry.reason, 'review_rework_feedback_already_resolved');
 });
 
+test('reconcile terminalizes an interrupted stale root without requiring unrelated current E23d text to match the saved queue', () => {
+  const value = fixture();
+  const todoPath = path.join(value.root, '.brownie/todo.md');
+  const currentNextTodo = `- [ ] E-23d-release-artifact-stateful-soak-target-01: Patch only \`scripts/release-artifact-stateful-soak.mjs\` after queue consolidation.
+  Route: implementation.
+  Source TODO: E-23d-release-artifact-stateful-soak.
+  Depends on: E-parent.
+  Completion condition: the consolidated current fixture target remains pending.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run \`node --test scripts/release-artifact-stateful-soak.test.mjs\`.`;
+  // This is the persisted pre-recovery queue.  Recovery snapshots it before
+  // materializing E-target and its stale review-rework claim.
+  fs.writeFileSync(todoPath, `# Queue\n\n${parent}\n\n${nextTodo}\n\n${dependent}\n`);
+  const recovered = recoverLegacyRejectedCompletion({
+    repoRoot: value.root,
+    statePath: value.state,
+    completionPath: value.completion,
+    snapshotPath: value.snapshot,
+    reviewReceiptPath: value.review,
+    actorDeployment: value.actorDeployment,
+    now: '2026-10-31T00:00:00.000Z'
+  });
+  assert.equal(recovered.recovered, true, JSON.stringify(recovered));
+  const independentPath = path.join(value.root, value.state, 'todo-completions', 'derived-independent-root.json');
+  writeJson(independentPath, derivedHistoricalCompletion({
+    claimId: 'derived-historical-todo-g624-76d1cb0e2aa4',
+    rootClaimId: 'todo-g624-76d1cb0e2aa4'
+  }));
+  // Simulate the real interrupted shape: the stale claim disappeared before
+  // reconciliation artifacts were created, while a later queue consolidation
+  // changed only the unrelated E23d wording and dependency.
+  fs.writeFileSync(todoPath, `# Queue\n\n${parent}\n\n${currentNextTodo}\n\n${dependent}\n`);
+  fs.unlinkSync(path.join(value.root, value.state, 'todo-claims', 'current.json'));
+
+  const reconciled = reconcilePersistedReviewRework({
+    repoRoot: value.root,
+    statePath: value.state,
+    actorDeployment: value.actorDeployment,
+    now: '2026-10-31T00:01:00.000Z'
+  });
+  assert.equal(reconciled.resolved, true, JSON.stringify(reconciled));
+  assert.equal(reconciled.queue_validation.terminalized_after_interrupted_stale_claim_removal, true);
+  const queue = fs.readFileSync(todoPath, 'utf8');
+  assert.doesNotMatch(queue, /E-target:/u);
+  assert.match(queue, /after queue consolidation/u);
+  assert.match(queue, /Depends on: E-parent/u);
+  const feedback = JSON.parse(fs.readFileSync(path.join(value.root, value.state, 'todo-repair-feedback.json'), 'utf8'));
+  assert.equal(feedback.completed, true);
+  assert.ok(fs.existsSync(path.join(value.root, reconciled.audit_path)));
+  assert.ok(fs.existsSync(path.join(value.root, reconciled.stale_claim_archive_path)));
+  const selection = evaluateTodoQueue(queue, {
+    repoRoot: value.root,
+    breakdownPath: path.join(value.root, '.brownie/todo-breakdown.md')
+  });
+  assert.equal(selection.selected_todo_id, 'E-23d-release-artifact-stateful-soak-target-01');
+  assert.match(selection.selected_todo, /after queue consolidation/u);
+  // The archive write is durable before the audit and completed-feedback
+  // writes.  Simulate that interruption shape and require a later invocation
+  // to validate the archive and finish the same terminalization.
+  const pendingFeedback = JSON.parse(fs.readFileSync(path.join(value.root, feedback.archived_path), 'utf8'));
+  fs.unlinkSync(path.join(value.root, reconciled.audit_path));
+  writeJson(path.join(value.root, value.state, 'todo-repair-feedback.json'), pendingFeedback);
+  const resumed = reconcilePersistedReviewRework({
+    repoRoot: value.root,
+    statePath: value.state,
+    actorDeployment: value.actorDeployment,
+    now: '2026-10-31T00:01:30.000Z'
+  });
+  assert.equal(resumed.queue_validation.terminalized_after_interrupted_stale_claim_removal, true);
+  assert.ok(fs.existsSync(path.join(value.root, resumed.audit_path)));
+  const retry = reconcilePersistedReviewRework({
+    repoRoot: value.root,
+    statePath: value.state,
+    actorDeployment: value.actorDeployment,
+    now: '2026-10-31T00:02:00.000Z'
+  });
+  assert.equal(retry.reason, 'review_rework_feedback_already_resolved');
+});
+
+test('interrupted stale-root terminalization fails closed when the legacy child reappears', () => {
+  const value = fixture();
+  const todoPath = path.join(value.root, '.brownie/todo.md');
+  fs.writeFileSync(todoPath, `# Queue\n\n${parent}\n\n${nextTodo}\n\n${dependent}\n`);
+  const recovered = recoverLegacyRejectedCompletion({
+    repoRoot: value.root,
+    statePath: value.state,
+    completionPath: value.completion,
+    snapshotPath: value.snapshot,
+    reviewReceiptPath: value.review,
+    actorDeployment: value.actorDeployment,
+    now: '2026-10-31T00:00:00.000Z'
+  });
+  assert.equal(recovered.recovered, true, JSON.stringify(recovered));
+  writeJson(path.join(value.root, value.state, 'todo-completions', 'derived-independent-root.json'), derivedHistoricalCompletion({
+    claimId: 'derived-historical-todo-g624-76d1cb0e2aa4',
+    rootClaimId: 'todo-g624-76d1cb0e2aa4'
+  }));
+  fs.writeFileSync(todoPath, `# Queue\n\n${parent}\n\n${target}\n\n${nextTodo}\n\n${dependent}\n`);
+  fs.unlinkSync(path.join(value.root, value.state, 'todo-claims', 'current.json'));
+
+  assert.throws(() => reconcilePersistedReviewRework({
+    repoRoot: value.root,
+    statePath: value.state,
+    actorDeployment: value.actorDeployment,
+    now: '2026-10-31T00:01:00.000Z'
+  }), /review_rework_independent_completion_current_claim_identity_mismatch/);
+  const feedback = JSON.parse(fs.readFileSync(path.join(value.root, value.state, 'todo-repair-feedback.json'), 'utf8'));
+  assert.equal(feedback.completed, false);
+  assert.equal(fs.existsSync(path.join(value.root, value.state, 'review-rework-independent-completion-reconciliations')), false);
+});
+
 test('recovery isolates an already-terminal same-root task attempt without reopening its history', () => {
   const value = fixture();
   const sourceTaskId = taskAttemptId('E-target', 'legacy-claim');
