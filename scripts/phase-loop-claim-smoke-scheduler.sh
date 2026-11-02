@@ -35,6 +35,15 @@ phase_loop_claim_smoke_group_has_live_members() {
   ps -eo pgid=,stat= 2>/dev/null | awk -v target="$pgid" '$1 == target && $2 !~ /^Z/ { found = 1 } END { exit(found ? 0 : 1) }'
 }
 
+phase_loop_claim_smoke_process_group_members() {
+  local pgid="$1"
+  case "$pgid" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  ps -eo pid=,ppid=,pgid=,stat=,command= 2>/dev/null |
+    awk -v target="$pgid" '$3 == target && $4 !~ /^Z/ { print }'
+}
+
 phase_loop_claim_smoke_start_process_group() {
   if command -v setsid >/dev/null 2>&1; then
     setsid "$@" &
@@ -83,6 +92,11 @@ phase_loop_claim_smoke_terminate_process_group() {
   fi
   kill -KILL "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
+  if [ -n "$pgid" ] && phase_loop_claim_smoke_group_has_live_members "$pgid"; then
+    echo "phase-loop claim smoke process-group cleanup failed: pid=${pid} pgid=${pgid} members=$(phase_loop_claim_smoke_process_group_members "$pgid" | tr '\n' ';')" >&2
+    return 1
+  fi
+  return 0
 }
 
 phase_loop_claim_smoke_append_audit_event() {
@@ -377,6 +391,7 @@ phase_loop_claim_smoke_run_scheduler() {
   local audit_file="$shard_dir/scheduler.audit.jsonl"
   local manifest_file="${PHASE_LOOP_CLAIM_SMOKE_AUDIT_OUTPUT:-$shard_dir/claim-smoke-audit.json}"
   local watchdog_pid=""
+  local watchdog_pgid=""
   local scheduler_parent_pid="$$"
   local scheduler_timed_out=0
   local cleanup_running=0
@@ -458,7 +473,19 @@ phase_loop_claim_smoke_run_scheduler() {
       return
     fi
     cleanup_running=1
-    kill "$watchdog_pid" 2>/dev/null || true
+    if [ -n "$watchdog_pid" ]; then
+      if phase_loop_claim_smoke_process_is_live "$watchdog_pid" || phase_loop_claim_smoke_group_has_live_members "$watchdog_pgid"; then
+        if ! phase_loop_claim_smoke_terminate_process_group "$watchdog_pid" 1 "$watchdog_pgid"; then
+          claim_smoke_failed=1
+          phase_loop_claim_smoke_emit_audit_event "$audit_file" watchdog_cleanup_failed "" "$watchdog_pid" "$watchdog_pgid" failed 124 "" "" "" "" "$PWD" "watchdog process group remained live after TERM/KILL; inspect stderr for members" none false || true
+        else
+          phase_loop_claim_smoke_emit_audit_event "$audit_file" watchdog_stopped "" "$watchdog_pid" "$watchdog_pgid" stopped "" "" "" "" "" "$PWD" "watchdog process group terminated" none true || true
+        fi
+      else
+        wait "$watchdog_pid" 2>/dev/null || true
+        phase_loop_claim_smoke_emit_audit_event "$audit_file" watchdog_stopped "" "$watchdog_pid" "$watchdog_pgid" stopped "" "" "" "" "" "$PWD" "watchdog already exited" none true || true
+      fi
+    fi
     for i in "${!active_pids[@]}"; do
       pid="${active_pids[$i]}"
       pgid="${active_pgids[$i]}"
@@ -484,17 +511,24 @@ phase_loop_claim_smoke_run_scheduler() {
 
   phase_loop_claim_smoke_scheduler_signal() {
     scheduler_timed_out=1
+    phase_loop_claim_smoke_emit_audit_event "$audit_file" scheduler_timeout "" "$watchdog_pid" "$watchdog_pgid" timed_out 124 "" "" "" "" "$PWD" "watchdog expired after effective=${effective_watchdog_seconds}s configured=${configured_watchdog_seconds}s required=${required_watchdog_seconds}s; command=sleep ${effective_watchdog_seconds}; parent_pid=${scheduler_parent_pid}" none false || true
     exit 143
   }
 
   trap phase_loop_claim_smoke_cleanup EXIT
   trap phase_loop_claim_smoke_scheduler_signal TERM INT
-  (
-    sleep "$effective_watchdog_seconds"
-    phase_loop_claim_smoke_emit_audit_event "$audit_file" scheduler_timeout "" "" "" timed_out 124 "" "" "" "" "$PWD" "watchdog expired after effective=${effective_watchdog_seconds}s configured=${configured_watchdog_seconds}s required=${required_watchdog_seconds}s"
-    kill -TERM "$scheduler_parent_pid" 2>/dev/null || true
-  ) &
-  watchdog_pid="$!"
+  # The watchdog has its own process group.  Killing only the parent shell of
+  # a background `( sleep … )` leaves its sleep child orphaned on Linux, which
+  # makes GitHub Actions hang during orphan-process cleanup after VSIX check.
+  # Keep the deadline bounded and make cleanup fail closed if the group cannot
+  # be reaped.
+  phase_loop_claim_smoke_start_process_group "$BASH" -c '
+    sleep "$1"
+    kill -TERM "$2" 2>/dev/null || exit 0
+  ' phase-loop-claim-smoke-watchdog "$effective_watchdog_seconds" "$scheduler_parent_pid"
+  watchdog_pid="$PHASE_LOOP_CLAIM_SMOKE_LAST_PID"
+  watchdog_pgid="$PHASE_LOOP_CLAIM_SMOKE_LAST_PGID"
+  phase_loop_claim_smoke_emit_audit_event "$audit_file" watchdog_started "" "$watchdog_pid" "$watchdog_pgid" running "" "" "" "" "" "$PWD" "command=sleep ${effective_watchdog_seconds}; parent_pid=${scheduler_parent_pid}" none ""
 
   while [ "$batch_start" -lt "${#shards[@]}" ]; do
     active_pids=()
@@ -608,5 +642,8 @@ phase_loop_claim_smoke_run_scheduler() {
   done
   phase_loop_claim_smoke_cleanup
   trap - EXIT TERM INT
+  if [ "$claim_smoke_failed" -ne 0 ]; then
+    return 1
+  fi
   return 0
 }

@@ -16,7 +16,10 @@ import {
   matchesContractRebaselineRecord,
   readContractRebaselineRecords
 } from './phase-loop-todo-contract-rebaseline.mjs';
-import { readGitMaterializedScopeRebaselineRecords } from './phase-loop-admit-materialized-scope-rebaseline.mjs';
+import {
+  readGitMaterializedScopeRebaselineRecords,
+  readVerifiedActiveClaimDurableApply
+} from './phase-loop-admit-materialized-scope-rebaseline.mjs';
 
 export { readTrackedBreakdownReplanRecords as trackedBreakdownReplanRecords };
 
@@ -26,7 +29,10 @@ function parseArgs(argv) {
   const args = {
     repo: process.cwd(),
     todo: defaultTodoPath,
-    breakdown: '.brownie/todo-breakdown.md'
+    breakdown: '.brownie/todo-breakdown.md',
+    stateRoot: null,
+    claimPath: null,
+    stage: 'general'
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -36,6 +42,12 @@ function parseArgs(argv) {
       args.todo = argv[++index];
     } else if (arg === '--breakdown') {
       args.breakdown = argv[++index];
+    } else if (arg === '--state') {
+      args.stateRoot = argv[++index];
+    } else if (arg === '--claim') {
+      args.claimPath = argv[++index];
+    } else if (arg === '--stage') {
+      args.stage = argv[++index];
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }
@@ -506,6 +518,19 @@ export function loadCliInput(args) {
     completionRecords: readTodoCompletionRecords(repoRoot),
     completionInvalidationRecords: readTodoCompletionInvalidationRecords(repoRoot)
   });
+  // Queue integrity revalidates the same public materialization receipt as
+  // decomposition.  Thread an exact, already persisted active-claim proof
+  // through this real command path rather than treating its old Git blob as a
+  // reason to ignore an admitted, unchanged runtime apply.
+  const activeClaimMaterialization = args.stateRoot && args.claimPath
+    ? readVerifiedActiveClaimDurableApply({
+      repoRoot,
+      stateRoot: path.resolve(args.stateRoot),
+      claimPath: args.claimPath,
+      stage: args.stage,
+      todoText: todoAfter
+    })
+    : null;
   return {
     repoRoot,
     todoRelative,
@@ -522,7 +547,7 @@ export function loadCliInput(args) {
     todoReplanRecords: replanRecords,
     contractRebaselineRecords: [
       ...readContractRebaselineRecords(repoRoot),
-      ...readGitMaterializedScopeRebaselineRecords(repoRoot, todoAfter)
+      ...readGitMaterializedScopeRebaselineRecords(repoRoot, todoAfter, { activeClaimMaterialization })
     ]
   };
 }

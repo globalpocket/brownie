@@ -84,6 +84,28 @@ assert_json "$normal_output" 'all(r.get("pid") and r.get("pgid") and r.get("stdo
 assert_json "$normal_output" 'all(r.get("started_monotonic_ns") and r.get("deadline_monotonic_ns") and r["deadline_monotonic_ns"] > r["started_monotonic_ns"] for r in manifest["records"] if r.get("event") == "shard_started")'
 grep -Fq '"event": "shard_started"' "$fixture_root/normal-driver.stderr"
 grep -Fq '"event": "shard_finished"' "$fixture_root/normal-driver.stderr"
+assert_json "$normal_output" 'any(r.get("event") == "watchdog_started" and r.get("pid") and r.get("pgid") and "command=sleep" in r.get("detail", "") for r in manifest["records"])'
+assert_json "$normal_output" 'any(r.get("event") == "watchdog_stopped" and r.get("accepted") is True for r in manifest["records"])'
+
+# A completed scheduler must reap the watchdog's entire isolated process
+# group, including its `sleep` child.  This is the Linux/GitHub Actions
+# regression: a dead watchdog shell with a live sleep child otherwise leaves
+# VSIX check stuck in Actions' orphan-process cleanup.
+read -r normal_watchdog_pid normal_watchdog_pgid <<EOF
+$(python3 - "$normal_output" <<'PY'
+import json
+import sys
+
+records = json.load(open(sys.argv[1], encoding="utf-8"))["records"]
+watchdog = next(record for record in records if record.get("event") == "watchdog_started")
+print(watchdog["pid"], watchdog["pgid"])
+PY
+)
+EOF
+if phase_loop_claim_smoke_process_is_live "$normal_watchdog_pid" || phase_loop_claim_smoke_group_has_live_members "$normal_watchdog_pgid"; then
+  echo "scheduler left watchdog process group live: pid=$normal_watchdog_pid pgid=$normal_watchdog_pgid members=$(phase_loop_claim_smoke_process_group_members "$normal_watchdog_pgid" | tr '\n' ';')" >&2
+  exit 1
+fi
 
 capacity_output="$fixture_root/capacity-audit.json"
 PHASE_LOOP_CLAIM_SMOKE_CPU_COUNT=4 \

@@ -767,12 +767,14 @@ export function writeTerminalExecutionEvidence({
   runStamp,
   workspaceBefore = '',
   workspaceAfter = '',
+  repoRoot = process.cwd(),
 }) {
   const snapshot = readJson(claimSnapshotPath) ?? {};
   const claim = snapshot.claim ?? snapshot;
   const { root, payload } = payloadFromFile(stdoutPath);
   const automation = payload.automation && typeof payload.automation === 'object' ? payload.automation : {};
   const contract = selectedContract(claim.selected_todo);
+  const workspaceRoot = path.resolve(repoRoot);
   const execution = payload.task_execution && typeof payload.task_execution === 'object' ? payload.task_execution : {};
   const runtimeStatus = payload.status ?? automation.status ?? null;
   const terminalCompletionEvidence = payload.terminal_completion_evidence && typeof payload.terminal_completion_evidence === 'object'
@@ -826,6 +828,36 @@ export function writeTerminalExecutionEvidence({
   ];
   const runtimeClaimId = payload.phase_loop_claim_id ?? automation.phase_loop_claim_id ?? null;
   const claimMatches = !runtimeClaimId || runtimeClaimId === claim.claim_id;
+  const appliedTarget = typeof payload.objective_apply_path === 'string' ? payload.objective_apply_path : '';
+  const selectedTodoSha256 = sha256(String(claim.selected_todo ?? ''));
+  const runtimeClaimBindingMatches = runtimeClaimId === claim.claim_id
+    && (payload.phase_loop_selected_todo_sha256 ?? automation.phase_loop_selected_todo_sha256 ?? null) === selectedTodoSha256
+    && String(payload.phase_loop_queue_generation ?? automation.phase_loop_queue_generation ?? '') === String(claim.queue_generation ?? '')
+    && (payload.phase_loop_queue_fingerprint ?? automation.phase_loop_queue_fingerprint ?? null) === (claim.queue_fingerprint ?? null);
+  const durableApplyEvidence = (
+    payload.objective_apply_applied === true
+    && payload.task_execution_confirmed === true
+    && claimMatches
+    && runtimeClaimBindingMatches
+    && validClaimTarget(appliedTarget)
+    && contract.target_files.includes(appliedTarget)
+  ) ? (() => {
+      const absoluteTarget = path.resolve(workspaceRoot, appliedTarget);
+      if (!isPathInside(workspaceRoot, absoluteTarget) || !fs.existsSync(absoluteTarget)) return null;
+      return {
+        schema_version: 1,
+        claim_id: claim.claim_id ?? null,
+        selected_todo_id: selectedTodoId(claim.selected_todo),
+        selected_todo_sha256: selectedTodoSha256,
+        runtime_run_stamp: runStamp,
+        runtime_claim_id: runtimeClaimId,
+        queue_generation: claim.queue_generation ?? null,
+        queue_fingerprint: claim.queue_fingerprint ?? null,
+        target_path: appliedTarget,
+        post_write_target_sha256: sha256(fs.readFileSync(absoluteTarget))
+      };
+    })()
+    : null;
   const evidence = {
     schema_version: 1,
     kind: 'phase_loop_terminal_failure_execution_evidence',
@@ -853,6 +885,7 @@ export function writeTerminalExecutionEvidence({
     task_execution_confirmed: claimMatches && explicitSignals.some(Boolean),
     source: 'current_run_stdout_and_claim_snapshot',
     stdout_path: stdoutPath,
+    ...(durableApplyEvidence ? { durable_apply_evidence: durableApplyEvidence } : {}),
   };
   writeJson(outputPath, evidence);
   return evidence;
@@ -894,6 +927,8 @@ function main() {
     process.exit(result.ok ? 0 : 78);
   }
   if (command === 'terminal-evidence') {
+    const workspaceRoot = args.get('workspace-root');
+    if (!workspaceRoot) throw new Error('terminal-evidence requires --workspace-root');
     const result = writeTerminalExecutionEvidence({
       stdoutPath: path.resolve(args.get('stdout')),
       claimSnapshotPath: path.resolve(args.get('claim-snapshot')),
@@ -901,6 +936,7 @@ function main() {
       runStamp: args.get('run-stamp'),
       workspaceBefore: args.get('workspace-before') ?? '',
       workspaceAfter: args.get('workspace-after') ?? '',
+      repoRoot: path.resolve(workspaceRoot),
     });
     process.stdout.write(`${JSON.stringify(result)}\n`);
     process.exit(result.task_execution_confirmed ? 0 : 1);

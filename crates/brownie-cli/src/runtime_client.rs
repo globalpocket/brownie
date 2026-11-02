@@ -2602,6 +2602,23 @@ fn cli_resume_payload(result: &Value) -> Result<Value, RuntimeClientError> {
             payload.insert(key.to_string(), bounded_json_optional_string(value)?);
         }
     }
+    // Direct `headless.continue_once` responses keep the actual apply result
+    // on the selected step.  Preserve the task-execution signal alongside
+    // that step evidence so the controller can durably bind an applied
+    // bounded target; do not infer it from a proposal alone.
+    if !payload.contains_key("task_execution_confirmed") {
+        let executed_count = resume_result_field(object, step, "executed_count")
+            .map(bounded_json_optional_u64)
+            .transpose()?;
+        if let Some(count) = executed_count {
+            let confirmed = count.as_u64().map(|value| value > 0).unwrap_or(false);
+            payload.insert("executed_count".to_string(), count);
+            payload.insert(
+                "task_execution_confirmed".to_string(),
+                Value::Bool(confirmed),
+            );
+        }
+    }
     for key in [
         "candidate_count",
         "current_aggregate_sequence",
@@ -2654,6 +2671,9 @@ fn cli_resume_payload(result: &Value) -> Result<Value, RuntimeClientError> {
         );
     }
     append_objective_route_evidence(&mut payload, object)?;
+    if let Some(step) = step {
+        append_objective_route_evidence(&mut payload, step)?;
+    }
     add_external_loop_contract(&mut payload)?;
     Ok(Value::Object(payload))
 }
@@ -6859,6 +6879,23 @@ mod tests {
         assert_eq!(payload["headless_session_id"], "cli.run.new");
         let rendered = json_result("resume", "resume", payload).unwrap();
         assert!(rendered.len() < MAX_RENDERED_OUTPUT_CHARS);
+    }
+
+    #[test]
+    fn cli_resume_preserves_direct_applied_step_execution_evidence() {
+        let result: Value = serde_json::from_str(
+            r#"{"status":"task_executed","session_id":"cli.resume.apply","executed_count":1,"steps":[{"step_index":1,"status":"task_executed","decision_id":"decision-apply","continuation_id":"run.cli.resume.apply.1","selected_task_id":"task-apply","selected_run_id":"run-apply","candidate_count":1,"next_action":"verify_objective_proposal","proposal_apply_result":{"apply_result":{"operation":"Patch","path":"scripts/bounded-target.mjs","apply_status":"applied","next_action":"verify_objective_proposal","applied":true}}}]}"#,
+        )
+        .unwrap();
+        let payload = cli_resume_payload(&result).unwrap();
+        assert_eq!(payload["task_execution_confirmed"], true);
+        assert_eq!(payload["executed_count"], 1);
+        assert_eq!(payload["objective_apply_applied"], true);
+        assert_eq!(
+            payload["objective_apply_path"],
+            "scripts/bounded-target.mjs"
+        );
+        assert_eq!(payload["objective_apply_apply_status"], "applied");
     }
 
     #[test]

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import test from 'node:test';
-import { admitMaterializedScopeRebaseline, readGitMaterializedScopeRebaselineRecords, validateMaterializedScopeRebaseline } from './phase-loop-admit-materialized-scope-rebaseline.mjs';
+import { admitMaterializedScopeRebaseline, readGitMaterializedScopeRebaselineRecords, readVerifiedActiveClaimDurableApply, validateMaterializedScopeRebaseline } from './phase-loop-admit-materialized-scope-rebaseline.mjs';
 import { validateTodoDecompositionText } from './guard-todo-decomposition.mjs';
 
 function contract(firstLine) {
@@ -153,6 +153,89 @@ test('rejects a Git materialization receipt when parent presence, digest, or TOD
   // Keep the fixture target referenced above so a future parser cannot ignore
   // an otherwise valid target list while accepting a mismatched binding.
   assert.equal(fs.existsSync(path.join(root, target)), true);
+});
+
+test('liveness admits only an exact active-claim durable apply over an unchanged public receipt target', () => {
+  const { root, target } = gitMergedMaterializationFixture();
+  const todoPath = path.join(root, '.brownie/todo.md');
+  const selectedTodo = fs.readFileSync(todoPath, 'utf8').trimEnd();
+  const selectedTodoSha256 = crypto.createHash('sha256').update(selectedTodo).digest('hex');
+  const stateRoot = path.join(root, '.brownie/private/phase-loop');
+  const claimPath = path.join(stateRoot, 'todo-claims/current.json');
+  const runStamp = 'fixture-runtime-apply';
+  const claimId = 'todo-g701-fixture-r1';
+  const queue = { generation: 701, fingerprint: 'fixture-active-queue' };
+  const runtimeBytes = 'export const journey = "runtime-applied";\n';
+  fs.writeFileSync(path.join(root, target), runtimeBytes);
+  const postWriteTargetSha256 = crypto.createHash('sha256').update(runtimeBytes).digest('hex');
+  const stdoutPath = path.join(stateRoot, 'runs', `${runStamp}.stdout.log`);
+  const evidencePath = path.join(stateRoot, 'runs', `${runStamp}.execution-evidence.json`);
+  const writeJson = (filePath, value) => {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
+  };
+  writeJson(claimPath, {
+    claim_id: claimId, status: 'in_progress', selected_todo: selectedTodo,
+    queue_generation: queue.generation, queue_fingerprint: queue.fingerprint,
+    run_stamp: runStamp, terminal_failure_execution_evidence_path: evidencePath
+  });
+  writeJson(path.join(stateRoot, 'todo-claims/todo-queue-state.json'), queue);
+  writeJson(path.join(stateRoot, 'runs', `${runStamp}.runtime-admission.json`), {
+    status: 'admitted', claim_id: claimId, selected_todo_id: 'E-fixture', selected_todo_sha256: selectedTodoSha256,
+    queue_generation: queue.generation, queue_fingerprint: queue.fingerprint
+  });
+  writeJson(stdoutPath, { run: {
+    status: 'objective_proposal_applied', task_execution_confirmed: true, phase_loop_claim_id: claimId,
+    phase_loop_selected_todo_sha256: selectedTodoSha256, phase_loop_queue_generation: queue.generation,
+    phase_loop_queue_fingerprint: queue.fingerprint, objective_apply_applied: true, objective_apply_path: target
+  } });
+  writeJson(evidencePath, {
+    run_stamp: runStamp, claim_id: claimId, runtime_claim_id: claimId, claim_matches: true,
+    selected_todo_id: 'E-fixture', selected_todo_sha256: selectedTodoSha256, task_execution_confirmed: true,
+    target_files: [target], stdout_path: stdoutPath,
+    durable_apply_evidence: {
+      schema_version: 1, claim_id: claimId, runtime_claim_id: claimId,
+      selected_todo_id: 'E-fixture', selected_todo_sha256: selectedTodoSha256, runtime_run_stamp: runStamp,
+      queue_generation: queue.generation, queue_fingerprint: queue.fingerprint, target_path: target, post_write_target_sha256: postWriteTargetSha256
+    }
+  });
+
+  const durableApply = readVerifiedActiveClaimDurableApply({ repoRoot: root, stateRoot, claimPath, stage: 'pre-completion', todoText: selectedTodo });
+  assert.equal(durableApply?.claim_id, claimId);
+  assert.equal(durableApply?.materializations[0]?.post_write_target_sha256, postWriteTargetSha256);
+  assert.equal(readGitMaterializedScopeRebaselineRecords(root, selectedTodo, { activeClaimMaterialization: durableApply }).length, 1);
+  assert.deepEqual(validateTodoDecompositionText(selectedTodo, {
+    repoRoot: root, packageScripts: new Set(['guard:release-contract:test']), stateRoot, claimPath, stage: 'pre-completion'
+  }), []);
+  assert.equal(JSON.parse(fs.readFileSync(claimPath, 'utf8')).status, 'in_progress', 'liveness reaches continuation without completion');
+
+  const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+  evidence.stdout_path = path.join(stateRoot, '..', 'outside-state.json');
+  writeJson(evidencePath, evidence);
+  assert.equal(readVerifiedActiveClaimDurableApply({ repoRoot: root, stateRoot, claimPath, stage: 'pre-completion', todoText: selectedTodo }), null);
+  evidence.stdout_path = stdoutPath;
+  writeJson(evidencePath, evidence);
+
+  const outsideStateArtifact = path.join(os.tmpdir(), `brownie-state-artifact-escape-${process.pid}.json`);
+  fs.writeFileSync(outsideStateArtifact, fs.readFileSync(stdoutPath));
+  fs.rmSync(stdoutPath);
+  fs.symlinkSync(outsideStateArtifact, stdoutPath);
+  assert.equal(
+    readVerifiedActiveClaimDurableApply({ repoRoot: root, stateRoot, claimPath, stage: 'pre-completion', todoText: selectedTodo }),
+    null,
+    'a lexical in-state path may not dereference a state-root escape symlink'
+  );
+  fs.unlinkSync(stdoutPath);
+  writeJson(stdoutPath, { run: {
+    status: 'objective_proposal_applied', task_execution_confirmed: true, phase_loop_claim_id: claimId,
+    phase_loop_selected_todo_sha256: selectedTodoSha256, phase_loop_queue_generation: queue.generation,
+    phase_loop_queue_fingerprint: queue.fingerprint, objective_apply_applied: true, objective_apply_path: target
+  } });
+  fs.rmSync(outsideStateArtifact, { force: true });
+
+  fs.writeFileSync(path.join(root, target), 'export const journey = "manual-drift";\n');
+  assert.equal(readVerifiedActiveClaimDurableApply({ repoRoot: root, stateRoot, claimPath, stage: 'pre-completion', todoText: selectedTodo }), null);
+  assert.throws(() => readGitMaterializedScopeRebaselineRecords(root, selectedTodo), /digest mismatch in current worktree/u);
 });
 
 test('fails closed with an actionable full-history error when a public materialization receipt is unavailable in a shallow checkout', () => {
