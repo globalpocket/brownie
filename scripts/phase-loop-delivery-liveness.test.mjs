@@ -149,18 +149,18 @@ test('clean liveness quarantines an incomplete predecessor, binds a fresh claim 
   git(root, ['config', 'user.email', 'fixture@example.invalid']);
   git(root, ['add', '.']);
   git(root, ['commit', '--quiet', '-m', 'base']);
-  git(root, ['switch', '--quiet', '-c', 'implementation']);
-  fs.writeFileSync(path.join(root, 'scripts', 'soak.mjs'), 'export const soak = "merged-and-verified";\n');
-  git(root, ['add', '.']);
-  git(root, ['commit', '--quiet', '-m', 'implement soak']);
-  const head = git(root, ['rev-parse', 'HEAD']).trim();
-  git(root, ['switch', '--quiet', 'main']);
-  git(root, ['merge', '--no-ff', '--no-edit', 'implementation']);
-  const merge = git(root, ['rev-parse', 'HEAD']).trim();
   const selected = `- [ ] E-clean-merged-soak: Patch only \`scripts/soak.mjs\`.
   Route: implementation.
   Completion condition: reviewed artifact soak is reverified before queue consumption.
   Verification: run \`node --check scripts/verify.mjs\`.`;
+  git(root, ['switch', '--quiet', '-c', 'implementation']);
+  fs.writeFileSync(path.join(root, 'scripts', 'soak.mjs'), 'export const soak = "merged-and-verified";\n');
+  git(root, ['add', '.']);
+  git(root, ['commit', '--quiet', '-m', `implement soak\n\nBrownie-Task-Todo: E-clean-merged-soak\nBrownie-Task-Spec-SHA256: ${selectedTodoSha256({ selected_todo: selected })}`]);
+  const head = git(root, ['rev-parse', 'HEAD']).trim();
+  git(root, ['switch', '--quiet', 'main']);
+  git(root, ['merge', '--no-ff', '--no-edit', 'implementation']);
+  const merge = git(root, ['rev-parse', 'HEAD']).trim();
   const freshClaim = {
     claim_id: 'todo-g630-clean-r1',
     root_claim_id: 'todo-g630-clean-r1',
@@ -183,7 +183,8 @@ test('clean liveness quarantines an incomplete predecessor, binds a fresh claim 
     stdoutPayload: { run: { runtime_claim_id: freshClaim.claim_id, payload_status: 'task_executed', reported_executed_count: 1 } },
     review: {
       pr_url: 'https://example.invalid/pull/630', pr_number: 630, state: 'MERGED', merge_commit_oid: merge, head_oid: head,
-      author: 'implementation', reviewer: 'review', merge_actor: 'review', merged_at: '2026-11-04T09:38:12Z', observed_at: '2026-11-04T11:39:21Z', approved: true, ci_passed: true
+      author: 'implementation', reviewer: 'review', merge_actor: 'review', merged_at: '2026-11-04T09:38:12Z', observed_at: '2026-11-04T11:39:21Z', approved: true, ci_passed: true,
+      latest_reviewer_review_state: 'APPROVED', latest_reviewer_review_commit_oid: head
     },
     reviewer: 'review',
     implementation: 'implementation'

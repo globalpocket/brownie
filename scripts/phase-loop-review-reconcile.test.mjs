@@ -151,6 +151,25 @@ test('the reviewer latest decision at the current head overrides historical requ
   assert.equal(reconciliation.status, 'completed');
 });
 
+test('a later changes-requested review at the merged head invalidates an earlier approval', () => {
+  const reconciliation = reconcileReviewSnapshot({
+    claim,
+    pullRequest: pr({
+      state: 'MERGED',
+      mergedAt: '2026-10-30T12:00:00Z',
+      mergedBy: { login: 'globalpocket' },
+      reviews: [
+        { state: 'APPROVED', author: { login: 'globalpocket' }, commit: { oid: 'a'.repeat(40) }, submittedAt: '2026-10-30T10:00:00Z' },
+        { state: 'CHANGES_REQUESTED', author: { login: 'globalpocket' }, commit: { oid: 'a'.repeat(40) }, body: 'a later review reopened the work', submittedAt: '2026-10-30T11:00:00Z' }
+      ]
+    }),
+    reviewer: 'globalpocket',
+    implementation: 'brownie-agent'
+  });
+  assert.equal(reconciliation.status, 'changes_requested');
+  assert.equal(reconciliation.delivery_review.approved, false);
+});
+
 test('merged completion refuses a missing or mismatched merge actor', () => {
   const missing = reconcileReviewSnapshot({
     claim,

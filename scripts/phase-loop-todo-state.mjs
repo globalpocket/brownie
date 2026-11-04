@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { validateHistoricalDerivedDeliveryReceipt } from './phase-loop-historical-derived-delivery-integrity.mjs';
+import { validateMergedDeliveryReverification } from './phase-loop-delivery-integrity.mjs';
 
 function checkboxBlocks(text) {
   const starts = [...String(text ?? '').matchAll(/^(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+/gmu)].map((match) => match.index);
@@ -165,6 +166,36 @@ export function durableCompletionRecordReceipt(record) {
     return derived;
   }
   const receipt = record?.delivery_receipt;
+  const mergedDelivery = receipt?.merged_delivery_reverification;
+  if (mergedDelivery) {
+    const selectedTodo = typeof record?.selected_todo === 'string' ? record.selected_todo : '';
+    const claim = {
+      claim_id: record?.claim_id,
+      root_claim_id: record?.root_claim_id ?? record?.claim_id,
+      selected_todo: selectedTodo,
+      selected_todo_id: record?.selected_todo_id,
+      selected_todo_sha256: record?.selected_todo_sha256,
+      queue_fingerprint: record?.queue_fingerprint,
+      queue_generation: record?.queue_generation
+    };
+    const proof = validateMergedDeliveryReverification({ claim, evidence: mergedDelivery });
+    const valid = (
+      record?.schema_version >= 3
+      && receipt?.schema_version === 1
+      && typeof record?.claim_id === 'string' && record.claim_id
+      && receipt.claim_id === record.claim_id
+      && receipt.root_claim_id === claim.root_claim_id
+      && receipt.selected_todo_sha256 === record.selected_todo_sha256
+      && receipt.approved === true
+      && receipt.ci_passed === true
+      && receipt.merged === true
+      && proof.valid
+    );
+    return {
+      valid,
+      reason: valid ? null : 'durable_delivery_receipt_invalid'
+    };
+  }
   const semantic = receipt?.semantic_completion_evidence;
   const verificationResults = Array.isArray(semantic?.verification_results)
     ? semantic.verification_results

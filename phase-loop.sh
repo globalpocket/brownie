@@ -12442,14 +12442,28 @@ import sys
 claim = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 selected = str(claim.get("selected_todo") or "")
 first = selected.splitlines()[0] if selected else ""
+selected_id = str(claim.get("selected_todo_id") or "")
+if not selected_id:
+    match = re.match(r"^\s*[-*]\s+\[\s*\]\s+([^:\s]+)", first)
+    selected_id = match.group(1) if match else ""
+selected_sha256 = str(claim.get("selected_todo_sha256") or "")
+if not re.fullmatch(r"[a-f0-9]{64}", selected_sha256):
+    import hashlib
+    selected_sha256 = hashlib.sha256(selected.encode("utf-8")).hexdigest()
 scope_match = re.search(r"\b(?:Patch|Create) only\b([^\n:]+)", first)
 tick = chr(96)
 scopes = re.findall(tick + "([^" + tick + r"\n]+)" + tick, scope_match.group(1)) if scope_match else []
-if not scopes or any(p.startswith("/") or ".." in pathlib.PurePosixPath(p).parts for p in scopes):
+if not selected_id or not scopes or any(p.startswith("/") or ".." in pathlib.PurePosixPath(p).parts for p in scopes):
     raise SystemExit(1)
 for merge in subprocess.check_output(["git", "rev-list", "--merges", "HEAD"], cwd=sys.argv[2], text=True).splitlines():
     parents = subprocess.check_output(["git", "rev-list", "--parents", "-n", "1", merge], cwd=sys.argv[2], text=True).split()
     if len(parents) != 3:
+        continue
+    head = parents[2]
+    message = subprocess.check_output(["git", "show", "-s", "--format=%B", head], cwd=sys.argv[2], text=True)
+    task_todo = re.search(r"^Brownie-Task-Todo:\s*([^\s]+)\s*$", message, re.MULTILINE | re.IGNORECASE)
+    task_sha = re.search(r"^Brownie-Task-Spec-SHA256:\s*([a-f0-9]{64})\s*$", message, re.MULTILINE | re.IGNORECASE)
+    if not task_todo or not task_sha or task_todo.group(1) != selected_id or task_sha.group(1).lower() != selected_sha256:
         continue
     changed = subprocess.check_output(["git", "diff", "--name-only", parents[1], merge, "--"], cwd=sys.argv[2], text=True).splitlines()
     if sorted(changed) != sorted(scopes):
@@ -12496,14 +12510,25 @@ value = json.loads(path.read_text(encoding="utf-8"))
 reviews = value.get("reviews") if isinstance(value.get("reviews"), list) else []
 status = value.get("statusCheckRollup") if isinstance(value.get("statusCheckRollup"), list) else []
 reviewer = sys.argv[3]
+head_oid = (value.get("headRefOid") or "")
+reviewer_reviews = [
+    entry for entry in reviews
+    if isinstance(entry, dict) and (entry.get("author") or {}).get("login") == reviewer
+]
+reviewer_reviews.sort(key=lambda entry: str(entry.get("submittedAt") or ""))
+latest_reviewer_review = reviewer_reviews[-1] if reviewer_reviews else {}
+latest_reviewer_state = latest_reviewer_review.get("state") if isinstance(latest_reviewer_review, dict) else None
+latest_reviewer_commit = ((latest_reviewer_review.get("commit") or {}).get("oid") if isinstance(latest_reviewer_review, dict) else None)
 value.update({
     "author": (value.get("author") or {}).get("login"),
     "merge_commit_oid": (value.get("mergeCommit") or {}).get("oid"),
-    "head_oid": value.get("headRefOid"),
+    "head_oid": head_oid,
     "merged_at": value.get("mergedAt"),
     "reviewer": reviewer,
     "merge_actor": sys.argv[2] or None,
-    "approved": any((entry.get("author") or {}).get("login") == reviewer and entry.get("state") == "APPROVED" for entry in reviews if isinstance(entry, dict)),
+    "approved": latest_reviewer_state == "APPROVED" and latest_reviewer_commit == head_oid,
+    "latest_reviewer_review_state": latest_reviewer_state,
+    "latest_reviewer_review_commit_oid": latest_reviewer_commit,
     "ci_passed": bool(status) and all(entry.get("status") == "COMPLETED" and entry.get("conclusion") == "SUCCESS" for entry in status if isinstance(entry, dict)),
     "observed_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
 })
@@ -18678,62 +18703,11 @@ PY
     publish_pending_completed_todo_pr "$run_stamp"
     return $?
   fi
-  # A Runtime result can leave a claim durably blocked even when its public
-  # envelope says `task_executed`/`resume`.  Resolve only the claim-bound,
-  # ledger-proven multi-target split before attempting to acquire that blocked
-  # claim again; claim_first_pending_todo deliberately rejects such a claim.
-  local pre_claim_terminal_multitarget_output pre_claim_terminal_multitarget_status
-  if pre_claim_terminal_multitarget_output="$(try_terminal_multitarget_leaf_split_fallback "$run_stamp" 2>&1)"; then
-    pre_claim_terminal_multitarget_status=0
-  else
-    pre_claim_terminal_multitarget_status=$?
-  fi
-  printf '%s run=%s terminal_multitarget_leaf_split_pre_claim_exit=%s result=%s\n' "$(now_utc)" "$run_stamp" "$pre_claim_terminal_multitarget_status" "$pre_claim_terminal_multitarget_output" >> "$SUPERVISOR_LOG"
-  if [ "$pre_claim_terminal_multitarget_status" -eq 0 ]; then
-    local pre_claim_terminal_replan_output pre_claim_terminal_replan_payload
-    if ! pre_claim_terminal_replan_output="$(record_terminal_multitarget_replan_transition "$run_stamp" "$pre_claim_terminal_multitarget_output" 2>&1)"; then
-      detail="Terminal multi-target split changed the queue but its derived task-ledger recovery transaction was not durable; preserving the source claim and refusing Runtime restart. ledger=${PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL:-$pre_claim_terminal_replan_output}"
-      printf '%s run=%s terminal_multitarget_replan_transaction_failed=true result=%s\n' "$(now_utc)" "$run_stamp" "$pre_claim_terminal_replan_output" >> "$SUPERVISOR_LOG"
-      write_status "blocked" "$detail" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-0}"
-      return 78
-    fi
-    if ! pre_claim_terminal_replan_payload="$(terminal_multitarget_replan_public_payload "$pre_claim_terminal_replan_output")"; then
-      PHASE_LOOP_TASK_LEDGER_FAILURE=1
-      PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL="terminal multi-target replan transaction returned an invalid public binding: $pre_claim_terminal_replan_output"
-      detail="Terminal multi-target split recovery transaction could not be bound to its public trajectory; preserving the source claim and refusing Runtime restart. ledger=$PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL"
-      printf '%s run=%s terminal_multitarget_replan_public_binding_failed=true result=%s\n' "$(now_utc)" "$run_stamp" "$pre_claim_terminal_replan_output" >> "$SUPERVISOR_LOG"
-      write_status "blocked" "$detail" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-0}"
-      return 78
-    fi
-    workspace_after="$(git_workspace_fingerprint)"
-    printf '%s\n' "$pre_claim_terminal_multitarget_output" > "$stdout_log"
-    : > "$stderr_log"
-    clear_repair_feedback
-    write_todo_claim "$(claim_field claim_id)" "replanned" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
-    if [ -f "$TODO_CLAIM_FILE" ]; then
-      PHASE_LOOP_LAST_CLAIM_ARCHIVE="$TODO_CLAIM_DIR/replanned-terminal-multitarget-split-$run_stamp.json"
-      mv "$TODO_CLAIM_FILE" "$PHASE_LOOP_LAST_CLAIM_ARCHIVE"
-      sync_parent_dir "$TODO_CLAIM_DIR"
-    fi
-    detail="Applied deterministic terminal multi-target leaf split before attempting another claim; the parent was replanned, not completed: $pre_claim_terminal_multitarget_output"
-    printf '%s run=%s terminal_multitarget_leaf_split=true phase=pre_claim result=%s\n' "$(now_utc)" "todo-terminal-multitarget-split-$run_stamp" "$pre_claim_terminal_multitarget_output" >> "$SUPERVISOR_LOG"
-    write_bdk_trajectory_event "$run_stamp" "tool.write_applied" '{"source":"deterministic_fallback","kind":"terminal_multitarget_leaf_split"}'
-    write_bdk_trajectory_event "$run_stamp" "todo.replanned" "$pre_claim_terminal_replan_payload" "todo.terminal_replanned"
-    if [ "${PHASE_LOOP_TASK_LEDGER_FAILURE:-0}" -eq 1 ]; then
-      detail="Terminal multi-target split recovery was committed, but its public trajectory could not be verified against the task ledger; refusing Runtime restart. ledger=${PHASE_LOOP_TASK_LEDGER_FAILURE_DETAIL}"
-      write_status "blocked" "$detail" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-0}"
-      return 78
-    fi
-    write_status "last_run_succeeded" "$detail" "todo-terminal-multitarget-split-$run_stamp" "0" "0"
-    phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after" || true
-    return 0
-  elif [ "$pre_claim_terminal_multitarget_status" -eq 1 ]; then
-    detail="Terminal multi-target leaf split fallback was eligible but failed safely before attempting another claim: $pre_claim_terminal_multitarget_output"
-    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
-    write_status "blocked" "$detail" "$run_stamp" "74" "${CONSECUTIVE_FAILURES:-0}"
-    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"terminal_multitarget_leaf_split_failed"}'
-    return 74
-  fi
+  # A terminal Runtime envelope is evidence of a failed attempt, never
+  # authority to rewrite the live TODO queue.  In particular, a controller
+  # cannot turn a missing terminal receipt into child TODOs before a durable
+  # implementation/review proof exists.  Keep the source claim and queue
+  # intact for one bounded re-verification or one stable actionable error.
   if active_todo_claim_exists; then
     if ! phase_loop_prepare_review_rework_stale_replay_store_isolation_repair; then
       detail="A review-rework claim has a stale-replay store-isolation repair failure; refusing a resume or replacement claim. repair=${PHASE_LOOP_REVIEW_REWORK_STALE_REPLAY_REPAIR_OUTPUT:-<no output>}"
@@ -20591,6 +20565,38 @@ PY
         write_repair_feedback "$run_stamp" "$verification_completion" "$stdout_log" "$stderr_log" || true
         printf '%s run=%s repair_feedback_recorded=true verification=%s\n' "$(now_utc)" "$run_id" "$verification_completion" >> "$SUPERVISOR_LOG"
       fi
+    fi
+
+    # A terminal evidence gap is not a TODO-contract defect.  Catch it before
+    # any proposal fallback can alter `.brownie/todo.md` or its breakdown.
+    # The only permitted continuation is the narrow reviewed-merge
+    # re-verification path; otherwise the exact claim remains intact with one
+    # stable actionable integrity error.
+    if python3 - "$PROGRESS_STATE_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+try:
+    progress = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+projection = progress.get("progress_projection") if isinstance(progress.get("progress_projection"), dict) else {}
+raise SystemExit(0 if (
+    progress.get("classification") == "terminal_failure"
+    and projection.get("terminal_completion_evidence_missing_without_objective_apply") is True
+) else 1)
+PY
+    then
+      if [ "$PHASE_LOOP_RUNTIME_EXECUTION_CONFIRMED" -eq 1 ]; then
+        phase_loop_reverify_and_consume_merged_delivery "$run_stamp" "$stdout_log" "$run_id"
+        return $?
+      fi
+      detail="Terminal completion evidence is missing without a claim-bound current-run execution proof; refusing TODO decomposition, TODO mutation, or child-TODO creation. Obtain one exact execution/verification receipt or resolve the stable controller integrity error. stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+      write_status "integrity_blocked" "$detail" "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+      write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"terminal_completion_evidence_missing_without_execution_proof","todo_mutation_refused":true}'
+      printf '%s run=%s terminal_completion_evidence_gap_todo_mutation_refused=true progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+      return 76
     fi
 
     local todo_breakdown_patch_proposal_apply_output todo_breakdown_patch_proposal_apply_status

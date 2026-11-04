@@ -48,9 +48,13 @@ export function rootClaimId(claim) {
 
 export function runDeliveryView(stdoutPayload) {
   const root = asObject(stdoutPayload);
-  const run = asObject(root.run);
+  const run = Object.keys(asObject(root.run)).length > 0
+    ? asObject(root.run)
+    : Object.keys(asObject(root.resume)).length > 0
+      ? asObject(root.resume)
+      : root;
   const automation = { ...asObject(root.automation), ...asObject(run.automation) };
-  const completed = run.completed === true || (Object.keys(run).length === 0 && root.completed === true);
+  const completed = run.completed === true || (run === root && root.completed === true);
   const continuationRequired = run.continuation_required === true
     || root.continuation_required === true
     || automation.continuation_required === true;
@@ -120,7 +124,11 @@ function isSha(value) {
 
 function runtimeTaskExecution(claim, stdoutPayload) {
   const root = asObject(stdoutPayload);
-  const run = Object.keys(asObject(root.run)).length > 0 ? asObject(root.run) : root;
+  const run = Object.keys(asObject(root.run)).length > 0
+    ? asObject(root.run)
+    : Object.keys(asObject(root.resume)).length > 0
+      ? asObject(root.resume)
+      : root;
   const runtimeClaimId = run.runtime_claim_id ?? run.phase_loop_claim_id ?? root.runtime_claim_id ?? root.phase_loop_claim_id;
   const executed = run.reported_executed_count ?? run.executed_count ?? root.reported_executed_count ?? root.executed_count;
   return {
@@ -131,6 +139,24 @@ function runtimeTaskExecution(claim, stdoutPayload) {
       && (run.payload_status ?? run.status ?? root.payload_status ?? root.status) === 'task_executed'
       && Number.isInteger(executed)
       && executed >= 1
+  };
+}
+
+function gitTaskSpecBinding(repoRoot, headOid) {
+  if (!isSha(headOid)) return null;
+  let message;
+  try {
+    message = git(repoRoot, ['show', '-s', '--format=%B', headOid]);
+  } catch {
+    return null;
+  }
+  const todo = message.match(/^Brownie-Task-Todo:\s*([^\s]+)\s*$/mi)?.[1] ?? '';
+  const selectedTodoSha256 = message.match(/^Brownie-Task-Spec-SHA256:\s*([a-f0-9]{64})\s*$/mi)?.[1] ?? '';
+  if (!todo || !/^[a-f0-9]{64}$/i.test(selectedTodoSha256)) return null;
+  return {
+    todo_id: todo,
+    selected_todo_sha256: selectedTodoSha256.toLowerCase(),
+    head_oid: headOid
   };
 }
 
@@ -170,7 +196,9 @@ function normalizeReview(value) {
     merged_at: review.merged_at ?? review.mergedAt ?? null,
     observed_at: review.observed_at ?? null,
     approved: review.approved === true,
-    ci_passed: review.ci_passed === true
+    ci_passed: review.ci_passed === true,
+    latest_reviewer_review_state: review.latest_reviewer_review_state ?? null,
+    latest_reviewer_review_commit_oid: review.latest_reviewer_review_commit_oid ?? null
   };
 }
 
@@ -205,6 +233,12 @@ export function verifyMergedDeliveryReverification({ repoRoot, claim, stdoutPayl
   if (!normalizedReview.approved || !normalizedReview.ci_passed || !normalizedReview.pr_url || !normalizedReview.merged_at || !normalizedReview.observed_at) {
     errors.push('merged_delivery_review_or_ci_evidence_missing');
   }
+  if (
+    normalizedReview.latest_reviewer_review_state !== 'APPROVED'
+    || normalizedReview.latest_reviewer_review_commit_oid !== normalizedReview.head_oid
+  ) {
+    errors.push('merged_delivery_latest_reviewer_approval_missing');
+  }
   const commands = verificationCommands(deliveryClaim);
   if (commands.length === 0 || commands.some((command) => !safeVerificationArgs(command))) {
     errors.push('merged_delivery_verification_contract_invalid');
@@ -219,6 +253,14 @@ export function verifyMergedDeliveryReverification({ repoRoot, claim, stdoutPayl
   }
   if (parents.length !== 3 || parents[2] !== normalizedReview.head_oid) {
     return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_merge_parent_binding_mismatch'] };
+  }
+  const taskSpecBinding = gitTaskSpecBinding(repoRoot, normalizedReview.head_oid);
+  if (
+    !taskSpecBinding
+    || taskSpecBinding.todo_id !== deliveryClaim.selected_todo_id
+    || taskSpecBinding.selected_todo_sha256 !== selectedTodoSha256(deliveryClaim)
+  ) {
+    return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_task_spec_binding_missing_or_mismatch'] };
   }
   const firstParent = parents[1];
   const mergePaths = git(repoRoot, ['diff', '--name-only', firstParent, normalizedReview.merge_commit_oid, '--']).split('\n').filter(Boolean).sort();
@@ -263,6 +305,7 @@ export function verifyMergedDeliveryReverification({ repoRoot, claim, stdoutPayl
     queue_generation: deliveryClaim.queue_generation,
     runtime: runtime,
     git: { merge_commit_oid: normalizedReview.merge_commit_oid, first_parent_oid: firstParent, head_oid: normalizedReview.head_oid, targets },
+    task_spec_binding: taskSpecBinding,
     review: normalizedReview,
     verification_results
   };
@@ -304,6 +347,17 @@ export function validateMergedDeliveryReverification({ claim, evidence }) {
   }
   if (review.state !== 'MERGED' || !review.approved || !review.ci_passed || !review.pr_url || !review.author || !review.reviewer || !review.merged_at || !review.observed_at || review.author === review.reviewer || review.merge_actor !== review.reviewer) {
     errors.push('merged_delivery_evidence_review_binding_invalid');
+  }
+  if (review.latest_reviewer_review_state !== 'APPROVED' || review.latest_reviewer_review_commit_oid !== gitProof.head_oid) {
+    errors.push('merged_delivery_evidence_latest_reviewer_approval_invalid');
+  }
+  const taskSpecBinding = asObject(proof.task_spec_binding);
+  if (
+    taskSpecBinding.todo_id !== expected.selected_todo_id
+    || taskSpecBinding.selected_todo_sha256 !== selectedTodoSha256(expected)
+    || taskSpecBinding.head_oid !== gitProof.head_oid
+  ) {
+    errors.push('merged_delivery_evidence_task_spec_binding_invalid');
   }
   const results = asArray(proof.verification_results);
   if (results.length === 0 || results.some((result) => !asObject(result).command || asObject(result).exit_code !== 0)) {

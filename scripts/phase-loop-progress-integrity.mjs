@@ -384,6 +384,7 @@ export function durableDeliveryReceiptForClaim(claim) {
     return { valid: false, errors: receipt.errors };
   }
   const review = claim.delivery_review;
+  const mergedDeliveryReverification = review?.merged_delivery_reverification ?? claim.merged_delivery_reverification;
   return {
     valid: true,
     receipt: {
@@ -398,7 +399,9 @@ export function durableDeliveryReceiptForClaim(claim) {
       ci_passed: true,
       merged: true,
       ...(typeof review.pr_url === 'string' && review.pr_url ? { pr_url: review.pr_url } : {}),
-      semantic_completion_evidence: review.semantic_completion_evidence
+      ...(mergedDeliveryReverification
+        ? { merged_delivery_reverification: mergedDeliveryReverification }
+        : { semantic_completion_evidence: review.semantic_completion_evidence })
     }
   };
 }
@@ -408,13 +411,16 @@ function writeCompletionRecord(repoRoot, claim, runStamp, validation, deliveryRe
   const dir = path.join(repoRoot, '.brownie/private/phase-loop/todo-completions');
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const record = {
-    schema_version: 2,
+    schema_version: 3,
     claim_id: claimId,
     root_claim_id: rootClaimId(claim),
     run_stamp: runStamp,
     selected_todo_id: validation.selected_todo_id,
+    selected_todo: String(claim.selected_todo ?? ''),
     selected_todo_first_line: String(claim.selected_todo ?? '').split('\n')[0] ?? '',
     selected_todo_sha256: selectedTodoSha256(claim),
+    queue_fingerprint: claim.queue_fingerprint ?? null,
+    queue_generation: claim.queue_generation ?? null,
     delivery_receipt: deliveryReceipt,
     changed_files: validation.claim_changed_files,
     workspace_changed_files: validation.changed_files,
