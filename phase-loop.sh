@@ -338,7 +338,7 @@ write_bdk_trajectory_event() {
           return 76
         fi
       fi
-      write_status "integrity_blocked" "Refused public todo.completed before independent review approval, required CI, and merge. event=$event_type run=$run_stamp" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-0}"
+      write_status "integrity_blocked" "Refused public todo.completed before independent review approval, required CI, and merge. event=$event_type run=$run_stamp" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-0}" "" "true"
       printf '%s public_completion_refused=true event=%s run=%s reason=independent_review_ci_merge_missing\n' "$(now_utc)" "$event_type" "$run_stamp" >> "$SUPERVISOR_LOG"
       return 76
     fi
@@ -12794,7 +12794,7 @@ PY
     # claim, publish a PR, or replace the status with a success-shaped value.
     # write_status exits 76 when the promotion flag is set, so this function
     # cannot be accidentally ignored by a future caller.
-    write_status "integrity_blocked" "Refused TODO completion before a valid claim-bound completion certificate, independent review approval, required CI, and merge. ${PHASE_LOOP_COMPLETION_PROMOTION_REFUSED_DETAIL}" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-0}"
+    write_status "integrity_blocked" "Refused TODO completion before a valid claim-bound completion certificate, independent review approval, required CI, and merge. ${PHASE_LOOP_COMPLETION_PROMOTION_REFUSED_DETAIL}" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-0}" "" "true"
     return 76
   fi
 }

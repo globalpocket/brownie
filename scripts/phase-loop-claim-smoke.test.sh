@@ -5544,7 +5544,7 @@ PHASE_LOOP_WORKSPACE_ROOT="$empty_queue_guard_workspace" \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null || empty_queue_guard_exit="$?"
 test "$empty_queue_guard_exit" = "76"
 
-python3 - "$state_empty_queue_guard/todo-claims/current.json" "$todo_empty_queue_guard" "$state_empty_queue_guard/logs/supervisor.log" "$empty_queue_guard_workspace/docs/golden.js" "$state_empty_queue_guard/bdk-trajectory.jsonl" <<'PY'
+python3 - "$state_empty_queue_guard/todo-claims/current.json" "$todo_empty_queue_guard" "$state_empty_queue_guard/logs/supervisor.log" "$empty_queue_guard_workspace/docs/golden.js" "$state_empty_queue_guard/bdk-trajectory.jsonl" "$state_empty_queue_guard/status.json" <<'PY'
 import json
 import pathlib
 import sys
@@ -5554,6 +5554,7 @@ todo = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 supervisor_log = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
 target = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8")
 trajectory_records = [json.loads(line) for line in pathlib.Path(sys.argv[5]).read_text(encoding="utf-8").splitlines() if line.strip()]
+status = json.loads(pathlib.Path(sys.argv[6]).read_text(encoding="utf-8"))
 trajectory = [
     event
     for record in trajectory_records
@@ -5566,11 +5567,18 @@ assert "completion_certificate" not in claim, claim
 # claim and expose a single blocked state rather than mutate the queue while
 # trying to recover it.
 assert "E-empty-queue-exact" in todo, todo
-assert "public_completion_refused=true" in supervisor_log, supervisor_log
+# The common claim writer rejects `completed` before the later public-event
+# fallback can run.  Assert that concrete terminal transition rather than an
+# unreachable log marker: it must be integrity-blocked, continuation-required,
+# and exit 76 while retaining the TODO and emitting one claim-bound failure.
+assert "completion_promotion_refused=true" in supervisor_log, supervisor_log
 assert "reason=independent_review_ci_merge_missing" in supervisor_log, supervisor_log
 assert "completion_refusal_terminalized=true" in supervisor_log, supervisor_log
 assert "bdk_harness_feedback_passed" in supervisor_log, supervisor_log
 assert "terminal_event=todo.blocked" in supervisor_log, supervisor_log
+assert status["status"] == "integrity_blocked", status
+assert status["exit_code"] == "76", status
+assert status["continuation_required"] is True, status
 assert "  fixture_path: fixtureRoot,\n  lifecycle_evidence: lifecycleEvidence,\n  commands," in target, target
 # The terminal refusal is public and claim-bound: there is exactly one
 # continuation-required blocked event, never an implicit completed event.
