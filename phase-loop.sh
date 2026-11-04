@@ -12415,6 +12415,133 @@ PY
   esac
 }
 
+# A Runtime task-executed envelope is never completion by itself.  There is,
+# however, one recovery shape where a selected implementation was already
+# independently reviewed and merged before a freshly admitted claim reached
+# Runtime.  Re-verify that exact merged delivery against Git and GitHub, run
+# the selected TODO's verification, and only then use the ordinary durable
+# completion-record/queue-removal path.  This does not rebaseline a claim or
+# accept a dirty target.
+phase_loop_reverify_and_consume_merged_delivery() {
+  local run_stamp="$1" stdout_log="$2" run_id="$3"
+  local reviewer implementation reviewer_gh_config_dir repository candidate merge_oid review_file pr_number merge_actor result status
+  reviewer="$(node "$ROOT_DIR/scripts/phase-loop-actor-deployment.mjs" --repo-root "$ROOT_DIR" --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" --role review --field github-login 2>/dev/null || true)"
+  implementation="$(node "$ROOT_DIR/scripts/phase-loop-actor-deployment.mjs" --repo-root "$ROOT_DIR" --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" --role implementation --field github-login 2>/dev/null || true)"
+  repository="$(node "$ROOT_DIR/scripts/phase-loop-actor-deployment.mjs" --repo-root "$ROOT_DIR" --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" --role implementation --field repository 2>/dev/null || true)"
+  if [ -z "$reviewer" ] || [ -z "$implementation" ] || [ -z "$repository" ]; then
+    write_status "integrity_blocked" "Merged delivery re-verification refused: actor/repository deployment evidence is unavailable for the active claim." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+    return 76
+  fi
+  candidate="$(python3 - "$TODO_CLAIM_FILE" "$PHASE_LOOP_WORKSPACE_ROOT" <<'PY'
+import json
+import pathlib
+import re
+import subprocess
+import sys
+
+claim = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+selected = str(claim.get("selected_todo") or "")
+first = selected.splitlines()[0] if selected else ""
+scope_match = re.search(r"\b(?:Patch|Create) only\b([^\n:]+)", first)
+tick = chr(96)
+scopes = re.findall(tick + "([^" + tick + r"\n]+)" + tick, scope_match.group(1)) if scope_match else []
+if not scopes or any(p.startswith("/") or ".." in pathlib.PurePosixPath(p).parts for p in scopes):
+    raise SystemExit(1)
+for merge in subprocess.check_output(["git", "rev-list", "--merges", "HEAD"], cwd=sys.argv[2], text=True).splitlines():
+    parents = subprocess.check_output(["git", "rev-list", "--parents", "-n", "1", merge], cwd=sys.argv[2], text=True).split()
+    if len(parents) != 3:
+        continue
+    changed = subprocess.check_output(["git", "diff", "--name-only", parents[1], merge, "--"], cwd=sys.argv[2], text=True).splitlines()
+    if sorted(changed) != sorted(scopes):
+        continue
+    try:
+        for scope in scopes:
+            if subprocess.check_output(["git", "rev-parse", f"HEAD:{scope}"], cwd=sys.argv[2], text=True).strip() != subprocess.check_output(["git", "rev-parse", f"{merge}:{scope}"], cwd=sys.argv[2], text=True).strip():
+                raise ValueError("head blob differs")
+            subprocess.check_call(["git", "diff", "--quiet", "HEAD", "--", scope], cwd=sys.argv[2])
+        print(merge)
+        raise SystemExit(0)
+    except Exception:
+        continue
+raise SystemExit(1)
+PY
+)" || {
+    write_status "integrity_blocked" "Merged delivery re-verification refused: no clean reviewed merge exactly matches the active claim's bounded scope." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+    return 76
+  }
+  reviewer_gh_config_dir="$(node "$ROOT_DIR/scripts/phase-loop-actor-preflight.mjs" --role review --repo-root "$PHASE_LOOP_WORKSPACE_ROOT" --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" --credentials "$PHASE_LOOP_ACTOR_CREDENTIALS" --credentials-root "$PHASE_LOOP_CONTROL_ROOT" --print-gh-config-dir 2>>"$SUPERVISOR_LOG")" || {
+    write_status "blocked" "Merged delivery re-verification could not resolve the configured independent-review profile; preserving the active claim." "$run_id" "78" "${CONSECUTIVE_FAILURES:-0}"
+    return 78
+  }
+  pr_number="$(GH_CONFIG_DIR="$reviewer_gh_config_dir" gh api "repos/$repository/commits/$candidate/pulls" --jq '[.[] | select(.merged_at != null)][0].number' 2>>"$SUPERVISOR_LOG" || true)"
+  if ! [[ "$pr_number" =~ ^[0-9]+$ ]]; then
+    write_status "integrity_blocked" "Merged delivery re-verification refused: the exact clean merge has no observable merged pull request." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+    return 76
+  fi
+  review_file="$TODO_CLAIM_DIR/merged-delivery-review.$$.json"
+  if ! GH_CONFIG_DIR="$reviewer_gh_config_dir" gh pr view "$pr_number" --json id,number,url,author,state,mergedAt,mergeCommit,headRefOid,reviews,statusCheckRollup > "$review_file"; then
+    rm -f "$review_file"
+    write_status "blocked" "Merged delivery re-verification could not read the observed merged pull request; preserving the active claim." "$run_id" "78" "${CONSECUTIVE_FAILURES:-0}"
+    return 78
+  fi
+  merge_actor="$(GH_CONFIG_DIR="$reviewer_gh_config_dir" gh api graphql -f query='query($id: ID!) { node(id: $id) { ... on PullRequest { mergedBy { login } } } }' -F "id=$(node -e 'const fs=require("fs"); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).id||"")' "$review_file")" --jq '.data.node.mergedBy.login' 2>>"$SUPERVISOR_LOG" || true)"
+  if ! python3 - "$review_file" "$merge_actor" "$reviewer" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+value = json.loads(path.read_text(encoding="utf-8"))
+reviews = value.get("reviews") if isinstance(value.get("reviews"), list) else []
+status = value.get("statusCheckRollup") if isinstance(value.get("statusCheckRollup"), list) else []
+reviewer = sys.argv[3]
+value.update({
+    "author": (value.get("author") or {}).get("login"),
+    "merge_commit_oid": (value.get("mergeCommit") or {}).get("oid"),
+    "head_oid": value.get("headRefOid"),
+    "merged_at": value.get("mergedAt"),
+    "reviewer": reviewer,
+    "merge_actor": sys.argv[2] or None,
+    "approved": any((entry.get("author") or {}).get("login") == reviewer and entry.get("state") == "APPROVED" for entry in reviews if isinstance(entry, dict)),
+    "ci_passed": bool(status) and all(entry.get("status") == "COMPLETED" and entry.get("conclusion") == "SUCCESS" for entry in status if isinstance(entry, dict)),
+    "observed_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+})
+temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+temporary.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+os.replace(temporary, path)
+PY
+  then
+    rm -f "$review_file"
+    write_status "integrity_blocked" "Merged delivery re-verification refused: observed review evidence could not be normalized." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+    return 76
+  fi
+  if result="$(node "$ROOT_DIR/scripts/phase-loop-delivery-integrity.mjs" verify-merged-delivery --repo "$PHASE_LOOP_WORKSPACE_ROOT" --claim "$TODO_CLAIM_FILE" --stdout "$stdout_log" --review "$review_file" --reviewer "$reviewer" --implementation "$implementation" --write 2>&1)"; then
+    status=0
+  else
+    status=$?
+  fi
+  rm -f "$review_file"
+  if [ "$status" -ne 0 ]; then
+    write_status "integrity_blocked" "Merged delivery re-verification refused: ${result:-missing result}" "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+    return 76
+  fi
+  if ! record_completion_ledger_transition "$run_stamp" '{"completion":"merged_delivery_reverified"}'; then
+    write_status "blocked" "Merged delivery re-verification passed but the durable completion ledger transition failed; preserving the completed claim for retry." "$run_id" "78" "${CONSECUTIVE_FAILURES:-0}"
+    return 78
+  fi
+  if ! remove_completed_todo_claim_from_queue "$run_stamp"; then
+    mark_completed_todo_cleanup_pending "$run_stamp" "$stdout_log" "" "" "" || true
+    write_status "blocked" "Merged delivery re-verification passed but TODO consumption was refused; preserving the completed claim for cleanup-only retry." "$run_id" "78" "${CONSECUTIVE_FAILURES:-0}"
+    return 78
+  fi
+  clear_repair_feedback
+  write_status "last_run_succeeded" "Selected TODO was already independently merged, was reverified against its exact reviewed Git state, and was consumed from the queue." "$run_id" "0" "0"
+  write_bdk_trajectory_event "$run_stamp" "verification.run" "$result"
+  printf '%s run=%s merged_delivery_reverified_and_consumed=true result=%s\n' "$(now_utc)" "$run_id" "$result" >> "$SUPERVISOR_LOG"
+  return 0
+}
+
 write_todo_claim() {
   local claim_id="$1"
   local status="$2"
@@ -20801,6 +20928,30 @@ PY
 
     case "$progress_classification" in
       terminal_failure)
+        # A fresh claim can legitimately execute after its selected bounded
+        # implementation has already merged.  Before terminalizing the claim
+        # for a missing in-run diff, try the narrow re-verification path.  It
+        # consumes only an exact reviewed merge with all bounded verification
+        # evidence; every other shape becomes one actionable integrity error.
+        if [ "$PHASE_LOOP_RUNTIME_EXECUTION_CONFIRMED" -eq 1 ] && python3 - "$PROGRESS_STATE_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+try:
+    progress = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+projection = progress.get("progress_projection") if isinstance(progress.get("progress_projection"), dict) else {}
+raise SystemExit(0 if (
+    progress.get("classification") == "terminal_failure"
+    and projection.get("terminal_completion_evidence_missing_without_objective_apply") is True
+) else 1)
+PY
+        then
+          phase_loop_reverify_and_consume_merged_delivery "$run_stamp" "$stdout_log" "$run_id"
+          return $?
+        fi
         if [ "$PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP" -eq 0 ] && [ "$PHASE_LOOP_RUNTIME_EXECUTION_CONFIRMED" -eq 1 ]; then
           # A resumable envelope with a terminal-completion evidence gap is a
           # controller-owned failed execution, not an invitation to mint a

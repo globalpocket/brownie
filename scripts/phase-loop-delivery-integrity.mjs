@@ -7,7 +7,10 @@
  * That is not a completed TODO, and it is not eligible for PR publication.
  */
 import crypto from 'node:crypto';
+import childProcess from 'node:child_process';
 import fs from 'node:fs';
+import path from 'node:path';
+import { boundedScopes } from './phase-loop-bounded-scope.mjs';
 
 function sha256(value) {
   return crypto.createHash('sha256').update(String(value ?? ''), 'utf8').digest('hex');
@@ -93,6 +96,256 @@ export function terminalCompletionEvidenceSha256(evidence) {
 function hasTerminalCompletionEvidence(evidence) {
   if (typeof evidence === 'string') return evidence.trim().length > 0;
   return Boolean(evidence && typeof evidence === 'object' && !Array.isArray(evidence) && Object.keys(evidence).length > 0);
+}
+
+function git(repoRoot, args) {
+  return childProcess.execFileSync('git', args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  }).trim();
+}
+
+function firstTodoLine(claim) {
+  return String(asObject(claim).selected_todo ?? '').split('\n')[0] ?? '';
+}
+
+function mergedDeliveryScope(claim) {
+  return boundedScopes(firstTodoLine(claim));
+}
+
+function isSha(value) {
+  return typeof value === 'string' && /^[0-9a-f]{40,64}$/i.test(value);
+}
+
+function runtimeTaskExecution(claim, stdoutPayload) {
+  const root = asObject(stdoutPayload);
+  const run = Object.keys(asObject(root.run)).length > 0 ? asObject(root.run) : root;
+  const runtimeClaimId = run.runtime_claim_id ?? run.phase_loop_claim_id ?? root.runtime_claim_id ?? root.phase_loop_claim_id;
+  const executed = run.reported_executed_count ?? run.executed_count ?? root.reported_executed_count ?? root.executed_count;
+  return {
+    claim_id: runtimeClaimId,
+    status: run.payload_status ?? run.status ?? root.payload_status ?? root.status,
+    executed_count: executed,
+    exact: runtimeClaimId === asObject(claim).claim_id
+      && (run.payload_status ?? run.status ?? root.payload_status ?? root.status) === 'task_executed'
+      && Number.isInteger(executed)
+      && executed >= 1
+  };
+}
+
+function verificationCommands(claim) {
+  const line = lineValue(asObject(claim).selected_todo, 'Verification');
+  return [...line.matchAll(/`([^`\n]+)`/g)].map((match) => match[1]).filter(Boolean);
+}
+
+function safeVerificationArgs(command) {
+  const args = String(command).trim().split(/\s+/).filter(Boolean);
+  if (
+    args.length >= 3
+    && args[0] === 'node'
+    && (args[1] === '--test' || args[1] === '--check')
+    && args.slice(2).every((entry) => /^[A-Za-z0-9_./:-]+$/.test(entry))
+  ) return args;
+  if (
+    args.length === 3
+    && args[0] === 'pnpm'
+    && args[1] === '--workspace-root'
+    && /^[A-Za-z0-9:_-]+$/.test(args[2])
+  ) return args;
+  return null;
+}
+
+function normalizeReview(value) {
+  const review = asObject(value);
+  return {
+    pr_url: review.pr_url ?? review.url ?? null,
+    pr_number: review.pr_number ?? review.number ?? null,
+    state: review.state ?? null,
+    merge_commit_oid: review.merge_commit_oid ?? review.mergeCommit?.oid ?? null,
+    head_oid: review.head_oid ?? review.headRefOid ?? null,
+    author: review.author?.login ?? review.author ?? null,
+    reviewer: review.reviewer ?? null,
+    merge_actor: review.merge_actor ?? review.mergedBy?.login ?? null,
+    merged_at: review.merged_at ?? review.mergedAt ?? null,
+    observed_at: review.observed_at ?? null,
+    approved: review.approved === true,
+    ci_passed: review.ci_passed === true
+  };
+}
+
+/**
+ * Reverify an already-merged implementation without treating a runtime
+ * `task_executed` envelope, a run id, or a green PR as completion.  This is
+ * intentionally a second, narrow terminal receipt: it proves that the exact
+ * selected target is clean at HEAD and came from the reviewed merge, then
+ * reruns the selected TODO's bounded verification commands.
+ */
+export function verifyMergedDeliveryReverification({ repoRoot, claim, stdoutPayload, review, reviewer, implementation }) {
+  const deliveryClaim = asObject(claim);
+  const normalizedReview = normalizeReview(review);
+  const scopes = mergedDeliveryScope(deliveryClaim);
+  const errors = [];
+  const runtime = runtimeTaskExecution(deliveryClaim, stdoutPayload);
+  if (!deliveryClaim.claim_id || !rootClaimId(deliveryClaim)) errors.push('merged_delivery_claim_identity_missing');
+  if (!deliveryClaim.selected_todo_id || deliveryClaim.selected_todo_sha256 !== selectedTodoSha256(deliveryClaim)) {
+    errors.push('merged_delivery_selected_todo_identity_mismatch');
+  }
+  if (!deliveryClaim.queue_fingerprint || !Number.isInteger(deliveryClaim.queue_generation)) {
+    errors.push('merged_delivery_queue_identity_missing');
+  }
+  if (scopes.length === 0) errors.push('merged_delivery_bounded_scope_missing');
+  if (!runtime.exact) errors.push('merged_delivery_runtime_execution_binding_missing');
+  if (normalizedReview.state !== 'MERGED') errors.push('merged_delivery_pr_not_merged');
+  if (!isSha(normalizedReview.merge_commit_oid) || !isSha(normalizedReview.head_oid)) errors.push('merged_delivery_git_identity_missing');
+  if (normalizedReview.author !== implementation) errors.push('merged_delivery_implementation_author_mismatch');
+  if (normalizedReview.reviewer !== reviewer || normalizedReview.merge_actor !== reviewer || reviewer === implementation) {
+    errors.push('merged_delivery_independent_review_missing');
+  }
+  if (!normalizedReview.approved || !normalizedReview.ci_passed || !normalizedReview.pr_url || !normalizedReview.merged_at || !normalizedReview.observed_at) {
+    errors.push('merged_delivery_review_or_ci_evidence_missing');
+  }
+  const commands = verificationCommands(deliveryClaim);
+  if (commands.length === 0 || commands.some((command) => !safeVerificationArgs(command))) {
+    errors.push('merged_delivery_verification_contract_invalid');
+  }
+  if (errors.length > 0) return { valid: false, reason: 'merged_delivery_reverification_refused', errors };
+
+  let parents;
+  try {
+    parents = git(repoRoot, ['rev-list', '--parents', '-n', '1', normalizedReview.merge_commit_oid]).split(/\s+/).filter(Boolean);
+  } catch {
+    return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_merge_history_unavailable'] };
+  }
+  if (parents.length !== 3 || parents[2] !== normalizedReview.head_oid) {
+    return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_merge_parent_binding_mismatch'] };
+  }
+  const firstParent = parents[1];
+  const mergePaths = git(repoRoot, ['diff', '--name-only', firstParent, normalizedReview.merge_commit_oid, '--']).split('\n').filter(Boolean).sort();
+  if (mergePaths.length !== scopes.length || mergePaths.some((entry, index) => entry !== scopes.slice().sort()[index])) {
+    return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_merge_scope_mismatch'] };
+  }
+
+  const targets = [];
+  for (const scope of scopes) {
+    try {
+      const mergeBlob = git(repoRoot, ['rev-parse', `${normalizedReview.merge_commit_oid}:${scope}`]);
+      const headBlob = git(repoRoot, ['rev-parse', `HEAD:${scope}`]);
+      childProcess.execFileSync('git', ['diff', '--quiet', 'HEAD', '--', scope], { cwd: repoRoot });
+      const untracked = git(repoRoot, ['ls-files', '--others', '--exclude-standard', '--', scope]);
+      if (mergeBlob !== headBlob || untracked) throw new Error('target differs from merged clean state');
+      targets.push({ path: scope, sha256: sha256(fs.readFileSync(path.join(repoRoot, scope))) });
+    } catch {
+      return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_target_not_clean_at_reviewed_merge'] };
+    }
+  }
+
+  const verification_results = [];
+  for (const command of commands) {
+    const args = safeVerificationArgs(command);
+    try {
+      childProcess.execFileSync(args[0], args.slice(1), { cwd: repoRoot, stdio: 'pipe', timeout: 180000 });
+      verification_results.push({ command, exit_code: 0 });
+    } catch (error) {
+      verification_results.push({ command, exit_code: Number.isInteger(error.status) ? error.status : 1 });
+      return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_verification_failed'], verification_results };
+    }
+  }
+  const evidence = {
+    schema_version: 1,
+    kind: 'phase_loop_merged_delivery_reverification',
+    claim_id: deliveryClaim.claim_id,
+    root_claim_id: rootClaimId(deliveryClaim),
+    selected_todo_id: deliveryClaim.selected_todo_id,
+    selected_todo_sha256: selectedTodoSha256(deliveryClaim),
+    completion_condition_sha256: completionConditionSha256(deliveryClaim),
+    queue_fingerprint: deliveryClaim.queue_fingerprint,
+    queue_generation: deliveryClaim.queue_generation,
+    runtime: runtime,
+    git: { merge_commit_oid: normalizedReview.merge_commit_oid, first_parent_oid: firstParent, head_oid: normalizedReview.head_oid, targets },
+    review: normalizedReview,
+    verification_results
+  };
+  return { valid: true, evidence };
+}
+
+export function validateMergedDeliveryReverification({ claim, evidence }) {
+  const proof = asObject(evidence);
+  const expected = asObject(claim);
+  const errors = [];
+  if (proof.schema_version !== 1 || proof.kind !== 'phase_loop_merged_delivery_reverification') errors.push('merged_delivery_evidence_schema_invalid');
+  for (const [key, value] of Object.entries({
+    claim_id: expected.claim_id,
+    root_claim_id: rootClaimId(expected),
+    selected_todo_id: expected.selected_todo_id,
+    selected_todo_sha256: selectedTodoSha256(expected),
+    completion_condition_sha256: completionConditionSha256(expected),
+    queue_fingerprint: expected.queue_fingerprint,
+    queue_generation: expected.queue_generation
+  })) {
+    if (proof[key] !== value) errors.push(`merged_delivery_evidence_${key}_mismatch`);
+  }
+  const runtime = asObject(proof.runtime);
+  if (runtime.claim_id !== expected.claim_id || runtime.status !== 'task_executed' || !Number.isInteger(runtime.executed_count) || runtime.executed_count < 1) {
+    errors.push('merged_delivery_evidence_runtime_binding_invalid');
+  }
+  const scopes = mergedDeliveryScope(expected);
+  const targets = asArray(asObject(proof.git).targets);
+  const gitProof = asObject(proof.git);
+  if (!isSha(gitProof.merge_commit_oid) || !isSha(gitProof.first_parent_oid) || !isSha(gitProof.head_oid)) {
+    errors.push('merged_delivery_evidence_git_identity_invalid');
+  }
+  if (scopes.length === 0 || targets.length !== scopes.length || targets.some((target, index) => asObject(target).path !== scopes[index] || !/^[a-f0-9]{64}$/.test(asObject(target).sha256 ?? ''))) {
+    errors.push('merged_delivery_evidence_target_binding_invalid');
+  }
+  const review = asObject(proof.review);
+  if (gitProof.merge_commit_oid !== review.merge_commit_oid || gitProof.head_oid !== review.head_oid) {
+    errors.push('merged_delivery_evidence_review_git_mismatch');
+  }
+  if (review.state !== 'MERGED' || !review.approved || !review.ci_passed || !review.pr_url || !review.author || !review.reviewer || !review.merged_at || !review.observed_at || review.author === review.reviewer || review.merge_actor !== review.reviewer) {
+    errors.push('merged_delivery_evidence_review_binding_invalid');
+  }
+  const results = asArray(proof.verification_results);
+  if (results.length === 0 || results.some((result) => !asObject(result).command || asObject(result).exit_code !== 0)) {
+    errors.push('merged_delivery_evidence_verification_missing_or_failed');
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+export function applyMergedDeliveryReverification({ claim, evidence, issuedAt = new Date().toISOString() }) {
+  const validated = validateMergedDeliveryReverification({ claim, evidence });
+  if (!validated.valid) return { valid: false, claim: null, errors: validated.errors };
+  const proof = asObject(evidence);
+  const review = asObject(proof.review);
+  const next = {
+    ...asObject(claim),
+    status: 'completed',
+    delivery_review: {
+      pr_url: review.pr_url,
+      pr_number: review.pr_number,
+      head_oid: review.head_oid,
+      merged_at: review.merged_at,
+      observed_at: review.observed_at,
+      merged: true,
+      approved: true,
+      ci_passed: true,
+      author: review.author,
+      reviewer: review.reviewer,
+      merge_actor: review.merge_actor,
+      merged_delivery_reverification: proof
+    },
+    merged_delivery_reverification: proof,
+    updated_at: issuedAt
+  };
+  const certificate = createCompletionCertificate({ claim: next, review: next.delivery_review, issuedAt });
+  if (!certificate.valid) return { valid: false, claim: null, errors: certificate.errors };
+  next.completion_certificate = certificate.certificate;
+  next.status_history = [...asArray(next.status_history), {
+    status: 'completed',
+    updated_at: issuedAt,
+    note: 'merged_delivery_reverified_before_queue_consumption'
+  }];
+  return { valid: true, claim: next, errors: [] };
 }
 
 /**
@@ -213,12 +466,18 @@ export function validateTerminalDeliveryReceipt({ claim, review = undefined }) {
   if (typeof reviewState.merge_actor !== 'string' || reviewState.merge_actor !== reviewState.reviewer) {
     errors.push('completed_requires_observed_reviewer_merge_actor');
   }
-  const semanticEvidence = validateSemanticCompletionEvidence({
-    claim: deliveryClaim,
-    evidence: reviewState.semantic_completion_evidence
-  });
-  if (!semanticEvidence.valid) {
-    errors.push(...semanticEvidence.errors.map((error) => `completed_requires_${error}`));
+  const mergedDelivery = asObject(reviewState.merged_delivery_reverification);
+  if (Object.keys(mergedDelivery).length > 0) {
+    const evidence = validateMergedDeliveryReverification({ claim: deliveryClaim, evidence: mergedDelivery });
+    if (!evidence.valid) errors.push(...evidence.errors.map((error) => `completed_requires_${error}`));
+  } else {
+    const semanticEvidence = validateSemanticCompletionEvidence({
+      claim: deliveryClaim,
+      evidence: reviewState.semantic_completion_evidence
+    });
+    if (!semanticEvidence.valid) {
+      errors.push(...semanticEvidence.errors.map((error) => `completed_requires_${error}`));
+    }
   }
   return { valid: errors.length === 0, errors };
 }
@@ -249,7 +508,9 @@ export function createCompletionCertificate({ claim, review = undefined, issuedA
       root_claim_id: rootClaimId(deliveryClaim),
       selected_todo_sha256: selectedTodoSha256(deliveryClaim),
       completion_condition_sha256: completionConditionSha256(deliveryClaim),
-      semantic_completion_evidence_sha256: semanticCompletionEvidenceSha256(reviewState.semantic_completion_evidence),
+      semantic_completion_evidence_sha256: semanticCompletionEvidenceSha256(
+        reviewState.merged_delivery_reverification ?? reviewState.semantic_completion_evidence
+      ),
       review: {
         pr_url: reviewState.pr_url ?? null,
         pr_number: reviewState.pr_number ?? null,
@@ -286,7 +547,9 @@ export function validateCompletionCertificate({ claim, certificate = undefined, 
   if (proof.completion_condition_sha256 !== completionConditionSha256(deliveryClaim)) {
     errors.push('completion_certificate_completion_condition_mismatch');
   }
-  if (proof.semantic_completion_evidence_sha256 !== semanticCompletionEvidenceSha256(reviewState.semantic_completion_evidence)) {
+  if (proof.semantic_completion_evidence_sha256 !== semanticCompletionEvidenceSha256(
+    reviewState.merged_delivery_reverification ?? reviewState.semantic_completion_evidence
+  )) {
     errors.push('completion_certificate_semantic_evidence_mismatch');
   }
   const certificateReview = asObject(proof.review);
@@ -390,12 +653,18 @@ export function validateClaimLifecycleTransition({ previous, next, review = {} }
 function usage() {
   process.stderr.write('usage: phase-loop-delivery-integrity.mjs evaluate --claim <claim.json> --stdout <run.stdout.json> [--verification <verification.json>]\n');
   process.stderr.write('   or: phase-loop-delivery-integrity.mjs validate-certificate --claim <claim.json> [--require-completed]\n');
+  process.stderr.write('   or: phase-loop-delivery-integrity.mjs verify-merged-delivery --repo <repo> --claim <claim.json> --stdout <run.stdout.json> --review <review.json> --reviewer <login> --implementation <login> [--write]\n');
 }
 
 function parseArgs(argv) {
   const args = new Map();
   for (let index = 0; index < argv.length; index += 1) {
-    if (argv[index].startsWith('--')) args.set(argv[index], argv[index + 1]);
+    if (!argv[index].startsWith('--')) continue;
+    if (argv[index] === '--require-completed' || argv[index] === '--write') {
+      args.set(argv[index], true);
+    } else {
+      args.set(argv[index], argv[++index]);
+    }
   }
   return args;
 }
@@ -403,7 +672,7 @@ function parseArgs(argv) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const [command] = process.argv.slice(2);
   const args = parseArgs(process.argv.slice(3));
-  if (!args.get('--claim') || (command !== 'evaluate' && command !== 'validate-certificate') || (command === 'evaluate' && !args.get('--stdout'))) {
+  if (!args.get('--claim') || !['evaluate', 'validate-certificate', 'verify-merged-delivery'].includes(command) || (command === 'evaluate' && !args.get('--stdout')) || (command === 'verify-merged-delivery' && (!args.get('--stdout') || !args.get('--repo') || !args.get('--review') || !args.get('--reviewer') || !args.get('--implementation')))) {
     usage();
     process.exit(64);
   }
@@ -417,6 +686,35 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       }
       process.stdout.write(`${JSON.stringify(result)}\n`);
       process.exit(result.valid ? 0 : 76);
+    }
+    if (command === 'verify-merged-delivery') {
+      const stdoutPayload = readJson(args.get('--stdout'));
+      const review = readJson(args.get('--review'));
+      const result = verifyMergedDeliveryReverification({
+        repoRoot: path.resolve(args.get('--repo')),
+        claim,
+        stdoutPayload,
+        review,
+        reviewer: args.get('--reviewer'),
+        implementation: args.get('--implementation')
+      });
+      if (!result.valid) {
+        process.stdout.write(`${JSON.stringify(result)}\n`);
+        process.exit(76);
+      }
+      const applied = applyMergedDeliveryReverification({ claim, evidence: result.evidence });
+      if (!applied.valid) {
+        process.stdout.write(`${JSON.stringify({ valid: false, reason: 'merged_delivery_reverification_refused', errors: applied.errors })}\n`);
+        process.exit(76);
+      }
+      if (args.has('--write')) {
+        const destination = args.get('--claim');
+        const temporary = `${destination}.${process.pid}.tmp`;
+        fs.writeFileSync(temporary, `${JSON.stringify(applied.claim, null, 2)}\n`, { mode: 0o600 });
+        fs.renameSync(temporary, destination);
+      }
+      process.stdout.write(`${JSON.stringify({ valid: true, evidence: result.evidence })}\n`);
+      process.exit(0);
     }
     const stdoutPayload = readJson(args.get('--stdout'));
     let verification = null;

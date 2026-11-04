@@ -112,6 +112,78 @@ test('allows selected removal after completion record without rewriting dependen
   assert.equal(result.valid, true, JSON.stringify(result.errors));
 });
 
+test('permits a clean merged target to be consumed only with exact merged-delivery re-verification evidence', () => {
+  const selected = `- [ ] E-merged-consume: Patch only \`scripts/merged-target.mjs\`.
+  Route: implementation.
+  Completion condition: consume only after the reviewed merged target is reverified.
+  Verification: run \`node --check scripts/merged-target.mjs\`.`;
+  const sha256 = (value) => createHash('sha256').update(value, 'utf8').digest('hex');
+  const claim = {
+    claim_id: 'todo-g1000-merged-r1',
+    root_claim_id: 'todo-g1000-merged-r1',
+    status: 'completed',
+    selected_todo: selected,
+    selected_todo_id: 'E-merged-consume',
+    selected_todo_sha256: sha256(selected),
+    queue_fingerprint: 'c'.repeat(64),
+    queue_generation: 1000
+  };
+  const evidence = {
+    schema_version: 1,
+    kind: 'phase_loop_merged_delivery_reverification',
+    claim_id: claim.claim_id,
+    root_claim_id: claim.root_claim_id,
+    selected_todo_id: claim.selected_todo_id,
+    selected_todo_sha256: claim.selected_todo_sha256,
+    completion_condition_sha256: sha256('consume only after the reviewed merged target is reverified.'),
+    queue_fingerprint: claim.queue_fingerprint,
+    queue_generation: claim.queue_generation,
+    runtime: { claim_id: claim.claim_id, status: 'task_executed', executed_count: 1 },
+    git: {
+      merge_commit_oid: 'a'.repeat(40),
+      first_parent_oid: 'b'.repeat(40),
+      head_oid: 'c'.repeat(40),
+      targets: [{ path: 'scripts/merged-target.mjs', sha256: 'a'.repeat(64) }]
+    },
+    review: {
+      state: 'MERGED', pr_url: 'https://example.invalid/pull/1000', merge_commit_oid: 'a'.repeat(40), head_oid: 'c'.repeat(40), author: 'implementation', reviewer: 'review', merge_actor: 'review', merged_at: '2026-11-04T09:38:12Z', observed_at: '2026-11-04T11:39:21Z', approved: true, ci_passed: true
+    },
+    verification_results: [{ command: 'node --check scripts/merged-target.mjs', exit_code: 0 }]
+  };
+  claim.merged_delivery_reverification = evidence;
+  claim.delivery_review = {
+    merged: true,
+    approved: true,
+    ci_passed: true,
+    author: 'implementation',
+    reviewer: 'review',
+    merge_actor: 'review',
+    merged_delivery_reverification: evidence
+  };
+  const result = validatePhaseLoopProgressIntegrity({
+    claim,
+    todoBefore: queue(selected, e20b),
+    todoAfter: queue(e20b),
+    diffFiles: ['.brownie/todo.md'],
+    completionRecordExists: true
+  });
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+  assert.equal(result.merged_delivery_reverified, true);
+  assert.equal(durableDeliveryReceiptForClaim(claim).valid, true);
+
+  delete claim.merged_delivery_reverification;
+  delete claim.delivery_review.merged_delivery_reverification;
+  const rejected = validatePhaseLoopProgressIntegrity({
+    claim,
+    todoBefore: queue(selected, e20b),
+    todoAfter: queue(e20b),
+    diffFiles: ['.brownie/todo.md'],
+    completionRecordExists: true
+  });
+  assert.equal(rejected.valid, false);
+  assert(rejected.errors.some((error) => error.code === 'selected_todo_removed_without_target_change'));
+});
+
 test('rejects dependent TODO dependency rewrite even after selected TODO completion record', () => {
   const result = validatePhaseLoopProgressIntegrity({
     claim: { claim_id: 'claim-1', selected_todo: e20a },
