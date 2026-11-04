@@ -119,6 +119,16 @@ test('clean fixture reaches an applied bounded change, review rework, and merged
   const delivered = applyReviewReconciliation({ claim: resubmittedClaim, reconciliation: completed, at: '2026-10-31T12:03:00Z', runStamp: 'liveness-merged' });
   assert.equal(delivered.status, 'completed');
   assert.equal(delivered.root_claim_id, claim.root_claim_id);
+  // This is the positive terminal fixture paired with the claim-smoke
+  // missing-proof refusal: completion is only admitted after the certificate
+  // binds this exact root/TODO to the independently observed approval, CI,
+  // and merge receipt.
+  assert.equal(delivered.completion_certificate.root_claim_id, claim.root_claim_id);
+  assert.equal(delivered.completion_certificate.selected_todo_sha256, selectedTodoSha256(claim));
+  assert.equal(delivered.completion_certificate.review.head_oid, 'b'.repeat(40));
+  assert.equal(delivered.delivery_review.ci_passed, true);
+  assert.equal(delivered.delivery_review.merge_actor, 'globalpocket');
+  assert.equal(delivered.delivery_review.effective_reviewer_decision, 'APPROVED');
   assert.equal(validateCompletionCertificate({ claim: delivered }).valid, true);
 });
 
