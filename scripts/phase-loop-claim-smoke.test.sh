@@ -5572,7 +5572,10 @@ assert "E-empty-queue-exact" in todo, todo
 # unreachable log marker: it must be integrity-blocked, continuation-required,
 # and exit 76 while retaining the TODO and emitting one claim-bound failure.
 assert "completion_promotion_refused=true" in supervisor_log, supervisor_log
-assert "reason=independent_review_ci_merge_missing" in supervisor_log, supervisor_log
+# The writer's durable refusal reason is the same canonical reason carried by
+# the public blocked event.  Keep the log assertion bound to that exact
+# contract so a shortened legacy alias cannot mask a changed failure class.
+assert "reason=completion_certificate_or_independent_review_ci_merge_missing" in supervisor_log, supervisor_log
 assert "completion_refusal_terminalized=true" in supervisor_log, supervisor_log
 assert "bdk_harness_feedback_passed" in supervisor_log, supervisor_log
 assert "terminal_event=todo.blocked" in supervisor_log, supervisor_log
