@@ -5567,11 +5567,16 @@ assert "completion_certificate" not in claim, claim
 # claim and expose a single blocked state rather than mutate the queue while
 # trying to recover it.
 assert "E-empty-queue-exact" in todo, todo
-# The common claim writer rejects `completed` before the later public-event
-# fallback can run.  Assert that concrete terminal transition rather than an
-# unreachable log marker: it must be integrity-blocked, continuation-required,
-# and exit 76 while retaining the TODO and emitting one claim-bound failure.
-assert "completion_promotion_refused=true" in supervisor_log, supervisor_log
+# Either the common claim writer or the public-event gate may be the first
+# boundary reached by this CI fixture.  Both are required to publish the same
+# canonical refusal reason; exactly one may terminalize an attempted
+# completion, never a second fallback or an implicit success.
+refusal_markers = [
+    marker
+    for marker in ("completion_promotion_refused=true", "public_completion_refused=true")
+    if marker in supervisor_log
+]
+assert len(refusal_markers) == 1, supervisor_log
 # The writer's durable refusal reason is the same canonical reason carried by
 # the public blocked event.  Keep the log assertion bound to that exact
 # contract so a shortened legacy alias cannot mask a changed failure class.

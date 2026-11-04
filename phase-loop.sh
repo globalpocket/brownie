@@ -339,7 +339,7 @@ write_bdk_trajectory_event() {
         fi
       fi
       write_status "integrity_blocked" "Refused public todo.completed before independent review approval, required CI, and merge. event=$event_type run=$run_stamp" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-0}" "" "true"
-      printf '%s public_completion_refused=true event=%s run=%s reason=independent_review_ci_merge_missing\n' "$(now_utc)" "$event_type" "$run_stamp" >> "$SUPERVISOR_LOG"
+      printf '%s public_completion_refused=true event=%s run=%s reason=completion_certificate_or_independent_review_ci_merge_missing\n' "$(now_utc)" "$event_type" "$run_stamp" >> "$SUPERVISOR_LOG"
       return 76
     fi
   fi
