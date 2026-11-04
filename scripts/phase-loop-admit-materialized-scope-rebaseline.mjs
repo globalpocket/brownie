@@ -53,6 +53,15 @@ function gitValue(repoRoot, args) {
   }
 }
 
+function gitSucceeds(repoRoot, args) {
+  try {
+    execFileSync('git', args, { cwd: repoRoot, stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function gitHistoryUnavailable(id, subject, revision) {
   return new Error(`${id}: receipt Git history unavailable for ${subject} ${revision}; fetch complete history (for example actions/checkout with fetch-depth: 0)`);
 }
@@ -136,6 +145,42 @@ function gitBlob(repoRoot, revision, target) {
 
 function worktreeBlob(repoRoot, target) {
   return gitValue(repoRoot, ['hash-object', '--path', target, target]);
+}
+
+function commitChangesOnlyBoundedScope(repoRoot, commit, parent, target, boundedTargets) {
+  const changedPaths = gitValue(repoRoot, ['diff-tree', '--no-commit-id', '--name-only', '-r', parent, commit]);
+  const paths = changedPaths?.split('\n').filter(Boolean) ?? [];
+  return paths.includes(target) && paths.every((candidate) => boundedTargets.has(candidate));
+}
+
+// A public receipt remains immutable evidence of the historical Create step.
+// A subsequent implementation may legitimately Patch its exact bounded scope.
+// Admit that later content only when Git proves it is clean, committed after
+// the receipt merge, and was introduced by a commit whose entire change set is
+// confined to the current Patch scope. The relevant commit is every actual
+// first introduction of the accepted blob, not a later merge delta: a merge
+// can inherit a bad blob from one parent while its diff against another parent
+// appears harmless. This deliberately does not admit an uncommitted target, a
+// scope-expanding introducing commit, or an unrelated branch.
+function hasCleanCommittedBoundedPatch({ repoRoot, mergeCommit, target, historicalBlob, currentBlob, boundedTargets }) {
+  if (currentBlob === historicalBlob
+    || gitBlob(repoRoot, 'HEAD', target) !== currentBlob
+    || !gitSucceeds(repoRoot, ['diff', '--quiet', 'HEAD', '--', target])
+    || !gitSucceeds(repoRoot, ['diff', '--cached', '--quiet', '--', target])
+    || !gitSucceeds(repoRoot, ['merge-base', '--is-ancestor', mergeCommit, 'HEAD'])) return false;
+  const firstIntroductions = [];
+  const descendants = gitValue(repoRoot, ['rev-list', '--ancestry-path', `${mergeCommit}..HEAD`]);
+  for (const commit of descendants?.split('\n').filter(Boolean) ?? []) {
+    const parentLine = gitValue(repoRoot, ['rev-list', '--parents', '-n', '1', commit]);
+    const parents = parentLine?.split(/\s+/u).slice(1) ?? [];
+    if (parents.length === 0 || gitBlob(repoRoot, commit, target) !== currentBlob) continue;
+    if (parents.every((parent) => gitBlob(repoRoot, parent, target) !== currentBlob)) {
+      firstIntroductions.push({ commit, parents });
+    }
+  }
+  return firstIntroductions.length > 0 && firstIntroductions.every(({ commit, parents }) => (
+    parents.every((parent) => commitChangesOnlyBoundedScope(repoRoot, commit, parent, target, boundedTargets))
+  ));
 }
 
 function isPathInside(root, candidate) {
@@ -329,6 +374,7 @@ export function readGitMaterializedScopeRebaselineRecords(repoRoot, todoText = n
     const beforeBlock = replaceFirstLine(block, beforeFirstLine);
     const beforeContract = protectedContract(beforeBlock);
     const afterContract = protectedContract(block);
+    const boundedTargets = new Set(boundedScopeEntries(afterContract.first_line).map((entry) => entry.path));
     for (const target of receipt.targets) {
       if (!target.path || path.isAbsolute(target.path) || target.path.includes('..')) throw new Error(`${id}: receipt target path is invalid: ${target.path}`);
       if (gitBlob(repoRoot, firstParent, target.path) !== null) throw new Error(`${id}: receipt target exists in merge first parent: ${target.path}`);
@@ -346,7 +392,17 @@ export function readGitMaterializedScopeRebaselineRecords(repoRoot, todoText = n
           && options.activeClaimMaterialization?.selected_todo_id === id
           && options.activeClaimMaterialization?.selected_todo_sha256 === sha256Text(block)
         ));
-        if (!activeMaterialization) throw new Error(`${id}: receipt target digest mismatch in current worktree: ${target.path}`);
+        const cleanCommittedPatch = hasCleanCommittedBoundedPatch({
+          repoRoot,
+          mergeCommit: receipt.merge_commit,
+          target: target.path,
+          historicalBlob: target.blob,
+          currentBlob: worktreeBlob(repoRoot, target.path),
+          boundedTargets
+        });
+        if (!activeMaterialization && !cleanCommittedPatch) {
+          throw new Error(`${id}: receipt target digest mismatch in current worktree: ${target.path}`);
+        }
       }
     }
     records.push({

@@ -138,6 +138,68 @@ test('admits a public Git-merged Create-to-Patch receipt only for the exact targ
   }), []);
 });
 
+test('admits a clean committed bounded Patch after a public Create-to-Patch receipt but rejects a dirty target mutation', () => {
+  const { root, target } = gitMergedMaterializationFixture();
+  const todoPath = path.join(root, '.brownie/todo.md');
+  execFileSync('git', ['add', '.brownie/todo.md'], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'publish public materialization receipt'], { cwd: root });
+  execFileSync('git', ['checkout', '-qb', 'implementation-patch'], { cwd: root });
+  fs.writeFileSync(path.join(root, target), 'export const journey = "clean-committed-patch";\n');
+  execFileSync('git', ['add', target], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'patch bounded E-fixture implementation'], { cwd: root });
+
+  const todoText = fs.readFileSync(todoPath, 'utf8');
+  assert.equal(readGitMaterializedScopeRebaselineRecords(root, todoText).length, 1);
+  assert.deepEqual(validateTodoDecompositionText(todoText, {
+    repoRoot: root,
+    packageScripts: new Set(['guard:release-contract:test'])
+  }), []);
+
+  fs.writeFileSync(path.join(root, target), 'export const journey = "dirty-mutation";\n');
+  assert.throws(
+    () => readGitMaterializedScopeRebaselineRecords(root, todoText),
+    /receipt target digest mismatch in current worktree/u
+  );
+});
+
+test('rejects a clean committed target Patch when its introducing commit expands beyond the bounded scope', () => {
+  const { root, target } = gitMergedMaterializationFixture();
+  const todoPath = path.join(root, '.brownie/todo.md');
+  execFileSync('git', ['add', '.brownie/todo.md'], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'publish public materialization receipt'], { cwd: root });
+  fs.writeFileSync(path.join(root, target), 'export const journey = "scope-expanded-patch";\n');
+  fs.writeFileSync(path.join(root, 'outside-bounded-scope.txt'), 'must not be admitted\n');
+  execFileSync('git', ['add', target, 'outside-bounded-scope.txt'], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'patch target with unrelated scope expansion'], { cwd: root });
+
+  assert.throws(
+    () => readGitMaterializedScopeRebaselineRecords(root, fs.readFileSync(todoPath, 'utf8')),
+    /receipt target digest mismatch in current worktree/u
+  );
+});
+
+test('rejects a merge that hides an out-of-scope current-blob introduction behind a bounded parent-pair delta', () => {
+  const { root, target } = gitMergedMaterializationFixture();
+  const todoPath = path.join(root, '.brownie/todo.md');
+  execFileSync('git', ['add', '.brownie/todo.md'], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'publish public materialization receipt'], { cwd: root });
+  execFileSync('git', ['checkout', '-qb', 'bad-introducer'], { cwd: root });
+  fs.writeFileSync(path.join(root, target), 'export const journey = "hidden-out-of-scope-introduction";\n');
+  fs.writeFileSync(path.join(root, 'outside-bounded-scope.txt'), 'shared outside change\n');
+  execFileSync('git', ['add', target, 'outside-bounded-scope.txt'], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'introduce target with outside scope'], { cwd: root });
+  execFileSync('git', ['checkout', '-q', 'main'], { cwd: root });
+  fs.writeFileSync(path.join(root, 'outside-bounded-scope.txt'), 'shared outside change\n');
+  execFileSync('git', ['add', 'outside-bounded-scope.txt'], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'independently add outside scope'], { cwd: root });
+  execFileSync('git', ['merge', '--no-ff', '-qm', 'merge target introduction', 'bad-introducer'], { cwd: root });
+
+  assert.throws(
+    () => readGitMaterializedScopeRebaselineRecords(root, fs.readFileSync(todoPath, 'utf8')),
+    /receipt target digest mismatch in current worktree/u
+  );
+});
+
 test('rejects a Git materialization receipt when parent presence, digest, or TODO binding is wrong', () => {
   const { root, target, merge, head, blob, laterMerge, followupHead } = gitMergedMaterializationFixture();
   const todoPath = path.join(root, '.brownie/todo.md');
