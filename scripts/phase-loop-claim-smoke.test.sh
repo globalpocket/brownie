@@ -3253,6 +3253,101 @@ git -C "$queue_workspace" -c user.name=Brownie -c user.email=brownie@example.inv
 queue_original_workspace="$test_workspace"
 test_workspace="$queue_workspace"
 
+# A partial claim created by an older controller must never be promoted merely
+# because it says in_progress.  This reproduces the E23d process-loss shape:
+# the live TODO is still pending, but current.json has no immutable admission
+# identity.  The controller must preserve its bytes in a quarantine archive,
+# write a non-secret audit record, and create a distinct fully admitted claim
+# before the Runtime reaches one stable actionable blocked state.
+incomplete_claim_workspace="$(mktemp -d)"
+incomplete_claim_state="$(mktemp -d)"
+incomplete_claim_prompt="$(mktemp)"
+git -C "$incomplete_claim_workspace" init -b main >/dev/null
+mkdir -p "$incomplete_claim_workspace/.brownie" "$incomplete_claim_workspace/scripts"
+printf '%s\n' '{"name":"brownie-claim-smoke-incomplete-e23d-fixture","private":true,"scripts":{"guard:todo-decomposition":"node scripts/guard-todo-decomposition.mjs","phase-loop:todo-queue-integrity":"node scripts/phase-loop-todo-queue-integrity.mjs"}}' > "$incomplete_claim_workspace/package.json"
+printf '%s\n' 'export const statefulSoak = "before";' > "$incomplete_claim_workspace/scripts/release-artifact-stateful-soak.mjs"
+printf '%s\n' '- [ ] E-23d-release-artifact-stateful-soak: Patch only `scripts/release-artifact-stateful-soak.mjs` to verify a bounded downloadable-artifact stateful soak.
+  Route: implementation.
+  Source TODO: E-23d.
+  Depends on: <none>.
+  Completion condition: preserve a pending implementation claim until independently reviewed delivery evidence exists.
+  Forbidden changes: do not edit unrelated files.
+  Verification: run `node --test scripts/release-artifact-stateful-soak.test.mjs`.' > "$incomplete_claim_workspace/.brownie/todo.md"
+printf '# incomplete E23d claim fixture breakdown\n' > "$incomplete_claim_workspace/.brownie/todo-breakdown.md"
+git -C "$incomplete_claim_workspace" add package.json scripts/release-artifact-stateful-soak.mjs .brownie/todo.md .brownie/todo-breakdown.md
+git -C "$incomplete_claim_workspace" -c user.name=Brownie -c user.email=brownie@example.invalid commit -m init >/dev/null
+printf 'base prompt\n' > "$incomplete_claim_prompt"
+mkdir -p "$incomplete_claim_state/todo-claims"
+python3 - "$incomplete_claim_workspace/.brownie/todo.md" "$incomplete_claim_state/todo-claims/current.json" "$incomplete_claim_state/legacy-claim.sha256" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+todo = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").strip()
+claim = {
+    "schema_version": 1,
+    "claim_id": "todo-g630-dbc266d54993",
+    "root_claim_id": "todo-g630-dbc266d54993",
+    "status": "in_progress",
+    "created_at": "2026-11-02T09:47:59Z",
+    "selected_todo": todo,
+    "queue_generation": 630,
+    "queue_fingerprint": "0" * 64,
+}
+raw = json.dumps(claim, ensure_ascii=False, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+pathlib.Path(sys.argv[2]).write_bytes(raw)
+pathlib.Path(sys.argv[3]).write_text(hashlib.sha256(raw).hexdigest() + "\n", encoding="utf-8")
+PY
+PHASE_LOOP_STATE_DIR="$incomplete_claim_state" \
+PHASE_LOOP_PROMPT="$incomplete_claim_prompt" \
+PHASE_LOOP_TODO="$incomplete_claim_workspace/.brownie/todo.md" \
+PHASE_LOOP_TODO_BREAKDOWN="$incomplete_claim_workspace/.brownie/todo-breakdown.md" \
+BROWNIE_BIN="$fake_brownie_blocked_json" \
+PHASE_LOOP_WORKSPACE_ROOT="$incomplete_claim_workspace" \
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+python3 - "$incomplete_claim_state" "$incomplete_claim_workspace/.brownie/todo.md" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+state = pathlib.Path(sys.argv[1])
+todo = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8").strip()
+legacy_digest = (state / "legacy-claim.sha256").read_text(encoding="utf-8").strip()
+archives = sorted((state / "todo-claims").glob("stale-incomplete-*.json"))
+assert len(archives) == 1, archives
+assert hashlib.sha256(archives[0].read_bytes()).hexdigest() == legacy_digest
+audits = sorted((state / "todo-claims" / "incomplete-claim-quarantine").glob("*.json"))
+assert len(audits) == 1, audits
+audit = json.loads(audits[0].read_text(encoding="utf-8"))
+assert audit["state"] == "quarantined", audit
+assert audit["claim_id"] == "todo-g630-dbc266d54993", audit
+assert audit["source_claim_sha256"] == legacy_digest, audit
+assert {"selected_todo_id", "selected_todo_sha256", "run_stamp", "workspace_changed", "claim_admission"}.issubset(audit["missing_required_admission_fields"]), audit
+assert {"run_id", "workspace_changed", "materialization", "receipt"}.issubset(audit["observed_runtime_fields_absent"]), audit
+claim = json.loads((state / "todo-claims" / "current.json").read_text(encoding="utf-8"))
+assert claim["status"] == "blocked", claim
+assert claim["claim_id"] != "todo-g630-dbc266d54993", claim
+assert claim["selected_todo_id"] == "E-23d-release-artifact-stateful-soak", claim
+assert claim["selected_todo"] == todo, claim
+assert claim["selected_todo_sha256"] == hashlib.sha256(todo.encode("utf-8")).hexdigest(), claim
+assert claim["workspace_changed"] is False, claim
+admission = claim["claim_admission"]
+assert admission["kind"] == "phase_loop_fresh_claim_admission", admission
+assert all(admission[key] == claim[key] for key in ("claim_id", "selected_todo_id", "selected_todo_sha256", "queue_fingerprint", "queue_generation")), admission
+assert admission["issued_at"].endswith("Z"), admission
+assert todo.startswith("- [ ] E-23d-release-artifact-stateful-soak:"), todo
+status = json.loads((state / "status.json").read_text(encoding="utf-8"))
+assert status["status"] == "blocked_todo_recorded", status
+assert "todo-g630-dbc266d54993" not in status.get("detail", ""), status
+progress = json.loads((state / "progress-state.json").read_text(encoding="utf-8"))
+runtime_payload = json.loads(pathlib.Path(progress["stdout_log"]).read_text(encoding="utf-8"))["run"]
+assert runtime_payload["phase_loop_claim_id"] == claim["claim_id"], runtime_payload
+assert runtime_payload["phase_loop_claim_id"] != "todo-g630-dbc266d54993", runtime_payload
+assert runtime_payload["phase_loop_selected_todo_id"] == "E-23d-release-artifact-stateful-soak", runtime_payload
+PY
+
 queue_state_with_claim="$(mktemp -d)"
 queue_prompt_with_claim="$(mktemp)"
 queue_todo_with_claim="$(mktemp)"

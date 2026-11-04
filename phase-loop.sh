@@ -2020,6 +2020,234 @@ active_todo_claim_exists() {
   esac
 }
 
+quarantine_incomplete_active_todo_claim() {
+  # A status field alone is not an admission record.  Older controllers could
+  # leave a partial current.json behind and a later run would upgrade it to
+  # in_progress without proving which live TODO it belonged to.  Preserve that
+  # exact snapshot, record why it was rejected, and force the ordinary queue
+  # integrity + fresh-claim path to create the next attempt.
+  local run_stamp="$1"
+  local result
+  if ! result="$(python3 - "$TODO_CLAIM_FILE" "$TODO_CLAIM_DIR" "$PHASE_LOOP_TODO" "$run_stamp" "$(now_utc)" <<'PY'
+import hashlib
+import json
+import os
+import pathlib
+import re
+import sys
+
+current_path = pathlib.Path(sys.argv[1])
+claim_dir = pathlib.Path(sys.argv[2])
+todo_path = pathlib.Path(sys.argv[3])
+run_stamp = sys.argv[4]
+timestamp = sys.argv[5]
+
+def atomic_json(path, value):
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, ensure_ascii=False, sort_keys=True, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            pass
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+def todo_id(block):
+    first_line = block.splitlines()[0] if block.splitlines() else ""
+    match = re.match(r"^[ \t]*[-*][ \t]+\[[ \t]*\][ \t]+([^:\s]+)", first_line)
+    return match.group(1).strip() if match else ""
+
+def unchecked_blocks(text):
+    starts = list(re.finditer(r"(?m)^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ xX]\][ \t]+", text))
+    result = []
+    for index, start in enumerate(starts):
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(text)
+        block = text[start.start():end].rstrip()
+        if re.match(r"^[ \t]*(?:[-*]|\d+[.)])[ \t]+\[[ \t]*\][ \t]+", block):
+            result.append(block)
+    return result
+
+if not current_path.is_file():
+    print(json.dumps({"action": "absent"}, sort_keys=True))
+    raise SystemExit(0)
+raw = current_path.read_bytes()
+try:
+    claim = json.loads(raw.decode("utf-8"))
+except Exception as exc:
+    print(json.dumps({"action": "refused", "reason": "active_claim_json_unreadable", "error": str(exc)}, sort_keys=True))
+    raise SystemExit(1)
+if not isinstance(claim, dict) or claim.get("status") not in {"claimed", "in_progress"}:
+    print(json.dumps({"action": "not_active"}, sort_keys=True))
+    raise SystemExit(0)
+
+claim_id = claim.get("claim_id") if isinstance(claim.get("claim_id"), str) else ""
+selected = claim.get("selected_todo") if isinstance(claim.get("selected_todo"), str) else ""
+selected_id = todo_id(selected)
+selected_sha256 = hashlib.sha256(selected.encode("utf-8")).hexdigest() if selected else ""
+
+# This quarantine gate protects the canonical controller claim format.  Older
+# synthetic/legacy claims are intentionally left to the pre-existing
+# stale-snapshot and replan handlers below the caller: those handlers retain
+# their own exact archival semantics and must not be short-circuited merely
+# because they predate fresh-claim admission records.  A non-canonical claim
+# is never upgraded by this gate into a fresh admission.
+if not re.fullmatch(r"todo-g[0-9]+-[0-9a-f]{12}(?:-r[0-9]+)?", claim_id):
+    print(json.dumps({"action": "legacy_admission_not_applicable", "claim_id": claim_id or None}, sort_keys=True))
+    raise SystemExit(0)
+
+missing = []
+if not selected_id:
+    missing.append("selected_todo")
+if claim.get("selected_todo_id") != selected_id:
+    missing.append("selected_todo_id")
+if claim.get("selected_todo_sha256") != selected_sha256:
+    missing.append("selected_todo_sha256")
+if not isinstance(claim.get("queue_generation"), int) or claim.get("queue_generation") < 1:
+    missing.append("queue_generation")
+if not isinstance(claim.get("queue_fingerprint"), str) or not re.fullmatch(r"[0-9a-f]{64}", claim.get("queue_fingerprint")):
+    missing.append("queue_fingerprint")
+if not isinstance(claim.get("workspace_changed"), bool):
+    missing.append("workspace_changed")
+# `run_stamp` is operational context.  Review reconciliation deliberately
+# writes stamps such as `review-rework`; binding it to a wall-clock format
+# would quarantine an otherwise exact claim and erase its same-claim review
+# metadata.  The immutable admission timestamp below remains strict.
+if not isinstance(claim.get("run_stamp"), str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", claim.get("run_stamp")):
+    missing.append("run_stamp")
+admission = claim.get("claim_admission")
+expected_admission = {
+    "kind": "phase_loop_fresh_claim_admission",
+    "claim_id": claim_id,
+    "selected_todo_id": selected_id,
+    "selected_todo_sha256": selected_sha256,
+}
+if not isinstance(admission, dict) or any(admission.get(key) != value for key, value in expected_admission.items()):
+    missing.append("claim_admission")
+elif not isinstance(admission.get("issued_at"), str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", admission.get("issued_at")):
+    missing.append("claim_admission_issued_at")
+elif not isinstance(admission.get("queue_generation"), int) or admission.get("queue_generation") < 1 or not isinstance(admission.get("queue_fingerprint"), str) or not re.fullmatch(r"[0-9a-f]{64}", admission.get("queue_fingerprint")):
+    missing.append("claim_admission_initial_queue_identity")
+
+# Admission preserves its initial queue identity for audit.  A supported
+# refresh may later bind different mutable queue context, but must bind the
+# same immutable selected TODO to that context exactly.
+refresh_context = claim.get("claim_refresh_context")
+admission_queue_differs = isinstance(admission, dict) and (
+    admission.get("queue_fingerprint") != claim.get("queue_fingerprint")
+    or admission.get("queue_generation") != claim.get("queue_generation")
+)
+if admission_queue_differs and refresh_context is None:
+    missing.append("claim_refresh_context")
+if refresh_context is not None:
+    expected_refresh_context = {
+        "kind": "phase_loop_supported_refresh_context",
+        "claim_id": claim_id,
+        "selected_todo_id": selected_id,
+        "selected_todo_sha256": selected_sha256,
+        "queue_fingerprint": claim.get("queue_fingerprint"),
+        "queue_generation": claim.get("queue_generation"),
+    }
+    if not isinstance(refresh_context, dict) or any(refresh_context.get(key) != value for key, value in expected_refresh_context.items()):
+        missing.append("claim_refresh_context")
+    elif not isinstance(refresh_context.get("refreshed_at"), str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", refresh_context.get("refreshed_at")):
+        missing.append("claim_refresh_context_refreshed_at")
+
+# A claim with syntactically complete admission data may still not be resumed
+# if it does not match the live queue.  Keep that distinct from this recovery:
+# the existing refresh/archive path handles ordinary stale queue transitions.
+if not missing:
+    try:
+        live_blocks = unchecked_blocks(todo_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(json.dumps({"action": "refused", "reason": "live_todo_unreadable", "error": str(exc)}, sort_keys=True))
+        raise SystemExit(1)
+    if any(todo_id(block) == selected_id and block == selected for block in live_blocks):
+        print(json.dumps({"action": "valid_admission", "claim_id": claim_id}, sort_keys=True))
+        raise SystemExit(0)
+    print(json.dumps({"action": "valid_admission_live_queue_changed", "claim_id": claim_id}, sort_keys=True))
+    raise SystemExit(0)
+
+source_sha256 = hashlib.sha256(raw).hexdigest()
+quarantine_dir = claim_dir / "incomplete-claim-quarantine"
+quarantine_dir.mkdir(parents=True, exist_ok=True)
+archive_path = claim_dir / f"stale-incomplete-{source_sha256[:24]}.json"
+audit_path = quarantine_dir / f"{source_sha256}.json"
+relative_archive = archive_path.relative_to(claim_dir).as_posix()
+runtime_fields_absent = [
+    field for field in ("run_id", "workspace_changed", "materialization", "receipt")
+    if field not in claim
+]
+base_audit = {
+    "schema_version": 1,
+    "record_type": "phase_loop_incomplete_active_claim_quarantine",
+    "claim_id": claim_id or None,
+    "source_claim_sha256": source_sha256,
+    "source_claim_bytes": len(raw),
+    "archive_path": relative_archive,
+    "missing_required_admission_fields": sorted(set(missing)),
+    "observed_runtime_fields_absent": runtime_fields_absent,
+    "reason": "active_claim_missing_exact_fresh_admission_identity",
+    "run_stamp": run_stamp,
+}
+
+if audit_path.exists():
+    try:
+        existing = json.loads(audit_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(json.dumps({"action": "refused", "reason": "quarantine_audit_unreadable", "error": str(exc)}, sort_keys=True))
+        raise SystemExit(1)
+    if not isinstance(existing, dict) or any(existing.get(key) != value for key, value in base_audit.items() if key != "run_stamp"):
+        print(json.dumps({"action": "refused", "reason": "quarantine_audit_identity_mismatch"}, sort_keys=True))
+        raise SystemExit(1)
+if archive_path.exists():
+    if hashlib.sha256(archive_path.read_bytes()).hexdigest() != source_sha256:
+        print(json.dumps({"action": "refused", "reason": "quarantine_archive_digest_mismatch"}, sort_keys=True))
+        raise SystemExit(1)
+    print(json.dumps({"action": "refused", "reason": "quarantine_archive_already_exists_with_live_current"}, sort_keys=True))
+    raise SystemExit(1)
+
+prepared = dict(base_audit)
+prepared.update({"state": "prepared", "prepared_at": timestamp})
+atomic_json(audit_path, prepared)
+os.replace(current_path, archive_path)
+try:
+    directory_fd = os.open(claim_dir, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+except OSError:
+    pass
+completed = dict(base_audit)
+completed.update({"state": "quarantined", "prepared_at": prepared["prepared_at"], "quarantined_at": timestamp})
+atomic_json(audit_path, completed)
+print(json.dumps({"action": "quarantined", "claim_id": claim_id or None, "archive_path": relative_archive, "audit_path": audit_path.relative_to(claim_dir).as_posix(), "source_claim_sha256": source_sha256}, sort_keys=True))
+PY
+)"; then
+    printf '%s incomplete_active_claim_quarantine_refused=true result=%s\n' "$(now_utc)" "${result:-<no output>}" >> "$SUPERVISOR_LOG"
+    return 1
+  fi
+  case "$result" in
+    *'"action": "quarantined"'*)
+      printf '%s incomplete_active_claim_quarantined=true result=%s\n' "$(now_utc)" "$result" >> "$SUPERVISOR_LOG"
+      ;;
+  esac
+  return 0
+}
+
 refresh_active_todo_claim_from_live_queue() {
   local run_stamp="$1"
   if [ ! -f "$TODO_CLAIM_FILE" ] || [ ! -f "$PHASE_LOOP_TODO" ]; then
@@ -2259,6 +2487,27 @@ claim["baseline_dirty_file_sha256"] = baseline_dirty_file_sha256
 claim["baseline_todo_text"] = todo_text
 claim["run_stamp"] = run_stamp
 claim["updated_at"] = timestamp
+admission = claim.get("claim_admission")
+expected_admission = {
+    "kind": "phase_loop_fresh_claim_admission",
+    "claim_id": claim.get("claim_id"),
+    "selected_todo_id": selected_id,
+    "selected_todo_sha256": selected_hash,
+}
+if isinstance(admission, dict) and all(admission.get(key) == value for key, value in expected_admission.items()):
+    # A supported queue refresh may advance generation or change the complete
+    # queue fingerprint without changing the immutable selected TODO.  Keep
+    # the admission's initial queue identity untouched and bind the refreshed
+    # context separately here.
+    claim["claim_refresh_context"] = {
+        "kind": "phase_loop_supported_refresh_context",
+        "claim_id": claim.get("claim_id"),
+        "selected_todo_id": selected_id,
+        "selected_todo_sha256": selected_hash,
+        "queue_fingerprint": fingerprint,
+        "queue_generation": generation,
+        "refreshed_at": timestamp,
+    }
 claim.setdefault("status_history", []).append({
     "status": claim.get("status", "in_progress"),
     "run_stamp": run_stamp,
@@ -12280,6 +12529,31 @@ else:
     claim.setdefault("queue_generation", 1)
 claim.setdefault("root_claim_id", claim.get("claim_id"))
 claim["queue_fingerprint"] = sys.argv[5]
+# A current claim is reusable only when it was created by this controller from
+# one exact live queue snapshot.  Keep this small, non-secret admission record
+# on the claim itself so a legacy partial current.json cannot later masquerade
+# as a resumable attempt merely because its status says `in_progress`.
+selected_todo = str(claim.get("selected_todo") or "")
+first_line = selected_todo.splitlines()[0] if selected_todo.splitlines() else ""
+selected_match = re.match(r"^[ \t]*[-*][ \t]+\[[ \t]*\][ \t]+([^:\s]+)", first_line)
+selected_todo_id = selected_match.group(1).strip() if selected_match else ""
+if selected_todo_id:
+    selected_todo_sha256 = hashlib.sha256(selected_todo.encode("utf-8")).hexdigest()
+    claim["selected_todo_id"] = selected_todo_id
+    claim["selected_todo_sha256"] = selected_todo_sha256
+    claim.setdefault("workspace_changed", False)
+    admission = claim.get("claim_admission")
+    expected_admission = {
+        "kind": "phase_loop_fresh_claim_admission",
+        "claim_id": claim_id,
+        "selected_todo_id": selected_todo_id,
+        "selected_todo_sha256": selected_todo_sha256,
+        "queue_fingerprint": sys.argv[5],
+        "queue_generation": claim.get("queue_generation"),
+    }
+    if not isinstance(admission, dict):
+        expected_admission["issued_at"] = timestamp
+        claim["claim_admission"] = expected_admission
 requested_status = status
 # Completion is a review outcome, not an implementation-side state. Keeping
 # this gate at the common writer prevents an overlooked caller from removing
@@ -12941,6 +13215,12 @@ claim_first_pending_todo() {
   local selected_todo queue_fingerprint queue_generation queue_state selected_hash claim_id claim_retry_suffix reread_fingerprint attempt durable_replan_id active_claim_id
   if ! validate_todo_queue_integrity_before_claim "$run_stamp"; then
     return 76
+  fi
+  if active_todo_claim_exists; then
+    if ! quarantine_incomplete_active_todo_claim "$run_stamp"; then
+      write_status "integrity_blocked" "Active TODO claim admission is incomplete or its quarantine record could not be verified; preserving the current claim." "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-0}"
+      return 78
+    fi
   fi
   if active_todo_claim_exists; then
     # A stalled claim can remain syntactically fresh after its TODO has been
@@ -18049,6 +18329,16 @@ _run_brownie_once() {
   fi
   if ! run_phase_loop_preflight "$run_stamp" "pre-claim"; then
     return 75
+  fi
+  # Quarantine a legacy partial claim before any resume-only controller path
+  # can derive a Runtime route or target snapshot from it.  Selection remains
+  # below the normal queue-integrity gate; this only removes an unadmitted
+  # identity from consideration.
+  if active_todo_claim_exists && ! quarantine_incomplete_active_todo_claim "$run_stamp"; then
+    detail="Active TODO claim admission is incomplete or its quarantine record could not be verified; preserving the current claim and refusing resume or Runtime dispatch."
+    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+    write_status "integrity_blocked" "$detail" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-0}"
+    return 78
   fi
   if ! todo_first_raw_pending_is_recorded_blocked && todo_first_raw_pending_is_explicit_blocker; then
     if claim_first_raw_pending_todo "$run_stamp"; then
