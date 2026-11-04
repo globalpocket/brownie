@@ -2097,9 +2097,18 @@ claim_id = claim.get("claim_id") if isinstance(claim.get("claim_id"), str) else 
 selected = claim.get("selected_todo") if isinstance(claim.get("selected_todo"), str) else ""
 selected_id = todo_id(selected)
 selected_sha256 = hashlib.sha256(selected.encode("utf-8")).hexdigest() if selected else ""
-missing = []
+
+# This quarantine gate protects the canonical controller claim format.  Older
+# synthetic/legacy claims are intentionally left to the pre-existing
+# stale-snapshot and replan handlers below the caller: those handlers retain
+# their own exact archival semantics and must not be short-circuited merely
+# because they predate fresh-claim admission records.  A non-canonical claim
+# is never upgraded by this gate into a fresh admission.
 if not re.fullmatch(r"todo-g[0-9]+-[0-9a-f]{12}(?:-r[0-9]+)?", claim_id):
-    missing.append("claim_id")
+    print(json.dumps({"action": "legacy_admission_not_applicable", "claim_id": claim_id or None}, sort_keys=True))
+    raise SystemExit(0)
+
+missing = []
 if not selected_id:
     missing.append("selected_todo")
 if claim.get("selected_todo_id") != selected_id:
@@ -2112,7 +2121,11 @@ if not isinstance(claim.get("queue_fingerprint"), str) or not re.fullmatch(r"[0-
     missing.append("queue_fingerprint")
 if not isinstance(claim.get("workspace_changed"), bool):
     missing.append("workspace_changed")
-if not isinstance(claim.get("run_stamp"), str) or not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", claim.get("run_stamp")):
+# `run_stamp` is operational context.  Review reconciliation deliberately
+# writes stamps such as `review-rework`; binding it to a wall-clock format
+# would quarantine an otherwise exact claim and erase its same-claim review
+# metadata.  The immutable admission timestamp below remains strict.
+if not isinstance(claim.get("run_stamp"), str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", claim.get("run_stamp")):
     missing.append("run_stamp")
 admission = claim.get("claim_admission")
 expected_admission = {
@@ -2120,11 +2133,37 @@ expected_admission = {
     "claim_id": claim_id,
     "selected_todo_id": selected_id,
     "selected_todo_sha256": selected_sha256,
-    "queue_fingerprint": claim.get("queue_fingerprint"),
-    "queue_generation": claim.get("queue_generation"),
 }
 if not isinstance(admission, dict) or any(admission.get(key) != value for key, value in expected_admission.items()):
     missing.append("claim_admission")
+elif not isinstance(admission.get("issued_at"), str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", admission.get("issued_at")):
+    missing.append("claim_admission_issued_at")
+elif not isinstance(admission.get("queue_generation"), int) or admission.get("queue_generation") < 1 or not isinstance(admission.get("queue_fingerprint"), str) or not re.fullmatch(r"[0-9a-f]{64}", admission.get("queue_fingerprint")):
+    missing.append("claim_admission_initial_queue_identity")
+
+# Admission preserves its initial queue identity for audit.  A supported
+# refresh may later bind different mutable queue context, but must bind the
+# same immutable selected TODO to that context exactly.
+refresh_context = claim.get("claim_refresh_context")
+admission_queue_differs = isinstance(admission, dict) and (
+    admission.get("queue_fingerprint") != claim.get("queue_fingerprint")
+    or admission.get("queue_generation") != claim.get("queue_generation")
+)
+if admission_queue_differs and refresh_context is None:
+    missing.append("claim_refresh_context")
+if refresh_context is not None:
+    expected_refresh_context = {
+        "kind": "phase_loop_supported_refresh_context",
+        "claim_id": claim_id,
+        "selected_todo_id": selected_id,
+        "selected_todo_sha256": selected_sha256,
+        "queue_fingerprint": claim.get("queue_fingerprint"),
+        "queue_generation": claim.get("queue_generation"),
+    }
+    if not isinstance(refresh_context, dict) or any(refresh_context.get(key) != value for key, value in expected_refresh_context.items()):
+        missing.append("claim_refresh_context")
+    elif not isinstance(refresh_context.get("refreshed_at"), str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", refresh_context.get("refreshed_at")):
+        missing.append("claim_refresh_context_refreshed_at")
 
 # A claim with syntactically complete admission data may still not be resumed
 # if it does not match the live queue.  Keep that distinct from this recovery:
@@ -2448,6 +2487,27 @@ claim["baseline_dirty_file_sha256"] = baseline_dirty_file_sha256
 claim["baseline_todo_text"] = todo_text
 claim["run_stamp"] = run_stamp
 claim["updated_at"] = timestamp
+admission = claim.get("claim_admission")
+expected_admission = {
+    "kind": "phase_loop_fresh_claim_admission",
+    "claim_id": claim.get("claim_id"),
+    "selected_todo_id": selected_id,
+    "selected_todo_sha256": selected_hash,
+}
+if isinstance(admission, dict) and all(admission.get(key) == value for key, value in expected_admission.items()):
+    # A supported queue refresh may advance generation or change the complete
+    # queue fingerprint without changing the immutable selected TODO.  Keep
+    # the admission's initial queue identity untouched and bind the refreshed
+    # context separately here.
+    claim["claim_refresh_context"] = {
+        "kind": "phase_loop_supported_refresh_context",
+        "claim_id": claim.get("claim_id"),
+        "selected_todo_id": selected_id,
+        "selected_todo_sha256": selected_hash,
+        "queue_fingerprint": fingerprint,
+        "queue_generation": generation,
+        "refreshed_at": timestamp,
+    }
 claim.setdefault("status_history", []).append({
     "status": claim.get("status", "in_progress"),
     "run_stamp": run_stamp,

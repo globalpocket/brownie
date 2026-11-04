@@ -189,6 +189,68 @@ test('archives a claim whose mutable snapshot no longer matches its ledger attem
   assert.notEqual(current.claim_id, archived.claim_id);
 });
 
+test('keeps a valid claim through review-rework after supported same-head queue growth', () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-claim-refresh-identity-'));
+  const state = path.join(workspace, '.brownie/private/phase-loop-state');
+  const todo = path.join(workspace, '.brownie/todo.md');
+  const breakdown = path.join(workspace, '.brownie/todo-breakdown.md');
+  const claims = path.join(state, 'todo-claims');
+  const selected = '- [ ] E-claim-refresh: Patch only `scripts/release.mjs`:\n  Route: implementation.\n  Source TODO: E-parent.\n  Depends on: <none>.\n  Completion condition: preserve the claimed contract.\n  Forbidden changes: do not weaken validation.\n  Verification: run `pnpm check`.';
+  const next = '- [ ] E-claim-refresh-next: Patch only `scripts/consumer.mjs`:\n  Route: implementation.\n  Source TODO: E-next.\n  Depends on: <none>.\n  Completion condition: queue growth is preserved.\n  Forbidden changes: do not retarget the active claim.\n  Verification: run `pnpm check`.';
+  const originalTodo = `${selected}\n`;
+  const grownTodo = `${selected}\n${next}\n`;
+  fs.mkdirSync(path.dirname(todo), { recursive: true });
+  fs.mkdirSync(claims, { recursive: true });
+  fs.writeFileSync(todo, originalTodo);
+  fs.writeFileSync(breakdown, '# Breakdown\n');
+  fs.writeFileSync(path.join(workspace, 'package.json'), JSON.stringify({ private: true }));
+  execFileSync('git', ['init', '-b', 'main'], { cwd: workspace, stdio: 'ignore' });
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: workspace });
+  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: workspace });
+  execFileSync('git', ['add', '.'], { cwd: workspace, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-m', 'initial queue'], { cwd: workspace, stdio: 'ignore' });
+
+  const initialFingerprint = crypto.createHash('sha256').update(originalTodo).digest('hex');
+  const refreshedFingerprint = crypto.createHash('sha256').update(grownTodo).digest('hex');
+  const output = execFileSync('bash', [
+    '-c',
+    'script=$1; selected=$2; next=$3; initial=$4; refreshed=$5; set --; source "$script" >/dev/null; write_todo_claim todo-g631-abcdef123456 in_progress "$selected" "$initial" 1 20261104T000000Z; printf "%s\\n%s\\n" "$selected" "$next" > "$PHASE_LOOP_TODO"; python3 - "$TODO_QUEUE_STATE_FILE" "$refreshed" <<\'PY\'\nimport json, sys\nfrom pathlib import Path\nPath(sys.argv[1]).parent.mkdir(parents=True, exist_ok=True)\nPath(sys.argv[1]).write_text(json.dumps({"generation": 2, "fingerprint": sys.argv[2]}) + "\\n", encoding="utf-8")\nPY\nrefresh_active_todo_claim_from_live_queue review-rework; quarantine_incomplete_active_todo_claim review-rework; python3 - "$TODO_CLAIM_FILE" <<\'PY\'\nimport json, sys\nprint(json.dumps(json.load(open(sys.argv[1])), sort_keys=True))\nPY',
+    '_',
+    phaseLoop,
+    selected,
+    next,
+    initialFingerprint,
+    refreshedFingerprint
+  ], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PHASE_LOOP_STATE_DIR: state,
+      PHASE_LOOP_TODO: todo,
+      PHASE_LOOP_TODO_BREAKDOWN: breakdown,
+      PHASE_LOOP_WORKSPACE_ROOT: workspace
+    }
+  });
+
+  const claim = JSON.parse(output.trim().split('\n').at(-1));
+  assert.equal(claim.claim_id, 'todo-g631-abcdef123456');
+  assert.equal(claim.run_stamp, 'review-rework');
+  assert.equal(claim.selected_todo, selected);
+  assert.equal(claim.selected_todo_id, 'E-claim-refresh');
+  assert.equal(claim.selected_todo_sha256, crypto.createHash('sha256').update(selected).digest('hex'));
+  assert.equal(claim.queue_fingerprint, refreshedFingerprint);
+  assert.equal(claim.queue_generation, 2);
+  assert.equal(claim.claim_admission.kind, 'phase_loop_fresh_claim_admission');
+  assert.equal(claim.claim_admission.claim_id, claim.claim_id);
+  assert.equal(claim.claim_admission.queue_fingerprint, initialFingerprint);
+  assert.equal(claim.claim_admission.queue_generation, 1);
+  assert.equal(claim.claim_refresh_context.kind, 'phase_loop_supported_refresh_context');
+  assert.equal(claim.claim_refresh_context.queue_fingerprint, refreshedFingerprint);
+  assert.equal(claim.claim_refresh_context.queue_generation, 2);
+  assert.ok(!fs.existsSync(path.join(claims, 'incomplete-claim-quarantine')));
+});
+
 test('claims a generated blocked-queue decomposition from the same TODO snapshot and CAS', () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-blocked-queue-generated-claim-'));
   const state = path.join(workspace, '.brownie/private/phase-loop-state');

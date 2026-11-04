@@ -3336,6 +3336,7 @@ assert claim["workspace_changed"] is False, claim
 admission = claim["claim_admission"]
 assert admission["kind"] == "phase_loop_fresh_claim_admission", admission
 assert all(admission[key] == claim[key] for key in ("claim_id", "selected_todo_id", "selected_todo_sha256", "queue_fingerprint", "queue_generation")), admission
+assert admission["issued_at"].endswith("Z"), admission
 assert todo.startswith("- [ ] E-23d-release-artifact-stateful-soak:"), todo
 status = json.loads((state / "status.json").read_text(encoding="utf-8"))
 assert status["status"] == "blocked_todo_recorded", status
