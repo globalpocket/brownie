@@ -1788,27 +1788,27 @@ claim_ids = [
 assert len(set(claim_ids)) == 2, claim_ids
 assert claim_ids[0] != claim_ids[1], claim_ids
 PY
-set +e
-PHASE_LOOP_STATE_DIR="$state_terminal_retry_cap" \
+retry_cap_todo_before="$(shasum -a 256 "$todo_terminal_retry_cap" | awk '{ print $1 }')"
+if PHASE_LOOP_STATE_DIR="$state_terminal_retry_cap" \
 PHASE_LOOP_PROMPT="$prompt_terminal_retry_cap" \
 PHASE_LOOP_TODO="$todo_terminal_retry_cap" \
-BROWNIE_BIN="$fake_brownie_terminal_task_executed" \
+BROWNIE_BIN="$fake_brownie_must_not_run" \
 PHASE_LOOP_WORKSPACE_ROOT="$terminal_retry_cap_workspace" \
 PHASE_LOOP_TEST_HEADLESS_ONLY=1 \
 PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP=1 \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 65,75,76 "$PHASE_LOOP" run-once >/dev/null
-retry_cap_exhausted_exit="$?"
-set -e
-case "$retry_cap_exhausted_exit" in
-  65|75|76) ;;
-  *) echo "unexpected retry-cap exhaustion exit=$retry_cap_exhausted_exit" >&2; exit 1 ;;
-esac
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null; then
+  retry_cap_exhausted_exit=0
+else
+  retry_cap_exhausted_exit="$?"
+fi
+test "$retry_cap_exhausted_exit" = "76"
+test "$(shasum -a 256 "$todo_terminal_retry_cap" | awk '{ print $1 }')" = "$retry_cap_todo_before"
 assert_terminal_failure_claim_archived \
   "$state_terminal_retry_cap/todo-claims" \
   "$state_terminal_retry_cap/todo-claims/blocked.jsonl" \
   "$terminal_retry_cap_workspace/.brownie/private/phase-loop/task-ledger.jsonl" \
   'E-retry-cap:' 2 1
-python3 - "$terminal_retry_cap_workspace/.brownie/private/phase-loop/task-ledger.jsonl" "$state_terminal_retry_cap/status.json" "$state_terminal_retry_cap/progress-state.json" <<'PY'
+python3 - "$terminal_retry_cap_workspace/.brownie/private/phase-loop/task-ledger.jsonl" "$state_terminal_retry_cap/status.json" "$state_terminal_retry_cap/progress-state.json" "$todo_terminal_retry_cap" <<'PY'
 import json
 import pathlib
 import sys
@@ -1824,22 +1824,13 @@ same_todo = [
 assert len(same_todo) == 2, same_todo
 status = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding='utf-8'))
 progress = json.loads(pathlib.Path(sys.argv[3]).read_text(encoding='utf-8'))
-assert status['status'] == 'blocked', status
+todo = pathlib.Path(sys.argv[4]).read_text(encoding='utf-8')
+assert status['status'] == 'integrity_blocked', status
+assert status['exit_code'] == '76', status
+assert 'Automatic TODO decomposition is refused' in status['detail'], status
 assert progress['progress_projection']['cli_status'] == 'task_executed', progress
 assert progress['progress_projection']['closure'] == 'no_eligible_task', progress
-if status['exit_code'] == '0':
-    # Once the retry cap is exhausted, queue suppression may project the
-    # already-archived TODO as an empty eligible queue. The assertion above
-    # still proves the two terminal attempts were durable and bounded.
-    pass
-elif status['exit_code'] == '75':
-    assert 'Failed to claim first pending TODO' in status['detail'], status
-elif status['exit_code'] == '65':
-    assert 'explicit owner-controlled blocker TODO' in status['detail'], status
-else:
-    assert status['exit_code'] == '76', status
-    assert 'terminal_task_failed' in status['detail'], status
-    assert progress['classification'] == 'terminal_failure', progress
+assert 'TODO-decompose-blocked-queue-' not in todo, todo
 PY
 
 # A retry-cap allowance may create a fresh claim/attempt, but an outer Runtime
@@ -2168,21 +2159,33 @@ assert status['exit_code'] == '78', status
 assert 'blocked evidence append failed' in status['detail'], status
 assert 'refusing to retry' in status['detail'], status
 PY
-set +e
-PHASE_LOOP_STATE_DIR="$blocked_append_failure_state" \
+blocked_append_todo_before="$(shasum -a 256 "$blocked_append_failure_todo" | awk '{ print $1 }')"
+if PHASE_LOOP_STATE_DIR="$blocked_append_failure_state" \
 PHASE_LOOP_PROMPT="$blocked_append_failure_prompt" \
 PHASE_LOOP_TODO="$blocked_append_failure_todo" \
 BROWNIE_BIN="$fake_brownie_terminal_no_eligible_counted" \
 PHASE_LOOP_WORKSPACE_ROOT="$blocked_append_failure_workspace" \
 PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP=1 \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 65,75 "$PHASE_LOOP" run-once >/dev/null
-blocked_append_failure_retry_exit="$?"
-set -e
-case "$blocked_append_failure_retry_exit" in
-  65|75) ;;
-  *) echo "unexpected blocked-append retry exit=$blocked_append_failure_retry_exit" >&2; exit 1 ;;
-esac
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null; then
+  blocked_append_failure_retry_exit=0
+else
+  blocked_append_failure_retry_exit="$?"
+fi
+test "$blocked_append_failure_retry_exit" = "76"
 test "$(cat "$blocked_append_failure_state/terminal-no-eligible-count" 2>/dev/null || printf '0')" = "0"
+test "$(shasum -a 256 "$blocked_append_failure_todo" | awk '{ print $1 }')" = "$blocked_append_todo_before"
+python3 - "$blocked_append_failure_state/status.json" "$blocked_append_failure_todo" <<'PY'
+import json
+import pathlib
+import sys
+
+status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))
+todo = pathlib.Path(sys.argv[2]).read_text(encoding='utf-8')
+assert status['status'] == 'integrity_blocked', status
+assert status['exit_code'] == '76', status
+assert 'Automatic TODO decomposition is refused' in status['detail'], status
+assert 'TODO-decompose-blocked-queue-' not in todo, todo
+PY
 fi
 
 # Completion protocol: an outer Runtime success must not write a terminal
@@ -3937,38 +3940,43 @@ BROWNIE_BIN="$fake_brownie_blocked_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
-PHASE_LOOP_STATE_DIR="$state_all_blocked" \
+todo_all_blocked_before="$(shasum -a 256 "$todo_all_blocked" | awk '{ print $1 }')"
+breakdown_all_blocked_before="$(shasum -a 256 "$todo_breakdown_all_blocked" | awk '{ print $1 }')"
+# The controller must stop before Runtime. A blocked queue is not permission
+# to create a decomposition child; terminal failures are handled by the
+# claim-bound integrity path, not by an implicit TODO mutation.
+if PHASE_LOOP_STATE_DIR="$state_all_blocked" \
 PHASE_LOOP_PROMPT="$prompt_all_blocked" \
 PHASE_LOOP_TODO="$todo_all_blocked" \
 PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_all_blocked" \
-BROWNIE_BIN="$fake_brownie_json" \
+BROWNIE_BIN="$fake_brownie_must_not_run" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null; then
+  all_blocked_exit=0
+else
+  all_blocked_exit="$?"
+fi
+test "$all_blocked_exit" = "76"
 
-python3 - "$state_all_blocked/todo-claims/current.json" "$todo_all_blocked" <<'PY'
+test "$(shasum -a 256 "$todo_all_blocked" | awk '{ print $1 }')" = "$todo_all_blocked_before"
+test "$(shasum -a 256 "$todo_breakdown_all_blocked" | awk '{ print $1 }')" = "$breakdown_all_blocked_before"
+python3 - "$state_all_blocked/todo-claims/current.json" "$state_all_blocked/status.json" "$state_all_blocked/supervisor.log" "$todo_all_blocked" <<'PY'
 import json
+import pathlib
 import sys
 
 claim = json.load(open(sys.argv[1], encoding="utf-8"))
-todo = open(sys.argv[2], encoding="utf-8").read()
-assert claim["status"] == "in_progress", claim
-assert "TODO-decompose-blocked-queue-" in claim["selected_todo"], claim
-assert "Brownie must own the" in claim["selected_todo"], claim
-assert "TODO-decompose-blocked-queue-" in todo, todo
-assert "decomposition ledger" in todo, todo
+status = json.load(open(sys.argv[2], encoding="utf-8"))
+supervisor_path = pathlib.Path(sys.argv[3])
+supervisor = supervisor_path.read_text(encoding="utf-8") if supervisor_path.exists() else ""
+todo = open(sys.argv[4], encoding="utf-8").read()
+assert claim["status"] == "blocked", claim
+assert status["status"] == "integrity_blocked", status
+assert status["exit_code"] == "76", status
+assert "Automatic TODO decomposition is refused" in status["detail"], status
+assert "TODO-decompose-blocked-queue-" not in todo, todo
+assert "blocked_todo_decomposition_request_created" not in supervisor, supervisor
 PY
-
-decomposition_prompt_file="$(find "$state_all_blocked/runs" -name '*.prompt.md' -print | sort | tail -n 1)"
-assert_contains "$decomposition_prompt_file" 'state: `decompose_todo`'
-assert_contains "$decomposition_prompt_file" 'decomposition_policy: this invocation is TODO decomposition only'
-assert_contains "$decomposition_prompt_file" 'decomposition_write_policy: the only allowed workspace.write targets are the live TODO queue'
-assert_contains "$decomposition_prompt_file" 'Prefer one compact `.brownie/todo.md` replacement first'
-assert_contains "$decomposition_prompt_file" 'decomposition_leaf_policy: replace the active decomposition request and its broad source TODO with unchecked leaf TODOs'
-assert_contains "$decomposition_prompt_file" 'decomposition_verification_policy: `Verification:` must use bounded commands'
-assert_contains "$decomposition_prompt_file" 'decomposition_scope_policy: every implementation leaf must name a bounded `Patch only`/`Create only` scope'
-assert_contains "$decomposition_prompt_file" 'decomposition_size_policy: keep the next workspace.write compact'
-assert_contains "$decomposition_prompt_file" 'decomposition_ledger_policy: update `.brownie/todo-breakdown.md`'
-assert_contains "$decomposition_prompt_file" 'let the guard request the breakdown repair next'
 
 state_decomposition_leaf="$(mktemp -d)"
 prompt_decomposition_leaf="$(mktemp)"
@@ -4005,42 +4013,46 @@ BROWNIE_BIN="$fake_brownie_blocked_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
-PHASE_LOOP_STATE_DIR="$state_blocked_decomposition" \
+todo_blocked_decomposition_before="$(shasum -a 256 "$todo_blocked_decomposition" | awk '{ print $1 }')"
+breakdown_blocked_decomposition_before="$(shasum -a 256 "$todo_breakdown_blocked_decomposition" | awk '{ print $1 }')"
+
+if PHASE_LOOP_STATE_DIR="$state_blocked_decomposition" \
 PHASE_LOOP_PROMPT="$prompt_blocked_decomposition" \
 PHASE_LOOP_TODO="$todo_blocked_decomposition" \
 PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_blocked_decomposition" \
-BROWNIE_BIN="$fake_brownie_blocked_json" \
+BROWNIE_BIN="$fake_brownie_must_not_run" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null; then
+  blocked_decomposition_exit=0
+else
+  blocked_decomposition_exit="$?"
+fi
+test "$blocked_decomposition_exit" = "76"
+test "$(shasum -a 256 "$todo_blocked_decomposition" | awk '{ print $1 }')" = "$todo_blocked_decomposition_before"
+test "$(shasum -a 256 "$todo_breakdown_blocked_decomposition" | awk '{ print $1 }')" = "$breakdown_blocked_decomposition_before"
 
-set +e
-PHASE_LOOP_STATE_DIR="$state_blocked_decomposition" \
-PHASE_LOOP_PROMPT="$prompt_blocked_decomposition" \
-PHASE_LOOP_TODO="$todo_blocked_decomposition" \
-PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_blocked_decomposition" \
-BROWNIE_BIN="$fake_brownie_blocked_json" \
-PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
-blocked_decomposition_exit="$?"
-set -e
-test "$blocked_decomposition_exit" = "75"
-
-python3 - "$todo_blocked_decomposition" "$state_blocked_decomposition/status.json" <<'PY'
+python3 - "$todo_blocked_decomposition" "$state_blocked_decomposition/status.json" "$state_blocked_decomposition/supervisor.log" <<'PY'
 import json
+import pathlib
 import re
 import sys
 
 todo = open(sys.argv[1], encoding="utf-8").read()
 status = json.load(open(sys.argv[2], encoding="utf-8"))
+supervisor_path = pathlib.Path(sys.argv[3])
+supervisor = supervisor_path.read_text(encoding="utf-8") if supervisor_path.exists() else ""
 decomposition_items = re.findall(r"TODO-decompose-blocked-queue-", todo)
-assert len(decomposition_items) == 1, todo
-assert status["status"] == "blocked", status
-assert "Failed to claim first pending TODO" in status["detail"], status
+assert len(decomposition_items) == 0, todo
+assert status["status"] == "integrity_blocked", status
+assert status["exit_code"] == "76", status
+assert "Automatic TODO decomposition is refused" in status["detail"], status
+assert "blocked_todo_decomposition_request_created" not in supervisor, supervisor
 PY
 
-# A stale child may retain the generated recovery id in its Source TODO
-# provenance after the request itself was removed.  That text must not make
-# the controller believe the request is still queued.
+# A stale child may retain a generated recovery id in its Source TODO
+# provenance after the request itself was removed. That text is not authority
+# to recreate the request: without an explicitly admitted decomposition task,
+# recovery must leave both queue files unchanged and emit one integrity error.
 state_orphaned_request="$(mktemp -d)"
 prompt_orphaned_request="$(mktemp)"
 todo_orphaned_request="$(mktemp)"
@@ -4077,32 +4089,39 @@ pathlib.Path(sys.argv[2]).write_text(json.dumps({
 }) + "\n", encoding="utf-8")
 PY
 
-PHASE_LOOP_STATE_DIR="$state_orphaned_request" \
+orphaned_request_todo_before="$(shasum -a 256 "$todo_orphaned_request" | awk '{ print $1 }')"
+orphaned_request_breakdown_before="$(shasum -a 256 "$todo_breakdown_orphaned_request" | awk '{ print $1 }')"
+if PHASE_LOOP_STATE_DIR="$state_orphaned_request" \
 PHASE_LOOP_PROMPT="$prompt_orphaned_request" \
 PHASE_LOOP_TODO="$todo_orphaned_request" \
 PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_orphaned_request" \
-BROWNIE_BIN="$fake_brownie_json" \
+BROWNIE_BIN="$fake_brownie_must_not_run" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null; then
+  orphaned_request_exit=0
+else
+  orphaned_request_exit="$?"
+fi
+test "$orphaned_request_exit" = "76"
+test "$(shasum -a 256 "$todo_orphaned_request" | awk '{ print $1 }')" = "$orphaned_request_todo_before"
+test "$(shasum -a 256 "$todo_breakdown_orphaned_request" | awk '{ print $1 }')" = "$orphaned_request_breakdown_before"
 
-python3 - "$state_orphaned_request/todo-claims/current.json" "$todo_orphaned_request" "$orphan_id" "$historical_id" <<'PY'
+python3 - "$state_orphaned_request/status.json" "$state_orphaned_request/todo-claims/current.json" "$todo_orphaned_request" "$orphan_id" "$historical_id" <<'PY'
 import json
+import pathlib
 import re
 import sys
 
-claim = json.load(open(sys.argv[1], encoding="utf-8"))
-todo = open(sys.argv[2], encoding="utf-8").read()
-orphan_id = sys.argv[3]
-historical_id = sys.argv[4]
-assert claim["status"] == "in_progress", claim
-selected = claim["selected_todo"]
-match = re.match(r"- \[ \] (TODO-decompose-blocked-queue(?:-stalled)?-[0-9a-f]{12}):", selected)
-assert match, claim
-# The stale Source TODO id remains provenance only.  Recovery must enqueue and
-# claim the id derived from the unchanged stalled source block instead.
-assert match.group(1) == orphan_id, claim
-assert match.group(1) != historical_id, claim
-assert selected in todo, todo
+status = json.load(open(sys.argv[1], encoding="utf-8"))
+current = pathlib.Path(sys.argv[2])
+todo = open(sys.argv[3], encoding="utf-8").read()
+orphan_id = sys.argv[4]
+historical_id = sys.argv[5]
+assert status["status"] == "integrity_blocked", status
+assert status["exit_code"] == "76", status
+assert "Automatic TODO decomposition is refused" in status["detail"], status
+assert not current.exists(), current
+assert orphan_id not in todo, todo
 assert f"Source TODO: {historical_id}." in todo, todo
 PY
 

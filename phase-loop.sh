@@ -18761,13 +18761,18 @@ PY
       printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
       write_status "blocked" "$detail" "owner-blockers-only-$run_stamp" "0" "${CONSECUTIVE_FAILURES:-0}"
       return 65
-    elif ensure_blocked_todo_decomposition_request && claim_first_pending_todo "$run_stamp"; then
-      printf '%s blocked_todo_decomposition_request_created todo=%s breakdown=%s\n' "$(now_utc)" "$PHASE_LOOP_TODO" "$PHASE_LOOP_TODO_BREAKDOWN" >> "$SUPERVISOR_LOG"
     else
-      detail="Failed to claim first pending TODO from queue: $PHASE_LOOP_TODO"
+      # A blocked queue is not authority for the controller to manufacture a
+      # decomposition TODO.  In particular, a terminal Runtime envelope
+      # without independent delivery evidence must remain one actionable
+      # integrity failure, not become a controller-created child that can
+      # mask the missing proof.  Preserve both queue files byte-for-byte;
+      # only an explicitly selected, separately admitted decomposition TODO
+      # may change them.
+      detail="No executable TODO can be selected without mutating the blocked queue. Automatic TODO decomposition is refused until an explicitly admitted decomposition task has claim-bound delivery evidence; inspect the blocked claim and repair its verified source instead. queue=$PHASE_LOOP_TODO"
       printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
-      write_status "blocked" "$detail" "$run_stamp" "75" "${CONSECUTIVE_FAILURES:-0}"
-      return 75
+      write_status "integrity_blocked" "$detail" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-0}"
+      return 76
     fi
   fi
   if [ "$CLAIM_REPLACED_BLOCKED" -eq 1 ] || [ "$CLAIM_REPLACED_STALLED_REPLAN" -eq 1 ]; then
