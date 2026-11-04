@@ -157,25 +157,30 @@ function commitChangesOnlyBoundedScope(repoRoot, commit, parent, target, bounded
 // A subsequent implementation may legitimately Patch its exact bounded scope.
 // Admit that later content only when Git proves it is clean, committed after
 // the receipt merge, and was introduced by a commit whose entire change set is
-// confined to the current Patch scope. This deliberately does not admit an
-// uncommitted target, a scope-expanding commit, or an unrelated branch.
+// confined to the current Patch scope. The relevant commit is every actual
+// first introduction of the accepted blob, not a later merge delta: a merge
+// can inherit a bad blob from one parent while its diff against another parent
+// appears harmless. This deliberately does not admit an uncommitted target, a
+// scope-expanding introducing commit, or an unrelated branch.
 function hasCleanCommittedBoundedPatch({ repoRoot, mergeCommit, target, historicalBlob, currentBlob, boundedTargets }) {
   if (currentBlob === historicalBlob
     || gitBlob(repoRoot, 'HEAD', target) !== currentBlob
     || !gitSucceeds(repoRoot, ['diff', '--quiet', 'HEAD', '--', target])
     || !gitSucceeds(repoRoot, ['diff', '--cached', '--quiet', '--', target])
     || !gitSucceeds(repoRoot, ['merge-base', '--is-ancestor', mergeCommit, 'HEAD'])) return false;
+  const firstIntroductions = [];
   const descendants = gitValue(repoRoot, ['rev-list', '--ancestry-path', `${mergeCommit}..HEAD`]);
   for (const commit of descendants?.split('\n').filter(Boolean) ?? []) {
     const parentLine = gitValue(repoRoot, ['rev-list', '--parents', '-n', '1', commit]);
     const parents = parentLine?.split(/\s+/u).slice(1) ?? [];
-    for (const parent of parents) {
-      if (gitBlob(repoRoot, commit, target) === currentBlob
-        && gitBlob(repoRoot, parent, target) !== currentBlob
-        && commitChangesOnlyBoundedScope(repoRoot, commit, parent, target, boundedTargets)) return true;
+    if (parents.length === 0 || gitBlob(repoRoot, commit, target) !== currentBlob) continue;
+    if (parents.every((parent) => gitBlob(repoRoot, parent, target) !== currentBlob)) {
+      firstIntroductions.push({ commit, parents });
     }
   }
-  return false;
+  return firstIntroductions.length > 0 && firstIntroductions.every(({ commit, parents }) => (
+    parents.every((parent) => commitChangesOnlyBoundedScope(repoRoot, commit, parent, target, boundedTargets))
+  ));
 }
 
 function isPathInside(root, candidate) {

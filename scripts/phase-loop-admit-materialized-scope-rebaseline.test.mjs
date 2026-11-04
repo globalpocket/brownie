@@ -178,6 +178,28 @@ test('rejects a clean committed target Patch when its introducing commit expands
   );
 });
 
+test('rejects a merge that hides an out-of-scope current-blob introduction behind a bounded parent-pair delta', () => {
+  const { root, target } = gitMergedMaterializationFixture();
+  const todoPath = path.join(root, '.brownie/todo.md');
+  execFileSync('git', ['add', '.brownie/todo.md'], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'publish public materialization receipt'], { cwd: root });
+  execFileSync('git', ['checkout', '-qb', 'bad-introducer'], { cwd: root });
+  fs.writeFileSync(path.join(root, target), 'export const journey = "hidden-out-of-scope-introduction";\n');
+  fs.writeFileSync(path.join(root, 'outside-bounded-scope.txt'), 'shared outside change\n');
+  execFileSync('git', ['add', target, 'outside-bounded-scope.txt'], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'introduce target with outside scope'], { cwd: root });
+  execFileSync('git', ['checkout', '-q', 'main'], { cwd: root });
+  fs.writeFileSync(path.join(root, 'outside-bounded-scope.txt'), 'shared outside change\n');
+  execFileSync('git', ['add', 'outside-bounded-scope.txt'], { cwd: root });
+  execFileSync('git', ['commit', '-qm', 'independently add outside scope'], { cwd: root });
+  execFileSync('git', ['merge', '--no-ff', '-qm', 'merge target introduction', 'bad-introducer'], { cwd: root });
+
+  assert.throws(
+    () => readGitMaterializedScopeRebaselineRecords(root, fs.readFileSync(todoPath, 'utf8')),
+    /receipt target digest mismatch in current worktree/u
+  );
+});
+
 test('rejects a Git materialization receipt when parent presence, digest, or TODO binding is wrong', () => {
   const { root, target, merge, head, blob, laterMerge, followupHead } = gitMergedMaterializationFixture();
   const todoPath = path.join(root, '.brownie/todo.md');
