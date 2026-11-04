@@ -120,6 +120,33 @@ test('a merge-time TODO snapshot cannot admit an implementation merge with an ou
   );
 });
 
+test('an explicit mismatched trailer cannot fall back to a matching merge-time TODO snapshot', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-merged-delivery-trailer-mismatch-'));
+  const selected = `- [ ] E-v2-selected: Patch only \`scripts/soak.mjs\`:
+  Route: implementation.
+  Completion condition: v2 semantics must not inherit v1 delivery.
+  Verification: run \`node --check scripts/soak.mjs\`.`;
+  fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  fs.mkdirSync(path.join(root, '.brownie'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'scripts', 'soak.mjs'), 'export const soak = "before";\n');
+  fs.writeFileSync(path.join(root, '.brownie', 'todo.md'), `${selected}\n`);
+  execFileSync('git', ['init', '--quiet', '-b', 'main'], { cwd: root });
+  execFileSync('git', ['config', 'user.name', 'fixture'], { cwd: root });
+  execFileSync('git', ['config', 'user.email', 'fixture@example.invalid'], { cwd: root });
+  execFileSync('git', ['add', '.'], { cwd: root });
+  execFileSync('git', ['commit', '--quiet', '-m', 'v2 queue snapshot'], { cwd: root });
+  execFileSync('git', ['switch', '--quiet', '-c', 'implementation'], { cwd: root });
+  fs.writeFileSync(path.join(root, 'scripts', 'soak.mjs'), 'export const soak = "implementation";\n');
+  execFileSync('git', ['add', '.'], { cwd: root });
+  execFileSync('git', ['commit', '--quiet', '-m', `v1 implementation\n\nBrownie-Task-Todo: E-v1-selected\nBrownie-Task-Spec-SHA256: ${'a'.repeat(64)}`], { cwd: root });
+  execFileSync('git', ['switch', '--quiet', 'main'], { cwd: root });
+  execFileSync('git', ['merge', '--no-ff', '--no-edit', 'implementation'], { cwd: root, stdio: 'ignore' });
+  assert.deepEqual(
+    findCleanMergedDeliveryCandidate({ repoRoot: root, selectedTodo: selected }),
+    { valid: false, reason: 'merged_delivery_candidate_task_spec_binding_mismatch' }
+  );
+});
+
 test('a process-success envelope cannot promote continuation_required to delivery success', () => {
   const result = evaluateDeliveryHandoff({
     claim,
@@ -432,6 +459,9 @@ test('merged delivery re-verification requires exact task execution, reviewed me
   });
   assert.equal(result.valid, true, JSON.stringify(result));
   assert.equal(validateMergedDeliveryReverification({ claim: fixtureClaim, evidence: result.evidence }).valid, true);
+  const schemaV1WithoutBinding = structuredClone(result.evidence);
+  delete schemaV1WithoutBinding.task_spec_binding;
+  assert.equal(validateMergedDeliveryReverification({ claim: fixtureClaim, evidence: schemaV1WithoutBinding }).valid, true);
   const applied = applyMergedDeliveryReverification({ claim: fixtureClaim, evidence: result.evidence, issuedAt: '2026-11-04T11:40:00Z' });
   assert.equal(applied.valid, true, JSON.stringify(applied.errors));
   assert.equal(validateTerminalDeliveryReceipt({ claim: applied.claim }).valid, true);

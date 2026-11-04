@@ -244,11 +244,15 @@ export function findCleanMergedDeliveryCandidate({ repoRoot, selectedTodo }) {
     if (parents.length !== 3) continue;
     const [, firstParentOid, headOid] = parents;
     const directBinding = gitTaskSpecBinding(repoRoot, headOid);
+    // A declared task binding is authoritative.  Never let a later TODO
+    // snapshot reinterpret an explicit (but different) implementation
+    // commit as another task version.
+    if (directBinding && (directBinding.todo_id !== todoId || directBinding.selected_todo_sha256 !== todoSha)) {
+      rejectedReason = 'merged_delivery_candidate_task_spec_binding_mismatch';
+      continue;
+    }
     const taskSpecBinding = directBinding
-      && directBinding.todo_id === todoId
-      && directBinding.selected_todo_sha256 === todoSha
-      ? directBinding
-      : gitTodoSnapshotBinding(repoRoot, mergeCommitOid, selectedTodo, todoId, todoSha, headOid);
+      ?? gitTodoSnapshotBinding(repoRoot, mergeCommitOid, selectedTodo, todoId, todoSha, headOid);
     if (!taskSpecBinding) continue;
     matchedTaskSpec = true;
 
@@ -523,12 +527,17 @@ export function validateMergedDeliveryReverification({ claim, evidence }) {
     errors.push('merged_delivery_evidence_latest_reviewer_approval_invalid');
   }
   const taskSpecBinding = asObject(proof.task_spec_binding);
-  if (
+  // Schema-v1 receipts predate task_spec_binding.  Their immutable claim,
+  // git, review, and target bindings above remain required; do not strand a
+  // valid historical cleanup receipt merely because the later annotation is
+  // absent. Any present binding must satisfy the current strict schema.
+  const legacyV1BindingAbsent = Object.keys(taskSpecBinding).length === 0;
+  if (!legacyV1BindingAbsent && (
     !['commit_trailer', 'merge_todo_snapshot'].includes(taskSpecBinding.kind)
     || taskSpecBinding.todo_id !== expected.selected_todo_id
     || taskSpecBinding.selected_todo_sha256 !== selectedTodoSha256(expected)
     || taskSpecBinding.head_oid !== gitProof.head_oid
-  ) {
+  )) {
     errors.push('merged_delivery_evidence_task_spec_binding_invalid');
   }
   if (taskSpecBinding.kind === 'merge_todo_snapshot') {

@@ -11065,6 +11065,39 @@ PY
   return 0
 }
 
+active_fresh_claim_has_clean_merged_delivery_candidate() {
+  # This exception is intentionally narrower than selection: it is available
+  # only to the fresh claim created in this run, and re-validates the Git
+  # candidate against that exact claim before each dispatch boundary.
+  [ "${CLAIM_CREATED_THIS_RUN:-0}" -eq 1 ] || return 1
+  [ -f "$TODO_CLAIM_FILE" ] || return 1
+  local claim_selected candidate_output
+  claim_selected="$(claim_field selected_todo 2>/dev/null || true)"
+  [ -n "$claim_selected" ] || return 1
+  if ! candidate_output="$(printf '%s' "$claim_selected" | node "$ROOT_DIR/scripts/phase-loop-delivery-integrity.mjs" find-clean-merged-delivery --repo "$PHASE_LOOP_WORKSPACE_ROOT" 2>/dev/null)"; then
+    return 1
+  fi
+  if ! CLAIM_PATH="$TODO_CLAIM_FILE" CANDIDATE_JSON="$candidate_output" node --input-type=module - <<'NODE'
+import fs from 'node:fs';
+const claim = JSON.parse(fs.readFileSync(process.env.CLAIM_PATH, 'utf8'));
+const candidate = JSON.parse(process.env.CANDIDATE_JSON);
+const bound = candidate?.valid === true && candidate?.candidate;
+process.exit(
+  bound
+  && claim.claim_id
+  && claim.selected_todo_id === bound.selected_todo_id
+  && claim.selected_todo_sha256 === bound.selected_todo_sha256
+  ? 0 : 1
+);
+NODE
+  then
+    return 1
+  fi
+  printf '%s active_fresh_claim_stable_block_bypassed_for_clean_merged_delivery=true claim=%s candidate=%s\n' \
+    "$(now_utc)" "$(claim_field claim_id 2>/dev/null || true)" "$candidate_output" >> "$SUPERVISOR_LOG"
+  return 0
+}
+
 git_workspace_fingerprint() {
   (
     cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 1
@@ -18799,7 +18832,7 @@ PY
     active_target_snapshot=""
   fi
   write_bdk_trajectory_event "$run_stamp" "todo.claimed" '{"source":"phase-loop"}'
-  if selected_todo_was_stably_blocked; then
+  if ! active_fresh_claim_has_clean_merged_delivery_candidate && selected_todo_was_stably_blocked; then
     record_stably_blocked_todo_claim "$run_stamp"
     write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"stably_blocked"}'
     return 0
@@ -18856,7 +18889,7 @@ PY
       return 75
     fi
   fi
-  if selected_todo_was_stably_blocked; then
+  if ! active_fresh_claim_has_clean_merged_delivery_candidate && selected_todo_was_stably_blocked; then
     record_stably_blocked_todo_claim "$run_stamp"
     write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"stably_blocked"}'
     return 0

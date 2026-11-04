@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { verifyMergedDeliveryReverification } from './phase-loop-delivery-integrity.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const phaseLoop = path.join(repoRoot, 'phase-loop.sh');
@@ -321,6 +322,39 @@ test('liveness claims a clean merged delivery after an archived terminal attempt
   assert.equal(execFileSync('git', ['diff', '--name-only', 'HEAD', '--', 'scripts/soak.mjs'], { cwd: workspace, encoding: 'utf8' }), '');
   assert.equal(execFileSync('git', ['ls-files', '--others', '--exclude-standard', '--', 'scripts/soak.mjs'], { cwd: workspace, encoding: 'utf8' }), '');
   assert.match(fs.readFileSync(path.join(state, 'logs', 'supervisor.log'), 'utf8'), /terminal_failure_retry_suppression_bypassed_for_clean_merged_delivery=true/);
+  const dispatchGate = execFileSync('bash', [
+    '-c', 'script=$1; set --; source "$script" >/dev/null; CLAIM_CREATED_THIS_RUN=1; active_fresh_claim_has_clean_merged_delivery_candidate; printf "dispatch_gate=%s\\n" "$?"',
+    '_', phaseLoop
+  ], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PHASE_LOOP_STATE_DIR: state,
+      PHASE_LOOP_TODO: todo,
+      PHASE_LOOP_TODO_BREAKDOWN: breakdown,
+      PHASE_LOOP_WORKSPACE_ROOT: workspace
+    }
+  });
+  assert.match(dispatchGate, /dispatch_gate=0/);
+  assert.match(fs.readFileSync(path.join(state, 'logs', 'supervisor.log'), 'utf8'), /active_fresh_claim_stable_block_bypassed_for_clean_merged_delivery=true/);
+  // The same archived-terminal/current-claim-absent fixture must cross the
+  // pre-dispatch gate and bind fake Runtime execution to re-verification; a
+  // fresh claim alone is not liveness success.
+  const mergeOid = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workspace, encoding: 'utf8' }).trim();
+  const headOid = execFileSync('git', ['rev-parse', 'HEAD^2'], { cwd: workspace, encoding: 'utf8' }).trim();
+  const reverified = verifyMergedDeliveryReverification({
+    repoRoot: workspace,
+    claim,
+    stdoutPayload: { run: { runtime_claim_id: claim.claim_id, payload_status: 'task_executed', reported_executed_count: 1 } },
+    review: {
+      pr_url: 'https://example.invalid/pull/1', pr_number: 1, state: 'MERGED', merge_commit_oid: mergeOid, head_oid: headOid,
+      author: 'implementation', reviewer: 'review', merge_actor: 'review', merged_at: '2026-11-04T09:38:12Z', observed_at: '2026-11-04T11:39:21Z', approved: true, ci_passed: true,
+      latest_reviewer_review_state: 'APPROVED', latest_reviewer_review_commit_oid: headOid
+    },
+    reviewer: 'review', implementation: 'implementation'
+  });
+  assert.equal(reverified.valid, true, JSON.stringify(reverified));
 });
 
 test('claims a generated blocked-queue decomposition from the same TODO snapshot and CAS', () => {
