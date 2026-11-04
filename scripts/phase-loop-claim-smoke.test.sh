@@ -5519,6 +5519,9 @@ cat > "$todo_empty_queue_guard" <<'EOF'
   immediately after the exact line `  fixture_path: fixtureRoot,`. Do not edit
   any other line.
 EOF
+empty_queue_guard_todo_sha256_before="$(shasum "$todo_empty_queue_guard" | awk '{print $1}')"
+empty_queue_guard_breakdown="$empty_queue_guard_workspace/.brownie/todo-breakdown.md"
+test ! -e "$empty_queue_guard_breakdown"
 
 empty_queue_guard_ledger="$empty_queue_guard_workspace/.brownie/private/phase-loop/task-ledger.jsonl"
 empty_queue_guard_runtime_marker="$state_empty_queue_guard/runtime-invoked"
@@ -5541,7 +5544,7 @@ PHASE_LOOP_WORKSPACE_ROOT="$empty_queue_guard_workspace" \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null || empty_queue_guard_exit="$?"
 test "$empty_queue_guard_exit" = "76"
 
-python3 - "$state_empty_queue_guard/todo-claims/current.json" "$todo_empty_queue_guard" "$state_empty_queue_guard/logs/supervisor.log" "$empty_queue_guard_workspace/docs/golden.js" <<'PY'
+python3 - "$state_empty_queue_guard/todo-claims/current.json" "$todo_empty_queue_guard" "$state_empty_queue_guard/logs/supervisor.log" "$empty_queue_guard_workspace/docs/golden.js" "$state_empty_queue_guard/bdk-trajectory.jsonl" <<'PY'
 import json
 import pathlib
 import sys
@@ -5550,6 +5553,12 @@ claim = json.load(open(sys.argv[1], encoding="utf-8"))
 todo = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 supervisor_log = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
 target = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8")
+trajectory_records = [json.loads(line) for line in pathlib.Path(sys.argv[5]).read_text(encoding="utf-8").splitlines() if line.strip()]
+trajectory = [
+    event
+    for record in trajectory_records
+    for event in record.get("events", [])
+]
 assert claim["status"] == "integrity_blocked", claim
 assert claim.get("completion_cleanup_pending") is not True, claim
 assert "completion_certificate" not in claim, claim
@@ -5559,8 +5568,21 @@ assert "completion_certificate" not in claim, claim
 assert "E-empty-queue-exact" in todo, todo
 assert "public_completion_refused=true" in supervisor_log, supervisor_log
 assert "reason=independent_review_ci_merge_missing" in supervisor_log, supervisor_log
+assert "completion_refusal_terminalized=true" in supervisor_log, supervisor_log
+assert "bdk_harness_feedback_passed" in supervisor_log, supervisor_log
+assert "terminal_event=todo.blocked" in supervisor_log, supervisor_log
 assert "  fixture_path: fixtureRoot,\n  lifecycle_evidence: lifecycleEvidence,\n  commands," in target, target
+# The terminal refusal is public and claim-bound: there is exactly one
+# continuation-required blocked event, never an implicit completed event.
+blocked = [event for event in trajectory if event.get("type") == "todo.blocked"]
+assert len(blocked) == 1, trajectory
+assert blocked[0].get("payload", {}).get("reason") == "completion_certificate_or_independent_review_ci_merge_missing", blocked
+assert blocked[0].get("payload", {}).get("continuation_required") is True, blocked
+assert not [event for event in trajectory if event.get("type") == "todo.completed"], trajectory
 PY
+
+test "$(shasum "$todo_empty_queue_guard" | awk '{print $1}')" = "$empty_queue_guard_todo_sha256_before"
+test ! -e "$empty_queue_guard_breakdown"
 
 python3 - "$empty_queue_guard_ledger" "$state_empty_queue_guard/todo-claims/current.json" <<'PY'
 import json
@@ -5577,9 +5599,10 @@ events = [
     for event in (record.get("events", []) if record.get("kind") in ("replan_transaction", "terminal_failure_transaction", "terminal_replan_transaction") else [record])
 ]
 source_attempt = [event for event in events if event.get("task_id") == f"E-empty-queue-exact@{claim_id}"]
-# Refusing an unproven completion can happen before a terminal ledger write.
-# Whether an attempt was persisted or not, it must never consume this TODO.
+# A missing completion receipt must produce one terminal source failure.  It
+# must never consume this TODO or synthesize a child/decomposition task.
 assert all(event.get("to_state") != "completed" for event in source_attempt), source_attempt
+assert sum(event.get("to_state") == "failed" for event in source_attempt) == 1, source_attempt
 PY
 
 # Historical cleanup behavior below documents the unsafe pre-merge completion

@@ -317,8 +317,26 @@ write_bdk_trajectory_event() {
       blocked_selected_todo="$(claim_field selected_todo 2>/dev/null || true)"
       blocked_queue_fingerprint="$(claim_field queue_fingerprint 2>/dev/null || true)"
       blocked_queue_generation="$(active_claim_queue_generation 2>/dev/null || true)"
+      # Do not return from the attempted completion with an orphaned public
+      # terminal.  The terminal event is the same claim-bound `todo.failed`
+      # transition used by other integrity refusals; it explicitly requests
+      # a bounded continuation and cannot create a TODO/replan on its own.
+      local completion_refusal_transition_result completion_refusal_transition_status=0
+      if completion_refusal_transition_result="$(write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"completion_certificate_or_independent_review_ci_merge_missing","terminal_failure":true,"continuation_required":true}' "todo.failed" 2>&1)"; then
+        completion_refusal_transition_status=0
+      else
+        completion_refusal_transition_status=$?
+      fi
+      printf '%s completion_refusal_terminalized=true claim=%s run=%s transition_status=%s result=%s\n' \
+        "$(now_utc)" "$blocked_claim_id" "$run_stamp" "$completion_refusal_transition_status" "${completion_refusal_transition_result:-<no output>}" >> "$SUPERVISOR_LOG"
       if [ -n "$blocked_claim_id" ] && [ -n "$blocked_selected_todo" ] && [ -n "$blocked_queue_fingerprint" ]; then
-        write_todo_claim "$blocked_claim_id" "integrity_blocked" "$blocked_selected_todo" "$blocked_queue_fingerprint" "$blocked_queue_generation" "$run_stamp"
+        # The terminal public/ledger event above is durable even if this
+        # snapshot update is interrupted.  Never let a writer failure erase
+        # it or fall through to an implicit completion path.
+        if ! write_todo_claim "$blocked_claim_id" "integrity_blocked" "$blocked_selected_todo" "$blocked_queue_fingerprint" "$blocked_queue_generation" "$run_stamp"; then
+          write_status "integrity_blocked" "Refused public todo.completed and could not persist the blocked claim snapshot after terminalization. event=$event_type run=$run_stamp" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-0}"
+          return 76
+        fi
       fi
       write_status "integrity_blocked" "Refused public todo.completed before independent review approval, required CI, and merge. event=$event_type run=$run_stamp" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-0}"
       printf '%s public_completion_refused=true event=%s run=%s reason=independent_review_ci_merge_missing\n' "$(now_utc)" "$event_type" "$run_stamp" >> "$SUPERVISOR_LOG"
@@ -12758,6 +12776,19 @@ PY
     PHASE_LOOP_COMPLETION_PROMOTION_REFUSED_DETAIL="claim=$claim_id requested_status=completed actual_status=$(claim_field status 2>/dev/null || true) run=$run_stamp"
     printf '%s completion_promotion_refused=true claim=%s requested=completed actual=%s run=%s reason=completion_certificate_or_independent_review_ci_merge_missing\n' \
       "$(now_utc)" "$claim_id" "$(claim_field status 2>/dev/null || true)" "$run_stamp" >> "$SUPERVISOR_LOG"
+    # This is a terminal integrity refusal, not a successful completion and
+    # not authority to manufacture a recovery TODO.  Publish the exact
+    # selected-claim transition before returning so the public harness sees
+    # one actionable, continuation-required terminal state rather than an
+    # orphaned `todo.blocked` event from a later fallback path.
+    local completion_refusal_transition_result completion_refusal_transition_status=0
+    if completion_refusal_transition_result="$(write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"completion_certificate_or_independent_review_ci_merge_missing","terminal_failure":true,"continuation_required":true}' "todo.failed" 2>&1)"; then
+      completion_refusal_transition_status=0
+    else
+      completion_refusal_transition_status=$?
+    fi
+    printf '%s completion_refusal_terminalized=true claim=%s run=%s transition_status=%s result=%s\n' \
+      "$(now_utc)" "$claim_id" "$run_stamp" "$completion_refusal_transition_status" "${completion_refusal_transition_result:-<no output>}" >> "$SUPERVISOR_LOG"
     # This is the universal terminal gate for legacy/fallback callers.  Write
     # the observable failed outcome here, before any caller can archive a
     # claim, publish a PR, or replace the status with a success-shaped value.
