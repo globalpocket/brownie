@@ -147,6 +147,7 @@ test('permits a clean merged target to be consumed only with exact merged-delive
       targets: [{ path: 'scripts/merged-target.mjs', sha256: 'a'.repeat(64) }]
     },
     task_spec_binding: {
+      kind: 'commit_trailer',
       todo_id: claim.selected_todo_id,
       selected_todo_sha256: claim.selected_todo_sha256,
       head_oid: 'c'.repeat(40)
@@ -210,7 +211,7 @@ test('CLI write-record persists and reloads the merged-delivery reverification p
     queue_generation: 44,
     runtime: { claim_id: 'claim-merged-record', status: 'task_executed', executed_count: 1 },
     git: { merge_commit_oid: 'a'.repeat(40), first_parent_oid: 'b'.repeat(40), head_oid: 'c'.repeat(40), targets: [{ path: 'scripts/merged-target.mjs', sha256: 'd'.repeat(64) }] },
-    task_spec_binding: { todo_id: 'E-merged-reverification-record', selected_todo_sha256: selectedHash, head_oid: 'c'.repeat(40) },
+    task_spec_binding: { kind: 'commit_trailer', todo_id: 'E-merged-reverification-record', selected_todo_sha256: selectedHash, head_oid: 'c'.repeat(40) },
     review: { state: 'MERGED', pr_url: 'https://example.invalid/pull/44', merge_commit_oid: 'a'.repeat(40), head_oid: 'c'.repeat(40), author: 'implementation', reviewer: 'review', merge_actor: 'review', merged_at: '2026-11-04T09:38:12Z', observed_at: '2026-11-04T11:39:21Z', approved: true, ci_passed: true, latest_reviewer_review_state: 'APPROVED', latest_reviewer_review_commit_oid: 'c'.repeat(40) },
     verification_results: [{ command: 'node --check scripts/merged-target.mjs', exit_code: 0 }]
   };

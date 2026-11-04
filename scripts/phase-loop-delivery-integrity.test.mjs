@@ -16,7 +16,8 @@ import {
   validateTerminalDeliveryReceipt,
   validateClaimLifecycleTransition,
   verifyMergedDeliveryReverification,
-  applyMergedDeliveryReverification
+  applyMergedDeliveryReverification,
+  findCleanMergedDeliveryCandidate
 } from './phase-loop-delivery-integrity.mjs';
 
 const selectedTodo = `- [ ] target-02: Patch only \`runtime.rs\`.
@@ -54,6 +55,70 @@ function validEvidence() {
     observables: [{ kind: 'artifact_journey', sha256: 'a'.repeat(64) }]
   };
 }
+
+test('a clean exact merged task is a pre-claim candidate but an uncommitted target remains fail closed', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-merged-delivery-candidate-'));
+  const target = path.join(root, 'scripts', 'soak.mjs');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, 'export const soak = "before";\n');
+  execFileSync('git', ['init', '--quiet', '-b', 'main'], { cwd: root });
+  execFileSync('git', ['config', 'user.name', 'fixture'], { cwd: root });
+  execFileSync('git', ['config', 'user.email', 'fixture@example.invalid'], { cwd: root });
+  execFileSync('git', ['add', '.'], { cwd: root });
+  execFileSync('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: root });
+
+  const selected = `- [ ] E-merged-candidate: Patch only \`scripts/soak.mjs\`:
+  Route: implementation.
+  Completion condition: the reviewed artifact soak is reverified before queue consumption.
+  Verification: run \`node --check scripts/soak.mjs\`.`;
+  execFileSync('git', ['switch', '--quiet', '-c', 'implementation'], { cwd: root });
+  fs.writeFileSync(target, 'export const soak = "merged";\n');
+  execFileSync('git', ['add', '.'], { cwd: root });
+  execFileSync('git', ['commit', '--quiet', '-m', `implement soak\n\nBrownie-Task-Todo: E-merged-candidate\nBrownie-Task-Spec-SHA256: ${selectedTodoSha256({ selected_todo: selected })}`], { cwd: root });
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  execFileSync('git', ['switch', '--quiet', 'main'], { cwd: root });
+  execFileSync('git', ['merge', '--no-ff', '--no-edit', 'implementation'], { cwd: root, stdio: 'ignore' });
+
+  const admitted = findCleanMergedDeliveryCandidate({ repoRoot: root, selectedTodo: selected });
+  assert.equal(admitted.valid, true, JSON.stringify(admitted));
+  assert.equal(admitted.candidate.head_oid, head);
+  assert.equal(admitted.candidate.selected_todo_id, 'E-merged-candidate');
+  assert.equal(admitted.candidate.targets[0].path, 'scripts/soak.mjs');
+
+  fs.writeFileSync(target, 'export const soak = "manual-dirty";\n');
+  const rejected = findCleanMergedDeliveryCandidate({ repoRoot: root, selectedTodo: selected });
+  assert.deepEqual(rejected, { valid: false, reason: 'merged_delivery_candidate_target_not_clean' });
+});
+
+test('a merge-time TODO snapshot cannot admit an implementation merge with an out-of-scope path', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-merged-delivery-scope-'));
+  const selected = `- [ ] E-42b-snapshot-scope: Patch only \`scripts/soak.mjs\`:
+  Route: implementation.
+  Completion condition: bounded delivery remains reviewable.
+  Verification: run \`node --check scripts/soak.mjs\`.`;
+  fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  fs.mkdirSync(path.join(root, '.brownie'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'scripts', 'soak.mjs'), 'export const soak = "before";\n');
+  fs.writeFileSync(path.join(root, 'scripts', 'outside.mjs'), 'export const outside = "before";\n');
+  fs.writeFileSync(path.join(root, '.brownie', 'todo.md'), `${selected}\n`);
+  execFileSync('git', ['init', '--quiet', '-b', 'main'], { cwd: root });
+  execFileSync('git', ['config', 'user.name', 'fixture'], { cwd: root });
+  execFileSync('git', ['config', 'user.email', 'fixture@example.invalid'], { cwd: root });
+  execFileSync('git', ['add', '.'], { cwd: root });
+  execFileSync('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: root });
+  execFileSync('git', ['switch', '--quiet', '-c', 'implementation'], { cwd: root });
+  fs.writeFileSync(path.join(root, 'scripts', 'soak.mjs'), 'export const soak = "merged";\n');
+  fs.writeFileSync(path.join(root, 'scripts', 'outside.mjs'), 'export const outside = "unexpected";\n');
+  execFileSync('git', ['add', '.'], { cwd: root });
+  execFileSync('git', ['commit', '--quiet', '-m', 'implement plus unrelated change'], { cwd: root });
+  execFileSync('git', ['switch', '--quiet', 'main'], { cwd: root });
+  execFileSync('git', ['merge', '--no-ff', '--no-edit', 'implementation'], { cwd: root, stdio: 'ignore' });
+
+  assert.deepEqual(
+    findCleanMergedDeliveryCandidate({ repoRoot: root, selectedTodo: selected }),
+    { valid: false, reason: 'merged_delivery_candidate_scope_mismatch' }
+  );
+});
 
 test('a process-success envelope cannot promote continuation_required to delivery success', () => {
   const result = evaluateDeliveryHandoff({

@@ -11012,16 +11012,16 @@ archive_failed_todo_claim_for_retry() {
 
 terminal_failure_retry_suppressed_for_todo() {
   local selected_todo="$1"
-  local retry_state
+  local retry_state suppression_detected=0
   if terminal_failure_retry_state_for_todo "$selected_todo"; then
     :
   else
     retry_state=$?
     if [ "$retry_state" -eq 2 ]; then
-      return 0
+      suppression_detected=1
     fi
   fi
-  python3 - "$TODO_CLAIM_DIR" "$selected_todo" <<'PY'
+  if python3 - "$TODO_CLAIM_DIR" "$selected_todo" <<'PY'
 import json
 import pathlib
 import sys
@@ -11042,6 +11042,27 @@ for path in sorted(claim_dir.glob("stale-*.json")):
         raise SystemExit(0)
 raise SystemExit(1)
 PY
+  then
+    suppression_detected=1
+  fi
+  if [ "$suppression_detected" -eq 0 ]; then
+    return 1
+  fi
+
+  # A non-retryable terminal record normally prevents a claim loop. It must
+  # not, however, erase the opportunity to *reverify* an exact delivery that
+  # was already merged after that attempt. The JS boundary proves the exact
+  # task spec, two-parent merge, bounded scope, and clean targets. It does
+  # not mark completion or bypass later runtime/review/verification evidence.
+  local candidate_output
+  if candidate_output="$(printf '%s' "$selected_todo" | node "$ROOT_DIR/scripts/phase-loop-delivery-integrity.mjs" find-clean-merged-delivery --repo "$PHASE_LOOP_WORKSPACE_ROOT" 2>&1)"; then
+    printf '%s terminal_failure_retry_suppression_bypassed_for_clean_merged_delivery=true candidate=%s\n' \
+      "$(now_utc)" "$candidate_output" >> "$SUPERVISOR_LOG"
+    return 1
+  fi
+  printf '%s terminal_failure_retry_suppression_retained=true merged_delivery_candidate=%s\n' \
+    "$(now_utc)" "${candidate_output:-<no output>}" >> "$SUPERVISOR_LOG"
+  return 0
 }
 
 git_workspace_fingerprint() {
@@ -12450,68 +12471,33 @@ phase_loop_reverify_and_consume_merged_delivery() {
     write_status "integrity_blocked" "Merged delivery re-verification refused: actor/repository deployment evidence is unavailable for the active claim." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
     return 76
   fi
-  candidate="$(python3 - "$TODO_CLAIM_FILE" "$PHASE_LOOP_WORKSPACE_ROOT" <<'PY'
+  candidate="$(python3 - "$TODO_CLAIM_FILE" <<'PY' | node "$ROOT_DIR/scripts/phase-loop-delivery-integrity.mjs" find-clean-merged-delivery --repo "$PHASE_LOOP_WORKSPACE_ROOT"
 import json
 import pathlib
-import re
-import subprocess
 import sys
 
 claim = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-selected = str(claim.get("selected_todo") or "")
-first = selected.splitlines()[0] if selected else ""
-selected_id = str(claim.get("selected_todo_id") or "")
-if not selected_id:
-    match = re.match(r"^\s*[-*]\s+\[\s*\]\s+([^:\s]+)", first)
-    selected_id = match.group(1) if match else ""
-selected_sha256 = str(claim.get("selected_todo_sha256") or "")
-if not re.fullmatch(r"[a-f0-9]{64}", selected_sha256):
-    import hashlib
-    selected_sha256 = hashlib.sha256(selected.encode("utf-8")).hexdigest()
-scope_match = re.search(r"\b(?:Patch|Create) only\b([^\n:]+)", first)
-tick = chr(96)
-scopes = re.findall(tick + "([^" + tick + r"\n]+)" + tick, scope_match.group(1)) if scope_match else []
-if not selected_id or not scopes or any(p.startswith("/") or ".." in pathlib.PurePosixPath(p).parts for p in scopes):
-    raise SystemExit(1)
-for merge in subprocess.check_output(["git", "rev-list", "--merges", "HEAD"], cwd=sys.argv[2], text=True).splitlines():
-    parents = subprocess.check_output(["git", "rev-list", "--parents", "-n", "1", merge], cwd=sys.argv[2], text=True).split()
-    if len(parents) != 3:
-        continue
-    head = parents[2]
-    message = subprocess.check_output(["git", "show", "-s", "--format=%B", head], cwd=sys.argv[2], text=True)
-    task_todo = re.search(r"^Brownie-Task-Todo:\s*([^\s]+)\s*$", message, re.MULTILINE | re.IGNORECASE)
-    task_sha = re.search(r"^Brownie-Task-Spec-SHA256:\s*([a-f0-9]{64})\s*$", message, re.MULTILINE | re.IGNORECASE)
-    if not task_todo or not task_sha or task_todo.group(1) != selected_id or task_sha.group(1).lower() != selected_sha256:
-        continue
-    changed = subprocess.check_output(["git", "diff", "--name-only", parents[1], merge, "--"], cwd=sys.argv[2], text=True).splitlines()
-    if sorted(changed) != sorted(scopes):
-        continue
-    try:
-        for scope in scopes:
-            if subprocess.check_output(["git", "rev-parse", f"HEAD:{scope}"], cwd=sys.argv[2], text=True).strip() != subprocess.check_output(["git", "rev-parse", f"{merge}:{scope}"], cwd=sys.argv[2], text=True).strip():
-                raise ValueError("head blob differs")
-            subprocess.check_call(["git", "diff", "--quiet", "HEAD", "--", scope], cwd=sys.argv[2])
-        print(merge)
-        raise SystemExit(0)
-    except Exception:
-        continue
-raise SystemExit(1)
+print(str(claim.get("selected_todo") or ""), end="")
 PY
 )" || {
     write_status "integrity_blocked" "Merged delivery re-verification refused: no clean reviewed merge exactly matches the active claim's bounded scope." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+    return 76
+  }
+  merge_oid="$(node -e 'const value=JSON.parse(process.argv[1]); if (!value.valid || !/^[a-f0-9]{40}$/i.test(value.candidate?.merge_commit_oid || "")) process.exit(1); process.stdout.write(value.candidate.merge_commit_oid)' "$candidate")" || {
+    write_status "integrity_blocked" "Merged delivery re-verification refused: the clean merge candidate did not retain a verifiable merge identity." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
     return 76
   }
   reviewer_gh_config_dir="$(node "$ROOT_DIR/scripts/phase-loop-actor-preflight.mjs" --role review --repo-root "$PHASE_LOOP_WORKSPACE_ROOT" --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" --credentials "$PHASE_LOOP_ACTOR_CREDENTIALS" --credentials-root "$PHASE_LOOP_CONTROL_ROOT" --print-gh-config-dir 2>>"$SUPERVISOR_LOG")" || {
     write_status "blocked" "Merged delivery re-verification could not resolve the configured independent-review profile; preserving the active claim." "$run_id" "78" "${CONSECUTIVE_FAILURES:-0}"
     return 78
   }
-  pr_number="$(GH_CONFIG_DIR="$reviewer_gh_config_dir" gh api "repos/$repository/commits/$candidate/pulls" --jq '[.[] | select(.merged_at != null)][0].number' 2>>"$SUPERVISOR_LOG" || true)"
+  pr_number="$(GH_CONFIG_DIR="$reviewer_gh_config_dir" gh api "repos/$repository/commits/$merge_oid/pulls" --jq '[.[] | select(.merged_at != null)][0].number' 2>>"$SUPERVISOR_LOG" || true)"
   if ! [[ "$pr_number" =~ ^[0-9]+$ ]]; then
     write_status "integrity_blocked" "Merged delivery re-verification refused: the exact clean merge has no observable merged pull request." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
     return 76
   fi
   review_file="$TODO_CLAIM_DIR/merged-delivery-review.$$.json"
-  if ! GH_CONFIG_DIR="$reviewer_gh_config_dir" gh pr view "$pr_number" --json id,number,url,author,state,mergedAt,mergeCommit,headRefOid,reviews,statusCheckRollup > "$review_file"; then
+  if ! GH_CONFIG_DIR="$reviewer_gh_config_dir" gh pr view "$pr_number" --json id,number,url,title,body,author,state,mergedAt,mergeCommit,headRefOid,reviews,statusCheckRollup > "$review_file"; then
     rm -f "$review_file"
     write_status "blocked" "Merged delivery re-verification could not read the observed merged pull request; preserving the active claim." "$run_id" "78" "${CONSECUTIVE_FAILURES:-0}"
     return 78
