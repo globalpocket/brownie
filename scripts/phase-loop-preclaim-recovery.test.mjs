@@ -21,6 +21,7 @@ function makeFixture({ repairableCycle = true } = {}) {
     'phase-loop-admit-materialized-scope-rebaseline.mjs',
     'phase-loop-todo-contract-rebaseline.mjs',
     'phase-loop-todo-state.mjs',
+    'phase-loop-delivery-integrity.mjs',
     'phase-loop-historical-derived-delivery-integrity.mjs',
     'phase-loop-bounded-scope.mjs',
     'repair-todo-decomposition.mjs'

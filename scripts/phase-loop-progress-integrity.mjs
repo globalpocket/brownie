@@ -7,6 +7,7 @@ import { boundedScopes } from './phase-loop-bounded-scope.mjs';
 import {
   rootClaimId,
   selectedTodoSha256,
+  validateMergedDeliveryReverification,
   validateTerminalDeliveryReceipt
 } from './phase-loop-delivery-integrity.mjs';
 
@@ -252,6 +253,10 @@ export function validatePhaseLoopProgressIntegrity(input) {
   const completedIds = new Set(input.completedTodoIds ?? []);
   const routeCanEditTodoFreely = selectedRoute === 'todo-decomposition' || selectedId.startsWith('TODO-decompose-');
   const explicitBlocker = isExplicitBlocker(selected);
+  const mergedDeliveryReverified = validateMergedDeliveryReverification({
+    claim,
+    evidence: claim.merged_delivery_reverification
+  }).valid;
 
   if (!selectedId) {
     errors.push({
@@ -286,7 +291,7 @@ export function validatePhaseLoopProgressIntegrity(input) {
         selected_todo_id: selectedId
       });
     }
-    if (selectedRemoved && selectedScopes.length > 0 && !allowedTargetChanged && !explicitBlocker) {
+    if (selectedRemoved && selectedScopes.length > 0 && !allowedTargetChanged && !explicitBlocker && !mergedDeliveryReverified) {
       errors.push({
         code: 'selected_todo_removed_without_target_change',
         message: 'Selected TODO was removed, but none of its bounded target files changed.',
@@ -368,7 +373,8 @@ export function validatePhaseLoopProgressIntegrity(input) {
     selected_all_targets_dirty_at_baseline: allSelectedTargetsDirtyAtBaseline,
     missing_selected_scopes: missingSelectedScopes,
     selected_todo_removed: selectedRemoved,
-    completion_record_present: recordExists
+    completion_record_present: recordExists,
+    merged_delivery_reverified: mergedDeliveryReverified
   };
 }
 
@@ -378,6 +384,7 @@ export function durableDeliveryReceiptForClaim(claim) {
     return { valid: false, errors: receipt.errors };
   }
   const review = claim.delivery_review;
+  const mergedDeliveryReverification = review?.merged_delivery_reverification ?? claim.merged_delivery_reverification;
   return {
     valid: true,
     receipt: {
@@ -392,7 +399,9 @@ export function durableDeliveryReceiptForClaim(claim) {
       ci_passed: true,
       merged: true,
       ...(typeof review.pr_url === 'string' && review.pr_url ? { pr_url: review.pr_url } : {}),
-      semantic_completion_evidence: review.semantic_completion_evidence
+      ...(mergedDeliveryReverification
+        ? { merged_delivery_reverification: mergedDeliveryReverification }
+        : { semantic_completion_evidence: review.semantic_completion_evidence })
     }
   };
 }
@@ -402,13 +411,16 @@ function writeCompletionRecord(repoRoot, claim, runStamp, validation, deliveryRe
   const dir = path.join(repoRoot, '.brownie/private/phase-loop/todo-completions');
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const record = {
-    schema_version: 2,
+    schema_version: 3,
     claim_id: claimId,
     root_claim_id: rootClaimId(claim),
     run_stamp: runStamp,
     selected_todo_id: validation.selected_todo_id,
+    selected_todo: String(claim.selected_todo ?? ''),
     selected_todo_first_line: String(claim.selected_todo ?? '').split('\n')[0] ?? '',
     selected_todo_sha256: selectedTodoSha256(claim),
+    queue_fingerprint: claim.queue_fingerprint ?? null,
+    queue_generation: claim.queue_generation ?? null,
     delivery_receipt: deliveryReceipt,
     changed_files: validation.claim_changed_files,
     workspace_changed_files: validation.changed_files,
@@ -421,7 +433,9 @@ function writeCompletionRecord(repoRoot, claim, runStamp, validation, deliveryRe
     selected_all_targets_changed: validation.selected_all_targets_changed,
     selected_all_targets_dirty_at_baseline: validation.selected_all_targets_dirty_at_baseline,
     missing_selected_scopes: validation.missing_selected_scopes,
-    completion_record_reason: validation.selected_route === 'todo-decomposition' ? 'todo_decomposition' : 'verified_before_todo_removal',
+    completion_record_reason: validation.merged_delivery_reverified
+      ? 'merged_delivery_reverified_before_todo_removal'
+      : validation.selected_route === 'todo-decomposition' ? 'todo_decomposition' : 'verified_before_todo_removal',
     written_at: new Date().toISOString()
   };
   for (const recordPath of completionRecordPaths(repoRoot, claimId, runStamp)) {
@@ -481,7 +495,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
         ['implementation', 'documentation'].includes(validation.selected_route) &&
         validation.selected_scopes.length > 0 &&
         !validation.selected_target_changed &&
-        !validation.selected_target_dirty_at_baseline
+        !validation.selected_target_dirty_at_baseline &&
+        !validation.merged_delivery_reverified
       ) {
         validation = {
           ...validation,
@@ -499,7 +514,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
         ['implementation', 'documentation'].includes(validation.selected_route) &&
         validation.selected_scopes.length > 1 &&
         !validation.selected_all_targets_changed &&
-        !validation.selected_all_targets_dirty_at_baseline
+        !validation.selected_all_targets_dirty_at_baseline &&
+        !validation.merged_delivery_reverified
       ) {
         validation = {
           ...validation,

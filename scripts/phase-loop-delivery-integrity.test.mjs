@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import {
   completionConditionSha256,
@@ -8,8 +12,11 @@ import {
   selectedTodoSha256,
   terminalCompletionEvidenceSha256,
   validateCompletionCertificate,
+  validateMergedDeliveryReverification,
   validateTerminalDeliveryReceipt,
-  validateClaimLifecycleTransition
+  validateClaimLifecycleTransition,
+  verifyMergedDeliveryReverification,
+  applyMergedDeliveryReverification
 } from './phase-loop-delivery-integrity.mjs';
 
 const selectedTodo = `- [ ] target-02: Patch only \`runtime.rs\`.
@@ -299,4 +306,126 @@ test('review-requested changes preserve the immutable root claim and fingerprint
   });
   assert.equal(replacement.valid, false);
   assert(replacement.errors.includes('root_claim_id_changed'));
+});
+
+test('merged delivery re-verification requires exact task execution, reviewed merge scope, clean targets, and rerun verification', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-merged-delivery-'));
+  const run = (args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'scripts', 'target.mjs'), 'export const release = "before";\n');
+  fs.writeFileSync(path.join(repo, 'scripts', 'verification.mjs'), 'import "./target.mjs";\n');
+  run(['init', '-b', 'main']);
+  run(['config', 'user.name', 'fixture']);
+  run(['config', 'user.email', 'fixture@example.invalid']);
+  run(['add', '.']);
+  run(['commit', '-m', 'base']);
+  const selected = `- [ ] E-merged-fixture: Patch only \`scripts/target.mjs\`.
+  Route: implementation.
+  Completion condition: target is verified from its reviewed merge.
+  Verification: run \`node --check scripts/verification.mjs\`.`;
+  run(['switch', '-c', 'implementation']);
+  fs.writeFileSync(path.join(repo, 'scripts', 'target.mjs'), 'export const release = "merged";\n');
+  run(['add', '.']);
+  run(['commit', '-m', `implement selected target\n\nBrownie-Task-Todo: E-merged-fixture\nBrownie-Task-Spec-SHA256: ${selectedTodoSha256({ selected_todo: selected })}`]);
+  const headOid = run(['rev-parse', 'HEAD']);
+  run(['switch', 'main']);
+  run(['merge', '--no-ff', 'implementation', '-m', 'merge selected target']);
+  const mergeOid = run(['rev-parse', 'HEAD']);
+  const fixtureClaim = {
+    claim_id: 'todo-g999-merged-r1',
+    root_claim_id: 'todo-g999-merged-r1',
+    selected_todo: selected,
+    selected_todo_id: 'E-merged-fixture',
+    selected_todo_sha256: selectedTodoSha256({ selected_todo: selected }),
+    queue_fingerprint: 'f'.repeat(64),
+    queue_generation: 999
+  };
+  const review = {
+    pr_url: 'https://example.invalid/pull/99',
+    pr_number: 99,
+    state: 'MERGED',
+    merge_commit_oid: mergeOid,
+    head_oid: headOid,
+    author: 'implementation-agent',
+    reviewer: 'review-agent',
+    merge_actor: 'review-agent',
+    merged_at: '2026-11-04T09:38:12Z',
+    observed_at: '2026-11-04T11:39:21Z',
+    approved: true,
+    ci_passed: true,
+    latest_reviewer_review_state: 'APPROVED',
+    latest_reviewer_review_commit_oid: headOid
+  };
+  const stdoutPayload = { run: { runtime_claim_id: fixtureClaim.claim_id, payload_status: 'task_executed', reported_executed_count: 1 } };
+  const result = verifyMergedDeliveryReverification({
+    repoRoot: repo,
+    claim: fixtureClaim,
+    stdoutPayload,
+    review,
+    reviewer: 'review-agent',
+    implementation: 'implementation-agent'
+  });
+  assert.equal(result.valid, true, JSON.stringify(result));
+  assert.equal(validateMergedDeliveryReverification({ claim: fixtureClaim, evidence: result.evidence }).valid, true);
+  const applied = applyMergedDeliveryReverification({ claim: fixtureClaim, evidence: result.evidence, issuedAt: '2026-11-04T11:40:00Z' });
+  assert.equal(applied.valid, true, JSON.stringify(applied.errors));
+  assert.equal(validateTerminalDeliveryReceipt({ claim: applied.claim }).valid, true);
+
+  const resumed = verifyMergedDeliveryReverification({
+    repoRoot: repo,
+    claim: fixtureClaim,
+    stdoutPayload: { resume: { runtime_claim_id: fixtureClaim.claim_id, payload_status: 'task_executed', reported_executed_count: 1 } },
+    review,
+    reviewer: 'review-agent',
+    implementation: 'implementation-agent'
+  });
+  assert.equal(resumed.valid, true, JSON.stringify(resumed));
+
+  const changesRequestedAfterApproval = verifyMergedDeliveryReverification({
+    repoRoot: repo,
+    claim: fixtureClaim,
+    stdoutPayload,
+    review: {
+      ...review,
+      latest_reviewer_review_state: 'CHANGES_REQUESTED',
+      latest_reviewer_review_commit_oid: headOid,
+      approved: false
+    },
+    reviewer: 'review-agent',
+    implementation: 'implementation-agent'
+  });
+  assert.equal(changesRequestedAfterApproval.valid, false);
+  assert(changesRequestedAfterApproval.errors.includes('merged_delivery_latest_reviewer_approval_missing'));
+
+  const versionThree = {
+    ...fixtureClaim,
+    selected_todo: selected.replace('target is verified from its reviewed merge.', 'target is verified against version three semantics.'),
+    selected_todo_sha256: selectedTodoSha256({ selected_todo: selected.replace('target is verified from its reviewed merge.', 'target is verified against version three semantics.') })
+  };
+  const differentVersion = verifyMergedDeliveryReverification({
+    repoRoot: repo,
+    claim: versionThree,
+    stdoutPayload,
+    review,
+    reviewer: 'review-agent',
+    implementation: 'implementation-agent'
+  });
+  assert.equal(differentVersion.valid, false);
+  assert.deepEqual(differentVersion.errors, ['merged_delivery_task_spec_binding_missing_or_mismatch']);
+
+  const taskOnly = verifyMergedDeliveryReverification({
+    repoRoot: repo,
+    claim: fixtureClaim,
+    stdoutPayload: { run: { runtime_claim_id: fixtureClaim.claim_id, payload_status: 'task_executed', reported_executed_count: 1 } },
+    review: { ...review, approved: false },
+    reviewer: 'review-agent',
+    implementation: 'implementation-agent'
+  });
+  assert.equal(taskOnly.valid, false);
+  assert.equal(taskOnly.reason, 'merged_delivery_reverification_refused');
+
+  fs.appendFileSync(path.join(repo, 'scripts', 'target.mjs'), '// dirty\n');
+  const dirty = verifyMergedDeliveryReverification({ repoRoot: repo, claim: fixtureClaim, stdoutPayload, review, reviewer: 'review-agent', implementation: 'implementation-agent' });
+  assert.equal(dirty.valid, false);
+  assert.deepEqual(dirty.errors, ['merged_delivery_target_not_clean_at_reviewed_merge']);
 });

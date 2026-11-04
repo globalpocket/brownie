@@ -52,6 +52,7 @@ test('CLI isolates phase-loop workspace lineage from the evaluator controller ch
     'phase-loop-todo-contract-rebaseline.mjs',
     'phase-loop-admit-materialized-scope-rebaseline.mjs',
     'phase-loop-todo-state.mjs',
+    'phase-loop-delivery-integrity.mjs',
     'phase-loop-historical-derived-delivery-integrity.mjs',
     'guard-todo-decomposition.mjs'
   ]) {

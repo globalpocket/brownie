@@ -1577,7 +1577,7 @@ blocked_path = pathlib.Path(sys.argv[5])
 blocked = [json.loads(line) for line in blocked_path.read_text(encoding="utf-8").splitlines() if line.strip()] if blocked_path.exists() else []
 ledger_path = pathlib.Path(sys.argv[6])
 ledger = ledger_path.read_text(encoding="utf-8") if ledger_path.exists() else ""
-assert status["status"] == "blocked", status
+assert status["status"] in {"blocked", "integrity_blocked"}, status
 assert "retry_cap=0" in status["detail"], status
 assert progress["classification"] == "terminal_failure", progress
 assert progress["meaningful_progress"] is False, progress
@@ -1788,27 +1788,27 @@ claim_ids = [
 assert len(set(claim_ids)) == 2, claim_ids
 assert claim_ids[0] != claim_ids[1], claim_ids
 PY
-set +e
-PHASE_LOOP_STATE_DIR="$state_terminal_retry_cap" \
+retry_cap_todo_before="$(shasum -a 256 "$todo_terminal_retry_cap" | awk '{ print $1 }')"
+if PHASE_LOOP_STATE_DIR="$state_terminal_retry_cap" \
 PHASE_LOOP_PROMPT="$prompt_terminal_retry_cap" \
 PHASE_LOOP_TODO="$todo_terminal_retry_cap" \
-BROWNIE_BIN="$fake_brownie_terminal_task_executed" \
+BROWNIE_BIN="$fake_brownie_must_not_run" \
 PHASE_LOOP_WORKSPACE_ROOT="$terminal_retry_cap_workspace" \
 PHASE_LOOP_TEST_HEADLESS_ONLY=1 \
 PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP=1 \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 65,75,76 "$PHASE_LOOP" run-once >/dev/null
-retry_cap_exhausted_exit="$?"
-set -e
-case "$retry_cap_exhausted_exit" in
-  65|75|76) ;;
-  *) echo "unexpected retry-cap exhaustion exit=$retry_cap_exhausted_exit" >&2; exit 1 ;;
-esac
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null; then
+  retry_cap_exhausted_exit=0
+else
+  retry_cap_exhausted_exit="$?"
+fi
+test "$retry_cap_exhausted_exit" = "76"
+test "$(shasum -a 256 "$todo_terminal_retry_cap" | awk '{ print $1 }')" = "$retry_cap_todo_before"
 assert_terminal_failure_claim_archived \
   "$state_terminal_retry_cap/todo-claims" \
   "$state_terminal_retry_cap/todo-claims/blocked.jsonl" \
   "$terminal_retry_cap_workspace/.brownie/private/phase-loop/task-ledger.jsonl" \
   'E-retry-cap:' 2 1
-python3 - "$terminal_retry_cap_workspace/.brownie/private/phase-loop/task-ledger.jsonl" "$state_terminal_retry_cap/status.json" "$state_terminal_retry_cap/progress-state.json" <<'PY'
+python3 - "$terminal_retry_cap_workspace/.brownie/private/phase-loop/task-ledger.jsonl" "$state_terminal_retry_cap/status.json" "$state_terminal_retry_cap/progress-state.json" "$todo_terminal_retry_cap" <<'PY'
 import json
 import pathlib
 import sys
@@ -1824,22 +1824,13 @@ same_todo = [
 assert len(same_todo) == 2, same_todo
 status = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding='utf-8'))
 progress = json.loads(pathlib.Path(sys.argv[3]).read_text(encoding='utf-8'))
-assert status['status'] == 'blocked', status
+todo = pathlib.Path(sys.argv[4]).read_text(encoding='utf-8')
+assert status['status'] == 'integrity_blocked', status
+assert status['exit_code'] == '76', status
+assert 'Automatic TODO decomposition is refused' in status['detail'], status
 assert progress['progress_projection']['cli_status'] == 'task_executed', progress
 assert progress['progress_projection']['closure'] == 'no_eligible_task', progress
-if status['exit_code'] == '0':
-    # Once the retry cap is exhausted, queue suppression may project the
-    # already-archived TODO as an empty eligible queue. The assertion above
-    # still proves the two terminal attempts were durable and bounded.
-    pass
-elif status['exit_code'] == '75':
-    assert 'Failed to claim first pending TODO' in status['detail'], status
-elif status['exit_code'] == '65':
-    assert 'explicit owner-controlled blocker TODO' in status['detail'], status
-else:
-    assert status['exit_code'] == '76', status
-    assert 'terminal_task_failed' in status['detail'], status
-    assert progress['classification'] == 'terminal_failure', progress
+assert 'TODO-decompose-blocked-queue-' not in todo, todo
 PY
 
 # A retry-cap allowance may create a fresh claim/attempt, but an outer Runtime
@@ -2168,21 +2159,33 @@ assert status['exit_code'] == '78', status
 assert 'blocked evidence append failed' in status['detail'], status
 assert 'refusing to retry' in status['detail'], status
 PY
-set +e
-PHASE_LOOP_STATE_DIR="$blocked_append_failure_state" \
+blocked_append_todo_before="$(shasum -a 256 "$blocked_append_failure_todo" | awk '{ print $1 }')"
+if PHASE_LOOP_STATE_DIR="$blocked_append_failure_state" \
 PHASE_LOOP_PROMPT="$blocked_append_failure_prompt" \
 PHASE_LOOP_TODO="$blocked_append_failure_todo" \
 BROWNIE_BIN="$fake_brownie_terminal_no_eligible_counted" \
 PHASE_LOOP_WORKSPACE_ROOT="$blocked_append_failure_workspace" \
 PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP=1 \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 65,75 "$PHASE_LOOP" run-once >/dev/null
-blocked_append_failure_retry_exit="$?"
-set -e
-case "$blocked_append_failure_retry_exit" in
-  65|75) ;;
-  *) echo "unexpected blocked-append retry exit=$blocked_append_failure_retry_exit" >&2; exit 1 ;;
-esac
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null; then
+  blocked_append_failure_retry_exit=0
+else
+  blocked_append_failure_retry_exit="$?"
+fi
+test "$blocked_append_failure_retry_exit" = "76"
 test "$(cat "$blocked_append_failure_state/terminal-no-eligible-count" 2>/dev/null || printf '0')" = "0"
+test "$(shasum -a 256 "$blocked_append_failure_todo" | awk '{ print $1 }')" = "$blocked_append_todo_before"
+python3 - "$blocked_append_failure_state/status.json" "$blocked_append_failure_todo" <<'PY'
+import json
+import pathlib
+import sys
+
+status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))
+todo = pathlib.Path(sys.argv[2]).read_text(encoding='utf-8')
+assert status['status'] == 'integrity_blocked', status
+assert status['exit_code'] == '76', status
+assert 'Automatic TODO decomposition is refused' in status['detail'], status
+assert 'TODO-decompose-blocked-queue-' not in todo, todo
+PY
 fi
 
 # Completion protocol: an outer Runtime success must not write a terminal
@@ -3937,38 +3940,43 @@ BROWNIE_BIN="$fake_brownie_blocked_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
-PHASE_LOOP_STATE_DIR="$state_all_blocked" \
+todo_all_blocked_before="$(shasum -a 256 "$todo_all_blocked" | awk '{ print $1 }')"
+breakdown_all_blocked_before="$(shasum -a 256 "$todo_breakdown_all_blocked" | awk '{ print $1 }')"
+# The controller must stop before Runtime. A blocked queue is not permission
+# to create a decomposition child; terminal failures are handled by the
+# claim-bound integrity path, not by an implicit TODO mutation.
+if PHASE_LOOP_STATE_DIR="$state_all_blocked" \
 PHASE_LOOP_PROMPT="$prompt_all_blocked" \
 PHASE_LOOP_TODO="$todo_all_blocked" \
 PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_all_blocked" \
-BROWNIE_BIN="$fake_brownie_json" \
+BROWNIE_BIN="$fake_brownie_must_not_run" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null; then
+  all_blocked_exit=0
+else
+  all_blocked_exit="$?"
+fi
+test "$all_blocked_exit" = "76"
 
-python3 - "$state_all_blocked/todo-claims/current.json" "$todo_all_blocked" <<'PY'
+test "$(shasum -a 256 "$todo_all_blocked" | awk '{ print $1 }')" = "$todo_all_blocked_before"
+test "$(shasum -a 256 "$todo_breakdown_all_blocked" | awk '{ print $1 }')" = "$breakdown_all_blocked_before"
+python3 - "$state_all_blocked/todo-claims/current.json" "$state_all_blocked/status.json" "$state_all_blocked/supervisor.log" "$todo_all_blocked" <<'PY'
 import json
+import pathlib
 import sys
 
 claim = json.load(open(sys.argv[1], encoding="utf-8"))
-todo = open(sys.argv[2], encoding="utf-8").read()
-assert claim["status"] == "in_progress", claim
-assert "TODO-decompose-blocked-queue-" in claim["selected_todo"], claim
-assert "Brownie must own the" in claim["selected_todo"], claim
-assert "TODO-decompose-blocked-queue-" in todo, todo
-assert "decomposition ledger" in todo, todo
+status = json.load(open(sys.argv[2], encoding="utf-8"))
+supervisor_path = pathlib.Path(sys.argv[3])
+supervisor = supervisor_path.read_text(encoding="utf-8") if supervisor_path.exists() else ""
+todo = open(sys.argv[4], encoding="utf-8").read()
+assert claim["status"] == "blocked", claim
+assert status["status"] == "integrity_blocked", status
+assert status["exit_code"] == "76", status
+assert "Automatic TODO decomposition is refused" in status["detail"], status
+assert "TODO-decompose-blocked-queue-" not in todo, todo
+assert "blocked_todo_decomposition_request_created" not in supervisor, supervisor
 PY
-
-decomposition_prompt_file="$(find "$state_all_blocked/runs" -name '*.prompt.md' -print | sort | tail -n 1)"
-assert_contains "$decomposition_prompt_file" 'state: `decompose_todo`'
-assert_contains "$decomposition_prompt_file" 'decomposition_policy: this invocation is TODO decomposition only'
-assert_contains "$decomposition_prompt_file" 'decomposition_write_policy: the only allowed workspace.write targets are the live TODO queue'
-assert_contains "$decomposition_prompt_file" 'Prefer one compact `.brownie/todo.md` replacement first'
-assert_contains "$decomposition_prompt_file" 'decomposition_leaf_policy: replace the active decomposition request and its broad source TODO with unchecked leaf TODOs'
-assert_contains "$decomposition_prompt_file" 'decomposition_verification_policy: `Verification:` must use bounded commands'
-assert_contains "$decomposition_prompt_file" 'decomposition_scope_policy: every implementation leaf must name a bounded `Patch only`/`Create only` scope'
-assert_contains "$decomposition_prompt_file" 'decomposition_size_policy: keep the next workspace.write compact'
-assert_contains "$decomposition_prompt_file" 'decomposition_ledger_policy: update `.brownie/todo-breakdown.md`'
-assert_contains "$decomposition_prompt_file" 'let the guard request the breakdown repair next'
 
 state_decomposition_leaf="$(mktemp -d)"
 prompt_decomposition_leaf="$(mktemp)"
@@ -4005,42 +4013,46 @@ BROWNIE_BIN="$fake_brownie_blocked_json" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
 
-PHASE_LOOP_STATE_DIR="$state_blocked_decomposition" \
+todo_blocked_decomposition_before="$(shasum -a 256 "$todo_blocked_decomposition" | awk '{ print $1 }')"
+breakdown_blocked_decomposition_before="$(shasum -a 256 "$todo_breakdown_blocked_decomposition" | awk '{ print $1 }')"
+
+if PHASE_LOOP_STATE_DIR="$state_blocked_decomposition" \
 PHASE_LOOP_PROMPT="$prompt_blocked_decomposition" \
 PHASE_LOOP_TODO="$todo_blocked_decomposition" \
 PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_blocked_decomposition" \
-BROWNIE_BIN="$fake_brownie_blocked_json" \
+BROWNIE_BIN="$fake_brownie_must_not_run" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null; then
+  blocked_decomposition_exit=0
+else
+  blocked_decomposition_exit="$?"
+fi
+test "$blocked_decomposition_exit" = "76"
+test "$(shasum -a 256 "$todo_blocked_decomposition" | awk '{ print $1 }')" = "$todo_blocked_decomposition_before"
+test "$(shasum -a 256 "$todo_breakdown_blocked_decomposition" | awk '{ print $1 }')" = "$breakdown_blocked_decomposition_before"
 
-set +e
-PHASE_LOOP_STATE_DIR="$state_blocked_decomposition" \
-PHASE_LOOP_PROMPT="$prompt_blocked_decomposition" \
-PHASE_LOOP_TODO="$todo_blocked_decomposition" \
-PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_blocked_decomposition" \
-BROWNIE_BIN="$fake_brownie_blocked_json" \
-PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
-blocked_decomposition_exit="$?"
-set -e
-test "$blocked_decomposition_exit" = "75"
-
-python3 - "$todo_blocked_decomposition" "$state_blocked_decomposition/status.json" <<'PY'
+python3 - "$todo_blocked_decomposition" "$state_blocked_decomposition/status.json" "$state_blocked_decomposition/supervisor.log" <<'PY'
 import json
+import pathlib
 import re
 import sys
 
 todo = open(sys.argv[1], encoding="utf-8").read()
 status = json.load(open(sys.argv[2], encoding="utf-8"))
+supervisor_path = pathlib.Path(sys.argv[3])
+supervisor = supervisor_path.read_text(encoding="utf-8") if supervisor_path.exists() else ""
 decomposition_items = re.findall(r"TODO-decompose-blocked-queue-", todo)
-assert len(decomposition_items) == 1, todo
-assert status["status"] == "blocked", status
-assert "Failed to claim first pending TODO" in status["detail"], status
+assert len(decomposition_items) == 0, todo
+assert status["status"] == "integrity_blocked", status
+assert status["exit_code"] == "76", status
+assert "Automatic TODO decomposition is refused" in status["detail"], status
+assert "blocked_todo_decomposition_request_created" not in supervisor, supervisor
 PY
 
-# A stale child may retain the generated recovery id in its Source TODO
-# provenance after the request itself was removed.  That text must not make
-# the controller believe the request is still queued.
+# A stale child may retain a generated recovery id in its Source TODO
+# provenance after the request itself was removed. That text is not authority
+# to recreate the request: without an explicitly admitted decomposition task,
+# recovery must leave both queue files unchanged and emit one integrity error.
 state_orphaned_request="$(mktemp -d)"
 prompt_orphaned_request="$(mktemp)"
 todo_orphaned_request="$(mktemp)"
@@ -4077,32 +4089,39 @@ pathlib.Path(sys.argv[2]).write_text(json.dumps({
 }) + "\n", encoding="utf-8")
 PY
 
-PHASE_LOOP_STATE_DIR="$state_orphaned_request" \
+orphaned_request_todo_before="$(shasum -a 256 "$todo_orphaned_request" | awk '{ print $1 }')"
+orphaned_request_breakdown_before="$(shasum -a 256 "$todo_breakdown_orphaned_request" | awk '{ print $1 }')"
+if PHASE_LOOP_STATE_DIR="$state_orphaned_request" \
 PHASE_LOOP_PROMPT="$prompt_orphaned_request" \
 PHASE_LOOP_TODO="$todo_orphaned_request" \
 PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_orphaned_request" \
-BROWNIE_BIN="$fake_brownie_json" \
+BROWNIE_BIN="$fake_brownie_must_not_run" \
 PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null; then
+  orphaned_request_exit=0
+else
+  orphaned_request_exit="$?"
+fi
+test "$orphaned_request_exit" = "76"
+test "$(shasum -a 256 "$todo_orphaned_request" | awk '{ print $1 }')" = "$orphaned_request_todo_before"
+test "$(shasum -a 256 "$todo_breakdown_orphaned_request" | awk '{ print $1 }')" = "$orphaned_request_breakdown_before"
 
-python3 - "$state_orphaned_request/todo-claims/current.json" "$todo_orphaned_request" "$orphan_id" "$historical_id" <<'PY'
+python3 - "$state_orphaned_request/status.json" "$state_orphaned_request/todo-claims/current.json" "$todo_orphaned_request" "$orphan_id" "$historical_id" <<'PY'
 import json
+import pathlib
 import re
 import sys
 
-claim = json.load(open(sys.argv[1], encoding="utf-8"))
-todo = open(sys.argv[2], encoding="utf-8").read()
-orphan_id = sys.argv[3]
-historical_id = sys.argv[4]
-assert claim["status"] == "in_progress", claim
-selected = claim["selected_todo"]
-match = re.match(r"- \[ \] (TODO-decompose-blocked-queue(?:-stalled)?-[0-9a-f]{12}):", selected)
-assert match, claim
-# The stale Source TODO id remains provenance only.  Recovery must enqueue and
-# claim the id derived from the unchanged stalled source block instead.
-assert match.group(1) == orphan_id, claim
-assert match.group(1) != historical_id, claim
-assert selected in todo, todo
+status = json.load(open(sys.argv[1], encoding="utf-8"))
+current = pathlib.Path(sys.argv[2])
+todo = open(sys.argv[3], encoding="utf-8").read()
+orphan_id = sys.argv[4]
+historical_id = sys.argv[5]
+assert status["status"] == "integrity_blocked", status
+assert status["exit_code"] == "76", status
+assert "Automatic TODO decomposition is refused" in status["detail"], status
+assert not current.exists(), current
+assert orphan_id not in todo, todo
 assert f"Source TODO: {historical_id}." in todo, todo
 PY
 
@@ -5474,6 +5493,7 @@ cp "$REPO_ROOT/scripts/phase-loop-admit-materialized-scope-rebaseline.mjs" "$emp
 cp "$REPO_ROOT/scripts/phase-loop-todo-contract-rebaseline.mjs" "$empty_queue_guard_workspace/scripts/phase-loop-todo-contract-rebaseline.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-bounded-scope.mjs" "$empty_queue_guard_workspace/scripts/phase-loop-bounded-scope.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-todo-state.mjs" "$empty_queue_guard_workspace/scripts/phase-loop-todo-state.mjs"
+cp "$REPO_ROOT/scripts/phase-loop-delivery-integrity.mjs" "$empty_queue_guard_workspace/scripts/phase-loop-delivery-integrity.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-historical-derived-delivery-integrity.mjs" "$empty_queue_guard_workspace/scripts/phase-loop-historical-derived-delivery-integrity.mjs"
 printf '{"scripts":{}}\n' > "$empty_queue_guard_workspace/package.json"
 printf '{"product_ready":false}\n' > "$empty_queue_guard_workspace/docs/architecture/phase-value-manifest.json"
@@ -5499,6 +5519,9 @@ cat > "$todo_empty_queue_guard" <<'EOF'
   immediately after the exact line `  fixture_path: fixtureRoot,`. Do not edit
   any other line.
 EOF
+empty_queue_guard_todo_sha256_before="$(shasum "$todo_empty_queue_guard" | awk '{print $1}')"
+empty_queue_guard_breakdown="$empty_queue_guard_workspace/.brownie/todo-breakdown.md"
+test ! -e "$empty_queue_guard_breakdown"
 
 empty_queue_guard_ledger="$empty_queue_guard_workspace/.brownie/private/phase-loop/task-ledger.jsonl"
 empty_queue_guard_runtime_marker="$state_empty_queue_guard/runtime-invoked"
@@ -5521,7 +5544,7 @@ PHASE_LOOP_WORKSPACE_ROOT="$empty_queue_guard_workspace" \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null || empty_queue_guard_exit="$?"
 test "$empty_queue_guard_exit" = "76"
 
-python3 - "$state_empty_queue_guard/todo-claims/current.json" "$todo_empty_queue_guard" "$state_empty_queue_guard/logs/supervisor.log" "$empty_queue_guard_workspace/docs/golden.js" <<'PY'
+python3 - "$state_empty_queue_guard/todo-claims/current.json" "$todo_empty_queue_guard" "$state_empty_queue_guard/logs/supervisor.log" "$empty_queue_guard_workspace/docs/golden.js" "$state_empty_queue_guard/bdk-trajectory.jsonl" "$state_empty_queue_guard/status.json" <<'PY'
 import json
 import pathlib
 import sys
@@ -5530,14 +5553,52 @@ claim = json.load(open(sys.argv[1], encoding="utf-8"))
 todo = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 supervisor_log = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
 target = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8")
+trajectory_records = [json.loads(line) for line in pathlib.Path(sys.argv[5]).read_text(encoding="utf-8").splitlines() if line.strip()]
+status = json.loads(pathlib.Path(sys.argv[6]).read_text(encoding="utf-8"))
+trajectory = [
+    event
+    for record in trajectory_records
+    for event in record.get("events", [])
+]
 assert claim["status"] == "integrity_blocked", claim
 assert claim.get("completion_cleanup_pending") is not True, claim
 assert "completion_certificate" not in claim, claim
-assert claim["completion_promotion_rejections"][-1]["reason"] == "completed_requires_claim_bound_completion_certificate_and_independent_review_ci_merge_receipt", claim
+# This fixture reaches the public completion gate.  It must retain the exact
+# claim and expose a single blocked state rather than mutate the queue while
+# trying to recover it.
 assert "E-empty-queue-exact" in todo, todo
-assert "completion_promotion_refused=true" in supervisor_log, supervisor_log
+# Either the common claim writer or the public-event gate may be the first
+# boundary reached by this CI fixture.  Both are required to publish the same
+# canonical refusal reason; exactly one may terminalize an attempted
+# completion, never a second fallback or an implicit success.
+refusal_markers = [
+    marker
+    for marker in ("completion_promotion_refused=true", "public_completion_refused=true")
+    if marker in supervisor_log
+]
+assert len(refusal_markers) == 1, supervisor_log
+# The writer's durable refusal reason is the same canonical reason carried by
+# the public blocked event.  Keep the log assertion bound to that exact
+# contract so a shortened legacy alias cannot mask a changed failure class.
+assert "reason=completion_certificate_or_independent_review_ci_merge_missing" in supervisor_log, supervisor_log
+assert "completion_refusal_terminalized=true" in supervisor_log, supervisor_log
+assert "bdk_harness_feedback_passed" in supervisor_log, supervisor_log
+assert "terminal_event=todo.blocked" in supervisor_log, supervisor_log
+assert status["status"] == "integrity_blocked", status
+assert status["exit_code"] == "76", status
+assert status["continuation_required"] is True, status
 assert "  fixture_path: fixtureRoot,\n  lifecycle_evidence: lifecycleEvidence,\n  commands," in target, target
+# The terminal refusal is public and claim-bound: there is exactly one
+# continuation-required blocked event, never an implicit completed event.
+blocked = [event for event in trajectory if event.get("type") == "todo.blocked"]
+assert len(blocked) == 1, trajectory
+assert blocked[0].get("payload", {}).get("reason") == "completion_certificate_or_independent_review_ci_merge_missing", blocked
+assert blocked[0].get("payload", {}).get("continuation_required") is True, blocked
+assert not [event for event in trajectory if event.get("type") == "todo.completed"], trajectory
 PY
+
+test "$(shasum "$todo_empty_queue_guard" | awk '{print $1}')" = "$empty_queue_guard_todo_sha256_before"
+test ! -e "$empty_queue_guard_breakdown"
 
 python3 - "$empty_queue_guard_ledger" "$state_empty_queue_guard/todo-claims/current.json" <<'PY'
 import json
@@ -5554,9 +5615,10 @@ events = [
     for event in (record.get("events", []) if record.get("kind") in ("replan_transaction", "terminal_failure_transaction", "terminal_replan_transaction") else [record])
 ]
 source_attempt = [event for event in events if event.get("task_id") == f"E-empty-queue-exact@{claim_id}"]
-assert source_attempt, events
-assert source_attempt[-1]["to_state"] != "completed", source_attempt
-assert all(event["to_state"] in ("queued", "claimed", "running") for event in source_attempt), source_attempt
+# A missing completion receipt must produce one terminal source failure.  It
+# must never consume this TODO or synthesize a child/decomposition task.
+assert all(event.get("to_state") != "completed" for event in source_attempt), source_attempt
+assert sum(event.get("to_state") == "failed" for event in source_attempt) == 1, source_attempt
 PY
 
 # Historical cleanup behavior below documents the unsafe pre-merge completion
@@ -5608,6 +5670,7 @@ cp "$REPO_ROOT/scripts/phase-loop-admit-materialized-scope-rebaseline.mjs" "$ver
 cp "$REPO_ROOT/scripts/phase-loop-todo-contract-rebaseline.mjs" "$verified_noop_e19_workspace/scripts/phase-loop-todo-contract-rebaseline.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-bounded-scope.mjs" "$verified_noop_e19_workspace/scripts/phase-loop-bounded-scope.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-todo-state.mjs" "$verified_noop_e19_workspace/scripts/phase-loop-todo-state.mjs"
+cp "$REPO_ROOT/scripts/phase-loop-delivery-integrity.mjs" "$verified_noop_e19_workspace/scripts/phase-loop-delivery-integrity.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-historical-derived-delivery-integrity.mjs" "$verified_noop_e19_workspace/scripts/phase-loop-historical-derived-delivery-integrity.mjs"
 printf '{"product_ready":false}\n' > "$verified_noop_e19_workspace/docs/architecture/phase-value-manifest.json"
 cat > "$verified_noop_e19_workspace/.brownie/todo.md" <<'EOF'
@@ -5694,6 +5757,7 @@ cp "$REPO_ROOT/scripts/phase-loop-admit-materialized-scope-rebaseline.mjs" "$rel
 cp "$REPO_ROOT/scripts/phase-loop-todo-contract-rebaseline.mjs" "$release_ops_workspace/scripts/phase-loop-todo-contract-rebaseline.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-bounded-scope.mjs" "$release_ops_workspace/scripts/phase-loop-bounded-scope.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-todo-state.mjs" "$release_ops_workspace/scripts/phase-loop-todo-state.mjs"
+cp "$REPO_ROOT/scripts/phase-loop-delivery-integrity.mjs" "$release_ops_workspace/scripts/phase-loop-delivery-integrity.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-historical-derived-delivery-integrity.mjs" "$release_ops_workspace/scripts/phase-loop-historical-derived-delivery-integrity.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-todo-evaluator.mjs" "$release_ops_workspace/scripts/phase-loop-todo-evaluator.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-release-ops-blocker.mjs" "$release_ops_workspace/scripts/phase-loop-release-ops-blocker.mjs"
@@ -5850,6 +5914,7 @@ printf 'export const ok = true;\n' > "$no_eligible_split_workspace/scripts/b.mjs
 # closure into this clean fixture instead of accepting a text-only split.
 cp "$REPO_ROOT/scripts/guard-todo-decomposition.mjs" "$no_eligible_split_workspace/scripts/guard-todo-decomposition.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-todo-state.mjs" "$no_eligible_split_workspace/scripts/phase-loop-todo-state.mjs"
+cp "$REPO_ROOT/scripts/phase-loop-delivery-integrity.mjs" "$no_eligible_split_workspace/scripts/phase-loop-delivery-integrity.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-historical-derived-delivery-integrity.mjs" "$no_eligible_split_workspace/scripts/phase-loop-historical-derived-delivery-integrity.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-bounded-scope.mjs" "$no_eligible_split_workspace/scripts/phase-loop-bounded-scope.mjs"
 cp "$REPO_ROOT/scripts/phase-loop-todo-queue-integrity.mjs" "$no_eligible_split_workspace/scripts/phase-loop-todo-queue-integrity.mjs"
@@ -5909,6 +5974,12 @@ terminal_write_unrelated_workspace="$(mktemp -d)"
 cp -R "$no_eligible_split_workspace/." "$terminal_write_unrelated_workspace/"
 printf 'base prompt\n' > "$terminal_write_unrelated_prompt"
 
+# A terminal no-eligible response is not a queue-rewrite authorization.  Keep
+# a byte-for-byte baseline so this clean fixture proves the failure remains a
+# stable blocked outcome across a retry instead of minting children or a
+# replan record.
+no_eligible_split_todo_before="$(shasum "$no_eligible_split_workspace/.brownie/todo.md" | awk '{print $1}')"
+no_eligible_split_breakdown_before="$(shasum "$no_eligible_split_workspace/.brownie/todo-breakdown.md" | awk '{print $1}')"
 set +e
 no_eligible_split_liveness_exit=0
 PHASE_LOOP_STATE_DIR="$no_eligible_split_state" \
@@ -5929,12 +6000,34 @@ PHASE_LOOP_WORKSPACE_ROOT="$no_eligible_split_workspace" \
 PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
 PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP=1 \
 BROWNIE_BIN="$fake_brownie_terminal_no_eligible" \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 0 "$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null
 no_eligible_split_exit="$?"
 set -e
-test "$no_eligible_split_exit" = "0"
+test "$no_eligible_split_exit" = "76"
+test "$(shasum "$no_eligible_split_workspace/.brownie/todo.md" | awk '{print $1}')" = "$no_eligible_split_todo_before"
+test "$(shasum "$no_eligible_split_workspace/.brownie/todo-breakdown.md" | awk '{print $1}')" = "$no_eligible_split_breakdown_before"
 
-if [ "$no_eligible_split_exit" = "0" ]; then
+python3 - "$no_eligible_split_state/status.json" "$no_eligible_split_workspace/.brownie/todo.md" "$no_eligible_split_workspace/.brownie/todo-breakdown.md" "$no_eligible_split_workspace/.brownie/private/phase-loop" <<'PY'
+import json
+import pathlib
+import sys
+
+status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+todo = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
+breakdown = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
+replan_dir = pathlib.Path(sys.argv[4]) / "todo-replans"
+assert status["status"] in {"blocked", "integrity_blocked"}, status
+assert status["exit_code"] == "76", status
+assert "E-20g-final-judgment-sync-target-01" not in todo, todo
+assert "E-20g-final-judgment-sync-target-02" not in todo, todo
+assert "multi-target split" not in breakdown, breakdown
+assert not replan_dir.exists() or not list(replan_dir.glob("*.json")), list(replan_dir.glob("*.json")) if replan_dir.exists() else []
+PY
+
+# Historical split assertions are intentionally disabled: a terminal runtime
+# response is now prohibited from mutating the live TODO contract.  The live
+# regression immediately above asserts the replacement fail-closed behavior.
+if false; then
 python3 - "$no_eligible_split_workspace/.brownie/todo.md" "$no_eligible_split_workspace/.brownie/todo-breakdown.md" "$no_eligible_split_state/status.json" "$no_eligible_split_workspace/.brownie/private/phase-loop/todo-replans" "$no_eligible_split_workspace/.brownie/private/phase-loop/task-ledger.jsonl" <<'PY'
 import json
 import pathlib
@@ -6055,11 +6148,14 @@ ledger = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8")
 assert status["status"] == "integrity_blocked", status
 assert "semantic_evidence" in status["detail"], status
 assert "phaseLoopCompletionFixtureCompleted" in target, target
-assert re.search(r"^- \[ \] E-20g-final-judgment-sync-target-01:", todo, re.M), todo
+# A later implementation attempt may change its bounded target, but it must
+# not inherit a child TODO that a prior unverified terminal envelope minted.
+assert "- [ ] E-20g-final-judgment-sync:" in todo, todo
+assert "E-20g-final-judgment-sync-target-01" not in todo, todo
 assert '"trajectory_type":"todo.completed"' not in ledger, ledger
 assert '"trajectory_type": "todo.completed"' not in ledger, ledger
 PY
-else
+elif false; then
 assert_terminal_failure_claim_archived \
   "$no_eligible_split_state/todo-claims" \
   "$no_eligible_split_state/todo-claims/blocked.jsonl" \
@@ -6104,7 +6200,7 @@ PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
 BROWNIE_BIN="$fake_brownie_terminal_unproposed_workspace_write" \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null || true
 
-python3 - "$terminal_write_split_state/status.json" "$terminal_write_split_state/progress-state.json" "$terminal_write_split_workspace/.brownie/todo.md" "$terminal_write_split_state/todo-claims/current.json" "$terminal_write_split_workspace/.brownie/private/phase-loop/task-ledger.jsonl" <<'PY'
+python3 - "$terminal_write_split_state/status.json" "$terminal_write_split_state/progress-state.json" "$terminal_write_split_workspace/.brownie/todo.md" "$terminal_write_split_workspace/.brownie/todo-breakdown.md" "$terminal_write_split_state/todo-claims/current.json" "$terminal_write_split_workspace/.brownie/private/phase-loop/task-ledger.jsonl" <<'PY'
 import json
 import pathlib
 import re
@@ -6113,59 +6209,36 @@ import sys
 status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 progress = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
 todo = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
-claim = json.loads(pathlib.Path(sys.argv[4]).read_text(encoding="utf-8"))
-ledger = [json.loads(line) for line in pathlib.Path(sys.argv[5]).read_text(encoding="utf-8").splitlines() if line.strip()]
+breakdown = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8")
+claim = json.loads(pathlib.Path(sys.argv[5]).read_text(encoding="utf-8"))
+ledger = [json.loads(line) for line in pathlib.Path(sys.argv[6]).read_text(encoding="utf-8").splitlines() if line.strip()]
 # A task-executed Runtime result with a terminal-evidence gap is a causeful
 # controller failure, not an external-control boundary.  Keep the selected
 # TODO/claim available for the bounded recovery path rather than hiding it in
 # blocked.jsonl and skipping to unrelated work.
-assert status["status"] == "blocked", status
+assert status["status"] == "integrity_blocked", status
 assert status["exit_code"] == "76", status
-assert "redelegatable recovery" in status["detail"], status
+assert "no clean reviewed merge exactly matches" in status["detail"], status
 assert progress["classification"] == "terminal_failure", progress
 assert progress["progress_projection"]["terminal_completion_evidence_missing_without_objective_apply"] is True, progress
 assert progress["workspace_changed"] is False, progress
 assert "- [ ] E-20g-final-judgment-sync:" in todo, todo
 assert "E-20g-final-judgment-sync-target-01" not in todo, todo
-# Retry cap zero must not erase the source task's causal terminal state or
-# mint an unrelated retry claim.  The follow-up split needs this exact source
-# attempt to be durably failed before it can replace the parent TODO.
-assert claim["status"] == "failed", claim
+# A terminal evidence gap has no authority to rewrite either queue file or
+# mint a child. Preserve the exact claim for audited remediation instead.
+assert claim["status"] == "in_progress", claim
 assert progress["progress_projection"]["claim_id"] == claim["claim_id"], progress
 assert not list(pathlib.Path(sys.argv[1]).parent.glob("todo-claims/stale-rebaseline-*.json"))
-todo_id = re.match(r"^\s*- \[ \]\s+([^:\s]+)", claim["selected_todo"].splitlines()[0]).group(1)
-source_task = f"{todo_id}@{claim['claim_id']}"
-assert any(record.get("task_id") == source_task and record.get("to_state") == "failed" for record in ledger), ledger
+assert "terminal-unproposed-workspace-write multi-target split" not in breakdown, breakdown
+assert not list(pathlib.Path(sys.argv[1]).parent.glob("todo-claims/replanned-terminal-multitarget-split-*.json"))
+assert not any(record.get("kind") == "terminal_replan_transaction" for record in ledger), ledger
 PY
 
-# Compatibility/liveness gate: records produced before the stdout snapshot
-# hash was added must still recover only when the immutable claim-before-
-# runtime snapshot proves an exact selected TODO match. This simulates the
-# production incident's rebaselined claim without weakening the lineage gate.
-python3 - "$terminal_write_split_state" <<'PY'
-import json
-import os
-import pathlib
-import tempfile
-import sys
-
-state_dir = pathlib.Path(sys.argv[1])
-logs = sorted((state_dir / "runs").glob("*.stdout.log"))
-assert len(logs) == 1, logs
-path = logs[0]
-payload = json.loads(path.read_text(encoding="utf-8"))
-run = payload.get("run")
-assert isinstance(run, dict), payload
-assert run.pop("phase_loop_selected_todo_sha256", None), run
-with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
-    json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
-    handle.write("\n")
-    handle.flush()
-    os.fsync(handle.fileno())
-    temporary = pathlib.Path(handle.name)
-os.replace(temporary, path)
-PY
-
+# A repeated terminal envelope is not a recovery protocol. It must retain the
+# exact queue bytes and report the same stable integrity error rather than
+# converting implementation failure into TODO decomposition.
+terminal_write_split_todo_before="$(shasum "$terminal_write_split_workspace/.brownie/todo.md" | awk '{print $1}')"
+terminal_write_split_breakdown_before="$(shasum "$terminal_write_split_workspace/.brownie/todo-breakdown.md" | awk '{print $1}')"
 PHASE_LOOP_STATE_DIR="$terminal_write_split_state" \
 PHASE_LOOP_PROMPT="$terminal_write_split_prompt" \
 PHASE_LOOP_TODO="$terminal_write_split_workspace/.brownie/todo.md" \
@@ -6173,9 +6246,13 @@ PHASE_LOOP_TODO_BREAKDOWN="$terminal_write_split_workspace/.brownie/todo-breakdo
 PHASE_LOOP_WORKSPACE_ROOT="$terminal_write_split_workspace" \
 PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
 BROWNIE_BIN="$fake_brownie_terminal_unproposed_workspace_write" \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 0 "$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null || terminal_write_split_liveness_exit="$?"
 
-python3 - "$terminal_write_split_state/status.json" "$terminal_write_split_workspace/.brownie/todo.md" "$terminal_write_split_workspace/.brownie/todo-breakdown.md" "$terminal_write_split_workspace/.brownie/private/phase-loop/todo-replans" "$terminal_write_split_workspace/.brownie/private/phase-loop/task-ledger.jsonl" <<'PY'
+test "$terminal_write_split_liveness_exit" = "76"
+
+test "$(shasum "$terminal_write_split_workspace/.brownie/todo.md" | awk '{print $1}')" = "$terminal_write_split_todo_before"
+test "$(shasum "$terminal_write_split_workspace/.brownie/todo-breakdown.md" | awk '{print $1}')" = "$terminal_write_split_breakdown_before"
+python3 - "$terminal_write_split_state/status.json" "$terminal_write_split_workspace/.brownie/todo.md" "$terminal_write_split_workspace/.brownie/todo-breakdown.md" "$terminal_write_split_workspace/.brownie/private/phase-loop/task-ledger.jsonl" <<'PY'
 import json
 import pathlib
 import re
@@ -6184,39 +6261,13 @@ import sys
 status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 todo = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 breakdown = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
-records = list(pathlib.Path(sys.argv[4]).glob("*.json"))
-ledger_path = pathlib.Path(sys.argv[5])
-archives = list(pathlib.Path(sys.argv[1]).parent.glob("todo-claims/replanned-terminal-multitarget-split-*.json"))
-assert status["status"] == "last_run_succeeded", status
-assert "replanned, not completed" in status["detail"], status
-assert "- [x] E-20g-final-judgment-sync:" in todo, todo
-assert "- [ ] E-20g-final-judgment-sync-target-01: Patch only `docs/a.md`" in todo, todo
-assert "- [ ] E-20g-final-judgment-sync-target-02: Patch only `scripts/b.mjs`" in todo, todo
-assert re.search(r"E-20h-next:.*?Depends on: E-20g-final-judgment-sync-target-02\.", todo, re.S), todo
-assert "terminal-unproposed-workspace-write multi-target split" in breakdown, breakdown
-assert records, "missing terminal-write replan record"
-record_text = "\n".join(path.read_text(encoding="utf-8") for path in records)
-assert "terminal_unproposed_workspace_write_multitarget_split" in record_text, record_text
-assert "prior_terminal_unproposed_workspace_write_ledger" in record_text, record_text
-assert '"claim_snapshot_path"' in record_text, record_text
-assert archives, "missing replanned terminal-write claim archive"
-archived_claim = json.loads(archives[-1].read_text(encoding="utf-8"))
-assert archived_claim["status"] == "replanned"
-todo_id = re.match(r"^\s*- \[ \]\s+([^:\s]+)", str(archived_claim["selected_todo"]).splitlines()[0]).group(1)
-source_attempt = f"{todo_id}@{archived_claim['claim_id']}"
+ledger_path = pathlib.Path(sys.argv[4])
+assert status["status"] == "integrity_blocked", status
+assert "no clean reviewed merge exactly matches" in status["detail"], status
+assert "E-20g-final-judgment-sync-target-01" not in todo, todo
+assert "terminal-unproposed-workspace-write multi-target split" not in breakdown, breakdown
 ledger_records = [json.loads(line) for line in ledger_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-terminal_replans = [
-    record for record in ledger_records
-    if record.get("kind") == "terminal_replan_transaction"
-    and record.get("source_task_id") == source_attempt
-    and record.get("evidence_source") == "prior_terminal_unproposed_workspace_write_ledger"
-]
-assert len(terminal_replans) == 1, terminal_replans
-events = terminal_replans[0].get("events", [])
-derived_id = terminal_replans[0].get("replan_task_id")
-derived_events = [event for event in events if event.get("task_id") == derived_id]
-assert [event.get("to_state") for event in derived_events] == ["queued", "claimed", "running", "replanned"], derived_events
-assert all(event.get("terminal_source_task_id") == source_attempt for event in derived_events), derived_events
+assert not any(record.get("kind") == "terminal_replan_transaction" for record in ledger_records), ledger_records
 PY
 
 PHASE_LOOP_STATE_DIR="$terminal_write_split_state" \
@@ -6233,7 +6284,6 @@ test "$terminal_write_split_liveness_exit" = "76"
 python3 - "$terminal_write_split_state/status.json" "$terminal_write_split_workspace/.brownie/todo.md" "$terminal_write_split_workspace/docs/a.md" "$terminal_write_split_workspace/.brownie/private/phase-loop/task-ledger.jsonl" <<'PY'
 import json
 import pathlib
-import re
 import sys
 
 status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
@@ -6243,7 +6293,10 @@ ledger = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8")
 assert status["status"] == "integrity_blocked", status
 assert "semantic_evidence" in status["detail"], status
 assert "phaseLoopCompletionFixtureCompleted" in target, target
-assert re.search(r"^- \[ \] E-20g-final-judgment-sync-target-01:", todo, re.M), todo
+# A later implementation attempt may change its bounded target, but it must
+# not inherit a child TODO that a prior unverified terminal envelope minted.
+assert "- [ ] E-20g-final-judgment-sync:" in todo, todo
+assert "E-20g-final-judgment-sync-target-01" not in todo, todo
 assert '"trajectory_type":"todo.completed"' not in ledger, ledger
 assert '"trajectory_type": "todo.completed"' not in ledger, ledger
 PY
@@ -6278,7 +6331,7 @@ import sys
 status = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 todo = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 replan_dir = pathlib.Path(sys.argv[3])
-assert status["status"] == "blocked", status
+assert status["status"] in {"blocked", "integrity_blocked"}, status
 assert status["exit_code"] in {"75", "76"}, status
 assert "- [ ] E-20g-final-judgment-sync:" in todo, todo
 assert "E-20g-final-judgment-sync-target-01" not in todo, todo
@@ -6890,10 +6943,14 @@ assert "todo_refinement_requires_todo_decomposition_route" in phase_loop, phase_
 assert "only Route: todo-decomposition may replace a parent TODO with decomposition leaves" in phase_loop, phase_loop
 assert "must_not_complete_by_todo_refinement_only" in phase_loop, phase_loop
 assert "selected_target_implementation_required" in phase_loop, phase_loop
-assert "try_terminal_multitarget_leaf_split_fallback" in phase_loop, phase_loop
-assert "deterministic_no_eligible_multitarget_split" in phase_loop, phase_loop
-assert "terminal_unproposed_workspace_write_multitarget_split" in phase_loop, phase_loop
-assert "terminal_multitarget_leaf_split_pre_claim_exit" in phase_loop, phase_loop
+# A terminal Runtime result is not authority to rewrite the queue.  Keep the
+# historical helper implementation available for controlled migration tests,
+# but prove it has no live call site and that pre-claim routing stops before
+# any automatic split/child-TODO creation.
+assert phase_loop.count("try_terminal_multitarget_leaf_split_fallback()") == 1, phase_loop
+assert "A terminal Runtime envelope is evidence of a failed attempt, never" in phase_loop, phase_loop
+assert "terminal_completion_evidence_missing_without_execution_proof" in phase_loop, phase_loop
+assert '"todo_mutation_refused":true' in phase_loop, phase_loop
 # `skip` is the single formatter for structured fallback rejections; assert the
 # branch rather than a whitespace-sensitive rendering of its JSON output.
 assert 'skip("selected_todo_not_in_queue")' in phase_loop, phase_loop
@@ -6905,7 +6962,7 @@ assert 'prior_terminal_no_eligible_stdout' in phase_loop, phase_loop
 assert 'prior_terminal_multitarget_split_evidence' in phase_loop, phase_loop
 assert 'prior_terminal_unproposed_workspace_write_ledger' in phase_loop, phase_loop
 assert 'evidence_source' in phase_loop, phase_loop
-assert phase_loop.index("terminal_multitarget_leaf_split_pre_claim_exit") < phase_loop.index('if ! claim_first_pending_todo "$run_stamp"; then'), phase_loop
+assert phase_loop.index("A terminal Runtime envelope is evidence of a failed attempt, never") < phase_loop.index('if ! claim_first_pending_todo "$run_stamp"; then'), phase_loop
 assert 'isolated_external_todo_state' in phase_loop, phase_loop
 assert '"rolled_back": True' in phase_loop, phase_loop
 assert "split_multitarget_or_force_bounded_workspace_write" in phase_loop, phase_loop

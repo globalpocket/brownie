@@ -10,6 +10,7 @@ import {
   validatePhaseLoopProgressIntegrity
 } from './phase-loop-progress-integrity.mjs';
 import { terminalCompletionEvidenceSha256 } from './phase-loop-delivery-integrity.mjs';
+import { durableCompletionRecordReceipt, loadTodoState } from './phase-loop-todo-state.mjs';
 
 const e20a = `- [ ] E-20a-golden-journey-workspace-mutation: Patch only \`scripts/release-runtime-operational-evidence.mjs\` and \`scripts/guard-runtime-operational-evidence.test.mjs\`: make Golden Journey require mutation.
   Route: implementation.
@@ -110,6 +111,136 @@ test('allows selected removal after completion record without rewriting dependen
   });
 
   assert.equal(result.valid, true, JSON.stringify(result.errors));
+});
+
+test('permits a clean merged target to be consumed only with exact merged-delivery re-verification evidence', () => {
+  const selected = `- [ ] E-merged-consume: Patch only \`scripts/merged-target.mjs\`.
+  Route: implementation.
+  Completion condition: consume only after the reviewed merged target is reverified.
+  Verification: run \`node --check scripts/merged-target.mjs\`.`;
+  const sha256 = (value) => createHash('sha256').update(value, 'utf8').digest('hex');
+  const claim = {
+    claim_id: 'todo-g1000-merged-r1',
+    root_claim_id: 'todo-g1000-merged-r1',
+    status: 'completed',
+    selected_todo: selected,
+    selected_todo_id: 'E-merged-consume',
+    selected_todo_sha256: sha256(selected),
+    queue_fingerprint: 'c'.repeat(64),
+    queue_generation: 1000
+  };
+  const evidence = {
+    schema_version: 1,
+    kind: 'phase_loop_merged_delivery_reverification',
+    claim_id: claim.claim_id,
+    root_claim_id: claim.root_claim_id,
+    selected_todo_id: claim.selected_todo_id,
+    selected_todo_sha256: claim.selected_todo_sha256,
+    completion_condition_sha256: sha256('consume only after the reviewed merged target is reverified.'),
+    queue_fingerprint: claim.queue_fingerprint,
+    queue_generation: claim.queue_generation,
+    runtime: { claim_id: claim.claim_id, status: 'task_executed', executed_count: 1 },
+    git: {
+      merge_commit_oid: 'a'.repeat(40),
+      first_parent_oid: 'b'.repeat(40),
+      head_oid: 'c'.repeat(40),
+      targets: [{ path: 'scripts/merged-target.mjs', sha256: 'a'.repeat(64) }]
+    },
+    task_spec_binding: {
+      todo_id: claim.selected_todo_id,
+      selected_todo_sha256: claim.selected_todo_sha256,
+      head_oid: 'c'.repeat(40)
+    },
+    review: {
+      state: 'MERGED', pr_url: 'https://example.invalid/pull/1000', merge_commit_oid: 'a'.repeat(40), head_oid: 'c'.repeat(40), author: 'implementation', reviewer: 'review', merge_actor: 'review', merged_at: '2026-11-04T09:38:12Z', observed_at: '2026-11-04T11:39:21Z', approved: true, ci_passed: true,
+      latest_reviewer_review_state: 'APPROVED', latest_reviewer_review_commit_oid: 'c'.repeat(40)
+    },
+    verification_results: [{ command: 'node --check scripts/merged-target.mjs', exit_code: 0 }]
+  };
+  claim.merged_delivery_reverification = evidence;
+  claim.delivery_review = {
+    merged: true,
+    approved: true,
+    ci_passed: true,
+    author: 'implementation',
+    reviewer: 'review',
+    merge_actor: 'review',
+    merged_delivery_reverification: evidence
+  };
+  const result = validatePhaseLoopProgressIntegrity({
+    claim,
+    todoBefore: queue(selected, e20b),
+    todoAfter: queue(e20b),
+    diffFiles: ['.brownie/todo.md'],
+    completionRecordExists: true
+  });
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+  assert.equal(result.merged_delivery_reverified, true);
+  assert.equal(durableDeliveryReceiptForClaim(claim).valid, true);
+
+  delete claim.merged_delivery_reverification;
+  delete claim.delivery_review.merged_delivery_reverification;
+  const rejected = validatePhaseLoopProgressIntegrity({
+    claim,
+    todoBefore: queue(selected, e20b),
+    todoAfter: queue(e20b),
+    diffFiles: ['.brownie/todo.md'],
+    completionRecordExists: true
+  });
+  assert.equal(rejected.valid, false);
+  assert(rejected.errors.some((error) => error.code === 'selected_todo_removed_without_target_change'));
+});
+
+test('CLI write-record persists and reloads the merged-delivery reverification proof', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-progress-integrity-merged-reverification-'));
+  const selected = `- [ ] E-merged-reverification-record: Patch only \`scripts/merged-target.mjs\`.
+  Route: implementation.
+  Completion condition: consume only after the reviewed merged target is reverified.
+  Verification: run \`node --check scripts/merged-target.mjs\`.`;
+  const selectedHash = createHash('sha256').update(selected, 'utf8').digest('hex');
+  const proof = {
+    schema_version: 1,
+    kind: 'phase_loop_merged_delivery_reverification',
+    claim_id: 'claim-merged-record',
+    root_claim_id: 'claim-merged-record',
+    selected_todo_id: 'E-merged-reverification-record',
+    selected_todo_sha256: selectedHash,
+    completion_condition_sha256: createHash('sha256').update('consume only after the reviewed merged target is reverified.', 'utf8').digest('hex'),
+    queue_fingerprint: 'e'.repeat(64),
+    queue_generation: 44,
+    runtime: { claim_id: 'claim-merged-record', status: 'task_executed', executed_count: 1 },
+    git: { merge_commit_oid: 'a'.repeat(40), first_parent_oid: 'b'.repeat(40), head_oid: 'c'.repeat(40), targets: [{ path: 'scripts/merged-target.mjs', sha256: 'd'.repeat(64) }] },
+    task_spec_binding: { todo_id: 'E-merged-reverification-record', selected_todo_sha256: selectedHash, head_oid: 'c'.repeat(40) },
+    review: { state: 'MERGED', pr_url: 'https://example.invalid/pull/44', merge_commit_oid: 'a'.repeat(40), head_oid: 'c'.repeat(40), author: 'implementation', reviewer: 'review', merge_actor: 'review', merged_at: '2026-11-04T09:38:12Z', observed_at: '2026-11-04T11:39:21Z', approved: true, ci_passed: true, latest_reviewer_review_state: 'APPROVED', latest_reviewer_review_commit_oid: 'c'.repeat(40) },
+    verification_results: [{ command: 'node --check scripts/merged-target.mjs', exit_code: 0 }]
+  };
+  const claim = {
+    claim_id: 'claim-merged-record', root_claim_id: 'claim-merged-record', status: 'completed', selected_todo: selected,
+    selected_todo_id: 'E-merged-reverification-record', selected_todo_sha256: selectedHash,
+    queue_fingerprint: 'e'.repeat(64), queue_generation: 44, baseline_todo_text: queue(selected), baseline_diff_files: [],
+    merged_delivery_reverification: proof,
+    delivery_review: { merged: true, approved: true, ci_passed: true, author: 'implementation', reviewer: 'review', merge_actor: 'review', merged_delivery_reverification: proof }
+  };
+  fs.mkdirSync(path.join(tmp, '.brownie/private/phase-loop/todo-claims'), { recursive: true });
+  fs.mkdirSync(path.join(tmp, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, '.brownie/todo.md'), queue(selected));
+  fs.writeFileSync(path.join(tmp, 'scripts/merged-target.mjs'), 'export const target = true;\n');
+  execFileSync('git', ['init', '-b', 'main'], { cwd: tmp, stdio: 'ignore' });
+  execFileSync('git', ['add', '.'], { cwd: tmp, stdio: 'ignore' });
+  execFileSync('git', ['-c', 'user.name=Brownie', '-c', 'user.email=brownie@example.invalid', 'commit', '-m', 'baseline'], { cwd: tmp, stdio: 'ignore' });
+  fs.writeFileSync(path.join(tmp, '.brownie/private/phase-loop/todo-claims/current.json'), `${JSON.stringify(claim, null, 2)}\n`);
+  const output = execFileSync('node', [
+    path.resolve('scripts/phase-loop-progress-integrity.mjs'), '--repo', tmp, '--claim', '.brownie/private/phase-loop/todo-claims/current.json', '--todo', '.brownie/todo.md', '--run-stamp', 'merged-record-run', '--write-record'
+  ], { cwd: path.resolve('.'), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const result = JSON.parse(output);
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+  const record = JSON.parse(fs.readFileSync(path.join(tmp, '.brownie/private/phase-loop/todo-completions/claim-merged-record.json'), 'utf8'));
+  assert.equal(record.schema_version, 3);
+  assert.deepEqual(record.delivery_receipt.merged_delivery_reverification, proof);
+  assert.equal(durableCompletionRecordReceipt(record).valid, true);
+  const reloaded = loadTodoState(tmp, queue(`- [ ] E-next: next\n  Depends on: E-merged-reverification-record.`));
+  assert(reloaded.completedIds.has('E-merged-reverification-record'));
+  assert.equal(reloaded.unverifiedCompletionRecords.length, 0);
 });
 
 test('rejects dependent TODO dependency rewrite even after selected TODO completion record', () => {
@@ -294,7 +425,7 @@ test('CLI write-record allows selected targets that were already dirty at claim 
   assert.deepEqual(result.selected_targets_dirty_at_baseline, ['docs/architecture/final-product-ready-judgment.md']);
   assert.equal(result.completion_record_present, true);
   const record = JSON.parse(fs.readFileSync(path.join(tmp, '.brownie/private/phase-loop/todo-completions/claim-baseline-dirty.json'), 'utf8'));
-  assert.equal(record.schema_version, 2);
+  assert.equal(record.schema_version, 3);
   assert.equal(record.delivery_receipt.merged, true);
   assert.equal(record.delivery_receipt.semantic_completion_evidence.root_claim_id, 'claim-baseline-dirty');
 });
