@@ -8,6 +8,7 @@ import {
   readAllTodoReplanRecords,
   readTodoCompletionRecords,
   readTodoCompletionInvalidationRecords,
+  readTodoSupersessionResolutionRecords,
   readTrackedBreakdownReplanRecords,
   resolveTodoState
 } from './phase-loop-todo-state.mjs';
@@ -516,7 +517,8 @@ export function loadCliInput(args) {
     todoText: todoAfter,
     replanRecords,
     completionRecords: readTodoCompletionRecords(repoRoot),
-    completionInvalidationRecords: readTodoCompletionInvalidationRecords(repoRoot)
+    completionInvalidationRecords: readTodoCompletionInvalidationRecords(repoRoot),
+    supersessionResolutionRecords: readTodoSupersessionResolutionRecords(repoRoot)
   });
   // Queue integrity revalidates the same public materialization receipt as
   // decomposition.  Thread an exact, already persisted active-claim proof
