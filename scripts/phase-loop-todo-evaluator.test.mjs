@@ -197,6 +197,7 @@ function makeSupersededMergedDeliveryFixture({ mutateTodo = false, childHistory 
     operation: 'split_parent_into_children',
     parent_status: 'superseded_by_children',
     parent_todo_id: 'E-superseded-merged-soak',
+    written_at: '2000-01-01T00:00:00Z',
     generated_child_ids: ['E-superseded-merged-soak-target-01', 'E-superseded-merged-soak-target-02']
   })}\n`);
   fs.writeFileSync(path.join(claimDir, 'stale-terminal.json'), `${JSON.stringify({
@@ -233,6 +234,9 @@ function makeSupersededMergedDeliveryFixture({ mutateTodo = false, childHistory 
     };
     if (childHistory === 'malformed') {
       fs.writeFileSync(path.join(claimDir, 'stale-child.json'), '{not-json}\n');
+    } else if (childHistory === 'archive-completed') {
+      archive.completed_at = '2026-11-05T00:00:00Z';
+      fs.writeFileSync(path.join(claimDir, 'stale-child.json'), `${JSON.stringify(archive)}\n`);
     } else if (childHistory === 'completed') {
       fs.mkdirSync(path.join(repo, '.brownie/private/phase-loop/todo-completions'), { recursive: true });
       fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/todo-completions', 'child.json'), `${JSON.stringify({
@@ -283,9 +287,9 @@ test('orphaned superseded recovery fails closed for an invalid candidate, materi
   const specMismatch = makeSupersededMergedDeliveryFixture({ mutateTodo: true });
   const childRunning = makeSupersededMergedDeliveryFixture({ childHistory: 'running' });
   const childCompleted = makeSupersededMergedDeliveryFixture({ childHistory: 'completed' });
-  const malformedChildHistory = makeSupersededMergedDeliveryFixture({ childHistory: 'malformed' });
+  const childArchiveCompleted = makeSupersededMergedDeliveryFixture({ childHistory: 'archive-completed' });
   const blockedDependency = makeSupersededMergedDeliveryFixture({ childHistory: 'terminal', blockedPredecessor: true });
-  for (const fixture of [dirtyCandidate, specMismatch, childRunning, childCompleted, malformedChildHistory, blockedDependency]) {
+  for (const fixture of [dirtyCandidate, specMismatch, childRunning, childCompleted, childArchiveCompleted, blockedDependency]) {
     const result = spawnSync(process.execPath, [
       path.join(controllerRoot, 'scripts/phase-loop-todo-evaluator.mjs'), 'select', '--todo', fixture.todoPath,
       '--breakdown', path.join(fixture.repo, '.brownie/todo-breakdown.md'), '--claim-dir', fixture.claimDir
@@ -293,6 +297,46 @@ test('orphaned superseded recovery fails closed for an invalid candidate, materi
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, '', result.stderr);
   }
+});
+
+test('orphaned superseded recovery isolates unrelated opaque archival history after a fresh direct delivery', () => {
+  const fixture = makeSupersededMergedDeliveryFixture({ childHistory: 'malformed' });
+  const result = spawnSync(process.execPath, [
+    path.join(controllerRoot, 'scripts/phase-loop-todo-evaluator.mjs'), 'select', '--todo', fixture.todoPath,
+    '--breakdown', path.join(fixture.repo, '.brownie/todo-breakdown.md'), '--claim-dir', fixture.claimDir
+  ], { cwd: fixture.repo, encoding: 'utf8', env: { ...process.env, PHASE_LOOP_WORKSPACE_ROOT: fixture.repo } });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), fixture.selected);
+});
+
+test('orphaned superseded recovery refuses a direct delivery merged before the recorded split', () => {
+  const fixture = makeSupersededMergedDeliveryFixture({ childHistory: 'terminal' });
+  const replanPath = path.join(fixture.repo, '.brownie/private/phase-loop/todo-replans/historical-split.json');
+  const replan = JSON.parse(fs.readFileSync(replanPath, 'utf8'));
+  replan.written_at = '2999-01-01T00:00:00Z';
+  fs.writeFileSync(replanPath, `${JSON.stringify(replan)}\n`);
+
+  const result = spawnSync(process.execPath, [
+    path.join(controllerRoot, 'scripts/phase-loop-todo-evaluator.mjs'), 'select', '--todo', fixture.todoPath,
+    '--breakdown', path.join(fixture.repo, '.brownie/todo-breakdown.md'), '--claim-dir', fixture.claimDir
+  ], { cwd: fixture.repo, encoding: 'utf8', env: { ...process.env, PHASE_LOOP_WORKSPACE_ROOT: fixture.repo } });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, '', result.stderr);
+});
+
+test('orphaned superseded recovery accepts a tracked breakdown alias of the same timestamped split', () => {
+  const fixture = makeSupersededMergedDeliveryFixture({ childHistory: 'terminal' });
+  fs.appendFileSync(path.join(fixture.repo, '.brownie/todo-breakdown.md'), `\n## TODO-repair-E-superseded-merged-soak\n\nDependency graph:\n- E-superseded-merged-soak-target-01: <none>\n- E-superseded-merged-soak-target-02: E-superseded-merged-soak-target-01\n`);
+
+  const result = spawnSync(process.execPath, [
+    path.join(controllerRoot, 'scripts/phase-loop-todo-evaluator.mjs'), 'select', '--todo', fixture.todoPath,
+    '--breakdown', path.join(fixture.repo, '.brownie/todo-breakdown.md'), '--claim-dir', fixture.claimDir
+  ], { cwd: fixture.repo, encoding: 'utf8', env: { ...process.env, PHASE_LOOP_WORKSPACE_ROOT: fixture.repo } });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), fixture.selected);
 });
 
 test('does not select a child whose dependency is blocked', () => {

@@ -223,7 +223,7 @@ function jsonRecordsInside(root) {
 // a hard stop. All archive and contract-rebaseline records are read so a
 // partial/corrupt history cannot create an exception.
 function readClaimHistory(claimDir, parentId, childIds) {
-  if (!claimDir || !fs.existsSync(claimDir)) return { readable: false };
+  if (!claimDir || !fs.existsSync(claimDir)) return { readable: false, unsafeChildState: false };
   const childSet = new Set(childIds);
   const childHistory = new Map(childIds.map((id) => [id, { archives: 0, ledgers: 0, unsafe: false }]));
   try {
@@ -258,13 +258,54 @@ function readClaimHistory(claimDir, parentId, childIds) {
       }
     }
     const hasChildHistory = [...childHistory.values()].some((state) => state.archives > 0 || state.ledgers > 0);
-    if (hasChildHistory && !hasApprovedParentContractRebaseline) return { readable: false };
-    if ([...childHistory.values()].some((state) => state.unsafe || (state.ledgers > 0 && state.archives === 0))) {
-      return { readable: false };
+    if (hasChildHistory && !hasApprovedParentContractRebaseline) {
+      return { readable: false, unsafeChildState: false };
     }
-    return { readable: true, terminalIds, childHistory };
+    if ([...childHistory.values()].some((state) => state.unsafe || (state.ledgers > 0 && state.archives === 0))) {
+      return { readable: false, unsafeChildState: true };
+    }
+    return { readable: true, unsafeChildState: false, terminalIds, childHistory };
   } catch {
-    return { readable: false };
+    return { readable: false, unsafeChildState: false };
+  }
+}
+
+// Once Git proves an exact delivery that postdates the split, stale archival
+// noise outside this child set is not authority to suppress re-verification.
+// Still fail closed for an active claim or any completion receipt for one of
+// the generated children: either means the split has a live/terminal owner.
+function noActiveOrCompletedGeneratedChildState(claimDir, childIds) {
+  if (!claimDir || !fs.existsSync(claimDir)) return false;
+  const childSet = new Set(childIds);
+  try {
+    const visit = (directory) => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const candidate = path.join(directory, entry.name);
+        if (entry.isSymbolicLink()) return false;
+        if (entry.isDirectory()) {
+          if (!visit(candidate)) return false;
+          continue;
+        }
+        if (!entry.isFile() || (!entry.name.endsWith('.json') && !entry.name.endsWith('.jsonl'))) continue;
+        const source = fs.readFileSync(candidate, 'utf8');
+        // Ignore opaque unrelated records, but never ignore a malformed
+        // record that claims to describe one of this split's children.
+        if (![...childSet].some((childId) => source.includes(childId))) continue;
+        const records = entry.name.endsWith('.jsonl')
+          ? source.split('\n').filter((line) => line.trim()).map((line) => JSON.parse(line))
+          : [JSON.parse(source)];
+        for (const record of records) {
+          if (!childSet.has(selectedTodoIdFromRecord(record))) continue;
+          const status = String(record?.status ?? '').toLowerCase();
+          if (recordHasCompletionEvidence(record) || ['claimed', 'in_progress', 'completed'].includes(status)) return false;
+        }
+      }
+      return true;
+    };
+    const completionRoot = path.join(path.dirname(claimDir), 'todo-completions');
+    return visit(claimDir) && (!fs.existsSync(completionRoot) || visit(completionRoot));
+  } catch {
+    return false;
   }
 }
 
@@ -277,7 +318,9 @@ function candidateMatchesSupersededParent(candidate, block) {
   }
   if (!/^[a-f0-9]{40}$/iu.test(value.merge_commit_oid ?? '')
     || !/^[a-f0-9]{40}$/iu.test(value.first_parent_oid ?? '')
-    || !/^[a-f0-9]{40}$/iu.test(value.head_oid ?? '')) {
+    || !/^[a-f0-9]{40}$/iu.test(value.head_oid ?? '')
+    || !Number.isSafeInteger(value.merge_commit_timestamp)
+    || value.merge_commit_timestamp <= 0) {
     return false;
   }
   const binding = value.task_spec_binding;
@@ -293,14 +336,31 @@ function candidateMatchesSupersededParent(candidate, block) {
     && targetScopes.every((scope, index) => scope === expectedScopes[index]);
 }
 
+function replanWrittenAtTimestamp(record) {
+  const writtenAt = String(record?.written_at ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u.test(writtenAt)) return null;
+  const timestamp = Date.parse(writtenAt) / 1000;
+  return Number.isSafeInteger(timestamp) ? timestamp : null;
+}
+
+function candidateMergedAfterReplans(candidate, replans) {
+  // The tracked breakdown is an alias of the durable private split receipt;
+  // it intentionally has no write time. Freshness must compare Git's merge
+  // time with actual receipt persistence, never with the attempt's run start.
+  const timestamps = replans.map(replanWrittenAtTimestamp).filter((timestamp) => timestamp !== null);
+  if (timestamps.length === 0) return false;
+  return candidate.merge_commit_timestamp > Math.max(...timestamps);
+}
+
 // Recover exactly one historical split only when its parent is still pending,
 // every generated child vanished from the live queue/state and any retained
-// child archive is an exact terminal failure from this same split, the parent
-// itself has a terminal record, and Git independently proves the exact parent
-// contract was cleanly merged. This creates no completion state; it merely
-// makes the original parent claimable for Runtime re-verification.  Keep the
-// candidate details private to this exact admission path so a later durable
-// resolution can bind its completion evidence to the same split.
+// child archive is an exact terminal failure from this same split.  A later,
+// Git-authored direct delivery may repair an old split whose parent was never
+// given a terminal receipt; require that merge to postdate the split record.
+// This creates no completion state; it merely makes the original parent
+// claimable for Runtime re-verification. Keep the candidate details private
+// to this exact admission path so a later durable resolution can bind its
+// completion evidence to the same split.
 export function supersededParentCleanMergedDeliveryRecovery(text, options = {}) {
   if (!options.repoRoot || !options.claimDir) return '';
   const todoState = options.todoState ?? loadTodoState(options.repoRoot, text, {
@@ -324,14 +384,15 @@ export function supersededParentCleanMergedDeliveryRecovery(text, options = {}) 
     const childIds = [...childSets][0].split('\u0000').filter(Boolean);
     if (childIds.length === 0) continue;
     const history = readClaimHistory(options.claimDir, id, childIds);
-    if (!history.readable || !history.terminalIds.has(id)) continue;
+    if (!noActiveOrCompletedGeneratedChildState(options.claimDir, childIds)) continue;
     if (childIds.some((childId) => (
       todoState.liveIds.has(childId)
       || todoState.completedIds.has(childId)
       || todoState.supersededIds.has(childId)
     ))) continue;
     const candidate = findCleanMergedDeliveryCandidate({ repoRoot: options.repoRoot, selectedTodo: block });
-    if (candidateMatchesSupersededParent(candidate, block)) {
+    if (candidateMatchesSupersededParent(candidate, block)
+      && candidateMergedAfterReplans(candidate.candidate, replans)) {
       return {
         block,
         parent_todo_id: id,

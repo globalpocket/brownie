@@ -286,6 +286,11 @@ export function findCleanMergedDeliveryCandidate({ repoRoot, selectedTodo }) {
       valid: true,
       candidate: {
         merge_commit_oid: mergeCommitOid,
+        // A superseded parent may be re-admitted only for a delivery that was
+        // merged after its recorded split.  Expose the Git-authored merge
+        // time as data rather than letting callers infer freshness from a
+        // mutable queue or claim timestamp.
+        merge_commit_timestamp: Number(git(repoRoot, ['show', '-s', '--format=%ct', mergeCommitOid])),
         first_parent_oid: firstParentOid,
         head_oid: headOid,
         selected_todo_id: todoId,
