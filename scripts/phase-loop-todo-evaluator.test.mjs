@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   evaluateTodoQueue,
   isBrownieOwnedBlockerTodo,
@@ -12,6 +13,8 @@ import {
   needsTodoDecomposition,
   selectFirstSchedulableTodo
 } from './phase-loop-todo-evaluator.mjs';
+
+const controllerRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const childFirstQueue = `- [ ] E-15-child: Patch only \`scripts/child.mjs\`:
   Route: implementation.
@@ -147,6 +150,149 @@ test('CLI isolates phase-loop workspace lineage from the evaluator controller ch
   });
   assert.equal(workspaceSelection.status, 0, workspaceSelection.stderr);
   assert.match(workspaceSelection.stdout, /^- \[ \] E-15-parent:/u);
+});
+
+function makeSupersededMergedDeliveryFixture({ mutateTodo = false, childHistory = 'none', blockedPredecessor = false } = {}) {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-superseded-merged-delivery-'));
+  const todoPath = path.join(repo, '.brownie/todo.md');
+  const claimDir = path.join(repo, '.brownie/private/phase-loop/todo-claims');
+  const replanDir = path.join(repo, '.brownie/private/phase-loop/todo-replans');
+  const target = 'scripts/soak.mjs';
+  const selected = `- [ ] E-superseded-merged-soak: Patch only \`scripts/soak.mjs\`:
+  Route: implementation.
+  Depends on: ${blockedPredecessor ? 'E-superseded-predecessor' : '<none>'}.
+  Completion condition: reverify the exact merged artifact before any queue consumption.
+  Forbidden changes: do not treat a historical terminal record as completion.
+  Verification: run \`node --check scripts/soak.mjs\`.`;
+  const predecessor = `- [ ] E-superseded-predecessor: Blocker: prerequisite is not complete.
+  Route: blocker.
+  Depends on: <none>.
+  Completion condition: owner records prerequisite completion.
+  Forbidden changes: do not patch.`;
+  fs.mkdirSync(path.dirname(todoPath), { recursive: true });
+  fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true });
+  fs.writeFileSync(todoPath, `${blockedPredecessor ? `${predecessor}\n\n` : ''}${selected}\n`);
+  fs.writeFileSync(path.join(repo, '.brownie/todo-breakdown.md'), '# Stable breakdown\n');
+  fs.writeFileSync(path.join(repo, target), 'export const soak = "before";\n');
+  execFileSync('git', ['init', '--quiet', '--initial-branch=main'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'fixture'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'fixture@example.invalid'], { cwd: repo });
+  execFileSync('git', ['add', '.'], { cwd: repo });
+  execFileSync('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: repo });
+  execFileSync('git', ['switch', '--quiet', '-c', 'implementation'], { cwd: repo });
+  fs.writeFileSync(path.join(repo, target), 'export const soak = "merged";\n');
+  const selectedHash = createHash('sha256').update(selected).digest('hex');
+  execFileSync('git', ['add', target], { cwd: repo });
+  execFileSync('git', ['commit', '--quiet', '-m', `implement soak\n\nBrownie-Task-Todo: E-superseded-merged-soak\nBrownie-Task-Spec-SHA256: ${selectedHash}`], { cwd: repo });
+  execFileSync('git', ['switch', '--quiet', 'main'], { cwd: repo });
+  execFileSync('git', ['merge', '--no-ff', '--quiet', '--no-edit', 'implementation'], { cwd: repo });
+  if (mutateTodo) {
+    fs.writeFileSync(todoPath, `${selected.replace('exact merged artifact', 'different artifact contract')}\n`);
+  }
+  fs.mkdirSync(claimDir, { recursive: true });
+  fs.mkdirSync(replanDir, { recursive: true });
+  fs.writeFileSync(path.join(replanDir, 'historical-split.json'), `${JSON.stringify({
+    schema_version: 1,
+    record_type: 'todo_replan',
+    operation: 'split_parent_into_children',
+    parent_status: 'superseded_by_children',
+    parent_todo_id: 'E-superseded-merged-soak',
+    generated_child_ids: ['E-superseded-merged-soak-target-01', 'E-superseded-merged-soak-target-02']
+  })}\n`);
+  fs.writeFileSync(path.join(claimDir, 'stale-terminal.json'), `${JSON.stringify({
+    claim_id: 'legacy-terminal', selected_todo: selected, status: 'failed',
+    archive_reason: 'terminal_failure_blocked_evidence_failed'
+  })}\n`);
+  if (childHistory !== 'none') {
+    const childId = 'E-superseded-merged-soak-target-01';
+    const childSelected = `- [ ] ${childId}: Patch only \`scripts/soak.mjs\`:\n  Route: implementation.\n  Source TODO: E-superseded-merged-soak.\n  Depends on: <none>.\n  Completion condition: terminal child history remains provenance only.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run \`node --check scripts/soak.mjs\`.`;
+    const childHash = createHash('sha256').update(childSelected).digest('hex');
+    fs.mkdirSync(path.join(claimDir, 'contract-rebaselines'), { recursive: true });
+    fs.writeFileSync(path.join(claimDir, 'contract-rebaselines', 'split.json'), `${JSON.stringify({
+      schema_version: 1,
+      record_type: 'todo_contract_rebaseline',
+      status: 'approved',
+      parent_todo_ids: ['E-superseded-merged-soak'],
+      target_todo_ids: ['E-superseded-merged-soak'],
+      contract_changes: [{ todo_id: 'E-superseded-merged-soak' }]
+    })}\n`);
+    const archive = {
+      claim_id: 'legacy-child',
+      selected_todo: childSelected,
+      selected_todo_id: childId,
+      selected_todo_sha256: childHash,
+      status: childHistory === 'running' ? 'in_progress' : 'failed',
+      archive_reason: 'terminal_failure_retry',
+      claim_admission: {
+        claim_id: 'legacy-child',
+        selected_todo_id: childId,
+        selected_todo_sha256: childHash
+      },
+      failure_history: [{ status: 'failed', selected_todo_sha256: childHash }],
+      status_history: [{ status: 'claimed' }, { status: 'in_progress' }, { status: 'failed' }]
+    };
+    if (childHistory === 'malformed') {
+      fs.writeFileSync(path.join(claimDir, 'stale-child.json'), '{not-json}\n');
+    } else if (childHistory === 'completed') {
+      fs.mkdirSync(path.join(repo, '.brownie/private/phase-loop/todo-completions'), { recursive: true });
+      fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/todo-completions', 'child.json'), `${JSON.stringify({
+        selected_todo_id: childId,
+        selected_todo_sha256: childHash,
+        completed_at: '2026-11-05T00:00:00Z'
+      })}\n`);
+    } else if (childHistory === 'running') {
+      fs.writeFileSync(path.join(claimDir, 'current.json'), `${JSON.stringify(archive)}\n`);
+    } else {
+      fs.writeFileSync(path.join(claimDir, 'stale-child.json'), `${JSON.stringify(archive)}\n`);
+      const staleSnapshot = {
+        ...archive,
+        claim_id: 'legacy-child-stale-snapshot',
+        status: 'stale_snapshot_rejected',
+        claim_admission: { ...archive.claim_admission, claim_id: 'legacy-child-stale-snapshot' },
+        status_history: [...archive.status_history, { status: 'stale_snapshot_rejected' }]
+      };
+      delete staleSnapshot.archive_reason;
+      fs.writeFileSync(path.join(claimDir, 'stale-child-snapshot.json'), `${JSON.stringify(staleSnapshot)}\n`);
+      fs.writeFileSync(path.join(claimDir, 'blocked.jsonl'), `${JSON.stringify({
+        selected_todo: childSelected,
+        selected_todo_id: childId,
+        selected_todo_sha256: childHash,
+        terminal_failure: true,
+        block_reason: 'terminal_runtime_failure'
+      })}\n`);
+    }
+  }
+  return { repo, todoPath, claimDir, selected: mutateTodo ? fs.readFileSync(todoPath, 'utf8').trim() : selected, selectedHash };
+}
+
+test('public evaluator recovers only an orphaned superseded parent with an exact clean merged delivery', () => {
+  const fixture = makeSupersededMergedDeliveryFixture({ childHistory: 'terminal' });
+  const result = spawnSync(process.execPath, [
+    path.join(controllerRoot, 'scripts/phase-loop-todo-evaluator.mjs'), 'select', '--todo', fixture.todoPath,
+    '--breakdown', path.join(fixture.repo, '.brownie/todo-breakdown.md'), '--claim-dir', fixture.claimDir
+  ], { cwd: fixture.repo, encoding: 'utf8', env: { ...process.env, PHASE_LOOP_WORKSPACE_ROOT: fixture.repo } });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), fixture.selected);
+  assert.equal(createHash('sha256').update(result.stdout.trim()).digest('hex'), fixture.selectedHash);
+});
+
+test('orphaned superseded recovery fails closed for an invalid candidate, material spec mismatch, or unsafe child history', () => {
+  const dirtyCandidate = makeSupersededMergedDeliveryFixture();
+  fs.writeFileSync(path.join(dirtyCandidate.repo, 'scripts/soak.mjs'), 'export const soak = "dirty";\n');
+  const specMismatch = makeSupersededMergedDeliveryFixture({ mutateTodo: true });
+  const childRunning = makeSupersededMergedDeliveryFixture({ childHistory: 'running' });
+  const childCompleted = makeSupersededMergedDeliveryFixture({ childHistory: 'completed' });
+  const malformedChildHistory = makeSupersededMergedDeliveryFixture({ childHistory: 'malformed' });
+  const blockedDependency = makeSupersededMergedDeliveryFixture({ childHistory: 'terminal', blockedPredecessor: true });
+  for (const fixture of [dirtyCandidate, specMismatch, childRunning, childCompleted, malformedChildHistory, blockedDependency]) {
+    const result = spawnSync(process.execPath, [
+      path.join(controllerRoot, 'scripts/phase-loop-todo-evaluator.mjs'), 'select', '--todo', fixture.todoPath,
+      '--breakdown', path.join(fixture.repo, '.brownie/todo-breakdown.md'), '--claim-dir', fixture.claimDir
+    ], { cwd: fixture.repo, encoding: 'utf8', env: { ...process.env, PHASE_LOOP_WORKSPACE_ROOT: fixture.repo } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, '', result.stderr);
+  }
 });
 
 test('does not select a child whose dependency is blocked', () => {

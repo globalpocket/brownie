@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { loadTodoState } from './phase-loop-todo-state.mjs';
 import { boundedScopes } from './phase-loop-bounded-scope.mjs';
@@ -10,6 +11,7 @@ import {
   validateMergedDeliveryReverification,
   validateTerminalDeliveryReceipt
 } from './phase-loop-delivery-integrity.mjs';
+import { supersededParentCleanMergedDeliveryRecovery } from './phase-loop-todo-evaluator.mjs';
 
 const defaultTodoPath = '.brownie/todo.md';
 
@@ -19,6 +21,7 @@ function parseArgs(argv) {
     claim: '.brownie/private/phase-loop/todo-claims/current.json',
     todo: defaultTodoPath,
     runStamp: '',
+    claimDir: '',
     writeRecord: false
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -31,6 +34,8 @@ function parseArgs(argv) {
       args.todo = argv[++index];
     } else if (arg === '--run-stamp') {
       args.runStamp = argv[++index];
+    } else if (arg === '--claim-dir') {
+      args.claimDir = argv[++index];
     } else if (arg === '--write-record') {
       args.writeRecord = true;
     } else {
@@ -42,6 +47,16 @@ function parseArgs(argv) {
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+function sha256Json(value) {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function withoutWrittenAt(record) {
+  const copy = { ...record };
+  delete copy.written_at;
+  return copy;
 }
 
 function maybeReadText(filePath) {
@@ -438,9 +453,97 @@ function writeCompletionRecord(repoRoot, claim, runStamp, validation, deliveryRe
       : validation.selected_route === 'todo-decomposition' ? 'todo_decomposition' : 'verified_before_todo_removal',
     written_at: new Date().toISOString()
   };
+  const existingPath = completionRecordPaths(repoRoot, claimId, runStamp).find((recordPath) => fs.existsSync(recordPath));
+  if (existingPath) {
+    const existing = readJson(existingPath);
+    if (sha256Json(withoutWrittenAt(existing)) === sha256Json(withoutWrittenAt(record))) {
+      return existing;
+    }
+    // A verified clean-merge parent can be retried during post-completion
+    // cleanup with a different run stamp. Its supersession-resolution receipt
+    // hashes the whole completion record, so rewriting only run metadata would
+    // orphan that receipt and make the resolved parent appear blocked again.
+    // Reuse only a record that an existing resolution already binds to this
+    // exact claim and selected TODO; other changed completion evidence remains
+    // fail-closed and reaches the conflict guard below.
+    const resolutionPath = path.join(
+      repoRoot,
+      '.brownie/private/phase-loop/todo-supersession-resolutions',
+      `${claimId}.json`
+    );
+    const resolutionText = maybeReadText(resolutionPath);
+    if (resolutionText !== null) {
+      const resolution = JSON.parse(resolutionText);
+      const boundToExistingCompletion = (
+        validation.merged_delivery_reverified === true
+        && resolution?.record_type === 'superseded_parent_clean_merged_delivery_resolution'
+        && resolution?.claim_id === claimId
+        && resolution?.root_claim_id === rootClaimId(claim)
+        && resolution?.parent_todo_id === validation.selected_todo_id
+        && resolution?.parent_todo_sha256 === selectedTodoSha256(claim)
+        && resolution?.completion_record_sha256 === sha256Json(existing)
+        && existing?.claim_id === claimId
+        && existing?.root_claim_id === rootClaimId(claim)
+        && existing?.selected_todo_id === validation.selected_todo_id
+        && existing?.selected_todo_sha256 === selectedTodoSha256(claim)
+      );
+      if (boundToExistingCompletion) return existing;
+    }
+  }
   for (const recordPath of completionRecordPaths(repoRoot, claimId, runStamp)) {
     fs.writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
   }
+  return record;
+}
+
+function writeSupersessionResolutionRecord({ repoRoot, claim, completionRecord, recovery }) {
+  const proof = claim.merged_delivery_reverification;
+  const candidate = recovery?.candidate;
+  if (!proof || !candidate
+    || candidate.selected_todo_id !== claim.selected_todo_id
+    || candidate.selected_todo_sha256 !== selectedTodoSha256(claim)
+    || candidate.merge_commit_oid !== proof?.git?.merge_commit_oid
+    || candidate.first_parent_oid !== proof?.git?.first_parent_oid
+    || candidate.head_oid !== proof?.git?.head_oid
+    || candidate.task_spec_binding?.todo_id !== claim.selected_todo_id
+    || candidate.task_spec_binding?.selected_todo_sha256 !== selectedTodoSha256(claim)
+    || candidate.task_spec_binding?.head_oid !== proof?.git?.head_oid) {
+    return null;
+  }
+  const dir = path.join(repoRoot, '.brownie/private/phase-loop/todo-supersession-resolutions');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const record = {
+    schema_version: 1,
+    record_type: 'superseded_parent_clean_merged_delivery_resolution',
+    reason: 'orphaned_superseded_parent_clean_merged_delivery_reverified',
+    parent_todo_id: claim.selected_todo_id,
+    parent_todo_sha256: selectedTodoSha256(claim),
+    generated_child_ids: [...recovery.generated_child_ids].sort(),
+    claim_id: claim.claim_id,
+    root_claim_id: rootClaimId(claim),
+    completion_record_sha256: sha256Json(completionRecord),
+    candidate: {
+      selected_todo_id: candidate.selected_todo_id,
+      selected_todo_sha256: candidate.selected_todo_sha256,
+      merge_commit_oid: candidate.merge_commit_oid,
+      first_parent_oid: candidate.first_parent_oid,
+      head_oid: candidate.head_oid,
+      task_spec_binding: candidate.task_spec_binding
+    },
+    written_at: new Date().toISOString()
+  };
+  const recordPath = path.join(dir, `${claim.claim_id}.json`);
+  const existing = maybeReadText(recordPath);
+  if (existing !== null) {
+    const prior = JSON.parse(existing);
+    if (sha256Json(withoutWrittenAt(prior)) !== sha256Json(withoutWrittenAt(record))) {
+      throw new Error('supersession_resolution_conflicts_with_existing_record');
+    }
+    return prior;
+  }
+  const temporary = path.join(dir, `.${claim.claim_id}.${process.pid}.tmp`);
+  fs.writeFileSync(temporary, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(temporary, recordPath);
   return record;
 }
 
@@ -464,6 +567,7 @@ export function loadCliInput(args) {
     todoBefore,
     todoAfter,
     runStamp: args.runStamp,
+    claimDir: args.claimDir ? path.resolve(repoRoot, args.claimDir) : '',
     completionRecordExists: completionRecordExists(repoRoot, claim.claim_id, args.runStamp),
     completedTodoIds: todoState.completedIds
   };
@@ -537,10 +641,27 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
         process.exit(1);
       }
       record = writeCompletionRecord(input.repoRoot, input.claim, args.runStamp, validation, durableReceipt.receipt);
+      const recovery = validation.merged_delivery_reverified && input.claimDir
+        ? supersededParentCleanMergedDeliveryRecovery(input.todoAfter, {
+            repoRoot: input.repoRoot,
+            claimDir: input.claimDir,
+            todoState: loadTodoState(input.repoRoot, input.todoAfter)
+          })
+        : null;
+      const supersessionResolution = recovery?.parent_todo_id === input.claim.selected_todo_id
+        && recovery?.parent_todo_sha256 === selectedTodoSha256(input.claim)
+        ? writeSupersessionResolutionRecord({
+            repoRoot: input.repoRoot,
+            claim: input.claim,
+            completionRecord: record,
+            recovery
+          })
+        : null;
       validation = {
         ...validation,
         completion_record_present: true,
-        completion_record: record
+        completion_record: record,
+        ...(supersessionResolution ? { supersession_resolution_record: supersessionResolution } : {})
       };
     }
     const output = JSON.stringify(validation, null, 2);

@@ -1171,6 +1171,7 @@ todo_first_pending_item() {
       --todo "$evaluator_todo_path"
       --breakdown "$PHASE_LOOP_TODO_BREAKDOWN"
       --blocked "$TODO_BLOCKED_FILE"
+      --claim-dir "$TODO_CLAIM_DIR"
       --controller-fingerprint "$(phase_loop_controller_fingerprint)"
     )
     local suppressed_hash
@@ -3336,6 +3337,7 @@ PY
       node "$ROOT_DIR/scripts/phase-loop-progress-integrity.mjs" \
         --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
         --claim "$TODO_CLAIM_FILE" \
+        --claim-dir "$TODO_CLAIM_DIR" \
         --todo "$PHASE_LOOP_TODO" \
         --run-stamp "$run_stamp" \
         --write-record 2>&1
@@ -3359,6 +3361,20 @@ sys.exit(0 if codes & {"completion_record_missing_selected_targets","completion_
       return 76
     fi
     printf '%s run=%s todo_completion_record_written=true result=%s\n' "$(now_utc)" "$run_stamp" "$completion_record_output" >> "$SUPERVISOR_LOG"
+    if printf '%s' "$completion_record_output" | node -e '
+let value = {};
+try { value = JSON.parse(require("fs").readFileSync(0, "utf8")); } catch { process.exit(1); }
+const record = value.supersession_resolution_record;
+process.exit(record && record.record_type === "superseded_parent_clean_merged_delivery_resolution" ? 0 : 1);
+'; then
+      # The durable resolution receipt, not a queue text mutation, consumes
+      # this narrowly-admitted historical parent. The state resolver can now
+      # satisfy its dependents while the public split and child audit stay
+      # intact.
+      PHASE_LOOP_SUPERSESSION_RESOLUTION_CONSUMED=1
+      printf '%s run=%s superseded_parent_resolution_recorded=true\n' "$(now_utc)" "$run_stamp" >> "$SUPERVISOR_LOG"
+      return 0
+    fi
   fi
   local todo_backup todo_guard_path todo_guard_output
   todo_backup="$(mktemp "${TMPDIR:-/tmp}/brownie-todo-before-complete.XXXXXX")"
@@ -12598,7 +12614,11 @@ PY
     return 78
   fi
   clear_repair_feedback
-  write_status "last_run_succeeded" "Selected TODO was already independently merged, was reverified against its exact reviewed Git state, and was consumed from the queue." "$run_id" "0" "0"
+  if [ "${PHASE_LOOP_SUPERSESSION_RESOLUTION_CONSUMED:-0}" = "1" ]; then
+    write_status "last_run_succeeded" "Selected superseded TODO was independently merged, reverified, and durably resolved without rewriting its historical split." "$run_id" "0" "0"
+  else
+    write_status "last_run_succeeded" "Selected TODO was already independently merged, was reverified against its exact reviewed Git state, and was consumed from the queue." "$run_id" "0" "0"
+  fi
   write_bdk_trajectory_event "$run_stamp" "verification.run" "$result"
   printf '%s run=%s merged_delivery_reverified_and_consumed=true result=%s\n' "$(now_utc)" "$run_id" "$result" >> "$SUPERVISOR_LOG"
   return 0

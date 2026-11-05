@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { validateHistoricalDerivedDeliveryReceipt } from './phase-loop-historical-derived-delivery-integrity.mjs';
 import { validateMergedDeliveryReverification } from './phase-loop-delivery-integrity.mjs';
 
@@ -44,6 +45,10 @@ function readJsonRecords(directory) {
     }
   }
   return records;
+}
+
+function sha256Json(value) {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
 
 export function readTodoReplanRecords(repoRoot) {
@@ -254,7 +259,67 @@ export function readTodoCompletionInvalidationRecords(repoRoot) {
   ));
 }
 
-export function resolveTodoState({ todoText, replanRecords = [], completionRecords = [], completionInvalidationRecords = [] }) {
+// A parent split is ordinarily resolved only by all generated children.  This
+// separate receipt is the sole narrowly-audited exception: an exact parent was
+// cleanly merged before a split lost every child, then Runtime, verification,
+// review, CI, and merge were re-observed on a fresh parent claim.  The receipt
+// is append-only and intentionally lives beside completion records rather than
+// changing the public TODO text or historical replan record.
+export function readTodoSupersessionResolutionRecords(repoRoot) {
+  return readJsonRecords(path.join(repoRoot, '.brownie/private/phase-loop/todo-supersession-resolutions')).filter((record) => (
+    record?.schema_version === 1
+    && record?.record_type === 'superseded_parent_clean_merged_delivery_resolution'
+    && typeof record?.parent_todo_id === 'string' && record.parent_todo_id.trim()
+    && typeof record?.claim_id === 'string' && record.claim_id.trim()
+  ));
+}
+
+function sameStrings(left, right) {
+  return Array.isArray(left)
+    && Array.isArray(right)
+    && left.length === right.length
+    && left.every((value, index) => value === right[index]);
+}
+
+function validSupersessionResolution({ resolution, completionRecord, replanRecord, liveIds, supersededIds, completionIds }) {
+  const parentId = replanRecord?.parent_todo_id;
+  const children = [...(replanRecord?.generated_child_ids ?? [])].sort();
+  const receipt = durableCompletionRecordReceipt(completionRecord);
+  const proof = completionRecord?.delivery_receipt?.merged_delivery_reverification;
+  const git = proof?.git;
+  const binding = proof?.task_spec_binding;
+  if (!receipt.valid
+    || resolution?.reason !== 'orphaned_superseded_parent_clean_merged_delivery_reverified'
+    || resolution?.parent_todo_id !== parentId
+    || resolution?.parent_todo_sha256 !== completionRecord?.selected_todo_sha256
+    || resolution?.claim_id !== completionRecord?.claim_id
+    || resolution?.root_claim_id !== completionRecord?.root_claim_id
+    || resolution?.completion_record_sha256 !== sha256Json(completionRecord)
+    || !sameStrings([...(resolution?.generated_child_ids ?? [])].sort(), children)
+    || resolution?.candidate?.selected_todo_id !== parentId
+    || resolution?.candidate?.selected_todo_sha256 !== completionRecord?.selected_todo_sha256
+    || resolution?.candidate?.merge_commit_oid !== git?.merge_commit_oid
+    || resolution?.candidate?.first_parent_oid !== git?.first_parent_oid
+    || resolution?.candidate?.head_oid !== git?.head_oid
+    || resolution?.candidate?.task_spec_binding?.todo_id !== parentId
+    || resolution?.candidate?.task_spec_binding?.selected_todo_sha256 !== completionRecord?.selected_todo_sha256
+    || resolution?.candidate?.task_spec_binding?.head_oid !== git?.head_oid
+    || binding?.todo_id !== parentId
+    || binding?.selected_todo_sha256 !== completionRecord?.selected_todo_sha256
+    || binding?.head_oid !== git?.head_oid
+    || children.some((childId) => liveIds.has(childId) || supersededIds.has(childId) || completionIds.has(childId))) {
+    return false;
+  }
+  return true;
+}
+
+export function resolveTodoState({
+  todoText,
+  replanRecords = [],
+  completionRecords = [],
+  completionInvalidationRecords = [],
+  supersessionResolutionRecords = []
+}) {
   const blocks = checkboxBlocks(todoText);
   const knownIds = new Set();
   const liveIds = new Set();
@@ -314,13 +379,36 @@ export function resolveTodoState({ todoText, replanRecords = [], completionRecor
   const invalidatedCompletionKeys = new Set(completionInvalidationRecords.map((record) => (
     `${record.selected_todo_id.trim()}\u0000${record.invalidated_completion_claim_id.trim()}`
   )));
+  const completionIds = new Set(completionRecords
+    .map((record) => typeof record?.selected_todo_id === 'string' ? record.selected_todo_id.trim() : '')
+    .filter(Boolean));
+  const validSupersessionResolutionClaims = new Set();
+  for (const resolution of supersessionResolutionRecords) {
+    const replanRecord = normalizedReplans.find((record) => record.parent_todo_id === resolution.parent_todo_id
+      && sameStrings([...record.generated_child_ids].sort(), [...(resolution.generated_child_ids ?? [])].sort()));
+    const completionRecord = completionRecords.find((record) => (
+      record?.selected_todo_id === resolution.parent_todo_id
+      && record?.claim_id === resolution.claim_id
+    ));
+    if (replanRecord && completionRecord && validSupersessionResolution({
+      resolution,
+      completionRecord,
+      replanRecord,
+      liveIds,
+      supersededIds,
+      completionIds
+    })) {
+      validSupersessionResolutionClaims.add(`${resolution.parent_todo_id}\u0000${resolution.claim_id}`);
+    }
+  }
   for (const record of completionRecords) {
     const id = typeof record?.selected_todo_id === 'string' ? record.selected_todo_id.trim() : '';
     if (!id) {
       continue;
     }
     const claimId = typeof record?.claim_id === 'string' ? record.claim_id.trim() : '';
-    if (record.reason === 'source_parent_completed' || supersededIds.has(id)
+    const supersessionResolutionValid = validSupersessionResolutionClaims.has(`${id}\u0000${claimId}`);
+    if (record.reason === 'source_parent_completed' || (supersededIds.has(id) && !supersessionResolutionValid)
       || (claimId && invalidatedCompletionKeys.has(`${id}\u0000${claimId}`))) {
       invalidatedCompletionRecords.push(record);
       continue;
@@ -396,6 +484,8 @@ export function resolveTodoState({ todoText, replanRecords = [], completionRecor
     replanRecords: normalizedReplans,
     completionRecords,
     completionInvalidationRecords,
+    supersessionResolutionRecords,
+    supersessionResolvedIds: new Set([...validSupersessionResolutionClaims].map((key) => key.split('\u0000')[0])),
     invalidatedCompletionRecords,
     durableCompletionIds,
     unverifiedCompletionRecords,
@@ -413,7 +503,8 @@ export function loadTodoState(repoRoot, todoText, options = {}) {
       ...(options.additionalReplanRecords ?? [])
     ],
     completionRecords: readTodoCompletionRecords(repoRoot),
-    completionInvalidationRecords: readTodoCompletionInvalidationRecords(repoRoot)
+    completionInvalidationRecords: readTodoCompletionInvalidationRecords(repoRoot),
+    supersessionResolutionRecords: readTodoSupersessionResolutionRecords(repoRoot)
   });
 }
 
@@ -423,6 +514,7 @@ export function todoStateSummary(state) {
     superseded_todo_ids: [...state.supersededIds].sort(),
     resolved_todo_ids: [...state.resolvedIds].sort(),
     invalidated_completion_record_count: state.invalidatedCompletionRecords.length,
+    supersession_resolved_todo_ids: [...state.supersessionResolvedIds].sort(),
     unverified_archived_completion_ids: [...state.unverifiedArchivedCompletionIds].sort(),
     warnings: state.warnings,
     errors: state.errors

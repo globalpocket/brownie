@@ -7470,11 +7470,12 @@ if claim_smoke_section_enabled terminal; then
   merged_terminal_prompt="$(mktemp)"
   merged_terminal_bin="$(mktemp -d)"
   merged_terminal_runtime="$(mktemp)"
-  mkdir -p "$merged_terminal_workspace/.brownie" "$merged_terminal_workspace/scripts" "$merged_terminal_workspace/docs/architecture" "$merged_terminal_state/todo-claims"
+  mkdir -p "$merged_terminal_workspace/.brownie/private/phase-loop/todo-replans" "$merged_terminal_workspace/scripts" "$merged_terminal_workspace/docs/architecture" "$merged_terminal_state/todo-claims/contract-rebaselines"
   cp "$REPO_ROOT/docs/architecture/phase-loop-actor-separation-policy.json" "$merged_terminal_workspace/docs/architecture/phase-loop-actor-separation-policy.json"
   printf 'export const soak = "before";\n' > "$merged_terminal_workspace/scripts/soak.mjs"
+  printf 'export const next = true;\n' > "$merged_terminal_workspace/scripts/next.mjs"
   cat > "$merged_terminal_todo" <<'EOF'
-- [ ] E-merged-terminal-live: Patch only `scripts/soak.mjs`:
+- [ ] E-23d-merged-terminal-live: Patch only `scripts/soak.mjs`:
   Route: implementation.
   Depends on: <none>.
   Completion condition: reviewed delivery is reverified before consumption.
@@ -7492,13 +7493,12 @@ EOF
   git -C "$merged_terminal_workspace" switch -c implementation >/dev/null
   printf 'export const soak = "merged";\n' > "$merged_terminal_workspace/scripts/soak.mjs"
   git -C "$merged_terminal_workspace" add scripts/soak.mjs
-  git -C "$merged_terminal_workspace" commit -m "implement merged terminal\n\nBrownie-Task-Todo: E-merged-terminal-live\nBrownie-Task-Spec-SHA256: $selected_hash" >/dev/null
+  git -C "$merged_terminal_workspace" commit -m "implement merged terminal\n\nBrownie-Task-Todo: E-23d-merged-terminal-live\nBrownie-Task-Spec-SHA256: $selected_hash" >/dev/null
   git -C "$merged_terminal_workspace" switch main >/dev/null
   git -C "$merged_terminal_workspace" merge --no-ff --no-edit implementation >/dev/null
-  # phase-loop.sh is an executable entrypoint, so sourcing it would invoke its
-  # CLI dispatcher rather than expose the helper.  Mirror the controller's
-  # documented fingerprint inputs without executing the entrypoint.
-  controller_fp="$(cd "$REPO_ROOT" && shasum -a 256 phase-loop.sh scripts/phase-loop-todo-evaluator.mjs | shasum -a 256 | awk '{print $1}')"
+  # Bind the archived terminal record to the implementation's actual
+  # controller fingerprint, not a test-side reconstruction of its inputs.
+  controller_fp="$(script="$PHASE_LOOP"; set --; source "$script" >/dev/null; phase_loop_controller_fingerprint)"
   cat > "$merged_terminal_state/todo-claims/stale-terminal.json" <<EOF
 {"claim_id":"legacy-terminal","selected_todo":$(python3 - "$merged_terminal_todo" <<'PY'
 import json,pathlib,sys
@@ -7506,7 +7506,70 @@ print(json.dumps(pathlib.Path(sys.argv[1]).read_text()))
 PY
 ),"status":"failed","archive_reason":"terminal_failure_blocked_evidence_failed","retry_eligible":false}
 EOF
-  printf '{"block_reason":"terminal_runtime_failure","controller_fingerprint":"%s","selected_todo_sha256":"%s","retry_cap":0}\n' "$controller_fp" "$selected_hash" > "$merged_terminal_state/todo-claims/blocked.jsonl"
+  # Match the production shape: target-01 has archived terminal attempts and
+  # a blocked ledger, but every record is bound to this exact parent split and
+  # contract rebaseline. These records are provenance, not child completion or
+  # a current claim, so only the independently verified parent delivery can
+  # re-enter Runtime re-verification.
+  python3 - "$merged_terminal_state/todo-claims" <<'PY'
+import hashlib,json,pathlib,sys
+
+claims=pathlib.Path(sys.argv[1])
+parent="E-23d-merged-terminal-live"
+child=f"{parent}-target-01"
+selected=(f"- [ ] {child}: Patch only `scripts/soak.mjs`:\n"
+          "  Route: implementation.\n"
+          f"  Source TODO: {parent}.\n"
+          "  Depends on: <none>.\n"
+          "  Completion condition: archived child failure remains provenance only.\n"
+          "  Forbidden changes: do not edit unrelated files.\n"
+          "  Verification: run `node --check scripts/soak.mjs`.")
+digest=hashlib.sha256(selected.encode()).hexdigest()
+archive={
+  "claim_id":"legacy-terminal-child",
+  "selected_todo":selected,
+  "selected_todo_id":child,
+  "selected_todo_sha256":digest,
+  "status":"failed",
+  "archive_reason":"terminal_failure_retry",
+  "claim_admission":{"claim_id":"legacy-terminal-child","selected_todo_id":child,"selected_todo_sha256":digest},
+  "failure_history":[{"status":"failed","selected_todo_sha256":digest}],
+  "status_history":[{"status":"claimed"},{"status":"in_progress"},{"status":"failed"}],
+}
+(claims / "stale-terminal-child.json").write_text(json.dumps(archive)+"\n", encoding="utf-8")
+stale_snapshot={
+  **archive,
+  "claim_id":"legacy-terminal-child-stale-snapshot",
+  "status":"stale_snapshot_rejected",
+  "claim_admission":{**archive["claim_admission"],"claim_id":"legacy-terminal-child-stale-snapshot"},
+  "status_history":[*archive["status_history"],{"status":"stale_snapshot_rejected"}],
+}
+stale_snapshot.pop("archive_reason")
+(claims / "stale-terminal-child-stale-snapshot.json").write_text(json.dumps(stale_snapshot)+"\n", encoding="utf-8")
+(claims / "blocked.jsonl").write_text(json.dumps({
+  "selected_todo":selected,
+  "selected_todo_id":child,
+  "selected_todo_sha256":digest,
+  "terminal_failure":True,
+  "block_reason":"terminal_runtime_failure",
+})+"\n", encoding="utf-8")
+(claims / "contract-rebaselines" / "orphaned-split.json").write_text(json.dumps({
+  "schema_version":1,
+  "record_type":"todo_contract_rebaseline",
+  "status":"approved",
+  "parent_todo_ids":[parent],
+  "target_todo_ids":[parent],
+  "contract_changes":[{"todo_id":parent}],
+})+"\n", encoding="utf-8")
+PY
+  printf '{"block_reason":"terminal_runtime_failure","controller_fingerprint":"%s","selected_todo_sha256":"%s","retry_cap":0}\n' "$controller_fp" "$selected_hash" >> "$merged_terminal_state/todo-claims/blocked.jsonl"
+  # Production-shaped orphaned split: the parent remains pending, a historical
+  # replan marked it superseded, and child history is terminal-only provenance
+  # from that split. Only the exact clean merged delivery candidate may recover
+  # this parent for re-verification.
+  cat > "$merged_terminal_workspace/.brownie/private/phase-loop/todo-replans/orphaned-split.json" <<'JSON'
+{"schema_version":1,"record_type":"todo_replan","operation":"split_parent_into_children","parent_status":"superseded_by_children","parent_todo_id":"E-23d-merged-terminal-live","generated_child_ids":["E-23d-merged-terminal-live-target-01","E-23d-merged-terminal-live-target-02"]}
+JSON
   cat > "$merged_terminal_runtime" <<'SH'
 #!/usr/bin/env bash
 set -eu
@@ -7523,7 +7586,7 @@ if [ "$1" = api ]; then printf '[]\n'; exit 0; fi
 exit 64
 SH
   chmod +x "$merged_terminal_bin/gh"
-  todo_before="$(cat "$merged_terminal_todo")"; breakdown_before="$(cat "$merged_terminal_breakdown")"; archive_before="$(cat "$merged_terminal_state/todo-claims/stale-terminal.json")"
+  todo_before="$(cat "$merged_terminal_todo")"; breakdown_before="$(cat "$merged_terminal_breakdown")"; archive_before="$(cat "$merged_terminal_state/todo-claims/stale-terminal.json")"; child_archive_before="$(cat "$merged_terminal_state/todo-claims/stale-terminal-child.json")"; child_snapshot_before="$(cat "$merged_terminal_state/todo-claims/stale-terminal-child-stale-snapshot.json")"; child_ledger_before="$(cat "$merged_terminal_state/todo-claims/blocked.jsonl")"; rebaseline_before="$(cat "$merged_terminal_state/todo-claims/contract-rebaselines/orphaned-split.json")"
   merged_terminal_claim_file="$(mktemp)"
   # Reverification is a review-role operation.  Supply an isolated explicit
   # review profile under this shard's control root so the real actor preflight
@@ -7545,7 +7608,7 @@ claim=json.loads(pathlib.Path(sys.argv[1]).read_text())
 runtime_claim=pathlib.Path(sys.argv[2]).read_text().strip()
 status=json.loads(pathlib.Path(sys.argv[3]).read_text())
 log=pathlib.Path(sys.argv[4]).read_text()
-assert claim['selected_todo_id']=='E-merged-terminal-live', claim
+assert claim['selected_todo_id']=='E-23d-merged-terminal-live', claim
 assert claim['selected_todo_sha256']==hashlib.sha256(claim['selected_todo'].encode()).hexdigest(), claim
 assert claim['claim_id']==runtime_claim, (claim,runtime_claim)
 assert status['status']=='integrity_blocked', status
@@ -7553,13 +7616,84 @@ assert str(status.get('exit_code'))=='76', status
 assert 'exact clean merge has no observable merged pull request' in status['detail'], status
 # This bypass log is emitted only by the CLAIM_CREATED_THIS_RUN path. Bind both
 # it and the claimed transition to the exact runtime claim, not any old run.
-assert f'event=todo.claimed result={{"ok":true,"code":"trajectory_recorded","task_id":"E-merged-terminal-live@{claim["claim_id"]}"}}' in log, log
+assert f'event=todo.claimed result={{"ok":true,"code":"trajectory_recorded","task_id":"E-23d-merged-terminal-live@{claim["claim_id"]}"}}' in log, log
 assert f'active_fresh_claim_stable_block_bypassed_for_clean_merged_delivery=true claim={claim["claim_id"]}' in log, log
 PY
   test "$(cat "$merged_terminal_todo")" = "$todo_before"
   test "$(cat "$merged_terminal_breakdown")" = "$breakdown_before"
   test "$(cat "$merged_terminal_state/todo-claims/stale-terminal.json")" = "$archive_before"
+  test "$(cat "$merged_terminal_state/todo-claims/stale-terminal-child.json")" = "$child_archive_before"
+  test "$(cat "$merged_terminal_state/todo-claims/stale-terminal-child-stale-snapshot.json")" = "$child_snapshot_before"
+  test "$(cat "$merged_terminal_state/todo-claims/blocked.jsonl")" = "$child_ledger_before"
+  test "$(cat "$merged_terminal_state/todo-claims/contract-rebaselines/orphaned-split.json")" = "$rebaseline_before"
   ! rg -q 'TODO-decompose|todo.completed' "$merged_terminal_state" "$merged_terminal_todo" "$merged_terminal_breakdown"
+
+  # A second, independent run uses the same production-shaped split but now
+  # supplies the exact PR/review/CI/merge facts.  This must use the public
+  # run-once path all the way through Runtime and re-verification.  A normal
+  # completion record alone is insufficient for a superseded parent: the
+  # progress writer must add the tightly bound resolution record that makes
+  # exactly this parent resolved without rewriting the public split.
+  rm -f "$merged_terminal_state/todo-claims/current.json"
+  merged_terminal_success_claim_file="$(mktemp)"
+  merged_terminal_merge_oid="$(git -C "$merged_terminal_workspace" rev-parse HEAD)"
+  merged_terminal_head_oid="$(git -C "$merged_terminal_workspace" rev-parse HEAD^2)"
+  cat > "$merged_terminal_bin/gh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+if [ "$1" = api ] && [ "${2:-}" = user ]; then printf 'fixture-review\n'; exit 0; fi
+if [ "$1" = api ] && [ "${2:-}" = graphql ]; then printf 'fixture-review\n'; exit 0; fi
+if [ "$1" = api ]; then printf '42\n'; exit 0; fi
+if [ "$1" = pr ] && [ "${2:-}" = view ]; then
+  cat <<JSON
+{"id":"PR_fixture_42","number":42,"url":"https://github.com/fixture-owner/fixture-repository/pull/42","title":"E-23d merged terminal fixture","body":"Bounded E-23d delivery fixture.","author":{"login":"fixture-implementation"},"state":"MERGED","mergedAt":"2026-11-05T00:00:00Z","mergeCommit":{"oid":"${PHASE_LOOP_TEST_MERGE_OID:?}"},"headRefOid":"${PHASE_LOOP_TEST_HEAD_OID:?}","reviews":[{"author":{"login":"fixture-review"},"state":"APPROVED","submittedAt":"2026-11-05T00:00:00Z","commit":{"oid":"${PHASE_LOOP_TEST_HEAD_OID:?}"}}],"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}
+JSON
+  exit 0
+fi
+exit 64
+SH
+  chmod +x "$merged_terminal_bin/gh"
+  PATH="$merged_terminal_bin:$PATH" PHASE_LOOP_STATE_DIR="$merged_terminal_state" PHASE_LOOP_PROMPT="$merged_terminal_prompt" PHASE_LOOP_TODO="$merged_terminal_todo" PHASE_LOOP_TODO_BREAKDOWN="$merged_terminal_breakdown" PHASE_LOOP_ACTOR_CREDENTIALS="$merged_terminal_review_credentials" BROWNIE_BIN="$merged_terminal_runtime" PHASE_LOOP_WORKSPACE_ROOT="$merged_terminal_workspace" PHASE_LOOP_TEST_RUNTIME_CLAIM_FILE="$merged_terminal_success_claim_file" PHASE_LOOP_TEST_MERGE_OID="$merged_terminal_merge_oid" PHASE_LOOP_TEST_HEAD_OID="$merged_terminal_head_oid" run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+  python3 - "$merged_terminal_state/todo-claims/current.json" "$merged_terminal_success_claim_file" "$merged_terminal_state/status.json" "$merged_terminal_workspace/.brownie/private/phase-loop/todo-supersession-resolutions" <<'PY'
+import hashlib,json,pathlib,sys
+claim=json.loads(pathlib.Path(sys.argv[1]).read_text())
+runtime_claim=pathlib.Path(sys.argv[2]).read_text().strip()
+status=json.loads(pathlib.Path(sys.argv[3]).read_text())
+records=sorted(pathlib.Path(sys.argv[4]).glob('*.json'))
+assert claim['selected_todo_id']=='E-23d-merged-terminal-live', claim
+assert claim['claim_id']==runtime_claim, (claim,runtime_claim)
+assert status['status']=='last_run_succeeded', status
+assert len(records)==1, records
+resolution=json.loads(records[0].read_text())
+assert resolution['record_type']=='superseded_parent_clean_merged_delivery_resolution', resolution
+assert resolution['parent_todo_id']==claim['selected_todo_id'], resolution
+assert resolution['parent_todo_sha256']==claim['selected_todo_sha256'], resolution
+assert resolution['claim_id']==claim['claim_id'], resolution
+assert resolution['candidate']['merge_commit_oid'], resolution
+PY
+  # Prove that run-once itself did not rewrite either public queue file or a
+  # historical split record before introducing the downstream scheduler probe.
+  test "$(cat "$merged_terminal_todo")" = "$todo_before"
+  test "$(cat "$merged_terminal_breakdown")" = "$breakdown_before"
+  test "$(cat "$merged_terminal_state/todo-claims/stale-terminal.json")" = "$archive_before"
+  test "$(cat "$merged_terminal_state/todo-claims/stale-terminal-child.json")" = "$child_archive_before"
+  test "$(cat "$merged_terminal_state/todo-claims/stale-terminal-child-stale-snapshot.json")" = "$child_snapshot_before"
+  test "$(cat "$merged_terminal_state/todo-claims/blocked.jsonl")" = "$child_ledger_before"
+  test "$(cat "$merged_terminal_state/todo-claims/contract-rebaselines/orphaned-split.json")" = "$rebaseline_before"
+  # Add the successor only after the successful run-once transition.  This is
+  # a scheduler probe, not a controller mutation: without the bound durable
+  # resolution record below it remains blocked by the historical split.
+  cat >> "$merged_terminal_todo" <<'EOF'
+
+- [ ] E-23d-merged-terminal-next: Patch only `scripts/next.mjs`:
+  Route: implementation.
+  Depends on: E-23d-merged-terminal-live.
+  Completion condition: waits for the parent delivery resolution.
+  Forbidden changes: do not bypass the parent completion receipt.
+  Verification: run `node --check scripts/next.mjs`.
+EOF
+  merged_terminal_next="$(PHASE_LOOP_WORKSPACE_ROOT="$merged_terminal_workspace" node "$REPO_ROOT/scripts/phase-loop-todo-evaluator.mjs" select --todo "$merged_terminal_todo" --breakdown "$merged_terminal_breakdown" --claim-dir "$merged_terminal_state/todo-claims")"
+  printf '%s' "$merged_terminal_next" | rg -q 'E-23d-merged-terminal-next'
 fi
 
 if [ "$PHASE_LOOP_CLAIM_SMOKE_SECTION" = "review-rework" ]; then
