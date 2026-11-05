@@ -459,6 +459,16 @@ function isCommitSha256(value) {
   return typeof value === 'string' && /^sha256:[a-f0-9]{40}$/u.test(value);
 }
 
+function targetCoordinates(target) {
+  const knownTargets = {
+    'darwin-arm64': { platform: 'darwin', architecture: 'arm64' },
+    'linux-arm64': { platform: 'linux', architecture: 'arm64' },
+    'linux-x64': { platform: 'linux', architecture: 'x64' },
+    'win32-x64': { platform: 'win32', architecture: 'x64' }
+  };
+  return knownTargets[target] ?? null;
+}
+
 function releaseArchiveForTarget(repoRoot, artifact) {
   const evidence = artifact.artifact_evidence ?? {};
   const declared = evidence.archive ?? artifact.archive;
@@ -520,12 +530,17 @@ export function buildReleaseEvidenceRoundtripBinding(options = {}) {
     }
     if (typeof artifactEvidence.platform !== 'string' || artifactEvidence.platform.length === 0) errors.push('platform_missing');
     if (typeof artifactEvidence.arch !== 'string' || artifactEvidence.arch.length === 0) errors.push('architecture_missing');
+    const expectedCoordinates = targetCoordinates(target);
+    if (!expectedCoordinates) errors.push('target_unsupported');
+    if (expectedCoordinates && artifactEvidence.platform !== expectedCoordinates.platform) errors.push('target_platform_mismatch');
+    if (expectedCoordinates && artifactEvidence.arch !== expectedCoordinates.architecture) errors.push('target_architecture_mismatch');
     if (!archive || !isSha256(archive.sha256)) errors.push('package_sha256_missing');
     if (!isSha256(binarySha256)) errors.push('binary_sha256_missing');
     if (!isSha256(runtimeSha256)) errors.push('runtime_sha256_missing');
 
     if (journey?.evidence_id !== 'brownie-release-artifact-runtime-journey-v1') errors.push('roundtrip_journey_missing_or_invalid');
     if (journey?.target !== target) errors.push('roundtrip_journey_target_mismatch');
+    if (journey?.workflow_run_id !== workflowRunId) errors.push('roundtrip_journey_workflow_run_mismatch');
     if (journey?.artifact?.archive_sha256 !== archive?.sha256) errors.push('roundtrip_journey_package_sha_mismatch');
     if (journey?.artifact?.artifact_sha256 !== binarySha256) errors.push('roundtrip_journey_binary_sha_mismatch');
     if (journey?.artifact?.runtime_sha256 !== runtimeSha256) errors.push('roundtrip_journey_runtime_sha_mismatch');
@@ -533,6 +548,7 @@ export function buildReleaseEvidenceRoundtripBinding(options = {}) {
 
     if (soak?.evidence_id !== 'brownie-release-artifact-stateful-soak-v1') errors.push('stateful_soak_missing_or_invalid');
     if (soak?.target !== target) errors.push('stateful_soak_target_mismatch');
+    if (soak?.workflow_run_id !== workflowRunId) errors.push('stateful_soak_workflow_run_mismatch');
     if (soak?.artifact?.archive_sha256 !== archive?.sha256) errors.push('stateful_soak_package_sha_mismatch');
     if (soak?.artifact?.artifact_sha256 !== binarySha256) errors.push('stateful_soak_binary_sha_mismatch');
     if (soak?.artifact?.runtime_sha256 !== runtimeSha256) errors.push('stateful_soak_runtime_sha_mismatch');
