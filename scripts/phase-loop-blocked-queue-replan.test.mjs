@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { verifyMergedDeliveryReverification } from './phase-loop-delivery-integrity.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const phaseLoop = path.join(repoRoot, 'phase-loop.sh');
@@ -249,6 +250,111 @@ test('keeps a valid claim through review-rework after supported same-head queue 
   assert.equal(claim.claim_refresh_context.queue_fingerprint, refreshedFingerprint);
   assert.equal(claim.claim_refresh_context.queue_generation, 2);
   assert.ok(!fs.existsSync(path.join(claims, 'incomplete-claim-quarantine')));
+});
+
+test('liveness claims a clean merged delivery after an archived terminal attempt without mutating the queue', () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-legacy-terminal-merged-claim-'));
+  const state = path.join(workspace, '.brownie/private/phase-loop-state');
+  const todo = path.join(workspace, '.brownie/todo.md');
+  const breakdown = path.join(workspace, '.brownie/todo-breakdown.md');
+  const claims = path.join(state, 'todo-claims');
+  const target = path.join(workspace, 'scripts/soak.mjs');
+  const selected = '- [ ] E-legacy-terminal-merged-soak: Patch only `scripts/soak.mjs`:\n  Route: implementation.\n  Depends on: <none>.\n  Completion condition: a reviewed merged soak is reverified before queue consumption.\n  Forbidden changes: do not treat a terminal history record as completion.\n  Verification: run `node --check scripts/soak.mjs`.';
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.mkdirSync(path.dirname(todo), { recursive: true });
+  fs.mkdirSync(claims, { recursive: true });
+  fs.mkdirSync(path.join(state, 'logs'), { recursive: true });
+  fs.writeFileSync(target, 'export const soak = "before";\n');
+  fs.writeFileSync(todo, `${selected}\n`);
+  fs.writeFileSync(breakdown, '# Existing breakdown remains byte-for-byte stable.\n');
+  fs.writeFileSync(path.join(workspace, 'package.json'), JSON.stringify({ private: true }));
+  execFileSync('git', ['init', '-b', 'main'], { cwd: workspace, stdio: 'ignore' });
+  execFileSync('git', ['config', 'user.email', 'fixture@example.invalid'], { cwd: workspace });
+  execFileSync('git', ['config', 'user.name', 'fixture'], { cwd: workspace });
+  execFileSync('git', ['add', '.'], { cwd: workspace, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-m', 'baseline'], { cwd: workspace, stdio: 'ignore' });
+  execFileSync('git', ['switch', '-c', 'implementation'], { cwd: workspace, stdio: 'ignore' });
+  fs.writeFileSync(target, 'export const soak = "merged";\n');
+  execFileSync('git', ['add', 'scripts/soak.mjs'], { cwd: workspace, stdio: 'ignore' });
+  const selectedHash = crypto.createHash('sha256').update(selected).digest('hex');
+  execFileSync('git', ['commit', '-m', `implement soak\n\nBrownie-Task-Todo: E-legacy-terminal-merged-soak\nBrownie-Task-Spec-SHA256: ${selectedHash}`], { cwd: workspace, stdio: 'ignore' });
+  execFileSync('git', ['switch', 'main'], { cwd: workspace, stdio: 'ignore' });
+  execFileSync('git', ['merge', '--no-ff', '--no-edit', 'implementation'], { cwd: workspace, stdio: 'ignore' });
+
+  const controller = execFileSync('bash', ['-c', 'script=$1; set --; source "$script" >/dev/null; phase_loop_controller_fingerprint', '_', phaseLoop], { cwd: repoRoot, encoding: 'utf8' }).trim();
+  const archivedPath = path.join(claims, 'stale-legacy-terminal.json');
+  const archived = {
+    claim_id: 'todo-g630-legacy', selected_todo: selected, status: 'failed',
+    archive_reason: 'terminal_failure_blocked_evidence_failed', retry_eligible: false
+  };
+  fs.writeFileSync(archivedPath, `${JSON.stringify(archived)}\n`);
+  fs.writeFileSync(path.join(claims, 'blocked.jsonl'), `${JSON.stringify({
+    block_reason: 'terminal_runtime_failure', controller_fingerprint: controller,
+    selected_todo_sha256: selectedHash, retry_cap: 0
+  })}\n`);
+  const todoBefore = fs.readFileSync(todo, 'utf8');
+  const breakdownBefore = fs.readFileSync(breakdown, 'utf8');
+  const archiveBefore = fs.readFileSync(archivedPath, 'utf8');
+
+  const output = execFileSync('bash', [
+    '-c',
+    'script=$1; set --; source "$script" >/dev/null; claim_first_pending_todo legacy-terminal-liveness; python3 - "$TODO_CLAIM_FILE" <<\'PY\'\nimport json, sys\nprint(json.dumps(json.load(open(sys.argv[1])), sort_keys=True))\nPY',
+    '_', phaseLoop
+  ], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PHASE_LOOP_STATE_DIR: state,
+      PHASE_LOOP_TODO: todo,
+      PHASE_LOOP_TODO_BREAKDOWN: breakdown,
+      PHASE_LOOP_WORKSPACE_ROOT: workspace
+    }
+  });
+  const claim = JSON.parse(output.trim().split('\n').at(-1));
+  assert.equal(claim.status, 'in_progress');
+  assert.equal(claim.selected_todo_id, 'E-legacy-terminal-merged-soak');
+  assert.equal(claim.selected_todo_sha256, selectedHash);
+  assert.match(claim.claim_id, /^todo-g\d+-[a-f0-9]{12}(?:-r\d+)?$/);
+  assert.equal(fs.readFileSync(todo, 'utf8'), todoBefore);
+  assert.equal(fs.readFileSync(breakdown, 'utf8'), breakdownBefore);
+  assert.equal(fs.readFileSync(archivedPath, 'utf8'), archiveBefore);
+  assert.equal(execFileSync('git', ['diff', '--name-only', 'HEAD', '--', 'scripts/soak.mjs'], { cwd: workspace, encoding: 'utf8' }), '');
+  assert.equal(execFileSync('git', ['ls-files', '--others', '--exclude-standard', '--', 'scripts/soak.mjs'], { cwd: workspace, encoding: 'utf8' }), '');
+  assert.match(fs.readFileSync(path.join(state, 'logs', 'supervisor.log'), 'utf8'), /terminal_failure_retry_suppression_bypassed_for_clean_merged_delivery=true/);
+  const dispatchGate = execFileSync('bash', [
+    '-c', 'script=$1; set --; source "$script" >/dev/null; CLAIM_CREATED_THIS_RUN=1; active_fresh_claim_has_clean_merged_delivery_candidate; printf "dispatch_gate=%s\\n" "$?"',
+    '_', phaseLoop
+  ], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PHASE_LOOP_STATE_DIR: state,
+      PHASE_LOOP_TODO: todo,
+      PHASE_LOOP_TODO_BREAKDOWN: breakdown,
+      PHASE_LOOP_WORKSPACE_ROOT: workspace
+    }
+  });
+  assert.match(dispatchGate, /dispatch_gate=0/);
+  assert.match(fs.readFileSync(path.join(state, 'logs', 'supervisor.log'), 'utf8'), /active_fresh_claim_stable_block_bypassed_for_clean_merged_delivery=true/);
+  // The same archived-terminal/current-claim-absent fixture must cross the
+  // pre-dispatch gate and bind fake Runtime execution to re-verification; a
+  // fresh claim alone is not liveness success.
+  const mergeOid = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workspace, encoding: 'utf8' }).trim();
+  const headOid = execFileSync('git', ['rev-parse', 'HEAD^2'], { cwd: workspace, encoding: 'utf8' }).trim();
+  const reverified = verifyMergedDeliveryReverification({
+    repoRoot: workspace,
+    claim,
+    stdoutPayload: { run: { runtime_claim_id: claim.claim_id, payload_status: 'task_executed', reported_executed_count: 1 } },
+    review: {
+      pr_url: 'https://example.invalid/pull/1', pr_number: 1, state: 'MERGED', merge_commit_oid: mergeOid, head_oid: headOid,
+      author: 'implementation', reviewer: 'review', merge_actor: 'review', merged_at: '2026-11-04T09:38:12Z', observed_at: '2026-11-04T11:39:21Z', approved: true, ci_passed: true,
+      latest_reviewer_review_state: 'APPROVED', latest_reviewer_review_commit_oid: headOid
+    },
+    reviewer: 'review', implementation: 'implementation'
+  });
+  assert.equal(reverified.valid, true, JSON.stringify(reverified));
 });
 
 test('claims a generated blocked-queue decomposition from the same TODO snapshot and CAS', () => {

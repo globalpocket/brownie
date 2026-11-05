@@ -7455,6 +7455,113 @@ assert "E-review-rework" in todo, todo
 PY
 fi
 
+if claim_smoke_section_enabled terminal; then
+  # End-to-end regression for the archived-terminal/no-current-claim shape.
+  # This uses the public run-once entrypoint: the fresh claim must survive the
+  # second pre-dispatch stable-block gate, invoke Runtime with that claim, and
+  # reach merged-delivery re-verification.  The fixture intentionally exposes
+  # no observable PR, so the only allowed terminal result is that one stable,
+  # actionable re-verification error; queue files and the archived attempt are
+  # immutable throughout.
+  merged_terminal_workspace="$(mktemp -d)"
+  merged_terminal_state="$(mktemp -d)"
+  merged_terminal_todo="$merged_terminal_workspace/.brownie/todo.md"
+  merged_terminal_breakdown="$merged_terminal_workspace/.brownie/todo-breakdown.md"
+  merged_terminal_prompt="$(mktemp)"
+  merged_terminal_bin="$(mktemp -d)"
+  merged_terminal_runtime="$(mktemp)"
+  mkdir -p "$merged_terminal_workspace/.brownie" "$merged_terminal_workspace/scripts" "$merged_terminal_workspace/docs/architecture" "$merged_terminal_state/todo-claims"
+  cp "$REPO_ROOT/docs/architecture/phase-loop-actor-separation-policy.json" "$merged_terminal_workspace/docs/architecture/phase-loop-actor-separation-policy.json"
+  printf 'export const soak = "before";\n' > "$merged_terminal_workspace/scripts/soak.mjs"
+  cat > "$merged_terminal_todo" <<'EOF'
+- [ ] E-merged-terminal-live: Patch only `scripts/soak.mjs`:
+  Route: implementation.
+  Depends on: <none>.
+  Completion condition: reviewed delivery is reverified before consumption.
+  Forbidden changes: do not treat terminal history as completion.
+  Verification: run `node --check scripts/soak.mjs`.
+EOF
+  printf '# Breakdown remains stable\n' > "$merged_terminal_breakdown"
+  printf 'base prompt\n' > "$merged_terminal_prompt"
+  git -C "$merged_terminal_workspace" init -b main >/dev/null
+  git -C "$merged_terminal_workspace" config user.name fixture
+  git -C "$merged_terminal_workspace" config user.email fixture@example.invalid
+  git -C "$merged_terminal_workspace" add . && git -C "$merged_terminal_workspace" commit -m base >/dev/null
+  git -C "$merged_terminal_workspace" remote add origin https://github.com/fixture-owner/fixture-repository.git
+  selected_hash="$(shasum -a 256 "$merged_terminal_todo" | awk '{print $1}')"
+  git -C "$merged_terminal_workspace" switch -c implementation >/dev/null
+  printf 'export const soak = "merged";\n' > "$merged_terminal_workspace/scripts/soak.mjs"
+  git -C "$merged_terminal_workspace" add scripts/soak.mjs
+  git -C "$merged_terminal_workspace" commit -m "implement merged terminal\n\nBrownie-Task-Todo: E-merged-terminal-live\nBrownie-Task-Spec-SHA256: $selected_hash" >/dev/null
+  git -C "$merged_terminal_workspace" switch main >/dev/null
+  git -C "$merged_terminal_workspace" merge --no-ff --no-edit implementation >/dev/null
+  # phase-loop.sh is an executable entrypoint, so sourcing it would invoke its
+  # CLI dispatcher rather than expose the helper.  Mirror the controller's
+  # documented fingerprint inputs without executing the entrypoint.
+  controller_fp="$(cd "$REPO_ROOT" && shasum -a 256 phase-loop.sh scripts/phase-loop-todo-evaluator.mjs | shasum -a 256 | awk '{print $1}')"
+  cat > "$merged_terminal_state/todo-claims/stale-terminal.json" <<EOF
+{"claim_id":"legacy-terminal","selected_todo":$(python3 - "$merged_terminal_todo" <<'PY'
+import json,pathlib,sys
+print(json.dumps(pathlib.Path(sys.argv[1]).read_text()))
+PY
+),"status":"failed","archive_reason":"terminal_failure_blocked_evidence_failed","retry_eligible":false}
+EOF
+  printf '{"block_reason":"terminal_runtime_failure","controller_fingerprint":"%s","selected_todo_sha256":"%s","retry_cap":0}\n' "$controller_fp" "$selected_hash" > "$merged_terminal_state/todo-claims/blocked.jsonl"
+  cat > "$merged_terminal_runtime" <<'SH'
+#!/usr/bin/env bash
+set -eu
+printf '%s\n' "${BROWNIE_PHASE_LOOP_CLAIM_ID:?missing claim}" > "${PHASE_LOOP_TEST_RUNTIME_CLAIM_FILE:?}"
+cat <<JSON
+{"command":"run","ok":true,"run":{"status":"task_executed","runtime_claim_id":"$BROWNIE_PHASE_LOOP_CLAIM_ID","reported_executed_count":1,"task_execution_confirmed":true,"terminal_completion_final_state":"Failed","terminal_completion_task_status":"Failed","completion_closure_terminal_task_count":1,"task_execution":{"started":true,"target_files":["scripts/soak.mjs"],"verification_commands":["node --check scripts/soak.mjs"]},"completed":false,"blocked":true,"retryable":false,"terminal_failure":true,"controller_action":"stop","stop_class":"terminal_failure","stop_reason":"terminal_completion_evidence_missing","next_action":"inspect_progress_overview","next_invocation":null,"automation":{"schema_version":1,"status":"terminal_failure","controller_action":"stop","stop_class":"terminal_failure","stop_reason":"terminal_completion_evidence_missing","completed":false,"blocked":true,"retryable":false,"terminal_failure":true,"task_id":"merged-terminal","run_id":"merged-terminal-run","next_action":"inspect_progress_overview","next_invocation":null}}}
+JSON
+SH
+  chmod +x "$merged_terminal_runtime"
+  cat > "$merged_terminal_bin/gh" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = api ] && [ "${2:-}" = user ]; then printf 'fixture-review\n'; exit 0; fi
+if [ "$1" = api ]; then printf '[]\n'; exit 0; fi
+exit 64
+SH
+  chmod +x "$merged_terminal_bin/gh"
+  todo_before="$(cat "$merged_terminal_todo")"; breakdown_before="$(cat "$merged_terminal_breakdown")"; archive_before="$(cat "$merged_terminal_state/todo-claims/stale-terminal.json")"
+  merged_terminal_claim_file="$(mktemp)"
+  # Reverification is a review-role operation.  Supply an isolated explicit
+  # review profile under this shard's control root so the real actor preflight
+  # passes without reading a developer account or a production credential.
+  merged_terminal_review_profile="$PHASE_LOOP_CONTROL_ROOT/.brownie/private/profiles/review"
+  merged_terminal_review_credentials="$PHASE_LOOP_CONTROL_ROOT/.brownie/private/merged-terminal-review-credentials.json"
+  mkdir -p "$merged_terminal_review_profile"
+  cat > "$merged_terminal_review_credentials" <<'JSON'
+{"schema_version":1,"roles":{"review":{"kind":"repository-private","github_config_dir":"profiles/review"}}}
+JSON
+  set +e
+  PATH="$merged_terminal_bin:$PATH" PHASE_LOOP_STATE_DIR="$merged_terminal_state" PHASE_LOOP_PROMPT="$merged_terminal_prompt" PHASE_LOOP_TODO="$merged_terminal_todo" PHASE_LOOP_TODO_BREAKDOWN="$merged_terminal_breakdown" PHASE_LOOP_ACTOR_CREDENTIALS="$merged_terminal_review_credentials" BROWNIE_BIN="$merged_terminal_runtime" PHASE_LOOP_WORKSPACE_ROOT="$merged_terminal_workspace" PHASE_LOOP_TEST_RUNTIME_CLAIM_FILE="$merged_terminal_claim_file" run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null
+  merged_terminal_exit="$?"
+  set -e
+  test "$merged_terminal_exit" = 76
+  python3 - "$merged_terminal_state/todo-claims/current.json" "$merged_terminal_claim_file" "$merged_terminal_state/status.json" "$merged_terminal_state/logs/supervisor.log" <<'PY'
+import hashlib,json,pathlib,sys
+claim=json.loads(pathlib.Path(sys.argv[1]).read_text())
+runtime_claim=pathlib.Path(sys.argv[2]).read_text().strip()
+status=json.loads(pathlib.Path(sys.argv[3]).read_text())
+log=pathlib.Path(sys.argv[4]).read_text()
+assert claim['selected_todo_id']=='E-merged-terminal-live', claim
+assert claim['selected_todo_sha256']==hashlib.sha256(claim['selected_todo'].encode()).hexdigest(), claim
+assert claim['claim_id']==runtime_claim, (claim,runtime_claim)
+assert status['status']=='integrity_blocked', status
+assert str(status.get('exit_code'))=='76', status
+assert 'exact clean merge has no observable merged pull request' in status['detail'], status
+# This bypass log is emitted only by the CLAIM_CREATED_THIS_RUN path. Bind both
+# it and the claimed transition to the exact runtime claim, not any old run.
+assert f'event=todo.claimed result={{"ok":true,"code":"trajectory_recorded","task_id":"E-merged-terminal-live@{claim["claim_id"]}"}}' in log, log
+assert f'active_fresh_claim_stable_block_bypassed_for_clean_merged_delivery=true claim={claim["claim_id"]}' in log, log
+PY
+  test "$(cat "$merged_terminal_todo")" = "$todo_before"
+  test "$(cat "$merged_terminal_breakdown")" = "$breakdown_before"
+  test "$(cat "$merged_terminal_state/todo-claims/stale-terminal.json")" = "$archive_before"
+  ! rg -q 'TODO-decompose|todo.completed' "$merged_terminal_state" "$merged_terminal_todo" "$merged_terminal_breakdown"
+fi
+
 if [ "$PHASE_LOOP_CLAIM_SMOKE_SECTION" = "review-rework" ]; then
   assert_repository_state_unchanged
   echo "phase-loop claim smoke passed"
