@@ -7481,6 +7481,13 @@ if claim_smoke_section_enabled terminal; then
   Completion condition: reviewed delivery is reverified before consumption.
   Forbidden changes: do not treat terminal history as completion.
   Verification: run `node --check scripts/soak.mjs`.
+
+- [ ] E-23e-merged-terminal-downstream: Patch only `scripts/next.mjs`:
+  Route: implementation.
+  Depends on: E-23d-merged-terminal-live.
+  Completion condition: waits for the parent delivery resolution without preempting its re-verification.
+  Forbidden changes: do not bypass the parent completion receipt.
+  Verification: run `node --check scripts/next.mjs`.
 EOF
   printf '# Breakdown remains stable\n' > "$merged_terminal_breakdown"
   printf 'base prompt\n' > "$merged_terminal_prompt"
@@ -7489,7 +7496,17 @@ EOF
   git -C "$merged_terminal_workspace" config user.email fixture@example.invalid
   git -C "$merged_terminal_workspace" add . && git -C "$merged_terminal_workspace" commit -m base >/dev/null
   git -C "$merged_terminal_workspace" remote add origin https://github.com/fixture-owner/fixture-repository.git
-  selected_hash="$(shasum -a 256 "$merged_terminal_todo" | awk '{print $1}')"
+  selected_hash="$(python3 - "$merged_terminal_todo" <<'PY'
+import hashlib
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+selected = re.split(r'\n\n(?=- \[ \] E-23e-merged-terminal-downstream:)', text, maxsplit=1)[0]
+print(hashlib.sha256(selected.encode()).hexdigest())
+PY
+)"
   git -C "$merged_terminal_workspace" switch -c implementation >/dev/null
   printf 'export const soak = "merged";\n' > "$merged_terminal_workspace/scripts/soak.mjs"
   git -C "$merged_terminal_workspace" add scripts/soak.mjs
@@ -7654,15 +7671,17 @@ exit 64
 SH
   chmod +x "$merged_terminal_bin/gh"
   PATH="$merged_terminal_bin:$PATH" PHASE_LOOP_STATE_DIR="$merged_terminal_state" PHASE_LOOP_PROMPT="$merged_terminal_prompt" PHASE_LOOP_TODO="$merged_terminal_todo" PHASE_LOOP_TODO_BREAKDOWN="$merged_terminal_breakdown" PHASE_LOOP_ACTOR_CREDENTIALS="$merged_terminal_review_credentials" BROWNIE_BIN="$merged_terminal_runtime" PHASE_LOOP_WORKSPACE_ROOT="$merged_terminal_workspace" PHASE_LOOP_TEST_RUNTIME_CLAIM_FILE="$merged_terminal_success_claim_file" PHASE_LOOP_TEST_MERGE_OID="$merged_terminal_merge_oid" PHASE_LOOP_TEST_HEAD_OID="$merged_terminal_head_oid" run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
-  python3 - "$merged_terminal_state/todo-claims/current.json" "$merged_terminal_success_claim_file" "$merged_terminal_state/status.json" "$merged_terminal_workspace/.brownie/private/phase-loop/todo-supersession-resolutions" <<'PY'
+  python3 - "$merged_terminal_state/todo-claims/current.json" "$merged_terminal_success_claim_file" "$merged_terminal_state/status.json" "$merged_terminal_workspace/.brownie/private/phase-loop/todo-supersession-resolutions" "$merged_terminal_state/logs/supervisor.log" <<'PY'
 import hashlib,json,pathlib,sys
 claim=json.loads(pathlib.Path(sys.argv[1]).read_text())
 runtime_claim=pathlib.Path(sys.argv[2]).read_text().strip()
 status=json.loads(pathlib.Path(sys.argv[3]).read_text())
 records=sorted(pathlib.Path(sys.argv[4]).glob('*.json'))
+log=pathlib.Path(sys.argv[5]).read_text()
 assert claim['selected_todo_id']=='E-23d-merged-terminal-live', claim
 assert claim['claim_id']==runtime_claim, (claim,runtime_claim)
 assert status['status']=='last_run_succeeded', status
+assert f'deterministic_todo_decomposition_deferred_for_clean_merged_delivery=true claim={claim["claim_id"]}' in log, log
 assert len(records)==1, records
 resolution=json.loads(records[0].read_text())
 assert resolution['record_type']=='superseded_parent_clean_merged_delivery_resolution', resolution
@@ -7680,9 +7699,10 @@ PY
   test "$(cat "$merged_terminal_state/todo-claims/stale-terminal-child-stale-snapshot.json")" = "$child_snapshot_before"
   test "$(cat "$merged_terminal_state/todo-claims/blocked.jsonl")" = "$child_ledger_before"
   test "$(cat "$merged_terminal_state/todo-claims/contract-rebaselines/orphaned-split.json")" = "$rebaseline_before"
-  # Add the successor only after the successful run-once transition.  This is
-  # a scheduler probe, not a controller mutation: without the bound durable
-  # resolution record below it remains blocked by the historical split.
+  # Add a second successor only after the successful run-once transition.
+  # The pre-existing downstream dependency is the liveness probe: without the
+  # bound durable resolution record below it remains blocked by the historical
+  # split, and it must not preempt the parent's Runtime re-verification.
   cat >> "$merged_terminal_todo" <<'EOF'
 
 - [ ] E-23d-merged-terminal-next: Patch only `scripts/next.mjs`:
@@ -7693,7 +7713,7 @@ PY
   Verification: run `node --check scripts/next.mjs`.
 EOF
   merged_terminal_next="$(PHASE_LOOP_WORKSPACE_ROOT="$merged_terminal_workspace" node "$REPO_ROOT/scripts/phase-loop-todo-evaluator.mjs" select --todo "$merged_terminal_todo" --breakdown "$merged_terminal_breakdown" --claim-dir "$merged_terminal_state/todo-claims")"
-  printf '%s' "$merged_terminal_next" | rg -q 'E-23d-merged-terminal-next'
+  printf '%s' "$merged_terminal_next" | rg -q 'E-23e-merged-terminal-downstream'
 fi
 
 if [ "$PHASE_LOOP_CLAIM_SMOKE_SECTION" = "review-rework" ]; then
