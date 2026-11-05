@@ -459,6 +459,36 @@ function writeCompletionRecord(repoRoot, claim, runStamp, validation, deliveryRe
     if (sha256Json(withoutWrittenAt(existing)) === sha256Json(withoutWrittenAt(record))) {
       return existing;
     }
+    // A verified clean-merge parent can be retried during post-completion
+    // cleanup with a different run stamp. Its supersession-resolution receipt
+    // hashes the whole completion record, so rewriting only run metadata would
+    // orphan that receipt and make the resolved parent appear blocked again.
+    // Reuse only a record that an existing resolution already binds to this
+    // exact claim and selected TODO; other changed completion evidence remains
+    // fail-closed and reaches the conflict guard below.
+    const resolutionPath = path.join(
+      repoRoot,
+      '.brownie/private/phase-loop/todo-supersession-resolutions',
+      `${claimId}.json`
+    );
+    const resolutionText = maybeReadText(resolutionPath);
+    if (resolutionText !== null) {
+      const resolution = JSON.parse(resolutionText);
+      const boundToExistingCompletion = (
+        validation.merged_delivery_reverified === true
+        && resolution?.record_type === 'superseded_parent_clean_merged_delivery_resolution'
+        && resolution?.claim_id === claimId
+        && resolution?.root_claim_id === rootClaimId(claim)
+        && resolution?.parent_todo_id === validation.selected_todo_id
+        && resolution?.parent_todo_sha256 === selectedTodoSha256(claim)
+        && resolution?.completion_record_sha256 === sha256Json(existing)
+        && existing?.claim_id === claimId
+        && existing?.root_claim_id === rootClaimId(claim)
+        && existing?.selected_todo_id === validation.selected_todo_id
+        && existing?.selected_todo_sha256 === selectedTodoSha256(claim)
+      );
+      if (boundToExistingCompletion) return existing;
+    }
   }
   for (const recordPath of completionRecordPaths(repoRoot, claimId, runStamp)) {
     fs.writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });

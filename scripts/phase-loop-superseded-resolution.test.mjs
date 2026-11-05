@@ -114,6 +114,38 @@ test('writes an audited supersession resolution only after exact verified parent
   assert.equal(queue.selected_todo_id, 'E-resolution-next');
 });
 
+test('cleanup retry preserves the completion receipt already bound to a supersession resolution', () => {
+  const fixture = setup();
+  const args = [
+    path.join(controllerRoot, 'scripts/phase-loop-progress-integrity.mjs'),
+    '--repo', fixture.repo, '--claim', '.brownie/private/phase-loop/todo-claims/current.json',
+    '--claim-dir', '.brownie/private/phase-loop/todo-claims', '--todo', '.brownie/todo.md',
+    '--write-record'
+  ];
+  execFileSync(process.execPath, [...args, '--run-stamp', 'resolution-first'], { cwd: controllerRoot });
+  const completionPath = path.join(fixture.repo, '.brownie/private/phase-loop/todo-completions/claim-resolution-parent.json');
+  const resolutionPath = path.join(fixture.repo, '.brownie/private/phase-loop/todo-supersession-resolutions/claim-resolution-parent.json');
+  const firstCompletion = fs.readFileSync(completionPath, 'utf8');
+  const firstResolution = fs.readFileSync(resolutionPath, 'utf8');
+
+  const retry = execFileSync(process.execPath, [...args, '--run-stamp', 'resolution-cleanup-retry'], {
+    cwd: controllerRoot,
+    encoding: 'utf8'
+  });
+  const result = JSON.parse(retry);
+  assert.equal(result.completion_record.run_stamp, 'resolution-first');
+  assert.equal(fs.readFileSync(completionPath, 'utf8'), firstCompletion);
+  assert.equal(fs.readFileSync(resolutionPath, 'utf8'), firstResolution);
+  const state = loadTodoState(fixture.repo, fixture.todo);
+  assert(state.resolvedIds.has(fixture.parentId));
+  const queue = evaluateTodoQueue(fixture.todo, {
+    repoRoot: fixture.repo,
+    claimDir: fixture.claimDir,
+    breakdownPath: path.join(fixture.repo, '.brownie/todo-breakdown.md')
+  });
+  assert.equal(queue.selected_todo_id, 'E-resolution-next');
+});
+
 test('does not resolve or schedule the dependent when parent proof fails or a child is live', () => {
   for (const options of [{ invalidProof: true }, { unsafeChild: true }]) {
     const fixture = setup(options);
