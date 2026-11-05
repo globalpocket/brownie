@@ -7,6 +7,7 @@ import {
   readAllTodoReplanRecords,
   readTodoCompletionInvalidationRecords,
   readTodoCompletionRecords,
+  readTodoSupersessionResolutionRecords,
   resolveTodoState
 } from './phase-loop-todo-state.mjs';
 import { readGitMaterializedScopeRebaselineRecords, readVerifiedActiveClaimDurableApply } from './phase-loop-admit-materialized-scope-rebaseline.mjs';
@@ -992,7 +993,8 @@ export function validateTodoDecompositionCandidate(
       ...additionalReplanRecords
     ],
     completionRecords: readTodoCompletionRecords(repoRoot),
-    completionInvalidationRecords: readTodoCompletionInvalidationRecords(repoRoot)
+    completionInvalidationRecords: readTodoCompletionInvalidationRecords(repoRoot),
+    supersessionResolutionRecords: readTodoSupersessionResolutionRecords(repoRoot)
   });
   const unresolvedSupersededIds = new Set(
     [...todoState.supersededIds].filter((id) => !todoState.resolvedIds.has(id))

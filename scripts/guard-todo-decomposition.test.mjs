@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { nextSchedulableTodoId, validateTodoDecomposition, validateTodoDecompositionText } from './guard-todo-decomposition.mjs';
 
@@ -13,6 +14,10 @@ const validLeaf = `- [ ] E-15b-child: Patch only \`scripts/example.mjs\`:
   Completion condition: the bounded patch is implemented and verified.
   Forbidden changes: do not edit unrelated release evidence files.
   Verification: run \`pnpm --workspace-root guard:release-contract:test\`.`;
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
 
 test('accepts structured decomposition leaf TODO', () => {
   assert.deepEqual(validateTodoDecompositionText(validLeaf, {
@@ -770,6 +775,65 @@ test('repository guard rejects a checked dependency when canonical state marks i
 
     const errors = validateTodoDecomposition(repoRoot);
     assert(errors.some((error) => error.includes('dependency E-22c-runtime-artifact-e2e-evidence is present only in the breakdown ledger')), errors.join('\n'));
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('repository guard accepts an absent dependency resolved by an exact supersession receipt', () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-supersession-receipt-guard-'));
+  try {
+    const parentId = 'E-receipt-parent';
+    const claimId = 'claim-receipt-parent';
+    const parent = `- [ ] ${parentId}: Patch only \`scripts/orphaned.mjs\`:
+  Route: implementation.
+  Depends on: <none>.
+  Completion condition: exact merged delivery is reverified before resolution.
+  Forbidden changes: do not treat a split as completion.
+  Verification: run \`node --check scripts/orphaned.mjs\`.`;
+    const selectedTodoSha256 = sha256(parent);
+    const proof = {
+      schema_version: 1, kind: 'phase_loop_merged_delivery_reverification', claim_id: claimId, root_claim_id: claimId,
+      selected_todo_id: parentId, selected_todo_sha256: selectedTodoSha256,
+      completion_condition_sha256: sha256('exact merged delivery is reverified before resolution.'),
+      queue_fingerprint: 'd'.repeat(64), queue_generation: 23,
+      runtime: { claim_id: claimId, status: 'task_executed', executed_count: 1 },
+      git: { merge_commit_oid: 'a'.repeat(40), first_parent_oid: 'b'.repeat(40), head_oid: 'c'.repeat(40), targets: [{ path: 'scripts/orphaned.mjs', sha256: 'd'.repeat(64) }] },
+      task_spec_binding: { kind: 'commit_trailer', todo_id: parentId, selected_todo_sha256: selectedTodoSha256, head_oid: 'c'.repeat(40) },
+      review: { state: 'MERGED', pr_url: 'https://example.invalid/pull/23', merge_commit_oid: 'a'.repeat(40), head_oid: 'c'.repeat(40), author: 'implementation', reviewer: 'review', merge_actor: 'review', merged_at: '2026-11-05T00:00:00Z', observed_at: '2026-11-05T00:01:00Z', approved: true, ci_passed: true, latest_reviewer_review_state: 'APPROVED', latest_reviewer_review_commit_oid: 'c'.repeat(40) },
+      verification_results: [{ command: 'node --check scripts/orphaned.mjs', exit_code: 0 }]
+    };
+    const completion = {
+      schema_version: 3, claim_id: claimId, root_claim_id: claimId, selected_todo_id: parentId,
+      selected_todo: parent, selected_todo_sha256: selectedTodoSha256, queue_fingerprint: 'd'.repeat(64), queue_generation: 23,
+      delivery_receipt: { schema_version: 1, claim_id: claimId, root_claim_id: claimId, selected_todo_sha256: selectedTodoSha256, author: 'implementation', reviewer: 'review', merge_actor: 'review', approved: true, ci_passed: true, merged: true, merged_delivery_reverification: proof }
+    };
+    const children = [`${parentId}-target-01`, `${parentId}-target-02`];
+    const resolution = {
+      schema_version: 1, record_type: 'superseded_parent_clean_merged_delivery_resolution', reason: 'orphaned_superseded_parent_clean_merged_delivery_reverified',
+      parent_todo_id: parentId, parent_todo_sha256: selectedTodoSha256, generated_child_ids: children, claim_id: claimId, root_claim_id: claimId,
+      completion_record_sha256: sha256(JSON.stringify(completion)),
+      candidate: { selected_todo_id: parentId, selected_todo_sha256: selectedTodoSha256, merge_commit_oid: 'a'.repeat(40), first_parent_oid: 'b'.repeat(40), head_oid: 'c'.repeat(40), task_spec_binding: { kind: 'commit_trailer', todo_id: parentId, selected_todo_sha256: selectedTodoSha256, head_oid: 'c'.repeat(40) } }
+    };
+
+    fs.mkdirSync(path.join(repoRoot, '.brownie/private/phase-loop/todo-completions'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, '.brownie/private/phase-loop/todo-replans'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, '.brownie/private/phase-loop/todo-supersession-resolutions'), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ scripts: { check: 'node -e ""' } }));
+    fs.writeFileSync(path.join(repoRoot, '.brownie/todo.md'), `- [ ] E-receipt-dependent: Patch only \`package.json\`:
+  Route: implementation.
+  Source TODO: E-receipt-parent.
+  Depends on: ${parentId}.
+  Completion condition: the exact durable dependency remains schedulable.
+  Forbidden changes: do not weaken durable state validation.
+  Verification: run \`pnpm --workspace-root check\`.
+`);
+    fs.writeFileSync(path.join(repoRoot, '.brownie/todo-breakdown.md'), `Parent TODO: ${parentId}\n\nDependency graph:\n- E-receipt-dependent: ${parentId}\n\nVerification ledger:\n- E-receipt-dependent: \`pnpm --workspace-root check\`\n\nQuality rubric:\n- E-receipt-dependent: bounded implementation leaf.\n`);
+    fs.writeFileSync(path.join(repoRoot, '.brownie/private/phase-loop/todo-completions/claim.json'), `${JSON.stringify(completion)}\n`);
+    fs.writeFileSync(path.join(repoRoot, '.brownie/private/phase-loop/todo-replans/parent.json'), `${JSON.stringify({ record_type: 'todo_replan', operation: 'split_parent_into_children', parent_status: 'superseded_by_children', parent_todo_id: parentId, generated_child_ids: children })}\n`);
+    fs.writeFileSync(path.join(repoRoot, '.brownie/private/phase-loop/todo-supersession-resolutions/parent.json'), `${JSON.stringify(resolution)}\n`);
+
+    assert.deepEqual(validateTodoDecomposition(repoRoot), []);
   } finally {
     fs.rmSync(repoRoot, { recursive: true, force: true });
   }
