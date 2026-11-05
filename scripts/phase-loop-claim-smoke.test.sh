@@ -7598,6 +7598,8 @@ SH
   chmod +x "$merged_terminal_runtime"
   cat > "$merged_terminal_bin/gh" <<'SH'
 #!/usr/bin/env bash
+: "${PHASE_LOOP_TEST_REVIEW_GH_CONFIG_DIR:?}"
+[ "${GH_CONFIG_DIR:-}" = "$PHASE_LOOP_TEST_REVIEW_GH_CONFIG_DIR" ] || exit 65
 if [ "$1" = api ] && [ "${2:-}" = user ]; then printf 'fixture-review\n'; exit 0; fi
 if [ "$1" = api ]; then printf '[]\n'; exit 0; fi
 exit 64
@@ -7605,17 +7607,18 @@ SH
   chmod +x "$merged_terminal_bin/gh"
   todo_before="$(cat "$merged_terminal_todo")"; breakdown_before="$(cat "$merged_terminal_breakdown")"; archive_before="$(cat "$merged_terminal_state/todo-claims/stale-terminal.json")"; child_archive_before="$(cat "$merged_terminal_state/todo-claims/stale-terminal-child.json")"; child_snapshot_before="$(cat "$merged_terminal_state/todo-claims/stale-terminal-child-stale-snapshot.json")"; child_ledger_before="$(cat "$merged_terminal_state/todo-claims/blocked.jsonl")"; rebaseline_before="$(cat "$merged_terminal_state/todo-claims/contract-rebaselines/orphaned-split.json")"
   merged_terminal_claim_file="$(mktemp)"
-  # Reverification is a review-role operation.  Supply an isolated explicit
-  # review profile under this shard's control root so the real actor preflight
-  # passes without reading a developer account or a production credential.
-  merged_terminal_review_profile="$PHASE_LOOP_CONTROL_ROOT/.brownie/private/profiles/review"
+  # Reverification is a review-role operation.  Its configured host-default
+  # profile must reach the full public run-once path without inventing a
+  # repository-private GH_CONFIG_DIR.  The fixture gh binary below supplies
+  # the host profile, so no developer account or production credential is read.
   merged_terminal_review_credentials="$PHASE_LOOP_CONTROL_ROOT/.brownie/private/merged-terminal-review-credentials.json"
-  mkdir -p "$merged_terminal_review_profile"
+  merged_terminal_review_config_dir="$merged_terminal_workspace/.brownie/host-gh-config"
+  mkdir -p "$merged_terminal_review_config_dir"
   cat > "$merged_terminal_review_credentials" <<'JSON'
-{"schema_version":1,"roles":{"review":{"kind":"repository-private","github_config_dir":"profiles/review"}}}
+{"schema_version":1,"roles":{"review":{"kind":"host-default"}}}
 JSON
   set +e
-  PATH="$merged_terminal_bin:$PATH" PHASE_LOOP_STATE_DIR="$merged_terminal_state" PHASE_LOOP_PROMPT="$merged_terminal_prompt" PHASE_LOOP_TODO="$merged_terminal_todo" PHASE_LOOP_TODO_BREAKDOWN="$merged_terminal_breakdown" PHASE_LOOP_ACTOR_CREDENTIALS="$merged_terminal_review_credentials" BROWNIE_BIN="$merged_terminal_runtime" PHASE_LOOP_WORKSPACE_ROOT="$merged_terminal_workspace" PHASE_LOOP_TEST_RUNTIME_CLAIM_FILE="$merged_terminal_claim_file" run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null
+  PATH="$merged_terminal_bin:$PATH" GH_CONFIG_DIR="$merged_terminal_review_config_dir" PHASE_LOOP_TEST_REVIEW_GH_CONFIG_DIR="$merged_terminal_review_config_dir" PHASE_LOOP_STATE_DIR="$merged_terminal_state" PHASE_LOOP_PROMPT="$merged_terminal_prompt" PHASE_LOOP_TODO="$merged_terminal_todo" PHASE_LOOP_TODO_BREAKDOWN="$merged_terminal_breakdown" PHASE_LOOP_ACTOR_CREDENTIALS="$merged_terminal_review_credentials" BROWNIE_BIN="$merged_terminal_runtime" PHASE_LOOP_WORKSPACE_ROOT="$merged_terminal_workspace" PHASE_LOOP_TEST_RUNTIME_CLAIM_FILE="$merged_terminal_claim_file" run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null
   merged_terminal_exit="$?"
   set -e
   test "$merged_terminal_exit" = 76
@@ -7658,6 +7661,8 @@ PY
   cat > "$merged_terminal_bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -eu
+: "${PHASE_LOOP_TEST_REVIEW_GH_CONFIG_DIR:?}"
+[ "${GH_CONFIG_DIR:-}" = "$PHASE_LOOP_TEST_REVIEW_GH_CONFIG_DIR" ] || exit 65
 if [ "$1" = api ] && [ "${2:-}" = user ]; then printf 'fixture-review\n'; exit 0; fi
 if [ "$1" = api ] && [ "${2:-}" = graphql ]; then printf 'fixture-review\n'; exit 0; fi
 if [ "$1" = api ]; then printf '42\n'; exit 0; fi
@@ -7670,7 +7675,7 @@ fi
 exit 64
 SH
   chmod +x "$merged_terminal_bin/gh"
-  PATH="$merged_terminal_bin:$PATH" PHASE_LOOP_STATE_DIR="$merged_terminal_state" PHASE_LOOP_PROMPT="$merged_terminal_prompt" PHASE_LOOP_TODO="$merged_terminal_todo" PHASE_LOOP_TODO_BREAKDOWN="$merged_terminal_breakdown" PHASE_LOOP_ACTOR_CREDENTIALS="$merged_terminal_review_credentials" BROWNIE_BIN="$merged_terminal_runtime" PHASE_LOOP_WORKSPACE_ROOT="$merged_terminal_workspace" PHASE_LOOP_TEST_RUNTIME_CLAIM_FILE="$merged_terminal_success_claim_file" PHASE_LOOP_TEST_MERGE_OID="$merged_terminal_merge_oid" PHASE_LOOP_TEST_HEAD_OID="$merged_terminal_head_oid" run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+  PATH="$merged_terminal_bin:$PATH" GH_CONFIG_DIR="$merged_terminal_review_config_dir" PHASE_LOOP_TEST_REVIEW_GH_CONFIG_DIR="$merged_terminal_review_config_dir" PHASE_LOOP_STATE_DIR="$merged_terminal_state" PHASE_LOOP_PROMPT="$merged_terminal_prompt" PHASE_LOOP_TODO="$merged_terminal_todo" PHASE_LOOP_TODO_BREAKDOWN="$merged_terminal_breakdown" PHASE_LOOP_ACTOR_CREDENTIALS="$merged_terminal_review_credentials" BROWNIE_BIN="$merged_terminal_runtime" PHASE_LOOP_WORKSPACE_ROOT="$merged_terminal_workspace" PHASE_LOOP_TEST_RUNTIME_CLAIM_FILE="$merged_terminal_success_claim_file" PHASE_LOOP_TEST_MERGE_OID="$merged_terminal_merge_oid" PHASE_LOOP_TEST_HEAD_OID="$merged_terminal_head_oid" run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
   python3 - "$merged_terminal_state/todo-claims/current.json" "$merged_terminal_success_claim_file" "$merged_terminal_state/status.json" "$merged_terminal_workspace/.brownie/private/phase-loop/todo-supersession-resolutions" "$merged_terminal_state/logs/supervisor.log" <<'PY'
 import hashlib,json,pathlib,sys
 claim=json.loads(pathlib.Path(sys.argv[1]).read_text())

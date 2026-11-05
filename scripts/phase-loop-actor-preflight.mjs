@@ -131,6 +131,15 @@ export function resolvePhaseLoopGitHubProfile(options = {}) {
   };
 }
 
+// Keep the exact environment selected by preflight.  For a host-default
+// profile this may be an inherited GH_CONFIG_DIR; emitting an empty string
+// would overwrite that selection in a later `GH_CONFIG_DIR=... gh` call and
+// make its authenticated actor differ from the one we just validated.
+// Repository-private profiles remain pinned by their resolved directory.
+export function phaseLoopGitHubConfigDirForShell(profile) {
+  return String(profile?.env?.GH_CONFIG_DIR ?? profile?.github_config_dir ?? '');
+}
+
 export function validatePhaseLoopActorPreflight(state, options = {}) {
   const errors = [];
   const role = options.role;
@@ -227,10 +236,7 @@ if (isMainModule()) {
       process.exit(1);
     }
     if (options.printGhConfigDir) {
-      if (!result.profile.github_config_dir) {
-        throw new Error('selected GitHub profile does not have an explicit GH_CONFIG_DIR.');
-      }
-      process.stdout.write(`${result.profile.github_config_dir}\n`);
+      process.stdout.write(`${phaseLoopGitHubConfigDirForShell(result.profile)}\n`);
       process.exit(0);
     }
     process.stdout.write(
