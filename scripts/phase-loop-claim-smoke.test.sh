@@ -7568,7 +7568,7 @@ PY
   # from that split. Only the exact clean merged delivery candidate may recover
   # this parent for re-verification.
   cat > "$merged_terminal_workspace/.brownie/private/phase-loop/todo-replans/orphaned-split.json" <<'JSON'
-{"schema_version":1,"record_type":"todo_replan","operation":"split_parent_into_children","parent_status":"superseded_by_children","parent_todo_id":"E-23d-merged-terminal-live","generated_child_ids":["E-23d-merged-terminal-live-target-01","E-23d-merged-terminal-live-target-02"]}
+{"schema_version":1,"record_type":"todo_replan","operation":"split_parent_into_children","parent_status":"superseded_by_children","parent_todo_id":"E-23d-merged-terminal-live","written_at":"2000-01-01T00:00:00Z","generated_child_ids":["E-23d-merged-terminal-live-target-01","E-23d-merged-terminal-live-target-02"]}
 JSON
   cat > "$merged_terminal_runtime" <<'SH'
 #!/usr/bin/env bash
