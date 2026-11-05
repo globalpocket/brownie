@@ -195,7 +195,7 @@ test('read-only status projects loop, progress, failures, claim, and active dele
       claim_id: 'claim-status',
       status: 'claimed',
       selected_todo: runtimeEvidenceTodo,
-      selected_todo_fingerprint: 'sha256:status-fixture'
+      selected_todo_sha256: 'a'.repeat(64)
     });
     writeJson(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json', {
       kind: 'phase_loop_delegation_pending',
@@ -218,6 +218,7 @@ test('read-only status projects loop, progress, failures, claim, and active dele
     assert.equal(result.failures.consecutive_failures, 2);
     assert.equal(result.progress.projection_status, 'no_eligible_task');
     assert.equal(result.active_claim.selected_todo_id, 'E-21c-runtime-operational-evidence-impl-2-target-02');
+    assert.equal(result.active_claim.selected_todo_fingerprint, 'a'.repeat(64));
     assert.equal(result.active_delegation.state, 'pending');
     assert.equal(result.active_delegation.issue_or_pr_url, 'https://github.com/example-org/supervisor-fixture/issues/626');
     assert.deepEqual(after, before);

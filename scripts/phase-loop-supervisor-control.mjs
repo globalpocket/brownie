@@ -605,11 +605,13 @@ export function readSupervisorStatus(options = {}) {
       claim_id: typeof claim.claim_id === 'string' ? claim.claim_id : null,
       status: typeof claim.status === 'string' ? claim.status : null,
       selected_todo_id: todoIdFromFirstLine(selectedTodoFirstLine),
-      selected_todo_fingerprint: typeof claim.selected_todo_fingerprint === 'string'
-        ? claim.selected_todo_fingerprint
-        : typeof claim.todo_fingerprint === 'string'
-          ? claim.todo_fingerprint
-          : null
+      selected_todo_fingerprint: typeof claim.selected_todo_sha256 === 'string'
+        ? claim.selected_todo_sha256
+        : typeof claim.selected_todo_fingerprint === 'string'
+          ? claim.selected_todo_fingerprint
+          : typeof claim.todo_fingerprint === 'string'
+            ? claim.todo_fingerprint
+            : null
     },
     active_delegation: activeDelegationStatus(path.join(stateRoot, 'todo-claims/repair-feedback.json'))
   };
