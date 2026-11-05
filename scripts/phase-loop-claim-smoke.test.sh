@@ -7470,7 +7470,7 @@ if claim_smoke_section_enabled terminal; then
   merged_terminal_prompt="$(mktemp)"
   merged_terminal_bin="$(mktemp -d)"
   merged_terminal_runtime="$(mktemp)"
-  mkdir -p "$merged_terminal_workspace/.brownie" "$merged_terminal_workspace/scripts" "$merged_terminal_workspace/docs/architecture" "$merged_terminal_state/todo-claims"
+  mkdir -p "$merged_terminal_workspace/.brownie/private/phase-loop/todo-replans" "$merged_terminal_workspace/scripts" "$merged_terminal_workspace/docs/architecture" "$merged_terminal_state/todo-claims"
   cp "$REPO_ROOT/docs/architecture/phase-loop-actor-separation-policy.json" "$merged_terminal_workspace/docs/architecture/phase-loop-actor-separation-policy.json"
   printf 'export const soak = "before";\n' > "$merged_terminal_workspace/scripts/soak.mjs"
   cat > "$merged_terminal_todo" <<'EOF'
@@ -7495,10 +7495,9 @@ EOF
   git -C "$merged_terminal_workspace" commit -m "implement merged terminal\n\nBrownie-Task-Todo: E-merged-terminal-live\nBrownie-Task-Spec-SHA256: $selected_hash" >/dev/null
   git -C "$merged_terminal_workspace" switch main >/dev/null
   git -C "$merged_terminal_workspace" merge --no-ff --no-edit implementation >/dev/null
-  # phase-loop.sh is an executable entrypoint, so sourcing it would invoke its
-  # CLI dispatcher rather than expose the helper.  Mirror the controller's
-  # documented fingerprint inputs without executing the entrypoint.
-  controller_fp="$(cd "$REPO_ROOT" && shasum -a 256 phase-loop.sh scripts/phase-loop-todo-evaluator.mjs | shasum -a 256 | awk '{print $1}')"
+  # Bind the archived terminal record to the implementation's actual
+  # controller fingerprint, not a test-side reconstruction of its inputs.
+  controller_fp="$(script="$PHASE_LOOP"; set --; source "$script" >/dev/null; phase_loop_controller_fingerprint)"
   cat > "$merged_terminal_state/todo-claims/stale-terminal.json" <<EOF
 {"claim_id":"legacy-terminal","selected_todo":$(python3 - "$merged_terminal_todo" <<'PY'
 import json,pathlib,sys
@@ -7507,6 +7506,13 @@ PY
 ),"status":"failed","archive_reason":"terminal_failure_blocked_evidence_failed","retry_eligible":false}
 EOF
   printf '{"block_reason":"terminal_runtime_failure","controller_fingerprint":"%s","selected_todo_sha256":"%s","retry_cap":0}\n' "$controller_fp" "$selected_hash" > "$merged_terminal_state/todo-claims/blocked.jsonl"
+  # Production-shaped orphaned split: the parent remains pending, but a
+  # historical replan marked it superseded and neither child exists in the
+  # live queue nor in terminal claim history. Only the exact clean merged
+  # delivery candidate may recover this parent for re-verification.
+  cat > "$merged_terminal_workspace/.brownie/private/phase-loop/todo-replans/orphaned-split.json" <<'JSON'
+{"schema_version":1,"record_type":"todo_replan","operation":"split_parent_into_children","parent_status":"superseded_by_children","parent_todo_id":"E-merged-terminal-live","generated_child_ids":["E-merged-terminal-live-target-01","E-merged-terminal-live-target-02"]}
+JSON
   cat > "$merged_terminal_runtime" <<'SH'
 #!/usr/bin/env bash
 set -eu

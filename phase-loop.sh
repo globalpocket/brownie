@@ -1171,6 +1171,7 @@ todo_first_pending_item() {
       --todo "$evaluator_todo_path"
       --breakdown "$PHASE_LOOP_TODO_BREAKDOWN"
       --blocked "$TODO_BLOCKED_FILE"
+      --claim-dir "$TODO_CLAIM_DIR"
       --controller-fingerprint "$(phase_loop_controller_fingerprint)"
     )
     local suppressed_hash

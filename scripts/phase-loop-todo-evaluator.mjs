@@ -13,6 +13,7 @@ import {
   todoStateSummary
 } from './phase-loop-todo-state.mjs';
 import { boundedScopes as boundedScopesFromFirstLine } from './phase-loop-bounded-scope.mjs';
+import { findCleanMergedDeliveryCandidate } from './phase-loop-delivery-integrity.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -96,6 +97,127 @@ function targetScopeKey(block) {
 function verificationCommand(block) {
   const line = block.split('\n').map((entry) => entry.trim()).find((entry) => entry.startsWith('Verification:'));
   return line?.slice('Verification:'.length).trim() ?? '';
+}
+
+function selectedTodoIdFromFirstLine(firstLine) {
+  return String(firstLine ?? '')
+    .trim()
+    .replace(/^(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+/u, '')
+    .split(':')[0]
+    ?.trim() ?? '';
+}
+
+function selectedTodoIdFromRecord(record) {
+  if (typeof record?.selected_todo_id === 'string' && record.selected_todo_id.trim()) {
+    return record.selected_todo_id.trim();
+  }
+  if (typeof record?.selected_todo === 'string' && record.selected_todo.trim()) {
+    return todoId(record.selected_todo);
+  }
+  return selectedTodoIdFromFirstLine(record?.selected_todo_first_line);
+}
+
+function recordIsTerminal(record) {
+  const reason = String(record?.block_reason ?? record?.archive_reason ?? '').toLowerCase();
+  const status = String(record?.status ?? '').toLowerCase();
+  return reason.includes('terminal') || status === 'failed' || status === 'terminal_failure';
+}
+
+// A missing replan child is normally an integrity warning, not authority to
+// resume its superseded parent. This reader is deliberately narrow: only the
+// claim archive/blocked ledger needed to establish the exact orphan shape is
+// inspected, and unreadable state makes the exceptional path unavailable.
+function readClaimHistory(claimDir) {
+  if (!claimDir || !fs.existsSync(claimDir)) {
+    return { readable: false, selectedIds: new Set(), terminalIds: new Set() };
+  }
+  let entries;
+  try {
+    entries = fs.readdirSync(claimDir, { withFileTypes: true });
+  } catch {
+    return { readable: false, selectedIds: new Set(), terminalIds: new Set() };
+  }
+  const selectedIds = new Set();
+  const terminalIds = new Set();
+  for (const entry of entries) {
+    if (!entry.isFile() || (!entry.name.endsWith('.json') && entry.name !== 'blocked.jsonl')) continue;
+    let records;
+    try {
+      const source = fs.readFileSync(path.join(claimDir, entry.name), 'utf8');
+      records = entry.name === 'blocked.jsonl'
+        ? source.split('\n').filter((line) => line.trim()).map((line) => JSON.parse(line))
+        : [JSON.parse(source)];
+    } catch {
+      return { readable: false, selectedIds: new Set(), terminalIds: new Set() };
+    }
+    for (const record of records) {
+      const id = selectedTodoIdFromRecord(record);
+      if (!id) continue;
+      selectedIds.add(id);
+      if (recordIsTerminal(record)) terminalIds.add(id);
+    }
+  }
+  return { readable: true, selectedIds, terminalIds };
+}
+
+function candidateMatchesSupersededParent(candidate, block) {
+  const id = todoId(block);
+  const sha256 = sha256Text(block);
+  const value = candidate?.candidate;
+  if (!candidate?.valid || !value || value.selected_todo_id !== id || value.selected_todo_sha256 !== sha256) {
+    return false;
+  }
+  if (!/^[a-f0-9]{40}$/iu.test(value.merge_commit_oid ?? '')
+    || !/^[a-f0-9]{40}$/iu.test(value.first_parent_oid ?? '')
+    || !/^[a-f0-9]{40}$/iu.test(value.head_oid ?? '')) {
+    return false;
+  }
+  const binding = value.task_spec_binding;
+  if (!binding || binding.todo_id !== id || binding.selected_todo_sha256 !== sha256) {
+    return false;
+  }
+  const expectedScopes = boundedScopes(block).slice().sort();
+  const targetScopes = Array.isArray(value.targets)
+    ? value.targets.map((target) => target?.path).filter((target) => typeof target === 'string').sort()
+    : [];
+  return expectedScopes.length > 0
+    && targetScopes.length === expectedScopes.length
+    && targetScopes.every((scope, index) => scope === expectedScopes[index]);
+}
+
+// Recover exactly one historical split only when its parent is still pending,
+// every generated child vanished from both the live queue and claim history,
+// the parent itself has a terminal record, and Git independently proves the
+// exact parent contract was cleanly merged. This creates no completion state;
+// it merely makes the original parent claimable for Runtime re-verification.
+export function selectSupersededParentWithMissingChildrenForCleanMergedDelivery(text, options = {}) {
+  if (!options.repoRoot || !options.claimDir) return '';
+  const todoState = options.todoState ?? loadTodoState(options.repoRoot, text, {
+    additionalReplanRecords: options.todoReplanRecords,
+    breakdownPath: options.breakdownPath
+  });
+  if (todoState.errors.length > 0) return '';
+  const history = readClaimHistory(options.claimDir);
+  if (!history.readable) return '';
+
+  for (const block of uncheckedTodoBlocks(text)) {
+    const id = todoId(block);
+    if (!id || !todoState.supersededIds.has(id) || todoState.completedIds.has(id)) continue;
+    const replans = todoState.replanRecords.filter((record) => record.parent_todo_id === id);
+    const childSets = new Set(replans.map((record) => [...record.generated_child_ids].sort().join('\u0000')));
+    if (childSets.size !== 1) continue;
+    const childIds = [...childSets][0].split('\u0000').filter(Boolean);
+    if (childIds.length === 0 || !history.terminalIds.has(id)) continue;
+    if (childIds.some((childId) => (
+      todoState.liveIds.has(childId)
+      || todoState.completedIds.has(childId)
+      || todoState.supersededIds.has(childId)
+      || history.selectedIds.has(childId)
+    ))) continue;
+    const candidate = findCleanMergedDeliveryCandidate({ repoRoot: options.repoRoot, selectedTodo: block });
+    if (candidateMatchesSupersededParent(candidate, block)) return block;
+  }
+  return '';
 }
 
 export function isExplicitBlockerTodo(block) {
@@ -468,7 +590,8 @@ export function selectFirstSchedulableTodo(text, options = {}) {
     }
     dependencyBlockedIds.add(id);
   }
-  return fallbackParentForRedecomposition;
+  if (fallbackParentForRedecomposition) return fallbackParentForRedecomposition;
+  return selectSupersededParentWithMissingChildrenForCleanMergedDelivery(text, { ...options, todoState });
 }
 
 export function evaluateTodoQueue(text, options = {}) {
@@ -511,6 +634,9 @@ function parseArgs(argv) {
     } else if (key === '--blocked') {
       args.blocked = value;
       index += 1;
+    } else if (key === '--claim-dir') {
+      args.claimDir = value;
+      index += 1;
     } else if (key === '--controller-fingerprint') {
       args.controllerFingerprint = value;
       index += 1;
@@ -541,6 +667,7 @@ if (isMainModule()) {
     repoRoot: defaultRepoRoot,
     breakdownPath,
     blockedPath: args.blocked,
+    claimDir: args.claimDir,
     controllerFingerprint: args.controllerFingerprint,
     excludedTodoHashes: args.excludedTodoHashes
   });
