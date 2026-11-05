@@ -7570,6 +7570,13 @@ PY
   cat > "$merged_terminal_workspace/.brownie/private/phase-loop/todo-replans/orphaned-split.json" <<'JSON'
 {"schema_version":1,"record_type":"todo_replan","operation":"split_parent_into_children","parent_status":"superseded_by_children","parent_todo_id":"E-23d-merged-terminal-live","generated_child_ids":["E-23d-merged-terminal-live-target-01","E-23d-merged-terminal-live-target-02"]}
 JSON
+  # These are separate run-once admissions.  The terminal-failure run creates
+  # a durable feedback obligation.  Reusing that state after manually removing
+  # its current claim would be an invalid review-rework lineage and must fail
+  # closed.  Preserve a clean seeded state for the distinct verified-success
+  # admission instead of testing around that guard.
+  merged_terminal_success_state="$(mktemp -d)"
+  cp -R "$merged_terminal_state/." "$merged_terminal_success_state/"
   cat > "$merged_terminal_runtime" <<'SH'
 #!/usr/bin/env bash
 set -eu
@@ -7634,7 +7641,7 @@ PY
   # completion record alone is insufficient for a superseded parent: the
   # progress writer must add the tightly bound resolution record that makes
   # exactly this parent resolved without rewriting the public split.
-  rm -f "$merged_terminal_state/todo-claims/current.json"
+  merged_terminal_state="$merged_terminal_success_state"
   merged_terminal_success_claim_file="$(mktemp)"
   merged_terminal_merge_oid="$(git -C "$merged_terminal_workspace" rev-parse HEAD)"
   merged_terminal_head_oid="$(git -C "$merged_terminal_workspace" rev-parse HEAD^2)"
