@@ -131,12 +131,13 @@ export function resolvePhaseLoopGitHubProfile(options = {}) {
   };
 }
 
-// An empty value is meaningful: it preserves the explicitly configured
-// host-default profile instead of inventing a repository-private directory.
-// Callers that export this value as GH_CONFIG_DIR therefore keep the host
-// selection unchanged, while repository-private profiles remain pinned.
+// Keep the exact environment selected by preflight.  For a host-default
+// profile this may be an inherited GH_CONFIG_DIR; emitting an empty string
+// would overwrite that selection in a later `GH_CONFIG_DIR=... gh` call and
+// make its authenticated actor differ from the one we just validated.
+// Repository-private profiles remain pinned by their resolved directory.
 export function phaseLoopGitHubConfigDirForShell(profile) {
-  return String(profile?.github_config_dir ?? '');
+  return String(profile?.env?.GH_CONFIG_DIR ?? profile?.github_config_dir ?? '');
 }
 
 export function validatePhaseLoopActorPreflight(state, options = {}) {

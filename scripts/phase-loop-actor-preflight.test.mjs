@@ -56,6 +56,25 @@ test('review host-default preserves the configured profile without inventing a p
   }
 });
 
+test('review host-default preserves an inherited GH_CONFIG_DIR for later GitHub calls', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'actor-profile-'));
+  try {
+    const inheritedConfigDir = path.join(repo, 'host-gh-config');
+    const profile = resolvePhaseLoopGitHubProfile({
+      repoRoot: repo,
+      role: 'review',
+      credentials,
+      env: { ...process.env, GH_CONFIG_DIR: inheritedConfigDir }
+    });
+    assert.equal(profile.ok, true);
+    assert.equal(profile.profile_id, 'host-default');
+    assert.equal(profile.github_config_dir, null);
+    assert.equal(phaseLoopGitHubConfigDirForShell(profile), inheritedConfigDir);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test('implementation rejects credentials outside repository private state', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'actor-profile-'));
   try {
