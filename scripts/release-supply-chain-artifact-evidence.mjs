@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadPhaseLoopActorDeployment } from './phase-loop-actor-deployment.mjs';
+import { buildReleaseEvidenceRoundtripBinding } from './release-runtime-operational-evidence.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -514,6 +515,8 @@ function findReleaseArtifacts(repoRoot) {
           source_clean_tree: artifact.source_clean_tree ?? null,
           source_identity: artifact.source_identity ?? null,
           artifact_evidence_path: evidencePath,
+          artifact_evidence: artifactEvidence,
+          evidence_dir: normalizeRelativePath(path.dirname(evidencePath)),
           smoke_evidence_path: smokeEvidence ? smokePath : null,
           smoke_evidence: smokeEvidence
         });
@@ -765,6 +768,7 @@ export function buildSupplyChainArtifactEvidence(options = {}) {
       buildArtifactProvenanceBinding({ artifact, sourceCommit, sourceCheckoutState })
     )
   );
+  const releaseEvidenceBinding = buildReleaseEvidenceRoundtripBinding({ repoRoot, artifacts });
   const sbom = buildSbom(repoRoot, generatedAt);
   const sbomPath = normalizeRelativePath(path.join(outDir, 'brownie-runtime-sbom.json'));
   writeJson(repoRoot, sbomPath, sbom);
@@ -857,6 +861,7 @@ export function buildSupplyChainArtifactEvidence(options = {}) {
       present_platforms: [...artifactTargets].sort(),
       missing_platforms: missingReleasePlatforms,
       missing_source_identity_targets: artifactsMissingSourceIdentity.map((artifact) => artifact.target),
+      release_evidence_binding: releaseEvidenceBinding,
       artifacts
     },
     artifact_smoke: artifactSmoke,
@@ -903,6 +908,9 @@ export function buildSupplyChainArtifactEvidence(options = {}) {
   if (!sourceCheckoutValidation.valid) {
     failClosedReasons.push(`source_checkout_state:${sourceCheckoutState}`);
   }
+  if (releaseEvidenceBinding.status !== 'satisfied') {
+    failClosedReasons.push(`release_evidence_binding:${releaseEvidenceBinding.status}`);
+  }
   for (const sectionId of requiredSections) {
     const section = sections[sectionId];
     if (!section || section.status !== 'satisfied') {
@@ -924,6 +932,7 @@ export function buildSupplyChainArtifactEvidence(options = {}) {
       validation: sourceCheckoutValidation,
       dirty_path_count: treeStatus.length
     },
+    release_evidence_binding: releaseEvidenceBinding,
     release_ready: false,
     runtime_release_ready: false,
     required_sections: requiredSections,
