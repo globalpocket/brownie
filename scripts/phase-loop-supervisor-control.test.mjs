@@ -10,7 +10,8 @@ import {
   controlPhaseLoop as controlPhaseLoopImplementation,
   inspectDelegationFeedback,
   inspectWorkerLaunchReceipt,
-  registerWorkerLaunchReceipt
+  registerWorkerLaunchReceipt,
+  readSupervisorStatus
 } from './phase-loop-supervisor-control.mjs';
 import { selectFirstSchedulableTodo } from './phase-loop-todo-evaluator.mjs';
 import { readTrackedBreakdownReplanRecords } from './phase-loop-todo-state.mjs';
@@ -167,6 +168,91 @@ test('delegation feedback parsing preserves acknowledgements and fails closed on
     delegation: { status: 'acknowledged', required_actor: implementationActor }
   });
   assert.equal(inspectDelegationFeedback(feedbackPath).state, 'acknowledged');
+});
+
+test('read-only status projects loop, progress, failures, claim, and active delegation without mutating state', () => {
+  const repo = makeRepo();
+  const stateRoot = path.join(repo, '.brownie/private/phase-loop');
+  const statusPath = path.join(stateRoot, 'status.json');
+  const progressPath = path.join(stateRoot, 'progress-state.json');
+  const claimPath = path.join(stateRoot, 'todo-claims/current.json');
+  const feedbackPath = path.join(stateRoot, 'todo-claims/repair-feedback.json');
+  try {
+    writeJson(repo, '.brownie/private/phase-loop/status.json', {
+      status: 'no_progress',
+      run_id: 'run-status',
+      consecutive_failures: 2,
+      detail: 'bounded failure',
+      updated_at: '2026-11-05T15:00:00Z'
+    });
+    writeJson(repo, '.brownie/private/phase-loop/progress-state.json', {
+      classification: 'no_progress',
+      same_progress_count: 2,
+      run_stamp: '20261105T150000Z',
+      progress_projection: { cli_status: 'no_eligible_task', stop_class: 'terminal_failure' }
+    });
+    writeJson(repo, '.brownie/private/phase-loop/todo-claims/current.json', {
+      claim_id: 'claim-status',
+      status: 'claimed',
+      selected_todo: runtimeEvidenceTodo,
+      selected_todo_sha256: 'a'.repeat(64)
+    });
+    writeJson(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json', {
+      kind: 'phase_loop_delegation_pending',
+      completed: false,
+      claim_id: 'claim-status',
+      selected_todo: runtimeEvidenceTodo,
+      delegation: {
+        status: 'pending',
+        required_actor: implementationActor,
+        issue_or_pr_url: 'https://github.com/example-org/supervisor-fixture/issues/626'
+      }
+    });
+    const before = [statusPath, progressPath, claimPath, feedbackPath].map((file) => fs.readFileSync(file, 'utf8'));
+    const result = readSupervisorStatus({ repoRoot: repo, stateRoot });
+    const after = [statusPath, progressPath, claimPath, feedbackPath].map((file) => fs.readFileSync(file, 'utf8'));
+
+    assert.equal(result.read_only, true);
+    assert.equal(result.phase_loop.status, 'no_progress');
+    assert.equal(result.latest_run.run_id, 'run-status');
+    assert.equal(result.failures.consecutive_failures, 2);
+    assert.equal(result.progress.projection_status, 'no_eligible_task');
+    assert.equal(result.active_claim.selected_todo_id, 'E-21c-runtime-operational-evidence-impl-2-target-02');
+    assert.equal(result.active_claim.selected_todo_fingerprint, 'a'.repeat(64));
+    assert.equal(result.active_delegation.state, 'pending');
+    assert.equal(result.active_delegation.issue_or_pr_url, 'https://github.com/example-org/supervisor-fixture/issues/626');
+    assert.deepEqual(after, before);
+
+    const stdout = execFileSync(process.execPath, [
+      path.join(__dirname, 'phase-loop-supervisor-control.mjs'),
+      '--status',
+      '--repo', repo,
+      '--state-dir', stateRoot
+    ], { encoding: 'utf8' });
+    const cli = JSON.parse(stdout);
+    assert.equal(cli.read_only, true);
+    assert.equal(cli.active_delegation.state, 'pending');
+    assert.equal(cli.failures.consecutive_failures, 2);
+  } finally {
+    fixtureRepoRoots.delete(repo);
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('read-only status exposes malformed delegation feedback as fail-closed', () => {
+  const repo = makeRepo();
+  try {
+    const feedbackPath = path.join(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json');
+    fs.writeFileSync(feedbackPath, '{malformed');
+    const result = readSupervisorStatus({ repoRoot: repo });
+    assert.deepEqual(result.active_delegation, {
+      state: 'unreadable',
+      reason: 'delegation_feedback_unreadable_fail_closed'
+    });
+  } finally {
+    fixtureRepoRoots.delete(repo);
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
 });
 
 function workerReceipt(overrides = {}) {
