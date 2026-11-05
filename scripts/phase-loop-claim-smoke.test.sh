@@ -7612,7 +7612,7 @@ SH
   # repository-private GH_CONFIG_DIR.  The fixture gh binary below supplies
   # the host profile, so no developer account or production credential is read.
   merged_terminal_review_credentials="$PHASE_LOOP_CONTROL_ROOT/.brownie/private/merged-terminal-review-credentials.json"
-  merged_terminal_review_config_dir="$merged_terminal_root/host-gh-config"
+  merged_terminal_review_config_dir="$merged_terminal_workspace/.brownie/host-gh-config"
   mkdir -p "$merged_terminal_review_config_dir"
   cat > "$merged_terminal_review_credentials" <<'JSON'
 {"schema_version":1,"roles":{"review":{"kind":"host-default"}}}
