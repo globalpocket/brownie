@@ -140,6 +140,7 @@ jobs:
           BROWNIE_RELEASE_ARTIFACT_SOAK_DOWNLOAD_ROOT: roundtrip-download
           BROWNIE_RELEASE_ARTIFACT_SOAK_TARGET: ${{ matrix.target }}
           BROWNIE_RELEASE_ARTIFACT_SOAK_EVIDENCE_PATH: roundtrip-download/runtime-stateful-soak-evidence.json
+          BROWNIE_RELEASE_ARTIFACT_SOAK_MAXIMUM_COMMANDS: '3'
         run: corepack pnpm --workspace-root release:artifact-stateful-soak:test
 
       - name: Upload Runtime journey evidence

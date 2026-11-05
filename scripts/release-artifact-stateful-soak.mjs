@@ -23,6 +23,19 @@ function sha256Value(value) {
   return `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
 }
 
+function boundedCommandLimit(options = {}) {
+  const configured = [
+    options.maximumCommands,
+    process.env.BROWNIE_RELEASE_ARTIFACT_SOAK_MAXIMUM_COMMANDS
+  ].filter((value) => value !== undefined && value !== '');
+  for (const value of configured) {
+    if (!Number.isInteger(Number(value)) || Number(value) !== maximumCommands) {
+      throw new Error(`stateful soak maximum command bound must be exactly ${maximumCommands}`);
+    }
+  }
+  return maximumCommands;
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd,
@@ -77,6 +90,9 @@ function assertPackageIntegrity(target, extractionRoot) {
   const checksums = parseChecksums(checksumsPath);
   for (const [field, name] of [['artifact', target.binaryName], ['runtime_companion', target.runtimeName]]) {
     const filePath = path.join(extractionRoot, name);
+    if (fs.lstatSync(filePath).isSymbolicLink()) {
+      throw new Error(`package integrity rejects symbolic link for ${name}`);
+    }
     const digest = sha256File(filePath);
     if (!fs.existsSync(filePath) || artifactEvidence?.[field]?.path !== name || artifactEvidence?.[field]?.sha256 !== digest || checksums[name] !== digest) {
       throw new Error(`package integrity mismatch for ${name}`);
@@ -205,6 +221,7 @@ function evidencePathFrom(options) {
 }
 
 export function runReleaseArtifactStatefulSoak(options = {}) {
+  const commandLimit = boundedCommandLimit(options);
   const targetId = options.targetId ?? process.env.BROWNIE_RELEASE_ARTIFACT_SOAK_TARGET ?? '';
   const target = releaseTargets.find((candidate) => candidate.id === targetId);
   if (!target) throw new Error(`unsupported release artifact soak target: ${targetId || '<missing>'}`);
@@ -270,7 +287,7 @@ export function runReleaseArtifactStatefulSoak(options = {}) {
     schema_version: 1,
     evidence_id: 'brownie-release-artifact-stateful-soak-v1',
     target: target.id,
-    bounds: { maximum_commands: maximumCommands, commands_executed: maximumCommands, per_command_timeout_ms: 60_000 },
+    bounds: { maximum_commands: commandLimit, commands_executed: commandLimit, per_command_timeout_ms: 60_000 },
     artifact: { archive_sha256: sha256File(archivePath), ...packageIntegrity },
     checks: {
       artifact_execution_boundary: { passed: true, packaged_cli_only: true, isolated_workspace_cwd: true, runtime_path_override_removed: true },
@@ -278,7 +295,7 @@ export function runReleaseArtifactStatefulSoak(options = {}) {
       duplicate_side_effect_rejection: { passed: true, replay_status: replay.status, workspace_unchanged: true, ledger_unchanged: true },
       ledger_workspace_consistency: { passed: true, full_workspace_snapshot: true, ledger_prefix_preserved: true, ledger_after_run: ledgerAfterRun.sha256, ledger_after_recovery: ledgerAfterRecovery.sha256, workspace_after_run: afterRun, workspace_after_recovery: afterRecovery },
       resume_replay_behavior: { passed: true, resume_controller_action: resumed.controller_action, replay_controller_action: replay.controller_action },
-      finite_convergence: { passed: true, recovery_status: resumed.status, terminal_status: replay.status, commands_executed: maximumCommands, maximum_commands: maximumCommands },
+      finite_convergence: { passed: true, recovery_status: resumed.status, terminal_status: replay.status, commands_executed: commandLimit, maximum_commands: commandLimit },
       evidence_chain_integrity: { passed: true, archive_sha256: sha256File(archivePath), artifact_sha256: packageIntegrity.artifact_sha256, runtime_sha256: packageIntegrity.runtime_sha256, workspace_snapshot: afterRecovery, ledger_sha256: ledgerAfterRecovery.sha256 }
     }
   };
@@ -291,5 +308,7 @@ export function runReleaseArtifactStatefulSoak(options = {}) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  process.stdout.write(`${JSON.stringify(runReleaseArtifactStatefulSoak({ cwd: repoRoot }))}\n`);
+  const maximumCommandsArgument = process.argv.slice(2).find((argument) => argument.startsWith('--maximum-commands='));
+  const maximumCommandsValue = maximumCommandsArgument?.slice('--maximum-commands='.length);
+  process.stdout.write(`${JSON.stringify(runReleaseArtifactStatefulSoak({ cwd: repoRoot, ...(maximumCommandsValue ? { maximumCommands: maximumCommandsValue } : {}) }))}\n`);
 }

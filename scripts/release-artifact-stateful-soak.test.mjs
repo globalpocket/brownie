@@ -198,3 +198,35 @@ test('stateful soak rejects a package whose signed CLI binding was tampered', ()
     /package integrity mismatch/u
   );
 });
+
+test('stateful soak rejects a package whose signed executable is a symbolic link', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-symlink-package-'));
+  const archivePath = createFixtureArchive(root);
+  const unpacked = path.join(root, 'unpacked');
+  fs.mkdirSync(unpacked);
+  assert.equal(spawnSync('tar', ['-xzf', archivePath, '-C', unpacked], { encoding: 'utf8' }).status, 0);
+  fs.unlinkSync(path.join(unpacked, 'brownie'));
+  try {
+    fs.symlinkSync('brownie-runtime', path.join(unpacked, 'brownie'));
+  } catch (error) {
+    if (process.platform === 'win32' && error.code === 'EPERM') return;
+    throw error;
+  }
+  const evidence = JSON.parse(fs.readFileSync(path.join(unpacked, 'artifact-evidence.json'), 'utf8'));
+  evidence.artifact.sha256 = sha256File(path.join(unpacked, 'brownie-runtime'));
+  fs.writeFileSync(path.join(unpacked, 'artifact-evidence.json'), `${JSON.stringify(evidence)}\n`);
+  fs.writeFileSync(path.join(unpacked, 'SHA256SUMS'), `${evidence.artifact.sha256.slice(7)}  brownie\n${evidence.runtime_companion.sha256.slice(7)}  brownie-runtime\n`);
+  assert.equal(spawnSync('tar', ['-czf', archivePath, '-C', unpacked, 'brownie', 'brownie-runtime', 'artifact-evidence.json', 'SHA256SUMS'], { encoding: 'utf8' }).status, 0);
+  assert.throws(
+    () => runReleaseArtifactStatefulSoak({ targetId: 'linux-x64', archivePath, workspaceRoot: path.join(root, 'workspace') }),
+    /rejects symbolic link/u
+  );
+});
+
+test('stateful soak fails closed if the configured finite command bound differs from the contract', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-command-bound-'));
+  assert.throws(
+    () => runReleaseArtifactStatefulSoak({ targetId: 'linux-x64', archivePath: createFixtureArchive(root), workspaceRoot: path.join(root, 'workspace'), maximumCommands: 4 }),
+    /maximum command bound must be exactly 3/u
+  );
+});
