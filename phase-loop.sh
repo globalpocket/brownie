@@ -18975,7 +18975,18 @@ PY
     return 78
   fi
   local deterministic_todo_decomposition_output deterministic_todo_decomposition_status
-  if deterministic_todo_decomposition_output="$(try_deterministic_todo_decomposition_repair "$run_stamp" 2>&1)"; then
+  # A fresh claim admitted solely to reverify an exact clean merged delivery
+  # has a deliberately narrow dispatch authority.  Do not let a global queue
+  # normalizer preempt it by trying to rewrite an unrelated downstream TODO
+  # that still names this historical parent.  The re-verification must reach
+  # Runtime first; only its bound completion/resolution receipt may unblock
+  # those dependents.
+  if active_fresh_claim_has_clean_merged_delivery_candidate; then
+    deterministic_todo_decomposition_output='{"applied":false,"eligible":false,"reason":"deferred_for_clean_merged_delivery_reverification"}'
+    deterministic_todo_decomposition_status=2
+    printf '%s run=%s deterministic_todo_decomposition_deferred_for_clean_merged_delivery=true claim=%s\n' \
+      "$(now_utc)" "$run_stamp" "$(claim_field claim_id 2>/dev/null || true)" >> "$SUPERVISOR_LOG"
+  elif deterministic_todo_decomposition_output="$(try_deterministic_todo_decomposition_repair "$run_stamp" 2>&1)"; then
     deterministic_todo_decomposition_status=0
   else
     deterministic_todo_decomposition_status=$?
