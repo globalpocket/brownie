@@ -152,16 +152,26 @@ test('CLI isolates phase-loop workspace lineage from the evaluator controller ch
   assert.match(workspaceSelection.stdout, /^- \[ \] E-15-parent:/u);
 });
 
-function makeSupersededMergedDeliveryFixture({ mutateTodo = false, childHistory = 'none' } = {}) {
+function makeSupersededMergedDeliveryFixture({ mutateTodo = false, childHistory = 'none', blockedPredecessor = false } = {}) {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-superseded-merged-delivery-'));
   const todoPath = path.join(repo, '.brownie/todo.md');
   const claimDir = path.join(repo, '.brownie/private/phase-loop/todo-claims');
   const replanDir = path.join(repo, '.brownie/private/phase-loop/todo-replans');
   const target = 'scripts/soak.mjs';
-  const selected = '- [ ] E-superseded-merged-soak: Patch only `scripts/soak.mjs`:\n  Route: implementation.\n  Depends on: <none>.\n  Completion condition: reverify the exact merged artifact before any queue consumption.\n  Forbidden changes: do not treat a historical terminal record as completion.\n  Verification: run `node --check scripts/soak.mjs`.';
+  const selected = `- [ ] E-superseded-merged-soak: Patch only \`scripts/soak.mjs\`:
+  Route: implementation.
+  Depends on: ${blockedPredecessor ? 'E-superseded-predecessor' : '<none>'}.
+  Completion condition: reverify the exact merged artifact before any queue consumption.
+  Forbidden changes: do not treat a historical terminal record as completion.
+  Verification: run \`node --check scripts/soak.mjs\`.`;
+  const predecessor = `- [ ] E-superseded-predecessor: Blocker: prerequisite is not complete.
+  Route: blocker.
+  Depends on: <none>.
+  Completion condition: owner records prerequisite completion.
+  Forbidden changes: do not patch.`;
   fs.mkdirSync(path.dirname(todoPath), { recursive: true });
   fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true });
-  fs.writeFileSync(todoPath, `${selected}\n`);
+  fs.writeFileSync(todoPath, `${blockedPredecessor ? `${predecessor}\n\n` : ''}${selected}\n`);
   fs.writeFileSync(path.join(repo, '.brownie/todo-breakdown.md'), '# Stable breakdown\n');
   fs.writeFileSync(path.join(repo, target), 'export const soak = "before";\n');
   execFileSync('git', ['init', '--quiet', '--initial-branch=main'], { cwd: repo });
@@ -274,7 +284,8 @@ test('orphaned superseded recovery fails closed for an invalid candidate, materi
   const childRunning = makeSupersededMergedDeliveryFixture({ childHistory: 'running' });
   const childCompleted = makeSupersededMergedDeliveryFixture({ childHistory: 'completed' });
   const malformedChildHistory = makeSupersededMergedDeliveryFixture({ childHistory: 'malformed' });
-  for (const fixture of [dirtyCandidate, specMismatch, childRunning, childCompleted, malformedChildHistory]) {
+  const blockedDependency = makeSupersededMergedDeliveryFixture({ childHistory: 'terminal', blockedPredecessor: true });
+  for (const fixture of [dirtyCandidate, specMismatch, childRunning, childCompleted, malformedChildHistory, blockedDependency]) {
     const result = spawnSync(process.execPath, [
       path.join(controllerRoot, 'scripts/phase-loop-todo-evaluator.mjs'), 'select', '--todo', fixture.todoPath,
       '--breakdown', path.join(fixture.repo, '.brownie/todo-breakdown.md'), '--claim-dir', fixture.claimDir

@@ -298,18 +298,26 @@ function candidateMatchesSupersededParent(candidate, block) {
 // child archive is an exact terminal failure from this same split, the parent
 // itself has a terminal record, and Git independently proves the exact parent
 // contract was cleanly merged. This creates no completion state; it merely
-// makes the original parent claimable for Runtime re-verification.
-export function selectSupersededParentWithMissingChildrenForCleanMergedDelivery(text, options = {}) {
+// makes the original parent claimable for Runtime re-verification.  Keep the
+// candidate details private to this exact admission path so a later durable
+// resolution can bind its completion evidence to the same split.
+export function supersededParentCleanMergedDeliveryRecovery(text, options = {}) {
   if (!options.repoRoot || !options.claimDir) return '';
   const todoState = options.todoState ?? loadTodoState(options.repoRoot, text, {
     additionalReplanRecords: options.todoReplanRecords,
     breakdownPath: options.breakdownPath
   });
-  if (todoState.errors.length > 0) return '';
+  if (todoState.errors.length > 0) return null;
 
   for (const block of uncheckedTodoBlocks(text)) {
     const id = todoId(block);
     if (!id || !todoState.supersededIds.has(id) || todoState.completedIds.has(id)) continue;
+    // This fallback has exactly the same dependency authority as the normal
+    // selector. A historical clean merge is proof about this TODO only; it is
+    // never proof that one of its prerequisites completed.
+    if (dependsOn(block).some((dependency) => (
+      todoState.knownIds.has(dependency) && !todoState.resolvedIds.has(dependency)
+    ))) continue;
     const replans = todoState.replanRecords.filter((record) => record.parent_todo_id === id);
     const childSets = new Set(replans.map((record) => [...record.generated_child_ids].sort().join('\u0000')));
     if (childSets.size !== 1) continue;
@@ -323,9 +331,22 @@ export function selectSupersededParentWithMissingChildrenForCleanMergedDelivery(
       || todoState.supersededIds.has(childId)
     ))) continue;
     const candidate = findCleanMergedDeliveryCandidate({ repoRoot: options.repoRoot, selectedTodo: block });
-    if (candidateMatchesSupersededParent(candidate, block)) return block;
+    if (candidateMatchesSupersededParent(candidate, block)) {
+      return {
+        block,
+        parent_todo_id: id,
+        parent_todo_sha256: sha256Text(block),
+        generated_child_ids: childIds,
+        candidate: candidate.candidate,
+        replan_records: replans
+      };
+    }
   }
-  return '';
+  return null;
+}
+
+export function selectSupersededParentWithMissingChildrenForCleanMergedDelivery(text, options = {}) {
+  return supersededParentCleanMergedDeliveryRecovery(text, options)?.block ?? '';
 }
 
 export function isExplicitBlockerTodo(block) {

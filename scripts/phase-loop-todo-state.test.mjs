@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 import {
   durableCompletionRecordReceipt,
@@ -29,6 +30,79 @@ const replan = {
   parent_todo_id: 'E-parent',
   generated_child_ids: ['E-child-1', 'E-child-2']
 };
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function orphanedParentResolutionFixture({ invalidBinding = false, unsafeChild = false, invalidProof = false } = {}) {
+  const parentBlock = `- [ ] E-orphaned-parent: Patch only \`scripts/orphaned.mjs\`:
+  Route: implementation.
+  Depends on: <none>.
+  Completion condition: exact merged delivery is reverified before resolution.
+  Forbidden changes: do not treat a split as completion.
+  Verification: run \`node --check scripts/orphaned.mjs\`.`;
+  const parentId = 'E-orphaned-parent';
+  const claimId = 'claim-orphaned-parent';
+  const selectedHash = sha256(parentBlock);
+  const conditionHash = sha256('exact merged delivery is reverified before resolution.');
+  const proof = {
+    schema_version: 1,
+    kind: 'phase_loop_merged_delivery_reverification',
+    claim_id: claimId,
+    root_claim_id: claimId,
+    selected_todo_id: parentId,
+    selected_todo_sha256: selectedHash,
+    completion_condition_sha256: conditionHash,
+    queue_fingerprint: 'd'.repeat(64),
+    queue_generation: 23,
+    runtime: { claim_id: claimId, status: invalidProof ? 'failed' : 'task_executed', executed_count: 1 },
+    git: { merge_commit_oid: 'a'.repeat(40), first_parent_oid: 'b'.repeat(40), head_oid: 'c'.repeat(40), targets: [{ path: 'scripts/orphaned.mjs', sha256: 'd'.repeat(64) }] },
+    task_spec_binding: { kind: 'commit_trailer', todo_id: parentId, selected_todo_sha256: selectedHash, head_oid: 'c'.repeat(40) },
+    review: { state: 'MERGED', pr_url: 'https://example.invalid/pull/23', merge_commit_oid: 'a'.repeat(40), head_oid: 'c'.repeat(40), author: 'implementation', reviewer: 'review', merge_actor: 'review', merged_at: '2026-11-05T00:00:00Z', observed_at: '2026-11-05T00:01:00Z', approved: true, ci_passed: true, latest_reviewer_review_state: 'APPROVED', latest_reviewer_review_commit_oid: 'c'.repeat(40) },
+    verification_results: [{ command: 'node --check scripts/orphaned.mjs', exit_code: 0 }]
+  };
+  const completion = {
+    schema_version: 3,
+    claim_id: claimId,
+    root_claim_id: claimId,
+    selected_todo_id: parentId,
+    selected_todo: parentBlock,
+    selected_todo_sha256: selectedHash,
+    queue_fingerprint: 'd'.repeat(64),
+    queue_generation: 23,
+    delivery_receipt: {
+      schema_version: 1,
+      claim_id: claimId,
+      root_claim_id: claimId,
+      selected_todo_sha256: selectedHash,
+      author: 'implementation', reviewer: 'review', merge_actor: 'review', approved: true, ci_passed: true, merged: true,
+      merged_delivery_reverification: proof
+    }
+  };
+  const children = ['E-orphaned-parent-target-01', 'E-orphaned-parent-target-02'];
+  const resolution = {
+    schema_version: 1,
+    record_type: 'superseded_parent_clean_merged_delivery_resolution',
+    reason: 'orphaned_superseded_parent_clean_merged_delivery_reverified',
+    parent_todo_id: parentId,
+    parent_todo_sha256: selectedHash,
+    generated_child_ids: children,
+    claim_id: claimId,
+    root_claim_id: claimId,
+    completion_record_sha256: sha256(JSON.stringify(completion)),
+    candidate: {
+      selected_todo_id: invalidBinding ? 'E-other' : parentId,
+      selected_todo_sha256: selectedHash,
+      merge_commit_oid: 'a'.repeat(40), first_parent_oid: 'b'.repeat(40), head_oid: 'c'.repeat(40),
+      task_spec_binding: { kind: 'commit_trailer', todo_id: parentId, selected_todo_sha256: selectedHash, head_oid: 'c'.repeat(40) }
+    }
+  };
+  const replanRecord = { ...replan, parent_todo_id: parentId, generated_child_ids: children };
+  const child = unsafeChild ? `\n\n- [ ] ${children[0]}: retained child blocks recovery.` : '';
+  const dependent = `\n\n- [ ] E-orphaned-dependent: Patch only \`scripts/dependent.mjs\`:\n  Route: implementation.\n  Depends on: ${parentId}.`;
+  return { todoText: `${parentBlock}${child}${dependent}`, completion, resolution, replanRecord, parentId };
+}
 
 test('Source TODO is lineage and never inherits completion', () => {
   const state = resolveTodoState({ todoText: `${parent}\n\n${childOne}\n` });
@@ -68,6 +142,35 @@ test('superseded parent resolves only after every generated child completes', ()
   assert(state.supersededIds.has('E-parent'));
   assert(!state.completedIds.has('E-parent'));
   assert(state.resolvedIds.has('E-parent'));
+});
+
+test('an exact durable merged-delivery supersession resolution consumes only its orphaned parent and unblocks its dependent', () => {
+  const fixture = orphanedParentResolutionFixture();
+  const state = resolveTodoState({
+    todoText: fixture.todoText,
+    replanRecords: [fixture.replanRecord],
+    completionRecords: [fixture.completion],
+    supersessionResolutionRecords: [fixture.resolution]
+  });
+
+  assert(state.completedIds.has(fixture.parentId));
+  assert(state.resolvedIds.has(fixture.parentId));
+  assert(state.supersessionResolvedIds.has(fixture.parentId));
+  assert.equal(state.invalidatedCompletionRecords.length, 0);
+});
+
+test('a missing exact binding, invalid runtime proof, or live child cannot resolve an orphaned superseded parent', () => {
+  for (const options of [{ invalidBinding: true }, { invalidProof: true }, { unsafeChild: true }]) {
+    const fixture = orphanedParentResolutionFixture(options);
+    const state = resolveTodoState({
+      todoText: fixture.todoText,
+      replanRecords: [fixture.replanRecord],
+      completionRecords: [fixture.completion],
+      supersessionResolutionRecords: [fixture.resolution]
+    });
+    assert(!state.resolvedIds.has(fixture.parentId), JSON.stringify({ options, summary: [...state.completedIds] }));
+    assert(!state.supersessionResolvedIds.has(fixture.parentId));
+  }
 });
 
 test('an exact durable invalidation retracts only its matching completion receipt', () => {
