@@ -7470,7 +7470,7 @@ if claim_smoke_section_enabled terminal; then
   merged_terminal_prompt="$(mktemp)"
   merged_terminal_bin="$(mktemp -d)"
   merged_terminal_runtime="$(mktemp)"
-  mkdir -p "$merged_terminal_workspace/.brownie/private/phase-loop/todo-replans" "$merged_terminal_workspace/scripts" "$merged_terminal_workspace/docs/architecture" "$merged_terminal_state/todo-claims"
+  mkdir -p "$merged_terminal_workspace/.brownie/private/phase-loop/todo-replans" "$merged_terminal_workspace/scripts" "$merged_terminal_workspace/docs/architecture" "$merged_terminal_state/todo-claims/contract-rebaselines"
   cp "$REPO_ROOT/docs/architecture/phase-loop-actor-separation-policy.json" "$merged_terminal_workspace/docs/architecture/phase-loop-actor-separation-policy.json"
   printf 'export const soak = "before";\n' > "$merged_terminal_workspace/scripts/soak.mjs"
   cat > "$merged_terminal_todo" <<'EOF'
@@ -7505,11 +7505,67 @@ print(json.dumps(pathlib.Path(sys.argv[1]).read_text()))
 PY
 ),"status":"failed","archive_reason":"terminal_failure_blocked_evidence_failed","retry_eligible":false}
 EOF
-  printf '{"block_reason":"terminal_runtime_failure","controller_fingerprint":"%s","selected_todo_sha256":"%s","retry_cap":0}\n' "$controller_fp" "$selected_hash" > "$merged_terminal_state/todo-claims/blocked.jsonl"
-  # Production-shaped orphaned split: the parent remains pending, but a
-  # historical replan marked it superseded and neither child exists in the
-  # live queue nor in terminal claim history. Only the exact clean merged
-  # delivery candidate may recover this parent for re-verification.
+  # Match the production shape: target-01 has archived terminal attempts and
+  # a blocked ledger, but every record is bound to this exact parent split and
+  # contract rebaseline. These records are provenance, not child completion or
+  # a current claim, so only the independently verified parent delivery can
+  # re-enter Runtime re-verification.
+  python3 - "$merged_terminal_state/todo-claims" <<'PY'
+import hashlib,json,pathlib,sys
+
+claims=pathlib.Path(sys.argv[1])
+parent="E-merged-terminal-live"
+child=f"{parent}-target-01"
+selected=(f"- [ ] {child}: Patch only `scripts/soak.mjs`:\n"
+          "  Route: implementation.\n"
+          f"  Source TODO: {parent}.\n"
+          "  Depends on: <none>.\n"
+          "  Completion condition: archived child failure remains provenance only.\n"
+          "  Forbidden changes: do not edit unrelated files.\n"
+          "  Verification: run `node --check scripts/soak.mjs`.")
+digest=hashlib.sha256(selected.encode()).hexdigest()
+archive={
+  "claim_id":"legacy-terminal-child",
+  "selected_todo":selected,
+  "selected_todo_id":child,
+  "selected_todo_sha256":digest,
+  "status":"failed",
+  "archive_reason":"terminal_failure_retry",
+  "claim_admission":{"claim_id":"legacy-terminal-child","selected_todo_id":child,"selected_todo_sha256":digest},
+  "failure_history":[{"status":"failed","selected_todo_sha256":digest}],
+  "status_history":[{"status":"claimed"},{"status":"in_progress"},{"status":"failed"}],
+}
+(claims / "stale-terminal-child.json").write_text(json.dumps(archive)+"\n", encoding="utf-8")
+stale_snapshot={
+  **archive,
+  "claim_id":"legacy-terminal-child-stale-snapshot",
+  "status":"stale_snapshot_rejected",
+  "claim_admission":{**archive["claim_admission"],"claim_id":"legacy-terminal-child-stale-snapshot"},
+  "status_history":[*archive["status_history"],{"status":"stale_snapshot_rejected"}],
+}
+stale_snapshot.pop("archive_reason")
+(claims / "stale-terminal-child-stale-snapshot.json").write_text(json.dumps(stale_snapshot)+"\n", encoding="utf-8")
+(claims / "blocked.jsonl").write_text(json.dumps({
+  "selected_todo":selected,
+  "selected_todo_id":child,
+  "selected_todo_sha256":digest,
+  "terminal_failure":True,
+  "block_reason":"terminal_runtime_failure",
+})+"\n", encoding="utf-8")
+(claims / "contract-rebaselines" / "orphaned-split.json").write_text(json.dumps({
+  "schema_version":1,
+  "record_type":"todo_contract_rebaseline",
+  "status":"approved",
+  "parent_todo_ids":[parent],
+  "target_todo_ids":[parent],
+  "contract_changes":[{"todo_id":parent}],
+})+"\n", encoding="utf-8")
+PY
+  printf '{"block_reason":"terminal_runtime_failure","controller_fingerprint":"%s","selected_todo_sha256":"%s","retry_cap":0}\n' "$controller_fp" "$selected_hash" >> "$merged_terminal_state/todo-claims/blocked.jsonl"
+  # Production-shaped orphaned split: the parent remains pending, a historical
+  # replan marked it superseded, and child history is terminal-only provenance
+  # from that split. Only the exact clean merged delivery candidate may recover
+  # this parent for re-verification.
   cat > "$merged_terminal_workspace/.brownie/private/phase-loop/todo-replans/orphaned-split.json" <<'JSON'
 {"schema_version":1,"record_type":"todo_replan","operation":"split_parent_into_children","parent_status":"superseded_by_children","parent_todo_id":"E-merged-terminal-live","generated_child_ids":["E-merged-terminal-live-target-01","E-merged-terminal-live-target-02"]}
 JSON
@@ -7529,7 +7585,7 @@ if [ "$1" = api ]; then printf '[]\n'; exit 0; fi
 exit 64
 SH
   chmod +x "$merged_terminal_bin/gh"
-  todo_before="$(cat "$merged_terminal_todo")"; breakdown_before="$(cat "$merged_terminal_breakdown")"; archive_before="$(cat "$merged_terminal_state/todo-claims/stale-terminal.json")"
+  todo_before="$(cat "$merged_terminal_todo")"; breakdown_before="$(cat "$merged_terminal_breakdown")"; archive_before="$(cat "$merged_terminal_state/todo-claims/stale-terminal.json")"; child_archive_before="$(cat "$merged_terminal_state/todo-claims/stale-terminal-child.json")"; child_snapshot_before="$(cat "$merged_terminal_state/todo-claims/stale-terminal-child-stale-snapshot.json")"; child_ledger_before="$(cat "$merged_terminal_state/todo-claims/blocked.jsonl")"; rebaseline_before="$(cat "$merged_terminal_state/todo-claims/contract-rebaselines/orphaned-split.json")"
   merged_terminal_claim_file="$(mktemp)"
   # Reverification is a review-role operation.  Supply an isolated explicit
   # review profile under this shard's control root so the real actor preflight
@@ -7565,6 +7621,10 @@ PY
   test "$(cat "$merged_terminal_todo")" = "$todo_before"
   test "$(cat "$merged_terminal_breakdown")" = "$breakdown_before"
   test "$(cat "$merged_terminal_state/todo-claims/stale-terminal.json")" = "$archive_before"
+  test "$(cat "$merged_terminal_state/todo-claims/stale-terminal-child.json")" = "$child_archive_before"
+  test "$(cat "$merged_terminal_state/todo-claims/stale-terminal-child-stale-snapshot.json")" = "$child_snapshot_before"
+  test "$(cat "$merged_terminal_state/todo-claims/blocked.jsonl")" = "$child_ledger_before"
+  test "$(cat "$merged_terminal_state/todo-claims/contract-rebaselines/orphaned-split.json")" = "$rebaseline_before"
   ! rg -q 'TODO-decompose|todo.completed' "$merged_terminal_state" "$merged_terminal_todo" "$merged_terminal_breakdown"
 fi
 

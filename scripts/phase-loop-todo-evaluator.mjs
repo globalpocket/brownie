@@ -123,41 +123,149 @@ function recordIsTerminal(record) {
   return reason.includes('terminal') || status === 'failed' || status === 'terminal_failure';
 }
 
-// A missing replan child is normally an integrity warning, not authority to
-// resume its superseded parent. This reader is deliberately narrow: only the
-// claim archive/blocked ledger needed to establish the exact orphan shape is
-// inspected, and unreadable state makes the exceptional path unavailable.
-function readClaimHistory(claimDir) {
-  if (!claimDir || !fs.existsSync(claimDir)) {
-    return { readable: false, selectedIds: new Set(), terminalIds: new Set() };
+function recordHasCompletionEvidence(record) {
+  return [
+    'completed_at',
+    'verified_at',
+    'completion_certificate',
+    'completion_evidence',
+    'verified_completion'
+  ].some((key) => record?.[key] !== undefined && record[key] !== null && record[key] !== false);
+}
+
+function recordHasExactDerivedParent(record, parentId, childId) {
+  if (selectedTodoIdFromRecord(record) !== childId || typeof record?.selected_todo !== 'string') return false;
+  if (sourceTodoId(record.selected_todo) !== parentId) return false;
+  if (typeof record.selected_todo_sha256 !== 'string' || record.selected_todo_sha256 !== sha256Text(record.selected_todo)) {
+    return false;
   }
-  let entries;
-  try {
-    entries = fs.readdirSync(claimDir, { withFileTypes: true });
-  } catch {
-    return { readable: false, selectedIds: new Set(), terminalIds: new Set() };
+  const admission = record.claim_admission;
+  return typeof admission === 'object'
+    && admission !== null
+    && admission.claim_id === record.claim_id
+    && admission.selected_todo_id === childId
+    && admission.selected_todo_sha256 === record.selected_todo_sha256;
+}
+
+function recordIsArchivedTerminalChildFailure(record, parentId, childId) {
+  if (!recordHasExactDerivedParent(record, parentId, childId) || recordHasCompletionEvidence(record)) return false;
+  const status = String(record?.status ?? '').toLowerCase();
+  const statusHistory = Array.isArray(record?.status_history) ? record.status_history : [];
+  const failureHistory = Array.isArray(record?.failure_history) ? record.failure_history : [];
+  const allowedTransitionStatuses = new Set(['claimed', 'in_progress', 'failed', 'stale_snapshot_rejected']);
+  if (!['failed', 'stale_snapshot_rejected'].includes(status)
+    || statusHistory.length === 0
+    || failureHistory.length === 0
+    || statusHistory.some((entry) => !allowedTransitionStatuses.has(String(entry?.status ?? '').toLowerCase()))
+    || failureHistory.some((entry) => String(entry?.status ?? '').toLowerCase() !== 'failed'
+      || entry?.selected_todo_sha256 !== record.selected_todo_sha256)
+    || String(statusHistory.at(-1)?.status ?? '').toLowerCase() !== status) {
+    return false;
   }
-  const selectedIds = new Set();
-  const terminalIds = new Set();
-  for (const entry of entries) {
-    if (!entry.isFile() || (!entry.name.endsWith('.json') && entry.name !== 'blocked.jsonl')) continue;
-    let records;
-    try {
-      const source = fs.readFileSync(path.join(claimDir, entry.name), 'utf8');
-      records = entry.name === 'blocked.jsonl'
+  if (status === 'failed') {
+    return String(record?.archive_reason ?? '').toLowerCase().includes('terminal_failure');
+  }
+  return statusHistory.some((entry) => String(entry?.status ?? '').toLowerCase() === 'failed');
+}
+
+function recordIsTerminalChildBlockedLedger(record, parentId, childId) {
+  if (typeof record?.selected_todo !== 'string'
+    || selectedTodoIdFromRecord(record) !== childId
+    || sourceTodoId(record.selected_todo) !== parentId
+    || record.selected_todo_sha256 !== sha256Text(record.selected_todo)
+    || record.terminal_failure !== true) {
+    return false;
+  }
+  return String(record?.block_reason ?? '').toLowerCase().includes('terminal');
+}
+
+function isApprovedParentContractRebaseline(record, parentId) {
+  return record?.schema_version === 1
+    && record?.record_type === 'todo_contract_rebaseline'
+    && record?.status === 'approved'
+    && Array.isArray(record?.parent_todo_ids)
+    && record.parent_todo_ids.includes(parentId)
+    && Array.isArray(record?.target_todo_ids)
+    && record.target_todo_ids.includes(parentId)
+    && Array.isArray(record?.contract_changes)
+    && record.contract_changes.some((change) => change?.todo_id === parentId);
+}
+
+function jsonRecordsInside(root) {
+  const records = [];
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const candidate = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) throw new Error('symlinked claim history is not accepted');
+      if (entry.isDirectory()) {
+        visit(candidate);
+        continue;
+      }
+      if (!entry.isFile() || (!entry.name.endsWith('.json') && !entry.name.endsWith('.jsonl'))) continue;
+      const source = fs.readFileSync(candidate, 'utf8');
+      const values = entry.name.endsWith('.jsonl')
         ? source.split('\n').filter((line) => line.trim()).map((line) => JSON.parse(line))
         : [JSON.parse(source)];
-    } catch {
-      return { readable: false, selectedIds: new Set(), terminalIds: new Set() };
+      for (const value of values) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('claim history record is not an object');
+        records.push({ relativePath: path.relative(root, candidate), record: value });
+      }
     }
-    for (const record of records) {
+  };
+  visit(root);
+  return records;
+}
+
+// A missing replan child is normally an integrity warning, not authority to
+// resume its superseded parent. A child archive can be tolerated only when it
+// proves the exact child was terminally rejected under this parent's split;
+// current, completed, successful, malformed, or unbound child state remains
+// a hard stop. All archive and contract-rebaseline records are read so a
+// partial/corrupt history cannot create an exception.
+function readClaimHistory(claimDir, parentId, childIds) {
+  if (!claimDir || !fs.existsSync(claimDir)) return { readable: false };
+  const childSet = new Set(childIds);
+  const childHistory = new Map(childIds.map((id) => [id, { archives: 0, ledgers: 0, unsafe: false }]));
+  try {
+    const records = jsonRecordsInside(claimDir);
+    const terminalIds = new Set();
+    let hasApprovedParentContractRebaseline = false;
+    for (const { relativePath, record } of records) {
       const id = selectedTodoIdFromRecord(record);
-      if (!id) continue;
-      selectedIds.add(id);
-      if (recordIsTerminal(record)) terminalIds.add(id);
+      if (id === parentId && recordIsTerminal(record)) terminalIds.add(id);
+      if (relativePath.startsWith(`contract-rebaselines${path.sep}`) && isApprovedParentContractRebaseline(record, parentId)) {
+        hasApprovedParentContractRebaseline = true;
+      }
+      if (!childSet.has(id)) continue;
+      const state = childHistory.get(id);
+      if (relativePath === 'blocked.jsonl') {
+        if (recordIsTerminalChildBlockedLedger(record, parentId, id)) state.ledgers += 1;
+        else state.unsafe = true;
+      } else if (path.basename(relativePath) === 'current.json') {
+        state.unsafe = true;
+      } else if (recordIsArchivedTerminalChildFailure(record, parentId, id)) {
+        state.archives += 1;
+      } else {
+        state.unsafe = true;
+      }
     }
+
+    const completionRoot = path.join(path.dirname(claimDir), 'todo-completions');
+    if (fs.existsSync(completionRoot)) {
+      for (const { record } of jsonRecordsInside(completionRoot)) {
+        const id = selectedTodoIdFromRecord(record) || String(record?.todo_id ?? '');
+        if (childSet.has(id)) childHistory.get(id).unsafe = true;
+      }
+    }
+    const hasChildHistory = [...childHistory.values()].some((state) => state.archives > 0 || state.ledgers > 0);
+    if (hasChildHistory && !hasApprovedParentContractRebaseline) return { readable: false };
+    if ([...childHistory.values()].some((state) => state.unsafe || (state.ledgers > 0 && state.archives === 0))) {
+      return { readable: false };
+    }
+    return { readable: true, terminalIds, childHistory };
+  } catch {
+    return { readable: false };
   }
-  return { readable: true, selectedIds, terminalIds };
 }
 
 function candidateMatchesSupersededParent(candidate, block) {
@@ -186,10 +294,11 @@ function candidateMatchesSupersededParent(candidate, block) {
 }
 
 // Recover exactly one historical split only when its parent is still pending,
-// every generated child vanished from both the live queue and claim history,
-// the parent itself has a terminal record, and Git independently proves the
-// exact parent contract was cleanly merged. This creates no completion state;
-// it merely makes the original parent claimable for Runtime re-verification.
+// every generated child vanished from the live queue/state and any retained
+// child archive is an exact terminal failure from this same split, the parent
+// itself has a terminal record, and Git independently proves the exact parent
+// contract was cleanly merged. This creates no completion state; it merely
+// makes the original parent claimable for Runtime re-verification.
 export function selectSupersededParentWithMissingChildrenForCleanMergedDelivery(text, options = {}) {
   if (!options.repoRoot || !options.claimDir) return '';
   const todoState = options.todoState ?? loadTodoState(options.repoRoot, text, {
@@ -197,8 +306,6 @@ export function selectSupersededParentWithMissingChildrenForCleanMergedDelivery(
     breakdownPath: options.breakdownPath
   });
   if (todoState.errors.length > 0) return '';
-  const history = readClaimHistory(options.claimDir);
-  if (!history.readable) return '';
 
   for (const block of uncheckedTodoBlocks(text)) {
     const id = todoId(block);
@@ -207,12 +314,13 @@ export function selectSupersededParentWithMissingChildrenForCleanMergedDelivery(
     const childSets = new Set(replans.map((record) => [...record.generated_child_ids].sort().join('\u0000')));
     if (childSets.size !== 1) continue;
     const childIds = [...childSets][0].split('\u0000').filter(Boolean);
-    if (childIds.length === 0 || !history.terminalIds.has(id)) continue;
+    if (childIds.length === 0) continue;
+    const history = readClaimHistory(options.claimDir, id, childIds);
+    if (!history.readable || !history.terminalIds.has(id)) continue;
     if (childIds.some((childId) => (
       todoState.liveIds.has(childId)
       || todoState.completedIds.has(childId)
       || todoState.supersededIds.has(childId)
-      || history.selectedIds.has(childId)
     ))) continue;
     const candidate = findCleanMergedDeliveryCandidate({ repoRoot: options.repoRoot, selectedTodo: block });
     if (candidateMatchesSupersededParent(candidate, block)) return block;

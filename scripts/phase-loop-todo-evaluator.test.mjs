@@ -152,7 +152,7 @@ test('CLI isolates phase-loop workspace lineage from the evaluator controller ch
   assert.match(workspaceSelection.stdout, /^- \[ \] E-15-parent:/u);
 });
 
-function makeSupersededMergedDeliveryFixture({ mutateTodo = false, childHistory = false } = {}) {
+function makeSupersededMergedDeliveryFixture({ mutateTodo = false, childHistory = 'none' } = {}) {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-superseded-merged-delivery-'));
   const todoPath = path.join(repo, '.brownie/todo.md');
   const claimDir = path.join(repo, '.brownie/private/phase-loop/todo-claims');
@@ -193,16 +193,70 @@ function makeSupersededMergedDeliveryFixture({ mutateTodo = false, childHistory 
     claim_id: 'legacy-terminal', selected_todo: selected, status: 'failed',
     archive_reason: 'terminal_failure_blocked_evidence_failed'
   })}\n`);
-  if (childHistory) {
-    fs.writeFileSync(path.join(claimDir, 'stale-child.json'), `${JSON.stringify({
-      claim_id: 'legacy-child', selected_todo_id: 'E-superseded-merged-soak-target-01', status: 'failed'
+  if (childHistory !== 'none') {
+    const childId = 'E-superseded-merged-soak-target-01';
+    const childSelected = `- [ ] ${childId}: Patch only \`scripts/soak.mjs\`:\n  Route: implementation.\n  Source TODO: E-superseded-merged-soak.\n  Depends on: <none>.\n  Completion condition: terminal child history remains provenance only.\n  Forbidden changes: do not edit unrelated files.\n  Verification: run \`node --check scripts/soak.mjs\`.`;
+    const childHash = createHash('sha256').update(childSelected).digest('hex');
+    fs.mkdirSync(path.join(claimDir, 'contract-rebaselines'), { recursive: true });
+    fs.writeFileSync(path.join(claimDir, 'contract-rebaselines', 'split.json'), `${JSON.stringify({
+      schema_version: 1,
+      record_type: 'todo_contract_rebaseline',
+      status: 'approved',
+      parent_todo_ids: ['E-superseded-merged-soak'],
+      target_todo_ids: ['E-superseded-merged-soak'],
+      contract_changes: [{ todo_id: 'E-superseded-merged-soak' }]
     })}\n`);
+    const archive = {
+      claim_id: 'legacy-child',
+      selected_todo: childSelected,
+      selected_todo_id: childId,
+      selected_todo_sha256: childHash,
+      status: childHistory === 'running' ? 'in_progress' : 'failed',
+      archive_reason: 'terminal_failure_retry',
+      claim_admission: {
+        claim_id: 'legacy-child',
+        selected_todo_id: childId,
+        selected_todo_sha256: childHash
+      },
+      failure_history: [{ status: 'failed', selected_todo_sha256: childHash }],
+      status_history: [{ status: 'claimed' }, { status: 'in_progress' }, { status: 'failed' }]
+    };
+    if (childHistory === 'malformed') {
+      fs.writeFileSync(path.join(claimDir, 'stale-child.json'), '{not-json}\n');
+    } else if (childHistory === 'completed') {
+      fs.mkdirSync(path.join(repo, '.brownie/private/phase-loop/todo-completions'), { recursive: true });
+      fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/todo-completions', 'child.json'), `${JSON.stringify({
+        selected_todo_id: childId,
+        selected_todo_sha256: childHash,
+        completed_at: '2026-11-05T00:00:00Z'
+      })}\n`);
+    } else if (childHistory === 'running') {
+      fs.writeFileSync(path.join(claimDir, 'current.json'), `${JSON.stringify(archive)}\n`);
+    } else {
+      fs.writeFileSync(path.join(claimDir, 'stale-child.json'), `${JSON.stringify(archive)}\n`);
+      const staleSnapshot = {
+        ...archive,
+        claim_id: 'legacy-child-stale-snapshot',
+        status: 'stale_snapshot_rejected',
+        claim_admission: { ...archive.claim_admission, claim_id: 'legacy-child-stale-snapshot' },
+        status_history: [...archive.status_history, { status: 'stale_snapshot_rejected' }]
+      };
+      delete staleSnapshot.archive_reason;
+      fs.writeFileSync(path.join(claimDir, 'stale-child-snapshot.json'), `${JSON.stringify(staleSnapshot)}\n`);
+      fs.writeFileSync(path.join(claimDir, 'blocked.jsonl'), `${JSON.stringify({
+        selected_todo: childSelected,
+        selected_todo_id: childId,
+        selected_todo_sha256: childHash,
+        terminal_failure: true,
+        block_reason: 'terminal_runtime_failure'
+      })}\n`);
+    }
   }
   return { repo, todoPath, claimDir, selected: mutateTodo ? fs.readFileSync(todoPath, 'utf8').trim() : selected, selectedHash };
 }
 
 test('public evaluator recovers only an orphaned superseded parent with an exact clean merged delivery', () => {
-  const fixture = makeSupersededMergedDeliveryFixture();
+  const fixture = makeSupersededMergedDeliveryFixture({ childHistory: 'terminal' });
   const result = spawnSync(process.execPath, [
     path.join(controllerRoot, 'scripts/phase-loop-todo-evaluator.mjs'), 'select', '--todo', fixture.todoPath,
     '--breakdown', path.join(fixture.repo, '.brownie/todo-breakdown.md'), '--claim-dir', fixture.claimDir
@@ -213,12 +267,14 @@ test('public evaluator recovers only an orphaned superseded parent with an exact
   assert.equal(createHash('sha256').update(result.stdout.trim()).digest('hex'), fixture.selectedHash);
 });
 
-test('orphaned superseded recovery fails closed for an invalid candidate, material spec mismatch, or child history', () => {
+test('orphaned superseded recovery fails closed for an invalid candidate, material spec mismatch, or unsafe child history', () => {
   const dirtyCandidate = makeSupersededMergedDeliveryFixture();
   fs.writeFileSync(path.join(dirtyCandidate.repo, 'scripts/soak.mjs'), 'export const soak = "dirty";\n');
   const specMismatch = makeSupersededMergedDeliveryFixture({ mutateTodo: true });
-  const childState = makeSupersededMergedDeliveryFixture({ childHistory: true });
-  for (const fixture of [dirtyCandidate, specMismatch, childState]) {
+  const childRunning = makeSupersededMergedDeliveryFixture({ childHistory: 'running' });
+  const childCompleted = makeSupersededMergedDeliveryFixture({ childHistory: 'completed' });
+  const malformedChildHistory = makeSupersededMergedDeliveryFixture({ childHistory: 'malformed' });
+  for (const fixture of [dirtyCandidate, specMismatch, childRunning, childCompleted, malformedChildHistory]) {
     const result = spawnSync(process.execPath, [
       path.join(controllerRoot, 'scripts/phase-loop-todo-evaluator.mjs'), 'select', '--todo', fixture.todoPath,
       '--breakdown', path.join(fixture.repo, '.brownie/todo-breakdown.md'), '--claim-dir', fixture.claimDir
