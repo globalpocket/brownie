@@ -63,6 +63,7 @@ function parseArgs(argv) {
     write: true,
     repair: true,
     start: false,
+    status: false,
     selfUpdateRequest: null,
     workerLaunchReceiptPath: null,
     actorDeploymentPath: null
@@ -93,6 +94,8 @@ function parseArgs(argv) {
       args.start = true;
     } else if (arg === '--no-start') {
       args.start = false;
+    } else if (arg === '--status') {
+      args.status = true;
     } else if (arg === '--self-update-request') {
       args.selfUpdateRequest = argv[++index];
     } else if (arg === '--worker-launch-receipt') {
@@ -514,6 +517,102 @@ export function inspectDelegationFeedback(filePath) {
   } catch {
     return { state: 'unreadable', feedback: null };
   }
+}
+
+function activeDelegationStatus(feedbackPath) {
+  const inspected = inspectDelegationFeedback(feedbackPath);
+  if (inspected.state === 'missing') return { state: 'none' };
+  if (inspected.state === 'unreadable') {
+    return { state: 'unreadable', reason: 'delegation_feedback_unreadable_fail_closed' };
+  }
+  if (inspected.state === 'other') {
+    return { state: 'none', feedback_kind: inspected.feedback?.kind ?? null };
+  }
+
+  const feedback = inspected.feedback ?? {};
+  const delegation = feedback.delegation && typeof feedback.delegation === 'object'
+    ? feedback.delegation
+    : {};
+  return {
+    state: inspected.state,
+    claim_id: typeof feedback.claim_id === 'string' ? feedback.claim_id : null,
+    selected_todo_id: todoIdFromFirstLine(todoFirstLine(feedback.selected_todo)),
+    required_actor: typeof delegation.required_actor === 'string' ? delegation.required_actor : null,
+    issue_or_pr_url: typeof delegation.issue_or_pr_url === 'string' ? delegation.issue_or_pr_url : null,
+    acknowledged_at: typeof delegation.acknowledged_at === 'string' ? delegation.acknowledged_at : null
+  };
+}
+
+// This is deliberately a direct file projection instead of diagnosePhaseLoop:
+// asking for status must not append a failure event, rewrite feedback, invoke a
+// repair, or start a worker. It is the read-only observability surface used
+// when a repeated failure has delegated work and the loop must remain stopped.
+export function readSupervisorStatus(options = {}) {
+  const repoRoot = path.resolve(options.repoRoot ?? defaultRepoRoot);
+  const stateRoot = path.resolve(options.stateRoot ?? path.join(repoRoot, '.brownie/private/phase-loop'));
+  const status = readJsonOrNull(path.join(stateRoot, 'status.json')) ?? {};
+  const progress = readJsonOrNull(path.join(stateRoot, 'progress-state.json')) ?? {};
+  const claim = readJsonOrNull(path.join(stateRoot, 'todo-claims/current.json')) ?? {};
+  const selectedTodo = typeof claim.selected_todo === 'string'
+    ? claim.selected_todo
+    : typeof progress?.progress_projection?.selected_todo === 'string'
+      ? progress.progress_projection.selected_todo
+      : null;
+  const selectedTodoFirstLine = todoFirstLine(selectedTodo);
+  const runId = typeof status.run_id === 'string'
+    ? status.run_id
+    : typeof progress.run_id === 'string'
+      ? progress.run_id
+      : null;
+
+  return {
+    schema_version: 1,
+    control_kind: 'brownie_phase_loop_supervisor_status',
+    observed_at: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z'),
+    read_only: true,
+    repo_root: repoRoot,
+    state_root: path.relative(repoRoot, stateRoot) || '.',
+    phase_loop: {
+      status: typeof status.status === 'string' ? status.status : null,
+      detail: typeof status.detail === 'string' ? status.detail : null,
+      updated_at: typeof status.updated_at === 'string' ? status.updated_at : null
+    },
+    latest_run: {
+      run_id: runId,
+      run_stamp: typeof progress.run_stamp === 'string' ? progress.run_stamp : null,
+      last_run_succeeded: status.last_run_succeeded === true || status.status === 'last_run_succeeded'
+    },
+    failures: {
+      consecutive_failures: Number.isFinite(Number(status.consecutive_failures))
+        ? Number(status.consecutive_failures)
+        : null
+    },
+    progress: {
+      classification: typeof progress.classification === 'string' ? progress.classification : null,
+      same_progress_count: Number.isFinite(Number(progress.same_progress_count))
+        ? Number(progress.same_progress_count)
+        : null,
+      projection_status: typeof progress?.progress_projection?.cli_status === 'string'
+        ? progress.progress_projection.cli_status
+        : null,
+      projection_stop_class: typeof progress?.progress_projection?.stop_class === 'string'
+        ? progress.progress_projection.stop_class
+        : typeof progress?.progress_projection?.stop_reason === 'string'
+          ? progress.progress_projection.stop_reason
+          : null
+    },
+    active_claim: {
+      claim_id: typeof claim.claim_id === 'string' ? claim.claim_id : null,
+      status: typeof claim.status === 'string' ? claim.status : null,
+      selected_todo_id: todoIdFromFirstLine(selectedTodoFirstLine),
+      selected_todo_fingerprint: typeof claim.selected_todo_fingerprint === 'string'
+        ? claim.selected_todo_fingerprint
+        : typeof claim.todo_fingerprint === 'string'
+          ? claim.todo_fingerprint
+          : null
+    },
+    active_delegation: activeDelegationStatus(path.join(stateRoot, 'todo-claims/repair-feedback.json'))
+  };
 }
 
 function hasMergedCommit(repoRoot, commit) {
@@ -3463,6 +3562,13 @@ export function controlPhaseLoop(options = {}) {
 
 if (process.argv[1] === __filename) {
   const args = parseArgs(process.argv);
+  if (args.status) {
+    console.log(JSON.stringify(readSupervisorStatus({
+      repoRoot: args.repo,
+      stateRoot: args.stateDir
+    }), null, 2));
+    process.exit(0);
+  }
   const actorDeploymentResult = loadPhaseLoopActorDeployment({
     repoRoot: args.controlPlaneRoot,
     deploymentPath: args.actorDeploymentPath
