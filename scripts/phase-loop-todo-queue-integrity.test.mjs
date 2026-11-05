@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import {
   trackedBreakdownReplanRecords,
+  loadCliInput,
   validateTodoQueueIntegrity
 } from './phase-loop-todo-queue-integrity.mjs';
 import { buildContractRebaselineReceipt } from './phase-loop-todo-contract-rebaseline.mjs';
@@ -33,6 +35,44 @@ const e20c = `- [ ] E-20c-release-contract-binding: Patch only \`docs/architectu
 
 function queue(...blocks) {
   return `# Brownie TODO Queue\n\n## Product Ready Blocking Queue\n\n${blocks.join('\n\n')}\n`;
+}
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function orphanedSupersessionFixture() {
+  const parentId = 'E-orphaned-parent';
+  const claimId = 'claim-orphaned-parent';
+  const parent = `- [ ] ${parentId}: Patch only \`scripts/orphaned.mjs\`:
+  Route: implementation.
+  Depends on: <none>.
+  Completion condition: exact merged delivery is reverified before resolution.
+  Forbidden changes: do not treat a split as completion.
+  Verification: run \`node --check scripts/orphaned.mjs\`.`;
+  const selectedHash = sha256(parent);
+  const proof = {
+    schema_version: 1, kind: 'phase_loop_merged_delivery_reverification', claim_id: claimId, root_claim_id: claimId,
+    selected_todo_id: parentId, selected_todo_sha256: selectedHash,
+    completion_condition_sha256: sha256('exact merged delivery is reverified before resolution.'),
+    queue_fingerprint: 'd'.repeat(64), queue_generation: 23,
+    runtime: { claim_id: claimId, status: 'task_executed', executed_count: 1 },
+    git: { merge_commit_oid: 'a'.repeat(40), first_parent_oid: 'b'.repeat(40), head_oid: 'c'.repeat(40), targets: [{ path: 'scripts/orphaned.mjs', sha256: 'd'.repeat(64) }] },
+    task_spec_binding: { kind: 'commit_trailer', todo_id: parentId, selected_todo_sha256: selectedHash, head_oid: 'c'.repeat(40) },
+    review: { state: 'MERGED', pr_url: 'https://example.invalid/pull/23', merge_commit_oid: 'a'.repeat(40), head_oid: 'c'.repeat(40), author: 'implementation', reviewer: 'review', merge_actor: 'review', merged_at: '2026-11-05T00:00:00Z', observed_at: '2026-11-05T00:01:00Z', approved: true, ci_passed: true, latest_reviewer_review_state: 'APPROVED', latest_reviewer_review_commit_oid: 'c'.repeat(40) },
+    verification_results: [{ command: 'node --check scripts/orphaned.mjs', exit_code: 0 }]
+  };
+  const completion = {
+    schema_version: 3, claim_id: claimId, root_claim_id: claimId, selected_todo_id: parentId,
+    selected_todo: parent, selected_todo_sha256: selectedHash, queue_fingerprint: 'd'.repeat(64), queue_generation: 23,
+    delivery_receipt: { schema_version: 1, claim_id: claimId, root_claim_id: claimId, selected_todo_sha256: selectedHash, author: 'implementation', reviewer: 'review', merge_actor: 'review', approved: true, ci_passed: true, merged: true, merged_delivery_reverification: proof }
+  };
+  const children = [`${parentId}-target-01`, `${parentId}-target-02`];
+  return {
+    parentId, parent, completion,
+    replan: { record_type: 'todo_replan', operation: 'split_parent_into_children', parent_status: 'superseded_by_children', parent_todo_id: parentId, generated_child_ids: children },
+    resolution: { schema_version: 1, record_type: 'superseded_parent_clean_merged_delivery_resolution', reason: 'orphaned_superseded_parent_clean_merged_delivery_reverified', parent_todo_id: parentId, parent_todo_sha256: selectedHash, generated_child_ids: children, claim_id: claimId, root_claim_id: claimId, completion_record_sha256: sha256(JSON.stringify(completion)), candidate: { selected_todo_id: parentId, selected_todo_sha256: selectedHash, merge_commit_oid: 'a'.repeat(40), first_parent_oid: 'b'.repeat(40), head_oid: 'c'.repeat(40), task_spec_binding: { kind: 'commit_trailer', todo_id: parentId, selected_todo_sha256: selectedHash, head_oid: 'c'.repeat(40) } } }
+  };
 }
 
 test('tracked breakdown replan parsing stops at the next level-two heading', () => {
@@ -65,6 +105,32 @@ test('allows removing a completed TODO while preserving dependent TODO contract'
     completedTodoIds: ['E-20a-golden-journey-workspace-mutation']
   });
 
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+});
+
+test('CLI input preserves an exact supersession resolution when loading durable queue state', () => {
+  const fixture = orphanedSupersessionFixture();
+  const dependent = e20b.replace('E-20a-golden-journey-workspace-mutation', fixture.parentId);
+  const before = queue(fixture.parent, dependent);
+  const after = queue(dependent);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-todo-supersession-input-'));
+  const state = path.join(tmp, '.brownie/private/phase-loop');
+  fs.mkdirSync(path.join(state, 'todo-completions'), { recursive: true });
+  fs.mkdirSync(path.join(state, 'todo-replans'), { recursive: true });
+  fs.mkdirSync(path.join(state, 'todo-supersession-resolutions'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, '.brownie/todo.md'), before);
+  execFileSync('git', ['init', '-b', 'main'], { cwd: tmp, stdio: 'ignore' });
+  execFileSync('git', ['add', '.brownie/todo.md'], { cwd: tmp, stdio: 'ignore' });
+  execFileSync('git', ['-c', 'user.name=Brownie', '-c', 'user.email=brownie@example.invalid', 'commit', '-m', 'todo baseline'], { cwd: tmp, stdio: 'ignore' });
+  fs.writeFileSync(path.join(tmp, '.brownie/todo.md'), after);
+  fs.writeFileSync(path.join(state, 'todo-completions/claim.json'), `${JSON.stringify(fixture.completion)}\n`);
+  fs.writeFileSync(path.join(state, 'todo-replans/parent.json'), `${JSON.stringify(fixture.replan)}\n`);
+  fs.writeFileSync(path.join(state, 'todo-supersession-resolutions/parent.json'), `${JSON.stringify(fixture.resolution)}\n`);
+
+  const input = loadCliInput({ repo: tmp, todo: '.brownie/todo.md' });
+  assert(input.completedTodoIds.includes(fixture.parentId));
+  assert(input.resolvedTodoIds.includes(fixture.parentId));
+  const result = validateTodoQueueIntegrity(input);
   assert.equal(result.valid, true, JSON.stringify(result.errors));
 });
 
