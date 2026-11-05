@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  phaseLoopGitHubConfigDirForShell,
   resolvePhaseLoopGitHubProfile,
   validatePhaseLoopActorPreflight
 } from './phase-loop-actor-preflight.mjs';
@@ -37,6 +38,19 @@ test('implementation resolves the configured repository-private profile, not a l
     assert.equal(profile.ok, true);
     assert.equal(profile.profile_id, 'private-implementation');
     assert.equal(profile.github_config_dir, path.join(repo, '.brownie/private/profiles/implementation'));
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('review host-default preserves the configured profile without inventing a private directory', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'actor-profile-'));
+  try {
+    const profile = resolvePhaseLoopGitHubProfile({ repoRoot: repo, role: 'review', credentials });
+    assert.equal(profile.ok, true);
+    assert.equal(profile.profile_id, 'host-default');
+    assert.equal(profile.github_config_dir, null);
+    assert.equal(phaseLoopGitHubConfigDirForShell(profile), '');
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }

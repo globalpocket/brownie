@@ -131,6 +131,14 @@ export function resolvePhaseLoopGitHubProfile(options = {}) {
   };
 }
 
+// An empty value is meaningful: it preserves the explicitly configured
+// host-default profile instead of inventing a repository-private directory.
+// Callers that export this value as GH_CONFIG_DIR therefore keep the host
+// selection unchanged, while repository-private profiles remain pinned.
+export function phaseLoopGitHubConfigDirForShell(profile) {
+  return String(profile?.github_config_dir ?? '');
+}
+
 export function validatePhaseLoopActorPreflight(state, options = {}) {
   const errors = [];
   const role = options.role;
@@ -227,10 +235,7 @@ if (isMainModule()) {
       process.exit(1);
     }
     if (options.printGhConfigDir) {
-      if (!result.profile.github_config_dir) {
-        throw new Error('selected GitHub profile does not have an explicit GH_CONFIG_DIR.');
-      }
-      process.stdout.write(`${result.profile.github_config_dir}\n`);
+      process.stdout.write(`${phaseLoopGitHubConfigDirForShell(result.profile)}\n`);
       process.exit(0);
     }
     process.stdout.write(
