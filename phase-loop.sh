@@ -8644,6 +8644,111 @@ validate_phase_loop_progress_integrity_after_runtime_apply() {
   )
 }
 
+# An applied Runtime objective is not a delivery completion when Runtime has
+# explicitly attested that the same claim must continue through `resume`.
+# Keep this predicate strict: it is used both before the completion handoff
+# and when recovering the one historical false-positive state that older
+# controllers recorded as integrity_blocked.  A malformed, terminal, or
+# differently-bound response must never be promoted to a resumable claim.
+phase_loop_is_verified_objective_apply_resume_continuation() {
+  local runtime_stdout="$1"
+  python3 - "$runtime_stdout" "$TODO_CLAIM_FILE" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+try:
+    root = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+    payload = root.get("run") if isinstance(root, dict) and isinstance(root.get("run"), dict) else root.get("resume") if isinstance(root, dict) and isinstance(root.get("resume"), dict) else root
+    claim = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or not isinstance(claim, dict):
+        raise ValueError("missing runtime payload or claim")
+    automation = payload.get("automation")
+    if not isinstance(automation, dict):
+        raise ValueError("missing runtime automation")
+    invocation = payload.get("next_invocation")
+    if not isinstance(invocation, dict):
+        invocation = automation.get("next_invocation")
+    selected = str(claim.get("selected_todo") or "")
+    selected_sha256 = str(claim.get("selected_todo_sha256") or hashlib.sha256(selected.encode("utf-8")).hexdigest())
+    valid = (
+        payload.get("task_execution_confirmed") is True
+        and payload.get("objective_apply_applied") is True
+        and payload.get("phase_loop_claim_id") == claim.get("claim_id")
+        and payload.get("phase_loop_selected_todo_sha256") == selected_sha256
+        and payload.get("phase_loop_queue_fingerprint") == claim.get("queue_fingerprint")
+        and payload.get("phase_loop_queue_generation") == claim.get("queue_generation")
+        and payload.get("continuation_required") is True
+        and automation.get("continuation_required") is True
+        and payload.get("controller_action") == "resume"
+        and automation.get("controller_action") == "resume"
+        and payload.get("completed") is False
+        and automation.get("completed") is False
+        and payload.get("blocked") is False
+        and automation.get("blocked") is False
+        and payload.get("terminal_failure") is False
+        and automation.get("terminal_failure") is False
+        and payload.get("retryable") is True
+        and automation.get("retryable") is True
+        and payload.get("stop_class") == "continuation_required"
+        and automation.get("stop_class") == "continuation_required"
+        and isinstance(invocation, dict)
+        and invocation.get("command") == "resume"
+    )
+    if not valid:
+        raise ValueError("runtime response is not a claim-bound objective-apply resume continuation")
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0)
+PY
+}
+
+# Versions before the objective-apply continuation boundary below recorded a
+# valid, claim-bound resume as integrity_blocked after verification. Recover
+# only that exact historical misclassification; all other integrity blocks
+# remain terminal audit evidence and are unavailable for automatic reuse.
+phase_loop_restore_verified_objective_apply_continuation_claim() {
+  local run_stamp="$1"
+  local recovery_stdout
+  recovery_stdout="$(python3 - "$TODO_CLAIM_FILE" "$PROGRESS_STATE_FILE" "$STATUS_FILE" "$RUN_DIR" <<'PY'
+import json
+import pathlib
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+progress_path = pathlib.Path(sys.argv[2])
+status_path = pathlib.Path(sys.argv[3])
+run_dir = pathlib.Path(sys.argv[4]).resolve()
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+    progress = json.loads(progress_path.read_text(encoding="utf-8"))
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    stdout_path = pathlib.Path(str(progress.get("stdout_log") or "")).resolve()
+    stdout_path.relative_to(run_dir)
+except Exception:
+    raise SystemExit(1)
+if (
+    claim.get("status") != "integrity_blocked"
+    or status.get("status") != "integrity_blocked"
+    or not str(status.get("detail") or "").startswith("Completion handoff refused:")
+    or not stdout_path.is_file()
+):
+    raise SystemExit(1)
+print(stdout_path)
+PY
+)" || return 1
+  if ! phase_loop_is_verified_objective_apply_resume_continuation "$recovery_stdout"; then
+    return 1
+  fi
+  write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+  local detail="Recovered the same claim from a legacy false integrity block: its verified objective apply is claim-bound and Runtime requires the attested resume continuation. stdout=$recovery_stdout progress=$PROGRESS_STATE_FILE"
+  write_status "continuation_required" "$detail" "$run_stamp" "0" "0" "" "true"
+  printf '%s run=%s verified_objective_apply_continuation_recovered=true stdout=%s\n' "$(now_utc)" "$run_stamp" "$recovery_stdout" >> "$SUPERVISOR_LOG"
+  write_bdk_trajectory_event "$run_stamp" "workflow.routed" '{"source":"controller-recovery","bdk_state":"continuation_required","llm_route":"resume","recovered":"verified_objective_apply_continuation"}'
+  return 0
+}
+
 # A Runtime continuation can durably update its private session while leaving
 # the claimed source files unchanged until its next `resume`. The ordinary
 # active-claim integrity guard correctly rejects arbitrary off-scope writes,
@@ -18531,6 +18636,13 @@ _run_brownie_once() {
     return 78
   fi
 
+  # Repair exactly one historical controller misclassification before the
+  # normal running status replaces the prior integrity-block evidence. The
+  # recovery validates both the persisted claim binding and Runtime's
+  # non-terminal resume attestation; it does not reopen arbitrary blocked
+  # claims.
+  phase_loop_restore_verified_objective_apply_continuation_claim "$run_stamp" || true
+
   write_status "running" "Brownie run started at $started_at" "$run_stamp" "" "${CONSECUTIVE_FAILURES:-0}"
   git_workspace_status_snapshot > "$workspace_status_before"
   chmod 600 "$workspace_status_before" 2>/dev/null || true
@@ -20444,6 +20556,18 @@ PY
     if verification_completion="$(complete_applied_todo_after_verification "$stdout_log" "$run_stamp" 2>&1)"; then
       save_active_target_known_good "selected_todo_verification_passed" || true
       clear_repair_feedback
+      if phase_loop_is_verified_objective_apply_resume_continuation "$stdout_log"; then
+        # Verification proved the bounded implementation artifact, but the
+        # Runtime has explicitly retained ownership of the same claim for a
+        # further resume. Do not reinterpret that non-terminal hand-off as a
+        # delivery certificate or contaminate the claim with integrity_blocked.
+        write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+        detail="Brownie verified the applied selected target and recorded the Runtime's claim-bound resume continuation; completion handoff is deferred until Runtime returns terminal delivery evidence. verification=$verification_completion stdout=$stdout_log stderr=$stderr_log progress=$PROGRESS_STATE_FILE"
+        write_status "continuation_required" "$detail" "$run_id" "$exit_code" "0" "" "true"
+        printf '%s run=%s verified_objective_apply_continuation_deferred=true progress=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_id" "$progress_summary" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+        write_bdk_trajectory_event "$run_stamp" "workflow.routed" '{"source":"runtime","bdk_state":"continuation_required","llm_route":"resume","completion_handoff":"deferred_for_verified_objective_apply"}'
+        return 0
+      fi
       local objective_handoff_status
       if phase_loop_handoff_verified_completion "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after" "$verification_completion"; then
         return 0

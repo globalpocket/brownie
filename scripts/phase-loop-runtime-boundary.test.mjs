@@ -252,6 +252,45 @@ test('controller defers only the selected-target integrity finding for a verifie
   assert.match(integrity, /integrity_deferred":"selected_target_not_changed/);
 });
 
+test('verified objective-apply continuations preserve the claim for resume instead of entering completion handoff', () => {
+  const helperStart = controller.indexOf('phase_loop_is_verified_objective_apply_resume_continuation()');
+  const helperEnd = controller.indexOf('\n# Versions before the objective-apply continuation boundary', helperStart);
+  assert(helperStart >= 0 && helperEnd > helperStart, 'claim-bound objective-apply continuation helper must exist');
+  const helper = controller.slice(helperStart, helperEnd);
+  assert.match(helper, /payload\.get\("task_execution_confirmed"\) is True/);
+  assert.match(helper, /payload\.get\("objective_apply_applied"\) is True/);
+  assert.match(helper, /payload\.get\("phase_loop_claim_id"\) == claim\.get\("claim_id"\)/);
+  assert.match(helper, /payload\.get\("phase_loop_selected_todo_sha256"\) == selected_sha256/);
+  assert.match(helper, /payload\.get\("phase_loop_queue_fingerprint"\) == claim\.get\("queue_fingerprint"\)/);
+  assert.match(helper, /payload\.get\("phase_loop_queue_generation"\) == claim\.get\("queue_generation"\)/);
+  assert.match(helper, /automation\.get\("continuation_required"\) is True/);
+  assert.match(helper, /invocation\.get\("command"\) == "resume"/);
+
+  const completionStart = controller.indexOf('local verification_completion');
+  const completionEnd = controller.indexOf('# Record the terminal ledger event', completionStart);
+  assert(completionStart >= 0 && completionEnd > completionStart, 'verified objective-apply completion block must exist');
+  const completion = controller.slice(completionStart, completionEnd);
+  const continuation = completion.indexOf('phase_loop_is_verified_objective_apply_resume_continuation "$stdout_log"');
+  const handoff = completion.indexOf('phase_loop_handoff_verified_completion');
+  assert(continuation >= 0 && handoff > continuation, 'verified continuation must be routed before completion handoff');
+  assert.match(completion, /write_todo_claim "\$\(claim_field claim_id\)" "in_progress"/);
+  assert.match(completion, /write_status "continuation_required"/);
+  assert.match(completion, /completion_handoff":"deferred_for_verified_objective_apply/);
+});
+
+test('controller recovers only the legacy false integrity block with the same claim-bound resume receipt', () => {
+  const recoveryStart = controller.indexOf('phase_loop_restore_verified_objective_apply_continuation_claim()');
+  const recoveryEnd = controller.indexOf('\n# A Runtime continuation can durably update', recoveryStart);
+  assert(recoveryStart >= 0 && recoveryEnd > recoveryStart, 'legacy continuation recovery helper must exist');
+  const recovery = controller.slice(recoveryStart, recoveryEnd);
+  assert.match(recovery, /claim\.get\("status"\) != "integrity_blocked"/);
+  assert.match(recovery, /status\.get\("status"\) != "integrity_blocked"/);
+  assert.match(recovery, /startswith\("Completion handoff refused:"\)/);
+  assert.match(recovery, /phase_loop_is_verified_objective_apply_resume_continuation "\$recovery_stdout"/);
+  assert.match(recovery, /verified_objective_apply_continuation_recovered=true/);
+  assert.match(recovery, /write_status "continuation_required"/);
+});
+
 test('explicit run-once rebaselines only a stale stop marker after acquiring ownership', () => {
   const start = controller.indexOf('  run-once)');
   const end = controller.indexOf('  *)', start);
