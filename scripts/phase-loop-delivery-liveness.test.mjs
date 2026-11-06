@@ -103,7 +103,19 @@ test('clean fixture reaches an applied bounded change, review rework, and merged
 
   fs.writeFileSync(artifact, '{"journey":"applied","ledger":"durable","stale_replay":"rejected","review_rework":"addressed"}\n');
   assert.deepEqual(git(root, ['diff', '--name-only']).trim().split('\n'), ['artifacts/journey-ledger.json']);
-  const resubmittedClaim = { ...reworkClaim, status: 'pr_pending_review' };
+  // A rework commit advances the implementation PR head.  Production refreshes
+  // the durable handoff receipt through strict implementation/current-HEAD
+  // admission before the next review; model that receipt update here rather
+  // than letting an obsolete requested-changes head bypass reconciliation.
+  const resubmittedClaim = {
+    ...reworkClaim,
+    status: 'pr_pending_review',
+    delivery_review: {
+      ...reworkClaim.delivery_review,
+      head_oid: 'b'.repeat(40),
+      author: 'brownie-agent'
+    }
+  };
   const completed = reconcileReviewSnapshot({
     claim: resubmittedClaim,
     pullRequest: pullRequest({
