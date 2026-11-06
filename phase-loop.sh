@@ -12567,12 +12567,14 @@ PY
   sync_parent_dir "$TODO_CLAIM_DIR"
 }
 
-# Repair only a demonstrably stale handoff: preserve the same claim and its
-# verified Runtime evidence, archive the obsolete receipt, and publish the
-# already-pushed implementation through the strict admission path. This
-# prevents a closed historical PR from forcing an objective to be run again.
-phase_loop_republish_stale_pr_handoff() {
-  local status run_stamp stdout_log stderr_log verification stale_review review_profile review_snapshot current_workspace
+# Refresh a claim-bound PR handoff without re-running Runtime.  A repair is
+# needed both when the recorded PR was closed and when the still-open PR head
+# advances to fix CI.  Preserve the verified Runtime evidence, archive the
+# old receipt, and publish only through strict implementation-author/current-
+# HEAD admission.  This prevents either a historical closed PR or an
+# unrecorded post-handoff commit from being reviewed as the delivered result.
+phase_loop_refresh_pr_handoff() {
+  local status run_stamp stdout_log stderr_log verification stale_review review_profile review_snapshot current_workspace review_state archive_key archive_reason
   [ -f "$TODO_CLAIM_FILE" ] || return 76
   status="$(claim_status 2>/dev/null || true)"
   [ "$status" = "pr_pending_review" ] || return 76
@@ -12598,11 +12600,16 @@ PY
   [ -n "$stale_review" ] || return 76
   review_profile="$(node "$ROOT_DIR/scripts/phase-loop-actor-preflight.mjs" --role review --repo-root "$PHASE_LOOP_WORKSPACE_ROOT" --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" --credentials "$PHASE_LOOP_ACTOR_CREDENTIALS" --credentials-root "$PHASE_LOOP_CONTROL_ROOT" --print-gh-config-dir 2>>"$SUPERVISOR_LOG")" || return 78
   review_snapshot="$(GH_CONFIG_DIR="$review_profile" gh pr view "$stale_review" --json state,headRefOid,url 2>>"$SUPERVISOR_LOG")" || return 78
-  if [ "$(node -e 'const value=JSON.parse(process.argv[1]); process.stdout.write(value.state === "OPEN" ? "1" : "0")' "$review_snapshot")" = "1" ]; then
-    return 76
+  review_state="$(node -e 'const value=JSON.parse(process.argv[1]); process.stdout.write(typeof value.state === "string" ? value.state : "")' "$review_snapshot")"
+  if [ "$review_state" = "OPEN" ]; then
+    archive_key="superseded_delivery_reviews"
+    archive_reason="open_pr_head_advanced_before_review"
+  else
+    archive_key="stale_delivery_reviews"
+    archive_reason="closed_or_merged_pr_cannot_be_reused_for_new_delivery_handoff"
   fi
   write_todo_claim "$(claim_field claim_id)" "verification_pending" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "stale-pr-handoff-$run_stamp"
-  python3 - "$TODO_CLAIM_FILE" "$stale_review" "$review_snapshot" "$(now_utc)" <<'PY'
+  python3 - "$TODO_CLAIM_FILE" "$stale_review" "$review_snapshot" "$archive_key" "$archive_reason" "$(now_utc)" <<'PY'
 import json
 import os
 import pathlib
@@ -12611,14 +12618,14 @@ import sys
 path = pathlib.Path(sys.argv[1])
 claim = json.loads(path.read_text(encoding="utf-8"))
 review = claim.pop("delivery_review", None)
-claim.setdefault("stale_delivery_reviews", []).append({
-    "reason": "closed_or_merged_pr_cannot_be_reused_for_new_delivery_handoff",
+claim.setdefault(sys.argv[4], []).append({
+    "reason": sys.argv[5],
     "pr_url": sys.argv[2],
     "observed_pr": json.loads(sys.argv[3]),
     "previous_receipt": review,
-    "repaired_at": sys.argv[4],
+    "repaired_at": sys.argv[6],
 })
-claim["updated_at"] = sys.argv[4]
+claim["updated_at"] = sys.argv[6]
 tmp = path.with_name(f"{path.name}.{os.getpid()}.stale-pr-repair.tmp")
 tmp.write_text(json.dumps(claim, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 os.chmod(tmp, 0o600)
@@ -12628,6 +12635,12 @@ PY
   sync_parent_dir "$TODO_CLAIM_DIR"
   current_workspace="$(git_workspace_fingerprint)"
   phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$current_workspace" "$current_workspace" "1" "$verification"
+}
+
+# Compatibility alias for the closed-PR recovery entrypoint.  Its successor
+# also handles an open PR whose exact head has advanced before review.
+phase_loop_republish_stale_pr_handoff() {
+  phase_loop_refresh_pr_handoff
 }
 
 # A verified implementation result is only eligible for review handoff. The
@@ -22675,8 +22688,28 @@ case "${1:-status}" in
       exit 75
     fi
     trap 'phase_loop_release_supervisor_lock; unset PHASE_LOOP_SUPERVISOR_PID PHASE_LOOP_SUPERVISOR_GENERATION' EXIT
-    if ! phase_loop_republish_stale_pr_handoff; then
+    if ! phase_loop_refresh_pr_handoff; then
       printf '%s\n' "phase-loop stale PR handoff republication refused" >&2
+      exit 76
+    fi
+    trap - EXIT
+    phase_loop_release_supervisor_lock
+    unset PHASE_LOOP_SUPERVISOR_PID PHASE_LOOP_SUPERVISOR_GENERATION
+    ;;
+  refresh-pr-handoff)
+    load_env
+    if ! phase_loop_require_operational_configuration; then
+      exit 78
+    fi
+    PHASE_LOOP_SUPERVISOR_PID="$$"
+    PHASE_LOOP_SUPERVISOR_GENERATION="refresh-pr-handoff-$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM"
+    if ! acquire_lock; then
+      printf '%s\n' "phase-loop PR handoff refresh refused: durable supervisor ownership is active or cannot be safely reclaimed" >&2
+      exit 75
+    fi
+    trap 'phase_loop_release_supervisor_lock; unset PHASE_LOOP_SUPERVISOR_PID PHASE_LOOP_SUPERVISOR_GENERATION' EXIT
+    if ! phase_loop_refresh_pr_handoff; then
+      printf '%s\n' "phase-loop PR handoff refresh refused" >&2
       exit 76
     fi
     trap - EXIT
@@ -22737,7 +22770,7 @@ case "${1:-status}" in
     exit "$run_once_status"
     ;;
   *)
-    echo "usage: $0 {start|status|stop|restart|watchdog|migrate-legacy|check-binary-freshness|check-runtime-bootstrap|republish-stale-pr-handoff|run-once}" >&2
+    echo "usage: $0 {start|status|stop|restart|watchdog|migrate-legacy|check-binary-freshness|check-runtime-bootstrap|republish-stale-pr-handoff|refresh-pr-handoff|run-once}" >&2
     exit 64
     ;;
 esac

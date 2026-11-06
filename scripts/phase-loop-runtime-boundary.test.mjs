@@ -44,11 +44,13 @@ test('PR handoff reuses only an open implementation-authored current-HEAD PR', (
 });
 
 test('closed handoffs can be republished from exact verified claim evidence without re-running Runtime', () => {
-  const repairStart = controller.indexOf('phase_loop_republish_stale_pr_handoff()');
+  const repairStart = controller.indexOf('phase_loop_refresh_pr_handoff()');
   const repairEnd = controller.indexOf('\n}\n\n# A verified implementation result', repairStart);
-  assert(repairStart >= 0 && repairEnd > repairStart, 'stale handoff repair path must exist');
+  assert(repairStart >= 0 && repairEnd > repairStart, 'PR handoff refresh path must exist');
   const repair = controller.slice(repairStart, repairEnd);
   assert.match(repair, /closed_or_merged_pr_cannot_be_reused_for_new_delivery_handoff/);
+  assert.match(repair, /open_pr_head_advanced_before_review/);
+  assert.match(repair, /superseded_delivery_reviews/);
   assert.match(repair, /write_todo_claim[\s\S]*"verification_pending"/);
   assert.match(repair, /phase_loop_create_pr_for_progress[\s\S]*"1" "\$verification"/);
   assert.doesNotMatch(repair, /run_brownie_once/);
@@ -58,6 +60,14 @@ test('closed handoffs can be republished from exact verified claim evidence with
   const command = controller.slice(commandStart, commandEnd);
   assert.match(command, /acquire_lock/);
   assert.match(command, /phase_loop_release_supervisor_lock/);
+
+  const refreshCommandStart = controller.indexOf('  refresh-pr-handoff)');
+  const refreshCommandEnd = controller.indexOf('  run-once)', refreshCommandStart);
+  assert(refreshCommandStart >= 0 && refreshCommandEnd > refreshCommandStart, 'open PR refresh command must exist');
+  const refreshCommand = controller.slice(refreshCommandStart, refreshCommandEnd);
+  assert.match(refreshCommand, /phase_loop_refresh_pr_handoff/);
+  assert.match(refreshCommand, /acquire_lock/);
+  assert.match(refreshCommand, /phase_loop_release_supervisor_lock/);
 });
 
 test('claim field lookup resolves nested review receipts rather than treating dotted paths as flat keys', () => {
