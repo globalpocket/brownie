@@ -7,8 +7,11 @@ import test from 'node:test';
 import {
   isolateReviewReworkFreshDispatchRuntimeStore,
   isolateMergedDeliveryFreshDispatchRuntimeStore,
+  isolateObjectiveApplyNoEligibleFreshDispatchRuntimeStore,
   prepareMergedDeliveryFreshDispatchRecovery,
+  prepareObjectiveApplyNoEligibleFreshDispatchRecovery,
   prepareReviewReworkStaleReplayStoreIsolationRepair,
+  verifyObjectiveApplyNoEligibleContinuationTarget,
 } from './phase-loop-review-rework-dispatch-isolation.mjs';
 import { execFileSync } from 'node:child_process';
 
@@ -92,6 +95,129 @@ test('a proved no-eligible continuation after bounded merged delivery is archive
     progressPath: path.join(f.stateDir, 'progress-state.json'),
   });
   assert.equal(repeated.reason, 'merged_delivery_fresh_dispatch_already_activated');
+});
+
+function objectiveApplyNoEligibleFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-objective-apply-no-eligible-'));
+  const repository = path.join(root, 'repository');
+  const stateDir = path.join(root, 'state');
+  const storeRoot = path.join(root, 'runtime-store');
+  const claimPath = path.join(stateDir, 'todo-claims', 'current.json');
+  const claimId = 'claim-objective-apply-no-eligible';
+  const selectedTodo = `- [ ] E-recover-objective: Patch only \`scripts/first.mjs\` and \`scripts/second.mjs\`.
+  Route: implementation.
+  Completion condition: both bounded collectors bind their evidence.
+  Verification: run \`node --check scripts/first.mjs\` and \`node --check scripts/second.mjs\`.`;
+  const run = (args) => execFileSync('git', args, { cwd: repository, encoding: 'utf8' }).trim();
+  fs.mkdirSync(path.join(repository, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(repository, 'scripts', 'first.mjs'), 'export const first = "before";\n');
+  fs.writeFileSync(path.join(repository, 'scripts', 'second.mjs'), 'export const second = "before";\n');
+  run(['init', '--quiet', '-b', 'main']);
+  run(['config', 'user.name', 'fixture']);
+  run(['config', 'user.email', 'fixture@example.invalid']);
+  run(['add', '.']);
+  run(['commit', '--quiet', '-m', 'base']);
+  fs.writeFileSync(path.join(repository, 'scripts', 'first.mjs'), 'export const first = "applied";\n');
+  const selectedTodoSha = crypto.createHash('sha256').update(selectedTodo).digest('hex');
+  const appliedSha = crypto.createHash('sha256').update(fs.readFileSync(path.join(repository, 'scripts', 'first.mjs'))).digest('hex');
+  const priorEvidence = path.join(stateDir, 'runs', 'prior.execution-evidence.json');
+  writeJson(priorEvidence, {
+    claim_id: claimId,
+    claim_matches: true,
+    task_execution_confirmed: true,
+    durable_apply_evidence: {
+      claim_id: claimId,
+      selected_todo_sha256: selectedTodoSha,
+      target_path: 'scripts/first.mjs',
+      post_write_target_sha256: appliedSha,
+    },
+  });
+  const runStamp = '20261106T081150Z';
+  const stdout = path.join(stateDir, 'runs', `${runStamp}.stdout.log`);
+  writeJson(stdout, {
+    command: 'resume',
+    resume: {
+      status: 'no_eligible_task', candidate_count: 0, controller_action: 'stop', task_id: null, run_id: null,
+      phase_loop_claim_id: claimId,
+    },
+  });
+  writeJson(path.join(stateDir, 'runs', `${runStamp}.execution-evidence.json`), {
+    claim_id: claimId, claim_matches: true, task_execution_confirmed: false, task_id: null, runtime_run_id: null,
+  });
+  writeJson(path.join(stateDir, 'progress-state.json'), {
+    run_stamp: runStamp, classification: 'terminal_failure', meaningful_progress: false, workspace_changed: false,
+    stdout_log: stdout, progress_projection: { claim_id: claimId },
+  });
+  writeJson(claimPath, {
+    claim_id: claimId, status: 'in_progress', selected_todo: selectedTodo, selected_todo_sha256: selectedTodoSha,
+    terminal_failure_execution_evidence_path: priorEvidence,
+    objective_apply_resume_scope: { state: 'applied_pending_verification', source_run_stamp: 'prior' },
+  });
+  const activeStore = path.join(storeRoot, 'phase-loop-claims', crypto.createHash('sha256').update(claimId).digest('hex'));
+  fs.mkdirSync(activeStore, { recursive: true });
+  fs.writeFileSync(path.join(activeStore, 'stale-continuation.json'), '{"resume":true}\n');
+  return { repository, stateDir, storeRoot, claimPath, claimId, activeStore, runStamp };
+}
+
+test('preserves the first applied target and admits one fresh store only for an untouched second target', () => {
+  const f = objectiveApplyNoEligibleFixture();
+  const prepared = prepareObjectiveApplyNoEligibleFreshDispatchRecovery({
+    repoRoot: f.repository, stateDir: f.stateDir, claimPath: f.claimPath,
+    progressPath: path.join(f.stateDir, 'progress-state.json'), now: '2026-11-06T08:20:00.000Z',
+  });
+  assert.equal(prepared.prepared, true, JSON.stringify(prepared));
+  assert.equal(prepared.continuation_target_path, 'scripts/second.mjs');
+  const claim = JSON.parse(fs.readFileSync(f.claimPath, 'utf8'));
+  assert.equal(claim.objective_apply_no_eligible_fresh_dispatch_pending, true);
+  assert.equal(claim.objective_apply_resume_scope.state, 'invalidated');
+
+  const isolated = isolateObjectiveApplyNoEligibleFreshDispatchRuntimeStore({
+    storeRoot: f.storeRoot, stateDir: f.stateDir, claimPath: f.claimPath, now: '2026-11-06T08:20:01.000Z',
+  });
+  assert.equal(isolated.isolated, true, JSON.stringify(isolated));
+  assert.equal(fs.existsSync(f.activeStore), false);
+  assert.equal(fs.readFileSync(path.join(isolated.archived_store, 'stale-continuation.json'), 'utf8'), '{"resume":true}\n');
+
+  const activated = JSON.parse(fs.readFileSync(f.claimPath, 'utf8'));
+  activated.objective_apply_no_eligible_fresh_dispatch_pending = false;
+  activated.objective_apply_no_eligible_fresh_dispatch_activated_run_stamp = f.runStamp;
+  writeJson(f.claimPath, activated);
+  const verified = verifyObjectiveApplyNoEligibleContinuationTarget({ repoRoot: f.repository, claimPath: f.claimPath, runStamp: f.runStamp });
+  assert.equal(verified.applicable, true, JSON.stringify(verified));
+  assert.equal(verified.continuation_target_path, 'scripts/second.mjs');
+
+  const laterResume = verifyObjectiveApplyNoEligibleContinuationTarget({
+    repoRoot: f.repository, claimPath: f.claimPath, runStamp: '20261106T081250Z',
+  });
+  assert.equal(laterResume.applicable, true, JSON.stringify(laterResume));
+  assert.equal(laterResume.activation_run_stamp, f.runStamp);
+
+  fs.writeFileSync(path.join(f.repository, 'scripts', 'first.mjs'), 'export const first = "replayed";\n');
+  assert.throws(
+    () => verifyObjectiveApplyNoEligibleContinuationTarget({ repoRoot: f.repository, claimPath: f.claimPath, runStamp: '20261106T081250Z' }),
+    /objective_apply_no_eligible_recovery_replayed_or_tampered_first_target/
+  );
+});
+
+test('fails closed when the remaining target was already dirty before recovery', () => {
+  const f = objectiveApplyNoEligibleFixture();
+  fs.writeFileSync(path.join(f.repository, 'scripts', 'second.mjs'), 'export const second = "user-dirty";\n');
+  const result = prepareObjectiveApplyNoEligibleFreshDispatchRecovery({
+    repoRoot: f.repository, stateDir: f.stateDir, claimPath: f.claimPath,
+    progressPath: path.join(f.stateDir, 'progress-state.json'),
+  });
+  assert.equal(result.prepared, false);
+  assert.equal(result.reason, 'objective_apply_no_eligible_fresh_dispatch_proof_not_satisfied');
+  const claim = JSON.parse(fs.readFileSync(f.claimPath, 'utf8'));
+  assert.equal(claim.objective_apply_no_eligible_fresh_dispatch_recovery, undefined);
+});
+
+test('does not reinterpret a normally removed terminal claim as an objective-apply recovery violation', () => {
+  const f = objectiveApplyNoEligibleFixture();
+  fs.rmSync(f.claimPath);
+  const result = verifyObjectiveApplyNoEligibleContinuationTarget({ repoRoot: f.repository, claimPath: f.claimPath, runStamp: f.runStamp });
+  assert.equal(result.applicable, false);
+  assert.equal(result.reason, 'claim_absent_after_runtime_terminalization');
 });
 
 function fixture() {

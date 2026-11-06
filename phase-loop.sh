@@ -10240,6 +10240,15 @@ selected = claim.get("selected_todo")
 if not isinstance(selected, str):
     raise SystemExit(1)
 first_line = selected.splitlines()[0] if selected.splitlines() else ""
+recovery = claim.get("objective_apply_no_eligible_fresh_dispatch_recovery")
+if isinstance(recovery, dict):
+    target = recovery.get("continuation_target_path")
+    if isinstance(target, str) and target and not target.startswith("/") and ".." not in pathlib.PurePosixPath(target).parts:
+        # The dedicated recovery helper proved this is the sole untouched
+        # remaining target. Prefer it for snapshots and changed-file gates so
+        # the first Runtime-applied target cannot be selected again.
+        print(target)
+        raise SystemExit(0)
 match = re.search(r"\b(?:Patch|Create) only\s+`([^`\n]+)`", first_line)
 if not match:
     raise SystemExit(1)
@@ -11412,6 +11421,7 @@ sys.exit(0 if (
     claim.get("runtime_authorization_rebaseline_pending") is True
     or claim.get("review_rework_fresh_dispatch_pending") is True
     or claim.get("merged_delivery_fresh_dispatch_pending") is True
+    or claim.get("objective_apply_no_eligible_fresh_dispatch_pending") is True
 ) else 1)
 PY
   then
@@ -16656,7 +16666,29 @@ os.replace(tmp, path)
 PY
   fi
   printf '%s run=%s terminal_execution_evidence_exit=%s confirmed=%s result=%s path=%s\n' "$(now_utc)" "$run_stamp" "$status" "$PHASE_LOOP_RUNTIME_EXECUTION_CONFIRMED" "${output:-<no output>}" "$evidence_path" >> "$SUPERVISOR_LOG"
-  return 0
+  # `terminal-evidence` deliberately exits nonzero when execution was not
+  # confirmed; that is the normal, durable input to the no-eligible recovery.
+  # Distinguish that evidence-bearing false result from a failed write so the
+  # caller fails closed only when no parseable receipt exists.
+  if [ -f "$evidence_path" ] && python3 - "$evidence_path" "$run_stamp" <<'PY'
+import json
+import pathlib
+import sys
+
+try:
+    value = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if (
+    isinstance(value, dict)
+    and value.get("kind") == "phase_loop_terminal_failure_execution_evidence"
+    and value.get("run_stamp") == sys.argv[2]
+) else 1)
+PY
+  then
+    return 0
+  fi
+  return "${status:-1}"
 }
 
 is_running() {
@@ -17732,6 +17764,53 @@ phase_loop_isolate_merged_delivery_fresh_runtime_dispatch() {
   printf '%s' "$output" | python3 -c 'import json,sys; value=json.load(sys.stdin); sys.exit(0 if value.get("ok") is True else 1)'
 }
 
+# Runtime can complete an authorized write for the first target of one bounded
+# two-target TODO, yet return zero candidates for the verification-only resume.
+# Keep that applied target immutable and use a distinct audited recovery to
+# dispatch exactly once against the still-untouched second target.  This is
+# intentionally not the merged-delivery recovery: no PR/merge evidence exists
+# at this stage and treating it as such would mask unfinished implementation.
+phase_loop_prepare_objective_apply_no_eligible_fresh_dispatch_recovery() {
+  local output status
+  set +e
+  output="$(node "$ROOT_DIR/scripts/phase-loop-review-rework-dispatch-isolation.mjs" prepare-objective-apply-no-eligible \
+    --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
+    --state-dir "$STATE_DIR" \
+    --claim "$TODO_CLAIM_FILE" \
+    --progress "$PROGRESS_STATE_FILE" 2>&1)"
+  status=$?
+  set -e
+  PHASE_LOOP_OBJECTIVE_APPLY_NO_ELIGIBLE_FRESH_DISPATCH_OUTPUT="$output"
+  if [ "$status" -ne 0 ]; then
+    return "$status"
+  fi
+  printf '%s' "$output" | python3 -c 'import json,sys; value=json.load(sys.stdin); sys.exit(0 if value.get("ok") is True else 1)'
+}
+
+phase_loop_isolate_objective_apply_no_eligible_fresh_runtime_dispatch() {
+  local output status
+  set +e
+  output="$(node "$ROOT_DIR/scripts/phase-loop-review-rework-dispatch-isolation.mjs" isolate-objective-apply-no-eligible \
+    --store-root "$PHASE_LOOP_BROWNIE_STORE_ROOT" \
+    --state-dir "$STATE_DIR" \
+    --claim "$TODO_CLAIM_FILE" 2>&1)"
+  status=$?
+  set -e
+  PHASE_LOOP_OBJECTIVE_APPLY_NO_ELIGIBLE_STORE_ISOLATION_OUTPUT="$output"
+  if [ "$status" -ne 0 ]; then
+    return "$status"
+  fi
+  printf '%s' "$output" | python3 -c 'import json,sys; value=json.load(sys.stdin); sys.exit(0 if value.get("ok") is True else 1)'
+}
+
+phase_loop_verify_objective_apply_no_eligible_continuation_target() {
+  local run_stamp="$1"
+  node "$ROOT_DIR/scripts/phase-loop-review-rework-dispatch-isolation.mjs" verify-objective-apply-continuation-target \
+    --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
+    --claim "$TODO_CLAIM_FILE" \
+    --run-stamp "$run_stamp"
+}
+
 # The first implementation of the review-rework re-arm invalidated `resume`
 # but left the claim-id-derived Runtime store in place. Repair only the
 # precisely evidenced historical shape (terminal replay-only resumes with no
@@ -17992,6 +18071,7 @@ sys.exit(0 if (
     claim.get("runtime_authorization_rebaseline_pending") is True
     or claim.get("review_rework_fresh_dispatch_pending") is True
     or claim.get("merged_delivery_fresh_dispatch_pending") is True
+    or claim.get("objective_apply_no_eligible_fresh_dispatch_pending") is True
 ) else 1)
 PY
   pending_status=$?
@@ -18031,6 +18111,10 @@ if claim.get("merged_delivery_fresh_dispatch_pending") is True:
     claim["merged_delivery_fresh_dispatch_pending"] = False
     claim["merged_delivery_fresh_dispatch_activated_run_stamp"] = run_stamp
     claim["merged_delivery_fresh_dispatch_activated_at"] = timestamp
+if claim.get("objective_apply_no_eligible_fresh_dispatch_pending") is True:
+    claim["objective_apply_no_eligible_fresh_dispatch_pending"] = False
+    claim["objective_apply_no_eligible_fresh_dispatch_activated_run_stamp"] = run_stamp
+    claim["objective_apply_no_eligible_fresh_dispatch_activated_at"] = timestamp
 destination.write_text(json.dumps(claim, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 os.chmod(destination, 0o600)
 PY
@@ -18577,6 +18661,7 @@ _run_brownie_once() {
   local workspace_status_before
   local active_target_path active_target_snapshot active_target_snapshots active_target_syntax_output active_target_syntax_status claim_snapshot_before_runtime runtime_admission_snapshot runtime_admission_validation runtime_admission_status delegated_scope_backup delegated_scope_output delegated_scope_status
   local objective_apply_scope_argument objective_apply_scope_capture_output objective_apply_scope_restore_output objective_apply_scope_args_output objective_apply_scope_status
+  local objective_apply_no_eligible_feedback objective_apply_no_eligible_target_verification
   local -a objective_apply_resume_args
   local use_resume=0
   local CLAIM_CREATED_THIS_RUN=0
@@ -18956,6 +19041,32 @@ PY
   # implementation/review proof exists.  Keep the source claim and queue
   # intact for one bounded re-verification or one stable actionable error.
   if active_todo_claim_exists; then
+    if ! phase_loop_prepare_objective_apply_no_eligible_fresh_dispatch_recovery; then
+      detail="An objective-apply no-eligible recovery proof or claim update failed; refusing to replay the applied target or replace the immutable claim. recovery=${PHASE_LOOP_OBJECTIVE_APPLY_NO_ELIGIBLE_FRESH_DISPATCH_OUTPUT:-<no output>}"
+      printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+      write_status "blocked" "$detail" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-0}"
+      write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"objective_apply_no_eligible_fresh_dispatch_recovery_failed","owner_blocked":true}'
+      return 78
+    fi
+    if printf '%s' "${PHASE_LOOP_OBJECTIVE_APPLY_NO_ELIGIBLE_FRESH_DISPATCH_OUTPUT:-}" | python3 -c 'import json,sys; value=json.load(sys.stdin); sys.exit(0 if value.get("prepared") is True else 1)'; then
+      objective_apply_no_eligible_feedback="$(printf '%s' "$PHASE_LOOP_OBJECTIVE_APPLY_NO_ELIGIBLE_FRESH_DISPATCH_OUTPUT" | python3 -c '
+import json,sys
+value=json.load(sys.stdin)
+print(json.dumps({
+  "completed": False,
+  "reason": "objective_apply_no_eligible_fresh_dispatch_remaining_target",
+  "selected_target_path": value["continuation_target_path"],
+  "repair_hint": "Runtime durably applied the first declared target, but its claim-bound verification resume returned zero candidates. Preserve the first target unchanged. The next fresh Runtime dispatch may read and patch only selected_target_path, then run the selected TODO verification; do not replay the first target or rewrite the TODO.",
+}, sort_keys=True))
+')"
+      if ! write_repair_feedback "$run_stamp" "$objective_apply_no_eligible_feedback" "" ""; then
+        detail="Objective-apply no-eligible recovery was prepared but its remaining-target repair feedback could not be persisted; refusing a fresh Runtime dispatch. recovery=$PHASE_LOOP_OBJECTIVE_APPLY_NO_ELIGIBLE_FRESH_DISPATCH_OUTPUT"
+        write_status "blocked" "$detail" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-0}"
+        return 78
+      fi
+      printf '%s run=%s objective_apply_no_eligible_fresh_dispatch_recovery_prepared=true result=%s\n' "$(now_utc)" "$run_stamp" "$PHASE_LOOP_OBJECTIVE_APPLY_NO_ELIGIBLE_FRESH_DISPATCH_OUTPUT" >> "$SUPERVISOR_LOG"
+      write_bdk_trajectory_event "$run_stamp" "todo.repair_feedback" '{"reason":"objective_apply_no_eligible_requires_fresh_dispatch_for_remaining_target","delivery_progress":false}'
+    fi
     if ! phase_loop_prepare_merged_delivery_fresh_dispatch_recovery; then
       detail="A merged-delivery no-eligible recovery proof or claim update failed; refusing to resume or replace the immutable claim. recovery=${PHASE_LOOP_MERGED_DELIVERY_FRESH_DISPATCH_OUTPUT:-<no output>}"
       printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
@@ -19112,6 +19223,17 @@ PY
   if printf '%s' "${PHASE_LOOP_MERGED_DELIVERY_STORE_ISOLATION_OUTPUT:-}" | python3 -c 'import json,sys; value=json.load(sys.stdin); sys.exit(0 if value.get("isolated") is True else 1)'; then
     printf '%s run=%s merged_delivery_runtime_store_isolated=true result=%s\n' "$(now_utc)" "$run_stamp" "$PHASE_LOOP_MERGED_DELIVERY_STORE_ISOLATION_OUTPUT" >> "$SUPERVISOR_LOG"
     write_bdk_trajectory_event "$run_stamp" "todo.repair_feedback" '{"reason":"merged_delivery_runtime_store_isolated_for_fresh_dispatch","delivery_progress":false}'
+  fi
+  if ! phase_loop_isolate_objective_apply_no_eligible_fresh_runtime_dispatch; then
+    detail="Objective-apply no-eligible fresh dispatch could not isolate the prior claim-local Runtime store; refusing an ambiguous replay. isolation=${PHASE_LOOP_OBJECTIVE_APPLY_NO_ELIGIBLE_STORE_ISOLATION_OUTPUT:-<no output>}"
+    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+    write_status "blocked" "$detail" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-0}"
+    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"objective_apply_no_eligible_runtime_store_isolation_failed","owner_blocked":true}'
+    return 78
+  fi
+  if printf '%s' "${PHASE_LOOP_OBJECTIVE_APPLY_NO_ELIGIBLE_STORE_ISOLATION_OUTPUT:-}" | python3 -c 'import json,sys; value=json.load(sys.stdin); sys.exit(0 if value.get("isolated") is True else 1)'; then
+    printf '%s run=%s objective_apply_no_eligible_runtime_store_isolated=true result=%s\n' "$(now_utc)" "$run_stamp" "$PHASE_LOOP_OBJECTIVE_APPLY_NO_ELIGIBLE_STORE_ISOLATION_OUTPUT" >> "$SUPERVISOR_LOG"
+    write_bdk_trajectory_event "$run_stamp" "todo.repair_feedback" '{"reason":"objective_apply_no_eligible_runtime_store_isolated_for_remaining_target","delivery_progress":false}'
   fi
   if ! phase_loop_isolate_review_rework_fresh_runtime_dispatch; then
     detail="Review-rework fresh dispatch could not isolate the prior claim-local Runtime store; refusing an ambiguous resume. isolation=${PHASE_LOOP_REVIEW_REWORK_STORE_ISOLATION_OUTPUT:-<no output>}"
@@ -19963,6 +20085,7 @@ NODE
     # every out-of-scope tracked file, while the exact pre-runtime target
     # snapshot restores writes inside the declared target as well.
     local mismatch_scope_output mismatch_scope_status=0 mismatch_target_status=0 mismatch_claim_status=0
+    local mismatch_execution_evidence_status=0 mismatch_progress_status=0
     set +e
     mismatch_scope_output="$(node "$ROOT_DIR/scripts/phase-loop-delegated-scope.mjs" \
       --workspace "$PHASE_LOOP_WORKSPACE_ROOT" \
@@ -19977,13 +20100,26 @@ NODE
     restore_claim_snapshot_before_runtime "$claim_snapshot_before_runtime"
     mismatch_claim_status=$?
     set -e
+    # `claimed_task_not_admitted` is an execution boundary outcome, not an
+    # invitation to retry without a durable record.  The no-eligible recovery
+    # needs this claim-bound zero-execution evidence and terminal projection to
+    # prove the first applied target before it can constrain one fresh dispatch
+    # to the untouched continuation target.  Persist both only after every
+    # rollback layer has restored the pre-runtime authority state.
+    workspace_after="$(git_workspace_fingerprint)"
+    set +e
+    write_runtime_execution_evidence "$run_stamp" "$stdout_log" "$claim_snapshot_before_runtime" "$workspace_before" "$workspace_after"
+    mismatch_execution_evidence_status=$?
+    write_progress_state "$stdout_log" "$run_stamp" "$exit_code" "$workspace_before" "$workspace_after" "$head_commit"
+    mismatch_progress_status=$?
+    set -e
     write_runtime_terminal_repair_feedback "$run_stamp" "$stdout_log" "$stderr_log" || true
     if [ "$runtime_admission_cause" = "claimed_task_not_admitted" ] && [ "$runtime_admission_snapshot_mismatch" = "0" ]; then
       detail="Runtime attested the admitted claim snapshot but produced no task execution evidence; classified as execution_not_started and restored the pre-runtime delegated scope, target, and claim snapshots before bounded recovery. admission=$runtime_admission_validation scope_status=$mismatch_scope_status target_status=$mismatch_target_status claim_status=$mismatch_claim_status scope=$mismatch_scope_output stdout=$stdout_log stderr=$stderr_log"
     else
       detail="Runtime admission snapshot mismatch; restored the pre-runtime delegated scope, target, and claim snapshots before bounded recovery. admission=$runtime_admission_validation scope_status=$mismatch_scope_status target_status=$mismatch_target_status claim_status=$mismatch_claim_status scope=$mismatch_scope_output stdout=$stdout_log stderr=$stderr_log"
     fi
-    if [ "$mismatch_scope_status" -ne 0 ] || [ "$mismatch_target_status" -ne 0 ] || [ "$mismatch_claim_status" -ne 0 ]; then
+    if [ "$mismatch_scope_status" -ne 0 ] || [ "$mismatch_target_status" -ne 0 ] || [ "$mismatch_claim_status" -ne 0 ] || [ "$mismatch_execution_evidence_status" -ne 0 ] || [ "$mismatch_progress_status" -ne 0 ]; then
       detail="Runtime admission mismatch recovery was incomplete; refusing to continue with partially restored state. $detail"
     fi
     write_status "no_progress" "$detail" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-1}"
@@ -20006,6 +20142,18 @@ NODE
     return 78
   fi
   bind_runtime_stdout_to_active_claim "$stdout_log"
+  if ! objective_apply_no_eligible_target_verification="$(phase_loop_verify_objective_apply_no_eligible_continuation_target "$run_stamp" 2>&1)"; then
+    # The fresh dispatch is constrained to the still-untouched target. If it
+    # touched the proven first target, restore this invocation's full target
+    # snapshot (which already contains the durable first write) and stop; a
+    # second blind dispatch could only hide that replay.
+    restore_pre_runtime_active_target_snapshots "$active_target_snapshots" || true
+    detail="Objective-apply no-eligible fresh dispatch changed or lost the already-proven first target; restored this dispatch's declared-target snapshot and refused replay. verification=$objective_apply_no_eligible_target_verification stdout=$stdout_log stderr=$stderr_log"
+    write_status "blocked" "$detail" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-1}"
+    printf '%s run=%s objective_apply_no_eligible_first_target_immutability_failed=true verification=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_stamp" "$objective_apply_no_eligible_target_verification" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"objective_apply_no_eligible_first_target_immutability_failed","owner_blocked":true}'
+    return 76
+  fi
   set +e
   delegated_scope_output="$(node "$ROOT_DIR/scripts/phase-loop-delegated-scope.mjs" \
     --workspace "$PHASE_LOOP_WORKSPACE_ROOT" \

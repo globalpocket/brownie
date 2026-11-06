@@ -433,32 +433,49 @@ PHASE_LOOP_STATE_DIR="$concurrent_migration_case_dir" STATE_DIR="$concurrent_mig
   set -u
   source "$ROOT_DIR/phase-loop.sh" status >/dev/null 2>&1
   node() {
-    sleep 1
+    deadline=$((SECONDS + 10))
+    while [ ! -e "$STATE_DIR/allow-owner-migration-exit" ]; do
+      if [ "$SECONDS" -ge "$deadline" ]; then
+        return 78
+      fi
+      sleep 0.05
+    done
   }
   phase_loop_migrate_legacy_state
 ' bash >"$concurrent_migration_case_dir/first.log" 2>&1 &
 first_migration_pid=$!
+# Wait for the first process to publish a fully owned lock before starting the
+# contender.  A fixed sleep lets a slow CI runner schedule the contender only
+# after the owner has completed, turning this contention test into two
+# sequential successful migrations.
+first_migration_ready=0
+for ((migration_wait_attempt = 0; migration_wait_attempt < 100; migration_wait_attempt++)); do
+  if [ -f "$concurrent_migration_case_dir/phase-loop-legacy-migration.lock/owner.json" ] &&
+    [ -f "$concurrent_migration_case_dir/phase-loop-legacy-migration.lock/pid" ]; then
+    first_migration_ready=1
+    break
+  fi
+  sleep 0.05
+done
+if [ "$first_migration_ready" -ne 1 ]; then
+  touch "$concurrent_migration_case_dir/allow-owner-migration-exit"
+  wait "$first_migration_pid" >/dev/null 2>&1
+  exit 1
+fi
 PHASE_LOOP_STATE_DIR="$concurrent_migration_case_dir" STATE_DIR="$concurrent_migration_case_dir" ROOT_DIR="$ROOT_DIR" bash -c '
   set -u
   source "$ROOT_DIR/phase-loop.sh" status >/dev/null 2>&1
-  node() {
-    sleep 1
-  }
   phase_loop_migrate_legacy_state
 ' bash >"$concurrent_migration_case_dir/second.log" 2>&1 &
 second_migration_pid=$!
-wait "$first_migration_pid"
-first_migration_status=$?
 wait "$second_migration_pid"
 second_migration_status=$?
+touch "$concurrent_migration_case_dir/allow-owner-migration-exit"
+wait "$first_migration_pid"
+first_migration_status=$?
 set -e
-if [ "$first_migration_status" -eq 0 ] && [ "$second_migration_status" -eq 75 ]; then
-  :
-elif [ "$first_migration_status" -eq 75 ] && [ "$second_migration_status" -eq 0 ]; then
-  :
-else
-  exit 1
-fi
+[ "$first_migration_status" -eq 0 ]
+[ "$second_migration_status" -eq 75 ]
 [ ! -d "$concurrent_migration_case_dir/phase-loop-legacy-migration.lock" ]
 printf '%s\n' 'phase-loop migration lock publication admits only one concurrent owner'
 
