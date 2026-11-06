@@ -11411,6 +11411,7 @@ except Exception:
 sys.exit(0 if (
     claim.get("runtime_authorization_rebaseline_pending") is True
     or claim.get("review_rework_fresh_dispatch_pending") is True
+    or claim.get("merged_delivery_fresh_dispatch_pending") is True
 ) else 1)
 PY
   then
@@ -17672,6 +17673,44 @@ phase_loop_isolate_review_rework_fresh_runtime_dispatch() {
   return 0
 }
 
+# A prior Runtime execution may be followed by independently merged delivery
+# while its same-claim continuation store still exists. If that continuation
+# reaches `no_eligible_task`, do not restart it: require the audited recovery
+# proof, archive the store, then admit one new `run` for the same immutable
+# claim. The helper is deliberately narrower than generic terminal retry.
+phase_loop_prepare_merged_delivery_fresh_dispatch_recovery() {
+  local output status
+  set +e
+  output="$(node "$ROOT_DIR/scripts/phase-loop-review-rework-dispatch-isolation.mjs" prepare-merged-delivery \
+    --repo "$PHASE_LOOP_WORKSPACE_ROOT" \
+    --state-dir "$STATE_DIR" \
+    --claim "$TODO_CLAIM_FILE" \
+    --progress "$PROGRESS_STATE_FILE" 2>&1)"
+  status=$?
+  set -e
+  PHASE_LOOP_MERGED_DELIVERY_FRESH_DISPATCH_OUTPUT="$output"
+  if [ "$status" -ne 0 ]; then
+    return "$status"
+  fi
+  printf '%s' "$output" | python3 -c 'import json,sys; value=json.load(sys.stdin); sys.exit(0 if value.get("ok") is True else 1)'
+}
+
+phase_loop_isolate_merged_delivery_fresh_runtime_dispatch() {
+  local output status
+  set +e
+  output="$(node "$ROOT_DIR/scripts/phase-loop-review-rework-dispatch-isolation.mjs" isolate-merged-delivery \
+    --store-root "$PHASE_LOOP_BROWNIE_STORE_ROOT" \
+    --state-dir "$STATE_DIR" \
+    --claim "$TODO_CLAIM_FILE" 2>&1)"
+  status=$?
+  set -e
+  PHASE_LOOP_MERGED_DELIVERY_STORE_ISOLATION_OUTPUT="$output"
+  if [ "$status" -ne 0 ]; then
+    return "$status"
+  fi
+  printf '%s' "$output" | python3 -c 'import json,sys; value=json.load(sys.stdin); sys.exit(0 if value.get("ok") is True else 1)'
+}
+
 # The first implementation of the review-rework re-arm invalidated `resume`
 # but left the claim-id-derived Runtime store in place. Repair only the
 # precisely evidenced historical shape (terminal replay-only resumes with no
@@ -17931,6 +17970,7 @@ except Exception:
 sys.exit(0 if (
     claim.get("runtime_authorization_rebaseline_pending") is True
     or claim.get("review_rework_fresh_dispatch_pending") is True
+    or claim.get("merged_delivery_fresh_dispatch_pending") is True
 ) else 1)
 PY
   pending_status=$?
@@ -17966,6 +18006,10 @@ if claim.get("review_rework_fresh_dispatch_pending") is True:
     claim["review_rework_fresh_dispatch_pending"] = False
     claim["review_rework_fresh_dispatch_activated_run_stamp"] = run_stamp
     claim["review_rework_fresh_dispatch_activated_at"] = timestamp
+if claim.get("merged_delivery_fresh_dispatch_pending") is True:
+    claim["merged_delivery_fresh_dispatch_pending"] = False
+    claim["merged_delivery_fresh_dispatch_activated_run_stamp"] = run_stamp
+    claim["merged_delivery_fresh_dispatch_activated_at"] = timestamp
 destination.write_text(json.dumps(claim, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 os.chmod(destination, 0o600)
 PY
@@ -18891,6 +18935,17 @@ PY
   # implementation/review proof exists.  Keep the source claim and queue
   # intact for one bounded re-verification or one stable actionable error.
   if active_todo_claim_exists; then
+    if ! phase_loop_prepare_merged_delivery_fresh_dispatch_recovery; then
+      detail="A merged-delivery no-eligible recovery proof or claim update failed; refusing to resume or replace the immutable claim. recovery=${PHASE_LOOP_MERGED_DELIVERY_FRESH_DISPATCH_OUTPUT:-<no output>}"
+      printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+      write_status "blocked" "$detail" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-0}"
+      write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"merged_delivery_fresh_dispatch_recovery_failed","owner_blocked":true}'
+      return 78
+    fi
+    if printf '%s' "${PHASE_LOOP_MERGED_DELIVERY_FRESH_DISPATCH_OUTPUT:-}" | python3 -c 'import json,sys; value=json.load(sys.stdin); sys.exit(0 if value.get("prepared") is True else 1)'; then
+      printf '%s run=%s merged_delivery_fresh_dispatch_recovery_prepared=true result=%s\n' "$(now_utc)" "$run_stamp" "$PHASE_LOOP_MERGED_DELIVERY_FRESH_DISPATCH_OUTPUT" >> "$SUPERVISOR_LOG"
+      write_bdk_trajectory_event "$run_stamp" "todo.repair_feedback" '{"reason":"merged_delivery_no_eligible_requires_fresh_dispatch","delivery_progress":false}'
+    fi
     if ! phase_loop_prepare_review_rework_stale_replay_store_isolation_repair; then
       detail="A review-rework claim has a stale-replay store-isolation repair failure; refusing a resume or replacement claim. repair=${PHASE_LOOP_REVIEW_REWORK_STALE_REPLAY_REPAIR_OUTPUT:-<no output>}"
       printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
@@ -19025,6 +19080,17 @@ PY
     record_stably_blocked_todo_claim "$run_stamp"
     write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"stably_blocked"}'
     return 0
+  fi
+  if ! phase_loop_isolate_merged_delivery_fresh_runtime_dispatch; then
+    detail="Merged-delivery fresh dispatch could not isolate the prior claim-local Runtime store; refusing an ambiguous resume. isolation=${PHASE_LOOP_MERGED_DELIVERY_STORE_ISOLATION_OUTPUT:-<no output>}"
+    printf '%s %s\n' "$(now_utc)" "$detail" >> "$SUPERVISOR_LOG"
+    write_status "blocked" "$detail" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-0}"
+    write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"merged_delivery_runtime_store_isolation_failed","owner_blocked":true}'
+    return 78
+  fi
+  if printf '%s' "${PHASE_LOOP_MERGED_DELIVERY_STORE_ISOLATION_OUTPUT:-}" | python3 -c 'import json,sys; value=json.load(sys.stdin); sys.exit(0 if value.get("isolated") is True else 1)'; then
+    printf '%s run=%s merged_delivery_runtime_store_isolated=true result=%s\n' "$(now_utc)" "$run_stamp" "$PHASE_LOOP_MERGED_DELIVERY_STORE_ISOLATION_OUTPUT" >> "$SUPERVISOR_LOG"
+    write_bdk_trajectory_event "$run_stamp" "todo.repair_feedback" '{"reason":"merged_delivery_runtime_store_isolated_for_fresh_dispatch","delivery_progress":false}'
   fi
   if ! phase_loop_isolate_review_rework_fresh_runtime_dispatch; then
     detail="Review-rework fresh dispatch could not isolate the prior claim-local Runtime store; refusing an ambiguous resume. isolation=${PHASE_LOOP_REVIEW_REWORK_STORE_ISOLATION_OUTPUT:-<no output>}"

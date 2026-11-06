@@ -196,15 +196,32 @@ function gitTodoSnapshotBinding(repoRoot, mergeCommitOid, selectedTodo, todoId, 
   }
 }
 
-function scopeMatchesCandidate({ mergePaths, scopes, binding }) {
+function isVerificationCompanionPath(entry) {
+  // A delivery can be split across independently reviewed PRs when the
+  // product targets and their regression/guard coverage cannot reasonably be
+  // landed together.  The candidate admission boundary may include only
+  // executable regression tests and guards beside the explicit product
+  // targets; it must not turn this into a general "related files" escape
+  // hatch.
+  return /^scripts\/(?:guard-[A-Za-z0-9_.-]+\.mjs|[A-Za-z0-9_.-]+\.test\.mjs)$/u.test(entry);
+}
+
+function scopeMatchesCandidate({ mergePaths, scopes, binding, allowVerificationCompanions = false, allowPartialScope = false }) {
   const expectedPaths = scopes.slice().sort();
   if (binding.kind === 'commit_trailer') {
-    return mergePaths.length === expectedPaths.length && mergePaths.every((entry, index) => entry === expectedPaths[index]);
+    const permitted = mergePaths.length > 0
+      && mergePaths.some((entry) => expectedPaths.includes(entry))
+      && mergePaths.every((entry) => expectedPaths.includes(entry)
+        || (allowVerificationCompanions && isVerificationCompanionPath(entry)));
+    return permitted && (allowPartialScope || expectedPaths.every((entry) => mergePaths.includes(entry)));
   }
   // A task snapshot fallback proves the exact pending contract at the merge,
   // while allowing an implementation PR to change a non-empty subset of its
   // explicitly permitted paths. It must never introduce an out-of-scope path.
-  return mergePaths.length > 0 && mergePaths.every((entry) => expectedPaths.includes(entry));
+  return mergePaths.length > 0
+    && mergePaths.some((entry) => expectedPaths.includes(entry))
+    && mergePaths.every((entry) => expectedPaths.includes(entry)
+      || (allowVerificationCompanions && isVerificationCompanionPath(entry)));
 }
 
 /**
@@ -234,6 +251,8 @@ export function findCleanMergedDeliveryCandidate({ repoRoot, selectedTodo }) {
 
   let matchedTaskSpec = false;
   let rejectedReason = null;
+  const lineage = [];
+  const coveredScopes = new Set();
   for (const mergeCommitOid of merges) {
     let parents;
     try {
@@ -263,39 +282,64 @@ export function findCleanMergedDeliveryCandidate({ repoRoot, selectedTodo }) {
     } catch {
       return { valid: false, reason: 'merged_delivery_candidate_history_unavailable' };
     }
-    if (!scopeMatchesCandidate({ mergePaths, scopes, binding: taskSpecBinding })) {
+    if (!scopeMatchesCandidate({
+      mergePaths,
+      scopes,
+      binding: taskSpecBinding,
+      allowVerificationCompanions: true,
+      allowPartialScope: true
+    })) {
       rejectedReason = 'merged_delivery_candidate_scope_mismatch';
       continue;
     }
 
+    const coveredByMerge = mergePaths.filter((entry) => scopes.includes(entry));
+    lineage.push({
+      merge_commit_oid: mergeCommitOid,
+      first_parent_oid: firstParentOid,
+      head_oid: headOid,
+      merge_paths: mergePaths,
+      task_spec_binding: taskSpecBinding
+    });
+    for (const scope of coveredByMerge) coveredScopes.add(scope);
+    // A selected TODO is allowed to be delivered by multiple reviewed merges,
+    // but every explicit target must be represented by the matching lineage.
+    // This remains only a *pre-claim* candidate: review, CI, Runtime
+    // execution, verification, and queue consumption are still checked by
+    // the ordinary delivery path.
+    if (coveredScopes.size !== scopes.length) continue;
+
     const targets = [];
     try {
       for (const scope of scopes) {
-        const mergeBlob = git(repoRoot, ['rev-parse', `${mergeCommitOid}:${scope}`]);
         const headBlob = git(repoRoot, ['rev-parse', `HEAD:${scope}`]);
         childProcess.execFileSync('git', ['diff', '--quiet', 'HEAD', '--', scope], { cwd: repoRoot });
         const untracked = git(repoRoot, ['ls-files', '--others', '--exclude-standard', '--', scope]);
-        if (mergeBlob !== headBlob || untracked) throw new Error('target differs from merged clean state');
+        if (!headBlob || untracked) throw new Error('target differs from merged clean state');
         targets.push({ path: scope, sha256: sha256(fs.readFileSync(path.join(repoRoot, scope))) });
       }
     } catch {
       rejectedReason = 'merged_delivery_candidate_target_not_clean';
       continue;
     }
+    const latest = lineage[0];
     return {
       valid: true,
       candidate: {
-        merge_commit_oid: mergeCommitOid,
+        // Keep the newest reviewed merge as the candidate identity; older
+        // entries merely complete the bounded target coverage.
+        merge_commit_oid: latest.merge_commit_oid,
         // A superseded parent may be re-admitted only for a delivery that was
         // merged after its recorded split.  Expose the Git-authored merge
         // time as data rather than letting callers infer freshness from a
         // mutable queue or claim timestamp.
-        merge_commit_timestamp: Number(git(repoRoot, ['show', '-s', '--format=%ct', mergeCommitOid])),
-        first_parent_oid: firstParentOid,
-        head_oid: headOid,
+        merge_commit_timestamp: Number(git(repoRoot, ['show', '-s', '--format=%ct', latest.merge_commit_oid])),
+        first_parent_oid: latest.first_parent_oid,
+        head_oid: latest.head_oid,
         selected_todo_id: todoId,
         selected_todo_sha256: todoSha,
-        task_spec_binding: taskSpecBinding,
+        task_spec_binding: latest.task_spec_binding,
+        merge_lineage: lineage,
         targets
       }
     };
