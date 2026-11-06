@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { findCleanMergedDeliveryCandidate } from './phase-loop-delivery-integrity.mjs';
 
 function sha256(value) {
   return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
@@ -524,6 +525,185 @@ export function isolateReviewReworkFreshDispatchRuntimeStore({ storeRoot, stateD
   }
 }
 
+function mergedDeliveryFreshDispatchIdentity(claim) {
+  const recovery = claim?.merged_delivery_fresh_dispatch_recovery;
+  if (claim?.merged_delivery_fresh_dispatch_pending !== true || !recovery || typeof recovery !== 'object') return null;
+  const claimId = typeof claim.claim_id === 'string' ? claim.claim_id : '';
+  const recoveryId = typeof recovery.recovery_id === 'string' ? recovery.recovery_id : '';
+  const dispatchAttempt = recovery.dispatch_attempt;
+  if (!claimId || !recoveryId || !Number.isSafeInteger(dispatchAttempt) || dispatchAttempt < 1) {
+    throw new Error('merged_delivery_fresh_dispatch_identity_invalid');
+  }
+  return { claimId, recoveryId, dispatchAttempt };
+}
+
+function noEligibleResumeProof({ claim, progressPath }) {
+  let progress;
+  try {
+    progress = readJson(progressPath);
+  } catch {
+    return null;
+  }
+  const projection = progress?.progress_projection;
+  const stdoutPath = typeof progress?.stdout_log === 'string' ? progress.stdout_log : '';
+  if (!projection || progress.classification !== 'terminal_failure'
+      || progress.meaningful_progress !== false || progress.workspace_changed !== false
+      || projection.claim_id !== claim.claim_id || !stdoutPath) return null;
+  let stdout;
+  try {
+    stdout = readJson(stdoutPath);
+  } catch {
+    return null;
+  }
+  const resume = stdout?.resume;
+  if (stdout?.command !== 'resume' || !resume || resume.status !== 'no_eligible_task'
+      || resume.candidate_count !== 0 || resume.controller_action !== 'stop') return null;
+  const previousEvidencePath = typeof claim.terminal_failure_execution_evidence_path === 'string'
+    ? claim.terminal_failure_execution_evidence_path : '';
+  let previousEvidence;
+  try {
+    previousEvidence = readJson(previousEvidencePath);
+  } catch {
+    return null;
+  }
+  if (previousEvidence.claim_id !== claim.claim_id || previousEvidence.claim_matches !== true
+      || previousEvidence.task_execution_confirmed !== true) return null;
+  return { stdoutPath, previousEvidencePath, runStamp: progress.run_stamp };
+}
+
+/**
+ * A reviewed product delivery can land while the original Runtime claim is
+ * still holding a continuation store. When the continuation subsequently
+ * reports `no_eligible_task`, preserve both receipts and require one new
+ * same-claim `run`; a resume would only replay the exhausted session. This is
+ * deliberately narrower than retry: it requires an earlier executed task,
+ * the exact no-eligible terminal shape, and a clean bounded merged lineage.
+ */
+export function prepareMergedDeliveryFreshDispatchRecovery({ repoRoot, stateDir, claimPath, progressPath, now = new Date().toISOString() }) {
+  const claim = readJson(claimPath);
+  const existing = claim.merged_delivery_fresh_dispatch_recovery;
+  if (existing) {
+    // The marker is cleared atomically immediately before the replacement
+    // Runtime `run`. Keep its immutable audit on the claim afterwards, but
+    // never try to prepare or isolate that completed dispatch a second time.
+    if (claim.merged_delivery_fresh_dispatch_pending !== true
+        && typeof claim.merged_delivery_fresh_dispatch_activated_run_stamp === 'string'
+        && claim.merged_delivery_fresh_dispatch_activated_run_stamp) {
+      return { ok: true, prepared: false, reason: 'merged_delivery_fresh_dispatch_already_activated', claim_id: claim.claim_id };
+    }
+    const identity = mergedDeliveryFreshDispatchIdentity(claim);
+    const auditPath = identity && path.join(stateDir, 'recovery-audits', `${sha256(identity.recoveryId).slice(0, 16)}-merged-delivery-dispatch-${identity.dispatchAttempt}.json`);
+    if (identity && auditPath && fs.existsSync(auditPath)) {
+      return { ok: true, prepared: false, reason: 'merged_delivery_fresh_dispatch_already_prepared', claim_id: identity.claimId, audit_path: auditPath };
+    }
+    throw new Error('merged_delivery_fresh_dispatch_recovery_evidence_invalid');
+  }
+  // Never overlap the pre-existing review-rework recovery grammar.
+  if (claim.review_rework_fresh_dispatch_pending === true) {
+    return { ok: true, prepared: false, reason: 'merged_delivery_fresh_dispatch_review_rework_owned' };
+  }
+  const noEligible = noEligibleResumeProof({ claim, progressPath });
+  if (!noEligible) return { ok: true, prepared: false, reason: 'merged_delivery_fresh_dispatch_no_eligible_proof_not_satisfied' };
+  const candidate = findCleanMergedDeliveryCandidate({ repoRoot, selectedTodo: claim.selected_todo });
+  if (!candidate.valid) return { ok: true, prepared: false, reason: candidate.reason };
+  const recoveryId = `sha256:${sha256(JSON.stringify({
+    claim_id: claim.claim_id,
+    selected_todo_sha256: candidate.candidate.selected_todo_sha256,
+    merge_lineage: candidate.candidate.merge_lineage.map((entry) => entry.merge_commit_oid),
+    no_eligible_stdout: noEligible.stdoutPath,
+    prior_execution_evidence: noEligible.previousEvidencePath,
+  }))}`;
+  const identity = { claimId: claim.claim_id, recoveryId, dispatchAttempt: 1 };
+  const recoveryDigest = sha256(recoveryId).slice(0, 16);
+  const auditPath = path.join(stateDir, 'recovery-audits', `${recoveryDigest}-merged-delivery-dispatch-1.json`);
+  const audit = {
+    schema_version: 1,
+    kind: 'phase_loop_merged_delivery_no_eligible_fresh_dispatch_recovery',
+    recorded_at: now,
+    claim_id: claim.claim_id,
+    recovery_id: recoveryId,
+    dispatch_attempt: 1,
+    no_eligible_resume: noEligible,
+    candidate: candidate.candidate,
+    recovery_policy: 'archive_same_claim_runtime_store_then_require_one_fresh_run',
+  };
+  if (!fs.existsSync(auditPath)) writeJsonAtomically(auditPath, audit);
+  writeJsonAtomically(claimPath, {
+    ...claim,
+    status: 'in_progress',
+    merged_delivery_fresh_dispatch_pending: true,
+    merged_delivery_fresh_dispatch_recovery: {
+      schema_version: 1,
+      recovery_id: recoveryId,
+      dispatch_attempt: 1,
+      audit_path: auditPath,
+      candidate: candidate.candidate,
+      prepared_at: now,
+    },
+    status_history: [...(Array.isArray(claim.status_history) ? claim.status_history : []), {
+      status: 'fresh_runtime_dispatch_required',
+      updated_at: now,
+      note: 'executed claim later reached no_eligible_task after bounded merged delivery; stale store must be isolated before one fresh run',
+    }],
+    updated_at: now,
+  });
+  return { ok: true, prepared: true, claim_id: identity.claimId, audit_path: auditPath, recovery_id: recoveryId };
+}
+
+export function isolateMergedDeliveryFreshDispatchRuntimeStore({ storeRoot, stateDir, claimPath, now = new Date().toISOString() }) {
+  const claim = readJson(claimPath);
+  const identity = mergedDeliveryFreshDispatchIdentity(claim);
+  if (!identity) return { ok: true, isolated: false, reason: 'merged_delivery_fresh_dispatch_not_pending' };
+  const claimDigest = sha256(identity.claimId);
+  const recoveryDigest = sha256(identity.recoveryId).slice(0, 16);
+  const activeStore = path.join(storeRoot, 'phase-loop-claims', claimDigest);
+  const archiveStore = path.join(storeRoot, 'phase-loop-claim-archives', claimDigest, `merged-delivery-${recoveryDigest}-dispatch-${identity.dispatchAttempt}`);
+  const auditPath = path.join(stateDir, 'recovery-audits', `${recoveryDigest}-merged-delivery-dispatch-${identity.dispatchAttempt}-runtime-store-isolation.json`);
+  const previous = claim.merged_delivery_fresh_dispatch_store_isolation;
+  if (matchingIsolation(previous, identity)) {
+    if (!fs.existsSync(auditPath)) throw new Error('merged_delivery_runtime_store_isolation_evidence_missing');
+    return { ok: true, isolated: false, reason: 'merged_delivery_runtime_store_already_isolated', claim_id: identity.claimId, audit_path: auditPath, archived_store: previous.archived_store ?? null };
+  }
+  const activeExists = fs.statSync(activeStore, { throwIfNoEntry: false })?.isDirectory() === true;
+  const archiveExists = fs.statSync(archiveStore, { throwIfNoEntry: false })?.isDirectory() === true;
+  if (activeExists && archiveExists) throw new Error('merged_delivery_runtime_store_isolation_ambiguous');
+  if (activeExists) {
+    fs.mkdirSync(path.dirname(archiveStore), { recursive: true, mode: 0o700 });
+    fs.renameSync(activeStore, archiveStore);
+  }
+  const audit = {
+    schema_version: 1,
+    kind: 'phase_loop_merged_delivery_fresh_dispatch_runtime_store_isolation',
+    recorded_at: now,
+    claim_id: identity.claimId,
+    recovery_id: identity.recoveryId,
+    dispatch_attempt: identity.dispatchAttempt,
+    active_store: activeStore,
+    archived_store: activeExists || archiveExists ? archiveStore : null,
+    recovery_policy: activeExists || archiveExists
+      ? 'archive_prior_claim_runtime_store_then_require_same-claim-fresh-run'
+      : 'no_prior_claim_runtime_store_require_same-claim-fresh-run',
+  };
+  try {
+    if (!fs.existsSync(auditPath)) writeJsonAtomically(auditPath, audit);
+    writeJsonAtomically(claimPath, {
+      ...claim,
+      merged_delivery_fresh_dispatch_store_isolation: {
+        schema_version: 1,
+        recovery_id: identity.recoveryId,
+        dispatch_attempt: identity.dispatchAttempt,
+        audit_path: auditPath,
+        archived_store: audit.archived_store,
+        isolated_at: now,
+      },
+    });
+  } catch (error) {
+    if (activeExists && !fs.existsSync(activeStore) && fs.existsSync(archiveStore)) fs.renameSync(archiveStore, activeStore);
+    throw error;
+  }
+  return { ok: true, isolated: true, claim_id: identity.claimId, audit_path: auditPath, archived_store: audit.archived_store };
+}
+
 function readOption(args, name) {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
@@ -531,8 +711,8 @@ function readOption(args, name) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
   const [command, ...args] = process.argv.slice(2);
-  if (command !== 'isolate' && command !== 'repair-stale-replay') {
-    process.stderr.write('usage: phase-loop-review-rework-dispatch-isolation.mjs <isolate|repair-stale-replay> --state-dir <path> --claim <path> [--store-root <path>] [--progress <path>]\n');
+  if (!['isolate', 'repair-stale-replay', 'prepare-merged-delivery', 'isolate-merged-delivery'].includes(command)) {
+    process.stderr.write('usage: phase-loop-review-rework-dispatch-isolation.mjs <isolate|repair-stale-replay|prepare-merged-delivery|isolate-merged-delivery> --state-dir <path> --claim <path> [--store-root <path>] [--progress <path>] [--repo <path>]\n');
     process.exit(64);
   }
   try {
@@ -542,11 +722,24 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
           stateDir: readOption(args, '--state-dir'),
           claimPath: readOption(args, '--claim'),
         })
-      : prepareReviewReworkStaleReplayStoreIsolationRepair({
+      : command === 'repair-stale-replay'
+        ? prepareReviewReworkStaleReplayStoreIsolationRepair({
           stateDir: readOption(args, '--state-dir'),
           claimPath: readOption(args, '--claim'),
           progressPath: readOption(args, '--progress'),
-        });
+        })
+        : command === 'prepare-merged-delivery'
+          ? prepareMergedDeliveryFreshDispatchRecovery({
+              repoRoot: readOption(args, '--repo'),
+              stateDir: readOption(args, '--state-dir'),
+              claimPath: readOption(args, '--claim'),
+              progressPath: readOption(args, '--progress'),
+            })
+          : isolateMergedDeliveryFreshDispatchRuntimeStore({
+              storeRoot: readOption(args, '--store-root'),
+              stateDir: readOption(args, '--state-dir'),
+              claimPath: readOption(args, '--claim'),
+            });
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } catch (error) {
     process.stdout.write(`${JSON.stringify({ ok: false, code: error instanceof Error ? error.message : 'review_rework_runtime_store_isolation_failed' })}\n`);

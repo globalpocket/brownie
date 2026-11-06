@@ -6,13 +6,93 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   isolateReviewReworkFreshDispatchRuntimeStore,
+  isolateMergedDeliveryFreshDispatchRuntimeStore,
+  prepareMergedDeliveryFreshDispatchRecovery,
   prepareReviewReworkStaleReplayStoreIsolationRepair,
 } from './phase-loop-review-rework-dispatch-isolation.mjs';
+import { execFileSync } from 'node:child_process';
 
 function writeJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
+
+function mergedDeliveryNoEligibleFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-merged-delivery-dispatch-'));
+  const repository = path.join(root, 'repository');
+  const stateDir = path.join(root, 'state');
+  const storeRoot = path.join(root, 'runtime-store');
+  const claimPath = path.join(stateDir, 'todo-claims', 'current.json');
+  const claimId = 'claim-merged-delivery';
+  const selectedTodo = `- [ ] E-recover: Patch only \`scripts/target.mjs\`.
+  Route: implementation.
+  Completion condition: the merged target is reverified.
+  Verification: run \`node --check scripts/target.mjs\`.`;
+  const run = (args) => execFileSync('git', args, { cwd: repository, encoding: 'utf8' }).trim();
+  fs.mkdirSync(path.join(repository, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(repository, 'scripts', 'target.mjs'), 'export const target = "before";\n');
+  run(['init', '--quiet', '-b', 'main']);
+  run(['config', 'user.name', 'fixture']);
+  run(['config', 'user.email', 'fixture@example.invalid']);
+  run(['add', '.']);
+  run(['commit', '--quiet', '-m', 'base']);
+  run(['switch', '--quiet', '-c', 'implementation']);
+  fs.writeFileSync(path.join(repository, 'scripts', 'target.mjs'), 'export const target = "merged";\n');
+  const todoHash = crypto.createHash('sha256').update(selectedTodo).digest('hex');
+  run(['add', '.']);
+  run(['commit', '--quiet', '-m', `implement target\n\nBrownie-Task-Todo: E-recover\nBrownie-Task-Spec-SHA256: ${todoHash}`]);
+  run(['switch', '--quiet', 'main']);
+  run(['merge', '--no-ff', '--no-edit', 'implementation']);
+  const priorEvidence = path.join(stateDir, 'runs', 'prior.execution-evidence.json');
+  writeJson(priorEvidence, { claim_id: claimId, claim_matches: true, task_execution_confirmed: true });
+  const stdout = path.join(stateDir, 'runs', 'current.stdout.log');
+  writeJson(stdout, { command: 'resume', resume: { status: 'no_eligible_task', candidate_count: 0, controller_action: 'stop' } });
+  writeJson(path.join(stateDir, 'progress-state.json'), {
+    run_stamp: 'current', classification: 'terminal_failure', meaningful_progress: false, workspace_changed: false,
+    stdout_log: stdout, progress_projection: { claim_id: claimId },
+  });
+  writeJson(claimPath, {
+    claim_id: claimId, root_claim_id: claimId, status: 'in_progress', selected_todo: selectedTodo,
+    terminal_failure_execution_evidence_path: priorEvidence,
+  });
+  const digest = crypto.createHash('sha256').update(claimId).digest('hex');
+  const activeStore = path.join(storeRoot, 'phase-loop-claims', digest);
+  fs.mkdirSync(activeStore, { recursive: true });
+  fs.writeFileSync(path.join(activeStore, 'stale.json'), '{"resume":true}\n');
+  return { repository, stateDir, storeRoot, claimPath, claimId, activeStore };
+}
+
+test('a proved no-eligible continuation after bounded merged delivery is archived before one same-claim fresh run', () => {
+  const f = mergedDeliveryNoEligibleFixture();
+  const prepared = prepareMergedDeliveryFreshDispatchRecovery({
+    repoRoot: f.repository,
+    stateDir: f.stateDir,
+    claimPath: f.claimPath,
+    progressPath: path.join(f.stateDir, 'progress-state.json'),
+    now: '2026-11-06T04:00:00.000Z',
+  });
+  assert.equal(prepared.prepared, true, JSON.stringify(prepared));
+  const isolated = isolateMergedDeliveryFreshDispatchRuntimeStore({
+    storeRoot: f.storeRoot, stateDir: f.stateDir, claimPath: f.claimPath, now: '2026-11-06T04:00:01.000Z',
+  });
+  assert.equal(isolated.isolated, true, JSON.stringify(isolated));
+  assert.equal(fs.existsSync(f.activeStore), false);
+  assert.equal(fs.readFileSync(path.join(isolated.archived_store, 'stale.json'), 'utf8'), '{"resume":true}\n');
+  const claim = JSON.parse(fs.readFileSync(f.claimPath, 'utf8'));
+  assert.equal(claim.merged_delivery_fresh_dispatch_pending, true);
+  assert.equal(claim.merged_delivery_fresh_dispatch_store_isolation.audit_path, isolated.audit_path);
+
+  claim.merged_delivery_fresh_dispatch_pending = false;
+  claim.merged_delivery_fresh_dispatch_activated_run_stamp = '20261106T040100Z';
+  writeJson(f.claimPath, claim);
+  const repeated = prepareMergedDeliveryFreshDispatchRecovery({
+    repoRoot: f.repository,
+    stateDir: f.stateDir,
+    claimPath: f.claimPath,
+    progressPath: path.join(f.stateDir, 'progress-state.json'),
+  });
+  assert.equal(repeated.reason, 'merged_delivery_fresh_dispatch_already_activated');
+});
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-review-rework-isolation-'));

@@ -196,15 +196,32 @@ function gitTodoSnapshotBinding(repoRoot, mergeCommitOid, selectedTodo, todoId, 
   }
 }
 
-function scopeMatchesCandidate({ mergePaths, scopes, binding }) {
+function isVerificationCompanionPath(entry) {
+  // A delivery can be split across independently reviewed PRs when the
+  // product targets and their regression/guard coverage cannot reasonably be
+  // landed together.  The candidate admission boundary may include only
+  // executable regression tests and guards beside the explicit product
+  // targets; it must not turn this into a general "related files" escape
+  // hatch.
+  return /^scripts\/(?:guard-[A-Za-z0-9_.-]+\.mjs|[A-Za-z0-9_.-]+\.test\.mjs)$/u.test(entry);
+}
+
+function scopeMatchesCandidate({ mergePaths, scopes, binding, allowVerificationCompanions = false, allowPartialScope = false }) {
   const expectedPaths = scopes.slice().sort();
   if (binding.kind === 'commit_trailer') {
-    return mergePaths.length === expectedPaths.length && mergePaths.every((entry, index) => entry === expectedPaths[index]);
+    const permitted = mergePaths.length > 0
+      && mergePaths.some((entry) => expectedPaths.includes(entry))
+      && mergePaths.every((entry) => expectedPaths.includes(entry)
+        || (allowVerificationCompanions && isVerificationCompanionPath(entry)));
+    return permitted && (allowPartialScope || expectedPaths.every((entry) => mergePaths.includes(entry)));
   }
   // A task snapshot fallback proves the exact pending contract at the merge,
   // while allowing an implementation PR to change a non-empty subset of its
   // explicitly permitted paths. It must never introduce an out-of-scope path.
-  return mergePaths.length > 0 && mergePaths.every((entry) => expectedPaths.includes(entry));
+  return mergePaths.length > 0
+    && mergePaths.some((entry) => expectedPaths.includes(entry))
+    && mergePaths.every((entry) => expectedPaths.includes(entry)
+      || (allowVerificationCompanions && isVerificationCompanionPath(entry)));
 }
 
 /**
@@ -234,6 +251,8 @@ export function findCleanMergedDeliveryCandidate({ repoRoot, selectedTodo }) {
 
   let matchedTaskSpec = false;
   let rejectedReason = null;
+  const lineage = [];
+  const coveredScopes = new Set();
   for (const mergeCommitOid of merges) {
     let parents;
     try {
@@ -263,39 +282,64 @@ export function findCleanMergedDeliveryCandidate({ repoRoot, selectedTodo }) {
     } catch {
       return { valid: false, reason: 'merged_delivery_candidate_history_unavailable' };
     }
-    if (!scopeMatchesCandidate({ mergePaths, scopes, binding: taskSpecBinding })) {
+    if (!scopeMatchesCandidate({
+      mergePaths,
+      scopes,
+      binding: taskSpecBinding,
+      allowVerificationCompanions: true,
+      allowPartialScope: true
+    })) {
       rejectedReason = 'merged_delivery_candidate_scope_mismatch';
       continue;
     }
 
+    const coveredByMerge = mergePaths.filter((entry) => scopes.includes(entry));
+    lineage.push({
+      merge_commit_oid: mergeCommitOid,
+      first_parent_oid: firstParentOid,
+      head_oid: headOid,
+      merge_paths: mergePaths,
+      task_spec_binding: taskSpecBinding
+    });
+    for (const scope of coveredByMerge) coveredScopes.add(scope);
+    // A selected TODO is allowed to be delivered by multiple reviewed merges,
+    // but every explicit target must be represented by the matching lineage.
+    // This remains only a *pre-claim* candidate: review, CI, Runtime
+    // execution, verification, and queue consumption are still checked by
+    // the ordinary delivery path.
+    if (coveredScopes.size !== scopes.length) continue;
+
     const targets = [];
     try {
       for (const scope of scopes) {
-        const mergeBlob = git(repoRoot, ['rev-parse', `${mergeCommitOid}:${scope}`]);
         const headBlob = git(repoRoot, ['rev-parse', `HEAD:${scope}`]);
         childProcess.execFileSync('git', ['diff', '--quiet', 'HEAD', '--', scope], { cwd: repoRoot });
         const untracked = git(repoRoot, ['ls-files', '--others', '--exclude-standard', '--', scope]);
-        if (mergeBlob !== headBlob || untracked) throw new Error('target differs from merged clean state');
+        if (!headBlob || untracked) throw new Error('target differs from merged clean state');
         targets.push({ path: scope, sha256: sha256(fs.readFileSync(path.join(repoRoot, scope))) });
       }
     } catch {
       rejectedReason = 'merged_delivery_candidate_target_not_clean';
       continue;
     }
+    const latest = lineage[0];
     return {
       valid: true,
       candidate: {
-        merge_commit_oid: mergeCommitOid,
+        // Keep the newest reviewed merge as the candidate identity; older
+        // entries merely complete the bounded target coverage.
+        merge_commit_oid: latest.merge_commit_oid,
         // A superseded parent may be re-admitted only for a delivery that was
         // merged after its recorded split.  Expose the Git-authored merge
         // time as data rather than letting callers infer freshness from a
         // mutable queue or claim timestamp.
-        merge_commit_timestamp: Number(git(repoRoot, ['show', '-s', '--format=%ct', mergeCommitOid])),
-        first_parent_oid: firstParentOid,
-        head_oid: headOid,
+        merge_commit_timestamp: Number(git(repoRoot, ['show', '-s', '--format=%ct', latest.merge_commit_oid])),
+        first_parent_oid: latest.first_parent_oid,
+        head_oid: latest.head_oid,
         selected_todo_id: todoId,
         selected_todo_sha256: todoSha,
-        task_spec_binding: taskSpecBinding,
+        task_spec_binding: latest.task_spec_binding,
+        merge_lineage: lineage,
         targets
       }
     };
@@ -366,7 +410,7 @@ function reviewDeclaresTask(review, todoId) {
  */
 export function verifyMergedDeliveryReverification({ repoRoot, claim, stdoutPayload, review, reviewer, implementation }) {
   const deliveryClaim = asObject(claim);
-  const normalizedReview = normalizeReview(review);
+  const normalizedReviews = (Array.isArray(review) ? review : [review]).map(normalizeReview);
   const scopes = mergedDeliveryScope(deliveryClaim);
   const errors = [];
   const runtime = runtimeTaskExecution(deliveryClaim, stdoutPayload);
@@ -379,81 +423,64 @@ export function verifyMergedDeliveryReverification({ repoRoot, claim, stdoutPayl
   }
   if (scopes.length === 0) errors.push('merged_delivery_bounded_scope_missing');
   if (!runtime.exact) errors.push('merged_delivery_runtime_execution_binding_missing');
-  if (normalizedReview.state !== 'MERGED') errors.push('merged_delivery_pr_not_merged');
-  if (!isSha(normalizedReview.merge_commit_oid) || !isSha(normalizedReview.head_oid)) errors.push('merged_delivery_git_identity_missing');
-  if (normalizedReview.author !== implementation) errors.push('merged_delivery_implementation_author_mismatch');
-  if (normalizedReview.reviewer !== reviewer || normalizedReview.merge_actor !== reviewer || reviewer === implementation) {
-    errors.push('merged_delivery_independent_review_missing');
-  }
-  if (!normalizedReview.approved || !normalizedReview.ci_passed || !normalizedReview.pr_url || !normalizedReview.merged_at || !normalizedReview.observed_at) {
-    errors.push('merged_delivery_review_or_ci_evidence_missing');
-  }
-  if (
-    normalizedReview.latest_reviewer_review_state !== 'APPROVED'
-    || normalizedReview.latest_reviewer_review_commit_oid !== normalizedReview.head_oid
-  ) {
-    errors.push('merged_delivery_latest_reviewer_approval_missing');
-  }
+  if (reviewer === implementation) errors.push('merged_delivery_independent_review_missing');
   const commands = verificationCommands(deliveryClaim);
   if (commands.length === 0 || commands.some((command) => !safeVerificationArgs(command))) {
     errors.push('merged_delivery_verification_contract_invalid');
   }
   if (errors.length > 0) return { valid: false, reason: 'merged_delivery_reverification_refused', errors };
 
-  let parents;
-  try {
-    parents = git(repoRoot, ['rev-list', '--parents', '-n', '1', normalizedReview.merge_commit_oid]).split(/\s+/).filter(Boolean);
-  } catch {
-    return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_merge_history_unavailable'] };
+  const candidateResult = findCleanMergedDeliveryCandidate({ repoRoot, selectedTodo: deliveryClaim.selected_todo });
+  if (!candidateResult.valid) {
+    const error = candidateResult.reason === 'merged_delivery_candidate_target_not_clean'
+      ? 'merged_delivery_target_not_clean_at_reviewed_merge'
+      : candidateResult.reason === 'merged_delivery_candidate_scope_mismatch'
+        ? 'merged_delivery_merge_scope_mismatch'
+        : 'merged_delivery_task_spec_binding_missing_or_mismatch';
+    return { valid: false, reason: 'merged_delivery_reverification_refused', errors: [error] };
   }
-  if (parents.length !== 3 || parents[2] !== normalizedReview.head_oid) {
-    return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_merge_parent_binding_mismatch'] };
+  const candidate = candidateResult.candidate;
+  const lineage = Array.isArray(candidate.merge_lineage) && candidate.merge_lineage.length > 0
+    ? candidate.merge_lineage : [{
+        merge_commit_oid: candidate.merge_commit_oid,
+        first_parent_oid: candidate.first_parent_oid,
+        head_oid: candidate.head_oid,
+        task_spec_binding: candidate.task_spec_binding,
+        merge_paths: scopes,
+      }];
+  if (normalizedReviews.length !== lineage.length) {
+    return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_review_lineage_incomplete'] };
   }
-  const directBinding = gitTaskSpecBinding(repoRoot, normalizedReview.head_oid);
-  const taskSpecBinding = directBinding
-    && directBinding.todo_id === deliveryClaim.selected_todo_id
-    && directBinding.selected_todo_sha256 === selectedTodoSha256(deliveryClaim)
-    ? directBinding
-    : gitTodoSnapshotBinding(
-      repoRoot,
-      normalizedReview.merge_commit_oid,
-      deliveryClaim.selected_todo,
-      deliveryClaim.selected_todo_id,
-      selectedTodoSha256(deliveryClaim),
-      normalizedReview.head_oid
-    );
-  if (
-    !taskSpecBinding
-    || taskSpecBinding.todo_id !== deliveryClaim.selected_todo_id
-    || taskSpecBinding.selected_todo_sha256 !== selectedTodoSha256(deliveryClaim)
-  ) {
-    return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_task_spec_binding_missing_or_mismatch'] };
+  const reviewedLineage = lineage.map((entry) => ({
+    entry,
+    review: normalizedReviews.find((item) => item.merge_commit_oid === entry.merge_commit_oid && item.head_oid === entry.head_oid),
+  }));
+  if (reviewedLineage.some(({ review: observed }) => !observed)) {
+    return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_review_git_mismatch'] };
   }
-  const firstParent = parents[1];
-  const mergePaths = git(repoRoot, ['diff', '--name-only', firstParent, normalizedReview.merge_commit_oid, '--']).split('\n').filter(Boolean).sort();
-  if (!scopeMatchesCandidate({ mergePaths, scopes, binding: taskSpecBinding })) {
-    return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_merge_scope_mismatch'] };
-  }
-  const reviewTaskDeclaration = taskSpecBinding.kind === 'merge_todo_snapshot'
-    ? reviewDeclaresTask(normalizedReview, deliveryClaim.selected_todo_id)
-    : null;
-  if (taskSpecBinding.kind === 'merge_todo_snapshot' && !reviewTaskDeclaration) {
-    return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_review_task_binding_missing'] };
-  }
-
-  const targets = [];
-  for (const scope of scopes) {
-    try {
-      const mergeBlob = git(repoRoot, ['rev-parse', `${normalizedReview.merge_commit_oid}:${scope}`]);
-      const headBlob = git(repoRoot, ['rev-parse', `HEAD:${scope}`]);
-      childProcess.execFileSync('git', ['diff', '--quiet', 'HEAD', '--', scope], { cwd: repoRoot });
-      const untracked = git(repoRoot, ['ls-files', '--others', '--exclude-standard', '--', scope]);
-      if (mergeBlob !== headBlob || untracked) throw new Error('target differs from merged clean state');
-      targets.push({ path: scope, sha256: sha256(fs.readFileSync(path.join(repoRoot, scope))) });
-    } catch {
-      return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_target_not_clean_at_reviewed_merge'] };
+  const reviewErrors = [];
+  for (const item of reviewedLineage) {
+    const observed = item.review;
+    const binding = asObject(item.entry.task_spec_binding);
+    if (observed.state !== 'MERGED') reviewErrors.push('merged_delivery_pr_not_merged');
+    if (!isSha(observed.merge_commit_oid) || !isSha(observed.head_oid)) reviewErrors.push('merged_delivery_git_identity_missing');
+    if (observed.author !== implementation) reviewErrors.push('merged_delivery_implementation_author_mismatch');
+    if (observed.reviewer !== reviewer || observed.merge_actor !== reviewer) reviewErrors.push('merged_delivery_independent_review_missing');
+    if (!observed.approved || !observed.ci_passed || !observed.pr_url || !observed.merged_at || !observed.observed_at) reviewErrors.push('merged_delivery_review_or_ci_evidence_missing');
+    if (observed.latest_reviewer_review_state !== 'APPROVED' || observed.latest_reviewer_review_commit_oid !== observed.head_oid) {
+      reviewErrors.push('merged_delivery_latest_reviewer_approval_missing');
+    }
+    if (binding.kind === 'merge_todo_snapshot' && !reviewDeclaresTask(observed, deliveryClaim.selected_todo_id)) {
+      reviewErrors.push('merged_delivery_review_task_binding_missing');
     }
   }
+  if (reviewErrors.length > 0) return { valid: false, reason: 'merged_delivery_reverification_refused', errors: [...new Set(reviewErrors)] };
+  const primary = reviewedLineage[0];
+  const normalizedReview = primary.review;
+  const taskSpecBinding = primary.entry.task_spec_binding;
+  const reviewTaskDeclaration = taskSpecBinding.kind === 'merge_todo_snapshot'
+    ? reviewDeclaresTask(normalizedReview, deliveryClaim.selected_todo_id) : null;
+  const targets = candidate.targets;
 
   const verification_results = [];
   for (const command of commands) {
@@ -473,6 +500,15 @@ export function verifyMergedDeliveryReverification({ repoRoot, claim, stdoutPayl
     task_declaration_key: reviewTaskDeclaration,
     task_declaration_sha256: reviewTaskDeclaration ? sha256(`${normalizedReview.title}\n${normalizedReview.body}`) : null
   };
+  const evidenceReviewLineage = reviewedLineage.map(({ entry, review: observed }) => ({
+    ...observed,
+    title: undefined,
+    body: undefined,
+    task_declaration_key: entry.task_spec_binding?.kind === 'merge_todo_snapshot'
+      ? reviewDeclaresTask(observed, deliveryClaim.selected_todo_id) : null,
+    task_declaration_sha256: entry.task_spec_binding?.kind === 'merge_todo_snapshot'
+      ? sha256(`${observed.title}\n${observed.body}`) : null,
+  }));
   const evidence = {
     schema_version: 1,
     kind: 'phase_loop_merged_delivery_reverification',
@@ -484,9 +520,16 @@ export function verifyMergedDeliveryReverification({ repoRoot, claim, stdoutPayl
     queue_fingerprint: deliveryClaim.queue_fingerprint,
     queue_generation: deliveryClaim.queue_generation,
     runtime: runtime,
-    git: { merge_commit_oid: normalizedReview.merge_commit_oid, first_parent_oid: firstParent, head_oid: normalizedReview.head_oid, targets },
+    git: {
+      merge_commit_oid: normalizedReview.merge_commit_oid,
+      first_parent_oid: primary.entry.first_parent_oid,
+      head_oid: normalizedReview.head_oid,
+      merge_lineage: lineage,
+      targets,
+    },
     task_spec_binding: taskSpecBinding,
     review: evidenceReview,
+    review_lineage: evidenceReviewLineage,
     verification_results
   };
   return { valid: true, evidence };
@@ -530,6 +573,31 @@ export function validateMergedDeliveryReverification({ claim, evidence }) {
   }
   if (review.latest_reviewer_review_state !== 'APPROVED' || review.latest_reviewer_review_commit_oid !== gitProof.head_oid) {
     errors.push('merged_delivery_evidence_latest_reviewer_approval_invalid');
+  }
+  const gitLineage = asArray(gitProof.merge_lineage);
+  const reviewLineage = asArray(proof.review_lineage);
+  // Version-1 receipts carried one reviewed merge. New receipts retain every
+  // independently reviewed merge that contributes a bounded target, so a
+  // split delivery cannot be admitted and then become unverifiable.
+  if (gitLineage.length > 0 || reviewLineage.length > 0) {
+    if (gitLineage.length === 0 || gitLineage.length !== reviewLineage.length) {
+      errors.push('merged_delivery_evidence_review_lineage_invalid');
+    } else {
+      for (let index = 0; index < gitLineage.length; index += 1) {
+        const merge = asObject(gitLineage[index]);
+        const observed = asObject(reviewLineage[index]);
+        if (!isSha(merge.merge_commit_oid) || !isSha(merge.first_parent_oid) || !isSha(merge.head_oid)
+            || merge.merge_commit_oid !== observed.merge_commit_oid || merge.head_oid !== observed.head_oid
+            || observed.state !== 'MERGED' || !observed.approved || !observed.ci_passed
+            || !observed.pr_url || !observed.author || !observed.reviewer
+            || observed.author === observed.reviewer || observed.merge_actor !== observed.reviewer
+            || observed.latest_reviewer_review_state !== 'APPROVED'
+            || observed.latest_reviewer_review_commit_oid !== merge.head_oid) {
+          errors.push('merged_delivery_evidence_review_lineage_invalid');
+          break;
+        }
+      }
+    }
   }
   const taskSpecBinding = asObject(proof.task_spec_binding);
   // Schema-v1 receipts predate task_spec_binding.  Their immutable claim,

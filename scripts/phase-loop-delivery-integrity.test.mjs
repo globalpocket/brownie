@@ -147,6 +147,73 @@ test('an explicit mismatched trailer cannot fall back to a matching merge-time T
   );
 });
 
+test('a selected TODO may be recovered from split reviewed merges with only bounded targets and regression companions', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-merged-delivery-split-'));
+  const selected = `- [ ] E-42b-split-candidate: Patch only \`scripts/runtime.mjs\`, \`scripts/supply.mjs\`:
+  Route: implementation.
+  Completion condition: reviewed runtime and supply evidence remain mutually bound.
+  Verification: run \`node --check scripts/runtime.mjs\`.`;
+  const run = (args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+  fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  fs.mkdirSync(path.join(root, '.brownie'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'scripts', 'runtime.mjs'), 'export const runtime = "before";\n');
+  fs.writeFileSync(path.join(root, 'scripts', 'supply.mjs'), 'export const supply = "before";\n');
+  fs.writeFileSync(path.join(root, '.brownie', 'todo.md'), `${selected}\n`);
+  run(['init', '--quiet', '-b', 'main']);
+  run(['config', 'user.name', 'fixture']);
+  run(['config', 'user.email', 'fixture@example.invalid']);
+  run(['add', '.']);
+  run(['commit', '--quiet', '-m', 'baseline']);
+
+  run(['switch', '--quiet', '-c', 'supply']);
+  fs.writeFileSync(path.join(root, 'scripts', 'supply.mjs'), 'export const supply = "merged";\n');
+  fs.writeFileSync(path.join(root, 'scripts', 'guard-runtime-evidence.mjs'), 'export const guarded = true;\n');
+  run(['add', '.']);
+  run(['commit', '--quiet', '-m', 'supply evidence']);
+  run(['switch', '--quiet', 'main']);
+  run(['merge', '--no-ff', '--no-edit', 'supply']);
+
+  run(['switch', '--quiet', '-c', 'runtime']);
+  fs.writeFileSync(path.join(root, 'scripts', 'runtime.mjs'), 'export const runtime = "merged";\n');
+  fs.writeFileSync(path.join(root, 'scripts', 'runtime-evidence.test.mjs'), 'export {};\n');
+  run(['add', '.']);
+  run(['commit', '--quiet', '-m', 'runtime evidence']);
+  run(['switch', '--quiet', 'main']);
+  run(['merge', '--no-ff', '--no-edit', 'runtime']);
+
+  const admitted = findCleanMergedDeliveryCandidate({ repoRoot: root, selectedTodo: selected });
+  assert.equal(admitted.valid, true, JSON.stringify(admitted));
+  assert.equal(admitted.candidate.merge_lineage.length, 2);
+  assert.deepEqual(admitted.candidate.targets.map((entry) => entry.path).sort(), ['scripts/runtime.mjs', 'scripts/supply.mjs']);
+
+  const fixtureClaim = {
+    claim_id: 'claim-split', root_claim_id: 'claim-split', selected_todo: selected,
+    selected_todo_id: 'E-42b-split-candidate', selected_todo_sha256: selectedTodoSha256({ selected_todo: selected }),
+    queue_fingerprint: 'f'.repeat(64), queue_generation: 42,
+  };
+  const reviews = admitted.candidate.merge_lineage.map((entry, index) => ({
+    pr_url: `https://example.invalid/pull/${index + 1}`,
+    pr_number: index + 1,
+    state: 'MERGED',
+    merge_commit_oid: entry.merge_commit_oid,
+    head_oid: entry.head_oid,
+    author: 'implementation-agent', reviewer: 'review-agent', merge_actor: 'review-agent',
+    merged_at: '2026-11-06T04:00:00Z', observed_at: '2026-11-06T04:01:00Z',
+    approved: true, ci_passed: true,
+    latest_reviewer_review_state: 'APPROVED', latest_reviewer_review_commit_oid: entry.head_oid,
+    title: 'E-42b-split-candidate reviewed delivery', body: 'Bounded split delivery for E-42b.',
+  }));
+  const reverified = verifyMergedDeliveryReverification({
+    repoRoot: root,
+    claim: fixtureClaim,
+    stdoutPayload: { run: { runtime_claim_id: fixtureClaim.claim_id, payload_status: 'task_executed', reported_executed_count: 1 } },
+    review: reviews,
+    reviewer: 'review-agent', implementation: 'implementation-agent',
+  });
+  assert.equal(reverified.valid, true, JSON.stringify(reverified));
+  assert.equal(validateMergedDeliveryReverification({ claim: fixtureClaim, evidence: reverified.evidence }).valid, true);
+});
+
 test('a process-success envelope cannot promote continuation_required to delivery success', () => {
   const result = evaluateDeliveryHandoff({
     claim,
