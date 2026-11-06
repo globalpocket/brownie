@@ -27,7 +27,9 @@ const requiredStatefulSoakStepIds = [
   'artifact_lifecycle',
   'golden_journey_fixture',
   'soak_test',
-  'executable_evidence_validation'
+  'executable_evidence_validation',
+  'roundtrip_journey_binding',
+  'soak_results_binding'
 ];
 
 const statefulSoakConfig = {
@@ -573,11 +575,44 @@ export function buildReleaseEvidenceRoundtripBinding(options = {}) {
   const missing = bindings
     .filter((binding) => binding.status !== 'satisfied')
     .map((binding) => `${binding.target || 'unknown'}:${binding.errors.join(',')}`);
+  const bindingWitnesses = bindings
+    .map((binding) => ({
+      target: binding.target,
+      status: binding.status,
+      implementation_commit: binding.implementation_commit,
+      tested_commit: binding.tested_commit,
+      workflow_run_id: binding.workflow_run_id,
+      platform: binding.platform,
+      architecture: binding.architecture,
+      package_sha256: binding.package_sha256,
+      binary_sha256: binding.binary_sha256,
+      runtime_sha256: binding.runtime_sha256,
+      errors: binding.errors
+    }))
+    .sort((left, right) => left.target.localeCompare(right.target));
   return {
+    schema_version: 1,
+    evidence_id: 'brownie-release-evidence-roundtrip-binding-v1',
     status: artifacts.length > 0 && missing.length === 0 ? 'satisfied' : 'not_executed',
     release_blocking: true,
+    target_count: bindings.length,
+    satisfied_target_count: bindings.filter((binding) => binding.status === 'satisfied').length,
+    binding_digest: `sha256:${crypto.createHash('sha256').update(JSON.stringify(bindingWitnesses)).digest('hex')}`,
     bindings,
     missing
+  };
+}
+
+export function summarizeReleaseEvidenceRoundtripBinding(binding) {
+  const bindings = Array.isArray(binding?.bindings) ? binding.bindings : [];
+  return {
+    schema_version: binding?.schema_version ?? null,
+    evidence_id: binding?.evidence_id ?? null,
+    status: binding?.status ?? 'not_executed',
+    release_blocking: binding?.release_blocking === true,
+    target_count: binding?.target_count ?? bindings.length,
+    satisfied_target_count: binding?.satisfied_target_count ?? bindings.filter((entry) => entry?.status === 'satisfied').length,
+    binding_digest: binding?.binding_digest ?? null
   };
 }
 
@@ -1019,7 +1054,7 @@ function buildGoldenJourneySection(repoRoot) {
   };
 }
 
-function buildSoakSection(repoRoot, iterations) {
+function buildSoakSection(repoRoot, iterations, releaseEvidenceBinding) {
   const cliPath = resolveRepoRelative(repoRoot, 'target/debug/brownie');
   if (!fs.existsSync(cliPath)) {
     return {
@@ -1037,8 +1072,29 @@ function buildSoakSection(repoRoot, iterations) {
     commands.push(run(cliPath, ['--version'], { cwd: repoRoot, timeoutMs: 15_000 }));
   }
   const failureCount = commands.filter((command) => !command.passed).length;
+  const bindingSummary = summarizeReleaseEvidenceRoundtripBinding(releaseEvidenceBinding);
+  const bindingSatisfied = bindingSummary.status === 'satisfied';
   const statefulSteps = [
-    { id: 'task_state_transition', status: failureCount === 0 ? 'satisfied' : 'failed', evidence_kind: 'bounded_cli_transition_proxy' }
+    {
+      id: 'task_state_transition',
+      status: failureCount === 0 ? 'satisfied' : 'failed',
+      passed: failureCount === 0,
+      evidence_kind: 'bounded_cli_transition_proxy'
+    },
+    {
+      id: 'roundtrip_journey_binding',
+      status: bindingSatisfied ? 'satisfied' : 'not_executed',
+      passed: bindingSatisfied,
+      evidence_kind: 'release_evidence_roundtrip_binding',
+      binding: bindingSummary
+    },
+    {
+      id: 'soak_results_binding',
+      status: bindingSatisfied ? 'satisfied' : 'not_executed',
+      passed: bindingSatisfied,
+      evidence_kind: 'release_evidence_roundtrip_binding',
+      binding: bindingSummary
+    }
   ];
   const satisfiedStatefulStepIds = new Set(
     statefulSteps
@@ -1207,7 +1263,7 @@ export function buildRuntimeOperationalEvidence(options = {}) {
   const sections = {
     artifact_lifecycle: buildArtifactLifecycleSection(repoRoot, artifacts),
     golden_journey_fixture: buildGoldenJourneySection(repoRoot),
-    soak_test: buildSoakSection(repoRoot, iterations)
+    soak_test: buildSoakSection(repoRoot, iterations, releaseEvidenceBinding)
   };
   sections.executable_evidence_validation = buildExecutableEvidenceValidationSection(sections, releaseEvidenceBinding);
   const failClosedReasons = [];
