@@ -99,6 +99,56 @@ test('release roundtrip binding receipt is deterministic and fail-closed without
   });
 });
 
+test('release roundtrip binding accepts complete, mutually bound artifact evidence', () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-roundtrip-binding-test-'));
+  const target = 'linux-x64';
+  const evidenceDir = `.brownie/release-evidence/artifacts/${target}`;
+  const archiveSha256 = `sha256:${'a'.repeat(64)}`;
+  const binarySha256 = `sha256:${'b'.repeat(64)}`;
+  const runtimeSha256 = `sha256:${'c'.repeat(64)}`;
+  const commit = 'd'.repeat(40);
+  const workflowRunId = 'workflow-123';
+  const journeyChecks = Object.fromEntries([
+    'mode_pack_load', 'workspace_mutation', 'ledger_generation', 'forced_interruption', 'resume', 'stale_replay_rejection'
+  ].map((id) => [id, { passed: true }]));
+  const soakChecks = Object.fromEntries([
+    'artifact_execution_boundary', 'process_loss_recovery', 'duplicate_side_effect_rejection', 'ledger_workspace_consistency',
+    'resume_replay_behavior', 'finite_convergence', 'evidence_chain_integrity'
+  ].map((id) => [id, { passed: true }]));
+  const artifactEvidence = {
+    target,
+    platform: 'linux',
+    arch: 'x64',
+    archive: { path: `${evidenceDir}/brownie-linux-x64.tar.gz`, sha256: archiveSha256 },
+    artifact: {
+      source_commit: `sha256:${commit}`,
+      source_clean_tree: 'clean',
+      source_identity: `sha256:${'e'.repeat(64)}`,
+      sha256: binarySha256
+    },
+    runtime_companion: { sha256: runtimeSha256 }
+  };
+  const artifactDirectory = path.join(repoRoot, evidenceDir);
+  fs.mkdirSync(artifactDirectory, { recursive: true });
+  fs.writeFileSync(path.join(artifactDirectory, 'runtime-journey-evidence.json'), JSON.stringify({
+    evidence_id: 'brownie-release-artifact-runtime-journey-v1', target, workflow_run_id: workflowRunId,
+    artifact: { archive_sha256: archiveSha256, artifact_sha256: binarySha256, runtime_sha256: runtimeSha256 }, checks: journeyChecks
+  }));
+  fs.writeFileSync(path.join(artifactDirectory, 'runtime-stateful-soak-evidence.json'), JSON.stringify({
+    evidence_id: 'brownie-release-artifact-stateful-soak-v1', target, workflow_run_id: workflowRunId,
+    artifact: { archive_sha256: archiveSha256, artifact_sha256: binarySha256, runtime_sha256: runtimeSha256 }, checks: soakChecks
+  }));
+  const binding = buildReleaseEvidenceRoundtripBinding({
+    repoRoot,
+    workflowRunId,
+    testedCommit: commit,
+    artifacts: [{ target, artifact_evidence: artifactEvidence, evidence_dir: evidenceDir }]
+  });
+  assert.equal(binding.status, 'satisfied');
+  assert.equal(binding.satisfied_target_count, 1);
+  assert.deepEqual(binding.missing, []);
+});
+
 test('evidence must not contain blocker placeholders', () => {
   const evidence = validEvidence();
   evidence.sections.artifact_lifecycle = { status: 'placeholder', blocker: 'TODO: implement evidence' };

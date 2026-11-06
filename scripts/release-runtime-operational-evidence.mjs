@@ -434,7 +434,7 @@ function discoveredArtifacts(repoRoot) {
   return artifacts;
 }
 
-const requiredRoundtripChecks = [
+const baseRoundtripChecks = [
   'mode_pack_load',
   'workspace_mutation',
   'ledger_generation',
@@ -443,7 +443,20 @@ const requiredRoundtripChecks = [
   'stale_replay_rejection'
 ];
 
-const requiredSoakChecks = [
+const requiredRoundtripChecks = [
+  ...baseRoundtripChecks,
+  'implementation_commit',
+  'tested_commit',
+  'workflow_run_id',
+  'artifact_sha256',
+  'binary_sha256',
+  'platform',
+  'architecture',
+  'roundtrip_journey',
+  'soak_results'
+];
+
+const baseSoakChecks = [
   'artifact_execution_boundary',
   'process_loss_recovery',
   'duplicate_side_effect_rejection',
@@ -451,6 +464,19 @@ const requiredSoakChecks = [
   'resume_replay_behavior',
   'finite_convergence',
   'evidence_chain_integrity'
+];
+
+const requiredSoakChecks = [
+  ...baseSoakChecks,
+  'implementation_commit',
+  'tested_commit',
+  'workflow_run_id',
+  'artifact_sha256',
+  'binary_sha256',
+  'platform',
+  'architecture',
+  'roundtrip_journey',
+  'soak_results'
 ];
 
 function isSha256(value) {
@@ -489,6 +515,66 @@ function allPassed(evidence, checks) {
   return checks.every((check) => evidence?.checks?.[check]?.passed === true);
 }
 
+function evidenceWithBindingChecks(evidence, bindingChecks) {
+  return {
+    ...evidence,
+    checks: {
+      ...(evidence?.checks ?? {}),
+      ...bindingChecks
+    }
+  };
+}
+
+function buildBindingChecks({
+  target,
+  implementationCommit,
+  testedCommit,
+  workflowRunId,
+  artifactEvidence,
+  archive,
+  binarySha256,
+  journey,
+  runtimeSha256,
+  soak
+}) {
+  const expectedCoordinates = targetCoordinates(target);
+  const implementationAndTestedCommitMatch =
+    isCommitSha256(implementationCommit) &&
+    typeof testedCommit === 'string' &&
+    implementationCommit.slice('sha256:'.length) === testedCommit;
+  const workflowBound = typeof workflowRunId === 'string' && workflowRunId.length > 0 &&
+    journey?.workflow_run_id === workflowRunId && soak?.workflow_run_id === workflowRunId;
+  const archiveBound = isSha256(archive?.sha256) &&
+    journey?.artifact?.archive_sha256 === archive.sha256 &&
+    soak?.artifact?.archive_sha256 === archive.sha256;
+  const binaryBound = isSha256(binarySha256) &&
+    journey?.artifact?.artifact_sha256 === binarySha256 &&
+    soak?.artifact?.artifact_sha256 === binarySha256;
+  const runtimeBound = isSha256(runtimeSha256) &&
+    journey?.artifact?.runtime_sha256 === runtimeSha256 &&
+    soak?.artifact?.runtime_sha256 === runtimeSha256;
+  const coordinatesBound = Boolean(expectedCoordinates) &&
+    artifactEvidence?.platform === expectedCoordinates.platform &&
+    artifactEvidence?.arch === expectedCoordinates.architecture;
+  const targetBound = journey?.target === target && soak?.target === target;
+  const journeyBound = journey?.evidence_id === 'brownie-release-artifact-runtime-journey-v1' &&
+    allPassed(journey, baseRoundtripChecks);
+  const soakBound = soak?.evidence_id === 'brownie-release-artifact-stateful-soak-v1' &&
+    allPassed(soak, baseSoakChecks);
+  const common = implementationAndTestedCommitMatch && workflowBound && archiveBound && binaryBound && runtimeBound && coordinatesBound && targetBound;
+  return {
+    implementation_commit: { passed: implementationAndTestedCommitMatch },
+    tested_commit: { passed: implementationAndTestedCommitMatch },
+    workflow_run_id: { passed: workflowBound },
+    artifact_sha256: { passed: archiveBound },
+    binary_sha256: { passed: binaryBound },
+    platform: { passed: coordinatesBound },
+    architecture: { passed: coordinatesBound },
+    roundtrip_journey: { passed: common && journeyBound },
+    soak_results: { passed: common && soakBound }
+  };
+}
+
 function optionalEvidence(repoRoot, relativePath) {
   if (!relativePath) return null;
   return readJsonIfExists(resolveRepoRelative(repoRoot, relativePath));
@@ -520,6 +606,18 @@ export function buildReleaseEvidenceRoundtripBinding(options = {}) {
     const implementationCommit = artifactRecord.source_commit ?? null;
     const binarySha256 = artifactRecord.sha256 ?? artifact.expected_sha256 ?? null;
     const runtimeSha256 = runtimeRecord.sha256 ?? null;
+    const bindingChecks = buildBindingChecks({
+      target,
+      implementationCommit,
+      testedCommit,
+      workflowRunId,
+      artifactEvidence,
+      archive,
+      binarySha256,
+      journey,
+      runtimeSha256,
+      soak
+    });
 
     if (!target || target !== artifactEvidence.target) errors.push('target_missing_or_mismatched');
     if (!isCommitSha256(implementationCommit)) errors.push('implementation_commit_missing_or_invalid');
@@ -546,7 +644,7 @@ export function buildReleaseEvidenceRoundtripBinding(options = {}) {
     if (journey?.artifact?.archive_sha256 !== archive?.sha256) errors.push('roundtrip_journey_package_sha_mismatch');
     if (journey?.artifact?.artifact_sha256 !== binarySha256) errors.push('roundtrip_journey_binary_sha_mismatch');
     if (journey?.artifact?.runtime_sha256 !== runtimeSha256) errors.push('roundtrip_journey_runtime_sha_mismatch');
-    if (!allPassed(journey, requiredRoundtripChecks)) errors.push('roundtrip_journey_checks_incomplete');
+    if (!allPassed(evidenceWithBindingChecks(journey, bindingChecks), requiredRoundtripChecks)) errors.push('roundtrip_journey_checks_incomplete');
 
     if (soak?.evidence_id !== 'brownie-release-artifact-stateful-soak-v1') errors.push('stateful_soak_missing_or_invalid');
     if (soak?.target !== target) errors.push('stateful_soak_target_mismatch');
@@ -554,7 +652,7 @@ export function buildReleaseEvidenceRoundtripBinding(options = {}) {
     if (soak?.artifact?.archive_sha256 !== archive?.sha256) errors.push('stateful_soak_package_sha_mismatch');
     if (soak?.artifact?.artifact_sha256 !== binarySha256) errors.push('stateful_soak_binary_sha_mismatch');
     if (soak?.artifact?.runtime_sha256 !== runtimeSha256) errors.push('stateful_soak_runtime_sha_mismatch');
-    if (!allPassed(soak, requiredSoakChecks)) errors.push('stateful_soak_checks_incomplete');
+    if (!allPassed(evidenceWithBindingChecks(soak, bindingChecks), requiredSoakChecks)) errors.push('stateful_soak_checks_incomplete');
 
     return {
       target,
