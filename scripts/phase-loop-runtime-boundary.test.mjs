@@ -79,6 +79,24 @@ test('claim field lookup resolves nested review receipts rather than treating do
   assert.match(helper, /value = value\.get\(segment, ""\)/);
 });
 
+test('handoff refresh locates the immutable Runtime execution instead of a review observation', () => {
+  const receiptStart = controller.indexOf('phase_loop_record_delivery_pr_handoff()');
+  const receiptEnd = controller.indexOf('\n}\n\n# Review observations', receiptStart);
+  assert(receiptStart >= 0 && receiptEnd > receiptStart, 'delivery receipt and execution-run resolver must exist');
+  const receipt = controller.slice(receiptStart, receiptEnd);
+  assert.match(receipt, /"execution_run_stamp": sys\.argv\[4\]/);
+  const resolverStart = controller.indexOf('phase_loop_verified_runtime_run_stamp()');
+  const resolverEnd = controller.indexOf('\n}\n\n# Refresh a claim-bound PR handoff', resolverStart);
+  assert(resolverStart >= 0 && resolverEnd > resolverStart, 'immutable execution-run resolver must exist');
+  const resolver = controller.slice(resolverStart, resolverEnd);
+  assert.match(resolver, /review\.get\("execution_run_stamp"\)/);
+  assert.match(resolver, /entry\.get\("note"\) != "pr_handoff_recorded"/);
+  const refreshStart = controller.indexOf('phase_loop_refresh_pr_handoff()');
+  const refreshEnd = controller.indexOf('\n}\n\n# Compatibility alias', refreshStart);
+  assert(refreshStart >= 0 && refreshEnd > refreshStart, 'handoff refresh must exist');
+  assert.match(controller.slice(refreshStart, refreshEnd), /phase_loop_verified_runtime_run_stamp/);
+});
+
 test('claimed-task-not-admitted recovery persists zero-execution evidence and a terminal progress projection after rollback', () => {
   const block = mismatchRecoveryBlock();
   const restoreClaim = block.indexOf('restore_claim_snapshot_before_runtime "$claim_snapshot_before_runtime"');

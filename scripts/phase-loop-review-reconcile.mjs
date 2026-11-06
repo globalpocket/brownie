@@ -111,6 +111,11 @@ export function applyReviewReconciliation({ claim, reconciliation, at = new Date
   const before = object(claim);
   const result = object(reconciliation);
   const next = structuredClone(before);
+  // An invalid observation must not overwrite the admitted receipt.  In
+  // particular, a head mismatch is a fail-closed boundary, not a mechanism
+  // for teaching the claim to accept the newly observed (unadmitted) head on
+  // the next poll.
+  if (!result.valid) return next;
   next.root_claim_id ??= next.claim_id;
   next.delivery_review = result.delivery_review;
   next.status = result.status;
@@ -221,7 +226,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       reconciliation,
       runStamp: args.get('--run') ?? ''
     });
-    if (args.has('--write')) {
+    // Never persist an invalid reconciliation: keeping the prior claim is the
+    // durable proof that the observed PR head was not admitted for delivery.
+    if (args.has('--write') && reconciliation.valid) {
       const target = path.resolve(claimPath);
       const temporary = `${target}.${process.pid}.review-reconcile.tmp`;
       fs.writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });

@@ -12538,6 +12538,7 @@ claim["delivery_review"] = {
     "pr_number": admission["pr_number"],
     "head_oid": admission["pr_head_oid"],
     "author": admission["pr_author"],
+    "execution_run_stamp": sys.argv[4],
     "merged": False,
     "approved": False,
     "ci_passed": False,
@@ -12567,6 +12568,41 @@ PY
   sync_parent_dir "$TODO_CLAIM_DIR"
 }
 
+# Review observations have their own timestamps and must never displace the
+# Runtime run that produced the verified delivery evidence.  New receipts bind
+# it directly; historical receipts recover the latest handoff record before
+# falling back to the legacy claim field.
+phase_loop_verified_runtime_run_stamp() {
+  python3 - "$TODO_CLAIM_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+try:
+    claim = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+review = claim.get("delivery_review") if isinstance(claim.get("delivery_review"), dict) else {}
+value = review.get("execution_run_stamp")
+if isinstance(value, str) and value:
+    print(value)
+    raise SystemExit(0)
+history = claim.get("status_history") if isinstance(claim.get("status_history"), list) else []
+for entry in reversed(history):
+    if not isinstance(entry, dict) or entry.get("note") != "pr_handoff_recorded":
+        continue
+    value = entry.get("run_stamp")
+    if isinstance(value, str) and value:
+        print(value)
+        raise SystemExit(0)
+value = claim.get("run_stamp")
+if isinstance(value, str) and value:
+    print(value)
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 # Refresh a claim-bound PR handoff without re-running Runtime.  A repair is
 # needed both when the recorded PR was closed and when the still-open PR head
 # advances to fix CI.  Preserve the verified Runtime evidence, archive the
@@ -12578,7 +12614,7 @@ phase_loop_refresh_pr_handoff() {
   [ -f "$TODO_CLAIM_FILE" ] || return 76
   status="$(claim_status 2>/dev/null || true)"
   [ "$status" = "pr_pending_review" ] || return 76
-  run_stamp="$(claim_field run_stamp 2>/dev/null || true)"
+  run_stamp="$(phase_loop_verified_runtime_run_stamp 2>/dev/null || true)"
   stdout_log="$RUN_DIR/$run_stamp.stdout.log"
   stderr_log="$RUN_DIR/$run_stamp.stderr.log"
   [ -n "$run_stamp" ] && [ -s "$stdout_log" ] || return 76
