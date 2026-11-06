@@ -12839,7 +12839,7 @@ PY
 # accept a dirty target.
 phase_loop_reverify_and_consume_merged_delivery() {
   local run_stamp="$1" stdout_log="$2" run_id="$3"
-  local reviewer implementation reviewer_gh_config_dir repository candidate merge_oid review_file raw_review_file pr_number merge_actor result status lineage
+  local reviewer implementation reviewer_gh_config_dir repository candidate merge_oid review_file raw_review_file pr_number merge_actor result status lineage merged_delivery_revision
   reviewer="$(node "$ROOT_DIR/scripts/phase-loop-actor-deployment.mjs" --repo-root "$ROOT_DIR" --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" --role review --field github-login 2>/dev/null || true)"
   implementation="$(node "$ROOT_DIR/scripts/phase-loop-actor-deployment.mjs" --repo-root "$ROOT_DIR" --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" --role implementation --field github-login 2>/dev/null || true)"
   repository="$(node "$ROOT_DIR/scripts/phase-loop-actor-deployment.mjs" --repo-root "$ROOT_DIR" --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" --role implementation --field repository 2>/dev/null || true)"
@@ -12847,7 +12847,20 @@ phase_loop_reverify_and_consume_merged_delivery() {
     write_status "integrity_blocked" "Merged delivery re-verification refused: actor/repository deployment evidence is unavailable for the active claim." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
     return 76
   fi
-  candidate="$(python3 - "$TODO_CLAIM_FILE" <<'PY' | node "$ROOT_DIR/scripts/phase-loop-delivery-integrity.mjs" find-clean-merged-delivery --repo "$PHASE_LOOP_WORKSPACE_ROOT"
+  if [ -z "$PHASE_LOOP_PR_REMOTE" ] || [ -z "$PHASE_LOOP_PR_BASE" ]; then
+    write_status "integrity_blocked" "Merged delivery re-verification refused: active deployment has no configured PR remote/base for the observed merge." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+    return 76
+  fi
+  if ! git -C "$PHASE_LOOP_WORKSPACE_ROOT" fetch --quiet "$PHASE_LOOP_PR_REMOTE" "$PHASE_LOOP_PR_BASE" >>"$SUPERVISOR_LOG" 2>&1; then
+    write_status "blocked" "Merged delivery re-verification could not refresh the configured PR base before validating the observed merge." "$run_id" "78" "${CONSECUTIVE_FAILURES:-0}"
+    return 78
+  fi
+  merged_delivery_revision="refs/remotes/$PHASE_LOOP_PR_REMOTE/$PHASE_LOOP_PR_BASE"
+  if ! git -C "$PHASE_LOOP_WORKSPACE_ROOT" rev-parse --verify "${merged_delivery_revision}^{commit}" >/dev/null 2>&1; then
+    write_status "integrity_blocked" "Merged delivery re-verification refused: the refreshed configured PR base has no immutable commit." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+    return 76
+  fi
+  candidate="$(python3 - "$TODO_CLAIM_FILE" <<'PY' | node "$ROOT_DIR/scripts/phase-loop-delivery-integrity.mjs" find-clean-merged-delivery --repo "$PHASE_LOOP_WORKSPACE_ROOT" --revision "$merged_delivery_revision"
 import json
 import pathlib
 import sys
@@ -12942,7 +12955,7 @@ NODE
     fi
     rm -f "$raw_review_file"
   done <<< "$lineage"
-  if result="$(node "$ROOT_DIR/scripts/phase-loop-delivery-integrity.mjs" verify-merged-delivery --repo "$PHASE_LOOP_WORKSPACE_ROOT" --claim "$TODO_CLAIM_FILE" --stdout "$stdout_log" --review "$review_file" --reviewer "$reviewer" --implementation "$implementation" --write 2>&1)"; then
+  if result="$(node "$ROOT_DIR/scripts/phase-loop-delivery-integrity.mjs" verify-merged-delivery --repo "$PHASE_LOOP_WORKSPACE_ROOT" --revision "$merged_delivery_revision" --claim "$TODO_CLAIM_FILE" --stdout "$stdout_log" --review "$review_file" --reviewer "$reviewer" --implementation "$implementation" --write 2>&1)"; then
     status=0
   else
     status=$?
@@ -13007,7 +13020,15 @@ PY
     write_status "blocked" "PR is merged and reviewed, but the immutable Runtime execution receipt is unavailable for merged-delivery re-verification." "$run_id" "78" "${CONSECUTIVE_FAILURES:-0}"
     return 78
   fi
-  phase_loop_reverify_and_consume_merged_delivery "$run_stamp" "$runtime_stdout_log" "$run_id"
+  if phase_loop_reverify_and_consume_merged_delivery "$run_stamp" "$runtime_stdout_log" "$run_id"; then
+    return 0
+  fi
+  local reverify_status=$?
+  # Reconciliation already observed a merged PR. Preserve an explicit
+  # cleanup-only retry obligation so a failed re-verification cannot fall
+  # through to a new Runtime execution or orphan the completed claim.
+  mark_completed_todo_cleanup_pending "$run_stamp" "$runtime_stdout_log" "" "" "" || true
+  return "$reverify_status"
 }
 
 write_todo_claim() {

@@ -116,6 +116,7 @@ test('merged review reconciliation re-verifies the merged delivery before consum
   const consumer = controller.slice(consumerStart, consumerEnd);
   assert.match(consumer, /phase_loop_verified_runtime_run_stamp/);
   assert.match(consumer, /phase_loop_reverify_and_consume_merged_delivery/);
+  assert.match(consumer, /mark_completed_todo_cleanup_pending/);
 });
 
 test('completed cleanup re-verifies an unproven reviewed merge before queue consumption', () => {
@@ -125,6 +126,15 @@ test('completed cleanup re-verifies an unproven reviewed merge before queue cons
   const cleanup = controller.slice(cleanupStart, cleanupEnd);
   assert.match(cleanup, /phase_loop_consume_completed_review_delivery/);
   assert.doesNotMatch(cleanup, /\$\(remove_completed_todo_claim_from_queue/);
+});
+
+test('merged delivery verification refreshes and verifies the configured observed base revision', () => {
+  const reverifyStart = controller.indexOf('phase_loop_reverify_and_consume_merged_delivery()');
+  const reverifyEnd = controller.indexOf('\n}\n\n# A completed claim may be retried', reverifyStart);
+  assert(reverifyStart >= 0 && reverifyEnd > reverifyStart, 'merged delivery re-verifier must exist');
+  const reverify = controller.slice(reverifyStart, reverifyEnd);
+  assert.match(reverify, /git -C "\$PHASE_LOOP_WORKSPACE_ROOT" fetch --quiet "\$PHASE_LOOP_PR_REMOTE" "\$PHASE_LOOP_PR_BASE"/);
+  assert.match(reverify, /--revision "\$merged_delivery_revision"/);
 });
 
 test('claimed-task-not-admitted recovery persists zero-execution evidence and a terminal progress projection after rollback', () => {
