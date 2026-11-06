@@ -156,6 +156,20 @@ test('release roundtrip binding accepts complete, mutually bound artifact eviden
   assert.equal(binding.status, 'satisfied');
   assert.equal(binding.satisfied_target_count, 1);
   assert.deepEqual(binding.missing, []);
+
+  delete soakChecks.process_loss_recovery;
+  fs.writeFileSync(path.join(artifactDirectory, 'runtime-stateful-soak-evidence.json'), JSON.stringify({
+    evidence_id: 'brownie-release-artifact-stateful-soak-v1', target, workflow_run_id: workflowRunId,
+    artifact: { archive_sha256: archiveSha256, artifact_sha256: binarySha256, runtime_sha256: runtimeSha256 }, checks: soakChecks
+  }));
+  const missingBaseSoakCheck = buildReleaseEvidenceRoundtripBinding({
+    repoRoot,
+    workflowRunId,
+    testedCommit: commit,
+    artifacts: [{ target, artifact_evidence: artifactEvidence, evidence_dir: evidenceDir }]
+  });
+  assert.equal(missingBaseSoakCheck.status, 'not_executed');
+  assert.match(missingBaseSoakCheck.bindings[0].errors.join(','), /stateful_soak_checks_incomplete/);
 });
 
 test('evidence must not contain blocker placeholders', () => {
