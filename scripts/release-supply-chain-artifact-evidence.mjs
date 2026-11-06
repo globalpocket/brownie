@@ -4,7 +4,10 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadPhaseLoopActorDeployment } from './phase-loop-actor-deployment.mjs';
-import { buildReleaseEvidenceRoundtripBinding } from './release-runtime-operational-evidence.mjs';
+import {
+  buildReleaseEvidenceRoundtripBinding,
+  summarizeReleaseEvidenceRoundtripBinding
+} from './release-runtime-operational-evidence.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -769,6 +772,7 @@ export function buildSupplyChainArtifactEvidence(options = {}) {
     )
   );
   const releaseEvidenceBinding = buildReleaseEvidenceRoundtripBinding({ repoRoot, artifacts });
+  const releaseEvidenceBindingSummary = summarizeReleaseEvidenceRoundtripBinding(releaseEvidenceBinding);
   const sbom = buildSbom(repoRoot, generatedAt);
   const sbomPath = normalizeRelativePath(path.join(outDir, 'brownie-runtime-sbom.json'));
   writeJson(repoRoot, sbomPath, sbom);
@@ -862,6 +866,7 @@ export function buildSupplyChainArtifactEvidence(options = {}) {
       missing_platforms: missingReleasePlatforms,
       missing_source_identity_targets: artifactsMissingSourceIdentity.map((artifact) => artifact.target),
       release_evidence_binding: releaseEvidenceBinding,
+      release_evidence_binding_summary: releaseEvidenceBindingSummary,
       artifacts
     },
     artifact_smoke: artifactSmoke,
@@ -933,6 +938,7 @@ export function buildSupplyChainArtifactEvidence(options = {}) {
       dirty_path_count: treeStatus.length
     },
     release_evidence_binding: releaseEvidenceBinding,
+    release_evidence_binding_summary: releaseEvidenceBindingSummary,
     release_ready: false,
     runtime_release_ready: false,
     required_sections: requiredSections,

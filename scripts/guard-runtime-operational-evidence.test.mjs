@@ -10,8 +10,10 @@ import {
   validateRuntimeOperationalEvidence
 } from './guard-runtime-operational-evidence.mjs';
 import {
+  buildReleaseEvidenceRoundtripBinding,
   buildRuntimeOperationalEvidence,
-  redactDelegatedResult
+  redactDelegatedResult,
+  summarizeReleaseEvidenceRoundtripBinding
 } from './release-runtime-operational-evidence.mjs';
 
 const requiredSections = runtimeOperationalEvidenceRequiredSections;
@@ -55,7 +57,9 @@ const requiredStatefulSoakStepIds = [
   'artifact_lifecycle',
   'golden_journey_fixture',
   'soak_test',
-  'executable_evidence_validation'
+  'executable_evidence_validation',
+  'roundtrip_journey_binding',
+  'soak_results_binding'
 ];
 
 test('evidence_chain_integrity step is required for fail-closed evidence', () => {
@@ -64,6 +68,35 @@ test('evidence_chain_integrity step is required for fail-closed evidence', () =>
   const errors = validateRuntimeOperationalEvidence(evidence);
   assert(errors.some((error) => error.includes('evidence_chain_integrity')),
     'evidence_chain_integrity step must be present for fail-closed evidence');
+});
+
+test('release roundtrip binding steps are required for fail-closed evidence', () => {
+  const evidence = validEvidence();
+  evidence.sections.soak_test.stateful_steps = statefulSoakSteps();
+  evidence.sections.soak_test.stateful_steps = evidence.sections.soak_test.stateful_steps.filter(
+    (step) => step.id !== 'roundtrip_journey_binding'
+  );
+  const errors = validateRuntimeOperationalEvidence(evidence);
+  assert(errors.some((error) => error.includes('roundtrip_journey_binding')),
+    'roundtrip_journey_binding must be present for satisfied soak evidence');
+});
+
+test('release roundtrip binding receipt is deterministic and fail-closed without artifacts', () => {
+  const binding = buildReleaseEvidenceRoundtripBinding({ artifacts: [] });
+  const receipt = summarizeReleaseEvidenceRoundtripBinding(binding);
+  assert.equal(binding.evidence_id, 'brownie-release-evidence-roundtrip-binding-v1');
+  assert.equal(binding.status, 'not_executed');
+  assert.equal(binding.target_count, 0);
+  assert.match(binding.binding_digest, /^sha256:[a-f0-9]{64}$/);
+  assert.deepEqual(receipt, {
+    schema_version: 1,
+    evidence_id: 'brownie-release-evidence-roundtrip-binding-v1',
+    status: 'not_executed',
+    release_blocking: true,
+    target_count: 0,
+    satisfied_target_count: 0,
+    binding_digest: binding.binding_digest
+  });
 });
 
 test('evidence must not contain blocker placeholders', () => {
@@ -404,6 +437,15 @@ test('collector keeps version-only soak fail-closed', () => {
     generatedAt: '2026-09-12T00:00:00.000Z'
   });
   assert.equal(evidence.sections.soak_test.status, 'not_executed');
+  const bindingSteps = Object.fromEntries(
+    evidence.sections.soak_test.stateful_steps.map((step) => [step.id, step])
+  );
+  for (const stepId of ['roundtrip_journey_binding', 'soak_results_binding']) {
+    assert.equal(bindingSteps[stepId].status, 'not_executed');
+    assert.equal(bindingSteps[stepId].passed, false);
+    assert.equal(bindingSteps[stepId].binding.evidence_id, 'brownie-release-evidence-roundtrip-binding-v1');
+    assert.match(bindingSteps[stepId].binding.binding_digest, /^sha256:[a-f0-9]{64}$/);
+  }
   assert.deepEqual(
     evidence.sections.soak_test.missing_stateful_steps,
     requiredStatefulSoakStepIds.filter((stepId) => stepId !== 'task_state_transition')

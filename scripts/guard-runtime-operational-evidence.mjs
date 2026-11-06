@@ -27,7 +27,9 @@ const requiredStatefulSoakStepIds = [
   'artifact_lifecycle',
   'golden_journey_fixture',
   'soak_test',
-  'executable_evidence_validation'
+  'executable_evidence_validation',
+  'roundtrip_journey_binding',
+  'soak_results_binding'
 ];
 const allowedIncompleteStatuses = new Set([
   'failed',
