@@ -7633,7 +7633,7 @@ assert claim['selected_todo_sha256']==hashlib.sha256(claim['selected_todo'].enco
 assert claim['claim_id']==runtime_claim, (claim,runtime_claim)
 assert status['status']=='integrity_blocked', status
 assert str(status.get('exit_code'))=='76', status
-assert 'exact clean merge has no observable merged pull request' in status['detail'], status
+assert 'a contributing clean merge has no observable merged pull request' in status['detail'], status
 # This bypass log is emitted only by the CLAIM_CREATED_THIS_RUN path. Bind both
 # it and the claimed transition to the exact runtime claim, not any old run.
 assert f'event=todo.claimed result={{"ok":true,"code":"trajectory_recorded","task_id":"E-23d-merged-terminal-live@{claim["claim_id"]}"}}' in log, log
