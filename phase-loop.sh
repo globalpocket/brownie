@@ -12816,15 +12816,9 @@ PY
       # and the selected bounded targets.  Route through the same clean-merge
       # re-verification used for recovered deliveries before emitting a ledger
       # completion or changing the live queue.
-      local merge_run_stamp runtime_run_stamp runtime_stdout_log
+      local merge_run_stamp
       merge_run_stamp="review-merge-$(date -u +%Y%m%dT%H%M%SZ)"
-      runtime_run_stamp="$(phase_loop_verified_runtime_run_stamp 2>/dev/null || true)"
-      runtime_stdout_log="$RUN_DIR/$runtime_run_stamp.stdout.log"
-      if [ -z "$runtime_run_stamp" ] || [ ! -s "$runtime_stdout_log" ]; then
-        write_status "blocked" "PR is merged and reviewed, but the immutable Runtime execution receipt is unavailable for merged-delivery re-verification." "review-reconcile" "78" "${CONSECUTIVE_FAILURES:-0}"
-        return 78
-      fi
-      if ! phase_loop_reverify_and_consume_merged_delivery "$merge_run_stamp" "$runtime_stdout_log" "review-reconcile"; then
+      if ! phase_loop_consume_completed_review_delivery "$merge_run_stamp" "review-reconcile"; then
         return $?
       fi
       return 75
@@ -12976,6 +12970,44 @@ NODE
   write_bdk_trajectory_event "$run_stamp" "verification.run" "$result"
   printf '%s run=%s merged_delivery_reverified_and_consumed=true result=%s\n' "$(now_utc)" "$run_id" "$result" >> "$SUPERVISOR_LOG"
   return 0
+}
+
+# A completed claim may be retried after its queue mutation was refused.  A
+# plain cleanup retry is safe only after durable merged-delivery evidence has
+# already been written; otherwise it must reconstruct that evidence from the
+# immutable Runtime receipt before it can consume the TODO.  This keeps a
+# committed workspace from being mistaken for unverified progress.
+phase_loop_consume_completed_review_delivery() {
+  local run_stamp="$1" run_id="$2"
+  local has_reverification runtime_run_stamp runtime_stdout_log
+  has_reverification="$(python3 - "$TODO_CLAIM_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+try:
+    claim = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+review = claim.get("delivery_review")
+proof = review.get("merged_delivery_reverification") if isinstance(review, dict) else None
+print("true" if isinstance(proof, dict) and proof else "false")
+PY
+)" || {
+    write_status "integrity_blocked" "Completed-claim cleanup refused: durable merged-delivery evidence could not be read." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+    return 76
+  }
+  if [ "$has_reverification" = "true" ]; then
+    remove_completed_todo_claim_from_queue "$run_stamp"
+    return $?
+  fi
+  runtime_run_stamp="$(phase_loop_verified_runtime_run_stamp 2>/dev/null || true)"
+  runtime_stdout_log="$RUN_DIR/$runtime_run_stamp.stdout.log"
+  if [ -z "$runtime_run_stamp" ] || [ ! -s "$runtime_stdout_log" ]; then
+    write_status "blocked" "PR is merged and reviewed, but the immutable Runtime execution receipt is unavailable for merged-delivery re-verification." "$run_id" "78" "${CONSECUTIVE_FAILURES:-0}"
+    return 78
+  fi
+  phase_loop_reverify_and_consume_merged_delivery "$run_stamp" "$runtime_stdout_log" "$run_id"
 }
 
 write_todo_claim() {
@@ -19214,7 +19246,7 @@ PY
   fi
   if completed_todo_cleanup_pending; then
     local completed_cleanup_output completed_cleanup_status
-    if completed_cleanup_output="$(remove_completed_todo_claim_from_queue "$run_stamp" 2>&1)"; then
+    if completed_cleanup_output="$(phase_loop_consume_completed_review_delivery "$run_stamp" "completed-cleanup" 2>&1)"; then
       completed_cleanup_status=0
     else
       completed_cleanup_status=$?

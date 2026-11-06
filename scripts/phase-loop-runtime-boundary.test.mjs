@@ -106,10 +106,25 @@ test('merged review reconciliation re-verifies the merged delivery before consum
   const completedEnd = reconcile.indexOf('    *)', completedStart);
   assert(completedStart >= 0 && completedEnd > completedStart, 'merged review completion branch must exist');
   const completed = reconcile.slice(completedStart, completedEnd);
-  assert.match(completed, /phase_loop_verified_runtime_run_stamp/);
-  assert.match(completed, /phase_loop_reverify_and_consume_merged_delivery/);
+  assert.match(completed, /phase_loop_consume_completed_review_delivery/);
   assert.doesNotMatch(completed, /record_completion_ledger_transition/);
   assert.doesNotMatch(completed, /remove_completed_todo_claim_from_queue/);
+
+  const consumerStart = controller.indexOf('phase_loop_consume_completed_review_delivery()');
+  const consumerEnd = controller.indexOf('\n}\n\nwrite_todo_claim()', consumerStart);
+  assert(consumerStart >= 0 && consumerEnd > consumerStart, 'completed review delivery consumer must exist');
+  const consumer = controller.slice(consumerStart, consumerEnd);
+  assert.match(consumer, /phase_loop_verified_runtime_run_stamp/);
+  assert.match(consumer, /phase_loop_reverify_and_consume_merged_delivery/);
+});
+
+test('completed cleanup re-verifies an unproven reviewed merge before queue consumption', () => {
+  const cleanupStart = controller.indexOf('  if completed_todo_cleanup_pending; then');
+  const cleanupEnd = controller.indexOf('\n  if ', cleanupStart + 4);
+  assert(cleanupStart >= 0 && cleanupEnd > cleanupStart, 'completed cleanup branch must exist');
+  const cleanup = controller.slice(cleanupStart, cleanupEnd);
+  assert.match(cleanup, /phase_loop_consume_completed_review_delivery/);
+  assert.doesNotMatch(cleanup, /\$\(remove_completed_todo_claim_from_queue/);
 });
 
 test('claimed-task-not-admitted recovery persists zero-execution evidence and a terminal progress projection after rollback', () => {
