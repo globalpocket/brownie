@@ -38,7 +38,8 @@ test('claimed-task-not-admitted recovery persists zero-execution evidence and a 
   const writerEnd = controller.indexOf('\n}\n\nis_running()', writerStart);
   assert(writerStart >= 0 && writerEnd > writerStart, 'terminal evidence writer must exist');
   const writer = controller.slice(writerStart, writerEnd);
-  assert.match(writer, /return "\$status"/,
+  assert.match(writer, /value\.get\("kind"\) == "phase_loop_terminal_failure_execution_evidence"/);
+  assert.match(writer, /return "\$\{status:-1\}"/,
     'admission recovery must fail closed if its durable zero-execution receipt cannot be written');
 });
 

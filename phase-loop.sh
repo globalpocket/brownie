@@ -16666,10 +16666,29 @@ os.replace(tmp, path)
 PY
   fi
   printf '%s run=%s terminal_execution_evidence_exit=%s confirmed=%s result=%s path=%s\n' "$(now_utc)" "$run_stamp" "$status" "$PHASE_LOOP_RUNTIME_EXECUTION_CONFIRMED" "${output:-<no output>}" "$evidence_path" >> "$SUPERVISOR_LOG"
-  # A missing or malformed durable receipt must fail the caller's recovery
-  # boundary.  Returning success here would let a later no-eligible replan
-  # manufacture its proof from an absent execution-evidence file.
-  return "$status"
+  # `terminal-evidence` deliberately exits nonzero when execution was not
+  # confirmed; that is the normal, durable input to the no-eligible recovery.
+  # Distinguish that evidence-bearing false result from a failed write so the
+  # caller fails closed only when no parseable receipt exists.
+  if [ -f "$evidence_path" ] && python3 - "$evidence_path" "$run_stamp" <<'PY'
+import json
+import pathlib
+import sys
+
+try:
+    value = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if (
+    isinstance(value, dict)
+    and value.get("kind") == "phase_loop_terminal_failure_execution_evidence"
+    and value.get("run_stamp") == sys.argv[2]
+) else 1)
+PY
+  then
+    return 0
+  fi
+  return "${status:-1}"
 }
 
 is_running() {
