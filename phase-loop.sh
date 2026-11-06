@@ -8672,6 +8672,8 @@ try:
         invocation = automation.get("next_invocation")
     selected = str(claim.get("selected_todo") or "")
     selected_sha256 = str(claim.get("selected_todo_sha256") or hashlib.sha256(selected.encode("utf-8")).hexdigest())
+    terminal_final_state = str(payload.get("terminal_completion_final_state") or "")
+    terminal_task_status = str(payload.get("terminal_completion_task_status") or "")
     valid = (
         payload.get("task_execution_confirmed") is True
         and payload.get("objective_apply_applied") is True
@@ -8691,6 +8693,12 @@ try:
         and automation.get("terminal_failure") is False
         and payload.get("retryable") is True
         and automation.get("retryable") is True
+        # An explicit terminal task result is completion evidence for this
+        # objective apply, not a reason to perform a second empty resume.
+        # Requiring both fields to be absent keeps the continuation exception
+        # limited to genuinely non-terminal Runtime hand-offs.
+        and terminal_final_state == ""
+        and terminal_task_status == ""
         and payload.get("stop_class") == "continuation_required"
         and automation.get("stop_class") == "continuation_required"
         and isinstance(invocation, dict)
