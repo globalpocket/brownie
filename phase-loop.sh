@@ -12618,7 +12618,7 @@ PY
 # accept a dirty target.
 phase_loop_reverify_and_consume_merged_delivery() {
   local run_stamp="$1" stdout_log="$2" run_id="$3"
-  local reviewer implementation reviewer_gh_config_dir repository candidate merge_oid review_file pr_number merge_actor result status
+  local reviewer implementation reviewer_gh_config_dir repository candidate merge_oid review_file raw_review_file pr_number merge_actor result status lineage
   reviewer="$(node "$ROOT_DIR/scripts/phase-loop-actor-deployment.mjs" --repo-root "$ROOT_DIR" --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" --role review --field github-login 2>/dev/null || true)"
   implementation="$(node "$ROOT_DIR/scripts/phase-loop-actor-deployment.mjs" --repo-root "$ROOT_DIR" --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" --role implementation --field github-login 2>/dev/null || true)"
   repository="$(node "$ROOT_DIR/scripts/phase-loop-actor-deployment.mjs" --repo-root "$ROOT_DIR" --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" --role implementation --field repository 2>/dev/null || true)"
@@ -12638,27 +12638,32 @@ PY
     write_status "integrity_blocked" "Merged delivery re-verification refused: no clean reviewed merge exactly matches the active claim's bounded scope." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
     return 76
   }
-  merge_oid="$(node -e 'const value=JSON.parse(process.argv[1]); if (!value.valid || !/^[a-f0-9]{40}$/i.test(value.candidate?.merge_commit_oid || "")) process.exit(1); process.stdout.write(value.candidate.merge_commit_oid)' "$candidate")" || {
-    write_status "integrity_blocked" "Merged delivery re-verification refused: the clean merge candidate did not retain a verifiable merge identity." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+  lineage="$(node -e 'const value=JSON.parse(process.argv[1]); const entries=value.valid && Array.isArray(value.candidate?.merge_lineage) && value.candidate.merge_lineage.length ? value.candidate.merge_lineage : [value.candidate]; if (!entries.length || entries.some(entry => !/^[a-f0-9]{40}$/i.test(entry?.merge_commit_oid || "") || !/^[a-f0-9]{40}$/i.test(entry?.head_oid || ""))) process.exit(1); process.stdout.write(entries.map(entry => `${entry.merge_commit_oid}\t${entry.head_oid}`).join("\n"))' "$candidate")" || {
+    write_status "integrity_blocked" "Merged delivery re-verification refused: the clean merge candidate did not retain a verifiable reviewed-merge lineage." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
     return 76
   }
   reviewer_gh_config_dir="$(node "$ROOT_DIR/scripts/phase-loop-actor-preflight.mjs" --role review --repo-root "$PHASE_LOOP_WORKSPACE_ROOT" --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" --credentials "$PHASE_LOOP_ACTOR_CREDENTIALS" --credentials-root "$PHASE_LOOP_CONTROL_ROOT" --print-gh-config-dir 2>>"$SUPERVISOR_LOG")" || {
     write_status "blocked" "Merged delivery re-verification could not resolve the configured independent-review profile; preserving the active claim." "$run_id" "78" "${CONSECUTIVE_FAILURES:-0}"
     return 78
   }
-  pr_number="$(GH_CONFIG_DIR="$reviewer_gh_config_dir" gh api "repos/$repository/commits/$merge_oid/pulls" --jq '[.[] | select(.merged_at != null)][0].number' 2>>"$SUPERVISOR_LOG" || true)"
-  if ! [[ "$pr_number" =~ ^[0-9]+$ ]]; then
-    write_status "integrity_blocked" "Merged delivery re-verification refused: the exact clean merge has no observable merged pull request." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
-    return 76
-  fi
   review_file="$TODO_CLAIM_DIR/merged-delivery-review.$$.json"
-  if ! GH_CONFIG_DIR="$reviewer_gh_config_dir" gh pr view "$pr_number" --json id,number,url,title,body,author,state,mergedAt,mergeCommit,headRefOid,reviews,statusCheckRollup > "$review_file"; then
-    rm -f "$review_file"
-    write_status "blocked" "Merged delivery re-verification could not read the observed merged pull request; preserving the active claim." "$run_id" "78" "${CONSECUTIVE_FAILURES:-0}"
-    return 78
-  fi
-  merge_actor="$(GH_CONFIG_DIR="$reviewer_gh_config_dir" gh api graphql -f query='query($id: ID!) { node(id: $id) { ... on PullRequest { mergedBy { login } } } }' -F "id=$(node -e 'const fs=require("fs"); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).id||"")' "$review_file")" --jq '.data.node.mergedBy.login' 2>>"$SUPERVISOR_LOG" || true)"
-  if ! python3 - "$review_file" "$merge_actor" "$reviewer" <<'PY'
+  printf '[]\n' > "$review_file"
+  while IFS=$'\t' read -r merge_oid expected_head_oid; do
+    [ -n "$merge_oid" ] || continue
+    pr_number="$(GH_CONFIG_DIR="$reviewer_gh_config_dir" gh api "repos/$repository/commits/$merge_oid/pulls" --jq '[.[] | select(.merged_at != null)][0].number' 2>>"$SUPERVISOR_LOG" || true)"
+    if ! [[ "$pr_number" =~ ^[0-9]+$ ]]; then
+      rm -f "$review_file"
+      write_status "integrity_blocked" "Merged delivery re-verification refused: a contributing clean merge has no observable merged pull request." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+      return 76
+    fi
+    raw_review_file="$TODO_CLAIM_DIR/merged-delivery-review.$$.${merge_oid}.json"
+    if ! GH_CONFIG_DIR="$reviewer_gh_config_dir" gh pr view "$pr_number" --json id,number,url,title,body,author,state,mergedAt,mergeCommit,headRefOid,reviews,statusCheckRollup > "$raw_review_file"; then
+      rm -f "$raw_review_file" "$review_file"
+      write_status "blocked" "Merged delivery re-verification could not read a contributing merged pull request; preserving the active claim." "$run_id" "78" "${CONSECUTIVE_FAILURES:-0}"
+      return 78
+    fi
+    merge_actor="$(GH_CONFIG_DIR="$reviewer_gh_config_dir" gh api graphql -f query='query($id: ID!) { node(id: $id) { ... on PullRequest { mergedBy { login } } } }' -F "id=$(node -e 'const fs=require("fs"); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).id||"")' "$raw_review_file")" --jq '.data.node.mergedBy.login' 2>>"$SUPERVISOR_LOG" || true)"
+    if ! python3 - "$raw_review_file" "$merge_actor" "$reviewer" <<'PY'
 import json
 import os
 import pathlib
@@ -12695,11 +12700,27 @@ temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
 temporary.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True), encoding="utf-8")
 os.replace(temporary, path)
 PY
-  then
-    rm -f "$review_file"
-    write_status "integrity_blocked" "Merged delivery re-verification refused: observed review evidence could not be normalized." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
-    return 76
-  fi
+    then
+      rm -f "$raw_review_file" "$review_file"
+      write_status "integrity_blocked" "Merged delivery re-verification refused: observed review evidence could not be normalized." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+      return 76
+    fi
+    if ! node - "$review_file" "$raw_review_file" "$merge_oid" "$expected_head_oid" <<'NODE'
+const fs = require('fs');
+const [destination, source, expectedMerge, expectedHead] = process.argv.slice(2);
+const reviews = JSON.parse(fs.readFileSync(destination, 'utf8'));
+const observed = JSON.parse(fs.readFileSync(source, 'utf8'));
+if (!Array.isArray(reviews) || observed.merge_commit_oid !== expectedMerge || observed.head_oid !== expectedHead) process.exit(1);
+reviews.push(observed);
+fs.writeFileSync(destination, `${JSON.stringify(reviews)}\n`, { mode: 0o600 });
+NODE
+    then
+      rm -f "$raw_review_file" "$review_file"
+      write_status "integrity_blocked" "Merged delivery re-verification refused: a contributing review does not bind its Git merge lineage." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+      return 76
+    fi
+    rm -f "$raw_review_file"
+  done <<< "$lineage"
   if result="$(node "$ROOT_DIR/scripts/phase-loop-delivery-integrity.mjs" verify-merged-delivery --repo "$PHASE_LOOP_WORKSPACE_ROOT" --claim "$TODO_CLAIM_FILE" --stdout "$stdout_log" --review "$review_file" --reviewer "$reviewer" --implementation "$implementation" --write 2>&1)"; then
     status=0
   else
