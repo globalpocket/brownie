@@ -117,8 +117,17 @@ test('changes requested removes a stale certificate and records a durable rework
   });
   assert.ok(completed.completion_certificate);
 
+  // A newly admitted rework head is required before its review can invalidate
+  // an older certificate; an unadmitted head mismatch is preserved instead.
+  const resubmitted = {
+    ...completed,
+    delivery_review: {
+      ...completed.delivery_review,
+      head_oid: 'b'.repeat(40)
+    }
+  };
   const reconciliation = reconcileReviewSnapshot({
-    claim: completed,
+    claim: resubmitted,
     pullRequest: pr({
       headRefOid: 'b'.repeat(40),
       reviews: [{ state: 'CHANGES_REQUESTED', author: { login: 'globalpocket' }, commit: { oid: 'b'.repeat(40) }, body: 'new work required', submittedAt: '2026-10-30T12:02:00Z' }]
@@ -126,7 +135,7 @@ test('changes requested removes a stale certificate and records a durable rework
     reviewer: 'globalpocket',
     implementation: 'brownie-agent'
   });
-  const next = applyReviewReconciliation({ claim: completed, reconciliation, at: '2026-10-30T12:03:00Z', runStamp: 'run-rework' });
+  const next = applyReviewReconciliation({ claim: resubmitted, reconciliation, at: '2026-10-30T12:03:00Z', runStamp: 'run-rework' });
   assert.equal(next.status, 'changes_requested');
   assert.equal(next.completion_certificate, undefined);
   assert.equal(next.review_rework.state, 'CHANGES_REQUESTED');
@@ -220,4 +229,31 @@ test('the author cannot satisfy the independent review role', () => {
   const reconciliation = reconcileReviewSnapshot({ claim, pullRequest: pr(), reviewer: 'brownie-agent', implementation: 'brownie-agent' });
   assert.equal(reconciliation.valid, false);
   assert(reconciliation.errors.includes('reviewer_not_independent'));
+});
+
+test('a recorded handoff refuses a different PR head even when its author is correct', () => {
+  const boundClaim = {
+    ...claim,
+    delivery_review: {
+      ...claim.delivery_review,
+      head_oid: 'b'.repeat(40)
+    }
+  };
+  const reconciliation = reconcileReviewSnapshot({
+    claim: boundClaim,
+    pullRequest: pr({ headRefOid: 'a'.repeat(40) }),
+    reviewer: 'globalpocket',
+    implementation: 'brownie-agent'
+  });
+  assert.equal(reconciliation.valid, false);
+  assert(reconciliation.errors.includes('implementation_head_mismatch'));
+
+  const preserved = applyReviewReconciliation({
+    claim: boundClaim,
+    reconciliation,
+    runStamp: 'rejected-head-observation'
+  });
+  assert.equal(preserved.status, boundClaim.status);
+  assert.equal(preserved.delivery_review.head_oid, 'b'.repeat(40));
+  assert.deepEqual(preserved, boundClaim);
 });

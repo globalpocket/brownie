@@ -12117,7 +12117,12 @@ import sys
 
 try:
     with open(sys.argv[1], encoding="utf-8") as handle:
-        value = json.load(handle).get(sys.argv[2], "")
+        value = json.load(handle)
+    for segment in sys.argv[2].split("."):
+        if not isinstance(value, dict):
+            value = ""
+            break
+        value = value.get(segment, "")
 except Exception:
     sys.exit(1)
 if isinstance(value, str):
@@ -12234,6 +12239,64 @@ phase_loop_require_implementation_pr_actor() {
   node "$guard_script" --expected-actor "$PHASE_LOOP_EXPECTED_ACTOR"
 }
 
+# A branch can have historical pull requests. GitHub's `pr view <branch>` may
+# resolve a closed, already-merged PR, so a delivery handoff is reusable only
+# when one open PR binds the deployment implementation principal to the exact
+# commit just pushed.
+phase_loop_admit_open_implementation_pr() {
+  local branch="$1" implementation_gh_config_dir="$2" expected_head implementation raw
+  expected_head="$(
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    git rev-parse HEAD
+  )" || return 1
+  implementation="$(node "$ROOT_DIR/scripts/phase-loop-actor-deployment.mjs" \
+    --repo-root "$PHASE_LOOP_WORKSPACE_ROOT" \
+    --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" \
+    --role implementation \
+    --field github-login 2>>"$SUPERVISOR_LOG")" || return 1
+  [ -n "$implementation" ] || return 1
+  raw="$(
+    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
+    GH_CONFIG_DIR="$implementation_gh_config_dir" gh pr list \
+      --head "$branch" \
+      --state open \
+      --json url,number,state,headRefOid,author
+  )" || return 1
+  node - "$raw" "$implementation" "$expected_head" <<'NODE'
+const [raw, implementation, expectedHead] = process.argv.slice(2);
+let pullRequests;
+try {
+  pullRequests = JSON.parse(raw);
+} catch {
+  process.exit(1);
+}
+if (!Array.isArray(pullRequests)) process.exit(1);
+if (pullRequests.length === 0) {
+  process.stdout.write(JSON.stringify({ found: false, expected_head_oid: expectedHead, implementation }));
+  process.exit(0);
+}
+if (pullRequests.length !== 1) process.exit(1);
+const pullRequest = pullRequests[0] ?? {};
+if (pullRequest.state !== 'OPEN'
+  || pullRequest.headRefOid !== expectedHead
+  || pullRequest.author?.login !== implementation
+  || typeof pullRequest.url !== 'string'
+  || !pullRequest.url
+  || !Number.isInteger(pullRequest.number)) {
+  process.exit(1);
+}
+process.stdout.write(JSON.stringify({
+  found: true,
+  pr_url: pullRequest.url,
+  pr_number: pullRequest.number,
+  pr_head_oid: pullRequest.headRefOid,
+  pr_author: pullRequest.author.login,
+  expected_head_oid: expectedHead,
+  implementation
+}));
+NODE
+}
+
 # A zero process exit only says that the protocol wrapper ran. It must never
 # be used as a proxy for terminal TODO delivery. This shared boundary covers
 # every publication path, including cleanup retries.
@@ -12258,7 +12321,7 @@ phase_loop_create_pr_for_progress() {
   local stderr_log="$3"
   local workspace_before="$4"
   local workspace_after="$5"
-  local title body pr_url branch push_rc pending_publish="${6:-0}" verification_payload="${7:-}" implementation_gh_config_dir
+  local title body pr_url branch push_rc pending_publish="${6:-0}" verification_payload="${7:-}" implementation_gh_config_dir pr_admission
   if [ "$PHASE_LOOP_CREATE_PR_AFTER_PROGRESS" != "1" ]; then
     return 0
   fi
@@ -12383,15 +12446,13 @@ claim can be completed only after independent approval, required CI, and merge."
     return 1
   }
 
-  if (
-    cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-    GH_CONFIG_DIR="$implementation_gh_config_dir" gh pr view "$branch" --json url --jq .url >/dev/null 2>&1
-  ); then
-    pr_url="$(
-      cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
-      GH_CONFIG_DIR="$implementation_gh_config_dir" gh pr view "$branch" --json url --jq .url
-    )"
-  else
+  if ! pr_admission="$(phase_loop_admit_open_implementation_pr "$branch" "$implementation_gh_config_dir")"; then
+    write_todo_claim "$(claim_field claim_id)" "integrity_blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+    write_status "integrity_blocked" "PR publication refused: an existing open PR does not bind the deployment implementation principal to the just-pushed HEAD. branch=$branch" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-0}"
+    printf '%s pr_create_refused=true reason=open_pr_admission_failed branch=%s\n' "$(now_utc)" "$branch" >> "$SUPERVISOR_LOG"
+    return 76
+  fi
+  if [ "$(node -e 'const value=JSON.parse(process.argv[1]); process.stdout.write(value.found === true ? "1" : "0")' "$pr_admission")" != "1" ]; then
     if ! GH_CONFIG_DIR="$implementation_gh_config_dir" phase_loop_require_implementation_pr_actor; then
       printf '%s pr_create_skipped reason=implementation_actor_guard_failed_before_pr_create branch=%s\n' "$(now_utc)" "$branch" >> "$SUPERVISOR_LOG"
       return 1
@@ -12413,9 +12474,20 @@ claim can be completed only after independent approval, required CI, and merge."
         return 1
       fi
     fi
+    if ! pr_admission="$(phase_loop_admit_open_implementation_pr "$branch" "$implementation_gh_config_dir")"; then
+      write_todo_claim "$(claim_field claim_id)" "integrity_blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+      write_status "integrity_blocked" "PR publication refused: the newly created PR failed open/author/HEAD admission. branch=$branch" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-0}"
+      printf '%s pr_create_refused=true reason=created_pr_admission_failed branch=%s\n' "$(now_utc)" "$branch" >> "$SUPERVISOR_LOG"
+      return 76
+    fi
   fi
+  pr_url="$(node -e 'const value=JSON.parse(process.argv[1]); if (value.found !== true || !value.pr_url) process.exit(1); process.stdout.write(value.pr_url)' "$pr_admission")" || {
+    write_todo_claim "$(claim_field claim_id)" "integrity_blocked" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+    write_status "integrity_blocked" "PR publication refused: an admitted PR receipt is incomplete. branch=$branch" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-0}"
+    return 76
+  }
   write_todo_claim "$(claim_field claim_id)" "pr_pending_review" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
-  if ! phase_loop_record_delivery_pr_handoff "$pr_url" "$delivery_handoff" "$run_stamp"; then
+  if ! phase_loop_record_delivery_pr_handoff "$pr_url" "$delivery_handoff" "$run_stamp" "$pr_admission"; then
     write_status "blocked" "PR was created but its durable review-handoff receipt could not be recorded; refusing to treat the claim as pending review. PR=$pr_url" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-0}"
     return 78
   fi
@@ -12429,8 +12501,8 @@ phase_loop_pr_created() {
 }
 
 phase_loop_record_delivery_pr_handoff() {
-  local pr_url="$1" delivery_handoff="$2" run_stamp="$3"
-  python3 - "$TODO_CLAIM_FILE" "$pr_url" "$delivery_handoff" "$run_stamp" "$(now_utc)" <<'PY'
+  local pr_url="$1" delivery_handoff="$2" run_stamp="$3" pr_admission="$4"
+  python3 - "$TODO_CLAIM_FILE" "$pr_url" "$delivery_handoff" "$run_stamp" "$(now_utc)" "$pr_admission" <<'PY'
 import json
 import os
 import pathlib
@@ -12447,8 +12519,26 @@ try:
     integrity = json.loads(sys.argv[3])
 except Exception:
     raise SystemExit(1)
+try:
+    admission = json.loads(sys.argv[6])
+except Exception:
+    raise SystemExit(1)
+if (
+    admission.get("found") is not True
+    or admission.get("pr_url") != sys.argv[2]
+    or not isinstance(admission.get("pr_number"), int)
+    or not isinstance(admission.get("pr_head_oid"), str)
+    or not admission.get("pr_head_oid")
+    or not isinstance(admission.get("pr_author"), str)
+    or not admission.get("pr_author")
+):
+    raise SystemExit(1)
 claim["delivery_review"] = {
     "pr_url": sys.argv[2],
+    "pr_number": admission["pr_number"],
+    "head_oid": admission["pr_head_oid"],
+    "author": admission["pr_author"],
+    "execution_run_stamp": sys.argv[4],
     "merged": False,
     "approved": False,
     "ci_passed": False,
@@ -12476,6 +12566,117 @@ os.replace(tmp, path)
 os.chmod(path, 0o600)
 PY
   sync_parent_dir "$TODO_CLAIM_DIR"
+}
+
+# Review observations have their own timestamps and must never displace the
+# Runtime run that produced the verified delivery evidence.  New receipts bind
+# it directly; historical receipts recover the latest handoff record before
+# falling back to the legacy claim field.
+phase_loop_verified_runtime_run_stamp() {
+  python3 - "$TODO_CLAIM_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+try:
+    claim = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+review = claim.get("delivery_review") if isinstance(claim.get("delivery_review"), dict) else {}
+value = review.get("execution_run_stamp")
+if isinstance(value, str) and value:
+    print(value)
+    raise SystemExit(0)
+history = claim.get("status_history") if isinstance(claim.get("status_history"), list) else []
+for entry in reversed(history):
+    if not isinstance(entry, dict) or entry.get("note") != "pr_handoff_recorded":
+        continue
+    value = entry.get("run_stamp")
+    if isinstance(value, str) and value:
+        print(value)
+        raise SystemExit(0)
+value = claim.get("run_stamp")
+if isinstance(value, str) and value:
+    print(value)
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+# Refresh a claim-bound PR handoff without re-running Runtime.  A repair is
+# needed both when the recorded PR was closed and when the still-open PR head
+# advances to fix CI.  Preserve the verified Runtime evidence, archive the
+# old receipt, and publish only through strict implementation-author/current-
+# HEAD admission.  This prevents either a historical closed PR or an
+# unrecorded post-handoff commit from being reviewed as the delivered result.
+phase_loop_refresh_pr_handoff() {
+  local status run_stamp stdout_log stderr_log verification stale_review review_profile review_snapshot current_workspace review_state archive_key archive_reason
+  [ -f "$TODO_CLAIM_FILE" ] || return 76
+  status="$(claim_status 2>/dev/null || true)"
+  [ "$status" = "pr_pending_review" ] || return 76
+  run_stamp="$(phase_loop_verified_runtime_run_stamp 2>/dev/null || true)"
+  stdout_log="$RUN_DIR/$run_stamp.stdout.log"
+  stderr_log="$RUN_DIR/$run_stamp.stderr.log"
+  [ -n "$run_stamp" ] && [ -s "$stdout_log" ] || return 76
+  verification="$(python3 - "$TODO_CLAIM_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+claim = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+review = claim.get("delivery_review") if isinstance(claim.get("delivery_review"), dict) else {}
+evidence = review.get("semantic_completion_evidence") if isinstance(review.get("semantic_completion_evidence"), dict) else {}
+results = evidence.get("verification_results") if isinstance(evidence.get("verification_results"), list) else []
+if not results:
+    raise SystemExit(1)
+print(json.dumps({"completed": True, "results": results}, sort_keys=True))
+PY
+)" || return 76
+  stale_review="$(claim_field delivery_review.pr_url 2>/dev/null || true)"
+  [ -n "$stale_review" ] || return 76
+  review_profile="$(node "$ROOT_DIR/scripts/phase-loop-actor-preflight.mjs" --role review --repo-root "$PHASE_LOOP_WORKSPACE_ROOT" --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" --credentials "$PHASE_LOOP_ACTOR_CREDENTIALS" --credentials-root "$PHASE_LOOP_CONTROL_ROOT" --print-gh-config-dir 2>>"$SUPERVISOR_LOG")" || return 78
+  review_snapshot="$(GH_CONFIG_DIR="$review_profile" gh pr view "$stale_review" --json state,headRefOid,url 2>>"$SUPERVISOR_LOG")" || return 78
+  review_state="$(node -e 'const value=JSON.parse(process.argv[1]); process.stdout.write(typeof value.state === "string" ? value.state : "")' "$review_snapshot")"
+  if [ "$review_state" = "OPEN" ]; then
+    archive_key="superseded_delivery_reviews"
+    archive_reason="open_pr_head_advanced_before_review"
+  else
+    archive_key="stale_delivery_reviews"
+    archive_reason="closed_or_merged_pr_cannot_be_reused_for_new_delivery_handoff"
+  fi
+  write_todo_claim "$(claim_field claim_id)" "verification_pending" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "stale-pr-handoff-$run_stamp"
+  python3 - "$TODO_CLAIM_FILE" "$stale_review" "$review_snapshot" "$archive_key" "$archive_reason" "$(now_utc)" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+claim = json.loads(path.read_text(encoding="utf-8"))
+review = claim.pop("delivery_review", None)
+claim.setdefault(sys.argv[4], []).append({
+    "reason": sys.argv[5],
+    "pr_url": sys.argv[2],
+    "observed_pr": json.loads(sys.argv[3]),
+    "previous_receipt": review,
+    "repaired_at": sys.argv[6],
+})
+claim["updated_at"] = sys.argv[6]
+tmp = path.with_name(f"{path.name}.{os.getpid()}.stale-pr-repair.tmp")
+tmp.write_text(json.dumps(claim, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+os.chmod(tmp, 0o600)
+os.replace(tmp, path)
+os.chmod(path, 0o600)
+PY
+  sync_parent_dir "$TODO_CLAIM_DIR"
+  current_workspace="$(git_workspace_fingerprint)"
+  phase_loop_create_pr_for_progress "$run_stamp" "$stdout_log" "$stderr_log" "$current_workspace" "$current_workspace" "1" "$verification"
+}
+
+# Compatibility alias for the closed-PR recovery entrypoint.  Its successor
+# also handles an open PR whose exact head has advanced before review.
+phase_loop_republish_stale_pr_handoff() {
+  phase_loop_refresh_pr_handoff
 }
 
 # A verified implementation result is only eligible for review handoff. The
@@ -22511,6 +22712,46 @@ case "${1:-status}" in
     printf '%s\n' "$PHASE_LOOP_BOOTSTRAP_DIAGNOSTIC"
     exit 78
     ;;
+  republish-stale-pr-handoff)
+    load_env
+    if ! phase_loop_require_operational_configuration; then
+      exit 78
+    fi
+    PHASE_LOOP_SUPERVISOR_PID="$$"
+    PHASE_LOOP_SUPERVISOR_GENERATION="stale-pr-handoff-$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM"
+    if ! acquire_lock; then
+      printf '%s\n' "phase-loop stale PR handoff republication refused: durable supervisor ownership is active or cannot be safely reclaimed" >&2
+      exit 75
+    fi
+    trap 'phase_loop_release_supervisor_lock; unset PHASE_LOOP_SUPERVISOR_PID PHASE_LOOP_SUPERVISOR_GENERATION' EXIT
+    if ! phase_loop_refresh_pr_handoff; then
+      printf '%s\n' "phase-loop stale PR handoff republication refused" >&2
+      exit 76
+    fi
+    trap - EXIT
+    phase_loop_release_supervisor_lock
+    unset PHASE_LOOP_SUPERVISOR_PID PHASE_LOOP_SUPERVISOR_GENERATION
+    ;;
+  refresh-pr-handoff)
+    load_env
+    if ! phase_loop_require_operational_configuration; then
+      exit 78
+    fi
+    PHASE_LOOP_SUPERVISOR_PID="$$"
+    PHASE_LOOP_SUPERVISOR_GENERATION="refresh-pr-handoff-$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM"
+    if ! acquire_lock; then
+      printf '%s\n' "phase-loop PR handoff refresh refused: durable supervisor ownership is active or cannot be safely reclaimed" >&2
+      exit 75
+    fi
+    trap 'phase_loop_release_supervisor_lock; unset PHASE_LOOP_SUPERVISOR_PID PHASE_LOOP_SUPERVISOR_GENERATION' EXIT
+    if ! phase_loop_refresh_pr_handoff; then
+      printf '%s\n' "phase-loop PR handoff refresh refused" >&2
+      exit 76
+    fi
+    trap - EXIT
+    phase_loop_release_supervisor_lock
+    unset PHASE_LOOP_SUPERVISOR_PID PHASE_LOOP_SUPERVISOR_GENERATION
+    ;;
   run-once)
     # Serialize the one-shot with supervisor acquisition.  A mere is_running
     # snapshot races start/supervise and can still let this process overwrite
@@ -22565,7 +22806,7 @@ case "${1:-status}" in
     exit "$run_once_status"
     ;;
   *)
-    echo "usage: $0 {start|status|stop|restart|watchdog|migrate-legacy|check-binary-freshness|check-runtime-bootstrap|run-once}" >&2
+    echo "usage: $0 {start|status|stop|restart|watchdog|migrate-legacy|check-binary-freshness|check-runtime-bootstrap|republish-stale-pr-handoff|refresh-pr-handoff|run-once}" >&2
     exit 64
     ;;
 esac

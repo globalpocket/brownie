@@ -24,6 +24,79 @@ test('runtime mismatch recovery restores delegated scope, target, and pre-runtim
   assert.doesNotMatch(block, /\n\s+write_todo_claim\b/);
 });
 
+test('PR handoff reuses only an open implementation-authored current-HEAD PR', () => {
+  const helperStart = controller.indexOf('phase_loop_admit_open_implementation_pr()');
+  const helperEnd = controller.indexOf('\n}\n\n# A zero process exit', helperStart);
+  assert(helperStart >= 0 && helperEnd > helperStart, 'strict PR admission helper must exist');
+  const helper = controller.slice(helperStart, helperEnd);
+  assert.match(helper, /gh pr list[\s\S]*--state open/);
+  assert.match(helper, /pullRequest\.state !== 'OPEN'/);
+  assert.match(helper, /pullRequest\.headRefOid !== expectedHead/);
+  assert.match(helper, /pullRequest\.author\?\.login !== implementation/);
+
+  const publicationStart = controller.indexOf('phase_loop_create_pr_for_progress()');
+  const publicationEnd = controller.indexOf('\n}\n\nphase_loop_pr_created()', publicationStart);
+  assert(publicationStart >= 0 && publicationEnd > publicationStart, 'PR publication path must exist');
+  const publication = controller.slice(publicationStart, publicationEnd);
+  assert.match(publication, /phase_loop_admit_open_implementation_pr "\$branch"/);
+  assert.doesNotMatch(publication, /gh pr view "\$branch"/);
+  assert.match(publication, /phase_loop_record_delivery_pr_handoff "\$pr_url" "\$delivery_handoff" "\$run_stamp" "\$pr_admission"/);
+});
+
+test('closed handoffs can be republished from exact verified claim evidence without re-running Runtime', () => {
+  const repairStart = controller.indexOf('phase_loop_refresh_pr_handoff()');
+  const repairEnd = controller.indexOf('\n}\n\n# A verified implementation result', repairStart);
+  assert(repairStart >= 0 && repairEnd > repairStart, 'PR handoff refresh path must exist');
+  const repair = controller.slice(repairStart, repairEnd);
+  assert.match(repair, /closed_or_merged_pr_cannot_be_reused_for_new_delivery_handoff/);
+  assert.match(repair, /open_pr_head_advanced_before_review/);
+  assert.match(repair, /superseded_delivery_reviews/);
+  assert.match(repair, /write_todo_claim[\s\S]*"verification_pending"/);
+  assert.match(repair, /phase_loop_create_pr_for_progress[\s\S]*"1" "\$verification"/);
+  assert.doesNotMatch(repair, /run_brownie_once/);
+  const commandStart = controller.indexOf('  republish-stale-pr-handoff)');
+  const commandEnd = controller.indexOf('  run-once)', commandStart);
+  assert(commandStart >= 0 && commandEnd > commandStart, 'stale handoff command must exist');
+  const command = controller.slice(commandStart, commandEnd);
+  assert.match(command, /acquire_lock/);
+  assert.match(command, /phase_loop_release_supervisor_lock/);
+
+  const refreshCommandStart = controller.indexOf('  refresh-pr-handoff)');
+  const refreshCommandEnd = controller.indexOf('  run-once)', refreshCommandStart);
+  assert(refreshCommandStart >= 0 && refreshCommandEnd > refreshCommandStart, 'open PR refresh command must exist');
+  const refreshCommand = controller.slice(refreshCommandStart, refreshCommandEnd);
+  assert.match(refreshCommand, /phase_loop_refresh_pr_handoff/);
+  assert.match(refreshCommand, /acquire_lock/);
+  assert.match(refreshCommand, /phase_loop_release_supervisor_lock/);
+});
+
+test('claim field lookup resolves nested review receipts rather than treating dotted paths as flat keys', () => {
+  const start = controller.indexOf('claim_field()');
+  const end = controller.indexOf('\n}\n\ntracked_workspace_diff_exists()', start);
+  assert(start >= 0 && end > start, 'claim field helper must exist');
+  const helper = controller.slice(start, end);
+  assert.match(helper, /for segment in sys\.argv\[2\]\.split\("\."\)/);
+  assert.match(helper, /value = value\.get\(segment, ""\)/);
+});
+
+test('handoff refresh locates the immutable Runtime execution instead of a review observation', () => {
+  const receiptStart = controller.indexOf('phase_loop_record_delivery_pr_handoff()');
+  const receiptEnd = controller.indexOf('\n}\n\n# Review observations', receiptStart);
+  assert(receiptStart >= 0 && receiptEnd > receiptStart, 'delivery receipt and execution-run resolver must exist');
+  const receipt = controller.slice(receiptStart, receiptEnd);
+  assert.match(receipt, /"execution_run_stamp": sys\.argv\[4\]/);
+  const resolverStart = controller.indexOf('phase_loop_verified_runtime_run_stamp()');
+  const resolverEnd = controller.indexOf('\n}\n\n# Refresh a claim-bound PR handoff', resolverStart);
+  assert(resolverStart >= 0 && resolverEnd > resolverStart, 'immutable execution-run resolver must exist');
+  const resolver = controller.slice(resolverStart, resolverEnd);
+  assert.match(resolver, /review\.get\("execution_run_stamp"\)/);
+  assert.match(resolver, /entry\.get\("note"\) != "pr_handoff_recorded"/);
+  const refreshStart = controller.indexOf('phase_loop_refresh_pr_handoff()');
+  const refreshEnd = controller.indexOf('\n}\n\n# Compatibility alias', refreshStart);
+  assert(refreshStart >= 0 && refreshEnd > refreshStart, 'handoff refresh must exist');
+  assert.match(controller.slice(refreshStart, refreshEnd), /phase_loop_verified_runtime_run_stamp/);
+});
+
 test('claimed-task-not-admitted recovery persists zero-execution evidence and a terminal progress projection after rollback', () => {
   const block = mismatchRecoveryBlock();
   const restoreClaim = block.indexOf('restore_claim_snapshot_before_runtime "$claim_snapshot_before_runtime"');

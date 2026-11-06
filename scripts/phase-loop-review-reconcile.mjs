@@ -56,6 +56,10 @@ export function reconcileReviewSnapshot({ claim, pullRequest, reviewer, implemen
   if (!rootClaimId || !before.selected_todo) errors.push('claim_identity_missing');
   if (!reviewActor || !implementationActor) errors.push('configured_actor_missing');
   if (login(pr.author) !== implementationActor) errors.push('implementation_author_mismatch');
+  const expectedHeadOid = typeof object(before.delivery_review).head_oid === 'string'
+    ? object(before.delivery_review).head_oid
+    : '';
+  if (expectedHeadOid && expectedHeadOid !== headOid) errors.push('implementation_head_mismatch');
   if (reviewActor === implementationActor) errors.push('reviewer_not_independent');
   const semanticCompletionEvidence = object(before.delivery_review).semantic_completion_evidence;
   const semanticEvidence = validateSemanticCompletionEvidence({ claim: before, evidence: semanticCompletionEvidence });
@@ -107,6 +111,11 @@ export function applyReviewReconciliation({ claim, reconciliation, at = new Date
   const before = object(claim);
   const result = object(reconciliation);
   const next = structuredClone(before);
+  // An invalid observation must not overwrite the admitted receipt.  In
+  // particular, a head mismatch is a fail-closed boundary, not a mechanism
+  // for teaching the claim to accept the newly observed (unadmitted) head on
+  // the next poll.
+  if (!result.valid) return next;
   next.root_claim_id ??= next.claim_id;
   next.delivery_review = result.delivery_review;
   next.status = result.status;
@@ -217,7 +226,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       reconciliation,
       runStamp: args.get('--run') ?? ''
     });
-    if (args.has('--write')) {
+    // Never persist an invalid reconciliation: keeping the prior claim is the
+    // durable proof that the observed PR head was not admitted for delivery.
+    if (args.has('--write') && reconciliation.valid) {
       const target = path.resolve(claimPath);
       const temporary = `${target}.${process.pid}.review-reconcile.tmp`;
       fs.writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });

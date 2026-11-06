@@ -68,7 +68,10 @@ const requiredStatefulSoakStepIds = [
   'platform',
   'architecture',
   'roundtrip_journey',
-  'soak_results'
+  'soak_results',
+  'downloaded_roundtrip_binding',
+  'runtime_journey_binding',
+  'supply_chain_guard_binding'
 ];
 
 test('evidence_chain_integrity step is required for fail-closed evidence', () => {
