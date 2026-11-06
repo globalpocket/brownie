@@ -221,3 +221,21 @@ test('the author cannot satisfy the independent review role', () => {
   assert.equal(reconciliation.valid, false);
   assert(reconciliation.errors.includes('reviewer_not_independent'));
 });
+
+test('a recorded handoff refuses a different PR head even when its author is correct', () => {
+  const boundClaim = {
+    ...claim,
+    delivery_review: {
+      ...claim.delivery_review,
+      head_oid: 'b'.repeat(40)
+    }
+  };
+  const reconciliation = reconcileReviewSnapshot({
+    claim: boundClaim,
+    pullRequest: pr({ headRefOid: 'a'.repeat(40) }),
+    reviewer: 'globalpocket',
+    implementation: 'brownie-agent'
+  });
+  assert.equal(reconciliation.valid, false);
+  assert(reconciliation.errors.includes('implementation_head_mismatch'));
+});

@@ -56,6 +56,10 @@ export function reconcileReviewSnapshot({ claim, pullRequest, reviewer, implemen
   if (!rootClaimId || !before.selected_todo) errors.push('claim_identity_missing');
   if (!reviewActor || !implementationActor) errors.push('configured_actor_missing');
   if (login(pr.author) !== implementationActor) errors.push('implementation_author_mismatch');
+  const expectedHeadOid = typeof object(before.delivery_review).head_oid === 'string'
+    ? object(before.delivery_review).head_oid
+    : '';
+  if (expectedHeadOid && expectedHeadOid !== headOid) errors.push('implementation_head_mismatch');
   if (reviewActor === implementationActor) errors.push('reviewer_not_independent');
   const semanticCompletionEvidence = object(before.delivery_review).semantic_completion_evidence;
   const semanticEvidence = validateSemanticCompletionEvidence({ claim: before, evidence: semanticCompletionEvidence });
