@@ -20193,11 +20193,14 @@ PY
   if [ -n "$active_target_path" ] && [ -n "$active_target_snapshot" ] && [ -f "$PHASE_LOOP_WORKSPACE_ROOT/$active_target_path" ] && {
     [ "${active_target_path##*.}" = "json" ] || [ "${active_target_path##*.}" = "jsonc" ];
   }; then
-    active_target_json_output="$(
+    if active_target_json_output="$(
       cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
       node "$ROOT_DIR/scripts/guard-json-parse.mjs" "$active_target_path" 2>&1
-    )"
-    active_target_json_status=$?
+    )"; then
+      active_target_json_status=0
+    else
+      active_target_json_status=$?
+    fi
     if [ "$active_target_json_status" -ne 0 ]; then
       restore_active_target_baseline >/dev/null || cp "$active_target_snapshot" "$PHASE_LOOP_WORKSPACE_ROOT/$active_target_path"
       workspace_after="$(git_workspace_fingerprint)"
@@ -20237,11 +20240,14 @@ PY
   if [ -n "$active_target_path" ] && [ -n "$active_target_snapshot" ] && [ -f "$PHASE_LOOP_WORKSPACE_ROOT/$active_target_path" ] && {
     [ "${active_target_path##*.}" = "js" ] || [ "${active_target_path##*.}" = "mjs" ] || [ "${active_target_path##*.}" = "cjs" ];
   }; then
-    active_target_syntax_output="$(
+    if active_target_syntax_output="$(
       cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
       node --check "$active_target_path" 2>&1
-    )"
-    active_target_syntax_status=$?
+    )"; then
+      active_target_syntax_status=0
+    else
+      active_target_syntax_status=$?
+    fi
     if [ "$active_target_syntax_status" -ne 0 ]; then
       restore_active_target_baseline >/dev/null || cp "$active_target_snapshot" "$PHASE_LOOP_WORKSPACE_ROOT/$active_target_path"
       workspace_after="$(git_workspace_fingerprint)"
@@ -20347,11 +20353,14 @@ PY
       return 76
     fi
     if [ -f "$ROOT_DIR/scripts/guard-js-duplicate-exports.mjs" ]; then
-      active_target_duplicate_exports_output="$(
+      if active_target_duplicate_exports_output="$(
         cd "$PHASE_LOOP_WORKSPACE_ROOT" || exit 70
         node "$ROOT_DIR/scripts/guard-js-duplicate-exports.mjs" "$PHASE_LOOP_WORKSPACE_ROOT/$active_target_path" 2>&1
-      )"
-      active_target_duplicate_exports_status=$?
+      )"; then
+        active_target_duplicate_exports_status=0
+      else
+        active_target_duplicate_exports_status=$?
+      fi
       if [ "$active_target_duplicate_exports_status" -ne 0 ]; then
         restore_active_target_baseline >/dev/null || cp "$active_target_snapshot" "$PHASE_LOOP_WORKSPACE_ROOT/$active_target_path"
         workspace_after="$(git_workspace_fingerprint)"
