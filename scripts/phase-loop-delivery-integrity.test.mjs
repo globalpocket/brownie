@@ -37,6 +37,36 @@ function completedRun(evidence) {
   };
 }
 
+function terminalObjectiveApplyRun() {
+  const fingerprint = 'sha256:terminal-objective-fixture';
+  return {
+    ok: true,
+    run: {
+      completed: false,
+      blocked: false,
+      continuation_required: true,
+      terminal_failure: false,
+      task_execution_confirmed: true,
+      objective_apply_applied: true,
+      completion_closure_terminal_task_count: 1,
+      completion_closure_runnable_task_count: 0,
+      completion_closure_blocked_task_count: 0,
+      completion_result_fingerprint: fingerprint,
+      terminal_completion_completion_result_fingerprint: fingerprint,
+      terminal_completion_final_state: 'Completed',
+      terminal_completion_task_status: 'Completed',
+      task_id: 'task-terminal-objective-fixture',
+      objective_apply_path: 'runtime.rs',
+      automation: {
+        completed: false,
+        blocked: false,
+        continuation_required: true,
+        terminal_failure: false
+      }
+    }
+  };
+}
+
 function validEvidence() {
   const terminalCompletionEvidence = { final_state: 'Succeeded', completion_result_fingerprint: 'sha256:terminal-fixture' };
   return {
@@ -276,6 +306,33 @@ test('controller binds executed verification and the CLI terminal payload into d
   const result = evaluateDeliveryHandoff({ claim, stdoutPayload, semanticCompletionEvidence: evidence });
   assert.equal(result.pr_handoff_allowed, true);
   assert.deepEqual(result.semantic_completion_evidence, evidence);
+});
+
+test('a verified terminal objective apply is eligible for handoff despite its legacy resume envelope', () => {
+  const stdoutPayload = terminalObjectiveApplyRun();
+  const evidence = produceSemanticCompletionEvidence({
+    claim,
+    stdoutPayload,
+    verification: {
+      completed: true,
+      results: [{ command: 'node --test scripts/artifact-journey.test.mjs', exit_code: 0 }]
+    }
+  });
+  assert.ok(evidence);
+  assert.equal(evidence.terminal.terminal_completion_evidence.final_state, 'Completed');
+  assert.equal(evidence.terminal.terminal_completion_evidence.task_status, 'Completed');
+  const result = evaluateDeliveryHandoff({ claim, stdoutPayload, semanticCompletionEvidence: evidence });
+  assert.equal(result.delivery_state, 'verification_passed');
+  assert.equal(result.pr_handoff_allowed, true);
+});
+
+test('a terminal-looking objective apply without matching completion fingerprints remains nonterminal', () => {
+  const stdoutPayload = terminalObjectiveApplyRun();
+  stdoutPayload.run.terminal_completion_completion_result_fingerprint = 'sha256:different';
+  const result = evaluateDeliveryHandoff({ claim, stdoutPayload });
+  assert.equal(result.pr_handoff_allowed, false);
+  assert(result.reasons.includes('continuation_required'));
+  assert(result.reasons.includes('run_not_completed'));
 });
 
 test('the producer cannot manufacture evidence without a successful executed verification', () => {
