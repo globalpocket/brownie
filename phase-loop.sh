@@ -12811,14 +12811,22 @@ PY
       return 0
       ;;
     completed)
-      if ! record_completion_ledger_transition "review-merge-$(date -u +%Y%m%dT%H%M%SZ)" '{"completion":"independent_review_ci_merge_verified"}'; then
+      # Review reconciliation establishes that GitHub accepted the PR, but it
+      # does not by itself bind the merged tree back to the Runtime execution
+      # and the selected bounded targets.  Route through the same clean-merge
+      # re-verification used for recovered deliveries before emitting a ledger
+      # completion or changing the live queue.
+      local merge_run_stamp runtime_run_stamp runtime_stdout_log
+      merge_run_stamp="review-merge-$(date -u +%Y%m%dT%H%M%SZ)"
+      runtime_run_stamp="$(phase_loop_verified_runtime_run_stamp 2>/dev/null || true)"
+      runtime_stdout_log="$RUN_DIR/$runtime_run_stamp.stdout.log"
+      if [ -z "$runtime_run_stamp" ] || [ ! -s "$runtime_stdout_log" ]; then
+        write_status "blocked" "PR is merged and reviewed, but the immutable Runtime execution receipt is unavailable for merged-delivery re-verification." "review-reconcile" "78" "${CONSECUTIVE_FAILURES:-0}"
         return 78
       fi
-      if ! remove_completed_todo_claim_from_queue "review-merge-$(date -u +%Y%m%dT%H%M%SZ)"; then
-        write_status "blocked" "PR is merged and reviewed, but durable TODO removal was refused; preserving completion claim for reconciliation." "review-reconcile" "78" "${CONSECUTIVE_FAILURES:-0}"
-        return 78
+      if ! phase_loop_reverify_and_consume_merged_delivery "$merge_run_stamp" "$runtime_stdout_log" "review-reconcile"; then
+        return $?
       fi
-      write_status "last_run_succeeded" "Selected TODO was independently approved, CI-verified, merged, and removed from the queue: $pr_url" "review-reconcile" "0" "0"
       return 75
       ;;
     *)

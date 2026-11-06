@@ -97,6 +97,21 @@ test('handoff refresh locates the immutable Runtime execution instead of a revie
   assert.match(controller.slice(refreshStart, refreshEnd), /phase_loop_verified_runtime_run_stamp/);
 });
 
+test('merged review reconciliation re-verifies the merged delivery before consuming the TODO', () => {
+  const reconcileStart = controller.indexOf('phase_loop_reconcile_pending_review()');
+  const reconcileEnd = controller.indexOf('\n}\n\n# A Runtime task-executed envelope', reconcileStart);
+  assert(reconcileStart >= 0 && reconcileEnd > reconcileStart, 'review reconciliation helper must exist');
+  const reconcile = controller.slice(reconcileStart, reconcileEnd);
+  const completedStart = reconcile.indexOf('    completed)');
+  const completedEnd = reconcile.indexOf('    *)', completedStart);
+  assert(completedStart >= 0 && completedEnd > completedStart, 'merged review completion branch must exist');
+  const completed = reconcile.slice(completedStart, completedEnd);
+  assert.match(completed, /phase_loop_verified_runtime_run_stamp/);
+  assert.match(completed, /phase_loop_reverify_and_consume_merged_delivery/);
+  assert.doesNotMatch(completed, /record_completion_ledger_transition/);
+  assert.doesNotMatch(completed, /remove_completed_todo_claim_from_queue/);
+});
+
 test('claimed-task-not-admitted recovery persists zero-execution evidence and a terminal progress projection after rollback', () => {
   const block = mismatchRecoveryBlock();
   const restoreClaim = block.indexOf('restore_claim_snapshot_before_runtime "$claim_snapshot_before_runtime"');
