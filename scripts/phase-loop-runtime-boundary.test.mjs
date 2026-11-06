@@ -315,6 +315,10 @@ test('verified objective-apply continuations preserve the claim for resume inste
   assert.match(helper, /payload\.get\("phase_loop_queue_fingerprint"\) == claim\.get\("queue_fingerprint"\)/);
   assert.match(helper, /payload\.get\("phase_loop_queue_generation"\) == claim\.get\("queue_generation"\)/);
   assert.match(helper, /automation\.get\("continuation_required"\) is True/);
+  assert.match(helper, /terminal_final_state = str\(payload\.get\("terminal_completion_final_state"\) or ""\)/);
+  assert.match(helper, /terminal_task_status = str\(payload\.get\("terminal_completion_task_status"\) or ""\)/);
+  assert.match(helper, /and terminal_final_state == ""/);
+  assert.match(helper, /and terminal_task_status == ""/);
   assert.match(helper, /invocation\.get\("command"\) == "resume"/);
 
   const completionStart = controller.indexOf('local verification_completion');

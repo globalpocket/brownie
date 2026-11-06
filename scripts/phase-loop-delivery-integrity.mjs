@@ -54,10 +54,42 @@ export function runDeliveryView(stdoutPayload) {
       ? asObject(root.resume)
       : root;
   const automation = { ...asObject(root.automation), ...asObject(run.automation) };
-  const completed = run.completed === true || (run === root && root.completed === true);
-  const continuationRequired = run.continuation_required === true
+  const terminalFinalState = typeof run.terminal_completion_final_state === 'string'
+    ? run.terminal_completion_final_state
+    : '';
+  const terminalTaskStatus = typeof run.terminal_completion_task_status === 'string'
+    ? run.terminal_completion_task_status
+    : '';
+  const completionFingerprint = typeof run.completion_result_fingerprint === 'string'
+    ? run.completion_result_fingerprint
+    : '';
+  const terminalCompletionFingerprint = typeof run.terminal_completion_completion_result_fingerprint === 'string'
+    ? run.terminal_completion_completion_result_fingerprint
+    : '';
+  // Runtime historically reports a completed objective apply as a resumable
+  // controller envelope.  Treat that as terminal only when the independent
+  // task result, closure counts, and duplicate completion fingerprint agree.
+  // This deliberately does not relax ordinary continuation handling.
+  const terminalObjectiveCompleted = (
+    run.task_execution_confirmed === true
+    && run.objective_apply_applied === true
+    && run.blocked === false
+    && automation.blocked === false
+    && run.terminal_failure === false
+    && automation.terminal_failure === false
+    && terminalFinalState === 'Completed'
+    && terminalTaskStatus === 'Completed'
+    && Number.isInteger(run.completion_closure_terminal_task_count)
+    && run.completion_closure_terminal_task_count > 0
+    && run.completion_closure_runnable_task_count === 0
+    && run.completion_closure_blocked_task_count === 0
+    && completionFingerprint.length > 0
+    && completionFingerprint === terminalCompletionFingerprint
+  );
+  const completed = run.completed === true || (run === root && root.completed === true) || terminalObjectiveCompleted;
+  const continuationRequired = !terminalObjectiveCompleted && (run.continuation_required === true
     || root.continuation_required === true
-    || automation.continuation_required === true;
+    || automation.continuation_required === true);
   const terminalEvidenceMissing = run.terminal_completion_evidence_missing === true
     || root.terminal_completion_evidence_missing === true
     || automation.terminal_completion_evidence_missing === true;
@@ -70,6 +102,17 @@ export function runDeliveryView(stdoutPayload) {
     continuation_required: continuationRequired,
     terminal_completion_evidence_missing: terminalEvidenceMissing,
     trajectory_failed: failure,
+    terminal_completion_evidence: run.terminal_completion_evidence
+      ?? root.terminal_completion_evidence
+      ?? (terminalObjectiveCompleted
+        ? {
+            final_state: terminalFinalState,
+            task_status: terminalTaskStatus,
+            completion_result_fingerprint: completionFingerprint,
+            task_id: typeof run.task_id === 'string' ? run.task_id : null,
+            objective_apply_path: typeof run.objective_apply_path === 'string' ? run.objective_apply_path : null
+          }
+        : null),
     semantic_completion_evidence: run.semantic_completion_evidence
       ?? root.semantic_completion_evidence
       ?? automation.semantic_completion_evidence
@@ -682,10 +725,12 @@ export function produceSemanticCompletionEvidence({ claim, stdoutPayload, verifi
 
   const runtime = runDeliveryView(stdoutPayload);
   const payload = asObject(stdoutPayload);
-  const run = asObject(payload.run);
-  const terminalCompletionEvidence = run.terminal_completion_evidence
-    ?? payload.terminal_completion_evidence
-    ?? null;
+  const run = Object.keys(asObject(payload.run)).length > 0
+    ? asObject(payload.run)
+    : Object.keys(asObject(payload.resume)).length > 0
+      ? asObject(payload.resume)
+      : payload;
+  const terminalCompletionEvidence = runtime.terminal_completion_evidence;
   // A successful process envelope is intentionally insufficient.  Preserve
   // the concrete terminal fact in the receipt so a later review reconcile
   // cannot turn a patch/CI result into a synthetic completed run.
