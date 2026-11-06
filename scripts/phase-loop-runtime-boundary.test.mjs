@@ -61,6 +61,20 @@ test('post-runtime target validators capture failures instead of escaping run-on
   }
 });
 
+test('a syntax-invalid objective apply restores the target and continues the same claim with repair feedback', () => {
+  const start = controller.indexOf('if [ "$active_target_syntax_status" -ne 0 ]; then');
+  const end = controller.indexOf('    if [ -f "$ROOT_DIR/scripts/guard-js-duplicate-exports.mjs" ]; then', start);
+  assert(start >= 0 && end > start, 'syntax recovery block must exist');
+  const recovery = controller.slice(start, end);
+  assert.match(recovery, /restore_active_target_baseline/);
+  assert.match(recovery, /write_repair_feedback/);
+  assert.match(recovery, /write_todo_claim "\$\(claim_field claim_id\)" "in_progress"/);
+  assert.match(recovery, /write_status "continuation_required"/);
+  assert.match(recovery, /"todo\.repair_feedback" '\{"reason":"syntax_breaking_target_restored"\}'/);
+  assert.doesNotMatch(recovery, /archive_stale_todo_claim/);
+  assert.doesNotMatch(recovery, /"todo\.blocked" '\{"reason":"syntax_breaking_target_restored"\}'/);
+});
+
 test('public blocked-event canonicalization preserves owner stops without contradictory continuation', () => {
   assert.match(controller, /reason in \{\"explicit_blocker\", \"explicit_blocker_pre_runtime\"\}/);
   assert.match(controller, /payload\.get\("owner_blocked"\) is True/);

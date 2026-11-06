@@ -20340,17 +20340,17 @@ PY
       fi
       write_repair_feedback "$run_stamp" "$syntax_repair_feedback" "$stdout_log" "$stderr_log" || true
       if active_todo_claim_exists; then
-        write_todo_claim "$(claim_field claim_id)" "failed" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
+        # A restored syntax-invalid objective apply is recoverable work on the
+        # same immutable TODO, not a failed TODO.  Preserve the claim so the
+        # next bounded Runtime invocation receives the precise repair feedback
+        # instead of selecting the already-implemented target from scratch.
+        write_todo_claim "$(claim_field claim_id)" "in_progress" "$(claim_field selected_todo)" "$(claim_field queue_fingerprint)" "$(active_claim_queue_generation)" "$run_stamp"
       fi
-      detail="Rejected syntax-breaking workspace mutation and restored $active_target_path from pre-run snapshot. syntax=$(printf '%s' "$active_target_syntax_output" | tail -c 1000) stdout=$stdout_log stderr=$stderr_log"
-      write_status "no_progress" "$detail" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-1}"
-      printf '%s run=%s syntax_breaking_target_restored=true target=%s stdout=%s stderr=%s\n' "$(now_utc)" "$run_stamp" "$active_target_path" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
-      # The public BDK contract has no todo.failed event. Keep its compatible
-      # repair-required terminal event while recording the precise terminal
-      # failure only in the private task ledger.
-      write_bdk_trajectory_event "$run_stamp" "todo.blocked" '{"reason":"syntax_breaking_target_restored"}' "todo.failed"
-      archive_stale_todo_claim "$run_stamp"
-      return 76
+      detail="Rejected syntax-breaking workspace mutation and restored $active_target_path from pre-run snapshot; durable repair feedback requires a bounded continuation on the same claim. syntax=$(printf '%s' "$active_target_syntax_output" | tail -c 1000) stdout=$stdout_log stderr=$stderr_log"
+      write_status "continuation_required" "$detail" "$run_stamp" "0" "0" "" "true"
+      printf '%s run=%s syntax_breaking_target_restored=true target=%s repair_continuation_required=true stdout=%s stderr=%s\n' "$(now_utc)" "$run_stamp" "$active_target_path" "$stdout_log" "$stderr_log" >> "$SUPERVISOR_LOG"
+      write_bdk_trajectory_event "$run_stamp" "todo.repair_feedback" '{"reason":"syntax_breaking_target_restored"}'
+      return 0
     fi
     if [ -f "$ROOT_DIR/scripts/guard-js-duplicate-exports.mjs" ]; then
       if active_target_duplicate_exports_output="$(
