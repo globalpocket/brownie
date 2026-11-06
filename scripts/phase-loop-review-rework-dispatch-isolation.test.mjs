@@ -186,9 +186,15 @@ test('preserves the first applied target and admits one fresh store only for an 
   assert.equal(verified.applicable, true, JSON.stringify(verified));
   assert.equal(verified.continuation_target_path, 'scripts/second.mjs');
 
+  const laterResume = verifyObjectiveApplyNoEligibleContinuationTarget({
+    repoRoot: f.repository, claimPath: f.claimPath, runStamp: '20261106T081250Z',
+  });
+  assert.equal(laterResume.applicable, true, JSON.stringify(laterResume));
+  assert.equal(laterResume.activation_run_stamp, f.runStamp);
+
   fs.writeFileSync(path.join(f.repository, 'scripts', 'first.mjs'), 'export const first = "replayed";\n');
   assert.throws(
-    () => verifyObjectiveApplyNoEligibleContinuationTarget({ repoRoot: f.repository, claimPath: f.claimPath, runStamp: f.runStamp }),
+    () => verifyObjectiveApplyNoEligibleContinuationTarget({ repoRoot: f.repository, claimPath: f.claimPath, runStamp: '20261106T081250Z' }),
     /objective_apply_no_eligible_recovery_replayed_or_tampered_first_target/
   );
 });

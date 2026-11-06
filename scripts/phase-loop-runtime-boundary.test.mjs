@@ -24,6 +24,24 @@ test('runtime mismatch recovery restores delegated scope, target, and pre-runtim
   assert.doesNotMatch(block, /\n\s+write_todo_claim\b/);
 });
 
+test('claimed-task-not-admitted recovery persists zero-execution evidence and a terminal progress projection after rollback', () => {
+  const block = mismatchRecoveryBlock();
+  const restoreClaim = block.indexOf('restore_claim_snapshot_before_runtime "$claim_snapshot_before_runtime"');
+  const evidence = block.indexOf('write_runtime_execution_evidence "$run_stamp" "$stdout_log" "$claim_snapshot_before_runtime"');
+  const progress = block.indexOf('write_progress_state "$stdout_log" "$run_stamp" "$exit_code"');
+  assert(restoreClaim >= 0 && evidence > restoreClaim && progress > evidence,
+    'the claim must be restored before durable no-execution evidence and progress are written');
+  assert.match(block, /workspace_after="\$\(git_workspace_fingerprint\)"/);
+  assert.match(block, /mismatch_execution_evidence_status/);
+  assert.match(block, /mismatch_progress_status/);
+  const writerStart = controller.indexOf('write_runtime_execution_evidence()');
+  const writerEnd = controller.indexOf('\n}\n\nis_running()', writerStart);
+  assert(writerStart >= 0 && writerEnd > writerStart, 'terminal evidence writer must exist');
+  const writer = controller.slice(writerStart, writerEnd);
+  assert.match(writer, /return "\$status"/,
+    'admission recovery must fail closed if its durable zero-execution receipt cannot be written');
+});
+
 test('public blocked-event canonicalization preserves owner stops without contradictory continuation', () => {
   assert.match(controller, /reason in \{\"explicit_blocker\", \"explicit_blocker_pre_runtime\"\}/);
   assert.match(controller, /payload\.get\("owner_blocked"\) is True/);

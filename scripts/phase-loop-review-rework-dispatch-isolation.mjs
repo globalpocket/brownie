@@ -980,7 +980,14 @@ export function verifyObjectiveApplyNoEligibleContinuationTarget({ repoRoot, cla
   const claim = readJson(claimPath);
   const recovery = claim.objective_apply_no_eligible_fresh_dispatch_recovery;
   if (!recovery || typeof recovery !== 'object') return { ok: true, applicable: false };
-  if (claim.objective_apply_no_eligible_fresh_dispatch_activated_run_stamp !== runStamp) return { ok: true, applicable: false };
+  // The marker is cleared only by the admitted fresh run, but its authority
+  // spans the full claim lifecycle.  A later resume must not regain permission
+  // to rewrite the already-proven first target merely because its run stamp is
+  // different from the fresh-dispatch activation stamp.
+  const activationRunStamp = claim.objective_apply_no_eligible_fresh_dispatch_activated_run_stamp;
+  if (typeof activationRunStamp !== 'string' || !activationRunStamp) {
+    return { ok: true, applicable: false, reason: 'objective_apply_no_eligible_fresh_dispatch_not_activated' };
+  }
   const appliedTarget = safeRelativePath(recovery.applied_target_path);
   const continuationTarget = safeRelativePath(recovery.continuation_target_path);
   if (!appliedTarget || !continuationTarget || appliedTarget === continuationTarget
@@ -993,7 +1000,14 @@ export function verifyObjectiveApplyNoEligibleContinuationTarget({ repoRoot, cla
       || sha256(fs.readFileSync(currentTarget)) !== recovery.applied_target_sha256) {
     throw new Error('objective_apply_no_eligible_recovery_replayed_or_tampered_first_target');
   }
-  return { ok: true, applicable: true, applied_target_path: appliedTarget, continuation_target_path: continuationTarget };
+  return {
+    ok: true,
+    applicable: true,
+    activation_run_stamp: activationRunStamp,
+    run_stamp: runStamp,
+    applied_target_path: appliedTarget,
+    continuation_target_path: continuationTarget,
+  };
 }
 
 function readOption(args, name) {

@@ -16666,7 +16666,10 @@ os.replace(tmp, path)
 PY
   fi
   printf '%s run=%s terminal_execution_evidence_exit=%s confirmed=%s result=%s path=%s\n' "$(now_utc)" "$run_stamp" "$status" "$PHASE_LOOP_RUNTIME_EXECUTION_CONFIRMED" "${output:-<no output>}" "$evidence_path" >> "$SUPERVISOR_LOG"
-  return 0
+  # A missing or malformed durable receipt must fail the caller's recovery
+  # boundary.  Returning success here would let a later no-eligible replan
+  # manufacture its proof from an absent execution-evidence file.
+  return "$status"
 }
 
 is_running() {
@@ -20063,6 +20066,7 @@ NODE
     # every out-of-scope tracked file, while the exact pre-runtime target
     # snapshot restores writes inside the declared target as well.
     local mismatch_scope_output mismatch_scope_status=0 mismatch_target_status=0 mismatch_claim_status=0
+    local mismatch_execution_evidence_status=0 mismatch_progress_status=0
     set +e
     mismatch_scope_output="$(node "$ROOT_DIR/scripts/phase-loop-delegated-scope.mjs" \
       --workspace "$PHASE_LOOP_WORKSPACE_ROOT" \
@@ -20077,13 +20081,26 @@ NODE
     restore_claim_snapshot_before_runtime "$claim_snapshot_before_runtime"
     mismatch_claim_status=$?
     set -e
+    # `claimed_task_not_admitted` is an execution boundary outcome, not an
+    # invitation to retry without a durable record.  The no-eligible recovery
+    # needs this claim-bound zero-execution evidence and terminal projection to
+    # prove the first applied target before it can constrain one fresh dispatch
+    # to the untouched continuation target.  Persist both only after every
+    # rollback layer has restored the pre-runtime authority state.
+    workspace_after="$(git_workspace_fingerprint)"
+    set +e
+    write_runtime_execution_evidence "$run_stamp" "$stdout_log" "$claim_snapshot_before_runtime" "$workspace_before" "$workspace_after"
+    mismatch_execution_evidence_status=$?
+    write_progress_state "$stdout_log" "$run_stamp" "$exit_code" "$workspace_before" "$workspace_after" "$head_commit"
+    mismatch_progress_status=$?
+    set -e
     write_runtime_terminal_repair_feedback "$run_stamp" "$stdout_log" "$stderr_log" || true
     if [ "$runtime_admission_cause" = "claimed_task_not_admitted" ] && [ "$runtime_admission_snapshot_mismatch" = "0" ]; then
       detail="Runtime attested the admitted claim snapshot but produced no task execution evidence; classified as execution_not_started and restored the pre-runtime delegated scope, target, and claim snapshots before bounded recovery. admission=$runtime_admission_validation scope_status=$mismatch_scope_status target_status=$mismatch_target_status claim_status=$mismatch_claim_status scope=$mismatch_scope_output stdout=$stdout_log stderr=$stderr_log"
     else
       detail="Runtime admission snapshot mismatch; restored the pre-runtime delegated scope, target, and claim snapshots before bounded recovery. admission=$runtime_admission_validation scope_status=$mismatch_scope_status target_status=$mismatch_target_status claim_status=$mismatch_claim_status scope=$mismatch_scope_output stdout=$stdout_log stderr=$stderr_log"
     fi
-    if [ "$mismatch_scope_status" -ne 0 ] || [ "$mismatch_target_status" -ne 0 ] || [ "$mismatch_claim_status" -ne 0 ]; then
+    if [ "$mismatch_scope_status" -ne 0 ] || [ "$mismatch_target_status" -ne 0 ] || [ "$mismatch_claim_status" -ne 0 ] || [ "$mismatch_execution_evidence_status" -ne 0 ] || [ "$mismatch_progress_status" -ne 0 ]; then
       detail="Runtime admission mismatch recovery was incomplete; refusing to continue with partially restored state. $detail"
     fi
     write_status "no_progress" "$detail" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-1}"
