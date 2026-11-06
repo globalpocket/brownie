@@ -59,7 +59,16 @@ const requiredStatefulSoakStepIds = [
   'soak_test',
   'executable_evidence_validation',
   'roundtrip_journey_binding',
-  'soak_results_binding'
+  'soak_results_binding',
+  'implementation_commit',
+  'tested_commit',
+  'workflow_run_id',
+  'artifact_sha256',
+  'binary_sha256',
+  'platform',
+  'architecture',
+  'roundtrip_journey',
+  'soak_results'
 ];
 
 test('evidence_chain_integrity step is required for fail-closed evidence', () => {
