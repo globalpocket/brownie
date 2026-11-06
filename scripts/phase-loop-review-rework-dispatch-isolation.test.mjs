@@ -81,6 +81,17 @@ test('a proved no-eligible continuation after bounded merged delivery is archive
   const claim = JSON.parse(fs.readFileSync(f.claimPath, 'utf8'));
   assert.equal(claim.merged_delivery_fresh_dispatch_pending, true);
   assert.equal(claim.merged_delivery_fresh_dispatch_store_isolation.audit_path, isolated.audit_path);
+
+  claim.merged_delivery_fresh_dispatch_pending = false;
+  claim.merged_delivery_fresh_dispatch_activated_run_stamp = '20261106T040100Z';
+  writeJson(f.claimPath, claim);
+  const repeated = prepareMergedDeliveryFreshDispatchRecovery({
+    repoRoot: f.repository,
+    stateDir: f.stateDir,
+    claimPath: f.claimPath,
+    progressPath: path.join(f.stateDir, 'progress-state.json'),
+  });
+  assert.equal(repeated.reason, 'merged_delivery_fresh_dispatch_already_activated');
 });
 
 function fixture() {

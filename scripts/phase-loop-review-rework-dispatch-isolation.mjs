@@ -583,6 +583,14 @@ export function prepareMergedDeliveryFreshDispatchRecovery({ repoRoot, stateDir,
   const claim = readJson(claimPath);
   const existing = claim.merged_delivery_fresh_dispatch_recovery;
   if (existing) {
+    // The marker is cleared atomically immediately before the replacement
+    // Runtime `run`. Keep its immutable audit on the claim afterwards, but
+    // never try to prepare or isolate that completed dispatch a second time.
+    if (claim.merged_delivery_fresh_dispatch_pending !== true
+        && typeof claim.merged_delivery_fresh_dispatch_activated_run_stamp === 'string'
+        && claim.merged_delivery_fresh_dispatch_activated_run_stamp) {
+      return { ok: true, prepared: false, reason: 'merged_delivery_fresh_dispatch_already_activated', claim_id: claim.claim_id };
+    }
     const identity = mergedDeliveryFreshDispatchIdentity(claim);
     const auditPath = identity && path.join(stateDir, 'recovery-audits', `${sha256(identity.recoveryId).slice(0, 16)}-merged-delivery-dispatch-${identity.dispatchAttempt}.json`);
     if (identity && auditPath && fs.existsSync(auditPath)) {
