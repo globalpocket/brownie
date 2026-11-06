@@ -81,7 +81,17 @@ test('archives a blocked active claim and selects its unblocked replan leaf', ()
   ], {
     cwd: repoRoot,
     encoding: 'utf8',
-    env: { ...process.env, PHASE_LOOP_STATE_DIR: state, PHASE_LOOP_TODO: todo, PHASE_LOOP_TODO_BREAKDOWN: breakdown }
+    // This shell-level controller test invokes functions directly rather than
+    // loading an operational deployment. Pin its target workspace explicitly
+    // so a CI environment variable such as the literal string "null" cannot
+    // turn the fixture into a configuration-dependent test.
+    env: {
+      ...process.env,
+      PHASE_LOOP_WORKSPACE_ROOT: repoRoot,
+      PHASE_LOOP_STATE_DIR: state,
+      PHASE_LOOP_TODO: todo,
+      PHASE_LOOP_TODO_BREAKDOWN: breakdown
+    }
   });
 
   assert.match(selected, /E-23a-replan-stalled-leaf-abc123-leaf-01/);
