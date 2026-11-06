@@ -29,7 +29,10 @@ const requiredStatefulSoakStepIds = [
   'soak_test',
   'executable_evidence_validation',
   'roundtrip_journey_binding',
-  'soak_results_binding'
+  'soak_results_binding',
+  'downloaded_roundtrip_binding',
+  'runtime_journey_binding',
+  'supply_chain_guard_binding'
 ];
 const allowedIncompleteStatuses = new Set([
   'failed',
