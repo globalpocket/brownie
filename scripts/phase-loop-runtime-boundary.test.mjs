@@ -43,6 +43,24 @@ test('claimed-task-not-admitted recovery persists zero-execution evidence and a 
     'admission recovery must fail closed if its durable zero-execution receipt cannot be written');
 });
 
+test('post-runtime target validators capture failures instead of escaping run-once', () => {
+  const validators = [
+    'node "$ROOT_DIR/scripts/guard-json-parse.mjs" "$active_target_path"',
+    'node --check "$active_target_path"',
+    'node "$ROOT_DIR/scripts/guard-js-duplicate-exports.mjs" "$PHASE_LOOP_WORKSPACE_ROOT/$active_target_path"'
+  ];
+  for (const validator of validators) {
+    const marker = controller.lastIndexOf(validator);
+    assert(marker >= 0, `${validator} validator must exist`);
+    const window = controller.slice(Math.max(0, marker - 320), marker + 560);
+    assert.match(
+      window,
+      /if active_target_[a-z_]+_output="\$\([\s\S]*?\)"; then[\s\S]*?active_target_[a-z_]+_status=0[\s\S]*?else[\s\S]*?active_target_[a-z_]+_status=\$\?/,
+      `${validator} failure must enter its bounded recovery branch rather than trigger errexit`,
+    );
+  }
+});
+
 test('public blocked-event canonicalization preserves owner stops without contradictory continuation', () => {
   assert.match(controller, /reason in \{\"explicit_blocker\", \"explicit_blocker_pre_runtime\"\}/);
   assert.match(controller, /payload\.get\("owner_blocked"\) is True/);
