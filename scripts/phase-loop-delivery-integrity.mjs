@@ -440,6 +440,10 @@ function normalizeReview(value) {
     ci_passed: review.ci_passed === true,
     latest_reviewer_review_state: review.latest_reviewer_review_state ?? null,
     latest_reviewer_review_commit_oid: review.latest_reviewer_review_commit_oid ?? null,
+    changed_files: asArray(review.changed_files ?? review.files)
+      .map((file) => typeof file === 'string' ? file : asObject(file).path)
+      .filter((file) => typeof file === 'string' && file.length > 0)
+      .sort(),
     title: typeof review.title === 'string' ? review.title : '',
     body: typeof review.body === 'string' ? review.body : ''
   };
@@ -455,6 +459,48 @@ function reviewDeclaresTask(review, todoId) {
   return matcher.test(`${review.title}\n${review.body}`) ? key : null;
 }
 
+function independentlyApprovedMergedReview(review, reviewer, implementation) {
+  return (
+    review.state === 'MERGED'
+    && isSha(review.merge_commit_oid)
+    && isSha(review.head_oid)
+    && review.author === implementation
+    && review.reviewer === reviewer
+    && review.merge_actor === reviewer
+    && review.approved
+    && review.ci_passed
+    && Boolean(review.pr_url)
+    && Boolean(review.merged_at)
+    && Boolean(review.observed_at)
+    && review.latest_reviewer_review_state === 'APPROVED'
+    && review.latest_reviewer_review_commit_oid === review.head_oid
+  );
+}
+
+function taskBindingAttestation({ repoRoot, revision, claim, review, reviewer, implementation, scopes }) {
+  const observed = normalizeReview(review);
+  const recorded = asObject(asObject(claim).delivery_review);
+  const errors = [];
+  if (!recorded.pr_number || observed.pr_number !== recorded.pr_number || observed.head_oid !== recorded.head_oid) {
+    errors.push('merged_delivery_task_attestation_claim_mismatch');
+  }
+  if (!independentlyApprovedMergedReview(observed, reviewer, implementation)) {
+    errors.push('merged_delivery_task_attestation_review_invalid');
+  }
+  if (!reviewDeclaresTask(observed, claim.selected_todo_id)) {
+    errors.push('merged_delivery_task_attestation_missing_task_binding');
+  }
+  if (!scopes.some((scope) => observed.changed_files.includes(scope))) {
+    errors.push('merged_delivery_task_attestation_scope_missing');
+  }
+  try {
+    git(repoRoot, ['merge-base', '--is-ancestor', observed.merge_commit_oid, revision]);
+  } catch {
+    errors.push('merged_delivery_task_attestation_not_on_observed_base');
+  }
+  return { valid: errors.length === 0, errors, review: observed };
+}
+
 /**
  * Reverify an already-merged implementation without treating a runtime
  * `task_executed` envelope, a run id, or a green PR as completion.  This is
@@ -464,7 +510,8 @@ function reviewDeclaresTask(review, todoId) {
  */
 export function verifyMergedDeliveryReverification({ repoRoot, claim, stdoutPayload, review, reviewer, implementation, revision = 'HEAD' }) {
   const deliveryClaim = asObject(claim);
-  const normalizedReviews = (Array.isArray(review) ? review : [review]).map(normalizeReview);
+  const reviewEnvelope = asObject(review);
+  const normalizedReviews = (Array.isArray(review) ? review : Array.isArray(reviewEnvelope.lineage) ? reviewEnvelope.lineage : [review]).map(normalizeReview);
   const scopes = mergedDeliveryScope(deliveryClaim);
   const errors = [];
   const runtime = runtimeTaskExecution(deliveryClaim, stdoutPayload);
@@ -513,27 +560,47 @@ export function verifyMergedDeliveryReverification({ repoRoot, claim, stdoutPayl
     return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_review_git_mismatch'] };
   }
   const reviewErrors = [];
+  const lineageDeclaresTask = reviewedLineage.some(({ entry, review: observed }) => (
+    entry.task_spec_binding?.kind === 'merge_todo_snapshot'
+    && reviewDeclaresTask(observed, deliveryClaim.selected_todo_id)
+  ));
+  const lineageRequiresTaskAttestation = reviewedLineage.some(({ entry }) => (
+    entry.task_spec_binding?.kind === 'merge_todo_snapshot'
+ ));
   for (const item of reviewedLineage) {
     const observed = item.review;
-    const binding = asObject(item.entry.task_spec_binding);
     if (observed.state !== 'MERGED') reviewErrors.push('merged_delivery_pr_not_merged');
     if (!isSha(observed.merge_commit_oid) || !isSha(observed.head_oid)) reviewErrors.push('merged_delivery_git_identity_missing');
     if (observed.author !== implementation) reviewErrors.push('merged_delivery_implementation_author_mismatch');
     if (observed.reviewer !== reviewer || observed.merge_actor !== reviewer) reviewErrors.push('merged_delivery_independent_review_missing');
     if (!observed.approved || !observed.ci_passed || !observed.pr_url || !observed.merged_at || !observed.observed_at) reviewErrors.push('merged_delivery_review_or_ci_evidence_missing');
-    if (observed.latest_reviewer_review_state !== 'APPROVED' || observed.latest_reviewer_review_commit_oid !== observed.head_oid) {
-      reviewErrors.push('merged_delivery_latest_reviewer_approval_missing');
-    }
-    if (binding.kind === 'merge_todo_snapshot' && !reviewDeclaresTask(observed, deliveryClaim.selected_todo_id)) {
+    if (observed.latest_reviewer_review_state !== 'APPROVED' || observed.latest_reviewer_review_commit_oid !== observed.head_oid) reviewErrors.push('merged_delivery_latest_reviewer_approval_missing');
+  }
+  let taskAttestation = null;
+  if (lineageRequiresTaskAttestation && !lineageDeclaresTask) {
+    // A legacy single-review receipt has no separate task-attestation
+    // envelope.  Preserve its single, actionable refusal code; detailed
+    // failures are reserved for an attestation that was actually supplied.
+    if (Object.keys(asObject(reviewEnvelope.task_attestation)).length === 0) {
       reviewErrors.push('merged_delivery_review_task_binding_missing');
+    } else {
+      const attestation = taskBindingAttestation({
+        repoRoot, revision, claim: deliveryClaim, review: reviewEnvelope.task_attestation,
+        reviewer, implementation, scopes
+      });
+      if (!attestation.valid) reviewErrors.push(...attestation.errors);
+      else taskAttestation = attestation.review;
     }
   }
   if (reviewErrors.length > 0) return { valid: false, reason: 'merged_delivery_reverification_refused', errors: [...new Set(reviewErrors)] };
   const primary = reviewedLineage[0];
   const normalizedReview = primary.review;
   const taskSpecBinding = primary.entry.task_spec_binding;
-  const reviewTaskDeclaration = taskSpecBinding.kind === 'merge_todo_snapshot'
+  const primaryReviewTaskDeclaration = taskSpecBinding.kind === 'merge_todo_snapshot'
     ? reviewDeclaresTask(normalizedReview, deliveryClaim.selected_todo_id) : null;
+  const reviewTaskDeclaration = taskAttestation
+    ? reviewDeclaresTask(taskAttestation, deliveryClaim.selected_todo_id)
+    : primaryReviewTaskDeclaration;
   const targets = candidate.targets;
 
   const verification_results = [];
@@ -551,8 +618,8 @@ export function verifyMergedDeliveryReverification({ repoRoot, claim, stdoutPayl
     ...normalizedReview,
     title: undefined,
     body: undefined,
-    task_declaration_key: reviewTaskDeclaration,
-    task_declaration_sha256: reviewTaskDeclaration ? sha256(`${normalizedReview.title}\n${normalizedReview.body}`) : null
+    task_declaration_key: primaryReviewTaskDeclaration,
+    task_declaration_sha256: primaryReviewTaskDeclaration ? sha256(`${normalizedReview.title}\n${normalizedReview.body}`) : null
   };
   const evidenceReviewLineage = reviewedLineage.map(({ entry, review: observed }) => ({
     ...observed,
@@ -584,6 +651,15 @@ export function verifyMergedDeliveryReverification({ repoRoot, claim, stdoutPayl
     task_spec_binding: taskSpecBinding,
     review: evidenceReview,
     review_lineage: evidenceReviewLineage,
+    ...(taskAttestation ? {
+      task_attestation: {
+        ...taskAttestation,
+        title: undefined,
+        body: undefined,
+        task_declaration_key: reviewTaskDeclaration,
+        task_declaration_sha256: sha256(`${taskAttestation.title}\n${taskAttestation.body}`)
+      }
+    } : {}),
     verification_results
   };
   return { valid: true, evidence };
@@ -673,8 +749,35 @@ export function validateMergedDeliveryReverification({ claim, evidence }) {
     if (taskSpecBinding.todo_snapshot_commit_oid !== gitProof.merge_commit_oid || taskSpecBinding.todo_snapshot_path !== '.brownie/todo.md') {
       errors.push('merged_delivery_evidence_task_snapshot_binding_invalid');
     }
-    if (review.task_declaration_key !== taskFamilyKey(expected.selected_todo_id) || !/^[a-f0-9]{64}$/.test(review.task_declaration_sha256 ?? '')) {
+    const lineageDeclaresTask = reviewLineage.some((entry) => (
+      asObject(entry).task_declaration_key === taskFamilyKey(expected.selected_todo_id)
+      && /^[a-f0-9]{64}$/.test(asObject(entry).task_declaration_sha256 ?? '')
+    ));
+    const attestation = asObject(proof.task_attestation);
+    if (!lineageDeclaresTask && Object.keys(attestation).length === 0) {
       errors.push('merged_delivery_evidence_review_task_binding_invalid');
+    }
+    if (Object.keys(attestation).length > 0) {
+      const deliveryReview = asObject(expected.delivery_review);
+      const changedFiles = asArray(attestation.changed_files);
+      if (
+        attestation.state !== 'MERGED'
+        || !isSha(attestation.merge_commit_oid)
+        || !isSha(attestation.head_oid)
+        || attestation.pr_number !== deliveryReview.pr_number
+        || attestation.head_oid !== deliveryReview.head_oid
+        || !attestation.author || !attestation.reviewer || attestation.author === attestation.reviewer
+        || attestation.merge_actor !== attestation.reviewer
+        || !attestation.approved || !attestation.ci_passed || !attestation.pr_url
+        || !attestation.merged_at || !attestation.observed_at
+        || attestation.latest_reviewer_review_state !== 'APPROVED'
+        || attestation.latest_reviewer_review_commit_oid !== attestation.head_oid
+        || attestation.task_declaration_key !== taskFamilyKey(expected.selected_todo_id)
+        || !/^[a-f0-9]{64}$/.test(attestation.task_declaration_sha256 ?? '')
+        || !scopes.some((scope) => changedFiles.includes(scope))
+      ) {
+        errors.push('merged_delivery_evidence_task_attestation_invalid');
+      }
     }
   }
   const results = asArray(proof.verification_results);
@@ -688,7 +791,12 @@ export function applyMergedDeliveryReverification({ claim, evidence, issuedAt = 
   const validated = validateMergedDeliveryReverification({ claim, evidence });
   if (!validated.valid) return { valid: false, claim: null, errors: validated.errors };
   const proof = asObject(evidence);
-  const review = asObject(proof.review);
+  // Source deliveries establish implementation scope, while a separate
+  // attestation establishes the immutable task-bound handoff.  Completion
+  // must retain the latter identity so certificate validation still binds to
+  // the same claim review that admitted the delivery.
+  const taskAttestation = asObject(proof.task_attestation);
+  const review = Object.keys(taskAttestation).length > 0 ? taskAttestation : asObject(proof.review);
   const next = {
     ...asObject(claim),
     status: 'completed',
