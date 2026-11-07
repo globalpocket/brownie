@@ -13390,6 +13390,60 @@ PY
   sync_parent_dir "$TODO_CLAIM_DIR"
 }
 
+# A historical controller bug could clear the cleanup marker after a failed
+# re-verification, then re-enter Runtime with a merged review still attached.
+# That combination is not a fresh implementation attempt: restore only the
+# cleanup obligation so the immutable Runtime receipt is re-verified before
+# any future dispatch. A durable re-verification receipt always wins.
+recover_unverified_completed_cleanup_state() {
+  local run_stamp="$1"
+  python3 - "$TODO_CLAIM_FILE" "$run_stamp" "$(now_utc)" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+try:
+    claim = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+if not isinstance(claim, dict):
+    raise SystemExit(1)
+review = claim.get("delivery_review") if isinstance(claim.get("delivery_review"), dict) else {}
+if isinstance(review.get("merged_delivery_reverification"), dict):
+    raise SystemExit(0)
+history = claim.get("status_history") if isinstance(claim.get("status_history"), list) else []
+notes = [entry.get("note") for entry in history if isinstance(entry, dict)]
+recovery_needed = (
+    claim.get("status") in {"claimed", "in_progress", "verification_pending"}
+    and review.get("merged") is True
+    and review.get("approved") is True
+    and review.get("ci_passed") is True
+    and "queue_removal_cleanup_pending" in notes
+    and "queue_removal_cleanup_completed" in notes
+)
+if not recovery_needed:
+    raise SystemExit(0)
+claim["status"] = "completed"
+claim["completion_cleanup_pending"] = True
+claim["run_stamp"] = sys.argv[2]
+claim["updated_at"] = sys.argv[3]
+history.append({
+    "status": "completed",
+    "run_stamp": sys.argv[2],
+    "updated_at": sys.argv[3],
+    "note": "queue_removal_cleanup_recovered_after_unverified_completion",
+})
+temporary = path.with_name(f"{path.name}.{os.getpid()}.cleanup-recovery.tmp")
+temporary.write_text(json.dumps(claim, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+os.chmod(temporary, 0o600)
+os.replace(temporary, path)
+os.chmod(path, 0o600)
+PY
+  sync_parent_dir "$TODO_CLAIM_DIR"
+}
+
 mark_completed_todo_pr_pending() {
   local run_stamp="$1"
   local stdout_log="${2:-}" stderr_log="${3:-}" workspace_before="${4:-}" workspace_after="${5:-}"
@@ -19276,6 +19330,12 @@ PY
     write_status "blocked" "$detail" "$run_stamp" "76" "${CONSECUTIVE_FAILURES:-1}"
     printf '%s run=%s terminal_runtime_failure_source_transition_retry_succeeded=true recovery=%s\n' "$(now_utc)" "$run_stamp" "$deferred_terminal_transition_output" >> "$SUPERVISOR_LOG"
     return 76
+  fi
+  if ! recover_unverified_completed_cleanup_state "$run_stamp"; then
+    detail="A merged delivery has an inconsistent cleanup state and could not be restored to re-verification-only recovery; refusing Runtime restart."
+    write_status "blocked" "$detail" "$run_stamp" "78" "${CONSECUTIVE_FAILURES:-1}"
+    printf '%s run=%s unverified_completed_cleanup_recovery_failed=true\n' "$(now_utc)" "$run_stamp" >> "$SUPERVISOR_LOG"
+    return 78
   fi
   if completed_todo_cleanup_pending; then
     local completed_cleanup_output completed_cleanup_status
