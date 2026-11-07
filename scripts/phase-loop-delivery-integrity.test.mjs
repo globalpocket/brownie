@@ -619,6 +619,14 @@ test('merged delivery re-verification requires exact task execution, reviewed me
     implementation: 'implementation-agent'
   });
   assert.equal(terminalObjectiveApplied.valid, true, JSON.stringify(terminalObjectiveApplied));
+  assert.equal(validateMergedDeliveryReverification({ claim: fixtureClaim, evidence: terminalObjectiveApplied.evidence }).valid, true);
+  const terminalObjectiveAppliedDelivery = applyMergedDeliveryReverification({
+    claim: fixtureClaim,
+    evidence: terminalObjectiveApplied.evidence,
+    issuedAt: '2026-11-04T11:40:01Z'
+  });
+  assert.equal(terminalObjectiveAppliedDelivery.valid, true, JSON.stringify(terminalObjectiveAppliedDelivery.errors));
+  assert.equal(validateTerminalDeliveryReceipt({ claim: terminalObjectiveAppliedDelivery.claim }).valid, true);
   const schemaV1WithoutBinding = structuredClone(result.evidence);
   delete schemaV1WithoutBinding.task_spec_binding;
   assert.equal(validateMergedDeliveryReverification({ claim: fixtureClaim, evidence: schemaV1WithoutBinding }).valid, true);
