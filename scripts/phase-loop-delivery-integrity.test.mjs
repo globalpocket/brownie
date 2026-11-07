@@ -588,6 +588,37 @@ test('merged delivery re-verification requires exact task execution, reviewed me
   });
   assert.equal(result.valid, true, JSON.stringify(result));
   assert.equal(validateMergedDeliveryReverification({ claim: fixtureClaim, evidence: result.evidence }).valid, true);
+  const terminalObjectiveApplied = verifyMergedDeliveryReverification({
+    repoRoot: repo,
+    claim: fixtureClaim,
+    stdoutPayload: {
+      run: {
+        automation: {
+          blocked: false,
+          terminal_failure: false
+        },
+        runtime_claim_id: fixtureClaim.claim_id,
+        payload_status: 'objective_proposal_applied',
+        executed_count: 1,
+        task_execution_confirmed: true,
+        objective_apply_applied: true,
+        blocked: false,
+        terminal_failure: false,
+        continuation_required: true,
+        completion_closure_terminal_task_count: 1,
+        completion_closure_runnable_task_count: 0,
+        completion_closure_blocked_task_count: 0,
+        completion_result_fingerprint: 'sha256:terminal-objective',
+        terminal_completion_completion_result_fingerprint: 'sha256:terminal-objective',
+        terminal_completion_final_state: 'Completed',
+        terminal_completion_task_status: 'Completed'
+      }
+    },
+    review,
+    reviewer: 'review-agent',
+    implementation: 'implementation-agent'
+  });
+  assert.equal(terminalObjectiveApplied.valid, true, JSON.stringify(terminalObjectiveApplied));
   const schemaV1WithoutBinding = structuredClone(result.evidence);
   delete schemaV1WithoutBinding.task_spec_binding;
   assert.equal(validateMergedDeliveryReverification({ claim: fixtureClaim, evidence: schemaV1WithoutBinding }).valid, true);
