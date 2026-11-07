@@ -19,6 +19,8 @@ import {
   applyMergedDeliveryReverification,
   findCleanMergedDeliveryCandidate
 } from './phase-loop-delivery-integrity.mjs';
+import { durableDeliveryReceiptForClaim } from './phase-loop-progress-integrity.mjs';
+import { durableCompletionRecordReceipt } from './phase-loop-todo-state.mjs';
 
 const selectedTodo = `- [ ] target-02: Patch only \`runtime.rs\`.
   Completion condition: the artifact journey persists a ledger and rejects stale replay.
@@ -281,6 +283,32 @@ test('a selected TODO may be recovered from split reviewed merges with only boun
   assert.equal(applied.claim.delivery_review.pr_number, taskAttestation.pr_number,
     'completion must retain the claim-bound handoff, not replace it with a source-delivery PR');
   assert.equal(validateCompletionCertificate({ claim: applied.claim }).valid, true);
+  const durableReceipt = durableDeliveryReceiptForClaim(applied.claim);
+  assert.equal(durableReceipt.valid, true, JSON.stringify(durableReceipt));
+  const completionRecord = {
+    schema_version: 3,
+    claim_id: fixtureClaim.claim_id,
+    root_claim_id: fixtureClaim.root_claim_id,
+    selected_todo_id: fixtureClaim.selected_todo_id,
+    selected_todo: fixtureClaim.selected_todo,
+    selected_todo_sha256: fixtureClaim.selected_todo_sha256,
+    queue_fingerprint: fixtureClaim.queue_fingerprint,
+    queue_generation: fixtureClaim.queue_generation,
+    delivery_receipt: durableReceipt.receipt
+  };
+  assert.equal(durableCompletionRecordReceipt(completionRecord).valid, true,
+    'a new completion record retains the task-bound review identity');
+  const persistedTamperedRecord = structuredClone(completionRecord);
+  persistedTamperedRecord.delivery_receipt.author = 'tampered-author';
+  assert.equal(durableCompletionRecordReceipt(persistedTamperedRecord).valid, false,
+    'a persisted receipt still requires compact actor identity to match its attestation');
+  const prePersistenceRecord = structuredClone(completionRecord);
+  delete prePersistenceRecord.delivery_receipt.delivery_review;
+  assert.equal(durableCompletionRecordReceipt(prePersistenceRecord).valid, true,
+    'pre-persistence split receipts remain verifiable when their compact receipt agrees with the attestation');
+  prePersistenceRecord.delivery_receipt.author = 'tampered-author';
+  assert.equal(durableCompletionRecordReceipt(prePersistenceRecord).valid, false,
+    'a detached or altered legacy task attestation cannot resolve a dependency');
   const missingScope = structuredClone(reverified.evidence);
   missingScope.task_attestation.changed_files = ['scripts/not-a-target.mjs'];
   assert.equal(validateMergedDeliveryReverification({ claim: fixtureClaim, evidence: missingScope }).valid, false);

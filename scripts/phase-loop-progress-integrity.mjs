@@ -414,6 +414,15 @@ export function durableDeliveryReceiptForClaim(claim) {
       ci_passed: true,
       merged: true,
       ...(typeof review.pr_url === 'string' && review.pr_url ? { pr_url: review.pr_url } : {}),
+      // Preserve the immutable task-bound review identity alongside the
+      // compact receipt fields.  A later dependency resolver cannot consult
+      // the mutable claim, so split source delivery needs these identifiers
+      // to revalidate its separate task attestation.
+      delivery_review: {
+        pr_url: review.pr_url,
+        pr_number: review.pr_number,
+        head_oid: review.head_oid
+      },
       ...(mergedDeliveryReverification
         ? { merged_delivery_reverification: mergedDeliveryReverification }
         : { semantic_completion_evidence: review.semantic_completion_evidence })

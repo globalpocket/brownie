@@ -173,6 +173,25 @@ export function durableCompletionRecordReceipt(record) {
   const receipt = record?.delivery_receipt;
   const mergedDelivery = receipt?.merged_delivery_reverification;
   if (mergedDelivery) {
+    const attestation = mergedDelivery?.task_attestation;
+    // Schema-v3 receipts written before delivery_review was persisted still
+    // retain the independent attestation and the compact actor receipt.  Use
+    // that immutable pair only when every shared identity field agrees; this
+    // makes the transition backward-compatible without treating a detached
+    // attestation as completion evidence.
+    const recordedReview = receipt?.delivery_review;
+    const attestationMatchesCompactReceipt = (
+      attestation
+      && receipt?.pr_url === attestation.pr_url
+      && receipt?.author === attestation.author
+      && receipt?.reviewer === attestation.reviewer
+      && receipt?.merge_actor === attestation.merge_actor
+    );
+    const deliveryReview = recordedReview ?? (attestationMatchesCompactReceipt ? {
+      pr_url: attestation.pr_url,
+      pr_number: attestation.pr_number,
+      head_oid: attestation.head_oid
+    } : {});
     const selectedTodo = typeof record?.selected_todo === 'string' ? record.selected_todo : '';
     const claim = {
       claim_id: record?.claim_id,
@@ -181,7 +200,8 @@ export function durableCompletionRecordReceipt(record) {
       selected_todo_id: record?.selected_todo_id,
       selected_todo_sha256: record?.selected_todo_sha256,
       queue_fingerprint: record?.queue_fingerprint,
-      queue_generation: record?.queue_generation
+      queue_generation: record?.queue_generation,
+      delivery_review: deliveryReview
     };
     const proof = validateMergedDeliveryReverification({ claim, evidence: mergedDelivery });
     const valid = (
@@ -194,6 +214,10 @@ export function durableCompletionRecordReceipt(record) {
       && receipt.approved === true
       && receipt.ci_passed === true
       && receipt.merged === true
+      // Both receipt shapes keep the compact actor tuple.  When the proof
+      // includes an attestation it must agree with that tuple even if the
+      // newer delivery_review identity is also present.
+      && (!attestation || attestationMatchesCompactReceipt)
       && proof.valid
     );
     return {
