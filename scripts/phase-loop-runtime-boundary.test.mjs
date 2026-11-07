@@ -164,6 +164,16 @@ test('merged delivery verification refreshes and verifies the configured observe
   assert.match(reverify, /--revision "\$merged_delivery_revision"/);
   assert.match(reverify, /PHASE_LOOP_CLAIM_SMOKE_TEST_ONLY/);
   assert.match(reverify, /Merged delivery re-verification could not refresh the configured PR base/);
+  assert.match(reverify, /statusCheckRollup,files/,
+    'both source-delivery and claim-bound handoff PRs must retain their changed-file evidence');
+  assert.match(reverify, /merged-delivery-task-attestation/,
+    'a split delivery must collect the separately task-bound handoff review');
+  assert.match(reverify, /delivery_review/,
+    'the handoff identity must be read from the immutable active claim rather than inferred from a branch');
+  assert.match(reverify, /if \[ -n "\$task_review_identity" \]; then/,
+    'ordinary task-bound source PRs must not require a redundant handoff receipt');
+  assert.match(reverify, /"pr_number": value\.get\("number"\)/,
+    'GitHub PR JSON must normalize number before the immutable handoff identity is checked');
 });
 
 test('claimed-task-not-admitted recovery persists zero-execution evidence and a terminal progress projection after rollback', () => {

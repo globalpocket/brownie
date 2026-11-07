@@ -216,6 +216,20 @@ test('a selected TODO may be recovered from split reviewed merges with only boun
   run(['switch', '--quiet', 'main']);
   run(['merge', '--no-ff', '--no-edit', 'runtime']);
 
+  // The task-bound handoff is a distinct reviewed merge.  Its only role is
+  // to attest the TODO identity for two source-delivery merges that each
+  // carry their own independent review/CI evidence but predate the task
+  // label on the PR itself.
+  run(['switch', '--quiet', '-c', 'handoff']);
+  fs.writeFileSync(path.join(root, 'scripts', 'runtime.mjs'), 'export const runtime = "merged";\n// reviewed task handoff\n');
+  fs.writeFileSync(path.join(root, '.brownie', 'todo.md'), '# selected TODO consumed after reviewed handoff\n');
+  run(['add', '.']);
+  run(['commit', '--quiet', '-m', 'reviewed task handoff']);
+  const handoffHead = run(['rev-parse', 'HEAD']);
+  run(['switch', '--quiet', 'main']);
+  run(['merge', '--no-ff', '--no-edit', 'handoff']);
+  const handoffMerge = run(['rev-parse', 'HEAD']);
+
   const admitted = findCleanMergedDeliveryCandidate({ repoRoot: root, selectedTodo: selected });
   assert.equal(admitted.valid, true, JSON.stringify(admitted));
   assert.equal(admitted.candidate.merge_lineage.length, 2);
@@ -225,6 +239,7 @@ test('a selected TODO may be recovered from split reviewed merges with only boun
     claim_id: 'claim-split', root_claim_id: 'claim-split', selected_todo: selected,
     selected_todo_id: 'E-42b-split-candidate', selected_todo_sha256: selectedTodoSha256({ selected_todo: selected }),
     queue_fingerprint: 'f'.repeat(64), queue_generation: 42,
+    delivery_review: { pr_number: 99, head_oid: handoffHead },
   };
   const reviews = admitted.candidate.merge_lineage.map((entry, index) => ({
     pr_url: `https://example.invalid/pull/${index + 1}`,
@@ -236,17 +251,39 @@ test('a selected TODO may be recovered from split reviewed merges with only boun
     merged_at: '2026-11-06T04:00:00Z', observed_at: '2026-11-06T04:01:00Z',
     approved: true, ci_passed: true,
     latest_reviewer_review_state: 'APPROVED', latest_reviewer_review_commit_oid: entry.head_oid,
-    title: 'E-42b-split-candidate reviewed delivery', body: 'Bounded split delivery for E-42b.',
+    title: 'Reviewed source delivery', body: 'Bounded source delivery.',
   }));
+  const taskAttestation = {
+    pr_url: 'https://example.invalid/pull/99', pr_number: 99, state: 'MERGED',
+    merge_commit_oid: handoffMerge, head_oid: handoffHead,
+    author: 'implementation-agent', reviewer: 'review-agent', merge_actor: 'review-agent',
+    merged_at: '2026-11-06T04:02:00Z', observed_at: '2026-11-06T04:03:00Z',
+    approved: true, ci_passed: true,
+    latest_reviewer_review_state: 'APPROVED', latest_reviewer_review_commit_oid: handoffHead,
+    changed_files: ['scripts/runtime.mjs'],
+    title: 'E-42b-split-candidate reviewed handoff', body: 'Bounded handoff for E-42b.',
+  };
   const reverified = verifyMergedDeliveryReverification({
     repoRoot: root,
     claim: fixtureClaim,
     stdoutPayload: { run: { runtime_claim_id: fixtureClaim.claim_id, payload_status: 'task_executed', reported_executed_count: 1 } },
-    review: reviews,
+    review: { lineage: reviews, task_attestation: taskAttestation },
     reviewer: 'review-agent', implementation: 'implementation-agent',
   });
   assert.equal(reverified.valid, true, JSON.stringify(reverified));
   assert.equal(validateMergedDeliveryReverification({ claim: fixtureClaim, evidence: reverified.evidence }).valid, true);
+  const applied = applyMergedDeliveryReverification({
+    claim: fixtureClaim,
+    evidence: reverified.evidence,
+    issuedAt: '2026-11-06T04:04:00Z'
+  });
+  assert.equal(applied.valid, true, JSON.stringify(applied.errors));
+  assert.equal(applied.claim.delivery_review.pr_number, taskAttestation.pr_number,
+    'completion must retain the claim-bound handoff, not replace it with a source-delivery PR');
+  assert.equal(validateCompletionCertificate({ claim: applied.claim }).valid, true);
+  const missingScope = structuredClone(reverified.evidence);
+  missingScope.task_attestation.changed_files = ['scripts/not-a-target.mjs'];
+  assert.equal(validateMergedDeliveryReverification({ claim: fixtureClaim, evidence: missingScope }).valid, false);
 });
 
 test('a process-success envelope cannot promote continuation_required to delivery success', () => {
