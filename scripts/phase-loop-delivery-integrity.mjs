@@ -275,7 +275,7 @@ function scopeMatchesCandidate({ mergePaths, scopes, binding, allowVerificationC
  * those targets are still clean at HEAD. Runtime execution, independent
  * review/CI evidence, verification, and queue consumption remain mandatory.
  */
-export function findCleanMergedDeliveryCandidate({ repoRoot, selectedTodo }) {
+export function findCleanMergedDeliveryCandidate({ repoRoot, selectedTodo, revision = 'HEAD' }) {
   const candidateClaim = { selected_todo: String(selectedTodo ?? '') };
   const todoId = selectedTodoId(candidateClaim);
   const todoSha = selectedTodoSha256(candidateClaim);
@@ -284,9 +284,11 @@ export function findCleanMergedDeliveryCandidate({ repoRoot, selectedTodo }) {
     return { valid: false, reason: 'merged_delivery_candidate_contract_invalid' };
   }
 
+  let verifiedRevision;
   let merges;
   try {
-    merges = git(repoRoot, ['rev-list', '--merges', 'HEAD']).split('\n').filter(Boolean);
+    verifiedRevision = git(repoRoot, ['rev-parse', '--verify', `${revision}^{commit}`]);
+    merges = git(repoRoot, ['rev-list', '--merges', verifiedRevision]).split('\n').filter(Boolean);
   } catch {
     return { valid: false, reason: 'merged_delivery_candidate_history_unavailable' };
   }
@@ -355,8 +357,8 @@ export function findCleanMergedDeliveryCandidate({ repoRoot, selectedTodo }) {
     const targets = [];
     try {
       for (const scope of scopes) {
-        const headBlob = git(repoRoot, ['rev-parse', `HEAD:${scope}`]);
-        childProcess.execFileSync('git', ['diff', '--quiet', 'HEAD', '--', scope], { cwd: repoRoot });
+        const headBlob = git(repoRoot, ['rev-parse', `${verifiedRevision}:${scope}`]);
+        childProcess.execFileSync('git', ['diff', '--quiet', verifiedRevision, '--', scope], { cwd: repoRoot });
         const untracked = git(repoRoot, ['ls-files', '--others', '--exclude-standard', '--', scope]);
         if (!headBlob || untracked) throw new Error('target differs from merged clean state');
         targets.push({ path: scope, sha256: sha256(fs.readFileSync(path.join(repoRoot, scope))) });
@@ -451,7 +453,7 @@ function reviewDeclaresTask(review, todoId) {
  * selected target is clean at HEAD and came from the reviewed merge, then
  * reruns the selected TODO's bounded verification commands.
  */
-export function verifyMergedDeliveryReverification({ repoRoot, claim, stdoutPayload, review, reviewer, implementation }) {
+export function verifyMergedDeliveryReverification({ repoRoot, claim, stdoutPayload, review, reviewer, implementation, revision = 'HEAD' }) {
   const deliveryClaim = asObject(claim);
   const normalizedReviews = (Array.isArray(review) ? review : [review]).map(normalizeReview);
   const scopes = mergedDeliveryScope(deliveryClaim);
@@ -473,7 +475,7 @@ export function verifyMergedDeliveryReverification({ repoRoot, claim, stdoutPayl
   }
   if (errors.length > 0) return { valid: false, reason: 'merged_delivery_reverification_refused', errors };
 
-  const candidateResult = findCleanMergedDeliveryCandidate({ repoRoot, selectedTodo: deliveryClaim.selected_todo });
+  const candidateResult = findCleanMergedDeliveryCandidate({ repoRoot, selectedTodo: deliveryClaim.selected_todo, revision });
   if (!candidateResult.valid) {
     const error = candidateResult.reason === 'merged_delivery_candidate_target_not_clean'
       ? 'merged_delivery_target_not_clean_at_reviewed_merge'
@@ -1048,7 +1050,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     if (command === 'find-clean-merged-delivery') {
       const result = findCleanMergedDeliveryCandidate({
         repoRoot: path.resolve(args.get('--repo')),
-        selectedTodo: fs.readFileSync(0, 'utf8')
+        selectedTodo: fs.readFileSync(0, 'utf8'),
+        revision: args.get('--revision') ?? 'HEAD'
       });
       process.stdout.write(`${JSON.stringify(result)}\n`);
       process.exit(result.valid ? 0 : 76);
@@ -1072,7 +1075,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         stdoutPayload,
         review,
         reviewer: args.get('--reviewer'),
-        implementation: args.get('--implementation')
+        implementation: args.get('--implementation'),
+        revision: args.get('--revision') ?? 'HEAD'
       });
       if (!result.valid) {
         process.stdout.write(`${JSON.stringify(result)}\n`);

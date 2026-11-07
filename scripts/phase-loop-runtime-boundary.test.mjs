@@ -97,6 +97,48 @@ test('handoff refresh locates the immutable Runtime execution instead of a revie
   assert.match(controller.slice(refreshStart, refreshEnd), /phase_loop_verified_runtime_run_stamp/);
 });
 
+test('merged review reconciliation re-verifies the merged delivery before consuming the TODO', () => {
+  const reconcileStart = controller.indexOf('phase_loop_reconcile_pending_review()');
+  const reconcileEnd = controller.indexOf('\n}\n\n# A Runtime task-executed envelope', reconcileStart);
+  assert(reconcileStart >= 0 && reconcileEnd > reconcileStart, 'review reconciliation helper must exist');
+  const reconcile = controller.slice(reconcileStart, reconcileEnd);
+  const completedStart = reconcile.indexOf('    completed)');
+  const completedEnd = reconcile.indexOf('    *)', completedStart);
+  assert(completedStart >= 0 && completedEnd > completedStart, 'merged review completion branch must exist');
+  const completed = reconcile.slice(completedStart, completedEnd);
+  assert.match(completed, /phase_loop_consume_completed_review_delivery/);
+  assert.doesNotMatch(completed, /record_completion_ledger_transition/);
+  assert.doesNotMatch(completed, /remove_completed_todo_claim_from_queue/);
+
+  const consumerStart = controller.indexOf('phase_loop_consume_completed_review_delivery()');
+  const consumerEnd = controller.indexOf('\n}\n\nwrite_todo_claim()', consumerStart);
+  assert(consumerStart >= 0 && consumerEnd > consumerStart, 'completed review delivery consumer must exist');
+  const consumer = controller.slice(consumerStart, consumerEnd);
+  assert.match(consumer, /phase_loop_verified_runtime_run_stamp/);
+  assert.match(consumer, /phase_loop_reverify_and_consume_merged_delivery/);
+  assert.match(consumer, /mark_completed_todo_cleanup_pending/);
+});
+
+test('completed cleanup re-verifies an unproven reviewed merge before queue consumption', () => {
+  const cleanupStart = controller.indexOf('  if completed_todo_cleanup_pending; then');
+  const cleanupEnd = controller.indexOf('\n  if ', cleanupStart + 4);
+  assert(cleanupStart >= 0 && cleanupEnd > cleanupStart, 'completed cleanup branch must exist');
+  const cleanup = controller.slice(cleanupStart, cleanupEnd);
+  assert.match(cleanup, /phase_loop_consume_completed_review_delivery/);
+  assert.doesNotMatch(cleanup, /\$\(remove_completed_todo_claim_from_queue/);
+});
+
+test('merged delivery verification refreshes and verifies the configured observed base revision', () => {
+  const reverifyStart = controller.indexOf('phase_loop_reverify_and_consume_merged_delivery()');
+  const reverifyEnd = controller.indexOf('\n}\n\n# A completed claim may be retried', reverifyStart);
+  assert(reverifyStart >= 0 && reverifyEnd > reverifyStart, 'merged delivery re-verifier must exist');
+  const reverify = controller.slice(reverifyStart, reverifyEnd);
+  assert.match(reverify, /git -C "\$PHASE_LOOP_WORKSPACE_ROOT" fetch --quiet "\$PHASE_LOOP_PR_REMOTE" "\$PHASE_LOOP_PR_BASE"/);
+  assert.match(reverify, /--revision "\$merged_delivery_revision"/);
+  assert.match(reverify, /PHASE_LOOP_CLAIM_SMOKE_TEST_ONLY/);
+  assert.match(reverify, /Merged delivery re-verification could not refresh the configured PR base/);
+});
+
 test('claimed-task-not-admitted recovery persists zero-execution evidence and a terminal progress projection after rollback', () => {
   const block = mismatchRecoveryBlock();
   const restoreClaim = block.indexOf('restore_claim_snapshot_before_runtime "$claim_snapshot_before_runtime"');

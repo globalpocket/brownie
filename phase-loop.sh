@@ -12811,14 +12811,16 @@ PY
       return 0
       ;;
     completed)
-      if ! record_completion_ledger_transition "review-merge-$(date -u +%Y%m%dT%H%M%SZ)" '{"completion":"independent_review_ci_merge_verified"}'; then
-        return 78
+      # Review reconciliation establishes that GitHub accepted the PR, but it
+      # does not by itself bind the merged tree back to the Runtime execution
+      # and the selected bounded targets.  Route through the same clean-merge
+      # re-verification used for recovered deliveries before emitting a ledger
+      # completion or changing the live queue.
+      local merge_run_stamp
+      merge_run_stamp="review-merge-$(date -u +%Y%m%dT%H%M%SZ)"
+      if ! phase_loop_consume_completed_review_delivery "$merge_run_stamp" "review-reconcile"; then
+        return $?
       fi
-      if ! remove_completed_todo_claim_from_queue "review-merge-$(date -u +%Y%m%dT%H%M%SZ)"; then
-        write_status "blocked" "PR is merged and reviewed, but durable TODO removal was refused; preserving completion claim for reconciliation." "review-reconcile" "78" "${CONSECUTIVE_FAILURES:-0}"
-        return 78
-      fi
-      write_status "last_run_succeeded" "Selected TODO was independently approved, CI-verified, merged, and removed from the queue: $pr_url" "review-reconcile" "0" "0"
       return 75
       ;;
     *)
@@ -12837,7 +12839,7 @@ PY
 # accept a dirty target.
 phase_loop_reverify_and_consume_merged_delivery() {
   local run_stamp="$1" stdout_log="$2" run_id="$3"
-  local reviewer implementation reviewer_gh_config_dir repository candidate merge_oid review_file raw_review_file pr_number merge_actor result status lineage
+  local reviewer implementation reviewer_gh_config_dir repository candidate merge_oid review_file raw_review_file pr_number merge_actor result status lineage merged_delivery_revision
   reviewer="$(node "$ROOT_DIR/scripts/phase-loop-actor-deployment.mjs" --repo-root "$ROOT_DIR" --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" --role review --field github-login 2>/dev/null || true)"
   implementation="$(node "$ROOT_DIR/scripts/phase-loop-actor-deployment.mjs" --repo-root "$ROOT_DIR" --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" --role implementation --field github-login 2>/dev/null || true)"
   repository="$(node "$ROOT_DIR/scripts/phase-loop-actor-deployment.mjs" --repo-root "$ROOT_DIR" --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" --role implementation --field repository 2>/dev/null || true)"
@@ -12845,7 +12847,30 @@ phase_loop_reverify_and_consume_merged_delivery() {
     write_status "integrity_blocked" "Merged delivery re-verification refused: actor/repository deployment evidence is unavailable for the active claim." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
     return 76
   fi
-  candidate="$(python3 - "$TODO_CLAIM_FILE" <<'PY' | node "$ROOT_DIR/scripts/phase-loop-delivery-integrity.mjs" find-clean-merged-delivery --repo "$PHASE_LOOP_WORKSPACE_ROOT"
+  if [ -z "$PHASE_LOOP_PR_REMOTE" ] || [ -z "$PHASE_LOOP_PR_BASE" ]; then
+    write_status "integrity_blocked" "Merged delivery re-verification refused: active deployment has no configured PR remote/base for the observed merge." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+    return 76
+  fi
+  if ! git -C "$PHASE_LOOP_WORKSPACE_ROOT" fetch --quiet "$PHASE_LOOP_PR_REMOTE" "$PHASE_LOOP_PR_BASE" >>"$SUPERVISOR_LOG" 2>&1; then
+    # Claim-smoke fixtures intentionally model GitHub review evidence without
+    # a network-visible base branch. This escape hatch is test-only; every
+    # production run must refresh the configured observed base or fail closed.
+    if [ "${PHASE_LOOP_CLAIM_SMOKE_TEST_ONLY:-0}" = "1" ]; then
+      merged_delivery_revision="HEAD"
+      printf '%s run=%s merged_delivery_base_refresh_skipped_for_test_fixture=true remote=%s base=%s\n' \
+        "$(now_utc)" "$run_id" "$PHASE_LOOP_PR_REMOTE" "$PHASE_LOOP_PR_BASE" >> "$SUPERVISOR_LOG"
+    else
+      write_status "blocked" "Merged delivery re-verification could not refresh the configured PR base before validating the observed merge." "$run_id" "78" "${CONSECUTIVE_FAILURES:-0}"
+      return 78
+    fi
+  else
+    merged_delivery_revision="refs/remotes/$PHASE_LOOP_PR_REMOTE/$PHASE_LOOP_PR_BASE"
+  fi
+  if ! git -C "$PHASE_LOOP_WORKSPACE_ROOT" rev-parse --verify "${merged_delivery_revision}^{commit}" >/dev/null 2>&1; then
+    write_status "integrity_blocked" "Merged delivery re-verification refused: the refreshed configured PR base has no immutable commit." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+    return 76
+  fi
+  candidate="$(python3 - "$TODO_CLAIM_FILE" <<'PY' | node "$ROOT_DIR/scripts/phase-loop-delivery-integrity.mjs" find-clean-merged-delivery --repo "$PHASE_LOOP_WORKSPACE_ROOT" --revision "$merged_delivery_revision"
 import json
 import pathlib
 import sys
@@ -12940,7 +12965,7 @@ NODE
     fi
     rm -f "$raw_review_file"
   done <<< "$lineage"
-  if result="$(node "$ROOT_DIR/scripts/phase-loop-delivery-integrity.mjs" verify-merged-delivery --repo "$PHASE_LOOP_WORKSPACE_ROOT" --claim "$TODO_CLAIM_FILE" --stdout "$stdout_log" --review "$review_file" --reviewer "$reviewer" --implementation "$implementation" --write 2>&1)"; then
+  if result="$(node "$ROOT_DIR/scripts/phase-loop-delivery-integrity.mjs" verify-merged-delivery --repo "$PHASE_LOOP_WORKSPACE_ROOT" --revision "$merged_delivery_revision" --claim "$TODO_CLAIM_FILE" --stdout "$stdout_log" --review "$review_file" --reviewer "$reviewer" --implementation "$implementation" --write 2>&1)"; then
     status=0
   else
     status=$?
@@ -12968,6 +12993,52 @@ NODE
   write_bdk_trajectory_event "$run_stamp" "verification.run" "$result"
   printf '%s run=%s merged_delivery_reverified_and_consumed=true result=%s\n' "$(now_utc)" "$run_id" "$result" >> "$SUPERVISOR_LOG"
   return 0
+}
+
+# A completed claim may be retried after its queue mutation was refused.  A
+# plain cleanup retry is safe only after durable merged-delivery evidence has
+# already been written; otherwise it must reconstruct that evidence from the
+# immutable Runtime receipt before it can consume the TODO.  This keeps a
+# committed workspace from being mistaken for unverified progress.
+phase_loop_consume_completed_review_delivery() {
+  local run_stamp="$1" run_id="$2"
+  local has_reverification runtime_run_stamp runtime_stdout_log
+  has_reverification="$(python3 - "$TODO_CLAIM_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+try:
+    claim = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+review = claim.get("delivery_review")
+proof = review.get("merged_delivery_reverification") if isinstance(review, dict) else None
+print("true" if isinstance(proof, dict) and proof else "false")
+PY
+)" || {
+    write_status "integrity_blocked" "Completed-claim cleanup refused: durable merged-delivery evidence could not be read." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
+    return 76
+  }
+  if [ "$has_reverification" = "true" ]; then
+    remove_completed_todo_claim_from_queue "$run_stamp"
+    return $?
+  fi
+  runtime_run_stamp="$(phase_loop_verified_runtime_run_stamp 2>/dev/null || true)"
+  runtime_stdout_log="$RUN_DIR/$runtime_run_stamp.stdout.log"
+  if [ -z "$runtime_run_stamp" ] || [ ! -s "$runtime_stdout_log" ]; then
+    write_status "blocked" "PR is merged and reviewed, but the immutable Runtime execution receipt is unavailable for merged-delivery re-verification." "$run_id" "78" "${CONSECUTIVE_FAILURES:-0}"
+    return 78
+  fi
+  if phase_loop_reverify_and_consume_merged_delivery "$run_stamp" "$runtime_stdout_log" "$run_id"; then
+    return 0
+  fi
+  local reverify_status=$?
+  # Reconciliation already observed a merged PR. Preserve an explicit
+  # cleanup-only retry obligation so a failed re-verification cannot fall
+  # through to a new Runtime execution or orphan the completed claim.
+  mark_completed_todo_cleanup_pending "$run_stamp" "$runtime_stdout_log" "" "" "" || true
+  return "$reverify_status"
 }
 
 write_todo_claim() {
@@ -19206,7 +19277,7 @@ PY
   fi
   if completed_todo_cleanup_pending; then
     local completed_cleanup_output completed_cleanup_status
-    if completed_cleanup_output="$(remove_completed_todo_claim_from_queue "$run_stamp" 2>&1)"; then
+    if completed_cleanup_output="$(phase_loop_consume_completed_review_delivery "$run_stamp" "completed-cleanup" 2>&1)"; then
       completed_cleanup_status=0
     else
       completed_cleanup_status=$?

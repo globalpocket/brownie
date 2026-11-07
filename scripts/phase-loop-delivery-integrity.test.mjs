@@ -108,15 +108,20 @@ test('a clean exact merged task is a pre-claim candidate but an uncommitted targ
   const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
   execFileSync('git', ['switch', '--quiet', 'main'], { cwd: root });
   execFileSync('git', ['merge', '--no-ff', '--no-edit', 'implementation'], { cwd: root, stdio: 'ignore' });
+  const mergedRevision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  // The controller may still be on the implementation branch when GitHub has
+  // already merged the delivery. It must verify the observed base revision,
+  // while proving every bounded target matches that revision exactly.
+  execFileSync('git', ['switch', '--quiet', 'implementation'], { cwd: root });
 
-  const admitted = findCleanMergedDeliveryCandidate({ repoRoot: root, selectedTodo: selected });
+  const admitted = findCleanMergedDeliveryCandidate({ repoRoot: root, selectedTodo: selected, revision: mergedRevision });
   assert.equal(admitted.valid, true, JSON.stringify(admitted));
   assert.equal(admitted.candidate.head_oid, head);
   assert.equal(admitted.candidate.selected_todo_id, 'E-merged-candidate');
   assert.equal(admitted.candidate.targets[0].path, 'scripts/soak.mjs');
 
   fs.writeFileSync(target, 'export const soak = "manual-dirty";\n');
-  const rejected = findCleanMergedDeliveryCandidate({ repoRoot: root, selectedTodo: selected });
+  const rejected = findCleanMergedDeliveryCandidate({ repoRoot: root, selectedTodo: selected, revision: mergedRevision });
   assert.deepEqual(rejected, { valid: false, reason: 'merged_delivery_candidate_target_not_clean' });
 });
 
