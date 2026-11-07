@@ -194,6 +194,108 @@ function validArtifactSmokeResult(overrides = {}) {
   };
 }
 
+function requiredJourneyChecks() {
+  return Object.fromEntries([
+    'mode_pack_load',
+    'workspace_mutation',
+    'ledger_generation',
+    'forced_interruption',
+    'resume',
+    'stale_replay_rejection'
+  ].map((id) => [id, { passed: true }]));
+}
+
+function requiredSoakChecks() {
+  return {
+    artifact_execution_boundary: {
+      passed: true,
+      packaged_cli_only: true,
+      isolated_workspace_cwd: true,
+      runtime_path_override_removed: true
+    },
+    ...Object.fromEntries([
+      'process_loss_recovery',
+      'duplicate_side_effect_rejection',
+      'ledger_workspace_consistency',
+      'resume_replay_behavior',
+      'finite_convergence',
+      'evidence_chain_integrity'
+    ].map((id) => [id, { passed: true }]))
+  };
+}
+
+function attachDownloadedRoundtripBinding(repoRoot, artifact) {
+  const evidenceDir = '.brownie/release-evidence/artifacts/darwin-arm64';
+  const journeyPath = `${evidenceDir}/runtime-journey-evidence.json`;
+  const soakPath = `${evidenceDir}/runtime-stateful-soak-evidence.json`;
+  fs.mkdirSync(path.join(repoRoot, evidenceDir), { recursive: true });
+  const binding = {
+    target: artifact.target,
+    status: 'satisfied',
+    implementation_commit: artifact.source_commit,
+    tested_commit: artifact.source_commit.slice('sha256:'.length),
+    workflow_run_id: artifact.provenance_binding.workflowRunId,
+    platform: artifact.provenance_binding.platform,
+    architecture: artifact.provenance_binding.architecture,
+    package_sha256: sha256Text('downloaded-release-package'),
+    binary_sha256: artifact.sha256,
+    runtime_sha256: sha256Text('downloaded-runtime-companion'),
+    journey_evidence_path: journeyPath,
+    soak_evidence_path: soakPath,
+    errors: []
+  };
+  const downloadedArtifact = {
+    archive_sha256: binding.package_sha256,
+    artifact_sha256: binding.binary_sha256,
+    runtime_sha256: binding.runtime_sha256
+  };
+  fs.writeFileSync(path.join(repoRoot, journeyPath), `${JSON.stringify({
+    evidence_id: 'brownie-release-artifact-runtime-journey-v1',
+    target: binding.target,
+    workflow_run_id: binding.workflow_run_id,
+    artifact: downloadedArtifact,
+    checks: requiredJourneyChecks()
+  }, null, 2)}\n`);
+  fs.writeFileSync(path.join(repoRoot, soakPath), `${JSON.stringify({
+    evidence_id: 'brownie-release-artifact-stateful-soak-v1',
+    target: binding.target,
+    workflow_run_id: binding.workflow_run_id,
+    artifact: downloadedArtifact,
+    checks: requiredSoakChecks()
+  }, null, 2)}\n`);
+  const witness = {
+    target: binding.target,
+    status: binding.status,
+    implementation_commit: binding.implementation_commit,
+    tested_commit: binding.tested_commit,
+    workflow_run_id: binding.workflow_run_id,
+    platform: binding.platform,
+    architecture: binding.architecture,
+    package_sha256: binding.package_sha256,
+    binary_sha256: binding.binary_sha256,
+    runtime_sha256: binding.runtime_sha256,
+    errors: binding.errors
+  };
+  return {
+    schema_version: 1,
+    evidence_id: 'brownie-release-evidence-roundtrip-binding-v1',
+    status: 'satisfied',
+    release_blocking: true,
+    target_count: 1,
+    satisfied_target_count: 1,
+    binding_digest: sha256Text(JSON.stringify([witness])),
+    bindings: [binding],
+    missing: []
+  };
+}
+
+function satisfiedArtifactsSection(repoRoot, artifact) {
+  return section('satisfied', {
+    artifacts: [artifact],
+    release_evidence_binding: attachDownloadedRoundtripBinding(repoRoot, artifact)
+  });
+}
+
 function validEvidence(repoRoot = tempRepo()) {
   return {
     schema_version: 1,
@@ -636,10 +738,96 @@ test('accepts satisfied artifacts with clean source identity binding', () => {
   evidence.fail_closed_reasons = evidence.fail_closed_reasons.filter(
     (reason) => !reason.startsWith('artifacts:')
   );
-  evidence.sections.artifacts = section('satisfied', {
-    artifacts: [artifactWithProvenance(repoRoot, artifactPath)]
-  });
+  evidence.sections.artifacts = satisfiedArtifactsSection(repoRoot, artifactWithProvenance(repoRoot, artifactPath));
   assert.deepEqual(validate({ evidence, repoRoot }), []);
+});
+
+test('rejects satisfied artifacts without downloaded roundtrip binding', () => {
+  const repoRoot = tempRepo();
+  const artifactPath = 'target/release/brownie';
+  fs.mkdirSync(path.join(repoRoot, 'target/release'), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, artifactPath), 'artifact');
+  const evidence = validEvidence(repoRoot);
+  evidence.fail_closed_reasons = evidence.fail_closed_reasons.filter((reason) => !reason.startsWith('artifacts:'));
+  evidence.sections.artifacts = section('satisfied', { artifacts: [artifactWithProvenance(repoRoot, artifactPath)] });
+  const errors = validate({ evidence, repoRoot });
+  assert(errors.some((error) => error.includes('release_evidence_binding must be present')));
+});
+
+test('rejects stale or inconsistent downloaded roundtrip bindings', () => {
+  const cases = [
+    ['package_sha256', (binding) => { binding.package_sha256 = sha256Text('stale-package'); }],
+    ['binary_sha256', (binding) => { binding.binary_sha256 = sha256Text('wrong-binary'); }],
+    ['workflow_run_id', (binding) => { binding.workflow_run_id = 'stale-run'; }],
+    ['implementation_commit', (binding) => { binding.implementation_commit = `sha256:${'b'.repeat(40)}`; }],
+    ['platform', (binding) => { binding.platform = 'linux'; }],
+    ['architecture', (binding) => { binding.architecture = 'x64'; }]
+  ];
+  for (const [field, mutate] of cases) {
+    const repoRoot = tempRepo();
+    const artifactPath = 'target/release/brownie';
+    fs.mkdirSync(path.join(repoRoot, 'target/release'), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, artifactPath), 'artifact');
+    const artifact = artifactWithProvenance(repoRoot, artifactPath);
+    const evidence = validEvidence(repoRoot);
+    evidence.fail_closed_reasons = evidence.fail_closed_reasons.filter((reason) => !reason.startsWith('artifacts:'));
+    evidence.sections.artifacts = satisfiedArtifactsSection(repoRoot, artifact);
+    const binding = evidence.sections.artifacts.release_evidence_binding.bindings[0];
+    mutate(binding);
+    const errors = validate({ evidence, repoRoot });
+    assert(errors.some((error) => error.includes(field)), `${field} must be rejected: ${errors.join('\n')}`);
+  }
+});
+
+test('rejects a roundtrip record that permits build-tree execution', () => {
+  const repoRoot = tempRepo();
+  const artifactPath = 'target/release/brownie';
+  fs.mkdirSync(path.join(repoRoot, 'target/release'), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, artifactPath), 'artifact');
+  const artifact = artifactWithProvenance(repoRoot, artifactPath);
+  const evidence = validEvidence(repoRoot);
+  evidence.fail_closed_reasons = evidence.fail_closed_reasons.filter((reason) => !reason.startsWith('artifacts:'));
+  evidence.sections.artifacts = satisfiedArtifactsSection(repoRoot, artifact);
+  const soakPath = path.join(repoRoot, evidence.sections.artifacts.release_evidence_binding.bindings[0].soak_evidence_path);
+  const soak = JSON.parse(fs.readFileSync(soakPath, 'utf8'));
+  soak.checks.artifact_execution_boundary.packaged_cli_only = false;
+  fs.writeFileSync(soakPath, `${JSON.stringify(soak)}\n`);
+  const errors = validate({ evidence, repoRoot });
+  assert(errors.some((error) => error.includes('not build-tree execution')));
+});
+
+test('rejects non-object downloaded journey evidence', () => {
+  const repoRoot = tempRepo();
+  const artifactPath = 'target/release/brownie';
+  fs.mkdirSync(path.join(repoRoot, 'target/release'), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, artifactPath), 'artifact');
+  const artifact = artifactWithProvenance(repoRoot, artifactPath);
+  const evidence = validEvidence(repoRoot);
+  evidence.fail_closed_reasons = evidence.fail_closed_reasons.filter((reason) => !reason.startsWith('artifacts:'));
+  evidence.sections.artifacts = satisfiedArtifactsSection(repoRoot, artifact);
+  const journeyPath = path.join(repoRoot, evidence.sections.artifacts.release_evidence_binding.bindings[0].journey_evidence_path);
+  fs.writeFileSync(journeyPath, 'null\n');
+  const errors = validate({ evidence, repoRoot });
+  assert(errors.some((error) => error.includes('must contain a JSON object')));
+});
+
+test('rejects downloaded evidence from a different workflow run', () => {
+  const repoRoot = tempRepo();
+  const artifactPath = 'target/release/brownie';
+  fs.mkdirSync(path.join(repoRoot, 'target/release'), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, artifactPath), 'artifact');
+  const artifact = artifactWithProvenance(repoRoot, artifactPath);
+  const evidence = validEvidence(repoRoot);
+  evidence.fail_closed_reasons = evidence.fail_closed_reasons.filter((reason) => !reason.startsWith('artifacts:'));
+  evidence.sections.artifacts = satisfiedArtifactsSection(repoRoot, artifact);
+  for (const field of ['journey_evidence_path', 'soak_evidence_path']) {
+    const evidencePath = path.join(repoRoot, evidence.sections.artifacts.release_evidence_binding.bindings[0][field]);
+    const downloadedEvidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+    downloadedEvidence.workflow_run_id = 'wrong-run';
+    fs.writeFileSync(evidencePath, `${JSON.stringify(downloadedEvidence)}\n`);
+  }
+  const errors = validate({ evidence, repoRoot });
+  assert.equal(errors.filter((error) => error.includes('workflow_run_id must match downloaded_roundtrip_binding')).length, 2);
 });
 
 test('rejects satisfied artifacts without provenance binding', () => {
