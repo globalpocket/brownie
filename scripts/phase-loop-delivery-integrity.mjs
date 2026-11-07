@@ -192,12 +192,21 @@ function runtimeTaskExecution(claim, stdoutPayload) {
       : root;
   const runtimeClaimId = run.runtime_claim_id ?? run.phase_loop_claim_id ?? root.runtime_claim_id ?? root.phase_loop_claim_id;
   const executed = run.reported_executed_count ?? run.executed_count ?? root.reported_executed_count ?? root.executed_count;
+  const terminal = runDeliveryView(stdoutPayload);
+  const directlyExecuted = (run.payload_status ?? run.status ?? root.payload_status ?? root.status) === 'task_executed';
+  // A completed objective apply is emitted as a resumable runtime envelope.
+  // runDeliveryView proves its independently-attested terminal facts before
+  // it may bind a reviewed delivery; never accept a generic continuation.
+  const terminalObjectiveApplied = terminal.completed === true
+    && run.task_execution_confirmed === true
+    && run.objective_apply_applied === true;
   return {
     claim_id: runtimeClaimId,
     status: run.payload_status ?? run.status ?? root.payload_status ?? root.status,
     executed_count: executed,
+    terminal_objective_applied: terminalObjectiveApplied,
     exact: runtimeClaimId === asObject(claim).claim_id
-      && (run.payload_status ?? run.status ?? root.payload_status ?? root.status) === 'task_executed'
+      && (directlyExecuted || terminalObjectiveApplied)
       && Number.isInteger(executed)
       && executed >= 1
   };
@@ -597,7 +606,9 @@ export function validateMergedDeliveryReverification({ claim, evidence }) {
     if (proof[key] !== value) errors.push(`merged_delivery_evidence_${key}_mismatch`);
   }
   const runtime = asObject(proof.runtime);
-  if (runtime.claim_id !== expected.claim_id || runtime.status !== 'task_executed' || !Number.isInteger(runtime.executed_count) || runtime.executed_count < 1) {
+  const validRuntimeStatus = runtime.status === 'task_executed'
+    || (runtime.status === 'objective_proposal_applied' && runtime.terminal_objective_applied === true);
+  if (runtime.claim_id !== expected.claim_id || !validRuntimeStatus || !Number.isInteger(runtime.executed_count) || runtime.executed_count < 1) {
     errors.push('merged_delivery_evidence_runtime_binding_invalid');
   }
   const scopes = mergedDeliveryScope(expected);

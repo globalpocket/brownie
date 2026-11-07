@@ -117,6 +117,12 @@ test('merged review reconciliation re-verifies the merged delivery before consum
   assert.match(consumer, /phase_loop_verified_runtime_run_stamp/);
   assert.match(consumer, /phase_loop_reverify_and_consume_merged_delivery/);
   assert.match(consumer, /mark_completed_todo_cleanup_pending/);
+  assert.match(consumer, /else\s+reverify_status=\$\?/);
+  assert.match(consumer, /return "\$reverify_status"/);
+  assert.match(
+    consumer,
+    /phase_loop_reverify_and_consume_merged_delivery "\$run_stamp" "\$runtime_stdout_log" "\$run_id"/,
+  );
 });
 
 test('completed cleanup re-verifies an unproven reviewed merge before queue consumption', () => {

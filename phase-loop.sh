@@ -13030,10 +13030,12 @@ PY
     write_status "blocked" "PR is merged and reviewed, but the immutable Runtime execution receipt is unavailable for merged-delivery re-verification." "$run_id" "78" "${CONSECUTIVE_FAILURES:-0}"
     return 78
   fi
+  local reverify_status
   if phase_loop_reverify_and_consume_merged_delivery "$run_stamp" "$runtime_stdout_log" "$run_id"; then
     return 0
+  else
+    reverify_status=$?
   fi
-  local reverify_status=$?
   # Reconciliation already observed a merged PR. Preserve an explicit
   # cleanup-only retry obligation so a failed re-verification cannot fall
   # through to a new Runtime execution or orphan the completed claim.
