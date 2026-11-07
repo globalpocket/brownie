@@ -216,7 +216,13 @@ function readBoundEvidence(repoRoot, relativePath, errors, owner) {
   if (!isSafeRelativePath(relativePath)) {
     return null;
   }
-  return readJson(repoRoot, relativePath, errors);
+  const evidence = readJson(repoRoot, relativePath, errors);
+  requireValue(
+    evidence !== null && typeof evidence === 'object' && !Array.isArray(evidence),
+    errors,
+    `${owner} must contain a JSON object.`
+  );
+  return evidence !== null && typeof evidence === 'object' && !Array.isArray(evidence) ? evidence : null;
 }
 
 function validateFiniteConvergence(soak, errors, owner) {

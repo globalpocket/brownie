@@ -510,6 +510,11 @@ test('rejects missing, inconsistent, and unbounded downloaded-artifact results',
   errors = validateRuntimeOperationalEvidence(evidence, { repoRoot, validateBoundEvidence: true });
   assert(errors.some((error) => error.includes('must remain within maximum_commands')), errors.join('\n'));
 
+  writeDownloadedRuntimeEvidence(repoRoot, evidence.release_evidence_binding);
+  fs.writeFileSync(journeyPath, 'null');
+  errors = validateRuntimeOperationalEvidence(evidence, { repoRoot, validateBoundEvidence: true });
+  assert(errors.some((error) => error.includes('journey_evidence_path must contain a JSON object')), errors.join('\n'));
+
   fs.rmSync(path.join(repoRoot, entry.soak_evidence_path));
   errors = validateRuntimeOperationalEvidence(evidence, { repoRoot, validateBoundEvidence: true });
   assert(errors.some((error) => error.includes('must be readable JSON')), errors.join('\n'));
