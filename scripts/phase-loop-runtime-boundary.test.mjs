@@ -134,6 +134,27 @@ test('completed cleanup re-verifies an unproven reviewed merge before queue cons
   assert.doesNotMatch(cleanup, /\$\(remove_completed_todo_claim_from_queue/);
 });
 
+test('a falsely cleared merged-delivery cleanup state is restored to re-verification before Runtime dispatch', () => {
+  const recoveryStart = controller.indexOf('recover_unverified_completed_cleanup_state()');
+  const recoveryEnd = controller.indexOf('\n}\n\nmark_completed_todo_pr_pending()', recoveryStart);
+  assert(recoveryStart >= 0 && recoveryEnd > recoveryStart, 'cleanup recovery helper must exist');
+  const recovery = controller.slice(recoveryStart, recoveryEnd);
+  assert.match(recovery, /queue_removal_cleanup_completed/);
+  assert.match(recovery, /claim\["completion_cleanup_pending"\] = True/);
+  assert.match(recovery, /queue_removal_cleanup_recovered_after_unverified_completion/);
+  assert.match(recovery, /\[ -f "\$TODO_CLAIM_FILE" \] \|\| return 0/,
+    'an absent claim must be a recovery no-op');
+  assert.match(recovery, /else\s+recovery_status=\$\?/);
+  assert.match(recovery, /if \[ "\$recovery_status" -ne 0 \]; then[\s\S]*return "\$recovery_status"/);
+  assert.match(recovery, /return "\$recovery_status"[\s\S]*sync_parent_dir/);
+
+  const runStart = controller.indexOf('  if terminal_failure_source_transition_pending; then');
+  const cleanupStart = controller.indexOf('  if completed_todo_cleanup_pending; then', runStart);
+  const recoveryCall = controller.indexOf('recover_unverified_completed_cleanup_state "$run_stamp"', runStart);
+  assert(recoveryCall > runStart && recoveryCall < cleanupStart,
+    'cleanup recovery must run before cleanup handling and any later Runtime dispatch');
+});
+
 test('merged delivery verification refreshes and verifies the configured observed base revision', () => {
   const reverifyStart = controller.indexOf('phase_loop_reverify_and_consume_merged_delivery()');
   const reverifyEnd = controller.indexOf('\n}\n\n# A completed claim may be retried', reverifyStart);

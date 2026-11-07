@@ -19,6 +19,9 @@ case "${PHASE_LOOP_CLAIM_SMOKE_SECTION:-}" in
   fast)
     printf 'fast shard completed\n'
     ;;
+  terminal)
+    printf 'terminal shard completed\n'
+    ;;
   queue|queue-claim|queue-recovery|queue-integrity)
     printf 'queue shard completed\n'
     ;;
@@ -116,6 +119,14 @@ PHASE_LOOP_CLAIM_SMOKE_CPU_COUNT=4 \
 assert_json "$capacity_output" 'all(any(r.get("event") == "shard_started" and r.get("shard") == shard and "batch_size=1" in r.get("detail", "") and "batch_rationale=queue_serialized_for_low_cpu_90s_deadline" in r.get("detail", "") and "cpu_count=4" in r.get("detail", "") for r in manifest["records"]) for shard in ["queue-claim", "queue-recovery", "queue-integrity"])'
 assert_json "$capacity_output" 'any(r.get("event") == "shard_started" and r.get("shard") == "fast" and "batch_start=5" in r.get("detail", "") for r in manifest["records"])'
 assert_json "$capacity_output" 'any(r.get("event") == "scheduler_plan" and "configured_watchdog_seconds=10" in r.get("detail", "") and "effective_watchdog_seconds=466" in r.get("detail", "") and "required_watchdog_seconds=466" in r.get("detail", "") and "planned_batches=5" in r.get("detail", "") and "effective_batch_sizes=2,1,1,1,1" in r.get("detail", "") and "cleanup_margin_seconds=11" in r.get("detail", "") and "plan_overhead_seconds=5" in r.get("detail", "") and r.get("workspace_root") for r in manifest["records"])'
+
+terminal_output="$fixture_root/terminal-audit.json"
+PHASE_LOOP_CLAIM_SMOKE_AUDIT_OUTPUT="$terminal_output" \
+  bash "$scheduler_driver" "$terminal_output" \
+  "$fixture_root/terminal-shards" "$fixture_script" 2 10 10 "" terminal fast fast \
+  2>"$fixture_root/terminal-driver.stderr"
+assert_json "$terminal_output" 'any(r.get("event") == "shard_started" and r.get("shard") == "terminal" and "batch_start=0" in r.get("detail", "") and "batch_size=1" in r.get("detail", "") and "batch_rationale=terminal_isolated_for_deadline" in r.get("detail", "") for r in manifest["records"])'
+assert_json "$terminal_output" 'any(r.get("event") == "scheduler_plan" and "planned_batches=2" in r.get("detail", "") and "effective_batch_sizes=1,2" in r.get("detail", "") for r in manifest["records"])'
 
 expected_output="$fixture_root/expected-audit.json"
 PHASE_LOOP_CLAIM_SMOKE_AUDIT_OUTPUT="$expected_output" \

@@ -365,7 +365,10 @@ esac
 # aggregate command with its diagnostics.
 if [ "$PHASE_LOOP_CLAIM_SMOKE_SECTION" = "all" ]; then
   claim_smoke_shard_dir="$(mktemp -d)"
-  claim_smoke_shards=(core terminal completion terminal-absent queue-claim queue-recovery queue-integrity pr guards feedback review-rework lifecycle)
+  # The terminal recovery liveness proof consumes nearly its entire bounded
+  # deadline alone.  Put it first so the scheduler's terminal singleton rule
+  # cannot accidentally group it with unrelated CPU-heavy fixtures.
+  claim_smoke_shards=(terminal core completion terminal-absent queue-claim queue-recovery queue-integrity pr guards feedback review-rework lifecycle)
   # A guards shard must pass end-to-end. Treating its historical static-check
   # failure as success would mask the very controller regressions this suite
   # exists to catch.
