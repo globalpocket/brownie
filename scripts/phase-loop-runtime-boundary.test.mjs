@@ -135,6 +135,8 @@ test('merged delivery verification refreshes and verifies the configured observe
   const reverify = controller.slice(reverifyStart, reverifyEnd);
   assert.match(reverify, /git -C "\$PHASE_LOOP_WORKSPACE_ROOT" fetch --quiet "\$PHASE_LOOP_PR_REMOTE" "\$PHASE_LOOP_PR_BASE"/);
   assert.match(reverify, /--revision "\$merged_delivery_revision"/);
+  assert.match(reverify, /PHASE_LOOP_CLAIM_SMOKE_TEST_ONLY/);
+  assert.match(reverify, /Merged delivery re-verification could not refresh the configured PR base/);
 });
 
 test('claimed-task-not-admitted recovery persists zero-execution evidence and a terminal progress projection after rollback', () => {

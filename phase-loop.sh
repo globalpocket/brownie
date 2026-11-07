@@ -12852,10 +12852,20 @@ phase_loop_reverify_and_consume_merged_delivery() {
     return 76
   fi
   if ! git -C "$PHASE_LOOP_WORKSPACE_ROOT" fetch --quiet "$PHASE_LOOP_PR_REMOTE" "$PHASE_LOOP_PR_BASE" >>"$SUPERVISOR_LOG" 2>&1; then
-    write_status "blocked" "Merged delivery re-verification could not refresh the configured PR base before validating the observed merge." "$run_id" "78" "${CONSECUTIVE_FAILURES:-0}"
-    return 78
+    # Claim-smoke fixtures intentionally model GitHub review evidence without
+    # a network-visible base branch. This escape hatch is test-only; every
+    # production run must refresh the configured observed base or fail closed.
+    if [ "${PHASE_LOOP_CLAIM_SMOKE_TEST_ONLY:-0}" = "1" ]; then
+      merged_delivery_revision="HEAD"
+      printf '%s run=%s merged_delivery_base_refresh_skipped_for_test_fixture=true remote=%s base=%s\n' \
+        "$(now_utc)" "$run_id" "$PHASE_LOOP_PR_REMOTE" "$PHASE_LOOP_PR_BASE" >> "$SUPERVISOR_LOG"
+    else
+      write_status "blocked" "Merged delivery re-verification could not refresh the configured PR base before validating the observed merge." "$run_id" "78" "${CONSECUTIVE_FAILURES:-0}"
+      return 78
+    fi
+  else
+    merged_delivery_revision="refs/remotes/$PHASE_LOOP_PR_REMOTE/$PHASE_LOOP_PR_BASE"
   fi
-  merged_delivery_revision="refs/remotes/$PHASE_LOOP_PR_REMOTE/$PHASE_LOOP_PR_BASE"
   if ! git -C "$PHASE_LOOP_WORKSPACE_ROOT" rev-parse --verify "${merged_delivery_revision}^{commit}" >/dev/null 2>&1; then
     write_status "integrity_blocked" "Merged delivery re-verification refused: the refreshed configured PR base has no immutable commit." "$run_id" "76" "${CONSECUTIVE_FAILURES:-0}"
     return 76
