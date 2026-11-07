@@ -142,6 +142,8 @@ test('a falsely cleared merged-delivery cleanup state is restored to re-verifica
   assert.match(recovery, /queue_removal_cleanup_completed/);
   assert.match(recovery, /claim\["completion_cleanup_pending"\] = True/);
   assert.match(recovery, /queue_removal_cleanup_recovered_after_unverified_completion/);
+  assert.match(recovery, /\[ -f "\$TODO_CLAIM_FILE" \] \|\| return 0/,
+    'an absent claim must be a recovery no-op');
   assert.match(recovery, /else\s+recovery_status=\$\?/);
   assert.match(recovery, /if \[ "\$recovery_status" -ne 0 \]; then[\s\S]*return "\$recovery_status"/);
   assert.match(recovery, /return "\$recovery_status"[\s\S]*sync_parent_dir/);

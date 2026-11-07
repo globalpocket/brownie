@@ -13397,6 +13397,9 @@ PY
 # any future dispatch. A durable re-verification receipt always wins.
 recover_unverified_completed_cleanup_state() {
   local run_stamp="$1" recovery_status
+  # A run without an active claim has no cleanup obligation to recover.  Keep
+  # this path a no-op; failures below remain fail-closed for an existing claim.
+  [ -f "$TODO_CLAIM_FILE" ] || return 0
   if python3 - "$TODO_CLAIM_FILE" "$run_stamp" "$(now_utc)" <<'PY'
 import json
 import os
