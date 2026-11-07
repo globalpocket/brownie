@@ -341,17 +341,28 @@ function validEvidence(repoRoot = tempRepo()) {
   };
 }
 
-function validate({ contract = validContract(), evidence, repoRoot = tempRepo(), evidencePath = 'evidence.json' } = {}) {
+function validate({ contract = validContract(), evidence, repoRoot = tempRepo(), evidencePath = 'evidence.json', repository } = {}) {
+  const resolvedEvidence = evidence ?? validEvidence(repoRoot);
   return runSupplyChainArtifactEvidenceGuard({
     repoRoot,
     contract,
-    evidence: evidence ?? validEvidence(repoRoot),
-    evidencePath
+    evidence: resolvedEvidence,
+    evidencePath,
+    // Fixture acceptance must not depend on an ambient deployment selected by
+    // the phase-loop process. Production callers omit this option, so the
+    // guard continues to resolve and enforce its deployment repository.
+    repository: repository ?? resolvedEvidence.repository
   }).errors;
 }
 
 test('accepts fail-closed supply-chain evidence with explicit missing artifact reasons', () => {
   assert.deepEqual(validate(), []);
+});
+
+test('rejects evidence whose repository differs from the configured repository', () => {
+  const evidence = validEvidence();
+  const errors = validate({ evidence, repository: 'globalpocket/brownie' });
+  assert(errors.some((error) => error.includes('repository must match the configured deployment repository')));
 });
 
 test('accepts contract-only mode when generated evidence has not been produced yet', () => {

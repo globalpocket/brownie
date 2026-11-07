@@ -537,7 +537,11 @@ export function runSupplyChainArtifactEvidenceGuard(options = {}) {
     options.evidence !== undefined || process.env.BROWNIE_SUPPLY_CHAIN_ARTIFACT_EVIDENCE || fs.existsSync(path.join(repoRoot, resolvedEvidencePath));
   if (shouldValidateEvidence) {
     const evidence = options.evidence ?? readJson(repoRoot, resolvedEvidencePath, errors);
-    errors.push(...validateEvidence(evidence, { repoRoot }));
+    errors.push(...validateEvidence(evidence, {
+      repoRoot,
+      repository: options.repository,
+      deploymentResult: options.deploymentResult
+    }));
   }
 
   return { errors, contractPath, evidencePath: resolvedEvidencePath, validatedEvidence: shouldValidateEvidence };
