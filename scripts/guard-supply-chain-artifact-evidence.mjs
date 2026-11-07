@@ -215,7 +215,13 @@ function readBoundEvidence(repoRoot, relativePath, errors, owner) {
     return null;
   }
   try {
-    return JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+    const evidence = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+    requireValue(
+      evidence !== null && typeof evidence === 'object' && !Array.isArray(evidence),
+      errors,
+      `${owner} must contain a JSON object.`
+    );
+    return evidence !== null && typeof evidence === 'object' && !Array.isArray(evidence) ? evidence : null;
   } catch (error) {
     errors.push(`${owner} must be readable JSON: ${error.message}`);
     return null;
@@ -245,6 +251,7 @@ function validateDownloadedRoundtripEvidence(repoRoot, binding, errors, owner) {
     const evidenceOwner = `${owner}.${kind}`;
     requireValue(evidence.evidence_id === evidenceId, errors, `${evidenceOwner}.evidence_id must identify downloaded artifact evidence.`);
     requireValue(evidence.target === binding.target, errors, `${evidenceOwner}.target must match downloaded_roundtrip_binding target.`);
+    requireValue(evidence.workflow_run_id === binding.workflow_run_id, errors, `${evidenceOwner}.workflow_run_id must match downloaded_roundtrip_binding.`);
     for (const [field, expected] of Object.entries(expectedArtifact)) {
       const bindingField = field === 'archive_sha256' ? 'package_sha256' : field;
       requireValue(evidence.artifact?.[field] === expected, errors, `${evidenceOwner}.artifact.${field} must match downloaded_roundtrip_binding.${bindingField}.`);
