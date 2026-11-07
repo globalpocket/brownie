@@ -13396,8 +13396,8 @@ PY
 # cleanup obligation so the immutable Runtime receipt is re-verified before
 # any future dispatch. A durable re-verification receipt always wins.
 recover_unverified_completed_cleanup_state() {
-  local run_stamp="$1"
-  python3 - "$TODO_CLAIM_FILE" "$run_stamp" "$(now_utc)" <<'PY'
+  local run_stamp="$1" recovery_status
+  if python3 - "$TODO_CLAIM_FILE" "$run_stamp" "$(now_utc)" <<'PY'
 import json
 import os
 import pathlib
@@ -13441,6 +13441,14 @@ os.chmod(temporary, 0o600)
 os.replace(temporary, path)
 os.chmod(path, 0o600)
 PY
+  then
+    recovery_status=0
+  else
+    recovery_status=$?
+  fi
+  if [ "$recovery_status" -ne 0 ]; then
+    return "$recovery_status"
+  fi
   sync_parent_dir "$TODO_CLAIM_DIR"
 }
 
