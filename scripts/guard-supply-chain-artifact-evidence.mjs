@@ -32,6 +32,23 @@ const requiredArtifactSmokeE2eStepIds = [
   'forced_stop_resume',
   'stale_replay_rejection'
 ];
+const requiredDownloadedJourneyChecks = [
+  'mode_pack_load',
+  'workspace_mutation',
+  'ledger_generation',
+  'forced_interruption',
+  'resume',
+  'stale_replay_rejection'
+];
+const requiredDownloadedSoakChecks = [
+  'artifact_execution_boundary',
+  'process_loss_recovery',
+  'duplicate_side_effect_rejection',
+  'ledger_workspace_consistency',
+  'resume_replay_behavior',
+  'finite_convergence',
+  'evidence_chain_integrity'
+];
 
 function isArtifactSmokeStepId(stepId) {
   return requiredArtifactSmokeE2eStepIds.includes(stepId);
@@ -187,6 +204,122 @@ function validateOptionalPath(repoRoot, value, errors, owner) {
   }
 }
 
+function readBoundEvidence(repoRoot, relativePath, errors, owner) {
+  requireValue(isSafeRelativePath(relativePath), errors, `${owner} must be repository-relative and bounded.`);
+  if (!isSafeRelativePath(relativePath)) {
+    return null;
+  }
+  const fullPath = path.join(repoRoot, relativePath);
+  requireValue(fs.existsSync(fullPath), errors, `${owner} must exist: ${relativePath}.`);
+  if (!fs.existsSync(fullPath)) {
+    return null;
+  }
+  try {
+    return JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+  } catch (error) {
+    errors.push(`${owner} must be readable JSON: ${error.message}`);
+    return null;
+  }
+}
+
+function requirePassedChecks(evidence, checkIds, errors, owner) {
+  for (const checkId of checkIds) {
+    requireValue(evidence?.checks?.[checkId]?.passed === true, errors, `${owner}.checks.${checkId}.passed must be true.`);
+  }
+}
+
+function validateDownloadedRoundtripEvidence(repoRoot, binding, errors, owner) {
+  const journey = readBoundEvidence(repoRoot, binding.journey_evidence_path, errors, `${owner}.journey_evidence_path`);
+  const soak = readBoundEvidence(repoRoot, binding.soak_evidence_path, errors, `${owner}.soak_evidence_path`);
+  const expectedArtifact = {
+    archive_sha256: binding.package_sha256,
+    artifact_sha256: binding.binary_sha256,
+    runtime_sha256: binding.runtime_sha256
+  };
+
+  for (const [kind, evidence, evidenceId, checks] of [
+    ['journey', journey, 'brownie-release-artifact-runtime-journey-v1', requiredDownloadedJourneyChecks],
+    ['soak', soak, 'brownie-release-artifact-stateful-soak-v1', requiredDownloadedSoakChecks]
+  ]) {
+    if (!evidence) continue;
+    const evidenceOwner = `${owner}.${kind}`;
+    requireValue(evidence.evidence_id === evidenceId, errors, `${evidenceOwner}.evidence_id must identify downloaded artifact evidence.`);
+    requireValue(evidence.target === binding.target, errors, `${evidenceOwner}.target must match downloaded_roundtrip_binding target.`);
+    for (const [field, expected] of Object.entries(expectedArtifact)) {
+      const bindingField = field === 'archive_sha256' ? 'package_sha256' : field;
+      requireValue(evidence.artifact?.[field] === expected, errors, `${evidenceOwner}.artifact.${field} must match downloaded_roundtrip_binding.${bindingField}.`);
+    }
+    requirePassedChecks(evidence, checks, errors, evidenceOwner);
+  }
+
+  requireValue(
+    soak?.checks?.artifact_execution_boundary?.packaged_cli_only === true &&
+      soak?.checks?.artifact_execution_boundary?.isolated_workspace_cwd === true &&
+      soak?.checks?.artifact_execution_boundary?.runtime_path_override_removed === true,
+    errors,
+    `${owner}.soak must prove downloaded packaged execution, not build-tree execution.`
+  );
+}
+
+function validateReleaseEvidenceRoundtripBinding(repoRoot, artifacts, errors) {
+  const owner = 'sections.artifacts.release_evidence_binding';
+  const binding = artifacts.release_evidence_binding;
+  requireValue(binding && typeof binding === 'object', errors, `${owner} must be present when artifacts are satisfied.`);
+  if (!binding || typeof binding !== 'object') return;
+
+  requireValue(binding.schema_version === 1, errors, `${owner}.schema_version must be 1.`);
+  requireValue(binding.evidence_id === 'brownie-release-evidence-roundtrip-binding-v1', errors, `${owner}.evidence_id must match.`);
+  requireValue(binding.status === 'satisfied', errors, `${owner}.status must be satisfied.`);
+  requireValue(binding.release_blocking === true, errors, `${owner}.release_blocking must be true.`);
+  const bindings = Array.isArray(binding.bindings) ? binding.bindings : [];
+  requireValue(bindings.length === artifacts.artifacts.length, errors, `${owner}.bindings must cover every artifact exactly once.`);
+  requireValue(binding.target_count === bindings.length, errors, `${owner}.target_count must match bindings.`);
+  requireValue(binding.satisfied_target_count === bindings.length, errors, `${owner}.satisfied_target_count must match bindings.`);
+  requireValue(Array.isArray(binding.missing) && binding.missing.length === 0, errors, `${owner}.missing must be empty.`);
+
+  const artifactsByTarget = new Map();
+  for (const artifact of artifacts.artifacts) {
+    if (isNonEmptyString(artifact?.target)) artifactsByTarget.set(artifact.target, artifact);
+  }
+  const seenTargets = new Set();
+  for (const [index, entry] of bindings.entries()) {
+    const entryOwner = `${owner}.bindings[${index}]`;
+    const artifact = artifactsByTarget.get(entry?.target);
+    requireValue(isNonEmptyString(entry?.target) && artifact !== undefined && !seenTargets.has(entry.target), errors, `${entryOwner}.target must identify one artifact.`);
+    if (!artifact || seenTargets.has(entry?.target)) continue;
+    seenTargets.add(entry.target);
+    const sourceCommit = artifact.source_commit.slice('sha256:'.length);
+    requireValue(entry.status === 'satisfied', errors, `${entryOwner}.status must be satisfied.`);
+    requireValue(entry.implementation_commit === artifact.source_commit, errors, `${entryOwner}.implementation_commit must match artifact source_commit.`);
+    requireValue(entry.tested_commit === sourceCommit, errors, `${entryOwner}.tested_commit must match artifact source_commit.`);
+    requireValue(entry.workflow_run_id === artifact.provenance_binding?.workflowRunId, errors, `${entryOwner}.workflow_run_id must match artifact provenance.`);
+    requireValue(entry.platform === artifact.provenance_binding?.platform, errors, `${entryOwner}.platform must match artifact provenance.`);
+    requireValue(entry.architecture === artifact.provenance_binding?.architecture, errors, `${entryOwner}.architecture must match artifact provenance.`);
+    requireValue(hashPattern.test(entry.package_sha256), errors, `${entryOwner}.package_sha256 must be sha256:<64 lowercase hex>.`);
+    requireValue(entry.binary_sha256 === artifact.sha256, errors, `${entryOwner}.binary_sha256 must match artifact sha256.`);
+    requireValue(hashPattern.test(entry.runtime_sha256), errors, `${entryOwner}.runtime_sha256 must be sha256:<64 lowercase hex>.`);
+    requireValue(Array.isArray(entry.errors) && entry.errors.length === 0, errors, `${entryOwner}.errors must be empty.`);
+    validateDownloadedRoundtripEvidence(repoRoot, entry, errors, entryOwner);
+  }
+  requireValue(seenTargets.size === artifactsByTarget.size, errors, `${owner}.bindings must cover every artifact target.`);
+  const witnesses = bindings
+    .map((entry) => ({
+      target: entry.target,
+      status: entry.status,
+      implementation_commit: entry.implementation_commit,
+      tested_commit: entry.tested_commit,
+      workflow_run_id: entry.workflow_run_id,
+      platform: entry.platform,
+      architecture: entry.architecture,
+      package_sha256: entry.package_sha256,
+      binary_sha256: entry.binary_sha256,
+      runtime_sha256: entry.runtime_sha256,
+      errors: entry.errors
+    }))
+    .sort((left, right) => String(left.target).localeCompare(String(right.target)));
+  requireValue(binding.binding_digest === sha256Text(JSON.stringify(witnesses)), errors, `${owner}.binding_digest must match bindings.`);
+}
+
 function validateEvidence(evidence, options = {}) {
   const repoRoot = options.repoRoot ?? defaultRepoRoot;
   const errors = [];
@@ -264,6 +397,7 @@ function validateEvidence(evidence, options = {}) {
       requireValue(hashPattern.test(artifact.source_identity), errors, `sections.artifacts.artifacts[${index}].source_identity must be sha256:<64 lowercase hex>.`);
       validateArtifactProvenanceBinding(artifact, errors, `sections.artifacts.artifacts[${index}]`);
     }
+    validateReleaseEvidenceRoundtripBinding(repoRoot, artifacts, errors);
   }
 
   const artifactSmoke = evidence.sections?.artifact_smoke;
