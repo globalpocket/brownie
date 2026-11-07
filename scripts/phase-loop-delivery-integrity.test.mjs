@@ -298,6 +298,10 @@ test('a selected TODO may be recovered from split reviewed merges with only boun
   };
   assert.equal(durableCompletionRecordReceipt(completionRecord).valid, true,
     'a new completion record retains the task-bound review identity');
+  const persistedTamperedRecord = structuredClone(completionRecord);
+  persistedTamperedRecord.delivery_receipt.author = 'tampered-author';
+  assert.equal(durableCompletionRecordReceipt(persistedTamperedRecord).valid, false,
+    'a persisted receipt still requires compact actor identity to match its attestation');
   const prePersistenceRecord = structuredClone(completionRecord);
   delete prePersistenceRecord.delivery_receipt.delivery_review;
   assert.equal(durableCompletionRecordReceipt(prePersistenceRecord).valid, true,

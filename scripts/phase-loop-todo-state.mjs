@@ -214,7 +214,10 @@ export function durableCompletionRecordReceipt(record) {
       && receipt.approved === true
       && receipt.ci_passed === true
       && receipt.merged === true
-      && (recordedReview || !attestation || attestationMatchesCompactReceipt)
+      // Both receipt shapes keep the compact actor tuple.  When the proof
+      // includes an attestation it must agree with that tuple even if the
+      // newer delivery_review identity is also present.
+      && (!attestation || attestationMatchesCompactReceipt)
       && proof.valid
     );
     return {
