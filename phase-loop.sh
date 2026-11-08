@@ -367,6 +367,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 
 aggregate_path = pathlib.Path(sys.argv[1])
@@ -14145,6 +14146,21 @@ def read_text(path):
     with open(path, encoding="utf-8") as handle:
         return handle.read()
 
+def javascript_syntax_valid(path):
+    if not path.is_file():
+        return False
+    try:
+        result = subprocess.run(
+            ["node", "--check", str(path)],
+            cwd=workspace_root_path,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
 def sha256_text(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -15619,15 +15635,16 @@ if repair_feedback:
         declared_match = re.search(r"Identifier '([^']+)' has already been declared", result_stdout + "\n" + result_stderr)
         if declared_match and selected_leaf_target_path:
             duplicate_name = declared_match.group(1)
-            target_text = read_text(pathlib.Path(selected_leaf_target_path))
+            target_path = workspace_root_path / selected_leaf_target_path
+            target_text = read_text(target_path)
             duplicate_names = duplicate_const_declarations(target_text, duplicate_name)
             duplicate_count = duplicate_names.get(duplicate_name, 0)
             repair_feedback_lines.append(f"- duplicate_const_syntax_error_name: `{duplicate_name}`")
             repair_feedback_lines.append(f"- duplicate_const_syntax_error_target: `{selected_leaf_target_path}`")
-            if duplicate_count <= 1:
+            if duplicate_count <= 1 and javascript_syntax_valid(target_path):
                 repair_feedback_lines.append(f"- restored_duplicate_declaration_policy: the supervisor restored `{selected_leaf_target_path}` and it now contains exactly one `const {duplicate_name} =` declaration. Do not issue workspace.write and do not recreate the duplicate. Run every selected TODO verification command against the restored target; if they pass, final-answer the concrete verification evidence so the same claim can complete. If a verifier fails, report that exact failure without changing unrelated files.")
             else:
-                repair_feedback_lines.append(f"- duplicate_const_syntax_error_policy: verification still finds `{duplicate_count}` declarations of `const {duplicate_name} =` in `{selected_leaf_target_path}`. Remove exactly one duplicate declaration from that selected target with one occurrence-qualified workspace.write hunk; do not patch `.brownie/todo.md` or split the TODO.")
+                repair_feedback_lines.append(f"- duplicate_const_syntax_error_policy: `{selected_leaf_target_path}` still fails JavaScript syntax validation after restoration. Re-read the selected target and repair the actual duplicate binding for `{duplicate_name}` with one occurrence-qualified workspace.write hunk; do not assume it is a simple const declaration, do not patch `.brownie/todo.md`, and do not split the TODO.")
         if "Route must be one of implementation, documentation, release-ops, todo-decomposition" in result_stderr:
             repair_feedback_lines.append("- todo_leaf_route_repair_policy: repair invalid TODO leaves by setting `Route:` to exactly one allowed route value, usually `Route: implementation.` for patch leaves. Do not put a path or prose in the `Route:` line.")
         if "Patch only/Create only scope must name at most two concrete backticked paths" in result_stderr or "Patch only target does not exist" in result_stderr:
@@ -15662,15 +15679,16 @@ if repair_feedback:
         previous_declared_match = re.search(r"Identifier '([^']+)' has already been declared", previous_stdout + "\n" + previous_stderr)
         if previous_declared_match and selected_leaf_target_path:
             duplicate_name = previous_declared_match.group(1)
-            target_text = read_text(pathlib.Path(selected_leaf_target_path))
+            target_path = workspace_root_path / selected_leaf_target_path
+            target_text = read_text(target_path)
             duplicate_names = duplicate_const_declarations(target_text, duplicate_name)
             duplicate_count = duplicate_names.get(duplicate_name, 0)
             repair_feedback_lines.append(f"- duplicate_const_syntax_error_name: `{duplicate_name}`")
             repair_feedback_lines.append(f"- duplicate_const_syntax_error_target: `{selected_leaf_target_path}`")
-            if duplicate_count <= 1:
+            if duplicate_count <= 1 and javascript_syntax_valid(target_path):
                 repair_feedback_lines.append(f"- restored_duplicate_declaration_policy: the supervisor restored `{selected_leaf_target_path}` and it now contains exactly one `const {duplicate_name} =` declaration. Do not issue workspace.write and do not recreate the duplicate. Run every selected TODO verification command against the restored target; if they pass, final-answer the concrete verification evidence so the same claim can complete. If a verifier fails, report that exact failure without changing unrelated files.")
             else:
-                repair_feedback_lines.append(f"- duplicate_const_syntax_error_policy: verification still finds `{duplicate_count}` declarations of `const {duplicate_name} =` in `{selected_leaf_target_path}`. Remove exactly one duplicate declaration from that selected target with one occurrence-qualified workspace.write hunk; do not patch `.brownie/todo.md` or split the TODO.")
+                repair_feedback_lines.append(f"- duplicate_const_syntax_error_policy: `{selected_leaf_target_path}` still fails JavaScript syntax validation after restoration. Re-read the selected target and repair the actual duplicate binding for `{duplicate_name}` with one occurrence-qualified workspace.write hunk; do not assume it is a simple const declaration, do not patch `.brownie/todo.md`, and do not split the TODO.")
         if "dependency " in previous_stderr and " is not present in unchecked, checked, or breakdown-ledger state" in previous_stderr:
             repair_feedback_lines.append("- todo_leaf_dependency_repair_policy: repair invalid `Depends on:` values by replacing the missing dependency with `<none>`. Do not preserve or reintroduce dependency ids that the guard says are not present.")
         if "Patch only/Create only scope must name at most two concrete backticked paths" in previous_stderr or "Patch only target does not exist" in previous_stderr:

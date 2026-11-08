@@ -228,10 +228,14 @@ test('a syntax-invalid objective apply restores the target and continues the sam
 });
 
 test('duplicate-declaration recovery binds feedback to the restored selected target', () => {
+  assert.match(controller, /def javascript_syntax_valid\(path\):/);
+  assert.match(controller, /\["node", "--check", str\(path\)\]/);
   assert.match(controller, /duplicate_const_syntax_error_target: `\{selected_leaf_target_path\}`/);
   assert.match(controller, /restored_duplicate_declaration_policy: the supervisor restored `\{selected_leaf_target_path\}`/);
+  assert.match(controller, /if duplicate_count <= 1 and javascript_syntax_valid\(target_path\):/);
   assert.match(controller, /Do not issue workspace\.write and do not recreate the duplicate/);
   assert.match(controller, /Run every selected TODO verification command against the restored target/);
+  assert.match(controller, /do not assume it is a simple const declaration/);
   assert.doesNotMatch(
     controller,
     /duplicate_const_syntax_error_policy:[^\n]*Repair `scripts\/release-runtime-operational-evidence\.mjs` directly/
