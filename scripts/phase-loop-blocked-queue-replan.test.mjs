@@ -100,6 +100,96 @@ test('archives a blocked active claim and selects its unblocked replan leaf', ()
   assert.ok(fs.existsSync(path.join(claims, 'stale-test-run-1.json')));
 });
 
+test('archives only a closed unmerged review handoff with the single observed head mismatch', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-closed-handoff-recovery-'));
+  const state = path.join(dir, 'state');
+  const claims = path.join(state, 'todo-claims');
+  const review = path.join(dir, 'review.json');
+  const reconciliation = path.join(dir, 'reconciliation.json');
+  fs.mkdirSync(claims, { recursive: true });
+  fs.writeFileSync(path.join(claims, 'current.json'), JSON.stringify({
+    claim_id: 'closed-handoff-claim',
+    status: 'pr_pending_review',
+    delivery_review: { head_oid: 'a'.repeat(40) },
+    status_history: []
+  }));
+  fs.writeFileSync(review, JSON.stringify({
+    number: 874,
+    state: 'CLOSED',
+    mergedAt: null,
+    headRefOid: 'b'.repeat(40)
+  }));
+  fs.writeFileSync(reconciliation, JSON.stringify({
+    reconciliation: { errors: ['implementation_head_mismatch'] }
+  }));
+
+  const output = execFileSync('bash', [
+    '-c', 'script=$1; review=$2; reconciliation=$3; set --; source "$script" >/dev/null; phase_loop_archive_closed_head_mismatch_review_handoff test-run "$review" "$(cat "$reconciliation")"; printf "archive=%s\\n" "$PHASE_LOOP_LAST_CLAIM_ARCHIVE"',
+    '_', phaseLoop, review, reconciliation
+  ], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: { ...process.env, PHASE_LOOP_STATE_DIR: state }
+  });
+
+  assert.match(output, /closed-review-handoff-test-run\.json/);
+  assert.equal(fs.existsSync(path.join(claims, 'current.json')), false);
+  const archived = JSON.parse(fs.readFileSync(path.join(claims, 'closed-review-handoff-test-run.json'), 'utf8'));
+  assert.equal(archived.status, 'review_handoff_invalidated');
+  assert.equal(archived.archive_reason, 'closed_unmerged_review_handoff_head_mismatch');
+  assert.deepEqual(archived.review_handoff_invalidation.reconciliation_errors, ['implementation_head_mismatch']);
+
+  const retryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-closed-handoff-retry-id-'));
+  const retryState = path.join(retryDir, 'state');
+  const retryClaims = path.join(retryState, 'todo-claims');
+  const retryTodo = path.join(retryDir, 'todo.md');
+  const retryBreakdown = path.join(retryDir, 'todo-breakdown.md');
+  const selectedTodo = '- [ ] E-closed-handoff-retry: Patch only `scripts/target.mjs`:\n  Route: implementation.\n  Source TODO: review-handoff-recovery.\n  Depends on: <none>.\n  Completion condition: a replacement claim uses an isolated Runtime store.\n  Forbidden changes: do not reuse a rejected Runtime session.\n  Verification: run `node --test scripts/target.test.mjs`.';
+  fs.writeFileSync(retryTodo, `${selectedTodo}\n`);
+  fs.writeFileSync(retryBreakdown, '# Breakdown\n');
+  const retryEnv = {
+    ...process.env,
+    PHASE_LOOP_STATE_DIR: retryState,
+    PHASE_LOOP_TODO: retryTodo,
+    PHASE_LOOP_TODO_BREAKDOWN: retryBreakdown,
+    PHASE_LOOP_WORKSPACE_ROOT: repoRoot
+  };
+  const firstClaimId = execFileSync('bash', [
+    '-c', 'script=$1; set --; source "$script" >/dev/null; claim_first_pending_todo first >/dev/null; python3 - "$TODO_CLAIM_FILE" <<\'PY\'\nimport json, sys\nprint(json.load(open(sys.argv[1]))["claim_id"])\nPY',
+    '_', phaseLoop
+  ], { cwd: repoRoot, encoding: 'utf8', env: retryEnv }).trim();
+  const retryCurrent = JSON.parse(fs.readFileSync(path.join(retryClaims, 'current.json'), 'utf8'));
+  retryCurrent.delivery_review = { head_oid: 'c'.repeat(40) };
+  fs.writeFileSync(path.join(retryClaims, 'current.json'), JSON.stringify(retryCurrent));
+  const retryReview = path.join(retryDir, 'review.json');
+  fs.writeFileSync(retryReview, JSON.stringify({ number: 875, state: 'CLOSED', mergedAt: null, headRefOid: 'd'.repeat(40) }));
+  execFileSync('bash', [
+    '-c', 'script=$1; review=$2; set --; source "$script" >/dev/null; phase_loop_archive_closed_head_mismatch_review_handoff retry "$review" \'{"reconciliation":{"errors":["implementation_head_mismatch"]}}\' ',
+    '_', phaseLoop, retryReview
+  ], { cwd: repoRoot, encoding: 'utf8', env: retryEnv });
+  const replacementClaimId = execFileSync('bash', [
+    '-c', 'script=$1; set --; source "$script" >/dev/null; claim_first_pending_todo replacement >/dev/null; python3 - "$TODO_CLAIM_FILE" <<\'PY\'\nimport json, sys\nprint(json.load(open(sys.argv[1]))["claim_id"])\nPY',
+    '_', phaseLoop
+  ], { cwd: repoRoot, encoding: 'utf8', env: retryEnv }).trim();
+  assert.equal(replacementClaimId, `${firstClaimId}-r1`);
+
+  fs.writeFileSync(path.join(claims, 'current.json'), JSON.stringify({
+    claim_id: 'open-handoff-claim',
+    delivery_review: { head_oid: 'a'.repeat(40) },
+    status_history: []
+  }));
+  fs.writeFileSync(review, JSON.stringify({ number: 874, state: 'OPEN', mergedAt: null, headRefOid: 'b'.repeat(40) }));
+  assert.throws(() => execFileSync('bash', [
+    '-c', 'script=$1; review=$2; reconciliation=$3; set --; source "$script" >/dev/null; phase_loop_archive_closed_head_mismatch_review_handoff test-open "$review" "$(cat "$reconciliation")"',
+    '_', phaseLoop, review, reconciliation
+  ], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: { ...process.env, PHASE_LOOP_STATE_DIR: state }
+  }));
+  assert.equal(fs.existsSync(path.join(claims, 'current.json')), true);
+});
+
 test('preempts a stale continuation when its durable stalled replan is already queued', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-durable-replan-handoff-'));
   const workspace = path.join(dir, 'workspace');

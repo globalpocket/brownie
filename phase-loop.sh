@@ -11022,6 +11022,126 @@ PY
   PHASE_LOOP_LAST_CLAIM_ARCHIVE="$archive_path"
 }
 
+# A closed, unmerged implementation PR whose observed head no longer equals
+# the claim-bound handoff head cannot be resumed or reviewed. Preserve that
+# exact rejected handoff as an audit artifact, then allow normal claim
+# selection to issue a new receipt. This is deliberately narrower than the
+# generic stale-claim path: an open PR, a merged PR, or any reconciliation
+# error besides the single head mismatch must keep the active claim intact.
+phase_loop_archive_closed_head_mismatch_review_handoff() {
+  local run_stamp="$1" review_file="$2" reconciliation_result="$3"
+  local archive_path archive_suffix result
+  PHASE_LOOP_CLOSED_REVIEW_HANDOFF_RECOVERY_DETAIL=""
+  [ -f "$TODO_CLAIM_FILE" ] && [ -f "$review_file" ] || return 1
+  archive_path="$TODO_CLAIM_DIR/closed-review-handoff-$run_stamp.json"
+  archive_suffix=1
+  while [ -e "$archive_path" ]; do
+    archive_path="$TODO_CLAIM_DIR/closed-review-handoff-$run_stamp-$archive_suffix.json"
+    archive_suffix=$((archive_suffix + 1))
+  done
+  if ! result="$(python3 - "$TODO_CLAIM_FILE" "$review_file" "$archive_path" "$run_stamp" "$(now_utc)" "$reconciliation_result" <<'PY'
+import json
+import os
+import pathlib
+import re
+import sys
+
+claim_path = pathlib.Path(sys.argv[1])
+review_path = pathlib.Path(sys.argv[2])
+archive_path = pathlib.Path(sys.argv[3])
+run_stamp = sys.argv[4]
+timestamp = sys.argv[5]
+raw_result = sys.argv[6]
+
+try:
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    reconciliation = json.loads(raw_result).get("reconciliation")
+except Exception:
+    print(json.dumps({"action": "not_applicable", "reason": "unreadable_reconciliation_inputs"}, sort_keys=True))
+    raise SystemExit(0)
+
+delivery_review = claim.get("delivery_review") if isinstance(claim, dict) else None
+errors = reconciliation.get("errors") if isinstance(reconciliation, dict) else None
+expected_head = delivery_review.get("head_oid") if isinstance(delivery_review, dict) else None
+observed_head = review.get("headRefOid") if isinstance(review, dict) else None
+closed_unmerged = isinstance(review, dict) and review.get("state") == "CLOSED" and review.get("mergedAt") is None
+if not (
+    isinstance(errors, list)
+    and errors == ["implementation_head_mismatch"]
+    and closed_unmerged
+    and isinstance(expected_head, str)
+    and isinstance(observed_head, str)
+    and re.fullmatch(r"[0-9a-f]{40}", expected_head)
+    and re.fullmatch(r"[0-9a-f]{40}", observed_head)
+    and expected_head != observed_head
+):
+    print(json.dumps({"action": "not_applicable", "reason": "closed_unmerged_single_head_mismatch_required"}, sort_keys=True))
+    raise SystemExit(0)
+
+if archive_path.exists():
+    print(json.dumps({"action": "not_applicable", "reason": "archive_path_already_exists"}, sort_keys=True))
+    raise SystemExit(0)
+
+archived = dict(claim)
+archived["status"] = "review_handoff_invalidated"
+archived["archive_reason"] = "closed_unmerged_review_handoff_head_mismatch"
+archived["archived_at"] = timestamp
+archived["review_handoff_invalidation"] = {
+    "record_type": "phase_loop_closed_unmerged_review_handoff",
+    "run_stamp": run_stamp,
+    "observed_pr_number": review.get("number"),
+    "observed_pr_state": review.get("state"),
+    "observed_merged_at": review.get("mergedAt"),
+    "expected_head_oid": expected_head,
+    "observed_head_oid": observed_head,
+    "reconciliation_errors": errors,
+}
+history = archived.setdefault("status_history", [])
+if not isinstance(history, list):
+    raise SystemExit(1)
+history.append({
+    "status": "review_handoff_invalidated",
+    "run_stamp": run_stamp,
+    "updated_at": timestamp,
+    "reason": "closed_unmerged_review_handoff_head_mismatch",
+})
+tmp = archive_path.with_suffix(".tmp")
+with open(tmp, "w", encoding="utf-8") as handle:
+    json.dump(archived, handle, ensure_ascii=False, sort_keys=True, indent=2)
+    handle.write("\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(tmp, 0o600)
+os.replace(tmp, archive_path)
+os.chmod(archive_path, 0o600)
+claim_path.unlink()
+print(json.dumps({
+    "action": "archived",
+    "archive_path": str(archive_path),
+    "claim_id": archived.get("claim_id"),
+    "expected_head_oid": expected_head,
+    "observed_head_oid": observed_head,
+    "pr_number": review.get("number"),
+}, sort_keys=True))
+PY
+)"; then
+    return 1
+  fi
+  case "$result" in
+    *'"action": "archived"'*)
+      sync_parent_dir "$TODO_CLAIM_DIR"
+      PHASE_LOOP_LAST_CLAIM_ARCHIVE="$(printf '%s' "$result" | python3 -c 'import json,sys; print(json.load(sys.stdin)["archive_path"])')"
+      PHASE_LOOP_CLOSED_REVIEW_HANDOFF_RECOVERY_DETAIL="$result"
+      printf '%s closed_unmerged_review_handoff_archived=true result=%s\n' "$(now_utc)" "$result" >> "$SUPERVISOR_LOG"
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 archive_terminal_failure_claim_snapshot() {
   local snapshot_path="$1"
   local run_stamp="$2"
@@ -12801,11 +12921,17 @@ PY
   else
     reconciliation_status=$?
   fi
-  rm -f "$review_file"
   if [ "$reconciliation_status" -ne 0 ]; then
+    if phase_loop_archive_closed_head_mismatch_review_handoff "review-reconcile-$(date -u +%Y%m%dT%H%M%SZ)" "$review_file" "$result"; then
+      rm -f "$review_file"
+      write_status "recovery_required" "Closed unmerged implementation handoff advanced away from its claim-bound head; archived the invalid handoff and will issue a fresh claim rather than review or reuse it. recovery=$PHASE_LOOP_CLOSED_REVIEW_HANDOFF_RECOVERY_DETAIL" "review-reconcile" "0" "${CONSECUTIVE_FAILURES:-0}" "" "true"
+      return 0
+    fi
+    rm -f "$review_file"
     write_status "integrity_blocked" "Review reconciliation rejected provenance; preserving claim. result=${result:-<no output>}" "review-reconcile" "76" "${CONSECUTIVE_FAILURES:-0}"
     return 76
   fi
+  rm -f "$review_file"
   status="$(claim_status 2>/dev/null || true)"
   case "$status" in
     pr_pending_review)
@@ -14086,19 +14212,20 @@ import sys
 claim_dir = pathlib.Path(sys.argv[1])
 base = sys.argv[2]
 max_retry = 0
-for path in claim_dir.glob("stale-*.json"):
-    try:
-        claim = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        continue
-    claim_id = str(claim.get("claim_id") or "")
-    if claim_id == base:
-        max_retry = max(max_retry, 1)
-    elif claim_id.startswith(base + "-r"):
+for pattern in ("stale-*.json", "closed-review-handoff-*.json"):
+    for path in claim_dir.glob(pattern):
         try:
-            max_retry = max(max_retry, int(claim_id.rsplit("-r", 1)[1]) + 1)
+            claim = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
+            continue
+        claim_id = str(claim.get("claim_id") or "")
+        if claim_id == base:
             max_retry = max(max_retry, 1)
+        elif claim_id.startswith(base + "-r"):
+            try:
+                max_retry = max(max_retry, int(claim_id.rsplit("-r", 1)[1]) + 1)
+            except Exception:
+                max_retry = max(max_retry, 1)
 print("" if max_retry == 0 else f"-r{max_retry}")
 PY
 )"
