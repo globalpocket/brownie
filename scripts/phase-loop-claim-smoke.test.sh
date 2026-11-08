@@ -3914,10 +3914,12 @@ queue_workspace="$(mktemp -d)"
 git -C "$queue_workspace" init -b main >/dev/null
 mkdir -p "$queue_workspace/.brownie" "$queue_workspace/scripts"
 printf '%s\n' '{"name":"brownie-claim-smoke-queue-recovery-fixture","private":true,"scripts":{"guard:todo-decomposition":"node scripts/guard-todo-decomposition.mjs","phase-loop:todo-queue-integrity":"node scripts/phase-loop-todo-queue-integrity.mjs"}}' > "$queue_workspace/package.json"
+printf 'packages: []\n' > "$queue_workspace/pnpm-workspace.yaml"
 printf '%s\n' '- [ ] E-99-objective-apply: Patch only `README.md` to exercise objective apply stall recovery.' > "$queue_workspace/.brownie/todo.md"
 printf '# queue fixture breakdown\n' > "$queue_workspace/.brownie/todo-breakdown.md"
+printf 'process.exit(0);\n' > "$queue_workspace/scripts/guard-todo-decomposition.mjs"
 printf 'export const evidence = {};\n' > "$queue_workspace/scripts/release-supply-chain-artifact-evidence.mjs"
-git -C "$queue_workspace" add package.json .brownie/todo.md .brownie/todo-breakdown.md scripts/release-supply-chain-artifact-evidence.mjs
+git -C "$queue_workspace" add package.json pnpm-workspace.yaml .brownie/todo.md .brownie/todo-breakdown.md scripts/guard-todo-decomposition.mjs scripts/release-supply-chain-artifact-evidence.mjs
 git -C "$queue_workspace" -c user.name=Brownie -c user.email=brownie@example.invalid commit -m init >/dev/null
 queue_original_workspace="$test_workspace"
 test_workspace="$queue_workspace"
