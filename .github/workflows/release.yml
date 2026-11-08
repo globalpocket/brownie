@@ -222,6 +222,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Download validated per-target release evidence
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-evidence-*
+          path: .
+          merge-multiple: true
+
       - name: Run supply-chain artifact evidence collector
         run: pnpm --workspace-root release:supply-chain-artifact-evidence
 
@@ -241,9 +248,10 @@ jobs:
           path: |
             .brownie/release-evidence/supply-chain-artifact-evidence.json
             .brownie/release-evidence/runtime-operational-evidence.json
-            .brownie/release-evidence/artifacts/${{ matrix.target }}/artifact-evidence.json
-            .brownie/release-evidence/artifacts/${{ matrix.target }}/${{ matrix.archive_name }}
-            .brownie/release-evidence/artifacts/${{ matrix.target }}/runtime-journey-evidence.json
-            .brownie/release-evidence/artifacts/${{ matrix.target }}/runtime-stateful-soak-evidence.json
+            .brownie/release-evidence/artifacts/*/artifact-evidence.json
+            .brownie/release-evidence/artifacts/*/*.tar.gz
+            .brownie/release-evidence/artifacts/*/*.zip
+            .brownie/release-evidence/artifacts/*/runtime-journey-evidence.json
+            .brownie/release-evidence/artifacts/*/runtime-stateful-soak-evidence.json
           if-no-files-found: error
           retention-days: 7
