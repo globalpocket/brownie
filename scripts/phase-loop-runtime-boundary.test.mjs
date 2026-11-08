@@ -228,8 +228,14 @@ test('a syntax-invalid objective apply restores the target and continues the sam
 });
 
 test('duplicate-declaration recovery binds feedback to the restored selected target', () => {
-  assert.match(controller, /def javascript_syntax_valid\(path\):/);
-  assert.match(controller, /\["node", "--check", str\(path\)\]/);
+  const promptGeneratorStart = controller.indexOf('if ! python3 - "$output_path" "$meta_path"');
+  const promptGeneratorEnd = controller.indexOf('def sha256_text(text):', promptGeneratorStart);
+  assert(promptGeneratorStart >= 0 && promptGeneratorEnd > promptGeneratorStart,
+    'prompt generator must include its syntax-validation helper');
+  const promptGenerator = controller.slice(promptGeneratorStart, promptGeneratorEnd);
+  assert.match(promptGenerator, /import subprocess/);
+  assert.match(promptGenerator, /def javascript_syntax_valid\(path\):/);
+  assert.match(promptGenerator, /\["node", "--check", str\(path\)\]/);
   assert.match(controller, /duplicate_const_syntax_error_target: `\{selected_leaf_target_path\}`/);
   assert.match(controller, /restored_duplicate_declaration_policy: the supervisor restored `\{selected_leaf_target_path\}`/);
   assert.match(controller, /if duplicate_count <= 1 and javascript_syntax_valid\(target_path\):/);

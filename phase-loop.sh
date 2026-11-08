@@ -367,7 +367,6 @@ import json
 import os
 import pathlib
 import re
-import subprocess
 import sys
 
 aggregate_path = pathlib.Path(sys.argv[1])
@@ -14122,6 +14121,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 
 output_path = pathlib.Path(sys.argv[1])
