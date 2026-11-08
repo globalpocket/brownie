@@ -21295,6 +21295,15 @@ PY
         write_bdk_trajectory_event "$run_stamp" "workflow.routed" '{"source":"runtime","bdk_state":"continuation_required","llm_route":"resume","completion_handoff":"deferred_for_verified_objective_apply"}'
         return 0
       fi
+      # A fresh claim can be admitted after the exact selected work was
+      # already independently merged. Runtime still supplies the claim-bound
+      # execution receipt above, but publishing another PR would duplicate
+      # delivery. Reverify the existing merge and consume the live queue
+      # before any new review handoff.
+      if active_fresh_claim_has_clean_merged_delivery_candidate; then
+        phase_loop_reverify_and_consume_merged_delivery "$run_stamp" "$stdout_log" "$run_id"
+        return $?
+      fi
       local objective_handoff_status
       if phase_loop_handoff_verified_completion "$run_stamp" "$stdout_log" "$stderr_log" "$workspace_before" "$workspace_after" "$verification_completion"; then
         return 0

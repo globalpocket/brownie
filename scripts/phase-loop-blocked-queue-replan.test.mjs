@@ -348,6 +348,12 @@ test('liveness claims a clean merged delivery after an archived terminal attempt
   });
   assert.match(dispatchGate, /dispatch_gate=0/);
   assert.match(fs.readFileSync(path.join(state, 'logs', 'supervisor.log'), 'utf8'), /active_fresh_claim_stable_block_bypassed_for_clean_merged_delivery=true/);
+  const controllerSource = fs.readFileSync(phaseLoop, 'utf8');
+  assert.match(
+    controllerSource,
+    /if active_fresh_claim_has_clean_merged_delivery_candidate; then\n\s+phase_loop_reverify_and_consume_merged_delivery "\$run_stamp" "\$stdout_log" "\$run_id"\n\s+return \$\?\n\s+fi\n\s+local objective_handoff_status\n\s+if phase_loop_handoff_verified_completion/u,
+    'a fresh claim with an exact clean merge must reverify and consume it before publishing another PR'
+  );
   // The same archived-terminal/current-claim-absent fixture must cross the
   // pre-dispatch gate and bind fake Runtime execution to re-verification; a
   // fresh claim alone is not liveness success.
