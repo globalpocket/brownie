@@ -86,7 +86,7 @@ function sha256SourceCommit(repoRoot) {
   return output ? `sha256:${output}` : 'sha256:unknown';
 }
 
-function sha256CleanTree(repoRoot) {
+export function sourceCleanTreeState(repoRoot) {
   const result = spawnSync('git', ['diff-index', '--quiet', 'HEAD', '--'], {
     cwd: repoRoot,
     encoding: 'utf8',
@@ -94,10 +94,10 @@ function sha256CleanTree(repoRoot) {
     stdio: ['ignore', 'pipe', 'pipe']
   });
   if (result.status === 0) {
-    return 'sha256:clean-tree';
+    return 'clean';
   }
   if (result.status === 1) {
-    return 'sha256:dirty-tree';
+    return 'dirty';
   }
   return 'sha256:unknown';
 }
@@ -289,6 +289,13 @@ export function buildLocalArtifact(options = {}) {
   const target = options.target ?? `${process.platform}-${process.arch}`;
   const outDir = normalizeRelativePath(options.outDir ?? `.brownie/release-evidence/artifacts/${target}`);
   const outFull = resolveRepoRelative(repoRoot, outDir);
+  // Capture source provenance before the build writes generated evidence into
+  // the checkout. Consumers intentionally require the literal clean/dirty
+  // state, not a hash-shaped label, and the snapshot must describe the source
+  // that was built rather than the generated release outputs.
+  const sourceCommit = sha256SourceCommit(repoRoot);
+  const sourceCleanTree = sourceCleanTreeState(repoRoot);
+  const sourceIdentity = sha256String(`${sourceCommit}:${sourceCleanTree}`);
   fs.mkdirSync(outFull, { recursive: true });
   const buildPlan = buildPlanForTarget(target);
 
@@ -341,9 +348,6 @@ export function buildLocalArtifact(options = {}) {
       );
     }
   }
-  const sourceCommit = sha256SourceCommit(repoRoot);
-  const sourceCleanTree = sha256CleanTree(repoRoot);
-  const sourceIdentity = sha256String(`${sourceCommit}:${sourceCleanTree}`);
   const artifactEvidence = {
     schema_version: 1,
     evidence_id: 'brownie-local-release-artifact-v1',

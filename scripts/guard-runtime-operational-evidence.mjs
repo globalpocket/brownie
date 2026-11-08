@@ -75,6 +75,7 @@ const allowedIncompleteStatuses = new Set([
 ]);
 const forbiddenEvidenceStringPattern = /(?:\/Users\/|\/home\/|[A-Za-z]:\/Users\/|EncodedCommand|brownie-linux|worktree)/u;
 const forbiddenRawProcessFieldNames = new Set(['command', 'stdout', 'stderr']);
+const downloadedArtifactBindingSource = 'downloaded_artifact_binding';
 
 function collectStatefulSoakStepIds(stepsOrIds) {
   if (!Array.isArray(stepsOrIds)) {
@@ -162,6 +163,17 @@ function validateSatisfiedCommands(commands, errors, owner) {
     requireValue(command?.passed === true, errors, `${owner}[${index}] must pass.`);
     requireValue(command?.exit_code === 0, errors, `${owner}[${index}].exit_code must be 0.`);
   }
+}
+
+function usesDownloadedArtifactBinding(section) {
+  return section?.evidence_source === downloadedArtifactBindingSource;
+}
+
+function validateDownloadedArtifactBindingSummary(section, errors, owner) {
+  const binding = section?.evidence_binding;
+  requireValue(binding && typeof binding === 'object', errors, `${owner}.evidence_binding must be present for downloaded-artifact evidence.`);
+  requireValue(binding?.evidence_id === 'brownie-release-evidence-roundtrip-binding-v1', errors, `${owner}.evidence_binding.evidence_id must identify the roundtrip binding.`);
+  requireValue(binding?.status === 'satisfied', errors, `${owner}.evidence_binding.status must be satisfied.`);
 }
 
 function validateSatisfiedStatefulSoakSteps(steps, errors) {
@@ -424,6 +436,12 @@ export function validateRuntimeOperationalEvidence(evidence, options = {}) {
       validateCommand(command, errors, `sections.artifact_lifecycle.lifecycle_results[${index}].commands[${commandIndex}]`);
     }
     if (evidence.sections?.artifact_lifecycle?.status === 'satisfied') {
+      if (usesDownloadedArtifactBinding(evidence.sections.artifact_lifecycle)) {
+        requireValue(result.evidence_source === downloadedArtifactBindingSource, errors, `sections.artifact_lifecycle.lifecycle_results[${index}] must identify downloaded-artifact evidence.`);
+        requireValue(isSafeRelativePath(result.journey_evidence_path), errors, `sections.artifact_lifecycle.lifecycle_results[${index}].journey_evidence_path must be repository-relative and bounded.`);
+        requireValue(isSafeRelativePath(result.soak_evidence_path), errors, `sections.artifact_lifecycle.lifecycle_results[${index}].soak_evidence_path must be repository-relative and bounded.`);
+        continue;
+      }
       requireValue(result.passed === true, errors, `sections.artifact_lifecycle.lifecycle_results[${index}] must pass when artifact_lifecycle is satisfied.`);
       requireValue(result.status === 'satisfied', errors, `sections.artifact_lifecycle.lifecycle_results[${index}].status must be satisfied.`);
       requireValue(result.uninstalled === true, errors, `sections.artifact_lifecycle.lifecycle_results[${index}].uninstalled must be true.`);
@@ -431,11 +449,17 @@ export function validateRuntimeOperationalEvidence(evidence, options = {}) {
       validateSatisfiedCommands(result.commands, errors, `sections.artifact_lifecycle.lifecycle_results[${index}].commands`);
     }
   }
+  if (evidence.sections?.artifact_lifecycle?.status === 'satisfied' && usesDownloadedArtifactBinding(evidence.sections.artifact_lifecycle)) {
+    validateDownloadedArtifactBindingSummary(evidence.sections.artifact_lifecycle, errors, 'sections.artifact_lifecycle');
+  }
 
   for (const [index, command] of (Array.isArray(evidence.sections?.golden_journey_fixture?.commands) ? evidence.sections.golden_journey_fixture.commands : []).entries()) {
     validateCommand(command, errors, `sections.golden_journey_fixture.commands[${index}]`);
   }
   if (evidence.sections?.golden_journey_fixture?.status === 'satisfied') {
+    if (usesDownloadedArtifactBinding(evidence.sections.golden_journey_fixture)) {
+      validateDownloadedArtifactBindingSummary(evidence.sections.golden_journey_fixture, errors, 'sections.golden_journey_fixture');
+    } else {
     validateSatisfiedCommands(
       evidence.sections.golden_journey_fixture.commands,
       errors,
@@ -461,6 +485,7 @@ export function validateRuntimeOperationalEvidence(evidence, options = {}) {
         `sections.golden_journey_fixture.lifecycle_evidence.${field} must be true when satisfied.`
       );
     }
+    }
   }
 
   const soak = evidence.sections?.soak_test;
@@ -478,7 +503,11 @@ export function validateRuntimeOperationalEvidence(evidence, options = {}) {
       requireValue(soak.failure_rate === 0, errors, 'satisfied soak_test must have a zero failure rate.');
       requireValue(soak.duplicate_side_effects_observed === false, errors, 'satisfied soak_test must not observe duplicate side effects.');
       requireValue(soak.unrecoverable_run_count === 0, errors, 'satisfied soak_test must have zero unrecoverable runs.');
-      validateSatisfiedCommands(soak.commands, errors, 'sections.soak_test.commands');
+      if (usesDownloadedArtifactBinding(soak)) {
+        validateDownloadedArtifactBindingSummary(soak, errors, 'sections.soak_test');
+      } else {
+        validateSatisfiedCommands(soak.commands, errors, 'sections.soak_test.commands');
+      }
       validateSatisfiedStatefulSoakSteps(soak.stateful_steps, errors);
     }
   }

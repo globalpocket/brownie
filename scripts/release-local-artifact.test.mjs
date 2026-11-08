@@ -9,11 +9,24 @@ import crypto from 'node:crypto';
 import {
   buildPlanForTarget,
   createPortableArchive,
+  sourceCleanTreeState,
   releaseArtifactBuildTimeoutMs,
   releaseArtifactSetupTimeoutMs,
   releaseArtifactSmokeTimeoutMs,
   releaseArtifactSmokeArgs
 } from './release-local-artifact.mjs';
+
+test('source provenance uses literal clean and dirty checkout states', () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-source-provenance-test-'));
+  const git = (args) => assert.equal(spawnSync('git', args, { cwd: repoRoot }).status, 0);
+  fs.writeFileSync(path.join(repoRoot, 'tracked.txt'), 'before\n');
+  git(['init', '--quiet']);
+  git(['add', 'tracked.txt']);
+  git(['-c', 'user.name=Brownie Test', '-c', 'user.email=brownie-test@example.invalid', 'commit', '--quiet', '-m', 'fixture']);
+  assert.equal(sourceCleanTreeState(repoRoot), 'clean');
+  fs.writeFileSync(path.join(repoRoot, 'tracked.txt'), 'after\n');
+  assert.equal(sourceCleanTreeState(repoRoot), 'dirty');
+});
 
 test('portable archive contains relocatable evidence and executable payloads', () => {
   const outFull = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-release-archive-test-'));

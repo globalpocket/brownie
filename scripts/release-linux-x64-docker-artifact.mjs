@@ -157,6 +157,11 @@ export function buildLinuxX64DockerArtifact(options = {}) {
   const target = options.target ?? 'linux-x64';
   const outDir = normalizeRelativePath(options.outDir ?? '.brownie/release-evidence/artifacts/linux-x64');
   const outFull = resolveRepoRelative(repoRoot, outDir);
+  // Capture the source snapshot before generated artifact evidence can change
+  // tracked files in the checkout.
+  const sourceCommit = sha256SourceCommit(repoRoot);
+  const sourceCleanTree = sha256CleanTree(repoRoot);
+  const sourceIdentity = sha256String(`${sourceCommit}:${sourceCleanTree}`);
   fs.mkdirSync(outFull, { recursive: true });
 
   const rustup = run('rustup', ['target', 'add', rustTargetTriple], { cwd: repoRoot });
@@ -188,9 +193,6 @@ export function buildLinuxX64DockerArtifact(options = {}) {
     smoke(repoRoot, docker, platform, smokeImage, artifactRelativePath, ['help', 'run'])
   ];
   const smokePassed = smokeResults.every((entry) => entry.passed);
-  const sourceCommit = sha256SourceCommit(repoRoot);
-  const sourceCleanTree = sha256CleanTree(repoRoot);
-  const sourceIdentity = sha256String(`${sourceCommit}:${sourceCleanTree}`);
   const artifactEvidence = {
     schema_version: 1,
     evidence_id: 'brownie-linux-x64-docker-release-artifact-v1',

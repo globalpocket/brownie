@@ -159,7 +159,7 @@ jobs:
         run: |
           corepack pnpm --workspace-root release:supply-chain-artifact-evidence
           corepack pnpm --workspace-root guard:supply-chain-artifact-evidence
-          corepack pnpm --workspace-root release:runtime-operational-evidence:failclosed-ok
+          corepack pnpm --workspace-root release:runtime-operational-evidence
           corepack pnpm --workspace-root guard:runtime-operational-evidence
 
       - name: Upload validated bound release evidence
