@@ -110,6 +110,17 @@ test('stateful soak uses only the packaged artifact and records bounded recovery
   assert.deepEqual(JSON.parse(fs.readFileSync(evidencePath, 'utf8')), evidence);
 });
 
+test('stateful soak treats a blank workflow run identifier as absent evidence', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-blank-workflow-run-'));
+  const evidence = runReleaseArtifactStatefulSoak({
+    targetId: 'linux-x64',
+    archivePath: createFixtureArchive(root),
+    workspaceRoot: path.join(root, 'workspace'),
+    workflowRunId: '   '
+  });
+  assert.equal(evidence.workflow_run_id, null);
+});
+
 test('stateful soak runs a packaged artifact from an isolated workspace without a source runtime override', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-isolated-workspace-'));
   const evidence = runReleaseArtifactStatefulSoak({

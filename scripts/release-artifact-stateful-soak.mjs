@@ -220,8 +220,13 @@ function evidencePathFrom(options) {
   return options.evidencePath ?? process.env.BROWNIE_RELEASE_ARTIFACT_SOAK_EVIDENCE_PATH ?? '';
 }
 
+function workflowRunIdFrom(options) {
+  const candidate = options.workflowRunId ?? process.env.GITHUB_RUN_ID ?? null;
+  return typeof candidate === 'string' && candidate.trim().length > 0 ? candidate.trim() : null;
+}
+
 export function runReleaseArtifactStatefulSoak(options = {}) {
-  const workflowRunId = options.workflowRunId ?? process.env.GITHUB_RUN_ID ?? null;
+  const workflowRunId = workflowRunIdFrom(options);
   const commandLimit = boundedCommandLimit(options);
   const targetId = options.targetId ?? process.env.BROWNIE_RELEASE_ARTIFACT_SOAK_TARGET ?? '';
   const target = releaseTargets.find((candidate) => candidate.id === targetId);
