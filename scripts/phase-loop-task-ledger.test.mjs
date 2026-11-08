@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { appendTaskTransition, readTaskLedger, recordTerminalFailureRecovery, recordTerminalReplanWithChildren, recordTrajectory, replanTaskWithChildren, resolveClaimLedgerAttempt, reviewReworkLedgerAttemptId, taskAttemptId, taskIsExecutable, taskProjection, validateTaskLedger } from './phase-loop-task-ledger.mjs';
+import { appendTaskTransition, mergedDeliveryCompletionRecoveryAttemptId, readTaskLedger, recordTerminalFailureRecovery, recordTerminalReplanWithChildren, recordTrajectory, replanTaskWithChildren, resolveClaimLedgerAttempt, reviewReworkLedgerAttemptId, taskAttemptId, taskIsExecutable, taskProjection, validateTaskLedger } from './phase-loop-task-ledger.mjs';
 
 function terminalEvidence(selectedTodo, claimId) {
   return {
@@ -80,6 +80,54 @@ test('task ledger enforces a terminal state machine', () => {
   assert.equal(appendTaskTransition(repo, { task_id: 'T-1', to_state: 'blocked', reason: 'runtime_terminal_failure' }).ok, true);
   assert.equal(appendTaskTransition(repo, { task_id: 'T-1', to_state: 'running' }).code, 'terminal_task_cannot_transition');
   assert.equal(taskProjection(readTaskLedger(repo)).get('T-1').to_state, 'blocked');
+});
+
+test('records merged delivery after a blocked attempt in a certificate-bound recovery attempt', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-task-ledger-'));
+  const selectedTodo = '- [ ] T-merged-recovery: bounded implementation\n  Route: implementation.';
+  const claimId = 'claim-merged-recovery';
+  const sourceTaskId = taskAttemptId('T-merged-recovery', claimId);
+  const specHash = crypto.createHash('sha256').update(selectedTodo).digest('hex');
+  let terminalEvent;
+  for (const to_state of ['queued', 'claimed', 'running', 'blocked']) {
+    const result = appendTaskTransition(repo, {
+      task_id: sourceTaskId,
+      to_state,
+      claim_id: claimId,
+      run_id: 'blocked-run',
+      task_spec_sha256: specHash,
+      reason: to_state === 'blocked' ? 'runtime_terminal_failure' : undefined
+    });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    if (to_state === 'blocked') terminalEvent = result.event;
+  }
+  const certificate = {
+    schema_version: 1,
+    root_claim_id: claimId,
+    selected_todo_sha256: specHash,
+    semantic_completion_evidence_sha256: 'a'.repeat(64)
+  };
+  const claimPath = path.join(repo, 'claim.json');
+  fs.writeFileSync(claimPath, JSON.stringify({
+    claim_id: claimId,
+    root_claim_id: claimId,
+    status: 'completed',
+    selected_todo: selectedTodo,
+    completion_certificate: certificate
+  }));
+
+  const completion = recordTrajectory(repo, { claimPath, type: 'todo.completed', runId: 'merged-run' });
+  assert.equal(completion.ok, true, JSON.stringify(completion));
+  const certificateSha256 = crypto.createHash('sha256').update(JSON.stringify(certificate)).digest('hex');
+  const recoveryTaskId = mergedDeliveryCompletionRecoveryAttemptId({
+    sourceTaskId,
+    sourceTerminalEventId: terminalEvent.event_id,
+    selectedTodoSha256: specHash,
+    certificateSha256
+  });
+  const projection = taskProjection(readTaskLedger(repo));
+  assert.equal(projection.get(sourceTaskId).to_state, 'blocked');
+  assert.equal(projection.get(recoveryTaskId).to_state, 'completed');
 });
 
 test('replans require a cause and replacement children', () => {
