@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const soakObjective = 'Create one bounded stateful soak marker in the workspace.';
 const maximumCommands = 3;
+const processLossExitCode = 75;
 
 const releaseTargets = [
   { id: 'linux-x64', archiveName: 'brownie-linux-x64.tar.gz', archiveType: 'tar', binaryName: 'brownie', runtimeName: 'brownie-runtime' },
@@ -261,7 +262,11 @@ export function runReleaseArtifactStatefulSoak(options = {}) {
     BROWNIE_RELEASE_ARTIFACT_SOAK_PROCESS_LOSS_AFTER_JOURNEY_STARTED: '1'
   };
   const interrupted = run(packagedCli, ['--json', 'run', soakObjective], { env: interruptionEnvironment, cwd: workspaceRoot });
-  if (interrupted.status === 0) throw new Error('runtime run did not lose its process after the durable journey boundary');
+  if (interrupted.status !== processLossExitCode) {
+    throw new Error(
+      `runtime did not exit with the required process-loss status ${processLossExitCode} after the durable journey boundary: ${interrupted.status ?? '<signal>'}`
+    );
+  }
   const interruptedRun = discoverInterruptedRun(workspaceRoot);
   const ledgerPath = interruptedRun.ledgerPath;
   const ledgerAfterRun = readDurableLedger(ledgerPath);

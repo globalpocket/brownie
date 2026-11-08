@@ -30,6 +30,8 @@ function createFixtureArchive(root, options = {}) {
   const truncateLedgerOnResume = options.truncateLedgerOnResume === true;
   const requireWorkspaceCwd = options.requireWorkspaceCwd === true;
   const rejectRuntimePathOverride = options.rejectRuntimePathOverride === true;
+  const requireProcessLossSignal = options.requireProcessLossSignal !== false;
+  const processLossExitCode = options.processLossExitCode ?? 75;
   writeExecutable(cliPath, `#!/usr/bin/env node
 const fs = require('node:fs');
 const path = require('node:path');
@@ -49,13 +51,17 @@ if (args[0] === 'mode' && args[1] === 'list') {
   process.exit(0);
 }
 if (args[0] === 'run') {
+  if (${requireProcessLossSignal} && process.env.BROWNIE_RELEASE_ARTIFACT_SOAK_PROCESS_LOSS_AFTER_JOURNEY_STARTED !== '1') {
+    process.stderr.write('packaged CLI did not receive the process-loss opt-in signal\\n');
+    process.exit(93);
+  }
   const runId = 'run-fixture';
   const runRoot = path.join(root, '.brownie', 'runs', runId);
   fs.mkdirSync(runRoot, { recursive: true });
   fs.writeFileSync(path.join(runRoot, 'ledger.jsonl'), '{"kind":"headless_journey_started"}\\n');
   fs.writeFileSync(path.join(root, '.brownie', 'soak-marker.json'), '{"state":"interrupted"}\\n');
   fs.writeFileSync(path.join(root, 'user-source.txt'), 'durable user workspace input\\n');
-  process.exit(75);
+  process.exit(${processLossExitCode});
 }
 if (args[0] === 'resume') {
   const ledgerPath = path.join(root, '.brownie', 'runs', 'run-fixture', 'ledger.jsonl');
@@ -108,6 +114,18 @@ test('stateful soak uses only the packaged artifact and records bounded recovery
   assert.equal(evidence.checks.finite_convergence.terminal_status, 'no_eligible_task');
   assert.equal(evidence.checks.evidence_chain_integrity.passed, true);
   assert.deepEqual(JSON.parse(fs.readFileSync(evidencePath, 'utf8')), evidence);
+});
+
+test('stateful soak rejects a non-process-loss run failure even after a durable journey boundary', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-wrong-exit-'));
+  assert.throws(
+    () => runReleaseArtifactStatefulSoak({
+      targetId: 'linux-x64',
+      archivePath: createFixtureArchive(root, { processLossExitCode: 74 }),
+      workspaceRoot: path.join(root, 'workspace')
+    }),
+    /required process-loss status 75/u
+  );
 });
 
 test('stateful soak treats a blank workflow run identifier as absent evidence', () => {
