@@ -6355,10 +6355,12 @@ git -C "$repair_feedback_workspace" init -b main >/dev/null
 git -C "$repair_feedback_workspace" config user.name Brownie
 git -C "$repair_feedback_workspace" config user.email brownie@example.invalid
 mkdir -p "$repair_feedback_workspace/scripts"
+printf 'packages: []\n' > "$repair_feedback_workspace/pnpm-workspace.yaml"
 printf '{"scripts":{"guard:todo-decomposition":"node scripts/guard-todo-decomposition.mjs"}}\n' > "$repair_feedback_workspace/package.json"
+printf 'process.exit(0);\n' > "$repair_feedback_workspace/scripts/guard-todo-decomposition.mjs"
 printf 'export const operationalEvidence = {};\n' > "$repair_feedback_workspace/scripts/release-runtime-operational-evidence.mjs"
-git -C "$repair_feedback_workspace" add package.json
-git -C "$repair_feedback_workspace" add scripts/release-runtime-operational-evidence.mjs
+git -C "$repair_feedback_workspace" add package.json pnpm-workspace.yaml
+git -C "$repair_feedback_workspace" add scripts/guard-todo-decomposition.mjs scripts/release-runtime-operational-evidence.mjs
 git -C "$repair_feedback_workspace" commit -m init >/dev/null
 printf 'base prompt\n' > "$repair_feedback_prompt"
 cat > "$repair_feedback_todo" <<'EOF'
@@ -7104,8 +7106,9 @@ if claim_smoke_section_enabled review-rework; then
   # non-workspace package script.
   printf 'packages: []\n' > "$review_rework_workspace/pnpm-workspace.yaml"
   printf '{"scripts":{"guard:todo-decomposition":"node scripts/guard-todo-decomposition.mjs","guard:runtime-operational-evidence:test":"node --check scripts/release-runtime-operational-evidence.mjs && grep -q fresh_reimplementation scripts/release-runtime-operational-evidence.mjs"}}\n' > "$review_rework_workspace/package.json"
+  printf 'process.exit(0);\n' > "$review_rework_workspace/scripts/guard-todo-decomposition.mjs"
   printf 'export const operationalEvidence = {};\n' > "$review_rework_workspace/scripts/release-runtime-operational-evidence.mjs"
-  git -C "$review_rework_workspace" add package.json scripts/release-runtime-operational-evidence.mjs
+  git -C "$review_rework_workspace" add package.json pnpm-workspace.yaml scripts/guard-todo-decomposition.mjs scripts/release-runtime-operational-evidence.mjs
   git -C "$review_rework_workspace" commit -m init >/dev/null
   # Simulate the rejected implementation retained as the workspace baseline.
   # The fake Runtime below applies a distinct, verified reimplementation; the
