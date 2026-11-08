@@ -851,6 +851,24 @@ export function recordTrajectory(repoRoot, {
       source_task_id: sourceTaskId
     };
   }
+  const completionRecoveryIdentity = attemptIdentity.isolated
+    ? attemptIdentity
+    : mergedDeliveryCompletionRecoveryAttemptIdentity({
+      claim,
+      sourceTaskId,
+      spec,
+      events,
+      type
+    });
+  if (!completionRecoveryIdentity.ok) {
+    return {
+      ok: false,
+      code: completionRecoveryIdentity.code,
+      reason: completionRecoveryIdentity.reason,
+      claim_id: claimId,
+      source_task_id: sourceTaskId
+    };
+  }
   const projectedSourceTask = taskProjection(events).get(sourceTaskId);
   // Replan creates the replacement child as the durable queued task itself.
   // Once that child is claimed, keep transitioning the raw child id so the
@@ -864,7 +882,7 @@ export function recordTrajectory(repoRoot, {
       || (projectedSourceTask.claim_id ?? null) === (claimId ?? null));
   const taskId = continuesSameReplacementClaim
     ? sourceTaskId
-    : attemptIdentity.task_id;
+    : completionRecoveryIdentity.task_id;
   if (replacementParentTaskId
     && !isTerminalTaskState(projectedSourceTask.to_state)
     && projectedSourceTask.claim_id
@@ -960,7 +978,9 @@ export function recordTrajectory(repoRoot, {
     'todo.blocked': ['blocked'],
     'todo.failed': ['failed']
   }[type] ?? [];
-  const transitionStates = type === 'todo.claimed' && taskId === sourceTaskId
+  const transitionStates = completionRecoveryIdentity.completion_recovery === true && type === 'todo.completed'
+    ? ['queued', 'claimed', 'running', 'completed']
+    : type === 'todo.claimed' && taskId === sourceTaskId
     ? ['claimed']
     : transitions;
   let duplicate = false;
@@ -993,6 +1013,60 @@ export function recordTrajectory(repoRoot, {
 // identifies one execution attempt while sourceTaskId remains the TODO key.
 export function taskAttemptId(sourceTaskId, claimId) {
   return claimId ? `${sourceTaskId}@${claimId}` : sourceTaskId;
+}
+
+// A failed controller attempt is immutable.  Once the exact implementation
+// later receives a claim-bound merged-delivery certificate, complete a new
+// ledger attempt rather than reopening the blocked historical record.  The
+// recovery id binds both pieces of evidence, so an arbitrary completed claim
+// cannot manufacture a replacement attempt.
+export function mergedDeliveryCompletionRecoveryAttemptId({
+  sourceTaskId,
+  sourceTerminalEventId,
+  selectedTodoSha256,
+  certificateSha256
+}) {
+  const binding = [sourceTaskId, sourceTerminalEventId, selectedTodoSha256, certificateSha256].join('\n');
+  const suffix = crypto.createHash('sha256').update(binding).digest('hex').slice(0, 24);
+  return `${sourceTaskId}@merged-delivery-recovery-${suffix}`;
+}
+
+function mergedDeliveryCompletionRecoveryAttemptIdentity({ claim, sourceTaskId, spec, events, type }) {
+  const fallback = taskAttemptId(sourceTaskId, claim.claim_id);
+  if (type !== 'todo.completed') return { ok: true, task_id: fallback, isolated: false };
+  const source = taskProjection(events).get(fallback);
+  if (!source || !['blocked', 'failed'].includes(source.to_state)) {
+    return { ok: true, task_id: fallback, isolated: false };
+  }
+  const certificate = claim?.completion_certificate;
+  const selectedTodoSha256 = crypto.createHash('sha256').update(spec).digest('hex');
+  const sourceEvent = events.find((event) => event?.task_id === fallback && event?.event_id === source.event_id);
+  const required = [
+    claim?.status === 'completed',
+    certificate?.schema_version === 1,
+    certificate?.root_claim_id === claim?.root_claim_id,
+    certificate?.selected_todo_sha256 === selectedTodoSha256,
+    typeof certificate?.semantic_completion_evidence_sha256 === 'string' && /^[a-f0-9]{64}$/u.test(certificate.semantic_completion_evidence_sha256),
+    sourceEvent != null,
+    source?.claim_id === claim.claim_id,
+    source?.task_spec_sha256 === selectedTodoSha256
+  ];
+  if (required.some((valid) => !valid)) {
+    return { ok: true, task_id: fallback, isolated: false };
+  }
+  const certificateSha256 = crypto.createHash('sha256').update(JSON.stringify(certificate)).digest('hex');
+  return {
+    ok: true,
+    task_id: mergedDeliveryCompletionRecoveryAttemptId({
+      sourceTaskId: fallback,
+      sourceTerminalEventId: source.event_id,
+      selectedTodoSha256,
+      certificateSha256
+    }),
+    isolated: true,
+    completion_recovery: true,
+    source_task_id: fallback
+  };
 }
 
 // A review-rework claim deliberately preserves its original claim id so the
