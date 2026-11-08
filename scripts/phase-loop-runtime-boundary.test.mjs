@@ -228,8 +228,31 @@ test('a syntax-invalid objective apply restores the target and continues the sam
 });
 
 test('duplicate-declaration recovery binds feedback to the restored selected target', () => {
-  assert.match(controller, /def javascript_syntax_valid\(path\):/);
-  assert.match(controller, /\["node", "--check", str\(path\)\]/);
+  const promptGeneratorStart = controller.indexOf('if ! python3 - "$output_path" "$meta_path"');
+  const promptGeneratorEnd = controller.indexOf('def sha256_text(text):', promptGeneratorStart);
+  assert(promptGeneratorStart >= 0 && promptGeneratorEnd > promptGeneratorStart,
+    'prompt generator must include its syntax-validation helper');
+  const promptGenerator = controller.slice(promptGeneratorStart, promptGeneratorEnd);
+  assert.match(promptGenerator, /import subprocess/);
+  assert.match(promptGenerator, /def javascript_syntax_valid\(path\):/);
+  assert.match(promptGenerator, /\["node", "--check", str\(path\)\]/);
+  assert.match(
+    controller,
+    /live_guard\.returncode != 0 and "TODO decomposition guard failed:" in \(live_guard\.stdout \+ live_guard\.stderr\)/,
+    'a package-manager bootstrap failure must not be misclassified as a malformed TODO queue',
+  );
+  assert.match(
+    controller,
+    /todo_guard_semantic_failure = any\([\s\S]*?"TODO decomposition guard failed:"/,
+    'persisted repair feedback must also retain the guard semantic-failure evidence',
+  );
+  const postApplyGuardStart = controller.indexOf('validate_todo_decomposition_after_runtime_apply()');
+  const postApplyGuardEnd = controller.indexOf('\n}\n\nvalidate_phase_loop_progress_integrity_after_runtime_apply()', postApplyGuardStart);
+  assert(postApplyGuardStart >= 0 && postApplyGuardEnd > postApplyGuardStart,
+    'post-runtime TODO guard validator must exist');
+  const postApplyGuard = controller.slice(postApplyGuardStart, postApplyGuardEnd);
+  assert.match(postApplyGuard, /grep -Fq 'TODO decomposition guard failed:'/,
+    'post-runtime package-manager failures must not overwrite bounded-leaf repair feedback');
   assert.match(controller, /duplicate_const_syntax_error_target: `\{selected_leaf_target_path\}`/);
   assert.match(controller, /restored_duplicate_declaration_policy: the supervisor restored `\{selected_leaf_target_path\}`/);
   assert.match(controller, /if duplicate_count <= 1 and javascript_syntax_valid\(target_path\):/);

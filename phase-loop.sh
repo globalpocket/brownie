@@ -367,7 +367,6 @@ import json
 import os
 import pathlib
 import re
-import subprocess
 import sys
 
 aggregate_path = pathlib.Path(sys.argv[1])
@@ -8595,6 +8594,14 @@ PY
     rm -f "$guard_stdout" "$guard_stderr"
     return 0
   fi
+  # A failed invocation is not automatically a malformed TODO queue.  For
+  # example, an isolated recovery workspace can lack a package-manager
+  # bootstrap.  Only the guard's own semantic failure marker may replace
+  # implementation feedback with a TODO-contract repair request.
+  if ! grep -Fq 'TODO decomposition guard failed:' "$guard_stdout" "$guard_stderr"; then
+    rm -f "$guard_stdout" "$guard_stderr"
+    return 0
+  fi
   python3 - "$guard_status" "$guard_stdout" "$guard_stderr" "$stdout_log" <<'PY'
 import json
 import pathlib
@@ -14122,6 +14129,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 
 output_path = pathlib.Path(sys.argv[1])
@@ -14483,7 +14491,10 @@ if claim and selected_todo:
             stderr=subprocess.PIPE,
             timeout=30,
         )
-        if guard.returncode != 0:
+        # Package-manager bootstrap failures do not prove a malformed queue.
+        # Keep the active bounded-leaf recovery unless the guard itself
+        # emitted its semantic-failure marker.
+        if guard.returncode != 0 and "TODO decomposition guard failed:" in (guard.stdout + guard.stderr):
             repair_feedback = {
                 "claim_id": claim.get("claim_id"),
                 "reason": "todo_decomposition_guard_failed_after_todo_apply",
@@ -14604,7 +14615,13 @@ if claim and selected_todo:
             stderr=subprocess.PIPE,
             timeout=30,
         )
-        if live_guard.returncode != 0:
+        # A nonzero package-script invocation is not itself evidence that the
+        # TODO contract is invalid: bounded fixture and recovery workspaces
+        # can intentionally omit package-manager bootstrap files.  Enter the
+        # mutually-exclusive TODO repair state only when the guard actually
+        # emitted its semantic failure marker; otherwise preserve the normal
+        # implementation/review-rework recovery state.
+        if live_guard.returncode != 0 and "TODO decomposition guard failed:" in (live_guard.stdout + live_guard.stderr):
             repair_feedback = {
                 "claim_id": claim.get("claim_id"),
                 "reason": "todo_decomposition_guard_failed_after_todo_apply",
@@ -15295,18 +15312,20 @@ if repair_feedback:
     for result_group in (verification.get("results", []), verification.get("previous_results", [])):
         if isinstance(result_group, list):
             previous_results.extend(result_group)
-    todo_guard_failed = (
+    todo_guard_semantic_failure = any(
+        isinstance(result, dict)
+        and "guard:todo-decomposition" in str(result.get("command", ""))
+        and "TODO decomposition guard failed:" in (
+            str(result.get("stdout_tail", "")) + str(result.get("stderr_tail", ""))
+        )
+        for result in previous_results
+    )
+    # Do not turn an unavailable fixture/package-manager command into a TODO
+    # queue repair.  Only the guard's own semantic marker proves that the
+    # queue, rather than its execution environment, needs repair.
+    todo_guard_failed = todo_guard_semantic_failure and (
         repair_feedback.get("reason") == "todo_decomposition_guard_failed_after_todo_apply"
         or verification.get("reason") == "todo_decomposition_guard_failed_after_todo_apply"
-        or any(
-            isinstance(result, dict)
-            and (
-                "guard:todo-decomposition" in str(result.get("command", ""))
-                or "TODO decomposition guard failed" in str(result.get("stderr_tail", ""))
-                or "duplicate unchecked TODO id" in str(result.get("stderr_tail", ""))
-            )
-            for result in previous_results
-        )
     )
     if todo_guard_failed:
         bdk_state = "todo_queue_repair"
