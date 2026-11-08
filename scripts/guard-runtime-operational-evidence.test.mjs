@@ -255,16 +255,28 @@ test('collector consumes complete downloaded artifact receipts without requiring
   fs.writeFileSync(path.join(artifactDirectory, 'runtime-stateful-soak-evidence.json'), JSON.stringify({
     evidence_id: 'brownie-release-artifact-stateful-soak-v1', target, workflow_run_id: workflowRunId, artifact, checks: soakChecks
   }));
+  const staleTarget = 'darwin-arm64';
+  const staleDirectory = path.join(repoRoot, '.brownie', 'release-evidence', 'artifacts', staleTarget);
+  fs.mkdirSync(staleDirectory, { recursive: true });
+  fs.writeFileSync(path.join(staleDirectory, 'brownie'), 'stale artifact');
+  fs.writeFileSync(path.join(staleDirectory, 'artifact-evidence.json'), JSON.stringify({
+    target: staleTarget,
+    platform: 'darwin',
+    arch: 'arm64',
+    artifact: { path: `.brownie/release-evidence/artifacts/${staleTarget}/brownie`, sha256: `sha256:${'0'.repeat(64)}` }
+  }));
   const previousRunId = process.env.GITHUB_RUN_ID;
   const previousSha = process.env.GITHUB_SHA;
   process.env.GITHUB_RUN_ID = workflowRunId;
   process.env.GITHUB_SHA = commit;
   try {
-    const evidence = buildRuntimeOperationalEvidence({ repoRoot, iterations: 100 });
+    const evidence = buildRuntimeOperationalEvidence({ repoRoot, iterations: 100, roundtripTarget: target });
     for (const sectionId of requiredSections) assert.equal(evidence.sections[sectionId].status, 'satisfied');
     assert.equal(evidence.sections.artifact_lifecycle.evidence_source, 'downloaded_artifact_binding');
     assert.equal(evidence.sections.golden_journey_fixture.evidence_source, 'downloaded_artifact_binding');
     assert.equal(evidence.sections.soak_test.evidence_source, 'downloaded_artifact_binding');
+    assert.equal(evidence.release_evidence_binding.target_count, 1);
+    assert.equal(evidence.release_evidence_binding.bindings[0].target, target);
     assert.equal(fs.existsSync(path.join(repoRoot, 'target/debug/brownie')), false);
     assert.deepEqual(validateRuntimeOperationalEvidence(evidence, { repoRoot, validateBoundEvidence: true }), []);
   } finally {
@@ -281,6 +293,7 @@ test('release workflow binds downloaded evidence before staging cleanup', () => 
     workflow,
     /cp -R "\$source_evidence_dir"\/\. "\$bound_evidence_dir"\/\n\s+cp roundtrip-download\/runtime-journey-evidence\.json "\$bound_evidence_dir\/runtime-journey-evidence\.json"\n\s+cp roundtrip-download\/runtime-stateful-soak-evidence\.json "\$bound_evidence_dir\/runtime-stateful-soak-evidence\.json"\n\s+rm -rf roundtrip-download\n\n\s+- name: Generate and validate bound release evidence/u
   );
+  assert.match(workflow, /BROWNIE_RELEASE_EVIDENCE_TARGET: \$\{\{ matrix\.target \}\}/u);
   assert.doesNotMatch(workflow, /path: roundtrip-download\/runtime-(?:journey|stateful-soak)-evidence\.json/u);
 });
 

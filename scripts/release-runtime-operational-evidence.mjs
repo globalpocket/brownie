@@ -1440,7 +1440,14 @@ export function buildRuntimeOperationalEvidence(options = {}) {
     return buildShortcutRuntimeOperationalEvidence(options, repoRoot, generatedAt);
   }
   const iterations = options.iterations ?? 100;
-  const artifacts = discoveredArtifacts(repoRoot);
+  const roundtripTarget = options.roundtripTarget ?? process.env.BROWNIE_RELEASE_EVIDENCE_TARGET ?? null;
+  const discovered = discoveredArtifacts(repoRoot);
+  // A matrix roundtrip job owns exactly one downloaded artifact.  Repository
+  // checkout residue for other targets is not evidence from this job and must
+  // not make its independently verified receipt fail closed.
+  const artifacts = typeof roundtripTarget === 'string' && roundtripTarget.length > 0
+    ? discovered.filter((artifact) => artifact.target === roundtripTarget)
+    : discovered;
   const releaseEvidenceBinding = buildReleaseEvidenceRoundtripBinding({ repoRoot, artifacts });
   const sections = releaseEvidenceBinding.status === 'satisfied'
     ? {

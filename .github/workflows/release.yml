@@ -157,6 +157,8 @@ jobs:
 
       - name: Generate and validate bound release evidence
         shell: bash
+        env:
+          BROWNIE_RELEASE_EVIDENCE_TARGET: ${{ matrix.target }}
         run: |
           corepack pnpm --workspace-root release:supply-chain-artifact-evidence
           corepack pnpm --workspace-root guard:supply-chain-artifact-evidence
