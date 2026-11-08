@@ -194,3 +194,56 @@ jobs:
           path: .brownie/release-evidence/artifacts/${{ matrix.target }}/runtime-stateful-soak-evidence.json
           if-no-files-found: error
           retention-days: 7
+
+  release-evidence-collectors:
+    name: Release Evidence Collectors
+    needs: artifact-roundtrip
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run supply-chain artifact evidence collector
+        run: pnpm --workspace-root release:supply-chain-artifact-evidence
+
+      - name: Run runtime operational evidence collector
+        run: pnpm --workspace-root release:runtime-operational-evidence
+
+      - name: Validate supply-chain artifact evidence
+        run: pnpm --workspace-root guard:supply-chain-artifact-evidence
+
+      - name: Validate runtime operational evidence
+        run: pnpm --workspace-root guard:runtime-operational-evidence
+
+      - name: Upload bound release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence
+          path: |
+            .brownie/release-evidence/supply-chain-artifact-evidence.json
+            .brownie/release-evidence/runtime-operational-evidence.json
+            .brownie/release-evidence/artifacts/${{ matrix.target }}/artifact-evidence.json
+            .brownie/release-evidence/artifacts/${{ matrix.target }}/${{ matrix.archive_name }}
+            .brownie/release-evidence/artifacts/${{ matrix.target }}/runtime-journey-evidence.json
+            .brownie/release-evidence/artifacts/${{ matrix.target }}/runtime-stateful-soak-evidence.json
+          if-no-files-found: error
+          retention-days: 7
