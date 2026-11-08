@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadPhaseLoopActorDeployment } from './phase-loop-actor-deployment.mjs';
@@ -30,9 +31,38 @@ const requiredStatefulSoakStepIds = [
   'executable_evidence_validation',
   'roundtrip_journey_binding',
   'soak_results_binding',
+  'implementation_commit',
+  'tested_commit',
+  'workflow_run_id',
+  'artifact_sha256',
+  'binary_sha256',
+  'platform',
+  'architecture',
+  'roundtrip_journey',
+  'soak_results',
   'downloaded_roundtrip_binding',
   'runtime_journey_binding',
   'supply_chain_guard_binding'
+];
+const sha256Pattern = /^sha256:[a-f0-9]{64}$/u;
+const sourceCommitSha256Pattern = /^sha256:[a-f0-9]{40}$/u;
+const gitCommitPattern = /^[a-f0-9]{40}$/u;
+const requiredDownloadedJourneyChecks = [
+  'mode_pack_load',
+  'workspace_mutation',
+  'ledger_generation',
+  'forced_interruption',
+  'resume',
+  'stale_replay_rejection'
+];
+const requiredDownloadedSoakChecks = [
+  'artifact_execution_boundary',
+  'process_loss_recovery',
+  'duplicate_side_effect_rejection',
+  'ledger_workspace_consistency',
+  'resume_replay_behavior',
+  'finite_convergence',
+  'evidence_chain_integrity'
 ];
 const allowedIncompleteStatuses = new Set([
   'failed',
@@ -72,6 +102,15 @@ function isMainModule() {
 
 function normalizeRelativePath(relativePath) {
   return relativePath.split(path.sep).join('/').replace(/^\.\//, '');
+}
+
+function isSafeRelativePath(value) {
+  return (
+    isNonEmptyString(value) &&
+    !path.isAbsolute(value) &&
+    !value.split(/[\\/]/).includes('..') &&
+    !/[\0\r\n]/.test(value)
+  );
 }
 
 function isNonEmptyString(value) {
@@ -150,6 +189,182 @@ function validateSatisfiedStatefulSoakSteps(steps, errors) {
       errors,
       `satisfied soak_test.stateful_steps.${stepId}.status must be satisfied.`
     );
+  }
+}
+
+function targetCoordinates(target) {
+  return {
+    'darwin-arm64': { platform: 'darwin', architecture: 'arm64' },
+    'linux-arm64': { platform: 'linux', architecture: 'arm64' },
+    'linux-x64': { platform: 'linux', architecture: 'x64' },
+    'win32-x64': { platform: 'win32', architecture: 'x64' }
+  }[target] ?? null;
+}
+
+function requirePassedChecks(evidence, checkIds, errors, owner) {
+  for (const checkId of checkIds) {
+    requireValue(evidence?.checks?.[checkId]?.passed === true, errors, `${owner}.checks.${checkId}.passed must be true.`);
+  }
+}
+
+function sha256Text(value) {
+  return `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
+}
+
+function readBoundEvidence(repoRoot, relativePath, errors, owner) {
+  requireValue(isSafeRelativePath(relativePath), errors, `${owner} must be repository-relative and bounded.`);
+  if (!isSafeRelativePath(relativePath)) {
+    return null;
+  }
+  const evidence = readJson(repoRoot, relativePath, errors);
+  requireValue(
+    evidence !== null && typeof evidence === 'object' && !Array.isArray(evidence),
+    errors,
+    `${owner} must contain a JSON object.`
+  );
+  return evidence !== null && typeof evidence === 'object' && !Array.isArray(evidence) ? evidence : null;
+}
+
+function validateFiniteConvergence(soak, errors, owner) {
+  const convergence = soak?.checks?.finite_convergence;
+  requireValue(convergence?.passed === true, errors, `${owner}.checks.finite_convergence.passed must be true.`);
+  requireValue(
+    Number.isInteger(convergence?.commands_executed) && convergence.commands_executed >= 0,
+    errors,
+    `${owner}.checks.finite_convergence.commands_executed must be a non-negative integer.`
+  );
+  requireValue(
+    Number.isInteger(convergence?.maximum_commands) && convergence.maximum_commands > 0,
+    errors,
+    `${owner}.checks.finite_convergence.maximum_commands must be a positive integer.`
+  );
+  if (Number.isInteger(convergence?.commands_executed) && Number.isInteger(convergence?.maximum_commands)) {
+    requireValue(
+      convergence.commands_executed <= convergence.maximum_commands,
+      errors,
+      `${owner}.checks.finite_convergence must remain within maximum_commands.`
+    );
+  }
+}
+
+function validateDownloadedRuntimeEvidence(repoRoot, binding, errors, owner) {
+  const journey = readBoundEvidence(repoRoot, binding.journey_evidence_path, errors, `${owner}.journey_evidence_path`);
+  const soak = readBoundEvidence(repoRoot, binding.soak_evidence_path, errors, `${owner}.soak_evidence_path`);
+  const expectedArtifact = {
+    archive_sha256: binding.package_sha256,
+    artifact_sha256: binding.binary_sha256,
+    runtime_sha256: binding.runtime_sha256
+  };
+  for (const [kind, evidence, evidenceId, checkIds] of [
+    ['journey', journey, 'brownie-release-artifact-runtime-journey-v1', requiredDownloadedJourneyChecks],
+    ['soak', soak, 'brownie-release-artifact-stateful-soak-v1', requiredDownloadedSoakChecks]
+  ]) {
+    if (!evidence || typeof evidence !== 'object') {
+      continue;
+    }
+    const evidenceOwner = `${owner}.${kind}`;
+    requireValue(evidence.evidence_id === evidenceId, errors, `${evidenceOwner}.evidence_id must identify downloaded artifact evidence.`);
+    requireValue(evidence.target === binding.target, errors, `${evidenceOwner}.target must match the binding target.`);
+    requireValue(evidence.workflow_run_id === binding.workflow_run_id, errors, `${evidenceOwner}.workflow_run_id must match the binding.`);
+    for (const [field, expected] of Object.entries(expectedArtifact)) {
+      requireValue(evidence.artifact?.[field] === expected, errors, `${evidenceOwner}.artifact.${field} must match the binding.`);
+    }
+    requirePassedChecks(evidence, checkIds, errors, evidenceOwner);
+  }
+  requireValue(
+    soak?.checks?.artifact_execution_boundary?.packaged_cli_only === true &&
+      soak?.checks?.artifact_execution_boundary?.isolated_workspace_cwd === true &&
+      soak?.checks?.artifact_execution_boundary?.runtime_path_override_removed === true,
+    errors,
+    `${owner}.soak must prove downloaded packaged execution, not build-tree execution.`
+  );
+  validateFiniteConvergence(soak, errors, `${owner}.soak`);
+}
+
+function validateReleaseEvidenceBinding(evidence, errors, options) {
+  const owner = 'release_evidence_binding';
+  const binding = evidence.release_evidence_binding;
+  requireValue(binding && typeof binding === 'object', errors, `${owner} must be present when runtime evidence is satisfied.`);
+  if (!binding || typeof binding !== 'object') {
+    return;
+  }
+  requireValue(binding.schema_version === 1, errors, `${owner}.schema_version must be 1.`);
+  requireValue(binding.evidence_id === 'brownie-release-evidence-roundtrip-binding-v1', errors, `${owner}.evidence_id must match.`);
+  requireValue(binding.status === 'satisfied', errors, `${owner}.status must be satisfied.`);
+  requireValue(binding.release_blocking === true, errors, `${owner}.release_blocking must be true.`);
+  const bindings = Array.isArray(binding.bindings) ? binding.bindings : [];
+  requireValue(bindings.length > 0, errors, `${owner}.bindings must contain downloaded-artifact evidence.`);
+  requireValue(binding.target_count === bindings.length, errors, `${owner}.target_count must match bindings.`);
+  requireValue(binding.satisfied_target_count === bindings.length, errors, `${owner}.satisfied_target_count must match bindings.`);
+  requireValue(Array.isArray(binding.missing) && binding.missing.length === 0, errors, `${owner}.missing must be empty.`);
+
+  const lifecycleTargets = new Set(
+    (Array.isArray(evidence.sections?.artifact_lifecycle?.lifecycle_results)
+      ? evidence.sections.artifact_lifecycle.lifecycle_results
+      : [])
+      .map((result) => result?.target)
+      .filter(isNonEmptyString)
+  );
+  const seenTargets = new Set();
+  for (const [index, entry] of bindings.entries()) {
+    const entryOwner = `${owner}.bindings[${index}]`;
+    requireValue(isNonEmptyString(entry?.target) && !seenTargets.has(entry.target), errors, `${entryOwner}.target must be unique and non-empty.`);
+    if (!isNonEmptyString(entry?.target) || seenTargets.has(entry.target)) {
+      continue;
+    }
+    seenTargets.add(entry.target);
+    requireValue(entry.status === 'satisfied', errors, `${entryOwner}.status must be satisfied.`);
+    requireValue(Array.isArray(entry.errors) && entry.errors.length === 0, errors, `${entryOwner}.errors must be empty.`);
+    requireValue(sourceCommitSha256Pattern.test(entry.implementation_commit), errors, `${entryOwner}.implementation_commit must be a sha256 git commit.`);
+    requireValue(gitCommitPattern.test(entry.tested_commit), errors, `${entryOwner}.tested_commit must be a git commit.`);
+    requireValue(
+      sourceCommitSha256Pattern.test(entry.implementation_commit) && entry.implementation_commit.slice('sha256:'.length) === entry.tested_commit,
+      errors,
+      `${entryOwner}.implementation_commit must match tested_commit.`
+    );
+    requireValue(isNonEmptyString(entry.workflow_run_id), errors, `${entryOwner}.workflow_run_id must be present.`);
+    requireValue(sha256Pattern.test(entry.package_sha256), errors, `${entryOwner}.package_sha256 must be sha256:<64 lowercase hex>.`);
+    requireValue(sha256Pattern.test(entry.binary_sha256), errors, `${entryOwner}.binary_sha256 must be sha256:<64 lowercase hex>.`);
+    requireValue(sha256Pattern.test(entry.runtime_sha256), errors, `${entryOwner}.runtime_sha256 must be sha256:<64 lowercase hex>.`);
+    const expectedCoordinates = targetCoordinates(entry.target);
+    requireValue(expectedCoordinates !== null, errors, `${entryOwner}.target must be a supported release target.`);
+    if (expectedCoordinates) {
+      requireValue(entry.platform === expectedCoordinates.platform, errors, `${entryOwner}.platform must match target.`);
+      requireValue(entry.architecture === expectedCoordinates.architecture, errors, `${entryOwner}.architecture must match target.`);
+    }
+    requireValue(isSafeRelativePath(entry.journey_evidence_path), errors, `${entryOwner}.journey_evidence_path must be repository-relative and bounded.`);
+    requireValue(isSafeRelativePath(entry.soak_evidence_path), errors, `${entryOwner}.soak_evidence_path must be repository-relative and bounded.`);
+    if (options.validateBoundEvidence === true) {
+      validateDownloadedRuntimeEvidence(options.repoRoot, entry, errors, entryOwner);
+    }
+  }
+  for (const target of lifecycleTargets) {
+    requireValue(seenTargets.has(target), errors, `${owner}.bindings must cover artifact lifecycle target ${target}.`);
+  }
+  requireValue(seenTargets.size === lifecycleTargets.size, errors, `${owner}.bindings must not claim partial or extra platform coverage.`);
+  const witnesses = bindings
+    .map((entry) => ({
+      target: entry.target,
+      status: entry.status,
+      implementation_commit: entry.implementation_commit,
+      tested_commit: entry.tested_commit,
+      workflow_run_id: entry.workflow_run_id,
+      platform: entry.platform,
+      architecture: entry.architecture,
+      package_sha256: entry.package_sha256,
+      binary_sha256: entry.binary_sha256,
+      runtime_sha256: entry.runtime_sha256,
+      errors: entry.errors
+    }))
+    .sort((left, right) => String(left.target).localeCompare(String(right.target)));
+  requireValue(binding.binding_digest === sha256Text(JSON.stringify(witnesses)), errors, `${owner}.binding_digest must match bindings.`);
+
+  const summary = evidence.sections?.executable_evidence_validation?.release_evidence_binding;
+  requireValue(summary && typeof summary === 'object', errors, 'sections.executable_evidence_validation.release_evidence_binding must be present when runtime evidence is satisfied.');
+  if (summary && typeof summary === 'object') {
+    for (const field of ['schema_version', 'evidence_id', 'status', 'release_blocking', 'target_count', 'satisfied_target_count', 'binding_digest']) {
+      requireValue(summary[field] === binding[field], errors, `sections.executable_evidence_validation.release_evidence_binding.${field} must match ${owner}.`);
+    }
   }
 }
 
@@ -267,6 +482,9 @@ export function validateRuntimeOperationalEvidence(evidence, options = {}) {
       validateSatisfiedStatefulSoakSteps(soak.stateful_steps, errors);
     }
   }
+  if (requiredSections.every((sectionId) => evidence.sections?.[sectionId]?.status === 'satisfied')) {
+    validateReleaseEvidenceBinding(evidence, errors, options);
+  }
   return errors;
 }
 
@@ -299,7 +517,10 @@ export function validateRuntimeOperationalEvidenceContract(contract, options = {
 
 export function runRuntimeOperationalEvidenceGuard(options = {}) {
   if (options?.schema_version === 1 && options?.evidence_id === 'brownie-runtime-operational-evidence-v1') {
-    const errors = validateRuntimeOperationalEvidence(options);
+    const errors = validateRuntimeOperationalEvidence(options, {
+      repoRoot: options.repoRoot,
+      validateBoundEvidence: options.validateBoundEvidence === true
+    });
     return {
       errors,
       valid: errors.length === 0,
@@ -320,7 +541,11 @@ export function runRuntimeOperationalEvidenceGuard(options = {}) {
   if (shouldValidateEvidence) {
     const evidence = options.evidence ?? readJson(repoRoot, evidencePath, errors);
     const deploymentResult = loadPhaseLoopActorDeployment({ repoRoot });
-    errors.push(...validateRuntimeOperationalEvidence(evidence, { deploymentResult }));
+    errors.push(...validateRuntimeOperationalEvidence(evidence, {
+      repoRoot,
+      deploymentResult,
+      validateBoundEvidence: true
+    }));
   }
   return { errors, contractPath, evidencePath, validatedEvidence: shouldValidateEvidence };
 }

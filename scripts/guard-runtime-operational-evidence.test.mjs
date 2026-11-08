@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -205,13 +206,9 @@ test('generated runtime operational evidence uses the guard-required section set
   );
 });
 
-test('runtime operational evidence models release operation as executable fail-closed evidence', async (t) => {
-  const evidence = await buildRuntimeOperationalEvidence({
-    artifact_lifecycle: { status: 'executable', fail_closed: true },
-    golden_journey_fixture: { executed: true },
-    soak_test: { step_ids: requiredStatefulSoakStepIds }
-  });
-  const guardResult = await runRuntimeOperationalEvidenceGuard(evidence);
+test('runtime operational evidence models release operation as executable fail-closed evidence', () => {
+  const evidence = validEvidence();
+  const guardResult = runRuntimeOperationalEvidenceGuard(evidence);
   assert.ok(guardResult.valid, 'guard should pass for valid executable evidence');
   assert.ok(guardResult.fail_closed === true, 'executable evidence must be fail-closed');
   const redacted = redactDelegatedResult(evidence);
@@ -302,7 +299,66 @@ function statefulSoakSteps(overrides = {}) {
   }));
 }
 
+function validReleaseEvidenceBinding(overrides = {}) {
+  const commit = 'd'.repeat(40);
+  const binding = {
+    schema_version: 1,
+    evidence_id: 'brownie-release-evidence-roundtrip-binding-v1',
+    status: 'satisfied',
+    release_blocking: true,
+    target_count: 1,
+    satisfied_target_count: 1,
+    binding_digest: null,
+    bindings: [{
+      target: 'darwin-arm64',
+      status: 'satisfied',
+      implementation_commit: `sha256:${commit}`,
+      tested_commit: commit,
+      workflow_run_id: 'workflow-123',
+      platform: 'darwin',
+      architecture: 'arm64',
+      package_sha256: `sha256:${'a'.repeat(64)}`,
+      binary_sha256: `sha256:${'b'.repeat(64)}`,
+      runtime_sha256: `sha256:${'c'.repeat(64)}`,
+      journey_evidence_path: '.brownie/release-evidence/artifacts/darwin-arm64/runtime-journey-evidence.json',
+      soak_evidence_path: '.brownie/release-evidence/artifacts/darwin-arm64/runtime-stateful-soak-evidence.json',
+      errors: []
+    }],
+    missing: []
+  };
+  const witnesses = binding.bindings
+    .map((entry) => ({
+      target: entry.target,
+      status: entry.status,
+      implementation_commit: entry.implementation_commit,
+      tested_commit: entry.tested_commit,
+      workflow_run_id: entry.workflow_run_id,
+      platform: entry.platform,
+      architecture: entry.architecture,
+      package_sha256: entry.package_sha256,
+      binary_sha256: entry.binary_sha256,
+      runtime_sha256: entry.runtime_sha256,
+      errors: entry.errors
+    }))
+    .sort((left, right) => left.target.localeCompare(right.target));
+  binding.binding_digest = `sha256:${crypto.createHash('sha256').update(JSON.stringify(witnesses)).digest('hex')}`;
+  return { ...binding, ...overrides };
+}
+
+function releaseEvidenceBindingSummary(binding) {
+  return Object.fromEntries([
+    'schema_version',
+    'evidence_id',
+    'status',
+    'release_blocking',
+    'target_count',
+    'satisfied_target_count',
+    'binding_digest'
+  ].map((field) => [field, binding[field]]));
+}
+
 function validEvidence(overrides = {}) {
+  const releaseEvidenceBinding = validReleaseEvidenceBinding();
   return {
     schema_version: 1,
     evidence_id: 'brownie-runtime-operational-evidence-v1',
@@ -353,17 +409,115 @@ function validEvidence(overrides = {}) {
           { id: 'golden_journey_fixture', status: 'satisfied', satisfied: true },
           { id: 'soak_test', status: 'satisfied', satisfied: true }
         ],
-        missing_executable_evidence: []
+        missing_executable_evidence: [],
+        release_evidence_binding: releaseEvidenceBindingSummary(releaseEvidenceBinding)
       })
     },
+    release_evidence_binding: releaseEvidenceBinding,
     ...overrides
   };
+}
+
+function writeDownloadedRuntimeEvidence(repoRoot, binding, overrides = {}) {
+  const entry = binding.bindings[0];
+  const journeyPath = path.join(repoRoot, entry.journey_evidence_path);
+  const soakPath = path.join(repoRoot, entry.soak_evidence_path);
+  fs.mkdirSync(path.dirname(journeyPath), { recursive: true });
+  const journeyChecks = Object.fromEntries([
+    'mode_pack_load', 'workspace_mutation', 'ledger_generation', 'forced_interruption', 'resume', 'stale_replay_rejection'
+  ].map((id) => [id, { passed: true }]));
+  const soakChecks = Object.fromEntries([
+    'artifact_execution_boundary', 'process_loss_recovery', 'duplicate_side_effect_rejection', 'ledger_workspace_consistency',
+    'resume_replay_behavior', 'finite_convergence', 'evidence_chain_integrity'
+  ].map((id) => [id, { passed: true }]));
+  soakChecks.artifact_execution_boundary = {
+    passed: true,
+    packaged_cli_only: true,
+    isolated_workspace_cwd: true,
+    runtime_path_override_removed: true
+  };
+  soakChecks.finite_convergence = {
+    passed: true,
+    commands_executed: 3,
+    maximum_commands: 3
+  };
+  const artifact = {
+    archive_sha256: entry.package_sha256,
+    artifact_sha256: entry.binary_sha256,
+    runtime_sha256: entry.runtime_sha256
+  };
+  fs.writeFileSync(journeyPath, JSON.stringify({
+    evidence_id: 'brownie-release-artifact-runtime-journey-v1',
+    target: entry.target,
+    workflow_run_id: entry.workflow_run_id,
+    artifact,
+    checks: { ...journeyChecks, ...(overrides.journey_checks ?? {}) }
+  }));
+  fs.writeFileSync(soakPath, JSON.stringify({
+    evidence_id: 'brownie-release-artifact-stateful-soak-v1',
+    target: entry.target,
+    workflow_run_id: entry.workflow_run_id,
+    artifact,
+    checks: { ...soakChecks, ...(overrides.soak_checks ?? {}) }
+  }));
 }
 
 test('accepts satisfied runtime operational evidence', () => {
   const evidence = validEvidence();
   const errors = validateRuntimeOperationalEvidence(evidence);
   assert.deepEqual(errors, []);
+});
+
+test('rejects satisfied runtime evidence without the downloaded-artifact binding', () => {
+  const evidence = validEvidence();
+  delete evidence.release_evidence_binding;
+  delete evidence.sections.executable_evidence_validation.release_evidence_binding;
+  const errors = validateRuntimeOperationalEvidence(evidence);
+  assert(errors.some((error) => error.includes('release_evidence_binding must be present')), errors.join('\n'));
+});
+
+test('rejects partial platform coverage in a satisfied runtime evidence binding', () => {
+  const evidence = validEvidence();
+  evidence.sections.artifact_lifecycle.lifecycle_results.push({
+    ...evidence.sections.artifact_lifecycle.lifecycle_results[0],
+    target: 'linux-x64'
+  });
+  const errors = validateRuntimeOperationalEvidence(evidence);
+  assert(errors.some((error) => error.includes('cover artifact lifecycle target linux-x64')), errors.join('\n'));
+});
+
+test('rejects missing, inconsistent, and unbounded downloaded-artifact results', () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-runtime-guard-binding-'));
+  const evidence = validEvidence();
+  writeDownloadedRuntimeEvidence(repoRoot, evidence.release_evidence_binding);
+  assert.deepEqual(
+    validateRuntimeOperationalEvidence(evidence, { repoRoot, validateBoundEvidence: true }),
+    [],
+    'complete downloaded journey and soak evidence should validate'
+  );
+
+  const entry = evidence.release_evidence_binding.bindings[0];
+  const journeyPath = path.join(repoRoot, entry.journey_evidence_path);
+  const journey = JSON.parse(fs.readFileSync(journeyPath, 'utf8'));
+  journey.artifact.artifact_sha256 = `sha256:${'f'.repeat(64)}`;
+  fs.writeFileSync(journeyPath, JSON.stringify(journey));
+  let errors = validateRuntimeOperationalEvidence(evidence, { repoRoot, validateBoundEvidence: true });
+  assert(errors.some((error) => error.includes('journey.artifact.artifact_sha256 must match')), errors.join('\n'));
+
+  writeDownloadedRuntimeEvidence(repoRoot, evidence.release_evidence_binding, {
+    soak_checks: { finite_convergence: { passed: true, commands_executed: 4, maximum_commands: 3 } }
+  });
+  errors = validateRuntimeOperationalEvidence(evidence, { repoRoot, validateBoundEvidence: true });
+  assert(errors.some((error) => error.includes('must remain within maximum_commands')), errors.join('\n'));
+
+  writeDownloadedRuntimeEvidence(repoRoot, evidence.release_evidence_binding);
+  fs.writeFileSync(journeyPath, 'null');
+  errors = validateRuntimeOperationalEvidence(evidence, { repoRoot, validateBoundEvidence: true });
+  assert(errors.some((error) => error.includes('journey_evidence_path must contain a JSON object')), errors.join('\n'));
+
+  fs.rmSync(path.join(repoRoot, entry.soak_evidence_path));
+  errors = validateRuntimeOperationalEvidence(evidence, { repoRoot, validateBoundEvidence: true });
+  assert(errors.some((error) => error.includes('must be readable JSON')), errors.join('\n'));
 });
 
 test('accepts contract-only mode when generated runtime operational evidence is absent', () => {
