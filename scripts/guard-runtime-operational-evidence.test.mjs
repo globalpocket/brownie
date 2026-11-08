@@ -161,6 +161,29 @@ test('release roundtrip binding accepts complete, mutually bound artifact eviden
   assert.equal(binding.satisfied_target_count, 1);
   assert.deepEqual(binding.missing, []);
 
+  // The release artifact writer stores its portable archive beside the
+  // evidence instead of duplicating archive metadata into artifact-evidence.
+  // The workflow binds that complete directory after download, so exercise
+  // the same convention rather than only the declared-archive shortcut.
+  const conventionArchiveContents = 'downloaded archive';
+  const conventionArchiveSha256 = `sha256:${crypto.createHash('sha256').update(conventionArchiveContents).digest('hex')}`;
+  fs.writeFileSync(path.join(artifactDirectory, 'brownie-linux-x64.tar.gz'), conventionArchiveContents);
+  for (const name of ['runtime-journey-evidence.json', 'runtime-stateful-soak-evidence.json']) {
+    const receiptPath = path.join(artifactDirectory, name);
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+    receipt.artifact.archive_sha256 = conventionArchiveSha256;
+    fs.writeFileSync(receiptPath, JSON.stringify(receipt));
+  }
+  const conventionOnlyEvidence = { ...artifactEvidence };
+  delete conventionOnlyEvidence.archive;
+  const conventionOnlyBinding = buildReleaseEvidenceRoundtripBinding({
+    repoRoot,
+    workflowRunId,
+    testedCommit: commit,
+    artifacts: [{ target, artifact_evidence: conventionOnlyEvidence, evidence_dir: evidenceDir }]
+  });
+  assert.equal(conventionOnlyBinding.status, 'satisfied');
+
   delete soakChecks.process_loss_recovery;
   fs.writeFileSync(path.join(artifactDirectory, 'runtime-stateful-soak-evidence.json'), JSON.stringify({
     evidence_id: 'brownie-release-artifact-stateful-soak-v1', target, workflow_run_id: workflowRunId,
@@ -174,6 +197,110 @@ test('release roundtrip binding accepts complete, mutually bound artifact eviden
   });
   assert.equal(missingBaseSoakCheck.status, 'not_executed');
   assert.match(missingBaseSoakCheck.bindings[0].errors.join(','), /stateful_soak_checks_incomplete/);
+});
+
+test('collector consumes complete downloaded artifact receipts without requiring target/debug', () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-bound-runtime-collector-test-'));
+  const target = 'linux-x64';
+  const evidenceDir = `.brownie/release-evidence/artifacts/${target}`;
+  const artifactDirectory = path.join(repoRoot, evidenceDir);
+  fs.mkdirSync(artifactDirectory, { recursive: true });
+  const write = (name, contents) => {
+    const filePath = path.join(artifactDirectory, name);
+    fs.writeFileSync(filePath, contents);
+    return `sha256:${crypto.createHash('sha256').update(contents).digest('hex')}`;
+  };
+  const binarySha256 = write('brownie', 'downloaded packaged cli');
+  const runtimeSha256 = write('brownie-runtime', 'downloaded runtime companion');
+  const archiveSha256 = write('brownie-linux-x64.tar.gz', 'downloaded archive');
+  const commit = 'd'.repeat(40);
+  const workflowRunId = 'workflow-123';
+  const artifact = {
+    archive_sha256: archiveSha256,
+    artifact_sha256: binarySha256,
+    runtime_sha256: runtimeSha256
+  };
+  fs.writeFileSync(path.join(artifactDirectory, 'artifact-evidence.json'), JSON.stringify({
+    target,
+    platform: 'linux',
+    arch: 'x64',
+    archive: { path: `${evidenceDir}/brownie-linux-x64.tar.gz`, sha256: archiveSha256 },
+    artifact: {
+      path: `${evidenceDir}/brownie`,
+      target,
+      sha256: binarySha256,
+      source_commit: `sha256:${commit}`,
+      source_clean_tree: 'clean',
+      source_identity: `sha256:${'e'.repeat(64)}`
+    },
+    runtime_companion: { path: `${evidenceDir}/brownie-runtime`, sha256: runtimeSha256 }
+  }));
+  const journeyChecks = Object.fromEntries([
+    'mode_pack_load', 'workspace_mutation', 'ledger_generation', 'forced_interruption', 'resume', 'stale_replay_rejection'
+  ].map((id) => [id, { passed: true }]));
+  const soakChecks = Object.fromEntries([
+    'artifact_execution_boundary', 'process_loss_recovery', 'duplicate_side_effect_rejection', 'ledger_workspace_consistency',
+    'resume_replay_behavior', 'finite_convergence', 'evidence_chain_integrity'
+  ].map((id) => [id, { passed: true }]));
+  soakChecks.artifact_execution_boundary = {
+    passed: true,
+    packaged_cli_only: true,
+    isolated_workspace_cwd: true,
+    runtime_path_override_removed: true
+  };
+  soakChecks.finite_convergence = { passed: true, commands_executed: 3, maximum_commands: 3 };
+  fs.writeFileSync(path.join(artifactDirectory, 'runtime-journey-evidence.json'), JSON.stringify({
+    evidence_id: 'brownie-release-artifact-runtime-journey-v1', target, workflow_run_id: workflowRunId, artifact, checks: journeyChecks
+  }));
+  fs.writeFileSync(path.join(artifactDirectory, 'runtime-stateful-soak-evidence.json'), JSON.stringify({
+    evidence_id: 'brownie-release-artifact-stateful-soak-v1', target, workflow_run_id: workflowRunId, artifact, checks: soakChecks
+  }));
+  const staleTarget = 'darwin-arm64';
+  const staleDirectory = path.join(repoRoot, '.brownie', 'release-evidence', 'artifacts', staleTarget);
+  fs.mkdirSync(staleDirectory, { recursive: true });
+  fs.writeFileSync(path.join(staleDirectory, 'brownie'), 'stale artifact');
+  fs.writeFileSync(path.join(staleDirectory, 'artifact-evidence.json'), JSON.stringify({
+    target: staleTarget,
+    platform: 'darwin',
+    arch: 'arm64',
+    artifact: { path: `.brownie/release-evidence/artifacts/${staleTarget}/brownie`, sha256: `sha256:${'0'.repeat(64)}` }
+  }));
+  const previousRunId = process.env.GITHUB_RUN_ID;
+  const previousSha = process.env.GITHUB_SHA;
+  process.env.GITHUB_RUN_ID = workflowRunId;
+  process.env.GITHUB_SHA = commit;
+  try {
+    const evidence = buildRuntimeOperationalEvidence({ repoRoot, iterations: 100, roundtripTarget: target });
+    for (const sectionId of requiredSections) assert.equal(evidence.sections[sectionId].status, 'satisfied');
+    assert.equal(evidence.sections.artifact_lifecycle.evidence_source, 'downloaded_artifact_binding');
+    assert.equal(evidence.sections.golden_journey_fixture.evidence_source, 'downloaded_artifact_binding');
+    assert.equal(evidence.sections.soak_test.evidence_source, 'downloaded_artifact_binding');
+    assert.equal(evidence.release_evidence_binding.target_count, 1);
+    assert.equal(evidence.release_evidence_binding.bindings[0].target, target);
+    assert.equal(fs.existsSync(path.join(repoRoot, 'target/debug/brownie')), false);
+    assert.deepEqual(validateRuntimeOperationalEvidence(evidence, { repoRoot, validateBoundEvidence: true }), []);
+  } finally {
+    if (previousRunId === undefined) delete process.env.GITHUB_RUN_ID;
+    else process.env.GITHUB_RUN_ID = previousRunId;
+    if (previousSha === undefined) delete process.env.GITHUB_SHA;
+    else process.env.GITHUB_SHA = previousSha;
+  }
+});
+
+test('release workflow binds downloaded evidence before staging cleanup', () => {
+  const workflow = fs.readFileSync(path.join(process.cwd(), '.github/workflows/release.yml'), 'utf8');
+  assert.match(
+    workflow,
+    /cp -R "\$source_evidence_dir"\/\. "\$bound_evidence_dir"\/\n\s+cp roundtrip-download\/runtime-journey-evidence\.json "\$bound_evidence_dir\/runtime-journey-evidence\.json"\n\s+cp roundtrip-download\/runtime-stateful-soak-evidence\.json "\$bound_evidence_dir\/runtime-stateful-soak-evidence\.json"\n\s+rm -rf roundtrip-download\n\n\s+- name: Generate and validate bound release evidence/u
+  );
+  assert.match(workflow, /BROWNIE_RELEASE_EVIDENCE_TARGET: \$\{\{ matrix\.target \}\}/u);
+  assert.doesNotMatch(workflow, /path: roundtrip-download\/runtime-(?:journey|stateful-soak)-evidence\.json/u);
+});
+
+test('collector CLI emits only target-scoped binding diagnostics', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'scripts/release-runtime-operational-evidence.mjs'), 'utf8');
+  assert.match(source, /release_evidence_binding: \{[\s\S]*bindings: Array\.isArray\(binding\?\.bindings\)/u);
+  assert.match(source, /\.map\(\(\{ target, status, errors \}\) => \(\{ target, status, errors \}\)\)/u);
 });
 
 test('evidence must not contain blocker placeholders', () => {

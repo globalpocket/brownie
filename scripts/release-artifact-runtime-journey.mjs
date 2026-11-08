@@ -123,6 +123,7 @@ function evidencePathFrom(options) {
 }
 
 export function runReleaseArtifactRuntimeJourney(options = {}) {
+  const workflowRunId = options.workflowRunId ?? process.env.GITHUB_RUN_ID ?? null;
   const targetId = options.targetId ?? process.env.BROWNIE_RELEASE_RUNTIME_JOURNEY_TARGET ?? '';
   const target = releaseTargets.find((candidate) => candidate.id === targetId);
   if (!target) throw new Error(`unsupported release Runtime journey target: ${targetId || '<missing>'}`);
@@ -177,6 +178,7 @@ export function runReleaseArtifactRuntimeJourney(options = {}) {
     schema_version: 1,
     evidence_id: 'brownie-release-artifact-runtime-journey-v1',
     target: target.id,
+    workflow_run_id: workflowRunId,
     artifact: {
       archive_sha256: sha256File(archivePath),
       ...packageIntegrity

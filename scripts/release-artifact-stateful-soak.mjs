@@ -220,7 +220,13 @@ function evidencePathFrom(options) {
   return options.evidencePath ?? process.env.BROWNIE_RELEASE_ARTIFACT_SOAK_EVIDENCE_PATH ?? '';
 }
 
+function workflowRunIdFrom(options) {
+  const candidate = options.workflowRunId ?? process.env.GITHUB_RUN_ID ?? null;
+  return typeof candidate === 'string' && candidate.trim().length > 0 ? candidate.trim() : null;
+}
+
 export function runReleaseArtifactStatefulSoak(options = {}) {
+  const workflowRunId = workflowRunIdFrom(options);
   const commandLimit = boundedCommandLimit(options);
   const targetId = options.targetId ?? process.env.BROWNIE_RELEASE_ARTIFACT_SOAK_TARGET ?? '';
   const target = releaseTargets.find((candidate) => candidate.id === targetId);
@@ -287,6 +293,7 @@ export function runReleaseArtifactStatefulSoak(options = {}) {
     schema_version: 1,
     evidence_id: 'brownie-release-artifact-stateful-soak-v1',
     target: target.id,
+    workflow_run_id: workflowRunId,
     bounds: { maximum_commands: commandLimit, commands_executed: commandLimit, per_command_timeout_ms: 60_000 },
     artifact: { archive_sha256: sha256File(archivePath), ...packageIntegrity },
     checks: {
