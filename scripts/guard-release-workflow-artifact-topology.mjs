@@ -6,6 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const defaultRepoRoot = path.resolve(__dirname, '..');
 const defaultWorkflowPath = '.github/workflows/release.yml';
+const defaultCiWorkflowPath = '.github/workflows/ci.yml';
 
 const collectorCommands = [
   'release:supply-chain-artifact-evidence',
@@ -152,11 +153,33 @@ export function validateReleaseWorkflowArtifactTopology(workflow) {
   return errors;
 }
 
+export function validateCiEarlyTopologyGate(ciWorkflow) {
+  const errors = [];
+  const gate = ciWorkflow.indexOf('- name: Fail fast on release workflow artifact topology');
+  const cargo = ciWorkflow.indexOf('- name: Cargo fmt');
+  if (gate < 0) errors.push('CI must run the release workflow artifact topology gate.');
+  if (cargo < 0 || (gate >= 0 && gate > cargo)) {
+    errors.push('CI must run the release workflow artifact topology gate before Cargo work.');
+  }
+  requireMatch(
+    ciWorkflow,
+    /- name: Fail fast on release workflow artifact topology\n\s+run: \|\n\s+node scripts\/guard-release-workflow-artifact-topology\.mjs\n\s+node --test scripts\/guard-release-workflow-artifact-topology\.test\.mjs/u,
+    'CI early topology gate must execute both the guard and its regression test.',
+    errors
+  );
+  return errors;
+}
+
 export function runReleaseWorkflowArtifactTopologyGuard(options = {}) {
   const repoRoot = path.resolve(options.repoRoot ?? defaultRepoRoot);
   const workflowPath = options.workflowPath ?? defaultWorkflowPath;
   const workflow = options.workflow ?? fs.readFileSync(path.join(repoRoot, workflowPath), 'utf8');
-  const errors = validateReleaseWorkflowArtifactTopology(workflow);
+  const ciWorkflowPath = options.ciWorkflowPath ?? defaultCiWorkflowPath;
+  const ciWorkflow = options.ciWorkflow ?? fs.readFileSync(path.join(repoRoot, ciWorkflowPath), 'utf8');
+  const errors = [
+    ...validateReleaseWorkflowArtifactTopology(workflow),
+    ...validateCiEarlyTopologyGate(ciWorkflow)
+  ];
   if (errors.length > 0) throw new Error(`Release workflow artifact topology guard failed:\n- ${errors.join('\n- ')}`);
   return { workflowPath, targetSet: targetSet(jobBlock(workflow, 'artifact-roundtrip')).split(',') };
 }

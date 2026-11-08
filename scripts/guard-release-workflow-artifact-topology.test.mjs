@@ -75,6 +75,17 @@ test('release workflow artifact topology guard rejects release CI that omits its
   );
 });
 
+test('release workflow artifact topology guard rejects CI that defers the gate until after Cargo work', () => {
+  const ciWorkflow = fs.readFileSync(path.join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
+  const invalidCiWorkflow = ciWorkflow
+    .replace('      - name: Fail fast on release workflow artifact topology\n        run: |\n          node scripts/guard-release-workflow-artifact-topology.mjs\n          node --test scripts/guard-release-workflow-artifact-topology.test.mjs\n\n', '')
+    .replace('      - name: Setup Node\n', '      - name: Fail fast on release workflow artifact topology\n        run: |\n          node scripts/guard-release-workflow-artifact-topology.mjs\n          node --test scripts/guard-release-workflow-artifact-topology.test.mjs\n\n      - name: Setup Node\n');
+  assert.throws(
+    () => runReleaseWorkflowArtifactTopologyGuard({ ciWorkflow: invalidCiWorkflow }),
+    /must run the release workflow artifact topology gate before Cargo work/u
+  );
+});
+
 test('downloaded upload-artifact topology is rebound and consumed by the collector', () => {
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-release-artifact-topology-'));
   const target = 'linux-x64';
