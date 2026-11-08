@@ -171,6 +171,7 @@ jobs:
             .brownie/release-evidence/supply-chain-artifact-evidence.json
             .brownie/release-evidence/runtime-operational-evidence.json
             .brownie/release-evidence/artifacts/${{ matrix.target }}/artifact-evidence.json
+            .brownie/release-evidence/artifacts/${{ matrix.target }}/${{ matrix.archive_name }}
             .brownie/release-evidence/artifacts/${{ matrix.target }}/runtime-journey-evidence.json
             .brownie/release-evidence/artifacts/${{ matrix.target }}/runtime-stateful-soak-evidence.json
           if-no-files-found: error
@@ -180,7 +181,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: runtime-journey-${{ matrix.target }}
-          path: roundtrip-download/runtime-journey-evidence.json
+          path: .brownie/release-evidence/artifacts/${{ matrix.target }}/runtime-journey-evidence.json
           if-no-files-found: error
           retention-days: 7
 
@@ -188,6 +189,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: runtime-stateful-soak-${{ matrix.target }}
-          path: roundtrip-download/runtime-stateful-soak-evidence.json
+          path: .brownie/release-evidence/artifacts/${{ matrix.target }}/runtime-stateful-soak-evidence.json
           if-no-files-found: error
           retention-days: 7

@@ -1487,7 +1487,18 @@ if (isMainModule()) {
   try {
     const options = parseArgs(process.argv.slice(2));
     const result = writeRuntimeOperationalEvidence(options);
-    process.stdout.write(`${JSON.stringify({ path: result.outPath, status: result.evidence.fail_closed_reasons.length === 0 ? 'satisfied' : 'failed', fail_closed_reasons: result.evidence.fail_closed_reasons }, null, 2)}\n`);
+    const binding = result.evidence.release_evidence_binding;
+    process.stdout.write(`${JSON.stringify({
+      path: result.outPath,
+      status: result.evidence.fail_closed_reasons.length === 0 ? 'satisfied' : 'failed',
+      fail_closed_reasons: result.evidence.fail_closed_reasons,
+      release_evidence_binding: {
+        status: binding?.status ?? 'missing',
+        bindings: Array.isArray(binding?.bindings)
+          ? binding.bindings.map(({ target, status, errors }) => ({ target, status, errors }))
+          : []
+      }
+    }, null, 2)}\n`);
     process.exit(result.evidence.fail_closed_reasons.length === 0 || options.allowFailClosed ? 0 : 1);
   } catch (error) {
     console.error(`Runtime operational evidence failed: ${error.message}`);

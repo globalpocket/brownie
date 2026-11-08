@@ -161,6 +161,29 @@ test('release roundtrip binding accepts complete, mutually bound artifact eviden
   assert.equal(binding.satisfied_target_count, 1);
   assert.deepEqual(binding.missing, []);
 
+  // The release artifact writer stores its portable archive beside the
+  // evidence instead of duplicating archive metadata into artifact-evidence.
+  // The workflow binds that complete directory after download, so exercise
+  // the same convention rather than only the declared-archive shortcut.
+  const conventionArchiveContents = 'downloaded archive';
+  const conventionArchiveSha256 = `sha256:${crypto.createHash('sha256').update(conventionArchiveContents).digest('hex')}`;
+  fs.writeFileSync(path.join(artifactDirectory, 'brownie-linux-x64.tar.gz'), conventionArchiveContents);
+  for (const name of ['runtime-journey-evidence.json', 'runtime-stateful-soak-evidence.json']) {
+    const receiptPath = path.join(artifactDirectory, name);
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+    receipt.artifact.archive_sha256 = conventionArchiveSha256;
+    fs.writeFileSync(receiptPath, JSON.stringify(receipt));
+  }
+  const conventionOnlyEvidence = { ...artifactEvidence };
+  delete conventionOnlyEvidence.archive;
+  const conventionOnlyBinding = buildReleaseEvidenceRoundtripBinding({
+    repoRoot,
+    workflowRunId,
+    testedCommit: commit,
+    artifacts: [{ target, artifact_evidence: conventionOnlyEvidence, evidence_dir: evidenceDir }]
+  });
+  assert.equal(conventionOnlyBinding.status, 'satisfied');
+
   delete soakChecks.process_loss_recovery;
   fs.writeFileSync(path.join(artifactDirectory, 'runtime-stateful-soak-evidence.json'), JSON.stringify({
     evidence_id: 'brownie-release-artifact-stateful-soak-v1', target, workflow_run_id: workflowRunId,
@@ -252,12 +275,19 @@ test('collector consumes complete downloaded artifact receipts without requiring
   }
 });
 
-test('release workflow removes the untracked download staging root before source-bound collectors run', () => {
+test('release workflow binds downloaded evidence before staging cleanup', () => {
   const workflow = fs.readFileSync(path.join(process.cwd(), '.github/workflows/release.yml'), 'utf8');
   assert.match(
     workflow,
-    /cp roundtrip-download\/runtime-stateful-soak-evidence\.json "\$bound_evidence_dir\/runtime-stateful-soak-evidence\.json"\n\s+rm -rf roundtrip-download\n\n\s+- name: Generate and validate bound release evidence/u
+    /cp -R "\$source_evidence_dir"\/\. "\$bound_evidence_dir"\/\n\s+cp roundtrip-download\/runtime-journey-evidence\.json "\$bound_evidence_dir\/runtime-journey-evidence\.json"\n\s+cp roundtrip-download\/runtime-stateful-soak-evidence\.json "\$bound_evidence_dir\/runtime-stateful-soak-evidence\.json"\n\s+rm -rf roundtrip-download\n\n\s+- name: Generate and validate bound release evidence/u
   );
+  assert.doesNotMatch(workflow, /path: roundtrip-download\/runtime-(?:journey|stateful-soak)-evidence\.json/u);
+});
+
+test('collector CLI emits only target-scoped binding diagnostics', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'scripts/release-runtime-operational-evidence.mjs'), 'utf8');
+  assert.match(source, /release_evidence_binding: \{[\s\S]*bindings: Array\.isArray\(binding\?\.bindings\)/u);
+  assert.match(source, /\.map\(\(\{ target, status, errors \}\) => \(\{ target, status, errors \}\)\)/u);
 });
 
 test('evidence must not contain blocker placeholders', () => {
