@@ -54,6 +54,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify release workflow artifact topology
+        run: pnpm --workspace-root guard:release-workflow-artifact-topology
+
       - name: Build VSIX
         run: |
           pnpm build
