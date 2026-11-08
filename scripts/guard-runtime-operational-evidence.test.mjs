@@ -252,6 +252,14 @@ test('collector consumes complete downloaded artifact receipts without requiring
   }
 });
 
+test('release workflow removes the untracked download staging root before source-bound collectors run', () => {
+  const workflow = fs.readFileSync(path.join(process.cwd(), '.github/workflows/release.yml'), 'utf8');
+  assert.match(
+    workflow,
+    /cp roundtrip-download\/runtime-stateful-soak-evidence\.json "\$bound_evidence_dir\/runtime-stateful-soak-evidence\.json"\n\s+rm -rf roundtrip-download\n\n\s+- name: Generate and validate bound release evidence/u
+  );
+});
+
 test('evidence must not contain blocker placeholders', () => {
   const evidence = validEvidence();
   evidence.sections.artifact_lifecycle = { status: 'placeholder', blocker: 'TODO: implement evidence' };

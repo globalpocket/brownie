@@ -63,8 +63,10 @@ test('journey executes only the packaged fixture and records durable interruptio
     targetId: 'linux-x64',
     archivePath: createFixtureArchive(root),
     workspaceRoot: path.join(root, 'workspace'),
-    evidencePath
+    evidencePath,
+    workflowRunId: 'workflow-fixture-123'
   });
+  assert.equal(evidence.workflow_run_id, 'workflow-fixture-123');
   assert.equal(evidence.checks.mode_pack_load.passed, true);
   assert.equal(evidence.checks.workspace_mutation.passed, true);
   assert.equal(evidence.checks.ledger_generation.passed, true);

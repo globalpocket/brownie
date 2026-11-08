@@ -153,6 +153,7 @@ jobs:
           cp -R "$source_evidence_dir"/. "$bound_evidence_dir"/
           cp roundtrip-download/runtime-journey-evidence.json "$bound_evidence_dir/runtime-journey-evidence.json"
           cp roundtrip-download/runtime-stateful-soak-evidence.json "$bound_evidence_dir/runtime-stateful-soak-evidence.json"
+          rm -rf roundtrip-download
 
       - name: Generate and validate bound release evidence
         shell: bash
