@@ -143,6 +143,38 @@ jobs:
           BROWNIE_RELEASE_ARTIFACT_SOAK_MAXIMUM_COMMANDS: '3'
         run: corepack pnpm --workspace-root release:artifact-stateful-soak:test
 
+      - name: Bind downloaded runtime evidence to this release artifact
+        shell: bash
+        run: |
+          source_evidence_dir="roundtrip-download/.brownie/release-evidence/artifacts/${{ matrix.target }}"
+          bound_evidence_dir=".brownie/release-evidence/artifacts/${{ matrix.target }}"
+          test -d "$source_evidence_dir"
+          mkdir -p "$bound_evidence_dir"
+          cp -R "$source_evidence_dir"/. "$bound_evidence_dir"/
+          cp roundtrip-download/runtime-journey-evidence.json "$bound_evidence_dir/runtime-journey-evidence.json"
+          cp roundtrip-download/runtime-stateful-soak-evidence.json "$bound_evidence_dir/runtime-stateful-soak-evidence.json"
+
+      - name: Generate and validate bound release evidence
+        shell: bash
+        run: |
+          corepack pnpm --workspace-root release:supply-chain-artifact-evidence
+          corepack pnpm --workspace-root guard:supply-chain-artifact-evidence
+          corepack pnpm --workspace-root release:runtime-operational-evidence:failclosed-ok
+          corepack pnpm --workspace-root guard:runtime-operational-evidence
+
+      - name: Upload validated bound release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence-${{ matrix.target }}
+          path: |
+            .brownie/release-evidence/supply-chain-artifact-evidence.json
+            .brownie/release-evidence/runtime-operational-evidence.json
+            .brownie/release-evidence/artifacts/${{ matrix.target }}/artifact-evidence.json
+            .brownie/release-evidence/artifacts/${{ matrix.target }}/runtime-journey-evidence.json
+            .brownie/release-evidence/artifacts/${{ matrix.target }}/runtime-stateful-soak-evidence.json
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload Runtime journey evidence
         uses: actions/upload-artifact@v4
         with:
