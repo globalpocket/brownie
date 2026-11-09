@@ -15,6 +15,8 @@ cat > "$fixture_script" <<'SH'
 #!/usr/bin/env bash
 set -eu
 
+source "${PHASE_LOOP_CLAIM_SMOKE_SCHEDULER_LIBRARY:?}"
+
 case "${PHASE_LOOP_CLAIM_SMOKE_SECTION:-}" in
   fast)
     printf 'fast shard completed\n'
@@ -37,6 +39,14 @@ case "${PHASE_LOOP_CLAIM_SMOKE_SECTION:-}" in
   stall)
     sleep 30
     ;;
+  progress)
+    # Each probe has its own bounded deadline.  Together they deliberately
+    # exceed the scheduler's initial one-second section window, so this proves
+    # the parent follows only mechanically published probe liveness rather
+    # than turning a healthy multi-probe section into a timeout.
+    phase_loop_claim_smoke_run_with_timeout 2 sleep 1
+    phase_loop_claim_smoke_run_with_timeout 2 sleep 1
+    ;;
   *)
     printf 'unexpected shard: %s\n' "${PHASE_LOOP_CLAIM_SMOKE_SECTION:-}" >&2
     exit 2
@@ -44,6 +54,7 @@ case "${PHASE_LOOP_CLAIM_SMOKE_SECTION:-}" in
 esac
 SH
 chmod +x "$fixture_script"
+export PHASE_LOOP_CLAIM_SMOKE_SCHEDULER_LIBRARY="$REPO_ROOT/scripts/phase-loop-claim-smoke-scheduler.sh"
 
 scheduler_driver="$fixture_root/scheduler-driver.sh"
 cat > "$scheduler_driver" <<SH
@@ -128,6 +139,23 @@ PHASE_LOOP_CLAIM_SMOKE_AUDIT_OUTPUT="$terminal_output" \
 assert_json "$terminal_output" 'any(r.get("event") == "shard_started" and r.get("shard") == "terminal" and "batch_start=0" in r.get("detail", "") and "batch_size=1" in r.get("detail", "") and "batch_rationale=terminal_isolated_for_deadline" in r.get("detail", "") for r in manifest["records"])'
 assert_json "$terminal_output" 'any(r.get("event") == "shard_started" and r.get("shard") == "merged-terminal" and "batch_start=1" in r.get("detail", "") and "batch_size=1" in r.get("detail", "") and "batch_rationale=terminal_isolated_for_deadline" in r.get("detail", "") for r in manifest["records"])'
 assert_json "$terminal_output" 'any(r.get("event") == "scheduler_plan" and "planned_batches=3" in r.get("detail", "") and "effective_batch_sizes=1,1,2" in r.get("detail", "") for r in manifest["records"])'
+
+# A section with multiple bounded probes may exceed the scheduler's initial
+# per-section window.  It remains admissible only when its own timeout helper
+# publishes a later monotonic deadline; this keeps a stuck shell fail-closed
+# while avoiding the old false timeout for the terminal fixture.
+progress_output="$fixture_root/progress-audit.json"
+PHASE_LOOP_CLAIM_SMOKE_AUDIT_OUTPUT="$progress_output" \
+  bash "$scheduler_driver" "$progress_output" \
+  "$fixture_root/progress-shards" "$fixture_script" 1 10 1 "" progress \
+  2>"$fixture_root/progress-driver.stderr" || {
+    cat "$fixture_root/progress-driver.stderr" >&2 || true
+    exit 1
+  }
+assert_json "$progress_output" 'any(r.get("event") == "shard_finished" and r.get("shard") == "progress" and r.get("status") == "passed" for r in manifest["records"])'
+assert_json "$progress_output" 'len([r for r in manifest["records"] if r.get("event") == "command_started" and r.get("shard") == "progress"]) == 2'
+assert_json "$progress_output" 'len([r for r in manifest["records"] if r.get("event") == "command_finished" and r.get("shard") == "progress"]) == 2'
+assert_json "$progress_output" 'any(r.get("event") == "shard_liveness_extended" and r.get("shard") == "progress" and r.get("deadline_monotonic_ns", 0) > r.get("started_monotonic_ns", 0) for r in manifest["records"])'
 
 expected_output="$fixture_root/expected-audit.json"
 PHASE_LOOP_CLAIM_SMOKE_AUDIT_OUTPUT="$expected_output" \
