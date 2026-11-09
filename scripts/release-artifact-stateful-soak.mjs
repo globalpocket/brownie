@@ -324,3 +324,5 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const maximumCommandsValue = maximumCommandsArgument?.slice('--maximum-commands='.length);
   process.stdout.write(`${JSON.stringify(runReleaseArtifactStatefulSoak({ cwd: repoRoot, ...(maximumCommandsValue ? { maximumCommands: maximumCommandsValue } : {}) }))}\n`);
 }
+
+export default runReleaseArtifactStatefulSoak;
