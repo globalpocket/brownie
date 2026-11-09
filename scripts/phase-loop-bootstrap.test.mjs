@@ -62,6 +62,24 @@ function runtimeStatusFixture(directory, name, status) {
   return filePath;
 }
 
+function runtimeStoreAwareStatusFixture(directory, name, capturePath, status) {
+  const filePath = path.join(directory, name);
+  const response = `${JSON.stringify({ jsonrpc: '2.0', id: 1, result: status })}\n`;
+  fs.writeFileSync(filePath, [
+    '#!/usr/bin/env node',
+    "const fs = require('node:fs');",
+    `const capturePath = ${JSON.stringify(capturePath)};`,
+    'process.stdin.resume();',
+    "process.stdin.on('end', () => {",
+    '  if (!process.env.BROWNIE_STORE_ROOT) process.exit(70);',
+    '  fs.writeFileSync(capturePath, process.env.BROWNIE_STORE_ROOT);',
+    `  process.stdout.write(${JSON.stringify(response)});`,
+    '});'
+  ].join('\n'), { mode: 0o755 });
+  fs.chmodSync(filePath, 0o755);
+  return filePath;
+}
+
 const readyProviderStatus = {
   provider: 'OpenAICompatible',
   enabled: true,
@@ -105,6 +123,7 @@ function baseEnvironment() {
   for (const name of [
     'BROWNIE_BIN',
     'BROWNIE_RUNTIME_PATH',
+    'BROWNIE_STORE_ROOT',
     'BROWNIE_WORKSPACE_ROOT',
     'PHASE_LOOP_ENV_FILE',
     'PHASE_LOOP_WORKSPACE_ROOT',
@@ -184,6 +203,31 @@ test('probes the provider from the implementation workspace context', () => {
     });
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(JSON.parse(result.stdout), { ok: true, code: 'phase_loop_bootstrap_ready' });
+  } finally {
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test('provider bootstrap probe uses and removes an isolated Runtime store', () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-bootstrap-provider-store-'));
+  try {
+    const workspace = path.join(fixture, 'implementation-workspace');
+    const capturePath = path.join(fixture, 'provider-store-root.txt');
+    fs.mkdirSync(workspace);
+    const cli = executableFixture(fixture, 'cli');
+    const runtime = runtimeStoreAwareStatusFixture(fixture, 'runtime', capturePath, readyProviderStatus);
+    const result = runBootstrapCheck({
+      BROWNIE_BIN: cli,
+      BROWNIE_RUNTIME_PATH: runtime,
+      PHASE_LOOP_WORKSPACE_ROOT: workspace,
+      PHASE_LOOP_STATE_DIR: path.join(fixture, 'state')
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const probeStoreRoot = fs.readFileSync(capturePath, 'utf8');
+    assert.match(path.basename(probeStoreRoot), /^brownie-phase-loop-provider-probe\./u);
+    assert.notEqual(path.resolve(probeStoreRoot), path.resolve(workspace));
+    assert.equal(fs.existsSync(probeStoreRoot), false, 'bootstrap probe store must be removed after status');
+    assert.equal(fs.existsSync(path.join(workspace, '.brownie', 'store-schema.json')), false);
   } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
   }

@@ -5666,7 +5666,7 @@ mod tests {
 
     #[test]
     fn cli_run_params_are_fixed_headless_drive_without_mode_policy() {
-        let params = cli_run_drive_params("summarize this repository").unwrap();
+        let params = cli_run_drive_params_with_mode("summarize this repository", None).unwrap();
         assert_eq!(params["authorize"], true);
         assert_eq!(params["expected_start_session_sequence"], 0);
         assert_eq!(params["max_advances"], 3);
@@ -5685,7 +5685,8 @@ mod tests {
             .starts_with("cli.run."));
         assert_ne!(
             params["session_id"],
-            cli_run_drive_params("summarize this repository").unwrap()["session_id"]
+            cli_run_drive_params_with_mode("summarize this repository", None).unwrap()
+                ["session_id"]
         );
         assert!(params["drive_id"].as_str().unwrap().ends_with(".drive"));
         assert!(params["journey_admission"]["journey_id"]

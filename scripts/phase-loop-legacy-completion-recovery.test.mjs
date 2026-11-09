@@ -1582,6 +1582,9 @@ test('recovery fails closed when the active deployment is unavailable', () => {
     statePath: value.state,
     completionPath: value.completion,
     snapshotPath: value.snapshot,
-    reviewReceiptPath: value.review
+    reviewReceiptPath: value.review,
+    // Do not let the real deployment selected for the outer check process
+    // satisfy this fixture's intentionally missing configuration.
+    actorDeploymentEnvironment: {}
   }), /actor_deployment_invalid/);
 });

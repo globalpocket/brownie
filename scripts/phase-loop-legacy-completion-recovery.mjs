@@ -378,11 +378,15 @@ function parseArgs(argv) {
   return args;
 }
 
-function recoveryActors({ repoRoot, actorDeploymentPath, actorDeployment }) {
+function recoveryActors({ repoRoot, actorDeploymentPath, actorDeployment, actorDeploymentEnvironment }) {
   const loaded = loadPhaseLoopActorDeployment({
     repoRoot,
     deploymentPath: actorDeploymentPath,
-    deployment: actorDeployment
+    deployment: actorDeployment,
+    // Programmatic test callers can isolate configuration discovery.  The
+    // production path deliberately continues to use the inherited launch
+    // environment, which is where the selected deployment is bound.
+    env: actorDeploymentEnvironment ?? process.env
   });
   if (!loaded.ok) {
     throw new Error(`actor_deployment_invalid:${loaded.errors.join(';')}`);
@@ -476,10 +480,16 @@ export function attestLegacyMergedCompletion({
   mergeReceiptPath,
   actorDeploymentPath,
   actorDeployment,
+  actorDeploymentEnvironment,
   now = new Date().toISOString()
 }) {
   const root = path.resolve(repoRoot);
-  const actors = recoveryActors({ repoRoot: root, actorDeploymentPath, actorDeployment });
+  const actors = recoveryActors({
+    repoRoot: root,
+    actorDeploymentPath,
+    actorDeployment,
+    actorDeploymentEnvironment
+  });
   const todoFile = path.resolve(root, todoPath);
   const stateRoot = path.resolve(root, statePath);
   const completionFile = path.resolve(root, completionPath);
@@ -1771,6 +1781,7 @@ export function reconcilePersistedReviewRework({
   statePath = defaultState,
   actorDeploymentPath,
   actorDeployment,
+  actorDeploymentEnvironment,
   unlinkCurrentClaim = fs.unlinkSync,
   now = new Date().toISOString()
 }) {
@@ -1929,6 +1940,7 @@ export function reconcilePersistedReviewRework({
     reviewReceiptPath: source.review_receipt_path,
     actorDeploymentPath,
     actorDeployment,
+    actorDeploymentEnvironment,
     now
   });
   return {
@@ -2283,10 +2295,16 @@ export function recoverLegacyRejectedCompletion({
   reviewReceiptPath,
   actorDeploymentPath,
   actorDeployment,
+  actorDeploymentEnvironment,
   now = new Date().toISOString()
 }) {
   const root = path.resolve(repoRoot);
-  const actors = recoveryActors({ repoRoot: root, actorDeploymentPath, actorDeployment });
+  const actors = recoveryActors({
+    repoRoot: root,
+    actorDeploymentPath,
+    actorDeployment,
+    actorDeploymentEnvironment
+  });
   const expectedAuthor = actors.implementation;
   const expectedReviewer = actors.review;
   const todoFile = path.resolve(root, todoPath);

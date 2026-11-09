@@ -1,8 +1,18 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
-import { requiredReleaseGateCommands } from './release-gate.mjs';
+import {
+  buildReleaseGateCommandEnvironment,
+  isExcludedFromHermeticRustTestCopy,
+  prepareHermeticRustTestWorkspace,
+  releaseGateCommandEnvironmentProfile,
+  requiredReleaseGateCommands
+} from './release-gate.mjs';
 import { requiredConditionIds, runReleaseContractGuard } from './guard-release-contract.mjs';
 
 function pendingTraceContract(overrides = {}) {
@@ -139,6 +149,108 @@ function validContract(overrides = {}) {
     ...overrides
   };
 }
+
+test('release gate removes every inherited Brownie setting from the Rust test process and isolates Cargo output', () => {
+  const rustTest = requiredReleaseGateCommands.find((entry) => entry.id === 'rust_test');
+  const nodeCheck = requiredReleaseGateCommands.find((entry) => entry.id === 'node_check');
+  const sourceEnvironment = {
+    PATH: '/test/bin',
+    BROWNIE_RUNTIME_PATH: '/configured/runtime',
+    BROWNIE_CLI_RUN_MODE_ID: 'configured-mode',
+    BROWNIE_LLM_API_KEY: 'fixture-key',
+    BROWNIE_UNEXPECTED_INHERITED_SETTING: 'fixture-value'
+  };
+
+  const rustTestEnvironment = buildReleaseGateCommandEnvironment(rustTest, sourceEnvironment, {
+    cargoTargetDir: '/tmp/brownie-release-gate-rust-target-fixture'
+  });
+  assert.equal(releaseGateCommandEnvironmentProfile(rustTest), 'hermetic_rust_test_workspace_copy');
+  assert.equal(rustTestEnvironment.PATH, '/test/bin');
+  assert.equal(rustTestEnvironment.CARGO_INCREMENTAL, '0');
+  assert.deepEqual(
+    Object.keys(rustTestEnvironment).filter((name) => name.startsWith('BROWNIE_')),
+    []
+  );
+  assert.equal(rustTestEnvironment.CARGO_TARGET_DIR, '/tmp/brownie-release-gate-rust-target-fixture');
+
+  const nodeCheckEnvironment = buildReleaseGateCommandEnvironment(nodeCheck, sourceEnvironment);
+  assert.equal(releaseGateCommandEnvironmentProfile(nodeCheck), 'selected_deployment');
+  assert.equal(nodeCheckEnvironment.BROWNIE_RUNTIME_PATH, '/configured/runtime');
+  assert.equal(nodeCheckEnvironment.BROWNIE_CLI_RUN_MODE_ID, 'configured-mode');
+});
+
+test('hermetic Rust test workspace copies source while excluding local state and build products', () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-release-gate-copy-'));
+  const repoRoot = path.join(fixture, 'repo');
+  const ephemeralRoot = path.join(fixture, 'ephemeral');
+  const sourceFile = path.join(repoRoot, 'crates', 'brownie-cli', 'src', 'lib.rs');
+  const privateState = path.join(repoRoot, '.brownie', 'private', 'phase-loop.env');
+  const historicalFixture = path.join(
+    repoRoot,
+    'crates',
+    'brownie-store',
+    'tests',
+    'fixtures',
+    'historical-ledger',
+    'v1-running-task',
+    '.brownie',
+    'runs',
+    'state.json'
+  );
+  const buildArtifact = path.join(repoRoot, 'target', 'debug', 'brownie');
+  const dependencyArtifact = path.join(repoRoot, 'node_modules', 'fixture-package', 'index.js');
+
+  try {
+    fs.mkdirSync(path.dirname(sourceFile), { recursive: true });
+    fs.mkdirSync(path.dirname(privateState), { recursive: true });
+    fs.mkdirSync(path.dirname(historicalFixture), { recursive: true });
+    fs.mkdirSync(path.dirname(buildArtifact), { recursive: true });
+    fs.mkdirSync(path.dirname(dependencyArtifact), { recursive: true });
+    fs.writeFileSync(sourceFile, 'pub fn copied() {}\n');
+    fs.writeFileSync(privateState, 'private=true\n');
+    fs.writeFileSync(historicalFixture, 'historical fixture\n');
+    fs.writeFileSync(buildArtifact, 'generated\n');
+    fs.writeFileSync(dependencyArtifact, 'dependency\n');
+
+    const workspaceRoot = prepareHermeticRustTestWorkspace(repoRoot, ephemeralRoot);
+
+    assert.equal(fs.readFileSync(path.join(workspaceRoot, 'crates', 'brownie-cli', 'src', 'lib.rs'), 'utf8'), 'pub fn copied() {}\n');
+    assert.equal(fs.existsSync(path.join(workspaceRoot, '.brownie')), false);
+    assert.equal(
+      fs.readFileSync(
+        path.join(
+          workspaceRoot,
+          'crates',
+          'brownie-store',
+          'tests',
+          'fixtures',
+          'historical-ledger',
+          'v1-running-task',
+          '.brownie',
+          'runs',
+          'state.json'
+        ),
+        'utf8'
+      ),
+      'historical fixture\n'
+    );
+    assert.equal(fs.existsSync(path.join(workspaceRoot, 'target')), false);
+    assert.equal(fs.existsSync(path.join(workspaceRoot, 'node_modules')), false);
+    const tracked = spawnSync('git', ['ls-files', '--', 'crates/brownie-cli/src/lib.rs'], {
+      cwd: workspaceRoot,
+      encoding: 'utf8'
+    });
+    assert.equal(tracked.status, 0);
+    assert.equal(tracked.stdout.trim(), 'crates/brownie-cli/src/lib.rs');
+    assert.equal(isExcludedFromHermeticRustTestCopy(repoRoot, privateState), true);
+    assert.equal(isExcludedFromHermeticRustTestCopy(repoRoot, buildArtifact), true);
+    assert.equal(isExcludedFromHermeticRustTestCopy(repoRoot, dependencyArtifact), true);
+    assert.equal(isExcludedFromHermeticRustTestCopy(repoRoot, sourceFile), false);
+    assert.equal(isExcludedFromHermeticRustTestCopy(repoRoot, historicalFixture), false);
+  } finally {
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
 
 function validAudit(overrides = {}) {
   return {

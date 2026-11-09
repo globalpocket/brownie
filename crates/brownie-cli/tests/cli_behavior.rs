@@ -121,6 +121,20 @@ fn unique_test_dir(name: &str) -> PathBuf {
     ))
 }
 
+fn runtime_state_root(workspace_root: &Path) -> PathBuf {
+    match std::env::var_os("BROWNIE_STORE_ROOT") {
+        Some(configured_root) => {
+            let configured_root = PathBuf::from(configured_root);
+            if configured_root.is_absolute() {
+                configured_root
+            } else {
+                workspace_root.join(configured_root)
+            }
+        }
+        None => workspace_root.join(".brownie"),
+    }
+}
+
 #[cfg_attr(not(unix), allow(unused_variables))]
 fn make_executable(path: &Path) {
     #[cfg(unix)]
@@ -2999,8 +3013,8 @@ fn installed_json_run_uses_real_agentmodes_active_snapshot_from_arbitrary_reposi
     assert_eq!(task["mode_id"], "core.orchestrator");
     let run_id = task["run_id"].as_str().expect("run id");
     let ledger = fs::read_to_string(
-        repository
-            .join(".brownie/runs")
+        runtime_state_root(&repository)
+            .join("runs")
             .join(run_id)
             .join("ledger.jsonl"),
     )
@@ -3093,8 +3107,8 @@ fn installed_json_run_uses_signed_latest_agentmodes_core_without_member_pack_wri
     );
 
     let root_ledger = fs::read_to_string(
-        repository
-            .join(".brownie/runs")
+        runtime_state_root(&repository)
+            .join("runs")
             .join(root_run_id)
             .join("ledger.jsonl"),
     )

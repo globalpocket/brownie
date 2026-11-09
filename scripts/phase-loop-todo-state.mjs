@@ -440,6 +440,7 @@ export function resolveTodoState({
     const receipt = durableCompletionRecordReceipt(record);
     if (receipt.valid) {
       durableCompletionIds.add(id);
+      completedIds.add(id);
     } else {
       unverifiedCompletionRecords.push({
         claim_id: claimId || null,
@@ -448,7 +449,6 @@ export function resolveTodoState({
         reason: receipt.reason
       });
     }
-    completedIds.add(id);
     knownIds.add(id);
   }
 
@@ -535,10 +535,12 @@ export function loadTodoState(repoRoot, todoText, options = {}) {
 export function todoStateSummary(state) {
   return {
     completed_todo_ids: [...state.completedIds].sort(),
+    durable_completed_todo_ids: [...state.durableCompletionIds].sort(),
     superseded_todo_ids: [...state.supersededIds].sort(),
     resolved_todo_ids: [...state.resolvedIds].sort(),
     invalidated_completion_record_count: state.invalidatedCompletionRecords.length,
     supersession_resolved_todo_ids: [...state.supersessionResolvedIds].sort(),
+    unverified_completion_records: state.unverifiedCompletionRecords,
     unverified_archived_completion_ids: [...state.unverifiedArchivedCompletionIds].sort(),
     warnings: state.warnings,
     errors: state.errors

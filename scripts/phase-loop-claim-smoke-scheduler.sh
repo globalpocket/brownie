@@ -15,6 +15,65 @@ phase_loop_claim_smoke_monotonic_ns() {
   fi
 }
 
+# A section can intentionally execute several independently bounded controller
+# probes.  The scheduler must distinguish that observed, bounded progress from
+# a parent shell that is merely stuck between probes.  Each probe publishes a
+# monotonic liveness deadline; the parent may extend only to that deadline,
+# while the probe's own timeout remains authoritative.
+phase_loop_claim_smoke_liveness_grace_seconds() {
+  local configured="${PHASE_LOOP_CLAIM_SMOKE_LIVENESS_GRACE_SECONDS:-2}"
+  case "$configured" in
+    ''|*[!0-9]*)
+      echo "PHASE_LOOP_CLAIM_SMOKE_LIVENESS_GRACE_SECONDS must be a non-negative integer" >&2
+      return 2
+      ;;
+  esac
+  printf '%s\n' "$configured"
+}
+
+phase_loop_claim_smoke_liveness_deadline_ns() {
+  local seconds="$1"
+  local now
+  local grace
+  case "$seconds" in
+    ''|*[!0-9]*)
+      echo "claim-smoke command timeout must be a non-negative integer" >&2
+      return 2
+      ;;
+  esac
+  grace="$(phase_loop_claim_smoke_liveness_grace_seconds)"
+  now="$(phase_loop_claim_smoke_monotonic_ns)"
+  printf '%s\n' "$((now + (seconds + grace) * 1000000000))"
+}
+
+phase_loop_claim_smoke_write_liveness_deadline() {
+  local liveness_file="$1"
+  local deadline_monotonic_ns="$2"
+  local temporary_file
+  [ -n "$liveness_file" ] || return 0
+  case "$deadline_monotonic_ns" in
+    ''|*[!0-9]*)
+      echo "claim-smoke liveness deadline must be monotonic nanoseconds" >&2
+      return 2
+      ;;
+  esac
+  mkdir -p "$(dirname "$liveness_file")"
+  temporary_file="${liveness_file}.tmp.$$"
+  printf '%s\n' "$deadline_monotonic_ns" > "$temporary_file"
+  mv -f "$temporary_file" "$liveness_file"
+}
+
+phase_loop_claim_smoke_read_liveness_deadline() {
+  local liveness_file="$1"
+  local deadline_monotonic_ns
+  [ -f "$liveness_file" ] || return 1
+  deadline_monotonic_ns="$(tr -d '[:space:]' < "$liveness_file")"
+  case "$deadline_monotonic_ns" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  printf '%s\n' "$deadline_monotonic_ns"
+}
+
 phase_loop_claim_smoke_process_group() {
   local pid="$1"
   ps -o pgid= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true
@@ -311,10 +370,29 @@ phase_loop_claim_smoke_run_with_timeout() {
   local elapsed=0
   local timed_out=0
   local child_status=0
+  local command_accepted=false
+  local liveness_file="${PHASE_LOOP_CLAIM_SMOKE_LIVENESS_FILE:-}"
+  local command_started_monotonic_ns
+  local command_deadline_monotonic_ns
+
+  command_started_monotonic_ns="$(phase_loop_claim_smoke_monotonic_ns)"
+  command_deadline_monotonic_ns="$(phase_loop_claim_smoke_liveness_deadline_ns "$seconds")"
+  if ! phase_loop_claim_smoke_write_liveness_deadline "$liveness_file" "$command_deadline_monotonic_ns"; then
+    echo "unable to publish claim-smoke command liveness deadline: ${command_description}" >&2
+    return 2
+  fi
 
   phase_loop_claim_smoke_start_process_group "$@"
   child_pid="$PHASE_LOOP_CLAIM_SMOKE_LAST_PID"
   child_pgid="$PHASE_LOOP_CLAIM_SMOKE_LAST_PGID"
+  if [ -n "$audit_file" ]; then
+    phase_loop_claim_smoke_append_audit_event \
+      "$audit_file" command_started "$shard_name" "$child_pid" "$child_pgid" \
+      running "" "" "" "${PHASE_LOOP_CONTROL_ROOT:-}" \
+      "${PHASE_LOOP_STATE_DIR:-}" "${PHASE_LOOP_WORKSPACE_ROOT:-$PWD}" \
+      "$command_description" "$expected_exit_codes" "" \
+      "$command_started_monotonic_ns" "$command_deadline_monotonic_ns"
+  fi
   while phase_loop_claim_smoke_process_is_live "$child_pid"; do
     if [ "$elapsed" -ge "$seconds" ]; then
       echo "command timed out after ${seconds}s: ${command_description} pid=${child_pid} pgid=${child_pgid}" >&2
@@ -337,6 +415,18 @@ phase_loop_claim_smoke_run_with_timeout() {
     child_status=0
   else
     child_status="$?"
+  fi
+  if [ -n "$audit_file" ]; then
+    if phase_loop_claim_smoke_exit_allowed "$child_status" "$expected_exit_codes"; then
+      command_accepted=true
+    fi
+    phase_loop_claim_smoke_append_audit_event \
+      "$audit_file" command_finished "$shard_name" "$child_pid" "$child_pgid" \
+      "$([ "$command_accepted" = true ] && echo passed || echo failed)" "$child_status" \
+      "" "" "${PHASE_LOOP_CONTROL_ROOT:-}" "${PHASE_LOOP_STATE_DIR:-}" \
+      "${PHASE_LOOP_WORKSPACE_ROOT:-$PWD}" "$command_description" \
+      "$expected_exit_codes" "$command_accepted" "$command_started_monotonic_ns" \
+      "$command_deadline_monotonic_ns"
   fi
   if [ -n "$child_pgid" ] && phase_loop_claim_smoke_group_has_live_members "$child_pgid"; then
     phase_loop_claim_smoke_terminate_process_group "$child_pid" 3 "$child_pgid"
@@ -424,6 +514,9 @@ phase_loop_claim_smoke_run_scheduler() {
   local effective_batch_size
   local batch_rationale
   local shard_cpu_count
+  local liveness_file
+  local liveness_deadline_monotonic_ns
+  local previous_deadline_monotonic_ns
   local configured_watchdog_seconds="$watchdog_seconds"
   local effective_watchdog_seconds
   local required_watchdog_seconds
@@ -442,6 +535,7 @@ phase_loop_claim_smoke_run_scheduler() {
   local -a active_shards=()
   local -a active_started_ns=()
   local -a active_deadline_ns=()
+  local -a active_liveness_files=()
   local -a active_done=()
 
   mkdir -p "$shard_dir"
@@ -571,22 +665,26 @@ phase_loop_claim_smoke_run_scheduler() {
       control_root="$shard_dir/$shard-control-root"
       stdout_log="$shard_dir/$shard.stdout.log"
       stderr_log="$shard_dir/$shard.stderr.log"
+      liveness_file="$shard_dir/$shard.liveness"
       mkdir -p "$control_root"
+      rm -f -- "$liveness_file"
       PHASE_LOOP_CLAIM_SMOKE_SECTION="$shard" \
       PHASE_LOOP_CONTROL_ROOT="$control_root" \
       PHASE_LOOP_CLAIM_SMOKE_AUDIT_FILE="$shard_dir/$shard.audit.jsonl" \
       PHASE_LOOP_CLAIM_SMOKE_SHARD_NAME="$shard" \
+      PHASE_LOOP_CLAIM_SMOKE_LIVENESS_FILE="$liveness_file" \
       phase_loop_claim_smoke_start_process_group "$BASH" "$script_path" >"$stdout_log" 2>"$stderr_log"
       pid="$PHASE_LOOP_CLAIM_SMOKE_LAST_PID"
       pgid="$PHASE_LOOP_CLAIM_SMOKE_LAST_PGID"
       expected_exit_codes="$(phase_loop_claim_smoke_expected_exit_codes "$shard" "$expected_exit_contract")"
       started_monotonic_ns="$(phase_loop_claim_smoke_monotonic_ns)"
-      deadline_monotonic_ns=$((started_monotonic_ns + command_timeout_seconds * 1000000000))
+      deadline_monotonic_ns="$(phase_loop_claim_smoke_liveness_deadline_ns "$command_timeout_seconds")"
       active_pids+=("$pid")
       active_pgids+=("$pgid")
       active_shards+=("$shard")
       active_started_ns+=("$started_monotonic_ns")
       active_deadline_ns+=("$deadline_monotonic_ns")
+      active_liveness_files+=("$liveness_file")
       active_done+=(0)
       phase_loop_claim_smoke_emit_audit_event "$audit_file" shard_started "$shard" "$pid" "$pgid" running "" "$stdout_log" "$stderr_log" "$control_root" "$control_root" "$PWD" "batch_start=$batch_start batch_size=$effective_batch_size batch_rationale=$batch_rationale command_timeout_seconds=$command_timeout_seconds cpu_count=$shard_cpu_count expected_exit_codes=$expected_exit_codes" "$expected_exit_codes" "" "$started_monotonic_ns" "$deadline_monotonic_ns"
       index=$((index + 1))
@@ -603,7 +701,17 @@ phase_loop_claim_smoke_run_scheduler() {
         shard="${active_shards[$i]}"
         started_monotonic_ns="${active_started_ns[$i]}"
         deadline_monotonic_ns="${active_deadline_ns[$i]}"
+        liveness_file="${active_liveness_files[$i]}"
         expected_exit_codes="$(phase_loop_claim_smoke_expected_exit_codes "$shard" "$expected_exit_contract")"
+
+        if liveness_deadline_monotonic_ns="$(phase_loop_claim_smoke_read_liveness_deadline "$liveness_file" 2>/dev/null)"; then
+          if [ "$liveness_deadline_monotonic_ns" -gt "$deadline_monotonic_ns" ]; then
+            previous_deadline_monotonic_ns="$deadline_monotonic_ns"
+            deadline_monotonic_ns="$liveness_deadline_monotonic_ns"
+            active_deadline_ns[$i]="$deadline_monotonic_ns"
+            phase_loop_claim_smoke_append_audit_event "$audit_file" shard_liveness_extended "$shard" "$pid" "$pgid" running "" "$shard_dir/$shard.stdout.log" "$shard_dir/$shard.stderr.log" "$shard_dir/$shard-control-root" "$shard_dir/$shard-control-root" "$PWD" "previous_deadline_monotonic_ns=$previous_deadline_monotonic_ns liveness_deadline_monotonic_ns=$liveness_deadline_monotonic_ns" "$expected_exit_codes" "" "$started_monotonic_ns" "$deadline_monotonic_ns"
+          fi
+        fi
 
         if ! phase_loop_claim_smoke_process_is_live "$pid"; then
           if wait "$pid"; then

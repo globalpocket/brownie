@@ -188,7 +188,13 @@ export function runDependencySecurityLicenseAuditGuard(options = {}) {
     fs.existsSync(path.join(repoRoot, evidencePath));
   if (shouldValidateEvidence) {
     const evidence = options.evidence ?? readJson(repoRoot, evidencePath, errors);
-    errors.push(...validateDependencySecurityLicenseAuditEvidence(evidence, { repoRoot }));
+    errors.push(
+      ...validateDependencySecurityLicenseAuditEvidence(evidence, {
+        repoRoot,
+        repository: options.repository,
+        deploymentResult: options.deploymentResult
+      })
+    );
   }
 
   return { errors, contractPath, evidencePath, validatedEvidence: shouldValidateEvidence };

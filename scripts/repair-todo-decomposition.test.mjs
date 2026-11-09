@@ -3,10 +3,42 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { validateTodoDecompositionText } from './guard-todo-decomposition.mjs';
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+
+function durableCompletionRecord(todoId, claimId = `claim-${todoId}`) {
+  const selectedHash = createHash('sha256').update(`fixture:${todoId}`).digest('hex');
+  return {
+    schema_version: 2,
+    claim_id: claimId,
+    root_claim_id: claimId,
+    selected_todo_id: todoId,
+    selected_todo_sha256: selectedHash,
+    delivery_receipt: {
+      schema_version: 1,
+      claim_id: claimId,
+      root_claim_id: claimId,
+      selected_todo_sha256: selectedHash,
+      author: 'implementation',
+      reviewer: 'review',
+      merge_actor: 'review',
+      approved: true,
+      ci_passed: true,
+      merged: true,
+      semantic_completion_evidence: {
+        schema_version: 1,
+        root_claim_id: claimId,
+        selected_todo_sha256: selectedHash,
+        completion_condition_sha256: createHash('sha256').update(`fixture completion:${todoId}`).digest('hex'),
+        verification_results: [{ command: 'node --test fixture.mjs', exit_code: 0 }],
+        observables: [{ kind: 'fixture', sha256: createHash('sha256').update(`fixture observable:${todoId}`).digest('hex') }]
+      }
+    }
+  };
+}
 
 function makeTempRepo() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-repair-todo-decomposition-'));
@@ -98,9 +130,10 @@ test('rebaselines sibling leaves when verification dependencies form a cycle and
     fs.mkdirSync(path.join(root, '.github/workflows'), { recursive: true });
     fs.mkdirSync(path.join(root, '.brownie/private/phase-loop/todo-completions'), { recursive: true });
     fs.writeFileSync(path.join(root, '.github/workflows/release.yml'), 'name: fixture\n');
-    fs.writeFileSync(path.join(root, '.brownie/private/phase-loop/todo-completions/e23a.json'), JSON.stringify({
-      selected_todo_id: 'E-23a-release-artifact-portable-archive'
-    }));
+    fs.writeFileSync(
+      path.join(root, '.brownie/private/phase-loop/todo-completions/e23a.json'),
+      JSON.stringify(durableCompletionRecord('E-23a-release-artifact-portable-archive'))
+    );
     const sourceId = 'E-23b-release-artifact-download-roundtrip';
     const leaf = (suffix, target, dependencies, verificationTarget = 'scripts/release-artifact-roundtrip-e2e.test.mjs') => `- [ ] ${sourceId}-target-${suffix}: Create only \`${target}\` for the downloaded release-artifact roundtrip:
   Route: implementation.
@@ -323,9 +356,10 @@ test('preserves a canonically completed dependency during sibling normalization'
     const leafId = sourceId + '-target-01';
     const completedId = 'E-23z-completed-prerequisite';
     fs.mkdirSync(path.join(root, '.brownie/private/phase-loop/todo-completions'), { recursive: true });
-    fs.writeFileSync(path.join(root, '.brownie/private/phase-loop/todo-completions/completed.json'), JSON.stringify({
-      selected_todo_id: completedId
-    }));
+    fs.writeFileSync(
+      path.join(root, '.brownie/private/phase-loop/todo-completions/completed.json'),
+      JSON.stringify(durableCompletionRecord(completedId))
+    );
     const leaf = '- [ ] ' + leafId + ': Create only ' + tick + 'package.json' + tick + ' after the completed prerequisite:\n'
       + '  Route: implementation.\n'
       + '  Source TODO: ' + sourceId + '.\n'
@@ -1635,9 +1669,10 @@ test('does not prune completion-backed dependency while repairing another dangli
       ''
     ].join('\n'));
     fs.mkdirSync(path.join(root, '.brownie/private/phase-loop/todo-completions'), { recursive: true });
-    fs.writeFileSync(path.join(root, '.brownie/private/phase-loop/todo-completions/e22c.json'), JSON.stringify({
-      selected_todo_id: 'E-22c-runtime-artifact-e2e-evidence'
-    }, null, 2));
+    fs.writeFileSync(
+      path.join(root, '.brownie/private/phase-loop/todo-completions/e22c.json'),
+      JSON.stringify(durableCompletionRecord('E-22c-runtime-artifact-e2e-evidence'), null, 2)
+    );
     fs.writeFileSync(path.join(root, '.brownie/private/phase-loop/todo-claims/current.json'), JSON.stringify({
       schema_version: 1,
       claim_id: 'claim-completed-dependency',

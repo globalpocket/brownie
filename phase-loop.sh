@@ -16717,6 +16717,7 @@ validate_phase_loop_implementation_provider() {
   local run_stamp="$1"
   local runtime_path="$2"
   local implementation_workspace runtime_status_output runtime_status_exit provider_ready
+  local provider_probe_store_root
 
   # The claim-smoke harness deliberately uses deterministic fake Runtime
   # binaries.  Its profile is accepted only with the paired test-only marker;
@@ -16731,13 +16732,24 @@ validate_phase_loop_implementation_provider() {
   # the controller process directory could otherwise admit or reject a claim
   # based on a different workspace's provider settings.
   implementation_workspace="${PHASE_LOOP_WORKSPACE_ROOT:-$ROOT_DIR}"
+  # BrownieStore initializes its durable schema even for a status probe. The
+  # probe must prove the selected provider configuration without materializing
+  # Runtime state in the implementation checkout or inheriting another
+  # process's store. Runtime dispatch still receives its claim-bound store
+  # below; this directory exists only for the bounded bootstrap probe.
+  provider_probe_store_root="$(mktemp -d "${TMPDIR:-/tmp}/brownie-phase-loop-provider-probe.XXXXXX")" || {
+    PHASE_LOOP_IMPLEMENTATION_PROVIDER_DIAGNOSTIC='{"ok":false,"code":"phase_loop_implementation_provider_unavailable","provider_reason":"bootstrap_probe_store_unavailable"}'
+    return 78
+  }
   set +e
   runtime_status_output="$(
     cd "$implementation_workspace" || exit 70
     export BROWNIE_WORKSPACE_ROOT="${BROWNIE_WORKSPACE_ROOT:-"$implementation_workspace"}"
+    export BROWNIE_STORE_ROOT="$provider_probe_store_root"
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"llm.status"}' | "$runtime_path" 2>&1
   )"
   runtime_status_exit=$?
+  rm -rf "$provider_probe_store_root"
   set -e
 
   PHASE_LOOP_IMPLEMENTATION_PROVIDER_DIAGNOSTIC="$(python3 - "$run_stamp" "$PHASE_LOOP_ENV_SOURCES" "$runtime_path" "$runtime_status_exit" "$implementation_workspace" "$runtime_status_output" <<'PY'

@@ -36,7 +36,13 @@ test('nested supervisor repair uses the explicit controller source root', () => 
 test('supervisor returns a controlled nonzero result when actor deployment is unavailable', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-supervisor-missing-deployment-'));
   try {
-    const result = controlPhaseLoop({ repoRoot: repo, write: false, repair: true, start: false });
+    const result = controlPhaseLoop({
+      repoRoot: repo,
+      write: false,
+      repair: true,
+      start: false,
+      actorDeploymentEnvironment: {}
+    });
     assert.equal(result.status, 'blocked');
     assert.equal(result.reason, 'actor_deployment_invalid');
     assert.equal(result.final_summary, undefined);
@@ -60,6 +66,7 @@ const ownerBlockerTodo = `- [ ] E-20i-runtime-release-ops-blocker: Blocker: Owne
   Completion condition: release engineering owner provides or documents the Runtime Release Ops authority needed for clean CI builds, artifact upload/provenance binding, and GitHub Release publication. Customer or Enterprise production deployment credentials are explicitly out of Runtime Product Ready scope and must not block the OSS Runtime release.
   Forbidden changes: do not attempt to configure external CI/CD, create credentials, publish a GitHub Release, or request customer/Enterprise production deployment credentials.
   Verification: inspect/blocker/fail-closed.`;
+
 const fixtureRepository = 'example-org/supervisor-fixture';
 const implementationActor = 'implementation-bot';
 const reviewActor = 'independent-reviewer';
@@ -73,6 +80,45 @@ const fixtureActorDeployment = Object.freeze({
   },
   constraints: { require_independent_review: true }
 });
+
+function sha256(value) {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function durableCompletionRecord(todoId, claimId = `claim-${todoId}`, options = {}) {
+  const selectedTodo = options.selectedTodo ?? `fixture:${todoId}`;
+  const rootClaimId = options.rootClaimId ?? claimId;
+  const selectedHash = sha256(selectedTodo);
+  return {
+    schema_version: 3,
+    claim_id: claimId,
+    root_claim_id: rootClaimId,
+    selected_todo_id: todoId,
+    selected_todo: selectedTodo,
+    selected_todo_sha256: selectedHash,
+    delivery_receipt: {
+      schema_version: 1,
+      claim_id: claimId,
+      root_claim_id: rootClaimId,
+      selected_todo_sha256: selectedHash,
+      author: implementationActor,
+      reviewer: reviewActor,
+      merge_actor: reviewActor,
+      approved: true,
+      ci_passed: true,
+      merged: true,
+      ...(options.pullRequestUrl ? { pr_url: options.pullRequestUrl } : {}),
+      semantic_completion_evidence: {
+        schema_version: 1,
+        root_claim_id: rootClaimId,
+        selected_todo_sha256: selectedHash,
+        completion_condition_sha256: sha256(`fixture completion:${todoId}`),
+        verification_results: [{ command: 'node --test fixture.mjs', exit_code: 0 }],
+        observables: [{ kind: 'fixture', sha256: sha256(`fixture observable:${todoId}`) }]
+      }
+    }
+  };
+}
 const fixtureRepoRoots = new Set();
 
 // Production control requires an explicitly injected deployment.  Keep each
@@ -336,19 +382,32 @@ Quality rubric:
   execFileSync('git', ['commit', '-m', 'todo fixture'], { cwd: repo, stdio: 'ignore' });
 }
 
-test('reconciles an acknowledged reviewed merged delegation into a durable completion receipt', () => {
+test('reconciles an acknowledged delegation only against an existing durable bound completion receipt', () => {
   const repo = makeRepo();
   writeTodo(repo);
   const mergedCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  const claimId = 'delegated-runtime-evidence-claim';
+  const rootClaimId = 'delegated-runtime-evidence-root';
+  const pullRequestUrl = `https://github.com/${fixtureRepository}/pull/999`;
+  const completion = durableCompletionRecord(
+    'E-21c-runtime-operational-evidence-impl-2-target-02',
+    claimId,
+    { rootClaimId, selectedTodo: runtimeEvidenceTodo, pullRequestUrl }
+  );
+  writeJson(repo, '.brownie/private/phase-loop/todo-completions/delegated-runtime-evidence.json', completion);
   writeJson(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json', {
     schema_version: 1,
     kind: 'phase_loop_delegation_pending',
     completed: false,
+    claim_id: claimId,
+    root_claim_id: rootClaimId,
     selected_todo: runtimeEvidenceTodo,
+    selected_todo_id: completion.selected_todo_id,
+    selected_todo_sha256: completion.selected_todo_sha256,
     delegation: {
       required_actor: implementationActor,
       status: 'acknowledged',
-      issue_or_pr_url: `https://github.com/${fixtureRepository}/pull/999`,
+      issue_or_pr_url: pullRequestUrl,
       acknowledged_at: '2026-10-15T00:00:00Z',
       implementation_commit_or_blocker: mergedCommit
     },
@@ -371,15 +430,71 @@ test('reconciles an acknowledged reviewed merged delegation into a durable compl
   });
   const todo = fs.readFileSync(path.join(repo, '.brownie/todo.md'), 'utf8');
   const feedback = JSON.parse(fs.readFileSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json'), 'utf8'));
-  const completion = JSON.parse(fs.readFileSync(path.join(repo, result.repair.acknowledged_delegation_reconciliation.completion_path), 'utf8'));
 
   assert.equal(result.repair.acknowledged_delegation_reconciliation.ok, true, JSON.stringify(result, null, 2));
+  assert.equal(result.repair.acknowledged_delegation_reconciliation.completion_record_claim_id, claimId);
   assert.equal(result.repair.non_live_todo_residue.ok, true, JSON.stringify(result, null, 2));
   assert.doesNotMatch(todo, /E-21c-runtime-operational-evidence-impl-2-target-02/u);
   assert.equal(feedback.completed, true);
+  assert.equal(feedback.completion_record_claim_id, claimId);
   assert.equal(completion.selected_todo_id, 'E-21c-runtime-operational-evidence-impl-2-target-02');
-  assert.equal(completion.implementation_commit, mergedCommit);
+});
 
+test('does not close an acknowledged delegation when its candidate receipt is invalid or bound to another PR', () => {
+  const repo = makeRepo();
+  writeTodo(repo);
+  const mergedCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  const claimId = 'delegated-runtime-evidence-claim';
+  const rootClaimId = 'delegated-runtime-evidence-root';
+  const pullRequestUrl = `https://github.com/${fixtureRepository}/pull/999`;
+  const differentPullRequest = `https://github.com/${fixtureRepository}/pull/998`;
+  const mismatchedReceipt = durableCompletionRecord(
+    'E-21c-runtime-operational-evidence-impl-2-target-02',
+    claimId,
+    { rootClaimId, selectedTodo: runtimeEvidenceTodo, pullRequestUrl: differentPullRequest }
+  );
+  mismatchedReceipt.delivery_receipt.reviewer = implementationActor;
+  mismatchedReceipt.delivery_receipt.merge_actor = implementationActor;
+  writeJson(repo, '.brownie/private/phase-loop/todo-completions/mismatched-delegated-runtime-evidence.json', mismatchedReceipt);
+  writeJson(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json', {
+    schema_version: 1,
+    kind: 'phase_loop_delegation_pending',
+    completed: false,
+    claim_id: claimId,
+    root_claim_id: rootClaimId,
+    selected_todo: runtimeEvidenceTodo,
+    selected_todo_id: mismatchedReceipt.selected_todo_id,
+    selected_todo_sha256: mismatchedReceipt.selected_todo_sha256,
+    delegation: {
+      required_actor: implementationActor,
+      status: 'acknowledged',
+      issue_or_pr_url: pullRequestUrl,
+      acknowledged_at: '2026-10-15T00:00:00Z',
+      implementation_commit_or_blocker: mergedCommit
+    },
+    verification: {
+      reviewed_by: reviewActor,
+      all_ci_checks_passed: true
+    }
+  });
+
+  const result = controlPhaseLoop({
+    repoRoot: repo,
+    write: false,
+    repair: true,
+    start: false,
+    delegationProvenanceVerifier() {
+      return { ok: true };
+    }
+  });
+  const todo = fs.readFileSync(path.join(repo, '.brownie/todo.md'), 'utf8');
+  const feedback = JSON.parse(fs.readFileSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/repair-feedback.json'), 'utf8'));
+
+  assert.equal(result.repair.acknowledged_delegation_reconciliation.ok, false, JSON.stringify(result, null, 2));
+  assert.equal(result.repair.acknowledged_delegation_reconciliation.reason, 'delegation_completion_receipt_missing_or_invalid');
+  assert.equal(result.repair.non_live_todo_residue.attempted, false);
+  assert.match(todo, /E-21c-runtime-operational-evidence-impl-2-target-02/u);
+  assert.equal(feedback.completed, false);
 });
 
 test('fails closed when acknowledged delegation lacks independently reviewable merge evidence', () => {
@@ -1431,7 +1546,7 @@ test('does not treat stale same-id blocked record as current stalled TODO incarn
   assert.equal(blocked[1].selected_todo_first_line, runtimeEvidenceTodo.split('\n')[0]);
 });
 
-test('removes completed TODO residue without erasing a dependent TODO contract or claimability', () => {
+test('does not remove live TODO residue from a legacy completion record', () => {
   const repo = makeRepo();
   writeTodo(repo);
   const replanTodo = `- [ ] E-21c-replan-stalled-leaf-${'a'.repeat(12)}: Patch only \`.brownie/todo.md\` and \`.brownie/todo-breakdown.md\` to replan stalled Brownie TODO leaf into implementable child TODOs:
@@ -1496,29 +1611,14 @@ Parent TODO: E-21c-runtime-operational-evidence-impl-2-target-02
   const todo = fs.readFileSync(path.join(repo, '.brownie/todo.md'), 'utf8');
   const breakdown = fs.readFileSync(path.join(repo, '.brownie/todo-breakdown.md'), 'utf8');
 
-  assert.equal(result.repair.non_live_todo_residue.attempted, true, JSON.stringify(result, null, 2));
-  assert.equal(result.repair.non_live_todo_residue.ok, true, JSON.stringify(result, null, 2));
-  assert.deepEqual(
-    result.repair.non_live_todo_residue.removed_todo_ids.sort(),
-    [`E-21c-replan-stalled-leaf-${'a'.repeat(12)}`, 'E-21c-runtime-operational-evidence-impl-2-target-02'].sort()
-  );
-  assert.doesNotMatch(todo, /E-21c-replan-stalled-leaf-/u);
-  assert.doesNotMatch(todo, /E-21c-runtime-operational-evidence-impl-2-target-02: Patch only/u);
+  assert.equal(result.repair.non_live_todo_residue.attempted, false, JSON.stringify(result, null, 2));
+  assert.equal(result.repair.non_live_todo_residue.reason, 'no_non_live_todo_residue_detected');
+  assert.match(todo, /E-21c-replan-stalled-leaf-/u);
+  assert.match(todo, /E-21c-runtime-operational-evidence-impl-2-target-02: Patch only/u);
   assert.match(todo, /Depends on: E-21c-runtime-operational-evidence-impl-2-target-02\./u);
   assert.match(todo, /E-21c-runtime-operational-evidence-impl-2-target-03/u);
-  assert.doesNotMatch(breakdown, /TODO-repair-E-21c-replan-stalled-leaf-/u);
+  assert.match(breakdown, /TODO-repair-E-21c-replan-stalled-leaf-/u);
   assert.match(breakdown, /E-21c-runtime-operational-evidence-impl-2-target-03: E-21c-runtime-operational-evidence-impl-2-target-02/u);
-  assert.equal(result.repair.non_live_todo_residue.dependency_rebaseline_receipt, null);
-  assert.deepEqual(result.repair.non_live_todo_residue.pruned_dependency_lines, []);
-  const selected = selectFirstSchedulableTodo(todo, { repoRoot: repo });
-  assert.match(selected ?? '', /E-21c-runtime-operational-evidence-impl-2-target-03/u);
-  // The fixture intentionally has only a legacy completion record.  The
-  // repair must therefore preserve the descendant contract and fail in this
-  // one stable, actionable state rather than silently making the descendant
-  // runnable by erasing its prerequisite.
-  assert.equal(result.repair.post_repair_validation.ok, false, JSON.stringify(result, null, 2));
-  assert.deepEqual(result.repair.post_repair_validation.failed_steps, ['phase-loop-todo-queue-integrity']);
-  assert.match(JSON.stringify(result.final_issues), /legacy_completion_dependency_requires_recovery/u);
 });
 
 test('preserves todo preamble and checked items when pruning generated TODO residue', () => {
@@ -2629,9 +2729,11 @@ test('does not recreate a replan for a completed leaf retained only in failure h
   const todoPath = path.join(repo, '.brownie/todo.md');
   fs.writeFileSync(todoPath, fs.readFileSync(todoPath, 'utf8').replace('- [ ] E-21c-runtime-operational-evidence-impl-2-target-02:', '- [x] E-21c-runtime-operational-evidence-impl-2-target-02:'));
   fs.mkdirSync(path.join(repo, '.brownie/private/phase-loop/todo-completions'), { recursive: true });
-  writeJson(repo, '.brownie/private/phase-loop/todo-completions/completed-target.json', {
-    selected_todo_id: 'E-21c-runtime-operational-evidence-impl-2-target-02'
-  });
+  writeJson(
+    repo,
+    '.brownie/private/phase-loop/todo-completions/completed-target.json',
+    durableCompletionRecord('E-21c-runtime-operational-evidence-impl-2-target-02', 'claim-completed-leaf-history')
+  );
   fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
   writeJson(repo, '.brownie/private/phase-loop/status.json', {
     status: 'no_progress',
@@ -2696,11 +2798,16 @@ test('does not recreate a replan for a completed leaf retained only in failure h
   assert.equal(fs.existsSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/blocked.jsonl')), false);
 });
 
-test('fails closed when a selected leaf disappears without durable completion evidence', () => {
+test('fails closed when a selected leaf disappears with only an invalid completion record', () => {
   const repo = makeRepo();
   writeTodo(repo);
   const todoPath = path.join(repo, '.brownie/todo.md');
   fs.writeFileSync(todoPath, fs.readFileSync(todoPath, 'utf8').replace('- [ ] E-21c-runtime-operational-evidence-impl-2-target-02:', '- [x] E-21c-runtime-operational-evidence-impl-2-target-02:'));
+  fs.mkdirSync(path.join(repo, '.brownie/private/phase-loop/todo-completions'), { recursive: true });
+  writeJson(repo, '.brownie/private/phase-loop/todo-completions/invalid-target.json', {
+    selected_todo_id: 'E-21c-runtime-operational-evidence-impl-2-target-02',
+    claim_id: 'invalid-completion'
+  });
   fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/phase-loop.pid'), `${process.pid}\n`);
   writeJson(repo, '.brownie/private/phase-loop/status.json', {
     status: 'no_progress', run_id: 'run-missing-leaf-without-receipt', consecutive_failures: 1

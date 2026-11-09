@@ -2,9 +2,9 @@
   "schema_version": 1,
   "evidence_id": "brownie-supply-chain-artifact-evidence-v1",
   "phase": "RRP-8.4",
-  "repository": "globalpocket/brownie",
-  "generated_at": "2026-10-04T03:58:22.564Z",
-  "source_commit": "29a296fc90fc9c98207ded66b3a438c12e93e30c",
+  "repository": null,
+  "generated_at": "2026-11-09T15:33:08.581Z",
+  "source_commit": "6f45416c6559ca67f43eb43b1689d339a6e8811e",
   "source_tree_dirty": true,
   "sourceCheckoutState": "dirty",
   "source_checkout": {
@@ -14,7 +14,174 @@
       "reason": "source_checkout_not_clean",
       "checkoutState": "dirty"
     },
-    "dirty_path_count": 7
+    "dirty_path_count": 1
+  },
+  "release_evidence_binding": {
+    "schema_version": 1,
+    "evidence_id": "brownie-release-evidence-roundtrip-binding-v1",
+    "status": "not_executed",
+    "release_blocking": true,
+    "target_count": 4,
+    "satisfied_target_count": 0,
+    "binding_digest": "sha256:f681a529eb4339419d4fe118d93758f3f2fdec870bd4643a010f9ca36f98cadc",
+    "bindings": [
+      {
+        "target": "darwin-arm64",
+        "status": "not_executed",
+        "implementation_commit": null,
+        "tested_commit": null,
+        "workflow_run_id": null,
+        "platform": "darwin",
+        "architecture": "arm64",
+        "package_sha256": null,
+        "binary_sha256": "sha256:bc32e7bd1482cc312211db9c08c1cea6d9cac6893c3f06c5aaa863c8cda4bf86",
+        "runtime_sha256": null,
+        "journey_evidence_path": ".brownie/release-evidence/artifacts/darwin-arm64/runtime-journey-evidence.json",
+        "soak_evidence_path": ".brownie/release-evidence/artifacts/darwin-arm64/runtime-stateful-soak-evidence.json",
+        "errors": [
+          "implementation_commit_missing_or_invalid",
+          "source_checkout_not_clean",
+          "source_identity_missing_or_invalid",
+          "workflow_run_id_missing",
+          "tested_commit_missing_or_invalid",
+          "package_sha256_missing",
+          "runtime_sha256_missing",
+          "roundtrip_journey_missing_or_invalid",
+          "roundtrip_journey_target_mismatch",
+          "roundtrip_journey_workflow_run_mismatch",
+          "roundtrip_journey_binary_sha_mismatch",
+          "roundtrip_journey_runtime_sha_mismatch",
+          "roundtrip_journey_checks_incomplete",
+          "stateful_soak_missing_or_invalid",
+          "stateful_soak_target_mismatch",
+          "stateful_soak_workflow_run_mismatch",
+          "stateful_soak_binary_sha_mismatch",
+          "stateful_soak_runtime_sha_mismatch",
+          "stateful_soak_checks_incomplete"
+        ]
+      },
+      {
+        "target": "linux-arm64",
+        "status": "not_executed",
+        "implementation_commit": null,
+        "tested_commit": null,
+        "workflow_run_id": null,
+        "platform": "linux",
+        "architecture": "arm64",
+        "package_sha256": null,
+        "binary_sha256": "sha256:a5f342724e4f7b7ae3e9d4c6f19793664abdce1a67a9043efa1b7fa0b61850a4",
+        "runtime_sha256": null,
+        "journey_evidence_path": ".brownie/release-evidence/artifacts/linux-arm64/runtime-journey-evidence.json",
+        "soak_evidence_path": ".brownie/release-evidence/artifacts/linux-arm64/runtime-stateful-soak-evidence.json",
+        "errors": [
+          "implementation_commit_missing_or_invalid",
+          "source_checkout_not_clean",
+          "source_identity_missing_or_invalid",
+          "workflow_run_id_missing",
+          "tested_commit_missing_or_invalid",
+          "package_sha256_missing",
+          "runtime_sha256_missing",
+          "roundtrip_journey_missing_or_invalid",
+          "roundtrip_journey_target_mismatch",
+          "roundtrip_journey_workflow_run_mismatch",
+          "roundtrip_journey_binary_sha_mismatch",
+          "roundtrip_journey_runtime_sha_mismatch",
+          "roundtrip_journey_checks_incomplete",
+          "stateful_soak_missing_or_invalid",
+          "stateful_soak_target_mismatch",
+          "stateful_soak_workflow_run_mismatch",
+          "stateful_soak_binary_sha_mismatch",
+          "stateful_soak_runtime_sha_mismatch",
+          "stateful_soak_checks_incomplete"
+        ]
+      },
+      {
+        "target": "linux-x64",
+        "status": "not_executed",
+        "implementation_commit": null,
+        "tested_commit": null,
+        "workflow_run_id": null,
+        "platform": "linux",
+        "architecture": "x64",
+        "package_sha256": null,
+        "binary_sha256": "sha256:e58a5587f8f43526ff3e06ef0c9ec5368fc25d1a70f2c5482c29ea065137f7b8",
+        "runtime_sha256": null,
+        "journey_evidence_path": ".brownie/release-evidence/artifacts/linux-x64/runtime-journey-evidence.json",
+        "soak_evidence_path": ".brownie/release-evidence/artifacts/linux-x64/runtime-stateful-soak-evidence.json",
+        "errors": [
+          "implementation_commit_missing_or_invalid",
+          "source_checkout_not_clean",
+          "source_identity_missing_or_invalid",
+          "workflow_run_id_missing",
+          "tested_commit_missing_or_invalid",
+          "package_sha256_missing",
+          "runtime_sha256_missing",
+          "roundtrip_journey_missing_or_invalid",
+          "roundtrip_journey_target_mismatch",
+          "roundtrip_journey_workflow_run_mismatch",
+          "roundtrip_journey_binary_sha_mismatch",
+          "roundtrip_journey_runtime_sha_mismatch",
+          "roundtrip_journey_checks_incomplete",
+          "stateful_soak_missing_or_invalid",
+          "stateful_soak_target_mismatch",
+          "stateful_soak_workflow_run_mismatch",
+          "stateful_soak_binary_sha_mismatch",
+          "stateful_soak_runtime_sha_mismatch",
+          "stateful_soak_checks_incomplete"
+        ]
+      },
+      {
+        "target": "win32-x64",
+        "status": "not_executed",
+        "implementation_commit": null,
+        "tested_commit": null,
+        "workflow_run_id": null,
+        "platform": "win32",
+        "architecture": "arm64",
+        "package_sha256": null,
+        "binary_sha256": "sha256:609998186f03111f7ede8a333128111613602db13b989fc376d125ad4746b1c1",
+        "runtime_sha256": null,
+        "journey_evidence_path": ".brownie/release-evidence/artifacts/win32-x64/runtime-journey-evidence.json",
+        "soak_evidence_path": ".brownie/release-evidence/artifacts/win32-x64/runtime-stateful-soak-evidence.json",
+        "errors": [
+          "implementation_commit_missing_or_invalid",
+          "source_checkout_not_clean",
+          "source_identity_missing_or_invalid",
+          "workflow_run_id_missing",
+          "tested_commit_missing_or_invalid",
+          "target_architecture_mismatch",
+          "package_sha256_missing",
+          "runtime_sha256_missing",
+          "roundtrip_journey_missing_or_invalid",
+          "roundtrip_journey_target_mismatch",
+          "roundtrip_journey_workflow_run_mismatch",
+          "roundtrip_journey_binary_sha_mismatch",
+          "roundtrip_journey_runtime_sha_mismatch",
+          "roundtrip_journey_checks_incomplete",
+          "stateful_soak_missing_or_invalid",
+          "stateful_soak_target_mismatch",
+          "stateful_soak_workflow_run_mismatch",
+          "stateful_soak_binary_sha_mismatch",
+          "stateful_soak_runtime_sha_mismatch",
+          "stateful_soak_checks_incomplete"
+        ]
+      }
+    ],
+    "missing": [
+      "darwin-arm64:implementation_commit_missing_or_invalid,source_checkout_not_clean,source_identity_missing_or_invalid,workflow_run_id_missing,tested_commit_missing_or_invalid,package_sha256_missing,runtime_sha256_missing,roundtrip_journey_missing_or_invalid,roundtrip_journey_target_mismatch,roundtrip_journey_workflow_run_mismatch,roundtrip_journey_binary_sha_mismatch,roundtrip_journey_runtime_sha_mismatch,roundtrip_journey_checks_incomplete,stateful_soak_missing_or_invalid,stateful_soak_target_mismatch,stateful_soak_workflow_run_mismatch,stateful_soak_binary_sha_mismatch,stateful_soak_runtime_sha_mismatch,stateful_soak_checks_incomplete",
+      "linux-arm64:implementation_commit_missing_or_invalid,source_checkout_not_clean,source_identity_missing_or_invalid,workflow_run_id_missing,tested_commit_missing_or_invalid,package_sha256_missing,runtime_sha256_missing,roundtrip_journey_missing_or_invalid,roundtrip_journey_target_mismatch,roundtrip_journey_workflow_run_mismatch,roundtrip_journey_binary_sha_mismatch,roundtrip_journey_runtime_sha_mismatch,roundtrip_journey_checks_incomplete,stateful_soak_missing_or_invalid,stateful_soak_target_mismatch,stateful_soak_workflow_run_mismatch,stateful_soak_binary_sha_mismatch,stateful_soak_runtime_sha_mismatch,stateful_soak_checks_incomplete",
+      "linux-x64:implementation_commit_missing_or_invalid,source_checkout_not_clean,source_identity_missing_or_invalid,workflow_run_id_missing,tested_commit_missing_or_invalid,package_sha256_missing,runtime_sha256_missing,roundtrip_journey_missing_or_invalid,roundtrip_journey_target_mismatch,roundtrip_journey_workflow_run_mismatch,roundtrip_journey_binary_sha_mismatch,roundtrip_journey_runtime_sha_mismatch,roundtrip_journey_checks_incomplete,stateful_soak_missing_or_invalid,stateful_soak_target_mismatch,stateful_soak_workflow_run_mismatch,stateful_soak_binary_sha_mismatch,stateful_soak_runtime_sha_mismatch,stateful_soak_checks_incomplete",
+      "win32-x64:implementation_commit_missing_or_invalid,source_checkout_not_clean,source_identity_missing_or_invalid,workflow_run_id_missing,tested_commit_missing_or_invalid,target_architecture_mismatch,package_sha256_missing,runtime_sha256_missing,roundtrip_journey_missing_or_invalid,roundtrip_journey_target_mismatch,roundtrip_journey_workflow_run_mismatch,roundtrip_journey_binary_sha_mismatch,roundtrip_journey_runtime_sha_mismatch,roundtrip_journey_checks_incomplete,stateful_soak_missing_or_invalid,stateful_soak_target_mismatch,stateful_soak_workflow_run_mismatch,stateful_soak_binary_sha_mismatch,stateful_soak_runtime_sha_mismatch,stateful_soak_checks_incomplete"
+    ]
+  },
+  "release_evidence_binding_summary": {
+    "schema_version": 1,
+    "evidence_id": "brownie-release-evidence-roundtrip-binding-v1",
+    "status": "not_executed",
+    "release_blocking": true,
+    "target_count": 4,
+    "satisfied_target_count": 0,
+    "binding_digest": "sha256:f681a529eb4339419d4fe118d93758f3f2fdec870bd4643a010f9ca36f98cadc"
   },
   "release_ready": false,
   "runtime_release_ready": false,
@@ -36,7 +203,7 @@
       "lockfiles": [
         {
           "path": "Cargo.lock",
-          "sha256": "sha256:c1537dc89ab48ada0a6fcd254751f855c4bd1be85f93936a80751d37ccdc0022"
+          "sha256": "sha256:a9fe53cd15d2c95d8715785ca401481f388ab092c08b2101765955e306f401ff"
         },
         {
           "path": "pnpm-lock.yaml",
@@ -79,7 +246,7 @@
       "status": "satisfied",
       "release_blocking": true,
       "scanner": "brownie-high-confidence-secret-patterns-v1",
-      "scanned_tracked_file_count": 542,
+      "scanned_tracked_file_count": 649,
       "findings_count": 0,
       "findings": []
     },
@@ -87,8 +254,8 @@
       "status": "satisfied",
       "release_blocking": true,
       "path": ".brownie/release-evidence/brownie-runtime-sbom.json",
-      "sha256": "sha256:eb9deb8275df62cce3193de1f24a7f80f9a174848704b2c1533a5028a0b89086",
-      "component_count": 221
+      "sha256": "sha256:8c41fd4624aeba28d531ef3147edc7f6d76831a5464b125ccae123f6daf45973",
+      "component_count": 220
     },
     "artifacts": {
       "status": "partial_source_identity_missing",
@@ -111,6 +278,173 @@
         "linux-x64",
         "win32-x64"
       ],
+      "release_evidence_binding": {
+        "schema_version": 1,
+        "evidence_id": "brownie-release-evidence-roundtrip-binding-v1",
+        "status": "not_executed",
+        "release_blocking": true,
+        "target_count": 4,
+        "satisfied_target_count": 0,
+        "binding_digest": "sha256:f681a529eb4339419d4fe118d93758f3f2fdec870bd4643a010f9ca36f98cadc",
+        "bindings": [
+          {
+            "target": "darwin-arm64",
+            "status": "not_executed",
+            "implementation_commit": null,
+            "tested_commit": null,
+            "workflow_run_id": null,
+            "platform": "darwin",
+            "architecture": "arm64",
+            "package_sha256": null,
+            "binary_sha256": "sha256:bc32e7bd1482cc312211db9c08c1cea6d9cac6893c3f06c5aaa863c8cda4bf86",
+            "runtime_sha256": null,
+            "journey_evidence_path": ".brownie/release-evidence/artifacts/darwin-arm64/runtime-journey-evidence.json",
+            "soak_evidence_path": ".brownie/release-evidence/artifacts/darwin-arm64/runtime-stateful-soak-evidence.json",
+            "errors": [
+              "implementation_commit_missing_or_invalid",
+              "source_checkout_not_clean",
+              "source_identity_missing_or_invalid",
+              "workflow_run_id_missing",
+              "tested_commit_missing_or_invalid",
+              "package_sha256_missing",
+              "runtime_sha256_missing",
+              "roundtrip_journey_missing_or_invalid",
+              "roundtrip_journey_target_mismatch",
+              "roundtrip_journey_workflow_run_mismatch",
+              "roundtrip_journey_binary_sha_mismatch",
+              "roundtrip_journey_runtime_sha_mismatch",
+              "roundtrip_journey_checks_incomplete",
+              "stateful_soak_missing_or_invalid",
+              "stateful_soak_target_mismatch",
+              "stateful_soak_workflow_run_mismatch",
+              "stateful_soak_binary_sha_mismatch",
+              "stateful_soak_runtime_sha_mismatch",
+              "stateful_soak_checks_incomplete"
+            ]
+          },
+          {
+            "target": "linux-arm64",
+            "status": "not_executed",
+            "implementation_commit": null,
+            "tested_commit": null,
+            "workflow_run_id": null,
+            "platform": "linux",
+            "architecture": "arm64",
+            "package_sha256": null,
+            "binary_sha256": "sha256:a5f342724e4f7b7ae3e9d4c6f19793664abdce1a67a9043efa1b7fa0b61850a4",
+            "runtime_sha256": null,
+            "journey_evidence_path": ".brownie/release-evidence/artifacts/linux-arm64/runtime-journey-evidence.json",
+            "soak_evidence_path": ".brownie/release-evidence/artifacts/linux-arm64/runtime-stateful-soak-evidence.json",
+            "errors": [
+              "implementation_commit_missing_or_invalid",
+              "source_checkout_not_clean",
+              "source_identity_missing_or_invalid",
+              "workflow_run_id_missing",
+              "tested_commit_missing_or_invalid",
+              "package_sha256_missing",
+              "runtime_sha256_missing",
+              "roundtrip_journey_missing_or_invalid",
+              "roundtrip_journey_target_mismatch",
+              "roundtrip_journey_workflow_run_mismatch",
+              "roundtrip_journey_binary_sha_mismatch",
+              "roundtrip_journey_runtime_sha_mismatch",
+              "roundtrip_journey_checks_incomplete",
+              "stateful_soak_missing_or_invalid",
+              "stateful_soak_target_mismatch",
+              "stateful_soak_workflow_run_mismatch",
+              "stateful_soak_binary_sha_mismatch",
+              "stateful_soak_runtime_sha_mismatch",
+              "stateful_soak_checks_incomplete"
+            ]
+          },
+          {
+            "target": "linux-x64",
+            "status": "not_executed",
+            "implementation_commit": null,
+            "tested_commit": null,
+            "workflow_run_id": null,
+            "platform": "linux",
+            "architecture": "x64",
+            "package_sha256": null,
+            "binary_sha256": "sha256:e58a5587f8f43526ff3e06ef0c9ec5368fc25d1a70f2c5482c29ea065137f7b8",
+            "runtime_sha256": null,
+            "journey_evidence_path": ".brownie/release-evidence/artifacts/linux-x64/runtime-journey-evidence.json",
+            "soak_evidence_path": ".brownie/release-evidence/artifacts/linux-x64/runtime-stateful-soak-evidence.json",
+            "errors": [
+              "implementation_commit_missing_or_invalid",
+              "source_checkout_not_clean",
+              "source_identity_missing_or_invalid",
+              "workflow_run_id_missing",
+              "tested_commit_missing_or_invalid",
+              "package_sha256_missing",
+              "runtime_sha256_missing",
+              "roundtrip_journey_missing_or_invalid",
+              "roundtrip_journey_target_mismatch",
+              "roundtrip_journey_workflow_run_mismatch",
+              "roundtrip_journey_binary_sha_mismatch",
+              "roundtrip_journey_runtime_sha_mismatch",
+              "roundtrip_journey_checks_incomplete",
+              "stateful_soak_missing_or_invalid",
+              "stateful_soak_target_mismatch",
+              "stateful_soak_workflow_run_mismatch",
+              "stateful_soak_binary_sha_mismatch",
+              "stateful_soak_runtime_sha_mismatch",
+              "stateful_soak_checks_incomplete"
+            ]
+          },
+          {
+            "target": "win32-x64",
+            "status": "not_executed",
+            "implementation_commit": null,
+            "tested_commit": null,
+            "workflow_run_id": null,
+            "platform": "win32",
+            "architecture": "arm64",
+            "package_sha256": null,
+            "binary_sha256": "sha256:609998186f03111f7ede8a333128111613602db13b989fc376d125ad4746b1c1",
+            "runtime_sha256": null,
+            "journey_evidence_path": ".brownie/release-evidence/artifacts/win32-x64/runtime-journey-evidence.json",
+            "soak_evidence_path": ".brownie/release-evidence/artifacts/win32-x64/runtime-stateful-soak-evidence.json",
+            "errors": [
+              "implementation_commit_missing_or_invalid",
+              "source_checkout_not_clean",
+              "source_identity_missing_or_invalid",
+              "workflow_run_id_missing",
+              "tested_commit_missing_or_invalid",
+              "target_architecture_mismatch",
+              "package_sha256_missing",
+              "runtime_sha256_missing",
+              "roundtrip_journey_missing_or_invalid",
+              "roundtrip_journey_target_mismatch",
+              "roundtrip_journey_workflow_run_mismatch",
+              "roundtrip_journey_binary_sha_mismatch",
+              "roundtrip_journey_runtime_sha_mismatch",
+              "roundtrip_journey_checks_incomplete",
+              "stateful_soak_missing_or_invalid",
+              "stateful_soak_target_mismatch",
+              "stateful_soak_workflow_run_mismatch",
+              "stateful_soak_binary_sha_mismatch",
+              "stateful_soak_runtime_sha_mismatch",
+              "stateful_soak_checks_incomplete"
+            ]
+          }
+        ],
+        "missing": [
+          "darwin-arm64:implementation_commit_missing_or_invalid,source_checkout_not_clean,source_identity_missing_or_invalid,workflow_run_id_missing,tested_commit_missing_or_invalid,package_sha256_missing,runtime_sha256_missing,roundtrip_journey_missing_or_invalid,roundtrip_journey_target_mismatch,roundtrip_journey_workflow_run_mismatch,roundtrip_journey_binary_sha_mismatch,roundtrip_journey_runtime_sha_mismatch,roundtrip_journey_checks_incomplete,stateful_soak_missing_or_invalid,stateful_soak_target_mismatch,stateful_soak_workflow_run_mismatch,stateful_soak_binary_sha_mismatch,stateful_soak_runtime_sha_mismatch,stateful_soak_checks_incomplete",
+          "linux-arm64:implementation_commit_missing_or_invalid,source_checkout_not_clean,source_identity_missing_or_invalid,workflow_run_id_missing,tested_commit_missing_or_invalid,package_sha256_missing,runtime_sha256_missing,roundtrip_journey_missing_or_invalid,roundtrip_journey_target_mismatch,roundtrip_journey_workflow_run_mismatch,roundtrip_journey_binary_sha_mismatch,roundtrip_journey_runtime_sha_mismatch,roundtrip_journey_checks_incomplete,stateful_soak_missing_or_invalid,stateful_soak_target_mismatch,stateful_soak_workflow_run_mismatch,stateful_soak_binary_sha_mismatch,stateful_soak_runtime_sha_mismatch,stateful_soak_checks_incomplete",
+          "linux-x64:implementation_commit_missing_or_invalid,source_checkout_not_clean,source_identity_missing_or_invalid,workflow_run_id_missing,tested_commit_missing_or_invalid,package_sha256_missing,runtime_sha256_missing,roundtrip_journey_missing_or_invalid,roundtrip_journey_target_mismatch,roundtrip_journey_workflow_run_mismatch,roundtrip_journey_binary_sha_mismatch,roundtrip_journey_runtime_sha_mismatch,roundtrip_journey_checks_incomplete,stateful_soak_missing_or_invalid,stateful_soak_target_mismatch,stateful_soak_workflow_run_mismatch,stateful_soak_binary_sha_mismatch,stateful_soak_runtime_sha_mismatch,stateful_soak_checks_incomplete",
+          "win32-x64:implementation_commit_missing_or_invalid,source_checkout_not_clean,source_identity_missing_or_invalid,workflow_run_id_missing,tested_commit_missing_or_invalid,target_architecture_mismatch,package_sha256_missing,runtime_sha256_missing,roundtrip_journey_missing_or_invalid,roundtrip_journey_target_mismatch,roundtrip_journey_workflow_run_mismatch,roundtrip_journey_binary_sha_mismatch,roundtrip_journey_runtime_sha_mismatch,roundtrip_journey_checks_incomplete,stateful_soak_missing_or_invalid,stateful_soak_target_mismatch,stateful_soak_workflow_run_mismatch,stateful_soak_binary_sha_mismatch,stateful_soak_runtime_sha_mismatch,stateful_soak_checks_incomplete"
+        ]
+      },
+      "release_evidence_binding_summary": {
+        "schema_version": 1,
+        "evidence_id": "brownie-release-evidence-roundtrip-binding-v1",
+        "status": "not_executed",
+        "release_blocking": true,
+        "target_count": 4,
+        "satisfied_target_count": 0,
+        "binding_digest": "sha256:f681a529eb4339419d4fe118d93758f3f2fdec870bd4643a010f9ca36f98cadc"
+      },
       "artifacts": [
         {
           "path": ".brownie/release-evidence/artifacts/darwin-arm64/brownie",
@@ -119,7 +453,34 @@
           "platform": "darwin",
           "arch": "arm64",
           "target": "darwin-arm64",
+          "source_commit": null,
+          "source_clean_tree": null,
+          "source_identity": null,
           "artifact_evidence_path": ".brownie/release-evidence/artifacts/darwin-arm64/artifact-evidence.json",
+          "artifact_evidence": {
+            "schema_version": 1,
+            "evidence_id": "brownie-local-release-artifact-v1",
+            "generated_at": "2026-09-08T13:39:32.343Z",
+            "target": "darwin-arm64",
+            "platform": "darwin",
+            "arch": "arm64",
+            "hostname_hash": "sha256:6bd913bcf0f239dff6bb008fb3b4da9fe0c1949a3be6304a8a7e8eae5c956da9",
+            "artifact": {
+              "path": ".brownie/release-evidence/artifacts/darwin-arm64/brownie",
+              "sha256": "sha256:bc32e7bd1482cc312211db9c08c1cea6d9cac6893c3f06c5aaa863c8cda4bf86",
+              "bytes": 1110112,
+              "target": "darwin-arm64"
+            },
+            "build": {
+              "setup": null,
+              "command": "cargo build --release -p brownie-cli",
+              "exit_code": 0,
+              "passed": true,
+              "cargo_target": null
+            },
+            "release_ready": false
+          },
+          "evidence_dir": ".brownie/release-evidence/artifacts/darwin-arm64",
           "smoke_evidence_path": ".brownie/release-evidence/artifacts/darwin-arm64/smoke-evidence.json",
           "smoke_evidence": {
             "schema_version": 1,
@@ -147,6 +508,26 @@
               }
             ],
             "release_ready": false
+          },
+          "provenance_binding": {
+            "implementationCommit": "6f45416c6559ca67f43eb43b1689d339a6e8811e",
+            "testedCommit": "6f45416c6559ca67f43eb43b1689d339a6e8811e",
+            "workflowRunId": null,
+            "artifactSha256": "sha256:bc32e7bd1482cc312211db9c08c1cea6d9cac6893c3f06c5aaa863c8cda4bf86",
+            "platform": "darwin",
+            "architecture": "arm64",
+            "sourceCheckoutState": "dirty",
+            "buildSourceCommit": null,
+            "buildSourceCleanTree": null,
+            "buildSourceIdentity": null,
+            "validation": {
+              "valid": false,
+              "reason": "provenance_field_workflowRunId_missing"
+            },
+            "buildSourceMetadataValidation": {
+              "valid": false,
+              "reason": "artifact_source_commit_missing_or_invalid"
+            }
           }
         },
         {
@@ -156,7 +537,32 @@
           "platform": "linux",
           "arch": "arm64",
           "target": "linux-arm64",
+          "source_commit": null,
+          "source_clean_tree": null,
+          "source_identity": null,
           "artifact_evidence_path": ".brownie/release-evidence/artifacts/linux-arm64/artifact-evidence.json",
+          "artifact_evidence": {
+            "schema_version": 1,
+            "evidence_id": "brownie-local-release-artifact-v1",
+            "generated_at": "2026-09-08T13:39:33.805Z",
+            "target": "linux-arm64",
+            "platform": "linux",
+            "arch": "arm64",
+            "hostname_hash": "sha256:d073381e4276088a0192603e805c803f04785b63dcc7a3562e81d690cc3a6101",
+            "artifact": {
+              "path": ".brownie/release-evidence/artifacts/linux-arm64/brownie",
+              "sha256": "sha256:a5f342724e4f7b7ae3e9d4c6f19793664abdce1a67a9043efa1b7fa0b61850a4",
+              "bytes": 1238040,
+              "target": "linux-arm64"
+            },
+            "build": {
+              "command": "cargo build --release -p brownie-cli",
+              "exit_code": 0,
+              "passed": true
+            },
+            "release_ready": false
+          },
+          "evidence_dir": ".brownie/release-evidence/artifacts/linux-arm64",
           "smoke_evidence_path": ".brownie/release-evidence/artifacts/linux-arm64/smoke-evidence.json",
           "smoke_evidence": {
             "schema_version": 1,
@@ -184,6 +590,26 @@
               }
             ],
             "release_ready": false
+          },
+          "provenance_binding": {
+            "implementationCommit": "6f45416c6559ca67f43eb43b1689d339a6e8811e",
+            "testedCommit": "6f45416c6559ca67f43eb43b1689d339a6e8811e",
+            "workflowRunId": null,
+            "artifactSha256": "sha256:a5f342724e4f7b7ae3e9d4c6f19793664abdce1a67a9043efa1b7fa0b61850a4",
+            "platform": "linux",
+            "architecture": "arm64",
+            "sourceCheckoutState": "dirty",
+            "buildSourceCommit": null,
+            "buildSourceCleanTree": null,
+            "buildSourceIdentity": null,
+            "validation": {
+              "valid": false,
+              "reason": "provenance_field_workflowRunId_missing"
+            },
+            "buildSourceMetadataValidation": {
+              "valid": false,
+              "reason": "artifact_source_commit_missing_or_invalid"
+            }
           }
         },
         {
@@ -193,7 +619,38 @@
           "platform": "linux",
           "arch": "x64",
           "target": "linux-x64",
+          "source_commit": null,
+          "source_clean_tree": null,
+          "source_identity": null,
           "artifact_evidence_path": ".brownie/release-evidence/artifacts/linux-x64/artifact-evidence.json",
+          "artifact_evidence": {
+            "schema_version": 1,
+            "evidence_id": "brownie-linux-x64-docker-release-artifact-v1",
+            "generated_at": "2026-09-08T13:39:35.821Z",
+            "target": "linux-x64",
+            "platform": "linux",
+            "arch": "x64",
+            "build_host_platform": "linux",
+            "build_host_arch": "arm64",
+            "container_platform": "linux/amd64",
+            "smoke_image": "alpine:3.20",
+            "hostname_hash": "sha256:d073381e4276088a0192603e805c803f04785b63dcc7a3562e81d690cc3a6101",
+            "artifact": {
+              "path": ".brownie/release-evidence/artifacts/linux-x64/brownie",
+              "sha256": "sha256:e58a5587f8f43526ff3e06ef0c9ec5368fc25d1a70f2c5482c29ea065137f7b8",
+              "bytes": 1681728,
+              "target": "linux-x64"
+            },
+            "build": {
+              "rust_target": "x86_64-unknown-linux-musl",
+              "linker": "rust-lld",
+              "command": "cargo build --release -p brownie-cli --target x86_64-unknown-linux-musl",
+              "exit_code": 0,
+              "passed": true
+            },
+            "release_ready": false
+          },
+          "evidence_dir": ".brownie/release-evidence/artifacts/linux-x64",
           "smoke_evidence_path": ".brownie/release-evidence/artifacts/linux-x64/smoke-evidence.json",
           "smoke_evidence": {
             "schema_version": 1,
@@ -223,6 +680,26 @@
               }
             ],
             "release_ready": false
+          },
+          "provenance_binding": {
+            "implementationCommit": "6f45416c6559ca67f43eb43b1689d339a6e8811e",
+            "testedCommit": "6f45416c6559ca67f43eb43b1689d339a6e8811e",
+            "workflowRunId": null,
+            "artifactSha256": "sha256:e58a5587f8f43526ff3e06ef0c9ec5368fc25d1a70f2c5482c29ea065137f7b8",
+            "platform": "linux",
+            "architecture": "x64",
+            "sourceCheckoutState": "dirty",
+            "buildSourceCommit": null,
+            "buildSourceCleanTree": null,
+            "buildSourceIdentity": null,
+            "validation": {
+              "valid": false,
+              "reason": "provenance_field_workflowRunId_missing"
+            },
+            "buildSourceMetadataValidation": {
+              "valid": false,
+              "reason": "artifact_source_commit_missing_or_invalid"
+            }
           }
         },
         {
@@ -232,7 +709,38 @@
           "platform": "win32",
           "arch": "arm64",
           "target": "win32-x64",
+          "source_commit": null,
+          "source_clean_tree": null,
+          "source_identity": null,
           "artifact_evidence_path": ".brownie/release-evidence/artifacts/win32-x64/artifact-evidence.json",
+          "artifact_evidence": {
+            "schema_version": 1,
+            "evidence_id": "brownie-local-release-artifact-v1",
+            "generated_at": "2026-09-08T04:39:48.383Z",
+            "target": "win32-x64",
+            "platform": "win32",
+            "arch": "arm64",
+            "hostname_hash": "sha256:80894511f4c3cc637b1b38a091ff311e4b8e17c1364762063d80fb8867db5450",
+            "artifact": {
+              "path": ".brownie/release-evidence/artifacts/win32-x64/brownie.exe",
+              "sha256": "sha256:609998186f03111f7ede8a333128111613602db13b989fc376d125ad4746b1c1",
+              "bytes": 998912,
+              "target": "win32-x64"
+            },
+            "build": {
+              "setup": {
+                "command": "rustup target add x86_64-pc-windows-msvc",
+                "exit_code": 0,
+                "passed": true
+              },
+              "command": "cmd.exe /d /c call C:\\BuildTools\\Common7\\Tools\\VsDevCmd.bat -arch=x64 -host_arch=arm64 && cargo build --release -p brownie-cli --target x86_64-pc-windows-msvc",
+              "exit_code": 0,
+              "passed": true,
+              "cargo_target": "x86_64-pc-windows-msvc"
+            },
+            "release_ready": false
+          },
+          "evidence_dir": ".brownie/release-evidence/artifacts/win32-x64",
           "smoke_evidence_path": ".brownie/release-evidence/artifacts/win32-x64/smoke-evidence.json",
           "smoke_evidence": {
             "schema_version": 1,
@@ -260,6 +768,26 @@
               }
             ],
             "release_ready": false
+          },
+          "provenance_binding": {
+            "implementationCommit": "6f45416c6559ca67f43eb43b1689d339a6e8811e",
+            "testedCommit": "6f45416c6559ca67f43eb43b1689d339a6e8811e",
+            "workflowRunId": null,
+            "artifactSha256": "sha256:609998186f03111f7ede8a333128111613602db13b989fc376d125ad4746b1c1",
+            "platform": "win32",
+            "architecture": "arm64",
+            "sourceCheckoutState": "dirty",
+            "buildSourceCommit": null,
+            "buildSourceCleanTree": null,
+            "buildSourceIdentity": null,
+            "validation": {
+              "valid": false,
+              "reason": "provenance_field_workflowRunId_missing"
+            },
+            "buildSourceMetadataValidation": {
+              "valid": false,
+              "reason": "artifact_source_commit_missing_or_invalid"
+            }
           }
         }
       ]
@@ -404,15 +932,15 @@
       "status": "satisfied",
       "release_blocking": true,
       "path": ".brownie/release-evidence/SHA256SUMS",
-      "sha256": "sha256:cf52b4bf0644e64b39ac0216fbd2c7cb47c975799f41ffbe6124e429991b7c21",
+      "sha256": "sha256:3cdecf507ff20c8c63f33627811634f25415d681194d04b052fb8d21086d46c3",
       "entries": [
         {
           "path": ".brownie/release-evidence/brownie-runtime-sbom.json",
-          "sha256": "sha256:eb9deb8275df62cce3193de1f24a7f80f9a174848704b2c1533a5028a0b89086"
+          "sha256": "sha256:8c41fd4624aeba28d531ef3147edc7f6d76831a5464b125ccae123f6daf45973"
         },
         {
           "path": ".brownie/release-evidence/brownie-runtime-provenance.json",
-          "sha256": "sha256:b42d402b820b78a995216bc79987d57fa65a59c9dd2c706e86ee47cafb64ebfc"
+          "sha256": "sha256:338ad9bde58c90d094453081208f46416f1eec61a76540bbbff68cc40535726a"
         },
         {
           "path": ".brownie/release-evidence/artifacts/darwin-arm64/brownie",
@@ -443,12 +971,13 @@
       "status": "satisfied",
       "release_blocking": true,
       "path": ".brownie/release-evidence/brownie-runtime-provenance.json",
-      "sha256": "sha256:b42d402b820b78a995216bc79987d57fa65a59c9dd2c706e86ee47cafb64ebfc"
+      "sha256": "sha256:338ad9bde58c90d094453081208f46416f1eec61a76540bbbff68cc40535726a"
     }
   },
   "fail_closed_reasons": [
     "source_tree_dirty:true",
     "source_checkout_state:dirty",
+    "release_evidence_binding:not_executed",
     "artifacts:partial_source_identity_missing",
     "artifact_smoke:not_executed"
   ]

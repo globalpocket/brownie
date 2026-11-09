@@ -50,6 +50,9 @@ cat > "$PHASE_LOOP_TEST_CONTROL_ROOT/.brownie/private/phase-loop-actor-credentia
 JSON
 cleanup_phase_loop_test_control_root() {
   rm -rf "$PHASE_LOOP_TEST_CONTROL_ROOT" "${PHASE_LOOP_TEST_RUNTIME:-}"
+  if [ -n "${CLAIM_SMOKE_BROWNIE_STORE_ROOT:-}" ]; then
+    rm -rf "$CLAIM_SMOKE_BROWNIE_STORE_ROOT"
+  fi
 }
 trap cleanup_phase_loop_test_control_root EXIT
 export PHASE_LOOP_CONTROL_ROOT="$PHASE_LOOP_TEST_CONTROL_ROOT"
@@ -62,6 +65,13 @@ PHASE_LOOP_TEST_IMPLEMENTATION_ACTOR="$(node "$REPO_ROOT/scripts/phase-loop-acto
 PHASE_LOOP_TEST_IMPLEMENTATION_BRANCH_PREFIX="$(node "$REPO_ROOT/scripts/phase-loop-actor-deployment.mjs" --repo-root "$REPO_ROOT" --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" --role implementation --field branch-prefix)"
 PHASE_LOOP_TEST_REVIEW_ACTOR="$(node "$REPO_ROOT/scripts/phase-loop-actor-deployment.mjs" --repo-root "$REPO_ROOT" --deployment "$PHASE_LOOP_ACTOR_DEPLOYMENT" --role review --field github-login)"
 export PHASE_LOOP_TEST_REPOSITORY PHASE_LOOP_TEST_IMPLEMENTATION_ACTOR PHASE_LOOP_TEST_IMPLEMENTATION_BRANCH_PREFIX PHASE_LOOP_TEST_REVIEW_ACTOR
+# The smoke suite may be launched after a real deployment environment has
+# already been loaded.  Its fixture calls must never inherit mutable queue,
+# prompt, state, or workspace paths from that environment: an omitted fixture
+# override would otherwise direct a recovery path at the live repository.
+# Every fixture below supplies its own paths, and phase-loop derives a
+# fixture-local breakdown path when a scenario intentionally omits one.
+unset PHASE_LOOP_ENV_FILE PHASE_LOOP_PROMPT PHASE_LOOP_TODO PHASE_LOOP_TODO_BREAKDOWN PHASE_LOOP_STATE_DIR PHASE_LOOP_WORKSPACE_ROOT
 # Inject every operational value used by a run. The test suite must not rely
 # on a repository-local deployment file or inherited developer configuration.
 PHASE_LOOP_TEST_RUNTIME="$(mktemp)"
@@ -659,12 +669,35 @@ claim_smoke_live_private_state_sha256() {
 CLAIM_SMOKE_REPO_TODO_SHA256="$(shasum "$REPO_ROOT/.brownie/todo.md" | awk '{print $1}')"
 CLAIM_SMOKE_REPO_BREAKDOWN_SHA256="$(shasum "$REPO_ROOT/.brownie/todo-breakdown.md" | awk '{print $1}')"
 CLAIM_SMOKE_REPO_PRIVATE_STATE_SHA256="$(claim_smoke_live_private_state_sha256)"
+# A fixture must not create the Runtime's default local store in the checked-out
+# repository. Keep a manifest so an omitted environment override fails the
+# smoke test even when the queue and controller-private files happen to remain
+# unchanged.
+claim_smoke_repository_runtime_store_sha256() {
+  local store_file
+  {
+    for store_file in store-layout.json store-schema.json; do
+      if [ -e "$REPO_ROOT/.brownie/$store_file" ]; then
+        shasum "$REPO_ROOT/.brownie/$store_file" | sed "s#  $REPO_ROOT/.brownie/#  #"
+      else
+        printf '%s absent\n' "$store_file"
+      fi
+    done
+  } | LC_ALL=C sort | shasum | awk '{print $1}'
+}
+CLAIM_SMOKE_REPO_RUNTIME_STORE_SHA256="$(claim_smoke_repository_runtime_store_sha256)"
 # Test invocations always use temporary queue/state paths; their durable
 # controller store must be isolated as well.  Otherwise phase-loop's default
 # store rooted at this repository can leave replan records that alter later
 # repository guards despite an unchanged fixture TODO.
 CLAIM_SMOKE_BROWNIE_STORE_ROOT="$(mktemp -d)"
 export PHASE_LOOP_BROWNIE_STORE_ROOT="$CLAIM_SMOKE_BROWNIE_STORE_ROOT"
+# Some fixture helpers and Runtime probes are invoked directly rather than
+# through phase-loop's claim dispatcher. Override the Runtime-facing variable
+# too, so they cannot retain a selected-deployment store rooted in this
+# checkout. The dispatcher later narrows this to its claim-specific child
+# directory.
+export BROWNIE_STORE_ROOT="$CLAIM_SMOKE_BROWNIE_STORE_ROOT"
 
 assert_repository_state_unchanged() {
   local current_todo_sha256
@@ -673,7 +706,9 @@ assert_repository_state_unchanged() {
   current_breakdown_sha256="$(shasum "$REPO_ROOT/.brownie/todo-breakdown.md" | awk '{print $1}')"
   local current_private_state_sha256
   current_private_state_sha256="$(claim_smoke_live_private_state_sha256)"
-  if [ "$current_todo_sha256" != "$CLAIM_SMOKE_REPO_TODO_SHA256" ] || [ "$current_breakdown_sha256" != "$CLAIM_SMOKE_REPO_BREAKDOWN_SHA256" ] || [ "$current_private_state_sha256" != "$CLAIM_SMOKE_REPO_PRIVATE_STATE_SHA256" ]; then
+  local current_runtime_store_sha256
+  current_runtime_store_sha256="$(claim_smoke_repository_runtime_store_sha256)"
+  if [ "$current_todo_sha256" != "$CLAIM_SMOKE_REPO_TODO_SHA256" ] || [ "$current_breakdown_sha256" != "$CLAIM_SMOKE_REPO_BREAKDOWN_SHA256" ] || [ "$current_private_state_sha256" != "$CLAIM_SMOKE_REPO_PRIVATE_STATE_SHA256" ] || [ "$current_runtime_store_sha256" != "$CLAIM_SMOKE_REPO_RUNTIME_STORE_SHA256" ]; then
     echo "phase-loop claim smoke leaked temporary controller state into the repository: todo=${PHASE_LOOP_TODO:-<default>} breakdown=${PHASE_LOOP_TODO_BREAKDOWN:-<default>} workspace=${PHASE_LOOP_WORKSPACE_ROOT:-<default>} state=${PHASE_LOOP_STATE_DIR:-<default>}" >&2
     return 97
   fi
@@ -4155,11 +4190,13 @@ if claim_smoke_section_enabled queue-integrity; then
 queue_workspace="$(mktemp -d)"
 git -C "$queue_workspace" init -b main >/dev/null
 mkdir -p "$queue_workspace/.brownie" "$queue_workspace/scripts"
-printf '%s\n' '{"name":"brownie-claim-smoke-queue-integrity-fixture","private":true,"scripts":{"guard:todo-decomposition":"node scripts/guard-todo-decomposition.mjs","phase-loop:todo-queue-integrity":"node scripts/phase-loop-todo-queue-integrity.mjs"}}' > "$queue_workspace/package.json"
+printf '%s\n' '{"name":"brownie-claim-smoke-queue-integrity-fixture","private":true,"scripts":{"guard:todo-decomposition":"node scripts/guard-todo-decomposition.mjs","phase-loop:todo-queue-integrity":"node scripts/phase-loop-todo-queue-integrity.mjs","guard:release-contract:test":"node --test scripts/guard-release-contract.test.mjs"}}' > "$queue_workspace/package.json"
 printf '%s\n' '- [ ] E-99-objective-apply: Patch only `README.md` to exercise objective apply stall recovery.' > "$queue_workspace/.brownie/todo.md"
 printf '# queue fixture breakdown\n' > "$queue_workspace/.brownie/todo-breakdown.md"
 printf 'export const evidence = {};\n' > "$queue_workspace/scripts/release-supply-chain-artifact-evidence.mjs"
-git -C "$queue_workspace" add package.json .brownie/todo.md .brownie/todo-breakdown.md scripts/release-supply-chain-artifact-evidence.mjs
+printf 'export function validateReleaseContract() { return []; }\n' > "$queue_workspace/scripts/guard-release-contract.mjs"
+printf 'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { validateReleaseContract } from "./guard-release-contract.mjs";\n\ntest("fixture release contract guard", () => { assert.deepEqual(validateReleaseContract(), []); });\n' > "$queue_workspace/scripts/guard-release-contract.test.mjs"
+git -C "$queue_workspace" add package.json .brownie/todo.md .brownie/todo-breakdown.md scripts/release-supply-chain-artifact-evidence.mjs scripts/guard-release-contract.mjs scripts/guard-release-contract.test.mjs
 git -C "$queue_workspace" -c user.name=Brownie -c user.email=brownie@example.invalid commit -m init >/dev/null
 queue_original_workspace="$test_workspace"
 test_workspace="$queue_workspace"
@@ -4197,14 +4234,13 @@ printf 'base prompt\n' > "$prompt_explicit_blocker"
 cat > "$todo_explicit_blocker" <<'EOF'
 - [ ] E-15e-doc-sync-blocker: Blocker: missing owner-controlled independent review evidence for Release workflow, permission model, Ledger Contract, Mode Pack trust boundary, signing/provenance, and Release Ready判定ロジック.
   Route: documentation.
-  Depends on: E-15e-release-contract-audit-phase-resync-doc-sync-leaf.
+  Depends on: <none>.
   Completion condition: all six independent human reviews are completed and recorded.
   Forbidden changes: do not patch runtime-release-contract.json until all reviews are complete.
   Verification: blocker: exact missing evidence or field is named, and no workspace file is patched until that evidence is available.
 
 - [ ] E-15f-next: Patch only `scripts/guard-release-contract.mjs`:
   Route: implementation.
-  Source TODO: E-15f.
   Depends on: <none>.
   Completion condition: the next TODO remains schedulable after the blocker is recorded.
   Forbidden changes: do not edit unrelated files.
@@ -4386,6 +4422,7 @@ printf -- '- [ ] E-08b-next: Finish E-08b after read-budget exhaustion:\n  Sourc
 PHASE_LOOP_STATE_DIR="$state_todo_md_only" \
 PHASE_LOOP_PROMPT="$prompt_todo_md_only" \
 PHASE_LOOP_TODO="$todo_todo_md_only" \
+PHASE_LOOP_TODO_BREAKDOWN="$workspace_todo_md_only/.brownie/todo-breakdown.md" \
 BROWNIE_BIN="$fake_brownie_todo_md_only_apply" \
 PHASE_LOOP_WORKSPACE_ROOT="$workspace_todo_md_only" \
 run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
@@ -4412,6 +4449,7 @@ set +e
 PHASE_LOOP_STATE_DIR="$state_todo_md_only" \
 PHASE_LOOP_PROMPT="$prompt_todo_md_only" \
 PHASE_LOOP_TODO="$todo_todo_md_only" \
+PHASE_LOOP_TODO_BREAKDOWN="$workspace_todo_md_only/.brownie/todo-breakdown.md" \
 BROWNIE_BIN="$fake_brownie_no_actionable" \
 PHASE_LOOP_WORKSPACE_ROOT="$workspace_todo_md_only" \
 PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP=0 \
@@ -4460,6 +4498,7 @@ non_todo_no_eligible_exit=0
 PHASE_LOOP_STATE_DIR="$state_non_todo_no_eligible" \
 PHASE_LOOP_PROMPT="$prompt_non_todo_no_eligible" \
 PHASE_LOOP_TODO="$todo_non_todo_no_eligible" \
+PHASE_LOOP_TODO_BREAKDOWN="$workspace_non_todo_no_eligible/.brownie/todo-breakdown.md" \
 BROWNIE_BIN="$fake_brownie_no_actionable" \
 PHASE_LOOP_WORKSPACE_ROOT="$workspace_non_todo_no_eligible" \
 PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP=0 \
