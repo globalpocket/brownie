@@ -60,11 +60,12 @@ test('claim-smoke isolated TODO fixtures copy every static dependency closure', 
   assertFixtureCopiesDependencyClosure(source, todoGuardEntry, 'guard-todo-decomposition.mjs');
 });
 
-test('CI check executes the terminal liveness shard for the merged-delivery recovery path', () => {
+test('CI check executes both isolated terminal liveness shards for the merged-delivery recovery path', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'));
   assert.equal(
     manifest.scripts['phase-loop:claim-smoke:terminal'],
-    'node --test scripts/phase-loop-claim-smoke-fixture-dependencies.test.mjs && PHASE_LOOP_CLAIM_SMOKE_SECTION=terminal PHASE_LOOP_CLAIM_SMOKE_BATCH_SIZE=1 bash scripts/phase-loop-claim-smoke.test.sh'
+    'node --test scripts/phase-loop-claim-smoke-fixture-dependencies.test.mjs && PHASE_LOOP_CLAIM_SMOKE_SECTION=terminal PHASE_LOOP_CLAIM_SMOKE_BATCH_SIZE=1 bash scripts/phase-loop-claim-smoke.test.sh && PHASE_LOOP_CLAIM_SMOKE_SECTION=merged-terminal PHASE_LOOP_CLAIM_SMOKE_BATCH_SIZE=1 bash scripts/phase-loop-claim-smoke.test.sh'
   );
+  assert.match(fs.readFileSync(claimSmokeFixture, 'utf8'), /claim_smoke_shards=\(terminal merged-terminal/);
   assert.match(manifest.scripts.check, /pnpm phase-loop:claim-smoke:terminal/);
 });
