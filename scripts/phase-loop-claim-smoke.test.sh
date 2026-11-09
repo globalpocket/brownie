@@ -351,7 +351,7 @@ phase_loop_prepare_pr_fixture_workspace() {
 }
 
 case "$PHASE_LOOP_CLAIM_SMOKE_SECTION" in
-  all|core|terminal|completion|terminal-absent|queue-claim|queue-recovery|queue-integrity|pr|lifecycle|guards|feedback|review-rework) ;;
+  all|core|terminal|merged-terminal|completion|terminal-absent|queue-claim|queue-recovery|queue-integrity|pr|lifecycle|guards|feedback|review-rework) ;;
   *)
     echo "unknown phase-loop claim smoke section: $PHASE_LOOP_CLAIM_SMOKE_SECTION" >&2
     exit 2
@@ -368,7 +368,7 @@ if [ "$PHASE_LOOP_CLAIM_SMOKE_SECTION" = "all" ]; then
   # The terminal recovery liveness proof consumes nearly its entire bounded
   # deadline alone.  Put it first so the scheduler's terminal singleton rule
   # cannot accidentally group it with unrelated CPU-heavy fixtures.
-  claim_smoke_shards=(terminal core completion terminal-absent queue-claim queue-recovery queue-integrity pr guards feedback review-rework lifecycle)
+  claim_smoke_shards=(terminal merged-terminal core completion terminal-absent queue-claim queue-recovery queue-integrity pr guards feedback review-rework lifecycle)
   # A guards shard must pass end-to-end. Treating its historical static-check
   # failure as success would mask the very controller regressions this suite
   # exists to catch.
@@ -7463,7 +7463,7 @@ assert "E-review-rework" in todo, todo
 PY
 fi
 
-if claim_smoke_section_enabled terminal; then
+if claim_smoke_section_enabled merged-terminal; then
   # End-to-end regression for the archived-terminal/no-current-claim shape.
   # This uses the public run-once entrypoint: the fresh claim must survive the
   # second pre-dispatch stable-block gate, invoke Runtime with that claim, and

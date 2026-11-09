@@ -225,13 +225,15 @@ phase_loop_claim_smoke_effective_batch_size() {
   local requested_batch_size="$2"
   local command_timeout_seconds="$3"
   local cpu_count="${4:-0}"
-  # The terminal recovery shard is the expensive liveness proof for merged
-  # delivery.  It can approach its bounded deadline by itself, so never let
-  # unrelated fixture work consume that same deadline.
-  if [ "$shard" = "terminal" ]; then
-    printf '1\n'
-    return 0
-  fi
+  # The terminal recovery shards are expensive liveness proofs for merged
+  # delivery. Keep their independent fixtures in separate deadline windows:
+  # combining them makes a valid pair compete for one watchdog budget.
+  case "$shard" in
+    terminal|merged-terminal)
+      printf '1\n'
+      return 0
+      ;;
+  esac
   case "$cpu_count" in
     ''|*[!0-9]*) cpu_count=0 ;;
   esac
@@ -549,11 +551,14 @@ phase_loop_claim_smoke_run_scheduler() {
     shard_cpu_count="${PHASE_LOOP_CLAIM_SMOKE_CPU_COUNT:-unknown}"
     effective_batch_size="$(phase_loop_claim_smoke_effective_batch_size "${shards[$batch_start]:-}" "$batch_size" "$command_timeout_seconds" "${PHASE_LOOP_CLAIM_SMOKE_CPU_COUNT:-0}")"
     if [ "$effective_batch_size" -lt "$batch_size" ]; then
-      if [ "${shards[$batch_start]:-}" = "terminal" ]; then
+      case "${shards[$batch_start]:-}" in
+      terminal|merged-terminal)
         batch_rationale="terminal_isolated_for_deadline"
-      else
+        ;;
+      *)
         batch_rationale="queue_serialized_for_low_cpu_90s_deadline"
-      fi
+        ;;
+      esac
     fi
     claim_smoke_batch_end=$((batch_start + effective_batch_size))
     if [ "$claim_smoke_batch_end" -gt "${#shards[@]}" ]; then
