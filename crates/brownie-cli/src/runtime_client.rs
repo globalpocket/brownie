@@ -31,6 +31,9 @@ const RUNTIME_OBJECTIVE_TIMEOUT_MS_ENV: &str = "BROWNIE_RUNTIME_OBJECTIVE_TIMEOU
 const CLI_RUN_MODE_ID_ENV: &str = "BROWNIE_CLI_RUN_MODE_ID";
 const PHASE_LOOP_CLAIM_ID_ENV: &str = "BROWNIE_PHASE_LOOP_CLAIM_ID";
 const PHASE_LOOP_ADMISSION_FILE_ENV: &str = "BROWNIE_PHASE_LOOP_ADMISSION_FILE";
+const RELEASE_ARTIFACT_SOAK_PROCESS_LOSS_ENV: &str =
+    "BROWNIE_RELEASE_ARTIFACT_SOAK_PROCESS_LOSS_AFTER_JOURNEY_STARTED";
+const RELEASE_ARTIFACT_SOAK_PROCESS_LOSS_EXIT_CODE: i32 = 75;
 const DEFAULT_READ_ONLY_TIMEOUT_MS: u64 = 2_000;
 const DEFAULT_OBJECTIVE_EXECUTION_TIMEOUT_MS: u64 = 120_000;
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
@@ -108,8 +111,14 @@ pub enum RuntimeClientError {
     RunTimedOutAdmissionUnknown(RunRecoveryIdentity),
     InvalidRunModeConfig,
     ProposalApplyAuthorizationExpired,
+    ReleaseArtifactSoakProcessLoss,
     InvalidResponse,
     RuntimeError,
+}
+
+fn release_artifact_soak_process_loss_requested() -> bool {
+    env::var_os(RELEASE_ARTIFACT_SOAK_PROCESS_LOSS_ENV).as_deref()
+        == Some(std::ffi::OsStr::new("1"))
 }
 
 impl RuntimeClientError {
@@ -582,11 +591,25 @@ impl RuntimeClient {
 
         let response = match receiver.recv_timeout(self.timeout_for(request_class)) {
             Ok(Ok(buffer)) => {
-                if matches!(child.try_wait(), Ok(None)) {
-                    let _ = child.kill();
-                }
-                let _ = child.wait();
+                let child_status = match child.try_wait() {
+                    Ok(Some(status)) => Some(status),
+                    Ok(None) => {
+                        let _ = child.kill();
+                        child.wait().ok()
+                    }
+                    Err(_) => {
+                        let _ = child.kill();
+                        child.wait().ok()
+                    }
+                };
                 if buffer.is_empty() || buffer.len() > MAX_RESPONSE_BYTES {
+                    if buffer.is_empty()
+                        && release_artifact_soak_process_loss_requested()
+                        && child_status.and_then(|status| status.code())
+                            == Some(RELEASE_ARTIFACT_SOAK_PROCESS_LOSS_EXIT_CODE)
+                    {
+                        return Err(RuntimeClientError::ReleaseArtifactSoakProcessLoss);
+                    }
                     debug_invalid_response_note(
                         "send_one_request",
                         "runtime response line is empty or exceeds MAX_RESPONSE_BYTES",

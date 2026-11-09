@@ -15,6 +15,7 @@ pub enum ExitCode {
     InvalidInvocation = 64,
     RuntimeUnavailable = 69,
     InternalCommunication = 70,
+    ReleaseArtifactSoakProcessLoss = 75,
 }
 
 impl ExitCode {
@@ -277,6 +278,12 @@ fn runtime_error_output(error: RuntimeClientError, json: bool, command: &'static
             "controlled proposal authorization expired before apply",
             None,
         ),
+        RuntimeClientError::ReleaseArtifactSoakProcessLoss => (
+            ExitCode::ReleaseArtifactSoakProcessLoss,
+            "runtime_process_loss",
+            "runtime exited at the requested release artifact process-loss boundary",
+            None,
+        ),
         RuntimeClientError::InvalidResponse => (
             ExitCode::InternalCommunication,
             "runtime_invalid_response",
@@ -323,8 +330,9 @@ fn error_output_with_reason(
     error_reason: Option<&str>,
 ) -> CliOutput {
     if json {
+        let controlled_process_loss = code == "runtime_process_loss";
         let retryable = matches!(code, "runtime_communication_failed" | "runtime_timeout");
-        let unknown_run_admission = retryable && command == "run";
+        let unknown_run_admission = (retryable || controlled_process_loss) && command == "run";
         let controller_action = if unknown_run_admission {
             "return_to_supervisor"
         } else if retryable {
@@ -332,7 +340,9 @@ fn error_output_with_reason(
         } else {
             "return_to_supervisor"
         };
-        let stop_class = if retryable {
+        let stop_class = if controlled_process_loss {
+            "process_loss"
+        } else if retryable {
             "retryable_failure"
         } else {
             "terminal_failure"
@@ -378,7 +388,7 @@ fn error_output_with_reason(
             "completed": false,
             "blocked": false,
             "retryable": retryable,
-            "terminal_failure": !retryable,
+            "terminal_failure": !retryable && !controlled_process_loss,
             "controller_action": controller_action,
             "stop_class": stop_class,
             "next_invocation": next_invocation.clone(),
@@ -400,7 +410,7 @@ fn error_output_with_reason(
                 "completed": false,
                 "blocked": false,
                 "retryable": retryable,
-                "terminal_failure": !retryable,
+                "terminal_failure": !retryable && !controlled_process_loss,
                 "controller_action": controller_action,
                 "stop_class": stop_class,
                 "next_invocation": next_invocation,
