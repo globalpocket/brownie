@@ -6,7 +6,7 @@
   "description": "Brownie Code-OSS extension and Rust runtime workspace.",
   "scripts": {
     "build": "pnpm --filter brownie-vsix build",
-    "check": "pnpm --filter brownie-vsix check && pnpm guard:phase-loop-control-plane && pnpm guard:phase-loop-completion-certificate && pnpm guard:runtime-release-readiness:freshness && pnpm phase-loop:run-state:test && pnpm phase-loop:watchdog:errexit:test && pnpm phase-loop:claim-lifecycle:test && pnpm phase-loop:delivery-integrity:test && pnpm phase-loop:delivery-liveness:test && pnpm phase-loop:claim-smoke:terminal && pnpm phase-loop:legacy-completion-recovery:test && pnpm phase-loop:historical-derived-delivery-attestation:test && pnpm phase-loop:review-rework-dispatch-isolation:test && pnpm phase-loop:review-reconcile:test && pnpm phase-loop:delegation-admission:test && pnpm phase-loop:materialized-scope-publication-guard:test && pnpm phase-loop:bootstrap:test && pnpm guard:phase-loop-pr-author:test && pnpm guard:release-contract && pnpm guard:trace-binding && pnpm guard:js-added-function-reachability",
+    "check": "pnpm guard:release-workflow-artifact-topology && pnpm guard:release-workflow-artifact-topology:test && pnpm --filter brownie-vsix check && pnpm guard:phase-loop-control-plane && pnpm guard:phase-loop-completion-certificate && pnpm guard:runtime-release-readiness:freshness && pnpm phase-loop:run-state:test && pnpm phase-loop:watchdog:errexit:test && pnpm phase-loop:claim-lifecycle:test && pnpm phase-loop:delivery-integrity:test && pnpm phase-loop:delivery-liveness:test && pnpm phase-loop:claim-smoke:terminal && pnpm phase-loop:legacy-completion-recovery:test && pnpm phase-loop:historical-derived-delivery-attestation:test && pnpm phase-loop:review-rework-dispatch-isolation:test && pnpm phase-loop:review-reconcile:test && pnpm phase-loop:delegation-admission:test && pnpm phase-loop:materialized-scope-publication-guard:test && pnpm phase-loop:bootstrap:test && pnpm guard:phase-loop-pr-author:test && pnpm guard:release-contract && pnpm guard:trace-binding && pnpm guard:js-added-function-reachability",
     "guard:control-plane-authority": "node scripts/guard-control-plane-authority.mjs",
     "guard:control-plane-authority:test": "node --test scripts/guard-control-plane-authority.test.mjs",
     "guard:diagnostics": "node scripts/guard-diagnostics-api.mjs",
@@ -18,6 +18,8 @@
     "guard:product-completion:test": "node --test scripts/guard-product-completion.test.mjs",
     "guard:release-contract": "node scripts/guard-release-contract.mjs",
     "guard:release-contract:test": "node --test scripts/guard-release-contract.test.mjs",
+    "guard:release-workflow-artifact-topology": "node scripts/guard-release-workflow-artifact-topology.mjs",
+    "guard:release-workflow-artifact-topology:test": "node --test scripts/guard-release-workflow-artifact-topology.test.mjs",
     "guard:trace-binding": "node scripts/release-gate.mjs --validate-trace-binding --test-schema",
     "guard:trace-binding:test": "node scripts/release-gate.mjs --validate-trace-binding --test-schema",
     "guard:dependency-security-license-audit": "node scripts/guard-dependency-security-license-audit.mjs",

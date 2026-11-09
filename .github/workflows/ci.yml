@@ -100,6 +100,11 @@ jobs:
       - name: Fail fast on stale runtime module assessment
         run: node scripts/update-runtime-module-decomposition-assessment.mjs --check
 
+      - name: Fail fast on release workflow artifact topology
+        run: |
+          node scripts/guard-release-workflow-artifact-topology.mjs
+          node --test scripts/guard-release-workflow-artifact-topology.test.mjs
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:

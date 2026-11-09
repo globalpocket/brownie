@@ -35,6 +35,16 @@ fn fake_runtime(name: &str, body: &str) -> PathBuf {
     path
 }
 
+#[cfg(unix)]
+fn fake_runtime_exit(name: &str, exit_code: i32) -> PathBuf {
+    let dir = unique_test_dir(name);
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("brownie-runtime");
+    fs::write(&path, format!("#!/bin/sh\nread line\nexit {exit_code}\n")).unwrap();
+    make_executable(&path);
+    path
+}
+
 fn fake_runtime_sequence(name: &str, bodies: &[&str]) -> PathBuf {
     let dir = unique_test_dir(name);
     fs::create_dir_all(&dir).unwrap();
@@ -517,6 +527,50 @@ fn status_rejects_malformed_json() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("runtime returned an invalid response"));
     assert!(!stderr.contains(runtime.to_string_lossy().as_ref()));
+}
+
+#[cfg(unix)]
+#[test]
+fn run_propagates_the_opt_in_release_artifact_process_loss_exit() {
+    let runtime = fake_runtime_exit("release-artifact-process-loss", 75);
+    let output = Command::new(brownie())
+        .args(["--json", "run", "bounded objective"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RELEASE_ARTIFACT_SOAK_PROCESS_LOSS_AFTER_JOURNEY_STARTED",
+            "1",
+        )
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(75));
+    assert!(output.stderr.is_empty());
+    let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["status"], "runtime_process_loss");
+    assert_eq!(payload["completed"], false);
+    assert_eq!(payload["terminal_failure"], false);
+    assert_eq!(payload["stop_class"], "process_loss");
+    assert_eq!(payload["process_admission_state"], "unknown");
+    assert_eq!(payload["automation"]["completed"], false);
+    assert_eq!(payload["automation"]["terminal_failure"], false);
+}
+
+#[cfg(unix)]
+#[test]
+fn run_rejects_the_process_loss_exit_without_the_soak_opt_in() {
+    let runtime = fake_runtime_exit("unrequested-process-loss", 75);
+    let output = Command::new(brownie())
+        .args(["--json", "run", "bounded objective"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(70));
+    let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["status"], "runtime_invalid_response");
+    assert_eq!(payload["terminal_failure"], true);
 }
 
 #[test]
