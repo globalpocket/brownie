@@ -16,6 +16,37 @@ import {
 
 const controllerRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+function durableCompletionRecord(todoId, claimId = `claim-${todoId}`) {
+  const selectedHash = createHash('sha256').update(`fixture:${todoId}`).digest('hex');
+  return {
+    schema_version: 2,
+    claim_id: claimId,
+    root_claim_id: claimId,
+    selected_todo_id: todoId,
+    selected_todo_sha256: selectedHash,
+    delivery_receipt: {
+      schema_version: 1,
+      claim_id: claimId,
+      root_claim_id: claimId,
+      selected_todo_sha256: selectedHash,
+      author: 'implementation',
+      reviewer: 'review',
+      merge_actor: 'review',
+      approved: true,
+      ci_passed: true,
+      merged: true,
+      semantic_completion_evidence: {
+        schema_version: 1,
+        root_claim_id: claimId,
+        selected_todo_sha256: selectedHash,
+        completion_condition_sha256: createHash('sha256').update(`fixture completion:${todoId}`).digest('hex'),
+        verification_results: [{ command: 'node --test fixture.mjs', exit_code: 0 }],
+        observables: [{ kind: 'fixture', sha256: createHash('sha256').update(`fixture observable:${todoId}`).digest('hex') }]
+      }
+    }
+  };
+}
+
 const childFirstQueue = `- [ ] E-15-child: Patch only \`scripts/child.mjs\`:
   Route: implementation.
   Source TODO: E-15.
@@ -843,7 +874,7 @@ test('keeps a superseded parent unresolved until every generated child completes
   const second = evaluateTodoQueue(queue, {
     todoReplanRecords: [replan],
     todoCompletionRecords: [
-      { selected_todo_id: 'E-23a-child-1', reason: 'verified_completion' }
+      durableCompletionRecord('E-23a-child-1')
     ]
   });
   assert.equal(second.selected_todo_id, 'E-23a-child-2');
@@ -852,8 +883,8 @@ test('keeps a superseded parent unresolved until every generated child completes
   const downstream = evaluateTodoQueue(queue, {
     todoReplanRecords: [replan],
     todoCompletionRecords: [
-      { selected_todo_id: 'E-23a-child-1', reason: 'verified_completion' },
-      { selected_todo_id: 'E-23a-child-2', reason: 'verified_completion' }
+      durableCompletionRecord('E-23a-child-1'),
+      durableCompletionRecord('E-23a-child-2')
     ]
   });
   assert.equal(downstream.selected_todo_id, 'E-23b-dependent');

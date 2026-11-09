@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 import {
   durableDeliveryReceiptForClaim,
+  loadCliInput,
   validatePhaseLoopProgressIntegrity
 } from './phase-loop-progress-integrity.mjs';
 import { terminalCompletionEvidenceSha256 } from './phase-loop-delivery-integrity.mjs';
@@ -96,6 +97,58 @@ test('rejects removing selected TODO without completion record', () => {
 
   assert.equal(result.valid, false);
   assert(result.errors.some((error) => error.code === 'selected_todo_removed_without_completion_record'));
+});
+
+test('CLI rejects selected TODO removal when a same-named completion file is invalid or bound to another TODO', () => {
+  const selected = `- [ ] E-completion-gate: Patch only \`scripts/completion-gate.mjs\`.
+  Route: implementation.
+  Depends on: <none>.
+  Completion condition: a durable receipt is exact-bound before queue removal.
+  Verification: run \`node --check scripts/completion-gate.mjs\`.`;
+  const selectedHash = createHash('sha256').update(selected, 'utf8').digest('hex');
+  const claim = completedClaim('claim-completion-gate', selected, {
+    selected_todo_id: 'E-completion-gate',
+    selected_todo_sha256: selectedHash,
+    baseline_todo_text: queue(selected),
+    baseline_diff_files: []
+  });
+  const receipt = durableDeliveryReceiptForClaim(claim).receipt;
+  const validButWrongTodo = {
+    schema_version: 3,
+    claim_id: claim.claim_id,
+    root_claim_id: claim.root_claim_id,
+    selected_todo_id: 'E-other-todo',
+    selected_todo: selected,
+    selected_todo_sha256: selectedHash,
+    delivery_receipt: receipt
+  };
+
+  for (const [name, record] of [
+    ['invalid', { ...validButWrongTodo, selected_todo_id: claim.selected_todo_id, delivery_receipt: {} }],
+    ['wrong-todo', validButWrongTodo]
+  ]) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `brownie-progress-integrity-completion-${name}-`));
+    fs.mkdirSync(path.join(tmp, '.brownie/private/phase-loop/todo-claims'), { recursive: true });
+    fs.mkdirSync(path.join(tmp, '.brownie/private/phase-loop/todo-completions'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, '.brownie/todo.md'), queue(selected));
+    execFileSync('git', ['init', '-b', 'main'], { cwd: tmp, stdio: 'ignore' });
+    execFileSync('git', ['add', '.'], { cwd: tmp, stdio: 'ignore' });
+    execFileSync('git', ['-c', 'user.name=Brownie', '-c', 'user.email=brownie@example.invalid', 'commit', '-m', 'baseline'], { cwd: tmp, stdio: 'ignore' });
+    fs.writeFileSync(path.join(tmp, '.brownie/todo.md'), queue());
+    fs.writeFileSync(path.join(tmp, '.brownie/private/phase-loop/todo-claims/current.json'), `${JSON.stringify(claim, null, 2)}\n`);
+    fs.writeFileSync(path.join(tmp, '.brownie/private/phase-loop/todo-completions/claim-completion-gate.json'), `${JSON.stringify(record, null, 2)}\n`);
+
+    const input = loadCliInput({
+      repo: tmp,
+      todo: '.brownie/todo.md',
+      claim: '.brownie/private/phase-loop/todo-claims/current.json',
+      runStamp: ''
+    });
+    const result = validatePhaseLoopProgressIntegrity(input);
+    assert.equal(input.completionRecordExists, false, name);
+    assert.equal(result.valid, false, JSON.stringify({ name, errors: result.errors }));
+    assert(result.errors.some((error) => error.code === 'selected_todo_removed_without_completion_record'));
+  }
 });
 
 test('allows selected removal after completion record without rewriting dependent TODO contract', () => {

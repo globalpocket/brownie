@@ -37,7 +37,7 @@ test('rejects implicit repository-relative deployment discovery', () => {
     const file = path.join(repo, '.brownie/phase-loop-actor-deployment.json');
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, JSON.stringify(deployment));
-    const loaded = loadPhaseLoopActorDeployment({ repoRoot: repo });
+    const loaded = loadPhaseLoopActorDeployment({ repoRoot: repo, env: {} });
     assert.equal(loaded.ok, false);
     assert.match(loaded.errors.join('\n'), /must be supplied explicitly/u);
   } finally {

@@ -35,6 +35,37 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
+function durableCompletion(todoId, claimId = `claim-${todoId}`) {
+  const selectedHash = sha256(`fixture:${todoId}`);
+  return {
+    schema_version: 2,
+    claim_id: claimId,
+    root_claim_id: claimId,
+    selected_todo_id: todoId,
+    selected_todo_sha256: selectedHash,
+    delivery_receipt: {
+      schema_version: 1,
+      claim_id: claimId,
+      root_claim_id: claimId,
+      selected_todo_sha256: selectedHash,
+      author: 'implementation',
+      reviewer: 'review',
+      merge_actor: 'review',
+      approved: true,
+      ci_passed: true,
+      merged: true,
+      semantic_completion_evidence: {
+        schema_version: 1,
+        root_claim_id: claimId,
+        selected_todo_sha256: selectedHash,
+        completion_condition_sha256: sha256(`fixture completion: ${todoId}`),
+        verification_results: [{ command: 'node --test fixture.mjs', exit_code: 0 }],
+        observables: [{ kind: 'fixture', sha256: sha256(`fixture observable: ${todoId}`) }]
+      }
+    }
+  };
+}
+
 function orphanedParentResolutionFixture({ invalidBinding = false, unsafeChild = false, invalidProof = false } = {}) {
   const parentBlock = `- [ ] E-orphaned-parent: Patch only \`scripts/orphaned.mjs\`:
   Route: implementation.
@@ -134,8 +165,8 @@ test('superseded parent resolves only after every generated child completes', ()
     todoText: parent,
     replanRecords: [replan],
     completionRecords: [
-      { selected_todo_id: 'E-child-1', reason: 'verified_completion' },
-      { selected_todo_id: 'E-child-2', reason: 'verified_completion' }
+      durableCompletion('E-child-1'),
+      durableCompletion('E-child-2')
     ]
   });
 
@@ -177,8 +208,8 @@ test('an exact durable invalidation retracts only its matching completion receip
   const state = resolveTodoState({
     todoText: childOne,
     completionRecords: [
-      { claim_id: 'claim-invalidated', selected_todo_id: 'E-child-1', reason: 'verified_completion' },
-      { claim_id: 'claim-retained', selected_todo_id: 'E-child-1', reason: 'verified_completion' }
+      durableCompletion('E-child-1', 'claim-invalidated'),
+      durableCompletion('E-child-1', 'claim-retained')
     ],
     completionInvalidationRecords: [{
       record_type: 'todo_completion_invalidation',
@@ -220,9 +251,31 @@ test('an absent dependency backed only by a legacy completion record remains ide
     }]
   });
 
-  assert(state.completedIds.has('E-erased'));
+  assert(!state.completedIds.has('E-erased'));
+  assert(!state.resolvedIds.has('E-erased'));
   assert(state.unverifiedArchivedCompletionIds.has('E-erased'));
   assert.equal(state.unverifiedCompletionRecords[0]?.reason, 'legacy_completion_record_without_delivery_receipt');
+});
+
+test('an invalid completion receipt cannot complete a live TODO or unlock its dependent', () => {
+  const target = `- [ ] E-invalid-receipt: Patch only \`scripts/target.mjs\`.
+  Route: implementation.
+  Depends on: <none>.`;
+  const dependent = `- [ ] E-invalid-dependent: Patch only \`scripts/dependent.mjs\`.
+  Route: implementation.
+  Depends on: E-invalid-receipt.`;
+  const invalid = durableCompletion('E-invalid-receipt');
+  invalid.delivery_receipt.reviewer = invalid.delivery_receipt.author;
+  invalid.delivery_receipt.merge_actor = invalid.delivery_receipt.author;
+
+  const state = resolveTodoState({
+    todoText: `${target}\n\n${dependent}`,
+    completionRecords: [invalid]
+  });
+
+  assert(!state.completedIds.has('E-invalid-receipt'));
+  assert(!state.resolvedIds.has('E-invalid-receipt'));
+  assert.equal(state.unverifiedCompletionRecords[0]?.reason, 'durable_delivery_receipt_invalid');
 });
 
 test('a schema-v2 completion requires an internally consistent durable review receipt', () => {

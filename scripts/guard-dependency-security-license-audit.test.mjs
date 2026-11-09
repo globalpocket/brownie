@@ -107,7 +107,12 @@ function validate({ contract = validContract(), packageJson = validPackageJson, 
     repoRoot,
     contract,
     packageJson,
-    evidence: evidence ?? validEvidence(repoRoot)
+    evidence: evidence ?? validEvidence(repoRoot),
+    deploymentResult: {
+      deployment: {
+        repository: 'example-org/evidence-fixture'
+      }
+    }
   }).errors;
 }
 

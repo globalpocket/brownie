@@ -54,7 +54,11 @@ export function reconcileCompletedTodoProjection({ repoRoot, todoPath = '.browni
   if (state.errors.length > 0) return { applied: false, reason: 'todo_state_invalid', errors: state.errors };
   const completedLiveIds = uncheckedBlocks(beforeTodo)
     .map(todoIdFromBlock)
-    .filter((id) => state.completedIds.has(id));
+    // A checked queue entry or an unverified historical record must not erase
+    // a live TODO.  This projection is destructive, so require the narrower
+    // independently verified completion set even if another caller later
+    // broadens the scheduler's completedIds view.
+    .filter((id) => state.durableCompletionIds.has(id));
   if (completedLiveIds.length === 0) return { applied: false, reason: 'no_completed_todo_projection_drift' };
 
   let afterTodo = beforeTodo;

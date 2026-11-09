@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -6,6 +7,19 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const defaultRepoRoot = path.resolve(__dirname, '..');
+const hermeticTestEnvironmentPrefix = 'BROWNIE_';
+// Exclude only runtime products at the workspace root.  Test fixtures may
+// intentionally contain a `.brownie` directory (for example, historical
+// durable-store fixtures), and removing nested directories would change what
+// the native test suite actually verifies.
+const hermeticRustTestCopyExcludedRootNames = new Set([
+  '.brownie',
+  '.git',
+  'coverage',
+  'dist',
+  'node_modules',
+  'target'
+]);
 
 export function validateTraceBindingSchema(payload) {
   if (!payload || typeof payload !== 'object') {
@@ -548,30 +562,104 @@ function readRuntimeReleaseReady(repoRoot) {
   }
 }
 
-function runCommand(repoRoot, entry) {
-  const startedAt = new Date().toISOString();
-  const result = spawnSync(entry.command, entry.args, {
-    cwd: repoRoot,
+export function releaseGateCommandEnvironmentProfile(entry) {
+  return entry?.id === 'rust_test' ? 'hermetic_rust_test_workspace_copy' : 'selected_deployment';
+}
+
+export function isExcludedFromHermeticRustTestCopy(repoRoot, candidatePath) {
+  const relative = path.relative(path.resolve(repoRoot), path.resolve(candidatePath));
+  if (relative === '' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    return false;
+  }
+  const [rootSegment] = relative.split(path.sep);
+  return hermeticRustTestCopyExcludedRootNames.has(rootSegment);
+}
+
+export function prepareHermeticRustTestWorkspace(repoRoot, ephemeralRoot) {
+  const sourceRoot = path.resolve(repoRoot);
+  const workspaceRoot = path.resolve(ephemeralRoot, 'workspace');
+  fs.cpSync(sourceRoot, workspaceRoot, {
+    recursive: true,
+    filter: (source) => !isExcludedFromHermeticRustTestCopy(sourceRoot, source)
+  });
+  const init = spawnSync('git', ['init', '--quiet'], {
+    cwd: workspaceRoot,
     encoding: 'utf8',
-    env: {
-      ...process.env,
-      CARGO_INCREMENTAL: '0',
-      CARGO_PROFILE_DEV_DEBUG: '0',
-      CARGO_TERM_COLOR: 'never'
-    },
     stdio: ['ignore', 'pipe', 'pipe']
   });
-  return {
-    id: entry.id,
-    category: entry.category,
-    command: [entry.command, ...entry.args].join(' '),
-    started_at: startedAt,
-    finished_at: new Date().toISOString(),
-    exit_code: result.status,
-    passed: result.status === 0,
-    stdout_tail: (result.stdout ?? '').slice(-4000),
-    stderr_tail: (result.stderr ?? '').slice(-4000)
+  if (init.status !== 0) {
+    throw new Error(`failed to initialize hermetic Rust test workspace: ${(init.stderr ?? '').trim()}`);
+  }
+  const stage = spawnSync('git', ['add', '--all'], {
+    cwd: workspaceRoot,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  if (stage.status !== 0) {
+    throw new Error(`failed to stage hermetic Rust test workspace: ${(stage.stderr ?? '').trim()}`);
+  }
+  return workspaceRoot;
+}
+
+export function buildReleaseGateCommandEnvironment(entry, sourceEnvironment = process.env, options = {}) {
+  const environment = {
+    ...sourceEnvironment,
+    CARGO_INCREMENTAL: '0',
+    CARGO_PROFILE_DEV_DEBUG: '0',
+    CARGO_TERM_COLOR: 'never'
   };
+
+  if (releaseGateCommandEnvironmentProfile(entry) === 'hermetic_rust_test_workspace_copy') {
+    for (const name of Object.keys(environment)) {
+      if (name.startsWith(hermeticTestEnvironmentPrefix)) {
+        delete environment[name];
+      }
+    }
+    if (typeof options.cargoTargetDir === 'string' && path.isAbsolute(options.cargoTargetDir)) {
+      environment.CARGO_TARGET_DIR = options.cargoTargetDir;
+    }
+  }
+
+  return environment;
+}
+
+function runCommand(repoRoot, entry) {
+  const startedAt = new Date().toISOString();
+  const environmentProfile = releaseGateCommandEnvironmentProfile(entry);
+  const ephemeralRustTestRoot =
+    environmentProfile === 'hermetic_rust_test_workspace_copy'
+      ? fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-release-gate-rust-test-'))
+      : null;
+  const hermeticRustTestWorkspace = ephemeralRustTestRoot
+    ? prepareHermeticRustTestWorkspace(repoRoot, ephemeralRustTestRoot)
+    : null;
+  try {
+    const result = spawnSync(entry.command, entry.args, {
+      cwd: hermeticRustTestWorkspace ?? repoRoot,
+      encoding: 'utf8',
+      env: buildReleaseGateCommandEnvironment(entry, process.env, {
+        cargoTargetDir: ephemeralRustTestRoot ? path.join(ephemeralRustTestRoot, 'target') : null
+      }),
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    return {
+      id: entry.id,
+      category: entry.category,
+      command: [entry.command, ...entry.args].join(' '),
+      environment_profile: environmentProfile,
+      runtime_store: hermeticRustTestWorkspace ? 'ephemeral_workspace_copy' : null,
+      started_at: startedAt,
+      finished_at: new Date().toISOString(),
+      exit_code: result.status,
+      passed: result.status === 0,
+      stdout_tail: (result.stdout ?? '').slice(-4000),
+      stderr_tail: (result.stderr ?? '').slice(-4000)
+    };
+  } finally {
+    if (ephemeralRustTestRoot) {
+      fs.rmSync(ephemeralRustTestRoot, { recursive: true, force: true });
+    }
+  }
 }
 
 export function buildReleaseGatePlan(options = {}) {

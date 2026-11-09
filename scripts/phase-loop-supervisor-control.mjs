@@ -6,7 +6,11 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { diagnosePhaseLoop as runDiagnosis } from './phase-loop-supervisor-diagnose.mjs';
 import { dispatchSelfUpdate } from './phase-loop-self-update.mjs';
-import { loadTodoState } from './phase-loop-todo-state.mjs';
+import {
+  durableCompletionRecordReceipt,
+  loadTodoState,
+  readTodoCompletionRecords
+} from './phase-loop-todo-state.mjs';
 import { loadPhaseLoopActorDeployment, roleActor } from './phase-loop-actor-deployment.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -203,8 +207,9 @@ function maybeArchiveResolvedRepairFeedback(repoRoot) {
 
 // A checked queue entry alone is not proof that a failed leaf completed: it
 // can be an accidental edit.  Suppress retained diagnostics only when the
-// leaf is absent from the live queue *and* a parsed completion receipt names
-// it.  This predicate is evaluated before every feedback writer.
+// leaf is absent from the live queue *and* an independently verified durable
+// completion receipt names it.  This predicate is evaluated before every
+// feedback writer.
 function completedLeafRecoveryState(repoRoot, diagnostic) {
   const selectedId = todoIdFromFirstLine(todoFirstLine(selectedTodoBlock(diagnostic)));
   if (!selectedId) return { completed: false, reason: 'selected_todo_id_missing' };
@@ -217,9 +222,7 @@ function completedLeafRecoveryState(repoRoot, diagnostic) {
   }
   const todoState = loadTodoState(repoRoot, todoText);
   const liveIds = liveUncheckedTodoIds(todoText);
-  const hasCompletionReceipt = todoState.completionRecords.some((record) => (
-    record?.selected_todo_id === selectedId && record?.reason !== 'source_parent_completed'
-  ));
+  const hasCompletionReceipt = todoState.durableCompletionIds.has(selectedId);
   return {
     completed: !liveIds.has(selectedId) && hasCompletionReceipt,
     todo_id: selectedId,
@@ -629,6 +632,57 @@ function hasMergedCommit(repoRoot, commit) {
   }
 }
 
+// A delegation acknowledgement is a routing receipt, not completion evidence.
+// Its queue mutation must therefore bind to a completion record that was
+// independently produced for the same immutable claim/TODO/PR tuple.  Do not
+// synthesize a new completion record here: the progress-integrity writer is
+// the only path that has the claim-bound delivery proof required to do so.
+function findDurableDelegationCompletionRecord({
+  repoRoot,
+  feedback,
+  selectedTodo,
+  selectedTodoId,
+  pullRequestUrl,
+  deployment
+}) {
+  const claimId = typeof feedback?.claim_id === 'string' ? feedback.claim_id.trim() : '';
+  const rootClaimId = typeof feedback?.root_claim_id === 'string' ? feedback.root_claim_id.trim() : '';
+  const recordedTodoId = typeof feedback?.selected_todo_id === 'string' ? feedback.selected_todo_id.trim() : '';
+  const recordedTodoHash = typeof feedback?.selected_todo_sha256 === 'string'
+    ? feedback.selected_todo_sha256.trim()
+    : '';
+  const expectedTodoHash = crypto.createHash('sha256').update(selectedTodo).digest('hex');
+  if (
+    !claimId
+    || !rootClaimId
+    || recordedTodoId !== selectedTodoId
+    || recordedTodoHash !== expectedTodoHash
+  ) {
+    return { record: null, reason: 'delegation_completion_binding_missing_or_mismatched' };
+  }
+
+  const implementation = roleActor(deployment, 'implementation');
+  const reviewer = roleActor(deployment, 'review');
+  const merger = roleActor(deployment, 'merge');
+  const record = readTodoCompletionRecords(repoRoot).find((candidate) => {
+    const receipt = candidate?.delivery_receipt;
+    return (
+      durableCompletionRecordReceipt(candidate).valid
+      && candidate?.claim_id === claimId
+      && candidate?.root_claim_id === rootClaimId
+      && candidate?.selected_todo_id === selectedTodoId
+      && candidate?.selected_todo_sha256 === expectedTodoHash
+      && receipt?.pr_url === pullRequestUrl
+      && receipt?.author === implementation
+      && receipt?.reviewer === reviewer
+      && receipt?.merge_actor === merger
+    );
+  });
+  return record
+    ? { record }
+    : { record: null, reason: 'delegation_completion_receipt_missing_or_invalid' };
+}
+
 function verifyDelegationPullRequestProvenance(repoRoot, pullRequestUrl, implementationCommit, deployment) {
   const repository = String(deployment?.repository ?? '');
   const escapedRepository = repository.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
@@ -672,10 +726,10 @@ function verifyDelegationPullRequestProvenance(repoRoot, pullRequestUrl, impleme
 }
 
 // An acknowledged handoff is not itself a completion: it must name a merged
-// configured implementation delivery and independent configured review. Once those durable facts are
-// present, materialize a completion receipt before pruning the matching queue
-// item. This prevents a merged fix from being selected again merely because a
-// stale controller claim still refers to the old TODO.
+// configured implementation delivery and independent configured review. Only
+// an already-persisted, claim-bound durable receipt may reconcile that handoff
+// before the matching queue item is pruned. This prevents a stale controller
+// claim from either reselecting a delivered TODO or fabricating its completion.
 function maybeReconcileAcknowledgedDelegation(repoRoot, provenanceVerifier, deployment) {
   const feedbackPath = workspaceStatePath(repoRoot, 'todo-claims/repair-feedback.json');
   const inspected = inspectDelegationFeedback(feedbackPath);
@@ -720,40 +774,41 @@ function maybeReconcileAcknowledgedDelegation(repoRoot, provenanceVerifier, depl
   if (!liveUncheckedTodoIds(todoText).has(selectedTodoId)) {
     return { attempted: true, ok: false, reason: 'delegated_todo_not_live_fail_closed', todo_id: selectedTodoId };
   }
-
-  const completionDirectory = workspaceStatePath(repoRoot, 'todo-completions');
-  const completionPath = path.join(
-    completionDirectory,
-    `delegation-${selectedTodoId.replace(/[^A-Za-z0-9_.-]+/gu, '-')}-${implementationCommit}.json`
-  );
-  const receipt = {
-    schema_version: 1,
-    kind: 'phase_loop_delegation_completion',
-    selected_todo_id: selectedTodoId,
-    selected_todo_first_line: todoFirstLine(selectedTodo),
-    reason: 'acknowledged_delegation_merged_and_reviewed',
-    pull_request_url: pullRequestUrl,
-    implementation_commit: implementationCommit,
-    acknowledged_at: acknowledgedAt,
-    reviewed_by: verification.reviewed_by,
-    all_ci_checks_passed: true,
-    reconciled_at: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z'),
-    generated_by: 'phase-loop-supervisor-control'
-  };
+  const durableCompletion = findDurableDelegationCompletionRecord({
+    repoRoot,
+    feedback,
+    selectedTodo,
+    selectedTodoId,
+    pullRequestUrl,
+    deployment
+  });
+  if (!durableCompletion.record) {
+    return {
+      attempted: true,
+      ok: false,
+      reason: durableCompletion.reason,
+      todo_id: selectedTodoId
+    };
+  }
+  const reconciledAt = new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z');
   try {
-    fs.mkdirSync(completionDirectory, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(completionPath, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
     const completedFeedback = {
       ...feedback,
       completed: true,
-      resolved_at: receipt.reconciled_at,
-      resolution: 'merged_delegation_receipt_materialized',
-      completion_receipt_path: path.relative(repoRoot, completionPath)
+      resolved_at: reconciledAt,
+      resolution: 'existing_durable_delegated_delivery_receipt_verified',
+      completion_record_claim_id: durableCompletion.record.claim_id,
+      completion_record_root_claim_id: durableCompletion.record.root_claim_id,
+      completion_record_selected_todo_sha256: durableCompletion.record.selected_todo_sha256
     };
     fs.writeFileSync(feedbackPath, `${JSON.stringify(completedFeedback, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-    fsyncFileAndParent(completionPath);
     fsyncFileAndParent(feedbackPath);
-    return { attempted: true, ok: true, todo_id: selectedTodoId, completion_path: path.relative(repoRoot, completionPath) };
+    return {
+      attempted: true,
+      ok: true,
+      todo_id: selectedTodoId,
+      completion_record_claim_id: durableCompletion.record.claim_id
+    };
   } catch (error) {
     return { attempted: true, ok: false, reason: 'delegation_reconciliation_write_failed', error: error?.message ?? String(error) };
   }
@@ -1739,7 +1794,10 @@ function maybeRepairNonLiveTodoResidue(repoRoot, diagnostic) {
   }
   const todoText = fs.readFileSync(todoPath, 'utf8');
   const todoState = loadTodoState(repoRoot, todoText);
-  const completedIds = todoState.completedIds;
+  // This repair deletes live TODOs.  It must not rely on a checked checkbox
+  // or on a completion file merely being present: only an independently
+  // verified receipt may authorize this destructive transition.
+  const completedIds = todoState.durableCompletionIds;
   const blockedIds = durableBlockedTodoIds(repoRoot);
   const uncheckedIds = liveUncheckedTodoIds(todoText);
   const idsToRemove = new Set();
@@ -2581,9 +2639,7 @@ function maybeWriteTodoContractReplanFeedback(repoRoot, diagnostic, ledgerSummar
   // failure. Historical ledger events must not resurrect a completed target
   // as a new replan request on a later supervisor pass.
   if (!selectedId || !liveTodoIds.has(selectedId)) {
-    const hasCompletionReceipt = todoState.completionRecords.some((record) => (
-      record?.selected_todo_id === selectedId && record?.reason !== 'source_parent_completed'
-    ));
+    const hasCompletionReceipt = todoState.durableCompletionIds.has(selectedId);
     if (!selectedId || !hasCompletionReceipt) {
       return {
         attempted: true,
@@ -2704,15 +2760,26 @@ function maybeWriteDelegationPendingFeedback(repoRoot, diagnostic, ledgerSummary
   }
   const claim = readJsonOrNull(workspaceStatePath(repoRoot, 'todo-claims/current.json'));
   const selectedTodo = claim?.selected_todo ?? selectedTodoBlock(diagnostic);
+  const selectedTodoId = todoIdFromFirstLine(todoFirstLine(selectedTodo));
+  const selectedTodoSha256 = typeof selectedTodo === 'string'
+    ? crypto.createHash('sha256').update(selectedTodo).digest('hex')
+    : null;
+  const claimId = typeof claim?.claim_id === 'string' ? claim.claim_id : null;
+  const rootClaimId = typeof claim?.root_claim_id === 'string'
+    ? claim.root_claim_id
+    : claimId;
   const feedback = {
     schema_version: 1,
     kind: 'phase_loop_delegation_pending',
     generated_at: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z'),
     completed: false,
     reason: 'same_target_scope_failed_across_replan_leaves',
-    claim_id: claim?.claim_id ?? diagnostic.progress?.progress_projection?.claim_id ?? null,
+    claim_id: claimId ?? diagnostic.progress?.progress_projection?.claim_id ?? null,
+    root_claim_id: rootClaimId,
     selected_todo: selectedTodo,
     selected_todo_first_line: todoFirstLine(selectedTodo),
+    selected_todo_id: selectedTodoId,
+    selected_todo_sha256: selectedTodoSha256,
     failure_ledger_summary: ledgerSummary,
     delegation: {
       required_actor: configuredActor('implementation'),
@@ -3199,7 +3266,12 @@ export function controlPhaseLoop(options = {}) {
   activeStateRoot = path.resolve(options.stateRoot ?? path.join(repoRoot, '.brownie/private/phase-loop'));
   const actorDeploymentResult = options.actorDeployment
     ? { ok: true, deployment: options.actorDeployment, errors: [] }
-    : loadPhaseLoopActorDeployment({ repoRoot });
+    : loadPhaseLoopActorDeployment({
+      repoRoot,
+      // Test callers may supply an isolated environment so an ambient
+      // deployment binding cannot turn a missing-deployment path into success.
+      env: options.actorDeploymentEnvironment ?? process.env
+    });
   if (!actorDeploymentResult.ok) {
     return {
       status: 'blocked',

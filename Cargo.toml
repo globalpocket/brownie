@@ -24,7 +24,7 @@ edition = "2021"
 license = "Apache-2.0"
 publish = false
 repository = "https://github.com/globalpocket/brownie"
-rust-version = "1.78"
+rust-version = "1.82"
 version = "0.1.0"
 
 [workspace.dependencies]
@@ -33,7 +33,10 @@ base64 = "0.22"
 ed25519-dalek = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml = "0.9"
+# Keep the workspace-facing dependency name so consumers retain the stable
+# `serde_yaml` API while using the maintained YAML Organization implementation
+# instead of the archived implementation that depends on `unsafe-libyaml`.
+serde_yaml = { package = "yaml_serde", version = "0.10.7" }
 schemars = "0.8"
 sha2 = "0.10"
 regex = "1"

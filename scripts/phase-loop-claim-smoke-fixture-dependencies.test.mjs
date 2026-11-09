@@ -60,6 +60,14 @@ test('claim-smoke isolated TODO fixtures copy every static dependency closure', 
   assertFixtureCopiesDependencyClosure(source, todoGuardEntry, 'guard-todo-decomposition.mjs');
 });
 
+test('claim-smoke isolates both controller and Runtime state from the checked-out repository', () => {
+  const source = fs.readFileSync(claimSmokeFixture, 'utf8');
+  assert.match(source, /export PHASE_LOOP_BROWNIE_STORE_ROOT="\$CLAIM_SMOKE_BROWNIE_STORE_ROOT"/);
+  assert.match(source, /export BROWNIE_STORE_ROOT="\$CLAIM_SMOKE_BROWNIE_STORE_ROOT"/);
+  assert.match(source, /CLAIM_SMOKE_REPO_RUNTIME_STORE_SHA256/);
+  assert.match(source, /claim_smoke_repository_runtime_store_sha256/);
+});
+
 test('CI check executes both isolated terminal liveness shards for the merged-delivery recovery path', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'));
   assert.equal(

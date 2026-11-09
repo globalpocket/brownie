@@ -3,7 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { loadTodoState } from './phase-loop-todo-state.mjs';
+import {
+  durableCompletionRecordReceipt,
+  loadTodoState,
+  readTodoCompletionRecords
+} from './phase-loop-todo-state.mjs';
 import { boundedScopes } from './phase-loop-bounded-scope.mjs';
 import {
   rootClaimId,
@@ -220,8 +224,23 @@ function completionRecordPaths(repoRoot, claimId, runStamp) {
   ].filter(Boolean);
 }
 
-function completionRecordExists(repoRoot, claimId, runStamp) {
-  return completionRecordPaths(repoRoot, claimId, runStamp).some((recordPath) => fs.existsSync(recordPath));
+function completionRecordExists(repoRoot, claim) {
+  const claimId = typeof claim?.claim_id === 'string' ? claim.claim_id.trim() : '';
+  const selectedId = typeof claim?.selected_todo_id === 'string' && claim.selected_todo_id.trim()
+    ? claim.selected_todo_id.trim()
+    : todoId(String(claim?.selected_todo ?? ''));
+  const selectedHash = selectedTodoSha256(claim);
+  const expectedRootClaimId = rootClaimId(claim);
+  if (!claimId || !selectedId || !selectedHash || !expectedRootClaimId) {
+    return false;
+  }
+  return readTodoCompletionRecords(repoRoot).some((record) => (
+    record?.claim_id === claimId
+    && record?.root_claim_id === expectedRootClaimId
+    && record?.selected_todo_id === selectedId
+    && record?.selected_todo_sha256 === selectedHash
+    && durableCompletionRecordReceipt(record).valid
+  ));
 }
 
 function isExplicitBlocker(block) {
@@ -577,7 +596,7 @@ export function loadCliInput(args) {
     todoAfter,
     runStamp: args.runStamp,
     claimDir: args.claimDir ? path.resolve(repoRoot, args.claimDir) : '',
-    completionRecordExists: completionRecordExists(repoRoot, claim.claim_id, args.runStamp),
+    completionRecordExists: completionRecordExists(repoRoot, claim),
     completedTodoIds: todoState.completedIds
   };
 }

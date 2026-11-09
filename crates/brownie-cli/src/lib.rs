@@ -36,11 +36,19 @@ where
     I: IntoIterator<Item = S>,
     S: Into<String>,
 {
+    run_cli_with_runtime_client(args, RuntimeClient::default())
+}
+
+fn run_cli_with_runtime_client<I, S>(args: I, client: RuntimeClient) -> CliOutput
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
     let args: Vec<String> = args.into_iter().map(Into::into).collect();
     let json_requested = args.iter().skip(1).any(|arg| arg == "--json");
 
     match Cli::parse(args) {
-        Ok(cli) => execute(cli),
+        Ok(cli) => execute(cli, &client),
         Err(error) => error_output(
             ExitCode::InvalidInvocation,
             "invalid_invocation",
@@ -52,7 +60,7 @@ where
     }
 }
 
-fn execute(cli: Cli) -> CliOutput {
+fn execute(cli: Cli, client: &RuntimeClient) -> CliOutput {
     match cli.command {
         CliCommand::Help { topic } => CliOutput {
             exit_code: ExitCode::Success,
@@ -81,7 +89,6 @@ fn execute(cli: Cli) -> CliOutput {
         },
         CliCommand::RunFile { path } => match read_run_file_objective(&path) {
             Ok(objective) => {
-                let client = RuntimeClient::default();
                 let command = CliCommand::Run { objective };
                 match client.invoke(&command, cli.json) {
                     Ok(message) => CliOutput {
@@ -103,7 +110,6 @@ fn execute(cli: Cli) -> CliOutput {
             ),
         },
         command => {
-            let client = RuntimeClient::default();
             let command_name = command_name(&command);
             match client.invoke(&command, cli.json) {
                 Ok(message) => CliOutput {
@@ -476,6 +482,8 @@ impl From<CliError> for ExitCode {
 mod tests {
     use super::*;
     use crate::cli::{InspectTarget, ListTarget, ModeTarget};
+    use crate::runtime_client::RuntimeClientConfig;
+    use std::time::Duration;
 
     #[test]
     fn help_names_run_and_not_develop() {
@@ -653,7 +661,12 @@ mod tests {
 
     #[test]
     fn json_unsupported_workflow_uses_same_exit_meaning() {
-        let output = run_cli(["brownie", "--json", "resume"]);
+        let client = RuntimeClient::new(RuntimeClientConfig {
+            runtime_path: None,
+            read_only_timeout: Duration::from_millis(1),
+            objective_execution_timeout: Duration::from_millis(1),
+        });
+        let output = run_cli_with_runtime_client(["brownie", "--json", "resume"], client);
         assert_eq!(output.exit_code, ExitCode::RuntimeUnavailable);
         assert!(output.stdout.contains("\"code\":\"runtime_unavailable\""));
         let payload: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
