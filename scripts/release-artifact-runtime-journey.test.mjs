@@ -22,36 +22,65 @@ function createFixtureArchive(root, options = {}) {
   fs.mkdirSync(packageRoot, { recursive: true });
   const runtimePath = path.join(packageRoot, 'brownie-runtime');
   const cliPath = path.join(packageRoot, 'brownie');
-  writeExecutable(runtimePath, '#!/usr/bin/env node\nprocess.exit(0);\n');
-  writeExecutable(cliPath, `#!/usr/bin/env node
+  writeExecutable(runtimePath, String.raw`#!/usr/bin/env node
+const fs = require('node:fs');
+for (const line of fs.readFileSync(0, 'utf8').trim().split('\n')) {
+  const request = JSON.parse(line);
+  const result = request.method === 'llm.status'
+    ? { provider: ${options.fakeProvider === true ? "'Fake'" : "'OpenAiCompatible'"}, enabled: true, strict: true, will_fallback_to_fake: false, llm_provider_access_allowed: true }
+    : { attempted: true, healthy: true };
+  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\n');
+}
+`);
+  writeExecutable(cliPath, String.raw`#!/usr/bin/env node
 const fs = require('node:fs');
 const path = require('node:path');
 const root = process.env.BROWNIE_WORKSPACE_ROOT;
 const args = process.argv.slice(2).filter((value) => value !== '--json');
 const write = (value) => process.stdout.write(JSON.stringify(value));
+const runId = 'run-fixture', taskId = 'task-fixture';
+const ledger = path.join(root, '.brownie', 'runs', runId, 'ledger.jsonl');
+const stagePath = path.join(root, '.brownie', 'fixture-stage');
 if (args[0] === 'mode' && args[1] === 'list') {
-  write({ ok: true, mode_list: { modes: [{ mode_id: 'fixture', display_name: 'Fixture' }] } });
+  write({ mode_list: { modes: [{ mode_id: 'implementer', display_name: 'Fixture' }] } });
   process.exit(0);
 }
 if (args[0] === 'run') {
-  const runId = 'run-fixture';
-  fs.mkdirSync(path.join(root, '.brownie', 'runs', runId), { recursive: true });
-  fs.writeFileSync(path.join(root, '.brownie', 'runs', runId, 'ledger.jsonl'), '{"event":"fixture"}\\n');
-  fs.writeFileSync(path.join(root, '.brownie', 'journey-marker.json'), '{"state":"interrupted"}\\n');
-  write({ ok: true, run: { session_id: 'session-fixture', journey_id: 'journey-fixture', task_id: 'task-fixture', run_id: runId, automation: { controller_action: 'resume', continuation_required: true, stop_reason: 'fixture_interruption' } } });
-  process.exit(0);
+  fs.mkdirSync(path.dirname(ledger), { recursive: true });
+  fs.writeFileSync(ledger, JSON.stringify({ kind: ${options.missingDurableBoundary === true ? "'Other'" : "'HeadlessJourneyStarted'"}, run_id: runId, task_id: taskId }) + '\n');
+  if (${options.missingProcessLoss === true}) {
+    write({ run: { session_id: 'session-fixture', journey_id: 'journey-fixture', task_id: taskId, run_id: runId, automation: { controller_action: 'resume', continuation_required: true, stop_reason: 'terminal_failure' } } });
+    process.exit(0);
+  }
+  write({ status: 'runtime_process_loss', automation: { stop_class: 'process_loss', completed: false, terminal_failure: false } });
+  process.exit(75);
 }
 if (args[0] === 'resume') {
-  if (${options.mutateUserFile === true}) fs.appendFileSync(path.join(root, 'user-source.txt'), 'duplicate-write\\n');
-  if (${options.createUserDirectory === true}) {
-    const index = fs.readdirSync(root).filter((name) => name.startsWith('replayed-output-')).length;
-    fs.mkdirSync(path.join(root, 'replayed-output-' + index));
+  const stage = fs.existsSync(stagePath) ? fs.readFileSync(stagePath, 'utf8') : '';
+  if (!stage) {
+    if (!${options.missingTaskOutput === true}) fs.writeFileSync(path.join(root, 'journey-output.md'), 'Brownie completed the artifact Runtime journey.\n');
+    fs.appendFileSync(ledger, JSON.stringify({ kind: 'TaskCompleted', run_id: runId, task_id: taskId }) + '\n');
+    if (!${options.missingLedgerApply === true}) fs.appendFileSync(ledger, JSON.stringify({ kind: 'WorkspacePatchApplyResultRecorded', run_id: runId, task_id: taskId, payload: { applied: true, apply_status: 'Applied' } }) + '\n');
+    fs.writeFileSync(stagePath, 'applied');
+    write({ resume: { status: 'objective_proposal_applied', session_id: 'session-fixture', journey_id: 'journey-fixture', task_id: taskId, run_id: runId,
+      objective_apply_applied: true, objective_apply_apply_status: 'Applied', terminal_completion_final_state: 'Completed', terminal_completion_task_status: 'Completed',
+      controller_action: 'resume', continuation_required: true, automation: { continuation_required: true, terminal_failure: false } } });
+    process.exit(0);
   }
-  if (${options.changeUserMode === true}) {
-    const target = path.join(root, 'user-source.txt');
-    fs.chmodSync(target, (fs.statSync(target).mode & 0o777) === 0o600 ? 0o640 : 0o600);
+  if (stage === 'terminal') {
+    if (${options.mutateUserFile === true}) fs.appendFileSync(path.join(root, 'user-source.txt'), 'duplicate-write\n');
+    if (${options.createUserDirectory === true}) fs.mkdirSync(path.join(root, 'replayed-output'));
+    if (${options.changeUserMode === true}) {
+      const target = path.join(root, 'user-source.txt');
+      fs.chmodSync(target, (fs.statSync(target).mode & 0o777) === 0o600 ? 0o640 : 0o600);
+    }
   }
-  write({ ok: true, resume: { status: 'no_eligible_task', controller_action: 'stop' } });
+  if (${options.neverConverge === true}) {
+    write({ resume: { status: 'continuation_required', controller_action: 'resume', continuation_required: true } });
+    process.exit(0);
+  }
+  fs.writeFileSync(stagePath, 'terminal');
+  write({ resume: { status: 'no_eligible_task', controller_action: 'stop', continuation_required: false } });
   process.exit(0);
 }
 process.exit(64);
@@ -79,13 +108,17 @@ test('journey executes only the packaged fixture and records durable interruptio
   assert.equal(evidence.checks.mode_pack_load.passed, true);
   assert.equal(evidence.checks.workspace_mutation.passed, true);
   assert.equal(evidence.checks.ledger_generation.passed, true);
-  assert.equal(evidence.checks.forced_interruption.stop_reason, 'fixture_interruption');
+  assert.equal(evidence.checks.forced_interruption.stop_reason, 'runtime_process_loss');
+  assert.equal(evidence.checks.forced_interruption.initial_command_exit_code, 75);
+  assert.equal(evidence.checks.forced_interruption.durable_journey_event, true);
+  assert.equal(evidence.checks.task_execution.ledger_application_recorded, true);
+  assert.equal(fs.readFileSync(path.join(root, 'workspace', 'journey-output.md'), 'utf8'), 'Brownie completed the artifact Runtime journey.\n');
   assert.equal(evidence.checks.resume.status, 'no_eligible_task');
   assert.equal(evidence.checks.stale_replay_rejection.workspace_unchanged, true);
   assert.deepEqual(JSON.parse(fs.readFileSync(evidencePath, 'utf8')), evidence);
 });
 
-test('journey rejects a package whose signed runtime binding was tampered', () => {
+test('journey rejects a package whose recorded runtime binding was tampered', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-runtime-journey-tamper-'));
   const archivePath = createFixtureArchive(root);
   const unpacked = path.join(root, 'unpacked');
@@ -99,7 +132,15 @@ test('journey rejects a package whose signed runtime binding was tampered', () =
   );
 });
 
-test('journey rejects a package whose signed CLI binding was tampered', () => {
+test('journey rejects continuation labels without a real controlled process-loss exit', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-missing-loss-'));
+  assert.throws(
+    () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root, { missingProcessLoss: true }), workspaceRoot: path.join(root, 'workspace') }),
+    /required process-loss status 75/u
+  );
+});
+
+test('journey rejects a package whose recorded CLI binding was tampered', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-runtime-journey-tamper-'));
   const archivePath = createFixtureArchive(root);
   const unpacked = path.join(root, 'unpacked');
@@ -112,6 +153,19 @@ test('journey rejects a package whose signed CLI binding was tampered', () => {
     /package integrity mismatch/u
   );
 });
+
+for (const [name, options, reason] of [
+  ['reported apply without a materialized output', { missingTaskOutput: true }, /materialize the minimal task output/u],
+  ['reported apply without its durable ledger record', { missingLedgerApply: true }, /ledger did not record the completed task application/u],
+  ['process loss before its durable journey boundary', { missingDurableBoundary: true }, /preceded the durable journey boundary/u],
+  ['a Fake provider despite reported health', { fakeProvider: true }, /non-Fake strict fixture provider bootstrap/u],
+  ['a recovery that never reaches its terminal boundary', { neverConverge: true }, /resume attempt budget/u]
+]) {
+  test(`journey rejects ${name}`, () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-evidence-rejection-'));
+    assert.throws(() => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root, options), workspaceRoot: path.join(root, 'workspace') }), reason);
+  });
+}
 
 test('journey rejects replay that changes an ordinary user task output', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-user-replay-'));
