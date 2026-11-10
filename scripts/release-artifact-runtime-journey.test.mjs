@@ -17,7 +17,7 @@ function writeExecutable(filePath, source) {
   fs.chmodSync(filePath, 0o755);
 }
 
-function createFixtureArchive(root) {
+function createFixtureArchive(root, options = {}) {
   const packageRoot = path.join(root, 'package');
   fs.mkdirSync(packageRoot, { recursive: true });
   const runtimePath = path.join(packageRoot, 'brownie-runtime');
@@ -42,6 +42,15 @@ if (args[0] === 'run') {
   process.exit(0);
 }
 if (args[0] === 'resume') {
+  if (${options.mutateUserFile === true}) fs.appendFileSync(path.join(root, 'user-source.txt'), 'duplicate-write\\n');
+  if (${options.createUserDirectory === true}) {
+    const index = fs.readdirSync(root).filter((name) => name.startsWith('replayed-output-')).length;
+    fs.mkdirSync(path.join(root, 'replayed-output-' + index));
+  }
+  if (${options.changeUserMode === true}) {
+    const target = path.join(root, 'user-source.txt');
+    fs.chmodSync(target, (fs.statSync(target).mode & 0o777) === 0o600 ? 0o640 : 0o600);
+  }
   write({ ok: true, resume: { status: 'no_eligible_task', controller_action: 'stop' } });
   process.exit(0);
 }
@@ -102,4 +111,114 @@ test('journey rejects a package whose signed CLI binding was tampered', () => {
     () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath, workspaceRoot: path.join(root, 'workspace') }),
     /package integrity mismatch/u
   );
+});
+
+test('journey rejects replay that changes an ordinary user task output', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-user-replay-'));
+  const workspaceRoot = path.join(root, 'workspace');
+  fs.mkdirSync(workspaceRoot);
+  fs.writeFileSync(path.join(workspaceRoot, 'user-source.txt'), 'initial\n');
+  assert.throws(
+    () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root, { mutateUserFile: true }), workspaceRoot }),
+    /runtime did not reject replay without a side effect/u
+  );
+});
+
+test('journey rejects replay that changes a user task output through an external symlink', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-linked-replay-'));
+  const workspaceRoot = path.join(root, 'workspace');
+  fs.mkdirSync(workspaceRoot);
+  const target = path.join(root, 'external-user-source.txt');
+  fs.writeFileSync(target, 'initial\n');
+  try {
+    fs.symlinkSync(target, path.join(workspaceRoot, 'user-source.txt'), 'file');
+  } catch (error) {
+    if (process.platform === 'win32' && error.code === 'EPERM') return t.skip('external symlink privilege unavailable');
+    throw error;
+  }
+  assert.throws(
+    () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root, { mutateUserFile: true }), workspaceRoot }),
+    /runtime did not reject replay without a side effect/u
+  );
+});
+
+test('journey rejects replay that creates an empty user output directory', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-directory-replay-'));
+  const workspaceRoot = path.join(root, 'workspace');
+  fs.mkdirSync(workspaceRoot);
+  assert.throws(
+    () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root, { createUserDirectory: true }), workspaceRoot }),
+    /runtime did not reject replay without a side effect/u
+  );
+});
+
+test('journey rejects replay that changes user output permissions', (t) => {
+  if (process.platform === 'win32') return t.skip('POSIX permission semantics unavailable');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-mode-replay-'));
+  const workspaceRoot = path.join(root, 'workspace');
+  fs.mkdirSync(workspaceRoot);
+  fs.writeFileSync(path.join(workspaceRoot, 'user-source.txt'), 'initial\n', { mode: 0o600 });
+  assert.throws(
+    () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root, { changeUserMode: true }), workspaceRoot }),
+    /runtime did not reject replay without a side effect/u
+  );
+});
+
+test('journey bounds full-workspace snapshot entry enumeration', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-entry-budget-'));
+  const workspaceRoot = path.join(root, 'workspace');
+  fs.mkdirSync(workspaceRoot);
+  for (let index = 0; index < 4097; index += 1) fs.writeFileSync(path.join(workspaceRoot, `entry-${index}`), '');
+  assert.throws(
+    () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root), workspaceRoot }),
+    /workspace snapshot entry budget exceeded/u
+  );
+});
+
+test('journey bounds full-workspace snapshot directory depth', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-depth-budget-'));
+  const workspaceRoot = path.join(root, 'workspace');
+  fs.mkdirSync(workspaceRoot);
+  let current = workspaceRoot;
+  for (let index = 0; index < 65; index += 1) {
+    current = path.join(current, 'n');
+    fs.mkdirSync(current);
+  }
+  assert.throws(
+    () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root), workspaceRoot }),
+    /workspace snapshot depth budget exceeded/u
+  );
+});
+
+test('journey bounds bytes read from externally linked task output', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-byte-budget-'));
+  const workspaceRoot = path.join(root, 'workspace');
+  fs.mkdirSync(workspaceRoot);
+  const target = path.join(root, 'external-output');
+  fs.writeFileSync(target, '');
+  fs.truncateSync(target, 64 * 1024 * 1024 + 1);
+  try {
+    fs.symlinkSync(target, path.join(workspaceRoot, 'user-source.txt'), 'file');
+  } catch (error) {
+    if (process.platform === 'win32' && error.code === 'EPERM') return t.skip('external symlink privilege unavailable');
+    throw error;
+  }
+  assert.throws(
+    () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root), workspaceRoot }),
+    /workspace snapshot byte budget exceeded/u
+  );
+});
+
+test('journey permits an unchanged directory symlink cycle without recursive traversal', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-cycle-'));
+  const workspaceRoot = path.join(root, 'workspace');
+  fs.mkdirSync(workspaceRoot);
+  try {
+    fs.symlinkSync(workspaceRoot, path.join(workspaceRoot, 'cycle'), process.platform === 'win32' ? 'junction' : 'dir');
+  } catch (error) {
+    if (process.platform === 'win32' && error.code === 'EPERM') return t.skip('directory symlink privilege unavailable');
+    throw error;
+  }
+  const evidence = runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root), workspaceRoot });
+  assert.equal(evidence.checks.stale_replay_rejection.workspace_unchanged, true);
 });

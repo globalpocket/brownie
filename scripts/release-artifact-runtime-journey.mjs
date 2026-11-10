@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const journeyObjective = 'Create a bounded journey marker in the workspace.';
+const snapshotBudget = Object.freeze({ maximumEntries: 4096, maximumDepth: 64, maximumBytes: 64 * 1024 * 1024 });
 
 const releaseTargets = [
   { id: 'linux-x64', archiveName: 'brownie-linux-x64.tar.gz', archiveType: 'tar', binaryName: 'brownie', runtimeName: 'brownie-runtime' },
@@ -98,19 +99,76 @@ function runJson(binaryPath, args, environment) {
 }
 
 function stableWorkspaceSnapshot(workspaceRoot) {
-  const root = path.join(workspaceRoot, '.brownie');
   const rows = [];
-  const visit = (current, relative = '') => {
-    if (!fs.existsSync(current)) return;
-    for (const entry of fs.readdirSync(current, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+  let entriesVisited = 0;
+  let bytesRead = 0;
+  const snapshotFile = (filePath, size) => {
+    if (bytesRead + size > snapshotBudget.maximumBytes) throw new Error('workspace snapshot byte budget exceeded');
+    const hash = crypto.createHash('sha256');
+    const buffer = Buffer.alloc(64 * 1024);
+    const descriptor = fs.openSync(filePath, 'r');
+    try {
+      let count;
+      while ((count = fs.readSync(descriptor, buffer, 0, buffer.length, null)) !== 0) {
+        bytesRead += count;
+        if (bytesRead > snapshotBudget.maximumBytes) throw new Error('workspace snapshot byte budget exceeded');
+        hash.update(buffer.subarray(0, count));
+      }
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    return `sha256:${hash.digest('hex')}`;
+  };
+  const visitDirectory = (current, relative, activeDirectories, depth = 0) => {
+    if (depth > snapshotBudget.maximumDepth) throw new Error('workspace snapshot depth budget exceeded');
+    const canonicalDirectory = fs.realpathSync(current);
+    rows.push([relative, 'directory', fs.statSync(current).mode & 0o777]);
+    if (activeDirectories.has(canonicalDirectory)) {
+      rows.push([relative, 'directory-cycle']);
+      return;
+    }
+    const nextActiveDirectories = new Set(activeDirectories);
+    nextActiveDirectories.add(canonicalDirectory);
+    const directory = fs.opendirSync(current);
+    const entries = [];
+    try {
+      let entry;
+      while ((entry = directory.readSync()) !== null) {
+        entriesVisited += 1;
+        if (entriesVisited > snapshotBudget.maximumEntries) throw new Error('workspace snapshot entry budget exceeded');
+        entries.push(entry);
+      }
+    } finally {
+      directory.closeSync();
+    }
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
       const childRelative = relative ? `${relative}/${entry.name}` : entry.name;
-      const child = path.join(current, entry.name);
-      if (entry.isDirectory()) visit(child, childRelative);
-      else if (entry.isFile()) rows.push(`${childRelative}:${sha256File(child)}`);
+      visitPath(path.join(current, entry.name), childRelative, nextActiveDirectories, depth + 1);
     }
   };
-  visit(root);
-  return `sha256:${crypto.createHash('sha256').update(rows.join('\n')).digest('hex')}`;
+  const visitPath = (current, relative, activeDirectories, depth) => {
+    const metadata = fs.lstatSync(current);
+    if (metadata.isDirectory()) {
+      visitDirectory(current, relative, activeDirectories, depth);
+    } else if (metadata.isFile()) {
+      rows.push([relative, 'file', metadata.mode & 0o777, snapshotFile(current, metadata.size)]);
+    } else if (metadata.isSymbolicLink()) {
+      rows.push([relative, 'symlink', fs.readlinkSync(current)]);
+      let target;
+      try {
+        target = fs.statSync(current);
+      } catch (error) {
+        throw new Error(`workspace snapshot cannot resolve symbolic link ${relative}: ${error.message}`);
+      }
+      if (target.isDirectory()) visitDirectory(current, `${relative}:target`, activeDirectories, depth);
+      else if (target.isFile()) rows.push([relative, 'target-file', target.mode & 0o777, snapshotFile(current, target.size)]);
+      else throw new Error(`workspace snapshot does not support symbolic link target ${relative}`);
+    } else {
+      throw new Error(`workspace snapshot does not support ${relative}`);
+    }
+  };
+  if (fs.existsSync(workspaceRoot)) visitDirectory(workspaceRoot, '', new Set());
+  return `sha256:${crypto.createHash('sha256').update(JSON.stringify(rows)).digest('hex')}`;
 }
 
 function requireObject(value, description) {

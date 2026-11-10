@@ -54,7 +54,7 @@
   Forbidden changes: do not validate the original build directory in place of the downloaded package, do not bypass checksum failures, and do not require publication credentials.
   Verification: run `node --test scripts/release-artifact-roundtrip-e2e.test.mjs` and the Release Workflow matrix.
 
-- [x] E-23c-release-artifact-runtime-journey: Patch only `scripts/release-artifact-runtime-journey.test.mjs` and `scripts/release-artifact-runtime-journey.mjs`, then patch only `package.json` and `.github/workflows/release.yml` to invoke them:
+- [ ] E-23c-release-artifact-runtime-journey: Patch only `scripts/release-artifact-runtime-journey.test.mjs` and `scripts/release-artifact-runtime-journey.mjs`, then patch only `package.json` and `.github/workflows/release.yml` to invoke them:
   Route: implementation.
   Source TODO: 2026-10-06 external review: downloaded artifacts have not demonstrated Mode Pack load, minimal task execution, ledger generation, forced stop/resume, or stale/replay rejection.
   Depends on: E-23b-release-artifact-download-roundtrip.
