@@ -7,7 +7,22 @@ import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import test from 'node:test';
 
-import { runReleaseArtifactRuntimeJourney, stopFixtureProvider, withFixtureProvider } from './release-artifact-runtime-journey.mjs';
+import { runReleaseArtifactRuntimeJourney, stopFixtureProvider, withFixtureProvider, fixtureEnvironment } from './release-artifact-runtime-journey.mjs';
+
+test('provider fixture uses an ordinary isolated Git config accepted by Git', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-provider-git-config-'));
+  try {
+    const env = fixtureEnvironment(root);
+    assert.ok(fs.lstatSync(env.GIT_CONFIG_GLOBAL).isFile(), 'Git config must be an ordinary file rather than an OS null device');
+    assert.ok(path.resolve(env.GIT_CONFIG_GLOBAL).startsWith(path.resolve(root) + path.sep));
+    assert.equal(fs.readFileSync(env.GIT_CONFIG_GLOBAL, 'utf8'), '');
+    const result = spawnSync('git', ['config', '--global', '--list', '--show-origin'], { cwd: root, env, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, '');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('provider shutdown waits for process exit before removing its working directory', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-provider-shutdown-'));

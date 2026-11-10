@@ -175,14 +175,16 @@ async function startFixtureProvider(environment) {
   return { baseUrl: JSON.parse(fs.readFileSync(portPath, 'utf8')).base_url, stop };
 }
 
-function fixtureEnvironment(workspaceRoot) {
+export function fixtureEnvironment(workspaceRoot) {
   const environment = {};
   for (const key of ['PATH', 'Path', 'PATHEXT', 'SystemRoot', 'SYSTEMROOT', 'COMSPEC', 'ComSpec', 'TEMP', 'TMP', 'TMPDIR']) {
     if (process.env[key] !== undefined) environment[key] = process.env[key];
   }
   const home = path.join(workspaceRoot, '.brownie', 'fixture-home');
   fs.mkdirSync(home, { recursive: true });
-  return { ...environment, HOME: home, USERPROFILE: home, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull,
+  const gitConfig = path.join(home, '.gitconfig');
+  fs.writeFileSync(gitConfig, '', { flag: 'wx', mode: 0o600 });
+  return { ...environment, HOME: home, USERPROFILE: home, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: gitConfig,
     GIT_TERMINAL_PROMPT: '0', BROWNIE_WORKSPACE_ROOT: workspaceRoot, BROWNIE_CLI_RUN_MODE_ID: 'implementer',
     BROWNIE_TEST_LLM_API_KEY: 'isolated-fixture-key', BROWNIE_LLM_ALLOW_PROVIDER_ACCESS: 'true' };
 }
