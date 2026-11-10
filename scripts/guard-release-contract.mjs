@@ -206,6 +206,8 @@ function validateExecutableTraceBinding(repoRoot, contract, errors, contractPath
   requireValue(matching.length === 1, errors, `${contractPath} commit_trace must identify exactly one validated executable artifact, including its workflow and both commit identities.`);
   for (const artifact of matching) {
     const provenance = artifact.provenance_binding;
+    requireValue(provenance.artifactSha256 === trace.artifact_sha256, errors,
+      `${contractPath} artifact provenance digest must match the trace and actual artifact bytes.`);
     const sourceCommit = 'sha256:' + trace.tested_commit;
     const sourceIdentity = 'sha256:' + crypto.createHash('sha256').update(sourceCommit + ':clean').digest('hex');
     requireValue(artifact.source_commit === sourceCommit && artifact.source_clean_tree === 'clean'
