@@ -218,7 +218,8 @@ function validateExecutableTraceBinding(repoRoot, contract, errors, contractPath
       && provenance.buildSourceCleanTree === 'clean' && provenance.buildSourceIdentity === sourceIdentity
       && provenance.sourceCheckoutState === 'clean', errors,
     `${contractPath} artifact source identity must bind the actual tested commit and clean source tree.`);
-    requireValue(typeof provenance.platform === 'string' && typeof provenance.architecture === 'string'
+    requireValue(typeof provenance.platform === 'string' && /^[a-z][a-z0-9]*$/.test(provenance.platform)
+      && typeof provenance.architecture === 'string' && /^[a-z][a-z0-9_]*$/.test(provenance.architecture)
       && artifact.target === provenance.platform + '-' + provenance.architecture, errors,
     `${contractPath} executable artifact target must match its platform and architecture.`);
     const provenanceIdentity = 'sha256:' + crypto.createHash('sha256').update([
