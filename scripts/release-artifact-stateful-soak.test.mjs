@@ -23,60 +23,57 @@ function createFixtureArchive(root, options = {}) {
   fs.mkdirSync(packageRoot, { recursive: true });
   const runtimePath = path.join(packageRoot, 'brownie-runtime');
   const cliPath = path.join(packageRoot, 'brownie');
-  writeExecutable(runtimePath, '#!/usr/bin/env node\nprocess.exit(0);\n');
-  const replayMutation = options.replayMutation === true;
-  const userWorkspaceReplayMutation = options.userWorkspaceReplayMutation === true;
-  const symlinkTargetReplayMutation = options.symlinkTargetReplayMutation === true;
-  const truncateLedgerOnResume = options.truncateLedgerOnResume === true;
-  const requireWorkspaceCwd = options.requireWorkspaceCwd === true;
-  const rejectRuntimePathOverride = options.rejectRuntimePathOverride === true;
-  const requireProcessLossSignal = options.requireProcessLossSignal !== false;
-  const processLossExitCode = options.processLossExitCode ?? 75;
-  writeExecutable(cliPath, `#!/usr/bin/env node
+  writeExecutable(runtimePath, String.raw`#!/usr/bin/env node
+const fs = require('node:fs');
+for (const line of fs.readFileSync(0, 'utf8').trim().split('\n')) {
+  const request = JSON.parse(line);
+  const result = request.method === 'llm.status'
+    ? {provider:${options.fakeProvider === true ? "'Fake'" : "'OpenAiCompatible'"},enabled:${options.disabledProvider !== true},strict:${options.nonStrictProvider !== true},will_fallback_to_fake:false,llm_provider_access_allowed:${options.deniedProvider !== true}}
+    : request.method === 'mode.list' ? {modes:[{mode_id:'implementer'}]}
+    : {attempted:true,healthy:${options.unhealthyProvider !== true}};
+  process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:request.id,result})+'\n');
+}
+`);
+  writeExecutable(cliPath, String.raw`#!/usr/bin/env node
 const fs = require('node:fs');
 const path = require('node:path');
 const root = process.env.BROWNIE_WORKSPACE_ROOT;
 const args = process.argv.slice(2).filter((value) => value !== '--json');
 const write = (value) => process.stdout.write(JSON.stringify(value));
-if (${requireWorkspaceCwd} && fs.realpathSync(process.cwd()) !== fs.realpathSync(root)) {
-  process.stderr.write('packaged CLI was not started in the isolated workspace\\n');
-  process.exit(91);
+fs.appendFileSync(${JSON.stringify(path.join(root, 'cli-invocations.jsonl'))},JSON.stringify(args)+'\n');
+if (${options.requireWorkspaceCwd === true} && fs.realpathSync(process.cwd()) !== fs.realpathSync(root)) process.exit(91);
+if (${options.rejectRuntimePathOverride === true} && process.env.BROWNIE_RUNTIME_PATH) process.exit(92);
+const runId='run-fixture',taskId='task-fixture';
+const ledgerPath=path.join(root,'.brownie','runs',runId,'ledger.jsonl');
+if(args[0]==='mode') {write({mode_list:{modes:[{mode_id:'implementer'}]}});process.exit(0);}
+if(args[0]==='run') {
+ if(${options.requireProcessLossSignal !== false} && process.env.BROWNIE_RELEASE_ARTIFACT_SOAK_PROCESS_LOSS_AFTER_JOURNEY_STARTED!=='1')process.exit(93);
+ fs.mkdirSync(path.dirname(ledgerPath),{recursive:true});
+ fs.writeFileSync(ledgerPath,JSON.stringify({kind:${options.missingDurableBoundary === true ? "'Other'" : "'HeadlessJourneyStarted'"},run_id:runId,task_id:taskId})+'\n');
+ fs.writeFileSync(path.join(root,'user-source.txt'),'durable user workspace input\n');
+ process.exit(${options.processLossExitCode ?? 75});
 }
-if (${rejectRuntimePathOverride} && process.env.BROWNIE_RUNTIME_PATH) {
-  process.stderr.write('packaged CLI received a runtime path override\\n');
-  process.exit(92);
-}
-if (args[0] === 'mode' && args[1] === 'list') {
-  write({ ok: true, mode_list: { modes: [{ mode_id: 'fixture', display_name: 'Fixture' }] } });
-  process.exit(0);
-}
-if (args[0] === 'run') {
-  if (${requireProcessLossSignal} && process.env.BROWNIE_RELEASE_ARTIFACT_SOAK_PROCESS_LOSS_AFTER_JOURNEY_STARTED !== '1') {
-    process.stderr.write('packaged CLI did not receive the process-loss opt-in signal\\n');
-    process.exit(93);
+if(args[0]==='resume') {
+ const resumedOnce=fs.readFileSync(ledgerPath,'utf8').includes('recovery_continuation');
+ if(!resumedOnce) {
+  if(${options.truncateLedgerOnResume === true})fs.writeFileSync(ledgerPath,'{"kind":"recovered"}\n');
+  fs.appendFileSync(ledgerPath,JSON.stringify({kind:'recovery_continuation',run_id:runId,task_id:taskId})+'\n');
+  if(${options.terminalFailure === true}) {
+   fs.appendFileSync(ledgerPath,JSON.stringify({kind:'TaskFailed',run_id:runId,task_id:taskId})+'\n');
+   write({resume:{status:'no_eligible_task',controller_action:'resume',continuation_required:true,terminal_failure:true}});process.exit(0);
   }
-  const runId = 'run-fixture';
-  const runRoot = path.join(root, '.brownie', 'runs', runId);
-  fs.mkdirSync(runRoot, { recursive: true });
-  fs.writeFileSync(path.join(runRoot, 'ledger.jsonl'), '{"kind":"headless_journey_started"}\\n');
-  fs.writeFileSync(path.join(root, '.brownie', 'soak-marker.json'), '{"state":"interrupted"}\\n');
-  fs.writeFileSync(path.join(root, 'user-source.txt'), 'durable user workspace input\\n');
-  process.exit(${processLossExitCode});
-}
-if (args[0] === 'resume') {
-  const ledgerPath = path.join(root, '.brownie', 'runs', 'run-fixture', 'ledger.jsonl');
-  const resumedOnce = fs.readFileSync(ledgerPath, 'utf8').includes('recovery_continuation');
-  if (!resumedOnce) {
-    if (${truncateLedgerOnResume}) fs.writeFileSync(ledgerPath, '{"kind":"recovered"}\\n');
-    else fs.appendFileSync(ledgerPath, '{"kind":"recovery_continuation"}\\n');
-    write({ ok: true, resume: { status: 'no_eligible_task', controller_action: 'resume', continuation_required: true } });
-    process.exit(0);
-  }
-  if (${replayMutation}) fs.appendFileSync(ledgerPath, '{"event":"unexpected_resume_side_effect"}\\n');
-  if (${userWorkspaceReplayMutation}) fs.appendFileSync(path.join(root, 'user-source.txt'), 'duplicate user workspace side effect\\n');
-  if (${symlinkTargetReplayMutation}) fs.appendFileSync(path.join(root, 'user-source.txt'), 'duplicate symlink target side effect\\n');
-  write({ ok: true, resume: { status: 'no_eligible_task', controller_action: 'stop', continuation_required: false } });
-  process.exit(0);
+  if(!${options.missingTaskOutput === true})fs.writeFileSync(path.join(root,'journey-output.md'),'Brownie completed the artifact Runtime journey.\n');
+  const ledgerTask=${options.mismatchedTaskLedger === true ? "'another-task'" : 'taskId'};
+  fs.appendFileSync(ledgerPath,JSON.stringify({kind:'TaskCompleted',run_id:runId,task_id:ledgerTask})+'\n');
+  if(!${options.missingLedgerApply === true})fs.appendFileSync(ledgerPath,JSON.stringify({kind:'WorkspacePatchApplyResultRecorded',run_id:runId,task_id:ledgerTask,payload:{applied:true,apply_status:'Applied'}})+'\n');
+  write({resume:{status:'objective_proposal_applied',controller_action:'resume',continuation_required:true,terminal_failure:false,
+   run_id:runId,task_id:taskId,session_id:'session-fixture',journey_id:'journey-fixture',objective_apply_applied:true,objective_apply_apply_status:'Applied',terminal_completion_final_state:'Completed',terminal_completion_task_status:'Completed'}});process.exit(0);
+ }
+ if(${options.replayMutation === true})fs.appendFileSync(ledgerPath,'{"kind":"duplicate"}\n');
+ if(${options.userWorkspaceReplayMutation === true || options.symlinkTargetReplayMutation === true})fs.appendFileSync(path.join(root,'user-source.txt'),'duplicate user workspace side effect\n');
+ if(${options.createUserDirectory === true})fs.mkdirSync(path.join(root,'replayed-directory'));
+ if(${options.changeUserMode === true})fs.chmodSync(path.join(root,'user-source.txt'),0o600);
+ write({resume:{status:'no_eligible_task',controller_action:'stop',continuation_required:false}});process.exit(0);
 }
 process.exit(64);
 `);
@@ -89,10 +86,10 @@ process.exit(64);
   return archivePath;
 }
 
-test('stateful soak uses only the packaged artifact and records bounded recovery, replay, and evidence-chain checks', () => {
+test('stateful soak uses only the packaged artifact and records bounded recovery, replay, and evidence-chain checks', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-fixture-'));
   const evidencePath = path.join(root, 'evidence.json');
-  const evidence = runReleaseArtifactStatefulSoak({
+  const evidence = await runReleaseArtifactStatefulSoak({
     targetId: 'linux-x64',
     archivePath: createFixtureArchive(root),
     workspaceRoot: path.join(root, 'workspace'),
@@ -101,6 +98,14 @@ test('stateful soak uses only the packaged artifact and records bounded recovery
   });
   assert.equal(evidence.workflow_run_id, 'workflow-fixture-123');
   assert.equal(evidence.bounds.commands_executed, 3);
+  assert.equal(evidence.bounds.bootstrap_runtime_calls, 1);
+  assert.equal(evidence.bounds.total_runtime_processes, 4);
+  const invocations = fs.readFileSync(path.join(root, 'cli-invocations.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.equal(invocations.length, 3);
+  assert.deepEqual(invocations.map((args) => args[0]), ['run', 'resume', 'resume']);
+  assert.ok(invocations[2].includes('--run-id'));
+  assert.equal(evidence.checks.task_execution.applied, true);
+  assert.equal(evidence.checks.provider_bootstrap.strict, true);
   assert.equal(evidence.checks.process_loss_recovery.fresh_process_resume, true);
   assert.equal(evidence.checks.artifact_execution_boundary.packaged_cli_only, true);
   assert.equal(evidence.checks.artifact_execution_boundary.isolated_workspace_cwd, true);
@@ -116,9 +121,9 @@ test('stateful soak uses only the packaged artifact and records bounded recovery
   assert.deepEqual(JSON.parse(fs.readFileSync(evidencePath, 'utf8')), evidence);
 });
 
-test('stateful soak rejects a non-process-loss run failure even after a durable journey boundary', () => {
+test('stateful soak rejects a non-process-loss run failure even after a durable journey boundary', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-wrong-exit-'));
-  assert.throws(
+  await assert.rejects(
     () => runReleaseArtifactStatefulSoak({
       targetId: 'linux-x64',
       archivePath: createFixtureArchive(root, { processLossExitCode: 74 }),
@@ -128,9 +133,9 @@ test('stateful soak rejects a non-process-loss run failure even after a durable 
   );
 });
 
-test('stateful soak treats a blank workflow run identifier as absent evidence', () => {
+test('stateful soak treats a blank workflow run identifier as absent evidence', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-blank-workflow-run-'));
-  const evidence = runReleaseArtifactStatefulSoak({
+  const evidence = await runReleaseArtifactStatefulSoak({
     targetId: 'linux-x64',
     archivePath: createFixtureArchive(root),
     workspaceRoot: path.join(root, 'workspace'),
@@ -139,9 +144,9 @@ test('stateful soak treats a blank workflow run identifier as absent evidence', 
   assert.equal(evidence.workflow_run_id, null);
 });
 
-test('stateful soak runs a packaged artifact from an isolated workspace without a source runtime override', () => {
+test('stateful soak runs a packaged artifact from an isolated workspace without a source runtime override', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-isolated-workspace-'));
-  const evidence = runReleaseArtifactStatefulSoak({
+  const evidence = await runReleaseArtifactStatefulSoak({
     targetId: 'linux-x64',
     archivePath: createFixtureArchive(root, {
       target: 'linux-x64',
@@ -156,9 +161,9 @@ test('stateful soak runs a packaged artifact from an isolated workspace without 
   assert.equal(evidence.checks.finite_convergence.commands_executed, 3);
 });
 
-test('stateful soak rejects replay mutations to files outside the Brownie state directory', () => {
+test('stateful soak rejects replay mutations to files outside the Brownie state directory', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-user-workspace-'));
-  assert.throws(
+  await assert.rejects(
     () => runReleaseArtifactStatefulSoak({
       targetId: 'linux-x64',
       archivePath: createFixtureArchive(root, { userWorkspaceReplayMutation: true }),
@@ -168,7 +173,7 @@ test('stateful soak rejects replay mutations to files outside the Brownie state 
   );
 });
 
-test('stateful soak rejects replay mutations through an external symlink target', () => {
+test('stateful soak rejects replay mutations through an external symlink target', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-symlink-workspace-'));
   const workspaceRoot = path.join(root, 'workspace');
   const externalTarget = path.join(root, 'external-user-source.txt');
@@ -182,7 +187,7 @@ test('stateful soak rejects replay mutations through an external symlink target'
     if (process.platform === 'win32' && error.code === 'EPERM') return;
     throw error;
   }
-  assert.throws(
+  await assert.rejects(
     () => runReleaseArtifactStatefulSoak({
       targetId: 'linux-x64',
       archivePath: createFixtureArchive(root, { symlinkTargetReplayMutation: true }),
@@ -192,9 +197,9 @@ test('stateful soak rejects replay mutations through an external symlink target'
   );
 });
 
-test('stateful soak rejects recovery that truncates the durable ledger', () => {
+test('stateful soak rejects recovery that truncates the durable ledger', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-ledger-truncation-'));
-  assert.throws(
+  await assert.rejects(
     () => runReleaseArtifactStatefulSoak({
       targetId: 'linux-x64',
       archivePath: createFixtureArchive(root, { truncateLedgerOnResume: true }),
@@ -204,9 +209,9 @@ test('stateful soak rejects recovery that truncates the durable ledger', () => {
   );
 });
 
-test('stateful soak rejects a terminal replay that appends a duplicate ledger side effect', () => {
+test('stateful soak rejects a terminal replay that appends a duplicate ledger side effect', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-duplicate-'));
-  assert.throws(
+  await assert.rejects(
     () => runReleaseArtifactStatefulSoak({
       targetId: 'linux-x64',
       archivePath: createFixtureArchive(root, { replayMutation: true }),
@@ -216,7 +221,7 @@ test('stateful soak rejects a terminal replay that appends a duplicate ledger si
   );
 });
 
-test('stateful soak rejects a package whose signed CLI binding was tampered', () => {
+test('stateful soak rejects a package whose recorded CLI binding was tampered', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-tamper-'));
   const archivePath = createFixtureArchive(root);
   const unpacked = path.join(root, 'unpacked');
@@ -224,13 +229,13 @@ test('stateful soak rejects a package whose signed CLI binding was tampered', ()
   assert.equal(spawnSync('tar', ['-xzf', archivePath, '-C', unpacked], { encoding: 'utf8' }).status, 0);
   fs.appendFileSync(path.join(unpacked, 'brownie'), 'tamper\n');
   assert.equal(spawnSync('tar', ['-czf', archivePath, '-C', unpacked, 'brownie', 'brownie-runtime', 'artifact-evidence.json', 'SHA256SUMS'], { encoding: 'utf8' }).status, 0);
-  assert.throws(
+  await assert.rejects(
     () => runReleaseArtifactStatefulSoak({ targetId: 'linux-x64', archivePath, workspaceRoot: path.join(root, 'workspace') }),
     /package integrity mismatch/u
   );
 });
 
-test('stateful soak rejects a package whose signed executable is a symbolic link', () => {
+test('stateful soak rejects a package whose recorded executable is a symbolic link', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-symlink-package-'));
   const archivePath = createFixtureArchive(root);
   const unpacked = path.join(root, 'unpacked');
@@ -248,16 +253,90 @@ test('stateful soak rejects a package whose signed executable is a symbolic link
   fs.writeFileSync(path.join(unpacked, 'artifact-evidence.json'), `${JSON.stringify(evidence)}\n`);
   fs.writeFileSync(path.join(unpacked, 'SHA256SUMS'), `${evidence.artifact.sha256.slice(7)}  brownie\n${evidence.runtime_companion.sha256.slice(7)}  brownie-runtime\n`);
   assert.equal(spawnSync('tar', ['-czf', archivePath, '-C', unpacked, 'brownie', 'brownie-runtime', 'artifact-evidence.json', 'SHA256SUMS'], { encoding: 'utf8' }).status, 0);
-  assert.throws(
+  await assert.rejects(
     () => runReleaseArtifactStatefulSoak({ targetId: 'linux-x64', archivePath, workspaceRoot: path.join(root, 'workspace') }),
     /rejects symbolic link/u
   );
 });
 
-test('stateful soak fails closed if the configured finite command bound differs from the contract', () => {
+test('stateful soak fails closed if the configured finite command bound differs from the contract', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-command-bound-'));
-  assert.throws(
+  await assert.rejects(
     () => runReleaseArtifactStatefulSoak({ targetId: 'linux-x64', archivePath: createFixtureArchive(root), workspaceRoot: path.join(root, 'workspace'), maximumCommands: 4 }),
     /maximum command bound must be exactly 3/u
   );
+});
+
+test('stateful soak rejects a workspace whose entry count exceeds the bounded snapshot budget', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-entry-budget-'));
+  const workspaceRoot = path.join(root, 'workspace');
+  fs.mkdirSync(workspaceRoot);
+  for (let index = 0; index < 4097; index += 1) {
+    fs.writeFileSync(path.join(workspaceRoot, `entry-${index}`), '');
+  }
+  await assert.rejects(
+    () => runReleaseArtifactStatefulSoak({ targetId: 'linux-x64', archivePath: createFixtureArchive(root), workspaceRoot }),
+    /workspace snapshot entry budget exceeded/u
+  );
+});
+
+test('stateful soak rejects a workspace whose nesting exceeds the bounded snapshot depth', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-depth-budget-'));
+  const workspaceRoot = path.join(root, 'workspace');
+  fs.mkdirSync(workspaceRoot);
+  let current = workspaceRoot;
+  for (let index = 0; index < 65; index += 1) {
+    current = path.join(current, 'nested');
+    fs.mkdirSync(current);
+  }
+  await assert.rejects(
+    () => runReleaseArtifactStatefulSoak({ targetId: 'linux-x64', archivePath: createFixtureArchive(root), workspaceRoot }),
+    /workspace snapshot depth budget exceeded/u
+  );
+});
+
+test('stateful soak rejects oversized content reached through an external symlink', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-byte-budget-'));
+  const workspaceRoot = path.join(root, 'workspace');
+  fs.mkdirSync(workspaceRoot);
+  const target = path.join(root, 'large-external-file');
+  fs.writeFileSync(target, '');
+  fs.truncateSync(target, 64 * 1024 * 1024 + 1);
+  try {
+    fs.symlinkSync(target, path.join(workspaceRoot, 'external-content'), 'file');
+  } catch (error) {
+    if (process.platform === 'win32' && error.code === 'EPERM') return t.skip('external symlink privilege unavailable');
+    throw error;
+  }
+  await assert.rejects(
+    () => runReleaseArtifactStatefulSoak({ targetId: 'linux-x64', archivePath: createFixtureArchive(root), workspaceRoot }),
+    /workspace snapshot byte budget exceeded/u
+  );
+});
+
+for (const [name, options, reason] of [
+  ['terminal task failure', { terminalFailure: true }, /task failed during process-loss recovery/u],
+  ['apply label without its task output', { missingTaskOutput: true }, /materialize the minimal task output/u],
+  ['apply label without its ledger record', { missingLedgerApply: true }, /ledger did not record the completed task application/u],
+  ['a completion from another task', { mismatchedTaskLedger: true }, /ledger did not record the completed task application/u],
+  ['process loss before the durable boundary', { missingDurableBoundary: true }, /durable HeadlessJourneyStarted/u],
+  ['a Fake provider', { fakeProvider: true }, /non-Fake strict soak provider/u],
+  ['a disabled provider', { disabledProvider: true }, /non-Fake strict soak provider/u],
+  ['non-strict configuration', { nonStrictProvider: true }, /non-Fake strict soak provider/u],
+  ['denied provider access', { deniedProvider: true }, /non-Fake strict soak provider/u],
+  ['unhealthy provider bootstrap', { unhealthyProvider: true }, /non-Fake strict soak provider/u],
+  ['an empty replay directory', { createUserDirectory: true }, /duplicate side effect/u]
+]) {
+  test(`stateful soak rejects ${name}`, async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-soak-proof-rejection-'));
+    const evidencePath = path.join(root, 'evidence.json');
+    await assert.rejects(() => runReleaseArtifactStatefulSoak({ targetId: 'linux-x64', archivePath: createFixtureArchive(root, options), workspaceRoot: path.join(root, 'workspace'), evidencePath }), reason);
+    assert.equal(fs.existsSync(evidencePath), false, 'failed checks must not publish success evidence');
+  });
+}
+
+test('stateful soak rejects replay that changes user file permissions', async (t) => {
+  if (process.platform === 'win32') return t.skip('POSIX permission semantics unavailable');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-soak-permission-replay-'));
+  await assert.rejects(() => runReleaseArtifactStatefulSoak({ targetId: 'linux-x64', archivePath: createFixtureArchive(root, { changeUserMode: true }), workspaceRoot: path.join(root, 'workspace') }), /duplicate side effect/u);
 });

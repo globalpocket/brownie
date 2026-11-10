@@ -58,6 +58,10 @@ jobs:
         if: runner.os == 'Linux'
         run: node --test scripts/release-artifact-runtime-journey.test.mjs
 
+      - name: Test artifact stateful soak evidence checks
+        if: runner.os == 'Linux'
+        run: node --test scripts/release-artifact-stateful-soak.test.mjs
+
       - name: Verify release workflow artifact topology
         run: pnpm --workspace-root guard:release-workflow-artifact-topology
 
