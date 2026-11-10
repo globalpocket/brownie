@@ -186,14 +186,17 @@ function validateExecutableTraceBinding(repoRoot, contract, errors, contractPath
     return result.status === 0 ? result.stdout.trim() : null;
   };
   const testedTree = /^[a-f0-9]{40}$/.test(trace.tested_commit ?? '') ? git('rev-parse', '--verify', `${trace.tested_commit}^{tree}`) : null;
-  const currentTree = git('rev-parse', '--verify', 'HEAD^{tree}');
-  requireValue(testedTree !== null && testedTree === currentTree, errors,
+  // The persisted trace contains the tested SHA and cannot be part of its own
+  // source identity. Exclude that exact metadata file and generated evidence;
+  // changes to any other tracked source must still invalidate the evidence.
+  const auditedSourcePaths = ['.', ':(exclude).brownie/release-evidence/', `:(exclude,literal)${defaultContractPath}`];
+  requireValue(testedTree !== null && git('diff', '--quiet', trace.tested_commit, 'HEAD', '--', ...auditedSourcePaths) !== null, errors,
     `${contractPath} tested_commit must identify the current audited source tree; stale evidence cannot satisfy the contract.`);
   if (/^[a-f0-9]{40}$/.test(trace.implementation_commit ?? '') && /^[a-f0-9]{40}$/.test(trace.tested_commit ?? '')) {
     requireValue(git('merge-base', '--is-ancestor', trace.implementation_commit, trace.tested_commit) !== null,
       errors, `${contractPath} implementation_commit must belong to the independently identified tested commit.`);
   }
-  requireValue(git('diff', '--quiet', 'HEAD', '--', '.', ':(exclude).brownie/release-evidence/') !== null, errors,
+  requireValue(git('diff', '--quiet', 'HEAD', '--', ...auditedSourcePaths) !== null, errors,
     `${contractPath} implemented evidence cannot describe a dirty tracked source checkout.`);
   const artifacts = supply.sections?.artifacts?.artifacts;
   requireValue(supply.sections?.artifacts?.status === 'satisfied', errors,
@@ -262,9 +265,25 @@ function validateExecutableTraceBinding(repoRoot, contract, errors, contractPath
     } else if (actual) {
       const section = supply.sections?.[{ sha256sums: 'checksums', signature: 'signature_or_integrity_proof', sbom: 'sbom', provenance: 'provenance' }[field]];
       requireValue(section?.status === 'satisfied' && typeof section.path === 'string'
-        && path.resolve(repoRoot, section.path) === actual.absolute
-        && section.sha256 === 'sha256:' + crypto.createHash('sha256').update(actual.bytes).digest('hex'), errors,
-      `${contractPath} implemented ${field} reference must match its executable evidence path and physical digest.`);
+        && path.resolve(repoRoot, section.path) === actual.absolute, errors,
+      `${contractPath} implemented ${field} reference must match its satisfied executable evidence path.`);
+      if (field === 'signature' && section?.proof_kind === 'owner_approved_integrity_authority_with_sha256sums') {
+        const decision = readObject(entry.path);
+        const checksums = supply.sections?.checksums;
+        const checksumFile = readEvidence(checksums?.path);
+        requireValue(section.path === 'docs/architecture/owner-integrity-authority-decision.json'
+          && decision?.schema_version === 1 && decision.decision_id === 'brownie-owner-integrity-authority-decision-v1'
+          && decision.decision_status === 'approved' && decision.owner_approved === true
+          && decision.approved_mechanism === 'protected-git-ref-ci-provenance-sha256sums-integrity-verification'
+          && checksums?.status === 'satisfied' && checksumFile
+          && checksums.sha256 === 'sha256:' + crypto.createHash('sha256').update(checksumFile.bytes).digest('hex')
+          && matching.every((artifact) => checksumFile.bytes.toString('utf8').split(/\r?\n/).some((line) =>
+            line === `${artifact.sha256.slice('sha256:'.length)}  ${artifact.path}`)), errors,
+        `${contractPath} integrity proof must use the approved physical decision and SHA256SUMS binding to the actual artifact.`);
+      } else {
+        requireValue(section?.sha256 === 'sha256:' + crypto.createHash('sha256').update(actual.bytes).digest('hex'), errors,
+          `${contractPath} implemented ${field} reference must match its physical digest.`);
+      }
     }
   }
   const runtimeClaims = (Array.isArray(contract.release_ready_conditions) ? contract.release_ready_conditions : []).some((entry) =>
