@@ -575,7 +575,7 @@ impl GitCommandExecutor {
             git_timeout(),
         )
         .context("failed to inspect current git head")?;
-        if output.timed_out || output.output_oversized {
+        if output.timed_out || output.output_oversized || !output.reader_thread_joined {
             anyhow::bail!("bounded git head inspection failed closed");
         }
         if output.exit_code != Some(0) {
@@ -618,6 +618,8 @@ fn execute_bounded_git(
         Some("git capability timed out.")
     } else if output.output_oversized {
         Some("git output exceeded byte limit.")
+    } else if !output.reader_thread_joined {
+        Some("git output readers did not terminate.")
     } else {
         None
     };
@@ -694,7 +696,11 @@ fn inspect_bounded_git_head_for_status(root: &Path) -> anyhow::Result<Option<Str
         Ok(output) => output,
         Err(_) => return Ok(None),
     };
-    if output.timed_out || output.output_oversized || output.exit_code != Some(0) {
+    if output.timed_out
+        || output.output_oversized
+        || !output.reader_thread_joined
+        || output.exit_code != Some(0)
+    {
         return Ok(None);
     }
     Ok(first_non_empty_git_output_line(&output)
@@ -721,7 +727,7 @@ fn validate_git_repository_root(
             )));
         }
     };
-    if repo.timed_out || repo.output_oversized {
+    if repo.timed_out || repo.output_oversized || !repo.reader_thread_joined {
         return Ok(Some(ToolExecutionResult {
             tool_id: tool_id.to_string(),
             status: ToolExecutionStatus::Failed,
@@ -729,7 +735,7 @@ fn validate_git_repository_root(
                 "reason": if repo.timed_out {
                     "Git repository inspection timed out."
                 } else {
-                    "Git repository inspection exceeded byte limit."
+                    if repo.output_oversized { "Git repository inspection exceeded byte limit." } else { "Git repository inspection readers did not terminate." }
                 },
                 "operation": operation,
                 "process_launched": true,
@@ -827,6 +833,16 @@ fn run_bounded_git_process_with_env(
     timeout: Duration,
     extra_env: &[(&str, OsString)],
 ) -> anyhow::Result<GitProcessResult> {
+    run_bounded_git_process_observed(root, args, timeout, extra_env, |_| Ok(()))
+}
+
+fn run_bounded_git_process_observed(
+    root: &Path,
+    args: &[&str],
+    timeout: Duration,
+    extra_env: &[(&str, OsString)],
+    before_poll: impl FnOnce(&mut Child) -> anyhow::Result<()>,
+) -> anyhow::Result<GitProcessResult> {
     let start = Instant::now();
     let total_bytes = Arc::new(AtomicUsize::new(0));
     let output_oversized = Arc::new(AtomicBool::new(false));
@@ -861,6 +877,13 @@ fn run_bounded_git_process_with_env(
         )
     });
 
+    if let Err(error) = before_poll(&mut child) {
+        let _ = terminate_git_process_tree(&mut child);
+        let _ = join_capture_with_status(stdout_handle);
+        let _ = join_capture_with_status(stderr_handle);
+        return Err(error);
+    }
+
     let mut timed_out = false;
     let mut process_tree_kill_attempted = false;
     let mut process_tree_kill_succeeded = false;
@@ -868,9 +891,14 @@ fn run_bounded_git_process_with_env(
     let exit_code = loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                if output_oversized.load(Ordering::SeqCst) {
-                    process_tree_kill_succeeded = true;
-                    process_tree_kill_reason = "process_tree_already_exited";
+                // Reaping the leader says nothing about descendants holding
+                // inherited stdout/stderr. Terminate the owned group before
+                // waiting for either reader, including on a successful exit.
+                if process_tree_timeout_supported() {
+                    process_tree_kill_attempted = true;
+                    let (succeeded, reason) = terminate_git_process_tree(&mut child);
+                    process_tree_kill_succeeded = succeeded;
+                    process_tree_kill_reason = reason;
                 }
                 break status.code();
             }
@@ -1619,7 +1647,10 @@ fn git_commit_process_failure(
     reason: &str,
     process_count: usize,
 ) -> Option<ToolExecutionResult> {
-    let failed = output.timed_out || output.output_oversized || output.exit_code != Some(0);
+    let failed = output.timed_out
+        || output.output_oversized
+        || !output.reader_thread_joined
+        || output.exit_code != Some(0);
     failed.then(|| {
         git_commit_failed_output(json!({
             "reason": reason,
@@ -2117,6 +2148,7 @@ impl VerificationCommandExecutor {
 
 struct ProcessCaptureHandle {
     receiver: mpsc::Receiver<ProcessCapture>,
+    thread: thread::JoinHandle<()>,
 }
 
 fn capture_pipe_async<R>(reader: R) -> ProcessCaptureHandle
@@ -2124,10 +2156,10 @@ where
     R: Read + Send + 'static,
 {
     let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || {
+    let thread = thread::spawn(move || {
         let _ = sender.send(capture_pipe(reader));
     });
-    ProcessCaptureHandle { receiver }
+    ProcessCaptureHandle { receiver, thread }
 }
 
 fn capture_pipe_async_bounded<R>(
@@ -2140,7 +2172,7 @@ where
     R: Read + Send + 'static,
 {
     let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || {
+    let thread = thread::spawn(move || {
         let _ = sender.send(capture_pipe_bounded(
             reader,
             max_bytes,
@@ -2148,7 +2180,7 @@ where
             output_oversized,
         ));
     });
-    ProcessCaptureHandle { receiver }
+    ProcessCaptureHandle { receiver, thread }
 }
 
 fn capture_pipe<R: Read>(mut reader: R) -> ProcessCapture {
@@ -2221,26 +2253,31 @@ fn capture_pipe_bounded<R: Read>(
 }
 
 fn join_capture(handle: Option<ProcessCaptureHandle>) -> ProcessCapture {
-    handle
-        .and_then(|handle| {
-            handle
-                .receiver
-                .recv_timeout(Duration::from_millis(VERIFICATION_CAPTURE_JOIN_TIMEOUT_MS))
-                .ok()
-        })
-        .unwrap_or_else(ProcessCapture::empty)
+    finish_capture(handle, VERIFICATION_CAPTURE_JOIN_TIMEOUT_MS).0
 }
 
 fn join_capture_with_status(handle: Option<ProcessCaptureHandle>) -> (ProcessCapture, bool) {
-    handle
-        .map(|handle| {
-            handle
-                .receiver
-                .recv_timeout(Duration::from_millis(GIT_CAPTURE_JOIN_TIMEOUT_MS))
-                .map(|capture| (capture, true))
-                .unwrap_or_else(|_| (ProcessCapture::empty(), false))
-        })
-        .unwrap_or_else(|| (ProcessCapture::empty(), true))
+    finish_capture(handle, GIT_CAPTURE_JOIN_TIMEOUT_MS)
+}
+
+fn finish_capture(handle: Option<ProcessCaptureHandle>, timeout_ms: u64) -> (ProcessCapture, bool) {
+    let Some(handle) = handle else {
+        return (ProcessCapture::empty(), true);
+    };
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    let Ok(capture) = handle
+        .receiver
+        .recv_timeout(Duration::from_millis(timeout_ms))
+    else {
+        return (ProcessCapture::empty(), false);
+    };
+    // Receiving a message is not a thread join. Preserve the same deadline
+    // and only report joined once the actual reader thread has terminated.
+    while !handle.thread.is_finished() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(1));
+    }
+    let joined = handle.thread.is_finished() && handle.thread.join().is_ok();
+    (capture, joined)
 }
 
 #[cfg(unix)]
@@ -2266,6 +2303,9 @@ fn terminate_process_tree(child_id: u32) -> (bool, &'static str) {
     let signaled = unsafe { kill(-pgid, SIGKILL) == 0 };
     if signaled {
         (true, "process_tree_kill_signaled")
+    } else if std::io::Error::last_os_error().raw_os_error() == Some(3) {
+        // ESRCH on the group, unlike a reaped leader, proves no member remains.
+        (true, "process_tree_already_exited")
     } else {
         (false, "process_tree_kill_failed")
     }
@@ -7376,6 +7416,65 @@ printf '%s\n' '?? normal.txt'
         assert!(!serialized.contains("fake-git"));
         assert!(!serialized.contains("BROWNIE_TEST_GIT_PROGRAM"));
         assert!(!serialized.contains("command"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_status_exited_leader_drains_owned_descendants_and_joins_readers() {
+        let _lock = git_test_env_lock();
+        for oversized in [false, true] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let script = temp.path().join("exited-leader.sh");
+            let leader = temp.path().join("leader.pid");
+            let descendant = temp.path().join("descendant.pid");
+            let payload = if oversized {
+                "x".repeat(MAX_GIT_CAPTURE_BYTES + 4096)
+            } else {
+                "bounded output".to_string()
+            };
+            fs::write(
+                &script,
+                format!(
+                    "#!/bin/sh\nprintf '%s\\n' \"$$\" > '{}'\n/bin/sleep 30 &\nprintf '%s\\n' \"$!\" > '{}'\nprintf '%s' '{}'\nexit 0\n",
+                    leader.display(), descendant.display(), payload
+                ),
+            )
+            .expect("write fixture");
+            let mut permissions = fs::metadata(&script).expect("metadata").permissions();
+            std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+            fs::set_permissions(&script, permissions).expect("chmod");
+            let _guard = TestGitEnvGuard::set(&script, 1000);
+            // This barrier, after starting both pipe readers, guarantees the
+            // root has exited while its descendant still owns the pipe. No
+            // sleep or scheduler-dependent race is used to arrange the case.
+            let result = run_bounded_git_process_observed(
+                temp.path(),
+                &["status"],
+                Duration::from_millis(1000),
+                &[],
+                |child| {
+                    child.wait()?;
+                    Ok(())
+                },
+            )
+            .expect("bounded process");
+            let pid = fs::read_to_string(leader)
+                .expect("leader pid")
+                .trim()
+                .parse::<u32>()
+                .expect("pid");
+            // Also clean up when testing a regression in the old branch.
+            let _ = terminate_process_tree(pid);
+            assert!(result.process_tree_kill_attempted);
+            assert!(result.process_tree_kill_succeeded);
+            assert_eq!(
+                result.process_tree_kill_reason,
+                "process_tree_kill_signaled"
+            );
+            assert!(result.reader_thread_joined);
+            assert_eq!(result.output_oversized, oversized);
+            assert!(!process_exists(pid));
+        }
     }
 
     #[cfg(unix)]
