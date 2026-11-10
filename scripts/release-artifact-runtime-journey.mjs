@@ -100,7 +100,46 @@ function runJson(binaryPath, args, environment) {
   }
 }
 
-function startFixtureProvider(environment) {
+export async function stopFixtureProvider(child, root) {
+  if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
+    await new Promise((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(terminateTimer);
+        clearTimeout(deadlineTimer);
+        child.removeListener('exit', onExit);
+        child.removeListener('error', onError);
+      };
+      const onExit = () => { cleanup(); resolve(); };
+      const onError = (error) => { cleanup(); reject(error); };
+      const terminateTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
+      const deadlineTimer = setTimeout(() => onError(new Error('fixture provider did not exit; preserving its directory')), 10_000);
+      child.once('exit', onExit);
+      child.once('error', onError);
+      child.kill('SIGTERM');
+    });
+  }
+  fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+}
+
+export async function withFixtureProvider(environment, operation) {
+  const provider = await startFixtureProvider(environment);
+  let operationError;
+  try {
+    return await operation(provider);
+  } catch (error) {
+    operationError = error;
+    throw error;
+  } finally {
+    try {
+      await provider.stop();
+    } catch (cleanupError) {
+      if (operationError) throw new AggregateError([operationError, cleanupError], `Runtime journey failed: ${operationError.message}; provider cleanup failed: ${cleanupError.message}`, { cause: operationError });
+      throw cleanupError;
+    }
+  }
+}
+
+async function startFixtureProvider(environment) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-journey-provider-'));
   const portPath = path.join(root, 'port.json');
   const scriptPath = path.join(root, 'server.mjs');
@@ -127,10 +166,12 @@ function startFixtureProvider(environment) {
     'setInterval(() => { try { process.kill(parent, 0); } catch { server.close(() => process.exit(0)); } }, 1000).unref();'
   ].join('\n'));
   const child = spawn(process.execPath, [scriptPath], { cwd: root, env: environment, stdio: 'ignore' });
-  const stop = () => { child.kill('SIGTERM'); fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); };
+  const stop = () => stopFixtureProvider(child, root);
+  let startupError;
+  child.on('error', (error) => { startupError = error; });
   const deadline = Date.now() + 5000;
-  while (!fs.existsSync(portPath) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
-  if (!fs.existsSync(portPath)) { stop(); throw new Error('isolated fixture provider bootstrap timed out'); }
+  while (!fs.existsSync(portPath) && !startupError && child.exitCode === null && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
+  if (!fs.existsSync(portPath)) { await stop(); throw startupError ?? new Error('isolated fixture provider bootstrap timed out'); }
   return { baseUrl: JSON.parse(fs.readFileSync(portPath, 'utf8')).base_url, stop };
 }
 
@@ -273,7 +314,7 @@ function evidencePathFrom(options) {
   return options.evidencePath ?? process.env.BROWNIE_RELEASE_RUNTIME_JOURNEY_EVIDENCE_PATH ?? '';
 }
 
-export function runReleaseArtifactRuntimeJourney(options = {}) {
+export async function runReleaseArtifactRuntimeJourney(options = {}) {
   const workflowRunId = options.workflowRunId ?? process.env.GITHUB_RUN_ID ?? null;
   const targetId = options.targetId ?? process.env.BROWNIE_RELEASE_RUNTIME_JOURNEY_TARGET ?? '';
   const target = releaseTargets.find((candidate) => candidate.id === targetId);
@@ -293,8 +334,7 @@ export function runReleaseArtifactRuntimeJourney(options = {}) {
   fs.mkdirSync(workspaceRoot, { recursive: true });
   if (fs.lstatSync(path.join(workspaceRoot, '.brownie'), { throwIfNoEntry: false })) throw new Error('existing Runtime state cannot be reused as an artifact fixture');
   const environment = fixtureEnvironment(workspaceRoot);
-  const provider = startFixtureProvider(environment);
-  try {
+  const evidence = await withFixtureProvider(environment, (provider) => {
     prepareFixture(workspaceRoot, environment, provider.baseUrl);
     const providerBootstrap = assertFixtureProvider(path.join(extractionRoot, target.runtimeName), environment);
     const modeList = runJson(packagedCli, ['mode', 'list'], environment);
@@ -364,18 +404,17 @@ export function runReleaseArtifactRuntimeJourney(options = {}) {
         stale_replay_rejection: { passed: true, status: replay.status, controller_action: replay.controller_action, workspace_unchanged: true, ledger_unchanged: true }
       }
     };
-    const outputPath = evidencePathFrom(options);
-    if (outputPath) {
-      fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-      fs.writeFileSync(outputPath, `${JSON.stringify(evidence, null, 2)}\n`);
-    }
     return evidence;
-  } finally {
-    provider.stop();
+  });
+  const outputPath = evidencePathFrom(options);
+  if (outputPath) {
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.writeFileSync(outputPath, `${JSON.stringify(evidence, null, 2)}\n`);
   }
+  return evidence;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const evidence = runReleaseArtifactRuntimeJourney({ cwd: repoRoot });
+  const evidence = await runReleaseArtifactRuntimeJourney({ cwd: repoRoot });
   process.stdout.write(`${JSON.stringify(evidence)}\n`);
 }

@@ -3,10 +3,63 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import test from 'node:test';
 
-import { runReleaseArtifactRuntimeJourney } from './release-artifact-runtime-journey.mjs';
+import { runReleaseArtifactRuntimeJourney, stopFixtureProvider, withFixtureProvider } from './release-artifact-runtime-journey.mjs';
+
+test('provider shutdown waits for process exit before removing its working directory', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-provider-shutdown-'));
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { cwd: root, stdio: 'ignore' });
+  const exited = once(child, 'exit');
+  const originalRemove = fs.rmSync;
+  fs.rmSync = function (target, options) {
+    if (target === root) assert.ok(child.exitCode !== null || child.signalCode !== null, 'directory is still held by a live child process (Windows EBUSY)');
+    return originalRemove.call(this, target, options);
+  };
+  try {
+    await stopFixtureProvider(child, root);
+    assert.equal(fs.existsSync(root), false);
+  } finally {
+    fs.rmSync = originalRemove;
+    child.kill('SIGKILL');
+    await exited;
+    originalRemove(root, { recursive: true, force: true });
+  }
+});
+
+for (const operationFails of [false, true]) {
+  test(`provider cleanup failure preserves ${operationFails ? 'the original journey error' : 'its failure status'}`, async () => {
+    const originalRemove = fs.rmSync;
+    const operationError = new Error('original Runtime application failure');
+    const cleanupError = new Error('directory removal failed');
+    let retainedRoot;
+    fs.rmSync = function (target, options) {
+      if (path.basename(target).startsWith('brownie-artifact-journey-provider-')) {
+        retainedRoot = target;
+        throw cleanupError;
+      }
+      return originalRemove.call(this, target, options);
+    };
+    try {
+      await assert.rejects(() => withFixtureProvider({ ...process.env }, () => {
+        if (operationFails) throw operationError;
+        return { passed: true };
+      }), (error) => {
+        if (operationFails) {
+          assert.ok(error instanceof AggregateError);
+          assert.equal(error.cause, operationError);
+          assert.deepEqual(error.errors, [operationError, cleanupError]);
+        } else assert.equal(error, cleanupError);
+        return true;
+      });
+    } finally {
+      fs.rmSync = originalRemove;
+      if (retainedRoot) originalRemove(retainedRoot, { recursive: true, force: true });
+    }
+  });
+}
 
 function sha256File(filePath) {
   return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')}`;
@@ -94,10 +147,10 @@ process.exit(64);
   return archivePath;
 }
 
-test('journey executes only the packaged fixture and records durable interruption, resume, and replay evidence', () => {
+test('journey executes only the packaged fixture and records durable interruption, resume, and replay evidence', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-runtime-journey-fixture-'));
   const evidencePath = path.join(root, 'evidence.json');
-  const evidence = runReleaseArtifactRuntimeJourney({
+  const evidence = await runReleaseArtifactRuntimeJourney({
     targetId: 'linux-x64',
     archivePath: createFixtureArchive(root),
     workspaceRoot: path.join(root, 'workspace'),
@@ -118,7 +171,7 @@ test('journey executes only the packaged fixture and records durable interruptio
   assert.deepEqual(JSON.parse(fs.readFileSync(evidencePath, 'utf8')), evidence);
 });
 
-test('journey rejects a package whose recorded runtime binding was tampered', () => {
+test('journey rejects a package whose recorded runtime binding was tampered', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-runtime-journey-tamper-'));
   const archivePath = createFixtureArchive(root);
   const unpacked = path.join(root, 'unpacked');
@@ -126,21 +179,21 @@ test('journey rejects a package whose recorded runtime binding was tampered', ()
   assert.equal(spawnSync('tar', ['-xzf', archivePath, '-C', unpacked], { encoding: 'utf8' }).status, 0);
   fs.appendFileSync(path.join(unpacked, 'brownie-runtime'), 'tamper\n');
   assert.equal(spawnSync('tar', ['-czf', archivePath, '-C', unpacked, 'brownie', 'brownie-runtime', 'artifact-evidence.json', 'SHA256SUMS'], { encoding: 'utf8' }).status, 0);
-  assert.throws(
+  await assert.rejects(
     () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath, workspaceRoot: path.join(root, 'workspace') }),
     /package integrity mismatch/u
   );
 });
 
-test('journey rejects continuation labels without a real controlled process-loss exit', () => {
+test('journey rejects continuation labels without a real controlled process-loss exit', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-missing-loss-'));
-  assert.throws(
+  await assert.rejects(
     () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root, { missingProcessLoss: true }), workspaceRoot: path.join(root, 'workspace') }),
     /required process-loss status 75/u
   );
 });
 
-test('journey rejects a package whose recorded CLI binding was tampered', () => {
+test('journey rejects a package whose recorded CLI binding was tampered', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-runtime-journey-tamper-'));
   const archivePath = createFixtureArchive(root);
   const unpacked = path.join(root, 'unpacked');
@@ -148,7 +201,7 @@ test('journey rejects a package whose recorded CLI binding was tampered', () => 
   assert.equal(spawnSync('tar', ['-xzf', archivePath, '-C', unpacked], { encoding: 'utf8' }).status, 0);
   fs.appendFileSync(path.join(unpacked, 'brownie'), 'tamper\n');
   assert.equal(spawnSync('tar', ['-czf', archivePath, '-C', unpacked, 'brownie', 'brownie-runtime', 'artifact-evidence.json', 'SHA256SUMS'], { encoding: 'utf8' }).status, 0);
-  assert.throws(
+  await assert.rejects(
     () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath, workspaceRoot: path.join(root, 'workspace') }),
     /package integrity mismatch/u
   );
@@ -161,24 +214,24 @@ for (const [name, options, reason] of [
   ['a Fake provider despite reported health', { fakeProvider: true }, /non-Fake strict fixture provider bootstrap/u],
   ['a recovery that never reaches its terminal boundary', { neverConverge: true }, /resume attempt budget/u]
 ]) {
-  test(`journey rejects ${name}`, () => {
+  test(`journey rejects ${name}`, async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-evidence-rejection-'));
-    assert.throws(() => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root, options), workspaceRoot: path.join(root, 'workspace') }), reason);
+    await assert.rejects(() => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root, options), workspaceRoot: path.join(root, 'workspace') }), reason);
   });
 }
 
-test('journey rejects replay that changes an ordinary user task output', () => {
+test('journey rejects replay that changes an ordinary user task output', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-user-replay-'));
   const workspaceRoot = path.join(root, 'workspace');
   fs.mkdirSync(workspaceRoot);
   fs.writeFileSync(path.join(workspaceRoot, 'user-source.txt'), 'initial\n');
-  assert.throws(
+  await assert.rejects(
     () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root, { mutateUserFile: true }), workspaceRoot }),
     /runtime did not reject replay without a side effect/u
   );
 });
 
-test('journey rejects replay that changes a user task output through an external symlink', (t) => {
+test('journey rejects replay that changes a user task output through an external symlink', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-linked-replay-'));
   const workspaceRoot = path.join(root, 'workspace');
   fs.mkdirSync(workspaceRoot);
@@ -190,46 +243,46 @@ test('journey rejects replay that changes a user task output through an external
     if (process.platform === 'win32' && error.code === 'EPERM') return t.skip('external symlink privilege unavailable');
     throw error;
   }
-  assert.throws(
+  await assert.rejects(
     () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root, { mutateUserFile: true }), workspaceRoot }),
     /runtime did not reject replay without a side effect/u
   );
 });
 
-test('journey rejects replay that creates an empty user output directory', () => {
+test('journey rejects replay that creates an empty user output directory', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-directory-replay-'));
   const workspaceRoot = path.join(root, 'workspace');
   fs.mkdirSync(workspaceRoot);
-  assert.throws(
+  await assert.rejects(
     () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root, { createUserDirectory: true }), workspaceRoot }),
     /runtime did not reject replay without a side effect/u
   );
 });
 
-test('journey rejects replay that changes user output permissions', (t) => {
+test('journey rejects replay that changes user output permissions', async (t) => {
   if (process.platform === 'win32') return t.skip('POSIX permission semantics unavailable');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-mode-replay-'));
   const workspaceRoot = path.join(root, 'workspace');
   fs.mkdirSync(workspaceRoot);
   fs.writeFileSync(path.join(workspaceRoot, 'user-source.txt'), 'initial\n', { mode: 0o600 });
-  assert.throws(
+  await assert.rejects(
     () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root, { changeUserMode: true }), workspaceRoot }),
     /runtime did not reject replay without a side effect/u
   );
 });
 
-test('journey bounds full-workspace snapshot entry enumeration', () => {
+test('journey bounds full-workspace snapshot entry enumeration', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-entry-budget-'));
   const workspaceRoot = path.join(root, 'workspace');
   fs.mkdirSync(workspaceRoot);
   for (let index = 0; index < 4097; index += 1) fs.writeFileSync(path.join(workspaceRoot, `entry-${index}`), '');
-  assert.throws(
+  await assert.rejects(
     () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root), workspaceRoot }),
     /workspace snapshot entry budget exceeded/u
   );
 });
 
-test('journey bounds full-workspace snapshot directory depth', () => {
+test('journey bounds full-workspace snapshot directory depth', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-depth-budget-'));
   const workspaceRoot = path.join(root, 'workspace');
   fs.mkdirSync(workspaceRoot);
@@ -238,13 +291,13 @@ test('journey bounds full-workspace snapshot directory depth', () => {
     current = path.join(current, 'n');
     fs.mkdirSync(current);
   }
-  assert.throws(
+  await assert.rejects(
     () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root), workspaceRoot }),
     /workspace snapshot depth budget exceeded/u
   );
 });
 
-test('journey bounds bytes read from externally linked task output', (t) => {
+test('journey bounds bytes read from externally linked task output', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-byte-budget-'));
   const workspaceRoot = path.join(root, 'workspace');
   fs.mkdirSync(workspaceRoot);
@@ -257,13 +310,13 @@ test('journey bounds bytes read from externally linked task output', (t) => {
     if (process.platform === 'win32' && error.code === 'EPERM') return t.skip('external symlink privilege unavailable');
     throw error;
   }
-  assert.throws(
+  await assert.rejects(
     () => runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root), workspaceRoot }),
     /workspace snapshot byte budget exceeded/u
   );
 });
 
-test('journey permits an unchanged directory symlink cycle without recursive traversal', (t) => {
+test('journey permits an unchanged directory symlink cycle without recursive traversal', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-journey-cycle-'));
   const workspaceRoot = path.join(root, 'workspace');
   fs.mkdirSync(workspaceRoot);
@@ -273,6 +326,6 @@ test('journey permits an unchanged directory symlink cycle without recursive tra
     if (process.platform === 'win32' && error.code === 'EPERM') return t.skip('directory symlink privilege unavailable');
     throw error;
   }
-  const evidence = runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root), workspaceRoot });
+  const evidence = await runReleaseArtifactRuntimeJourney({ targetId: 'linux-x64', archivePath: createFixtureArchive(root), workspaceRoot });
   assert.equal(evidence.checks.stale_replay_rejection.workspace_unchanged, true);
 });
