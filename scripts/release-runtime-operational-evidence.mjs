@@ -512,8 +512,10 @@ function targetCoordinates(target) {
 function releaseArchiveForTarget(repoRoot, artifact) {
   const evidence = artifact.artifact_evidence ?? {};
   const declared = evidence.archive ?? artifact.archive;
-  if (declared?.path && isSha256(declared.sha256)) {
-    return { path: normalizeRelativePath(declared.path), sha256: declared.sha256 };
+  if (declared !== undefined && declared !== null) {
+    return typeof declared.path === 'string' && declared.path.length > 0 && isSha256(declared.sha256)
+      ? { path: normalizeRelativePath(declared.path), sha256: declared.sha256 }
+      : null;
   }
   const extension = String(artifact.target ?? '').startsWith('win32-') ? 'zip' : 'tar.gz';
   const candidate = path.join(artifact.evidence_dir ?? '', `brownie-${artifact.target}.${extension}`);
@@ -521,6 +523,20 @@ function releaseArchiveForTarget(repoRoot, artifact) {
   return fs.existsSync(fullPath)
     ? { path: normalizeRelativePath(candidate), sha256: sha256File(fullPath) }
     : null;
+}
+
+function physicalReleaseFileMatches(repoRoot, record) {
+  if (typeof record?.path !== 'string' || record.path.length === 0 || !isSha256(record.sha256)) {
+    return false;
+  }
+  try {
+    const file = resolveRepoRelative(repoRoot, record.path);
+    const relative = path.relative(fs.realpathSync(repoRoot), fs.realpathSync(file));
+    return !relative.startsWith('..') && !path.isAbsolute(relative) && fs.lstatSync(file).isFile() &&
+      sha256File(file) === record.sha256;
+  } catch {
+    return false;
+  }
 }
 
 function allPassed(evidence, checks) {
@@ -554,7 +570,7 @@ function buildBindingChecks({
     isCommitSha256(implementationCommit) &&
     typeof testedCommit === 'string' &&
     implementationCommit.slice('sha256:'.length) === testedCommit;
-  const workflowBound = typeof workflowRunId === 'string' && workflowRunId.length > 0 &&
+  const workflowBound = typeof workflowRunId === 'string' && /^[1-9][0-9]*$/u.test(workflowRunId) &&
     journey?.workflow_run_id === workflowRunId && soak?.workflow_run_id === workflowRunId;
   const archiveBound = isSha256(archive?.sha256) &&
     journey?.artifact?.archive_sha256 === archive.sha256 &&
@@ -636,6 +652,7 @@ export function buildReleaseEvidenceRoundtripBinding(options = {}) {
     if (artifactRecord.source_clean_tree !== 'clean') errors.push('source_checkout_not_clean');
     if (!isSha256(artifactRecord.source_identity)) errors.push('source_identity_missing_or_invalid');
     if (typeof workflowRunId !== 'string' || workflowRunId.length === 0) errors.push('workflow_run_id_missing');
+    else if (!/^[1-9][0-9]*$/u.test(workflowRunId)) errors.push('workflow_run_id_invalid');
     if (typeof testedCommit !== 'string' || !/^[a-f0-9]{40}$/u.test(testedCommit)) errors.push('tested_commit_missing_or_invalid');
     if (isCommitSha256(implementationCommit) && testedCommit && implementationCommit.slice('sha256:'.length) !== testedCommit) {
       errors.push('implementation_tested_commit_mismatch');
@@ -649,6 +666,9 @@ export function buildReleaseEvidenceRoundtripBinding(options = {}) {
     if (!archive || !isSha256(archive.sha256)) errors.push('package_sha256_missing');
     if (!isSha256(binarySha256)) errors.push('binary_sha256_missing');
     if (!isSha256(runtimeSha256)) errors.push('runtime_sha256_missing');
+    if (!physicalReleaseFileMatches(repoRoot, archive)) errors.push('package_file_missing_or_sha_mismatch');
+    if (!physicalReleaseFileMatches(repoRoot, { path: artifactRecord.path ?? artifact.path, sha256: binarySha256 })) errors.push('binary_file_missing_or_sha_mismatch');
+    if (!physicalReleaseFileMatches(repoRoot, runtimeRecord)) errors.push('runtime_file_missing_or_sha_mismatch');
 
     if (journey?.evidence_id !== 'brownie-release-artifact-runtime-journey-v1') errors.push('roundtrip_journey_missing_or_invalid');
     if (journey?.target !== target) errors.push('roundtrip_journey_target_mismatch');
@@ -1326,103 +1346,6 @@ function buildExecutableEvidenceValidationSection(sections, releaseEvidenceBindi
   };
 }
 
-function commandSummaryFixture() {
-  return {
-    command_summary: { kind: 'command_summary', word_count: 2, sha256: 'a'.repeat(64) },
-    exit_code: 0,
-    signal: null,
-    passed: true,
-    stdout_summary: { kind: 'process_output_summary', byte_length: 0, line_count: 0, sha256: 'b'.repeat(64) },
-    stderr_summary: { kind: 'process_output_summary', byte_length: 0, line_count: 0, sha256: 'c'.repeat(64) }
-  };
-}
-
-function statefulStepFixture(id) {
-  return {
-    id,
-    status: 'satisfied',
-    passed: true,
-    evidence_summary: { kind: 'stateful_soak_step_summary', sha256: id.padEnd(64, id.at(0) ?? 'a').slice(0, 64) }
-  };
-}
-
-function buildShortcutRuntimeOperationalEvidence(options, repoRoot, generatedAt) {
-  const artifactLifecycleInput = options.artifact_lifecycle ?? {};
-  const artifactFailClosed = artifactLifecycleInput.fail_closed !== false;
-  const artifactStatus = artifactLifecycleInput.status === 'executable' ? 'satisfied' : (artifactLifecycleInput.status ?? 'satisfied');
-  const goldenInput = options.golden_journey_fixture ?? {};
-  const goldenExecuted = goldenInput.executed !== false;
-  const soakInput = options.soak_test ?? {};
-  const soakStepIds = Array.isArray(soakInput.step_ids) ? soakInput.step_ids : requiredStatefulSoakStepIds;
-  const sections = {
-    artifact_lifecycle: {
-      status: artifactStatus,
-      release_blocking: true,
-      fail_closed: artifactFailClosed,
-      lifecycle_results: [
-        {
-          target: 'darwin-arm64',
-          path: '.brownie/release-evidence/artifacts/darwin-arm64/brownie',
-          status: artifactStatus,
-          passed: artifactStatus === 'satisfied',
-          checksum_verified: artifactStatus === 'satisfied',
-          uninstalled: artifactStatus === 'satisfied',
-          commands: [commandSummaryFixture()]
-        }
-      ]
-    },
-    golden_journey_fixture: {
-      status: goldenExecuted ? 'satisfied' : 'not_executed',
-      release_blocking: true,
-      commands: goldenExecuted ? [commandSummaryFixture()] : [],
-      lifecycle_evidence: {
-        json_present: goldenExecuted,
-        proposal_preflight_observed: goldenExecuted,
-        apply_observed: goldenExecuted,
-        post_apply_verification_observed: goldenExecuted,
-        workspace_mutation_observed: goldenExecuted,
-        completion_observed: goldenExecuted
-      }
-    },
-    soak_test: {
-      status: 'satisfied',
-      release_blocking: true,
-      iterations_requested: 100,
-      iterations_completed: 100,
-      failure_count: 0,
-      failure_rate: 0,
-      duplicate_side_effects_observed: false,
-      unrecoverable_run_count: 0,
-      commands: [commandSummaryFixture()],
-      step_ids: soakStepIds,
-      stateful_steps: soakStepIds.map((id) => statefulStepFixture(id))
-    }
-  };
-  sections.executable_evidence_validation = buildExecutableEvidenceValidationSection(sections);
-  const failClosedReasons = [];
-  if (!artifactFailClosed) {
-    failClosedReasons.push('artifact_lifecycle:fail_closed_false');
-  }
-  for (const sectionId of requiredSections) {
-    const section = sections[sectionId];
-    if (!section || section.status !== 'satisfied') {
-      failClosedReasons.push(`${sectionId}:${section?.status ?? 'missing'}`);
-    }
-  }
-  return {
-    schema_version: 1,
-    evidence_id: 'brownie-runtime-operational-evidence-v1',
-    generated_at: generatedAt,
-    repository: loadPhaseLoopActorDeployment({ repoRoot }).deployment?.repository ?? null,
-    release_ready: false,
-    runtime_release_ready: false,
-    fail_closed: artifactFailClosed,
-    required_sections: requiredSections,
-    sections,
-    fail_closed_reasons: failClosedReasons
-  };
-}
-
 function writeJson(repoRoot, relativePath, value) {
   const fullPath = resolveRepoRelative(repoRoot, relativePath);
   fs.mkdirSync(path.dirname(fullPath), { recursive: true });
@@ -1437,7 +1360,7 @@ export function buildRuntimeOperationalEvidence(options = {}) {
     options.golden_journey_fixture !== undefined ||
     options.soak_test !== undefined
   ) {
-    return buildShortcutRuntimeOperationalEvidence(options, repoRoot, generatedAt);
+    throw new Error('Synthetic operational evidence options are unsupported; provide executable artifact evidence.');
   }
   const iterations = options.iterations ?? 100;
   const roundtripTarget = options.roundtripTarget ?? process.env.BROWNIE_RELEASE_EVIDENCE_TARGET ?? null;
