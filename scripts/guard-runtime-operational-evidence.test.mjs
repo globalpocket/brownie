@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 import {
@@ -116,11 +117,13 @@ test('release roundtrip binding accepts complete, mutually bound artifact eviden
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-roundtrip-binding-test-'));
   const target = 'linux-x64';
   const evidenceDir = `.brownie/release-evidence/artifacts/${target}`;
-  const archiveSha256 = `sha256:${'a'.repeat(64)}`;
-  const binarySha256 = `sha256:${'b'.repeat(64)}`;
-  const runtimeSha256 = `sha256:${'c'.repeat(64)}`;
+  const physicalContents = { archive: 'downloaded archive bytes', binary: 'downloaded CLI bytes', runtime: 'downloaded Runtime bytes' };
+  const hash = value => `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
+  const archiveSha256 = hash(physicalContents.archive);
+  const binarySha256 = hash(physicalContents.binary);
+  const runtimeSha256 = hash(physicalContents.runtime);
   const commit = 'd'.repeat(40);
-  const workflowRunId = 'workflow-123';
+  const workflowRunId = '123456';
   const journeyChecks = Object.fromEntries([
     'mode_pack_load', 'workspace_mutation', 'ledger_generation', 'forced_interruption', 'resume', 'stale_replay_rejection'
   ].map((id) => [id, { passed: true }]));
@@ -134,15 +137,19 @@ test('release roundtrip binding accepts complete, mutually bound artifact eviden
     arch: 'x64',
     archive: { path: `${evidenceDir}/brownie-linux-x64.tar.gz`, sha256: archiveSha256 },
     artifact: {
+      path: `${evidenceDir}/brownie`,
       source_commit: `sha256:${commit}`,
       source_clean_tree: 'clean',
       source_identity: `sha256:${'e'.repeat(64)}`,
       sha256: binarySha256
     },
-    runtime_companion: { sha256: runtimeSha256 }
+    runtime_companion: { path: `${evidenceDir}/brownie-runtime`, sha256: runtimeSha256 }
   };
   const artifactDirectory = path.join(repoRoot, evidenceDir);
   fs.mkdirSync(artifactDirectory, { recursive: true });
+  fs.writeFileSync(path.join(artifactDirectory, 'brownie-linux-x64.tar.gz'), physicalContents.archive);
+  fs.writeFileSync(path.join(artifactDirectory, 'brownie'), physicalContents.binary);
+  fs.writeFileSync(path.join(artifactDirectory, 'brownie-runtime'), physicalContents.runtime);
   fs.writeFileSync(path.join(artifactDirectory, 'runtime-journey-evidence.json'), JSON.stringify({
     evidence_id: 'brownie-release-artifact-runtime-journey-v1', target, workflow_run_id: workflowRunId,
     artifact: { archive_sha256: archiveSha256, artifact_sha256: binarySha256, runtime_sha256: runtimeSha256 }, checks: journeyChecks
@@ -214,7 +221,7 @@ test('collector consumes complete downloaded artifact receipts without requiring
   const runtimeSha256 = write('brownie-runtime', 'downloaded runtime companion');
   const archiveSha256 = write('brownie-linux-x64.tar.gz', 'downloaded archive');
   const commit = 'd'.repeat(40);
-  const workflowRunId = 'workflow-123';
+  const workflowRunId = '123456';
   const artifact = {
     archive_sha256: archiveSha256,
     artifact_sha256: binarySha256,
@@ -352,14 +359,11 @@ test('fail-closed evidence requires explicit fail_closed_reasons when artifact l
 });
 
 test('rejects non-fail-closed executable evidence', async (t) => {
-  const evidence = await buildRuntimeOperationalEvidence({
+  assert.throws(() => buildRuntimeOperationalEvidence({
     artifact_lifecycle: { status: 'executable', fail_closed: false },
     golden_journey_fixture: { executed: true },
     soak_test: { step_ids: requiredStatefulSoakStepIds }
-  });
-  const guardResult = await runRuntimeOperationalEvidenceGuard(evidence);
-  assert.ok(!guardResult.valid, 'guard should reject non-fail-closed executable evidence');
-  assert.ok(guardResult.errors.some((e) => e.includes('fail_closed')), 'error should mention fail_closed');
+  }), /Synthetic operational evidence/u);
 });
 
 function validateStatefulSoakSteps(evidence) {
@@ -441,7 +445,7 @@ function validReleaseEvidenceBinding(overrides = {}) {
       status: 'satisfied',
       implementation_commit: `sha256:${commit}`,
       tested_commit: commit,
-      workflow_run_id: 'workflow-123',
+      workflow_run_id: '123456',
       platform: 'darwin',
       architecture: 'arm64',
       package_sha256: `sha256:${'a'.repeat(64)}`,
@@ -975,3 +979,137 @@ test('rejects forbidden local and raw process evidence', () => {
   assert(errors.some((error) => error.includes('must not store raw process evidence')), errors);
   assert(errors.some((error) => error.includes('must not contain forbidden local evidence')), errors);
 });
+
+function physicalRoundtripFixture() {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-physical-roundtrip-'));
+  const target = 'linux-x64';
+  const evidenceDir = `.brownie/release-evidence/artifacts/${target}`;
+  const directory = path.join(repoRoot, evidenceDir);
+  fs.mkdirSync(directory, { recursive: true });
+  const names = { package: 'brownie-linux-x64.tar.gz', binary: 'brownie', runtime: 'brownie-runtime' };
+  const hashes = {};
+  for (const [kind, name] of Object.entries(names)) {
+    const bytes = Buffer.from(`downloaded ${kind} fixture`);
+    fs.writeFileSync(path.join(directory, name), bytes);
+    hashes[kind] = `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
+  }
+  const commit = 'd'.repeat(40);
+  const workflowRunId = '123456';
+  const artifact = { archive_sha256: hashes.package, artifact_sha256: hashes.binary, runtime_sha256: hashes.runtime };
+  const artifactEvidence = {
+    target, platform: 'linux', arch: 'x64',
+    archive: { path: `${evidenceDir}/${names.package}`, sha256: hashes.package },
+    artifact: { path: `${evidenceDir}/${names.binary}`, target, sha256: hashes.binary,
+      source_commit: `sha256:${commit}`, source_clean_tree: 'clean', source_identity: `sha256:${'e'.repeat(64)}` },
+    runtime_companion: { path: `${evidenceDir}/${names.runtime}`, sha256: hashes.runtime }
+  };
+  const writeJson = (name, value) => fs.writeFileSync(path.join(directory, name), JSON.stringify(value));
+  writeJson('artifact-evidence.json', artifactEvidence);
+  const journeyChecks = Object.fromEntries(['mode_pack_load', 'workspace_mutation', 'ledger_generation', 'forced_interruption', 'resume', 'stale_replay_rejection'].map(id => [id, { passed: true }]));
+  const soakChecks = Object.fromEntries(['artifact_execution_boundary', 'process_loss_recovery', 'duplicate_side_effect_rejection', 'ledger_workspace_consistency', 'resume_replay_behavior', 'finite_convergence', 'evidence_chain_integrity'].map(id => [id, { passed: true }]));
+  soakChecks.artifact_execution_boundary = { passed: true, packaged_cli_only: true, isolated_workspace_cwd: true, runtime_path_override_removed: true };
+  soakChecks.finite_convergence = { passed: true, commands_executed: 3, maximum_commands: 3 };
+  writeJson('runtime-journey-evidence.json', { evidence_id: 'brownie-release-artifact-runtime-journey-v1', target, workflow_run_id: workflowRunId, artifact, checks: journeyChecks });
+  writeJson('runtime-stateful-soak-evidence.json', { evidence_id: 'brownie-release-artifact-stateful-soak-v1', target, workflow_run_id: workflowRunId, artifact, checks: soakChecks });
+  return { repoRoot, target, evidenceDir, directory, names, artifactEvidence, writeJson, commit, workflowRunId };
+}
+
+for (const kind of ['package', 'binary', 'runtime']) {
+  for (const operation of ['delete', 'modify']) {
+    test(`full Runtime collector rejects ${operation} of the physical ${kind} despite matching receipts`, () => {
+      const fixture = physicalRoundtripFixture();
+      const previousRun = process.env.GITHUB_RUN_ID;
+      const previousSha = process.env.GITHUB_SHA;
+      try {
+        const file = path.join(fixture.directory, fixture.names[kind]);
+        if (operation === 'delete') fs.unlinkSync(file);
+        else fs.writeFileSync(file, 'changed physical bytes');
+        process.env.GITHUB_RUN_ID = fixture.workflowRunId;
+        process.env.GITHUB_SHA = fixture.commit;
+        const evidence = buildRuntimeOperationalEvidence({ repoRoot: fixture.repoRoot, iterations: 1, roundtripTarget: fixture.target });
+        assert.equal(evidence.release_evidence_binding.status, 'not_executed');
+        assert(evidence.fail_closed_reasons.length > 0);
+        // A blocked evidence document is valid; its status must not become satisfied.
+        assert.deepEqual(validateRuntimeOperationalEvidence(evidence, { repoRoot: fixture.repoRoot, validateBoundEvidence: true }), []);
+        const command = spawnSync(process.execPath, [path.join(process.cwd(), 'scripts/release-runtime-operational-evidence.mjs'), '--repo-root', fixture.repoRoot, '--iterations', '1'], { encoding: 'utf8', timeout: 10000 });
+        assert.equal(command.status, 1, command.stderr);
+        const generated = JSON.parse(command.stdout);
+        assert.equal(generated.status, 'failed');
+        assert(generated.fail_closed_reasons.length > 0);
+        assert.equal(evidence.release_ready, false);
+        assert.equal(evidence.runtime_release_ready, false);
+      } finally {
+        if (previousRun === undefined) delete process.env.GITHUB_RUN_ID; else process.env.GITHUB_RUN_ID = previousRun;
+        if (previousSha === undefined) delete process.env.GITHUB_SHA; else process.env.GITHUB_SHA = previousSha;
+        fs.rmSync(fixture.repoRoot, { recursive: true, force: true });
+      }
+    });
+  }
+}
+
+test('physical binding rejects a declared file outside the repository even when bytes match', () => {
+  const fixture = physicalRoundtripFixture();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-physical-outside-'));
+  try {
+    const source = path.join(fixture.directory, fixture.names.runtime);
+    const destination = path.join(outside, fixture.names.runtime);
+    fs.copyFileSync(source, destination);
+    fixture.artifactEvidence.runtime_companion.path = path.relative(fixture.repoRoot, destination);
+    const binding = buildReleaseEvidenceRoundtripBinding({ repoRoot: fixture.repoRoot, testedCommit: fixture.commit,
+      workflowRunId: fixture.workflowRunId, artifacts: [{ target: fixture.target, evidence_dir: fixture.evidenceDir, artifact_evidence: fixture.artifactEvidence }] });
+    assert.equal(binding.status, 'not_executed');
+  } finally {
+    fs.rmSync(fixture.repoRoot, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('physical binding rejects malformed declared archive metadata instead of falling back to a valid convention file', () => {
+  const fixture = physicalRoundtripFixture();
+  try {
+    fixture.artifactEvidence.archive.sha256 = 'malformed-declared-digest';
+    const binding = buildReleaseEvidenceRoundtripBinding({ repoRoot: fixture.repoRoot, testedCommit: fixture.commit,
+      workflowRunId: fixture.workflowRunId, artifacts: [{ target: fixture.target, evidence_dir: fixture.evidenceDir, artifact_evidence: fixture.artifactEvidence }] });
+    assert.equal(binding.status, 'not_executed');
+    assert(binding.bindings[0].errors.includes('package_sha256_missing'));
+  } finally {
+    fs.rmSync(fixture.repoRoot, { recursive: true, force: true });
+  }
+});
+
+
+for (const [name, input] of [
+  ['artifact lifecycle', { artifact_lifecycle: { status: 'executable', fail_closed: true } }],
+  ['Golden Journey', { golden_journey_fixture: { executed: true } }],
+  ['100-iteration stateful soak', { soak_test: { step_ids: requiredStatefulSoakStepIds } }]
+]) test(`public collector rejects unobserved synthetic ${name}`, () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-unobserved-operational-'));
+  try {
+    assert.throws(() => buildRuntimeOperationalEvidence({ repoRoot, ...input }), /Synthetic operational evidence/u);
+    assert.deepEqual(fs.readdirSync(repoRoot), []);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+for (const workflowRunId of ['workflow-123', '0', '-1', '1.5', '00123456', 123456]) {
+  test(`collector rejects noncanonical workflow identity ${typeof workflowRunId}:${workflowRunId}`, () => {
+    const fixture = physicalRoundtripFixture();
+    try {
+      for (const name of ['runtime-journey-evidence.json', 'runtime-stateful-soak-evidence.json']) {
+        const value = JSON.parse(fs.readFileSync(path.join(fixture.directory, name), 'utf8'));
+        value.workflow_run_id = workflowRunId;
+        fixture.writeJson(name, value);
+      }
+      const binding = buildReleaseEvidenceRoundtripBinding({
+        repoRoot: fixture.repoRoot,
+        testedCommit: fixture.commit,
+        workflowRunId,
+        artifacts: [{target:fixture.target,evidence_dir:fixture.evidenceDir,artifact_evidence:fixture.artifactEvidence}]
+      });
+      assert.equal(binding.status, 'not_executed');
+      const code = typeof workflowRunId === 'string' ? 'workflow_run_id_invalid' : 'workflow_run_id_missing';
+      assert(binding.bindings[0].errors.includes(code), JSON.stringify(binding));
+    } finally { fs.rmSync(fixture.repoRoot, {recursive:true,force:true}); }
+  });
+}
