@@ -3,9 +3,22 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import test from 'node:test';
+import test, { afterEach, beforeEach } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { validateAddedFunctionReachability } from './guard-js-added-function-reachability.mjs';
+
+const fixtureEnvironmentKeys = ['CI', 'GITHUB_EVENT_NAME', 'GITHUB_BASE_REF', 'BROWNIE_JS_REACHABILITY_BASE'];
+let fixtureEnvironment;
+beforeEach(() => {
+  fixtureEnvironment = Object.fromEntries(fixtureEnvironmentKeys.map((name) => [name, process.env[name]]));
+  for (const name of fixtureEnvironmentKeys) delete process.env[name];
+});
+afterEach(() => {
+  for (const name of fixtureEnvironmentKeys) {
+    if (fixtureEnvironment[name] === undefined) delete process.env[name];
+    else process.env[name] = fixtureEnvironment[name];
+  }
+});
 
 function run(repoRoot, args) {
   const result = spawnSync('git', args, {

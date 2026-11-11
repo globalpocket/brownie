@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -695,7 +695,7 @@ test('allows claim-smoke recovery to deliver dirty workspace progress for a pend
   const repo = makeRepo();
   fs.writeFileSync(path.join(repo, '.brownie/todo.md'), '- [ ] E-owner: Owner must provide release credentials:\n  Route: owner.\n  Verification: external owner handoff.\n');
   fs.writeFileSync(path.join(repo, 'README.md'), 'dirty\n');
-  const claim = path.join(os.tmpdir(), `brownie-pending-completion-claim-${Date.now()}.json`);
+  const claim = path.join(os.tmpdir(), `brownie-pending-completion-claim-${randomUUID()}.json`);
   fs.writeFileSync(claim, JSON.stringify({
     status: 'completed',
     completion_cleanup_pending: true,
@@ -736,7 +736,7 @@ test('accepts an absolute TODO path inside the repository', () => {
 
 test('rejects a TODO path outside the repository', () => {
   const repo = makeRepo();
-  const outsideTodo = path.join(os.tmpdir(), `brownie-outside-${Date.now()}.md`);
+  const outsideTodo = path.join(os.tmpdir(), `brownie-outside-${randomUUID()}.md`);
   fs.writeFileSync(outsideTodo, '- [ ] E-outside: Patch only `README.md`\n');
   const result = validatePhaseLoopPreflight({ repo, todo: outsideTodo, skipCommands: true });
   assert.equal(result.valid, false);
@@ -746,7 +746,7 @@ test('rejects a TODO path outside the repository', () => {
 
 test('rejects an in-repository TODO symlink that resolves outside the repository', () => {
   const repo = makeRepo();
-  const outsideTodo = path.join(os.tmpdir(), `brownie-outside-link-${Date.now()}.md`);
+  const outsideTodo = path.join(os.tmpdir(), `brownie-outside-link-${randomUUID()}.md`);
   const linkedTodo = path.join(repo, '.brownie/todo-link.md');
   fs.writeFileSync(outsideTodo, '- [ ] E-outside: Patch only `README.md`\n');
   fs.symlinkSync(outsideTodo, linkedTodo);
@@ -758,7 +758,7 @@ test('rejects an in-repository TODO symlink that resolves outside the repository
 
 test('accepts a workspace TODO snapshot and records source, fingerprint, and queue CAS evidence', () => {
   const repo = makeRepo();
-  const sourceTodo = path.join(os.tmpdir(), `brownie-snapshot-source-${Date.now()}.md`);
+  const sourceTodo = path.join(os.tmpdir(), `brownie-snapshot-source-${randomUUID()}.md`);
   const snapshotTodo = path.join(repo, '.brownie', 'todo-snapshot.md');
   const breakdown = path.join(repo, '.brownie', 'todo-breakdown.md');
   const todoText = fs.readFileSync(path.join(repo, '.brownie/todo.md'), 'utf8');
@@ -805,7 +805,7 @@ test('runs the TODO guard against the configured snapshot path and rejects malfo
 
 test('snapshot audit rejection preserves claim, ledger, status, and runtime state', () => {
   const repo = makeRepo();
-  const sourceTodo = path.join(os.tmpdir(), `brownie-snapshot-protected-${Date.now()}.md`);
+  const sourceTodo = path.join(os.tmpdir(), `brownie-snapshot-protected-${randomUUID()}.md`);
   const snapshotTodo = path.join(repo, '.brownie', 'todo-snapshot.md');
   const breakdown = path.join(repo, '.brownie', 'todo-breakdown.md');
   const stateDir = path.join(repo, '.brownie', 'private', 'phase-loop');
@@ -895,7 +895,7 @@ test('rejects the fixture marker outside the claim-smoke fixture profile', () =>
 
 test('allows an external temporary queue only under the explicit claim-smoke fixture profile', () => {
   const repo = makeRepo();
-  const outsideTodo = path.join(os.tmpdir(), `brownie-claim-smoke-todo-${Date.now()}.md`);
+  const outsideTodo = path.join(os.tmpdir(), `brownie-claim-smoke-todo-${randomUUID()}.md`);
   fs.writeFileSync(outsideTodo, '- [ ] B-01: durable claim task\n');
   const previous = process.env.PHASE_LOOP_CLAIM_SMOKE_TEST_ONLY;
   process.env.PHASE_LOOP_CLAIM_SMOKE_TEST_ONLY = '1';
@@ -932,7 +932,7 @@ test('keeps production preflight strict when a controller root is supplied', () 
 
 test('accepts sequential controller-owned completion mutations for multiple TODOs', () => {
   const repo = makeRepo();
-  const sourceTodo = path.join(os.tmpdir(), `brownie-snapshot-multi-${Date.now()}.md`);
+  const sourceTodo = path.join(os.tmpdir(), `brownie-snapshot-multi-${randomUUID()}.md`);
   const snapshotTodo = path.join(repo, '.brownie', 'todo-snapshot.md');
   const breakdown = path.join(repo, '.brownie', 'todo-breakdown.md');
   const first = '- [ ] E-first: Patch only `README.md`:\n  Route: documentation.\n  Verification: run `pnpm --workspace-root guard:release-contract`.\n';
@@ -1005,7 +1005,7 @@ test('accepts sequential controller-owned completion mutations for multiple TODO
 
 test('rejects a workspace TODO snapshot whose source fingerprint changed', () => {
   const repo = makeRepo();
-  const sourceTodo = path.join(os.tmpdir(), `brownie-snapshot-mismatch-${Date.now()}.md`);
+  const sourceTodo = path.join(os.tmpdir(), `brownie-snapshot-mismatch-${randomUUID()}.md`);
   const snapshotTodo = path.join(repo, '.brownie', 'todo-snapshot.md');
   const breakdown = path.join(repo, '.brownie', 'todo-breakdown.md');
   fs.writeFileSync(sourceTodo, '- [ ] E-source: Patch only `README.md`\n');
