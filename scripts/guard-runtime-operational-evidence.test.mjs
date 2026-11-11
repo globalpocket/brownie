@@ -710,6 +710,22 @@ test('accepts satisfied runtime operational evidence', () => {
   assert.deepEqual(errors, []);
 });
 
+test('committed Runtime evidence withdraws an unbound Golden Journey success claim', () => {
+  // Bind this check to the committed delivery, preserving any operator's dirty
+  // operational evidence in the working directory.
+  const result = spawnSync('git', ['show', 'HEAD:.brownie/release-evidence/runtime-operational-evidence.json'], {
+    cwd: process.cwd(), encoding: 'utf8'
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const evidence = JSON.parse(result.stdout);
+  if (!evidence.release_evidence_binding) {
+    assert.notEqual(evidence.sections.golden_journey_fixture.status, 'satisfied');
+  }
+  assert.deepEqual(runRuntimeOperationalEvidenceGuard({ repoRoot: process.cwd(), evidence }).errors, []);
+  assert.equal(evidence.runtime_release_ready, false);
+  assert.equal(evidence.release_ready, false);
+});
+
 test('rejects satisfied runtime evidence without the downloaded-artifact binding', () => {
   const evidence = validEvidence();
   delete evidence.release_evidence_binding;

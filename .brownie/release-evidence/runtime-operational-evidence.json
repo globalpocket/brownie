@@ -292,108 +292,10 @@
       ]
     },
     "golden_journey_fixture": {
-      "status": "satisfied",
+      "status": "not_executed",
       "release_blocking": true,
-      "fixture_path": ".brownie/release-evidence/golden-journey-fixture",
-      "lifecycle_evidence": {
-        "json_present": true,
-        "proposal_preflight_observed": true,
-        "apply_observed": true,
-        "post_apply_verification_observed": true,
-        "workspace_mutation_observed": true,
-        "completion_observed": true
-      },
-      "commands": [
-        {
-          "command_summary": {
-            "kind": "command_summary",
-            "word_count": 2,
-            "sha256": "1d9d094c7a5ee2fe49ec8c8146e95d283116ea1b1d9b9e92ca0534a86310f529"
-          },
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout_summary": {
-            "kind": "process_output_summary",
-            "byte_length": 14,
-            "line_count": 1,
-            "sha256": "be8840c2adabf9153603b07c6911172f92a72a4f3466ebad9d458c41602f84c6"
-          },
-          "stderr_summary": {
-            "kind": "process_output_summary",
-            "byte_length": 0,
-            "line_count": 0,
-            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-          }
-        },
-        {
-          "command_summary": {
-            "kind": "command_summary",
-            "word_count": 3,
-            "sha256": "1b060a7ed6f69715c1e83d41f5b335e4978103559f6e53f767f2e12a772d2bd5"
-          },
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout_summary": {
-            "kind": "process_output_summary",
-            "byte_length": 1245,
-            "line_count": 25,
-            "sha256": "768466cdb62ae0e7a187f4a9ff395b4237131f58b463653cad291c09825dc9d3"
-          },
-          "stderr_summary": {
-            "kind": "process_output_summary",
-            "byte_length": 0,
-            "line_count": 0,
-            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-          }
-        },
-        {
-          "command_summary": {
-            "kind": "command_summary",
-            "word_count": 5,
-            "sha256": "62839162aedc7876096350b150e5d230ff88cfa2d75816f0eaeba9b6a2ea001d"
-          },
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout_summary": {
-            "kind": "process_output_summary",
-            "byte_length": 3165,
-            "line_count": 1,
-            "sha256": "b16620de0c83f28678b20cb31ae0f7427757ee1cb8c5c1243f4cf2fd57a6c677"
-          },
-          "stderr_summary": {
-            "kind": "process_output_summary",
-            "byte_length": 0,
-            "line_count": 0,
-            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-          }
-        },
-        {
-          "command_summary": {
-            "kind": "command_summary",
-            "word_count": 3,
-            "sha256": "c2b629d3eb7da307293bfcfd8c249b668f8c092c13e215e902d17577043a354d"
-          },
-          "exit_code": 0,
-          "signal": null,
-          "passed": true,
-          "stdout_summary": {
-            "kind": "process_output_summary",
-            "byte_length": 1589,
-            "line_count": 1,
-            "sha256": "06fae77c125fa75cf4488c56b634855986d83a07924fda04eab8e64c1c0771c5"
-          },
-          "stderr_summary": {
-            "kind": "process_output_summary",
-            "byte_length": 0,
-            "line_count": 0,
-            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-          }
-        }
-      ],
-      "note": "This local fixture evidence checks the executable Golden Journey boundary by driving proposal preflight, apply, post-apply verification, workspace mutation, and completion through the Runtime CLI."
+      "fail_closed": true,
+      "note": "Previous Golden Journey satisfaction claim withdrawn: no downloaded-artifact journey and stateful-soak binding is present."
     },
     "soak_test": {
       "stateful_steps": [
@@ -2713,6 +2615,7 @@
   "fail_closed_reasons": [
     "artifact_lifecycle:failed",
     "soak_test:not_executed",
-    "executable_evidence_validation:not_executed"
+    "executable_evidence_validation:not_executed",
+    "golden_journey_fixture:missing_downloaded_artifact_binding_prior_claim_withdrawn"
   ]
 }
