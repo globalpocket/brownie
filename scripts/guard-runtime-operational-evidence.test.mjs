@@ -553,6 +553,17 @@ function validEvidence(overrides = {}) {
   };
 }
 
+function incompleteEvidence(overrides = {}) {
+  const evidence = validEvidence(overrides);
+  delete evidence.release_evidence_binding;
+  for (const id of requiredSections) {
+    evidence.sections[id].status = 'not_executed';
+    evidence.fail_closed_reasons.push(`${id}:not_executed`);
+    delete evidence.sections[id].release_evidence_binding;
+  }
+  return evidence;
+}
+
 function writeDownloadedRuntimeEvidence(repoRoot, binding, overrides = {}) {
   const entry = binding.bindings[0];
   const journeyPath = path.join(repoRoot, entry.journey_evidence_path);
@@ -631,6 +642,44 @@ for (const satisfiedSection of ['artifact_lifecycle', 'golden_journey_fixture', 
         assert(validateRuntimeOperationalEvidence(evidence, boundRuntimeOptions(repoRoot)).length > 0);
       } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
     });
+  }
+}
+
+for (const lifecycleStatus of ['not_executed', 'failed']) {
+  for (const satisfiedSection of requiredSections.filter(id => id !== 'artifact_lifecycle')) {
+    for (const declaration of ['complete', 'missing target', 'duplicate target', 'empty targets', 'wrong target']) {
+      test(`Runtime guard checks the declared lifecycle platform set: ${lifecycleStatus}, ${satisfiedSection}, ${declaration}`, () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-runtime-platform-set-'));
+        try {
+          const evidence = validEvidence();
+          writeDownloadedRuntimeEvidence(repoRoot, evidence.release_evidence_binding);
+          for (const id of requiredSections.filter(id => id !== satisfiedSection)) {
+            evidence.sections[id].status = 'not_executed';
+            evidence.fail_closed_reasons.push(`${id}:not_executed`);
+          }
+          evidence.sections.artifact_lifecycle.status = lifecycleStatus;
+          evidence.fail_closed_reasons.push(`artifact_lifecycle:${lifecycleStatus}`);
+          const results = evidence.sections.artifact_lifecycle.lifecycle_results;
+          const omitted = evidence.release_evidence_binding.bindings[0].target === 'win32-x64'
+            ? 'linux-x64' : 'win32-x64';
+          if (declaration === 'missing target') {
+            results.push({ ...results[0], target: omitted, path: `downloaded-platform-${omitted}`, commands: [] });
+          } else if (declaration === 'duplicate target') {
+            results.push({ ...results[0] });
+          } else if (declaration === 'empty targets') {
+            results.length = 0;
+          } else if (declaration === 'wrong target') {
+            results[0].target = omitted;
+          }
+          const errors = validateRuntimeOperationalEvidence(evidence, boundRuntimeOptions(repoRoot));
+          if (declaration === 'complete') {
+            assert.deepEqual(errors, [], 'complete receipts may coexist with an explicitly blocked lifecycle section');
+          } else {
+            assert(errors.some(error => /non-empty and unique|cover artifact lifecycle target|partial or extra platform coverage/u.test(error)), errors.join('\n'));
+          }
+        } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+      });
+    }
   }
 }
 
@@ -851,7 +900,7 @@ test('requires fail-closed reasons for incomplete artifact lifecycle evidence', 
 });
 
 test('accepts fail-closed incomplete sections with explicit reasons', () => {
-  const evidence = validEvidence({
+  const evidence = incompleteEvidence({
     fail_closed_reasons: [
       'artifact_lifecycle:not_executed_missing_artifacts',
       'golden_journey_fixture:not_executed_missing_artifacts',
@@ -870,7 +919,7 @@ test('accepts fail-closed incomplete sections with explicit reasons', () => {
 });
 
 test('accepts fail-closed artifact lifecycle when cross-platform artifacts are host-incompatible', () => {
-  const evidence = validEvidence({
+  const evidence = incompleteEvidence({
     fail_closed_reasons: ['artifact_lifecycle:failed']
   });
   evidence.sections.artifact_lifecycle = section('failed', {
@@ -967,7 +1016,7 @@ test('collector source does not contain raw fixture output payloads', () => {
 });
 
 test('accepts fail-closed delegated target command failures', () => {
-  const evidence = validEvidence({
+  const evidence = incompleteEvidence({
     fail_closed_reasons: ['artifact_lifecycle:failed']
   });
   evidence.sections.artifact_lifecycle = section('failed', {
@@ -1010,7 +1059,7 @@ test('redacts successful delegated target JSON before evidence persistence', () 
     host: 'brownie-linux',
     workspace: '/home/ubuntu/brownie-worktree'
   });
-  const evidence = validEvidence({
+  const evidence = incompleteEvidence({
     fail_closed_reasons: ['artifact_lifecycle:failed']
   });
   evidence.sections.artifact_lifecycle = section('failed', {

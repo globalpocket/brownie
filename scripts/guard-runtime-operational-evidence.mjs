@@ -328,10 +328,8 @@ function validateReleaseEvidenceBinding(evidence, errors, options) {
   const lifecycle = evidence.sections?.artifact_lifecycle;
   const lifecycleEntries = Array.isArray(lifecycle?.lifecycle_results) ? lifecycle.lifecycle_results : [];
   const lifecycleTargets = new Set(lifecycleEntries.map(result => result?.target).filter(isNonEmptyString));
-  if (lifecycle?.status === 'satisfied') {
-    requireValue(lifecycleEntries.length > 0 && lifecycleTargets.size === lifecycleEntries.length,
-      errors, 'satisfied artifact lifecycle targets must be non-empty and unique.');
-  }
+  requireValue(lifecycleEntries.length > 0 && lifecycleTargets.size === lifecycleEntries.length,
+    errors, 'declared artifact lifecycle targets must be non-empty and unique.');
   const expectedWorkflow = options.workflowRunId ?? (options.validateBoundEvidence === true ? process.env.GITHUB_RUN_ID : undefined);
   const expectedCommit = options.testedCommit ?? (options.validateBoundEvidence === true ? process.env.GITHUB_SHA : undefined);
   const seenTargets = new Set();
@@ -378,12 +376,10 @@ function validateReleaseEvidenceBinding(evidence, errors, options) {
       validateDownloadedRuntimeEvidence(options.repoRoot, entry, errors, entryOwner);
     }
   }
-  if (lifecycle?.status === 'satisfied') {
-    for (const target of lifecycleTargets) {
-      requireValue(seenTargets.has(target), errors, `${owner}.bindings must cover artifact lifecycle target ${target}.`);
-    }
-    requireValue(seenTargets.size === lifecycleTargets.size, errors, `${owner}.bindings must not claim partial or extra platform coverage.`);
+  for (const target of lifecycleTargets) {
+    requireValue(seenTargets.has(target), errors, `${owner}.bindings must cover artifact lifecycle target ${target}.`);
   }
+  requireValue(seenTargets.size === lifecycleTargets.size, errors, `${owner}.bindings must not claim partial or extra platform coverage.`);
   const witnesses = bindings
     .map((entry) => ({
       target: entry.target,
