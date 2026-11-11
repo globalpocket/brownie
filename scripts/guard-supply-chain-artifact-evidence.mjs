@@ -25,6 +25,7 @@ const requiredSections = [
 const hashPattern = /^sha256:[a-f0-9]{64}$/;
 const sourceCommitHashPattern = /^sha256:[a-f0-9]{40}$/;
 const gitCommitPattern = /^[a-f0-9]{40}$/;
+const workflowRunPattern = /^[1-9][0-9]*$/u;
 const requiredArtifactSmokeE2eStepIds = [
   'base_mode_pack_load',
   'minimal_task_run',
@@ -66,7 +67,7 @@ function validateArtifactProvenanceBinding(artifact, errors, pathLabel) {
   }
   requireValue(gitCommitPattern.test(binding.implementationCommit), errors, `${pathLabel}.provenance_binding.implementationCommit must be a 40-character git SHA.`);
   requireValue(gitCommitPattern.test(binding.testedCommit), errors, `${pathLabel}.provenance_binding.testedCommit must be a 40-character git SHA.`);
-  requireValue(isNonEmptyString(binding.workflowRunId), errors, `${pathLabel}.provenance_binding.workflowRunId must be present.`);
+  requireValue(typeof binding.workflowRunId === 'string' && workflowRunPattern.test(binding.workflowRunId), errors, `${pathLabel}.provenance_binding.workflowRunId must be a canonical positive integer string.`);
   requireValue(binding.artifactSha256 === artifact.sha256, errors, `${pathLabel}.provenance_binding.artifactSha256 must match artifact sha256.`);
   requireValue(isNonEmptyString(binding.platform), errors, `${pathLabel}.provenance_binding.platform must be present.`);
   requireValue(isNonEmptyString(binding.architecture), errors, `${pathLabel}.provenance_binding.architecture must be present.`);
@@ -182,16 +183,27 @@ function sha256File(filePath) {
 }
 
 function validateReferencedFile(repoRoot, entry, errors, owner) {
-  requireValue(isSafeRelativePath(entry.path), errors, `${owner}.path must be repository-relative and bounded.`);
-  requireValue(hashPattern.test(entry.sha256), errors, `${owner}.sha256 must be sha256:<64 lowercase hex>.`);
-  if (!isSafeRelativePath(entry.path)) {
+  requireValue(isSafeRelativePath(entry?.path), errors, `${owner}.path must be repository-relative and bounded.`);
+  requireValue(hashPattern.test(entry?.sha256), errors, `${owner}.sha256 must be sha256:<64 lowercase hex>.`);
+  if (!isSafeRelativePath(entry?.path)) {
     return;
   }
   const fullPath = path.join(repoRoot, entry.path);
-  requireValue(fs.existsSync(fullPath), errors, `${owner}.path must exist: ${entry.path}.`);
-  if (fs.existsSync(fullPath) && hashPattern.test(entry.sha256)) {
+  const regular = isBoundedRegularFile(repoRoot, entry.path);
+  requireValue(regular, errors, `${owner}.path must exist as a regular file within the repository: ${entry.path}.`);
+  if (regular && hashPattern.test(entry.sha256)) {
     requireValue(sha256File(fullPath) === entry.sha256, errors, `${owner}.sha256 must match ${entry.path}.`);
   }
+}
+
+function isBoundedRegularFile(repoRoot, relativePath) {
+  if (!isSafeRelativePath(relativePath)) return false;
+  try {
+    const file = path.join(repoRoot, relativePath);
+    const relative = path.relative(fs.realpathSync(repoRoot), fs.realpathSync(file));
+    return fs.lstatSync(file).isFile() && relative !== '..' &&
+      !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  } catch { return false; }
 }
 
 function validateOptionalPath(repoRoot, value, errors, owner) {
@@ -210,8 +222,8 @@ function readBoundEvidence(repoRoot, relativePath, errors, owner) {
     return null;
   }
   const fullPath = path.join(repoRoot, relativePath);
-  requireValue(fs.existsSync(fullPath), errors, `${owner} must exist: ${relativePath}.`);
-  if (!fs.existsSync(fullPath)) {
+  requireValue(isBoundedRegularFile(repoRoot, relativePath), errors, `${owner} must exist as a regular file within the repository: ${relativePath}.`);
+  if (!isBoundedRegularFile(repoRoot, relativePath)) {
     return null;
   }
   try {
@@ -226,6 +238,37 @@ function readBoundEvidence(repoRoot, relativePath, errors, owner) {
     errors.push(`${owner} must be readable JSON: ${error.message}`);
     return null;
   }
+}
+
+function validateDownloadedPhysicalEvidence(repoRoot, artifact, binding, errors, owner) {
+  const coordinates = {
+    'darwin-arm64': ['darwin', 'arm64'], 'linux-x64': ['linux', 'x64'],
+    'linux-arm64': ['linux', 'arm64'], 'win32-x64': ['win32', 'x64']
+  }[binding.target];
+  requireValue(coordinates && binding.platform === coordinates[0] && binding.architecture === coordinates[1],
+    errors, `${owner}.platform and architecture must match the supported target.`);
+  const directory = `.brownie/release-evidence/artifacts/${binding.target}`;
+  requireValue(artifact.artifact_evidence_path === `${directory}/artifact-evidence.json`, errors,
+    `${owner}.artifact_evidence_path must identify downloaded target metadata.`);
+  const metadata = readBoundEvidence(repoRoot, artifact.artifact_evidence_path, errors, `${owner}.artifact_evidence_path`);
+  if (!metadata) return;
+  requireValue(metadata.target === binding.target && metadata.platform === binding.platform && metadata.arch === binding.architecture,
+    errors, `${owner}.artifact metadata target/platform/architecture must match the binding.`);
+  const binary = metadata.artifact;
+  requireValue(typeof artifact.path === 'string' && binary?.path === artifact.path && artifact.path.startsWith(`${directory}/`) &&
+    binary?.sha256 === binding.binary_sha256 && binary?.source_commit === binding.implementation_commit &&
+    binary?.source_clean_tree === artifact.source_clean_tree && binary?.source_identity === artifact.source_identity,
+  errors, `${owner}.binary metadata must match downloaded artifact identity and source.`);
+  validateReferencedFile(repoRoot, binary, errors, `${owner}.binary`);
+  const archive = metadata.archive ?? {
+    path: `${directory}/brownie-${binding.target}.${binding.target === 'win32-x64' ? 'zip' : 'tar.gz'}`,
+    sha256: binding.package_sha256
+  };
+  requireValue(archive?.sha256 === binding.package_sha256, errors, `${owner}.package sha256 must match declared archive metadata.`);
+  validateReferencedFile(repoRoot, archive, errors, `${owner}.package`);
+  requireValue(metadata.runtime_companion?.sha256 === binding.runtime_sha256, errors,
+    `${owner}.runtime_companion sha256 must match downloaded binding.`);
+  validateReferencedFile(repoRoot, metadata.runtime_companion, errors, `${owner}.runtime_companion`);
 }
 
 function requirePassedChecks(evidence, checkIds, errors, owner) {
@@ -268,7 +311,7 @@ function validateDownloadedRoundtripEvidence(repoRoot, binding, errors, owner) {
   );
 }
 
-function validateReleaseEvidenceRoundtripBinding(repoRoot, artifacts, errors) {
+function validateReleaseEvidenceRoundtripBinding(repoRoot, artifacts, errors, expected) {
   const owner = 'sections.artifacts.release_evidence_binding';
   const binding = artifacts.release_evidence_binding;
   requireValue(binding && typeof binding === 'object', errors, `${owner} must be present when artifacts are satisfied.`);
@@ -295,17 +338,24 @@ function validateReleaseEvidenceRoundtripBinding(repoRoot, artifacts, errors) {
     requireValue(isNonEmptyString(entry?.target) && artifact !== undefined && !seenTargets.has(entry.target), errors, `${entryOwner}.target must identify one artifact.`);
     if (!artifact || seenTargets.has(entry?.target)) continue;
     seenTargets.add(entry.target);
-    const sourceCommit = artifact.source_commit.slice('sha256:'.length);
+    const sourceCommit = typeof artifact.source_commit === 'string' ? artifact.source_commit.slice('sha256:'.length) : null;
     requireValue(entry.status === 'satisfied', errors, `${entryOwner}.status must be satisfied.`);
     requireValue(entry.implementation_commit === artifact.source_commit, errors, `${entryOwner}.implementation_commit must match artifact source_commit.`);
     requireValue(entry.tested_commit === sourceCommit, errors, `${entryOwner}.tested_commit must match artifact source_commit.`);
     requireValue(entry.workflow_run_id === artifact.provenance_binding?.workflowRunId, errors, `${entryOwner}.workflow_run_id must match artifact provenance.`);
+    requireValue(typeof entry.workflow_run_id === 'string' && workflowRunPattern.test(entry.workflow_run_id), errors,
+      `${entryOwner}.workflow_run_id must be a canonical positive integer string.`);
+    requireValue(entry.workflow_run_id === expected.workflowRunId, errors,
+      `${entryOwner}.workflow_run_id must match the current verification workflow.`);
+    requireValue(entry.tested_commit === expected.testedCommit, errors,
+      `${entryOwner}.tested_commit must match the current verification commit.`);
     requireValue(entry.platform === artifact.provenance_binding?.platform, errors, `${entryOwner}.platform must match artifact provenance.`);
     requireValue(entry.architecture === artifact.provenance_binding?.architecture, errors, `${entryOwner}.architecture must match artifact provenance.`);
     requireValue(hashPattern.test(entry.package_sha256), errors, `${entryOwner}.package_sha256 must be sha256:<64 lowercase hex>.`);
     requireValue(entry.binary_sha256 === artifact.sha256, errors, `${entryOwner}.binary_sha256 must match artifact sha256.`);
     requireValue(hashPattern.test(entry.runtime_sha256), errors, `${entryOwner}.runtime_sha256 must be sha256:<64 lowercase hex>.`);
     requireValue(Array.isArray(entry.errors) && entry.errors.length === 0, errors, `${entryOwner}.errors must be empty.`);
+    validateDownloadedPhysicalEvidence(repoRoot, artifact, entry, errors, entryOwner);
     validateDownloadedRoundtripEvidence(repoRoot, entry, errors, entryOwner);
   }
   requireValue(seenTargets.size === artifactsByTarget.size, errors, `${owner}.bindings must cover every artifact target.`);
@@ -394,6 +444,14 @@ function validateEvidence(evidence, options = {}) {
 
   const artifacts = evidence.sections?.artifacts;
   if (artifacts?.status === 'satisfied') {
+    const expected = {
+      workflowRunId: options.workflowRunId ?? process.env.GITHUB_RUN_ID,
+      testedCommit: options.testedCommit ?? process.env.GITHUB_SHA
+    };
+    requireValue(typeof expected.workflowRunId === 'string' && workflowRunPattern.test(expected.workflowRunId), errors,
+      'satisfied artifacts require the current verification workflowRunId.');
+    requireValue(typeof expected.testedCommit === 'string' && gitCommitPattern.test(expected.testedCommit), errors,
+      'satisfied artifacts require the current verification testedCommit.');
     requireValue(Array.isArray(artifacts.artifacts) && artifacts.artifacts.length > 0, errors, 'satisfied artifacts section must include artifacts.');
     for (const [index, artifact] of artifacts.artifacts.entries()) {
       validateReferencedFile(repoRoot, artifact, errors, `sections.artifacts.artifacts[${index}]`);
@@ -404,7 +462,7 @@ function validateEvidence(evidence, options = {}) {
       requireValue(hashPattern.test(artifact.source_identity), errors, `sections.artifacts.artifacts[${index}].source_identity must be sha256:<64 lowercase hex>.`);
       validateArtifactProvenanceBinding(artifact, errors, `sections.artifacts.artifacts[${index}]`);
     }
-    validateReleaseEvidenceRoundtripBinding(repoRoot, artifacts, errors);
+    validateReleaseEvidenceRoundtripBinding(repoRoot, artifacts, errors, expected);
   }
 
   const artifactSmoke = evidence.sections?.artifact_smoke;
@@ -540,7 +598,9 @@ export function runSupplyChainArtifactEvidenceGuard(options = {}) {
     errors.push(...validateEvidence(evidence, {
       repoRoot,
       repository: options.repository,
-      deploymentResult: options.deploymentResult
+      deploymentResult: options.deploymentResult,
+      workflowRunId: options.workflowRunId,
+      testedCommit: options.testedCommit
     }));
   }
 

@@ -229,6 +229,24 @@ function attachDownloadedRoundtripBinding(repoRoot, artifact) {
   const journeyPath = `${evidenceDir}/runtime-journey-evidence.json`;
   const soakPath = `${evidenceDir}/runtime-stateful-soak-evidence.json`;
   fs.mkdirSync(path.join(repoRoot, evidenceDir), { recursive: true });
+  const downloadedPath = `${evidenceDir}/brownie`;
+  fs.copyFileSync(path.join(repoRoot, artifact.path), path.join(repoRoot, downloadedPath));
+  artifact.path = downloadedPath;
+  artifact.provenance_identity = sha256Text([
+    artifact.provenance_binding.implementationCommit, artifact.provenance_binding.testedCommit,
+    artifact.provenance_binding.workflowRunId, artifact.path, artifact.sha256,
+    artifact.provenance_binding.platform, artifact.provenance_binding.architecture
+  ].join('\n'));
+  fs.writeFileSync(path.join(repoRoot, evidenceDir, 'brownie-darwin-arm64.tar.gz'), 'downloaded-release-package');
+  fs.writeFileSync(path.join(repoRoot, evidenceDir, 'brownie-runtime'), 'downloaded-runtime-companion');
+  artifact.artifact_evidence_path = `${evidenceDir}/artifact-evidence.json`;
+  fs.writeFileSync(path.join(repoRoot, artifact.artifact_evidence_path), JSON.stringify({
+    target: artifact.target, platform: artifact.provenance_binding.platform,
+    arch: artifact.provenance_binding.architecture,
+    artifact: { path: artifact.path, sha256: artifact.sha256, source_commit: artifact.source_commit,
+      source_clean_tree: artifact.source_clean_tree, source_identity: artifact.source_identity },
+    runtime_companion: { path: `${evidenceDir}/brownie-runtime`, sha256: sha256Text('downloaded-runtime-companion') }
+  }));
   const binding = {
     target: artifact.target,
     status: 'satisfied',
@@ -296,6 +314,137 @@ function satisfiedArtifactsSection(repoRoot, artifact) {
   });
 }
 
+function downloadedGuardFixture() {
+  const repoRoot = tempRepo();
+  const artifactPath = 'target/release/brownie';
+  fs.mkdirSync(path.join(repoRoot, 'target/release'), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, artifactPath), 'downloaded CLI fixture');
+  const evidence = validEvidence(repoRoot);
+  evidence.fail_closed_reasons = evidence.fail_closed_reasons.filter(reason => !reason.startsWith('artifacts:'));
+  evidence.sections.artifacts = satisfiedArtifactsSection(repoRoot, artifactWithProvenance(repoRoot, artifactPath));
+  return { repoRoot, evidence, artifact: evidence.sections.artifacts.artifacts[0],
+    binding: evidence.sections.artifacts.release_evidence_binding.bindings[0] };
+}
+
+function refreshBindingDigest(evidence) {
+  const binding = evidence.sections.artifacts.release_evidence_binding;
+  const witnesses = binding.bindings.map(({ journey_evidence_path, soak_evidence_path, ...entry }) => entry)
+    .sort((left, right) => left.target.localeCompare(right.target));
+  binding.binding_digest = sha256Text(JSON.stringify(witnesses));
+}
+
+for (const [name, file] of [
+  ['package', 'brownie-darwin-arm64.tar.gz'], ['Runtime', 'brownie-runtime']
+]) for (const operation of ['delete', 'modify']) {
+  test(`guard rejects ${operation} of downloaded ${name} with otherwise matching receipts`, () => {
+    const fixture = downloadedGuardFixture();
+    try {
+      assert.deepEqual(validate(fixture), []);
+      const target = path.join(fixture.repoRoot, '.brownie/release-evidence/artifacts/darwin-arm64', file);
+      if (operation === 'delete') fs.unlinkSync(target); else fs.writeFileSync(target, 'tampered bytes');
+      assert(validate(fixture).some(error => error.includes(name === 'package' ? 'package' : 'runtime_companion')));
+    } finally { fs.rmSync(fixture.repoRoot, { recursive: true, force: true }); }
+  });
+}
+
+for (const runId of ['workflow-123', '0', '00123456', '-1', '1.5']) {
+  test(`guard rejects mutually consistent noncanonical workflow identity ${runId}`, () => {
+    const fixture = downloadedGuardFixture();
+    try {
+      const { artifact, binding, repoRoot, evidence } = fixture;
+      artifact.provenance_binding.workflowRunId = runId;
+      artifact.provenance_identity = sha256Text([
+        artifact.provenance_binding.implementationCommit, artifact.provenance_binding.testedCommit,
+        runId, artifact.path, artifact.sha256, artifact.provenance_binding.platform,
+        artifact.provenance_binding.architecture
+      ].join('\n'));
+      binding.workflow_run_id = runId;
+      for (const field of ['journey_evidence_path', 'soak_evidence_path']) {
+        const file = path.join(repoRoot, binding[field]);
+        const receipt = JSON.parse(fs.readFileSync(file)); receipt.workflow_run_id = runId;
+        fs.writeFileSync(file, JSON.stringify(receipt));
+      }
+      refreshBindingDigest(evidence);
+      assert(validate(fixture).some(error => error.includes('workflowRunId') || error.includes('workflow_run_id')));
+    } finally { fs.rmSync(fixture.repoRoot, { recursive: true, force: true }); }
+  });
+}
+
+for (const [field, value, message] of [
+  ['workflowRunId', '123457', 'current verification workflow'],
+  ['testedCommit', 'b'.repeat(40), 'current verification commit']
+]) test(`guard rejects mutually consistent stale receipts against current ${field}`, () => {
+  const fixture = downloadedGuardFixture();
+  try {
+    assert.deepEqual(validate(fixture), []);
+    assert(validate({ ...fixture, [field]: value }).some(error => error.includes(message)));
+  } finally { fs.rmSync(fixture.repoRoot, { recursive: true, force: true }); }
+});
+
+test('satisfied downloaded artifacts require a current workflow and commit verification context', () => {
+  const fixture = downloadedGuardFixture();
+  const priorRun = process.env.GITHUB_RUN_ID, priorCommit = process.env.GITHUB_SHA;
+  try {
+    delete process.env.GITHUB_RUN_ID; delete process.env.GITHUB_SHA;
+    const result = runSupplyChainArtifactEvidenceGuard({ ...fixture, contract: validContract(), repository: fixture.evidence.repository });
+    assert(result.errors.some(error => error.includes('current verification workflowRunId')));
+    assert(result.errors.some(error => error.includes('current verification testedCommit')));
+  } finally {
+    if (priorRun === undefined) delete process.env.GITHUB_RUN_ID; else process.env.GITHUB_RUN_ID = priorRun;
+    if (priorCommit === undefined) delete process.env.GITHUB_SHA; else process.env.GITHUB_SHA = priorCommit;
+    fs.rmSync(fixture.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('guard rejects malformed declared archive metadata despite an intact conventional package', () => {
+  const fixture = downloadedGuardFixture();
+  try {
+    const file = path.join(fixture.repoRoot, fixture.artifact.artifact_evidence_path);
+    const metadata = JSON.parse(fs.readFileSync(file)); metadata.archive = { path: 'invalid', sha256: 'malformed' };
+    fs.writeFileSync(file, JSON.stringify(metadata));
+    assert(validate(fixture).some(error => error.includes('package')));
+  } finally { fs.rmSync(fixture.repoRoot, { recursive: true, force: true }); }
+});
+
+test('guard rejects coherent platform metadata that conflicts with the target', () => {
+  const fixture = downloadedGuardFixture();
+  try {
+    const { artifact, binding } = fixture;
+    artifact.provenance_binding.platform = binding.platform = 'linux';
+    artifact.provenance_identity = sha256Text([
+      artifact.provenance_binding.implementationCommit, artifact.provenance_binding.testedCommit,
+      artifact.provenance_binding.workflowRunId, artifact.path, artifact.sha256, 'linux', 'arm64'
+    ].join('\n'));
+    const file = path.join(fixture.repoRoot, artifact.artifact_evidence_path);
+    const metadata = JSON.parse(fs.readFileSync(file)); metadata.platform = 'linux';
+    fs.writeFileSync(file, JSON.stringify(metadata)); refreshBindingDigest(fixture.evidence);
+    assert(validate(fixture).some(error => error.includes('supported target')));
+  } finally { fs.rmSync(fixture.repoRoot, { recursive: true, force: true }); }
+});
+
+test('guard rejects downloaded metadata and files that resolve outside the repository', () => {
+  const fixture = downloadedGuardFixture();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-outside-artifact-'));
+  try {
+    const directory = path.join(fixture.repoRoot, '.brownie/release-evidence/artifacts/darwin-arm64');
+    const destination = path.join(outside, 'artifact'); fs.renameSync(directory, destination);
+    fs.symlinkSync(destination, directory, 'junction');
+    assert(validate(fixture).some(error => error.includes('within the repository')));
+  } finally {
+    fs.rmSync(fixture.repoRoot, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('guard rejects a directory substituted for the Runtime regular file', () => {
+  const fixture = downloadedGuardFixture();
+  try {
+    const file = path.join(fixture.repoRoot, '.brownie/release-evidence/artifacts/darwin-arm64/brownie-runtime');
+    fs.unlinkSync(file); fs.mkdirSync(file);
+    assert(validate(fixture).some(error => error.includes('runtime_companion.path must exist as a regular file')));
+  } finally { fs.rmSync(fixture.repoRoot, { recursive: true, force: true }); }
+});
+
 function validEvidence(repoRoot = tempRepo()) {
   return {
     schema_version: 1,
@@ -341,13 +490,16 @@ function validEvidence(repoRoot = tempRepo()) {
   };
 }
 
-function validate({ contract = validContract(), evidence, repoRoot = tempRepo(), evidencePath = 'evidence.json', repository } = {}) {
+function validate({ contract = validContract(), evidence, repoRoot = tempRepo(), evidencePath = 'evidence.json', repository,
+  workflowRunId = '123456', testedCommit = 'a'.repeat(40) } = {}) {
   const resolvedEvidence = evidence ?? validEvidence(repoRoot);
   return runSupplyChainArtifactEvidenceGuard({
     repoRoot,
     contract,
     evidence: resolvedEvidence,
     evidencePath,
+    workflowRunId,
+    testedCommit,
     // Fixture acceptance must not depend on an ambient deployment selected by
     // the phase-loop process. Production callers omit this option, so the
     // guard continues to resolve and enforce its deployment repository.
