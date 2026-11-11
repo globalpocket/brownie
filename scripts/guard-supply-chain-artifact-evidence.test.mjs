@@ -436,6 +436,20 @@ test('guard rejects downloaded metadata and files that resolve outside the repos
   }
 });
 
+for (const ancestor of ['artifacts', 'artifacts/darwin-arm64']) {
+  test(`guard rejects downloaded ${ancestor} ancestor redirected to the build tree`, () => {
+    const fixture = downloadedGuardFixture();
+    try {
+      assert.deepEqual(validate(fixture), []);
+      const directory = path.join(fixture.repoRoot, '.brownie/release-evidence', ancestor);
+      const destination = path.join(fixture.repoRoot, 'target/release/redirected-artifact');
+      fs.renameSync(directory, destination);
+      fs.symlinkSync(destination, directory, 'junction');
+      assert(validate(fixture).some(error => error.includes('regular file within the repository')));
+    } finally { fs.rmSync(fixture.repoRoot, { recursive: true, force: true }); }
+  });
+}
+
 test('guard rejects a directory substituted for the Runtime regular file', () => {
   const fixture = downloadedGuardFixture();
   try {

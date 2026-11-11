@@ -201,6 +201,11 @@ function isBoundedRegularFile(repoRoot, relativePath) {
   try {
     const file = path.join(repoRoot, relativePath);
     const relative = path.relative(fs.realpathSync(repoRoot), fs.realpathSync(file));
+    let component = path.resolve(repoRoot);
+    for (const part of path.relative(component, path.resolve(file)).split(path.sep)) {
+      component = path.join(component, part);
+      if (fs.lstatSync(component).isSymbolicLink()) return false;
+    }
     return fs.lstatSync(file).isFile() && relative !== '..' &&
       !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
   } catch { return false; }
