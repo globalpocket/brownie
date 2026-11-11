@@ -196,8 +196,8 @@ function validateExecutableTraceBinding(repoRoot, contract, errors, contractPath
     requireValue(git('merge-base', '--is-ancestor', trace.implementation_commit, trace.tested_commit) !== null,
       errors, `${contractPath} implementation_commit must belong to the independently identified tested commit.`);
   }
-  requireValue(git('diff', '--quiet', 'HEAD', '--', ...auditedSourcePaths) !== null, errors,
-    `${contractPath} implemented evidence cannot describe a dirty tracked source checkout.`);
+  requireValue(git('status', '--porcelain=v1', '--untracked-files=all', '--', ...auditedSourcePaths) === '', errors,
+    `${contractPath} implemented evidence cannot describe a dirty source checkout, including untracked build inputs.`);
   const artifacts = supply.sections?.artifacts?.artifacts;
   requireValue(supply.sections?.artifacts?.status === 'satisfied', errors,
     `${contractPath} implemented artifact evidence requires a validated satisfied artifact section.`);
