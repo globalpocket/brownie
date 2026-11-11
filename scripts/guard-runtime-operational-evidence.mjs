@@ -228,6 +228,21 @@ function readBoundEvidence(repoRoot, relativePath, errors, owner) {
   if (!isSafeRelativePath(relativePath)) {
     return null;
   }
+  let bounded = false;
+  try {
+    const root = fs.realpathSync(repoRoot);
+    const file = path.resolve(repoRoot, relativePath);
+    const resolved = path.relative(root, fs.realpathSync(file));
+    let component = path.resolve(repoRoot);
+    bounded = fs.lstatSync(file).isFile() && resolved !== '..' &&
+      !resolved.startsWith(`..${path.sep}`) && !path.isAbsolute(resolved);
+    for (const part of path.relative(component, file).split(path.sep)) {
+      component = path.join(component, part);
+      if (fs.lstatSync(component).isSymbolicLink()) bounded = false;
+    }
+  } catch { /* Missing or linked evidence cannot prove downloaded execution. */ }
+  requireValue(bounded, errors, `${owner} must exist as a regular file within the repository.`);
+  if (!bounded) return null;
   const evidence = readJson(repoRoot, relativePath, errors);
   requireValue(
     evidence !== null && typeof evidence === 'object' && !Array.isArray(evidence),
@@ -241,14 +256,14 @@ function validateFiniteConvergence(soak, errors, owner) {
   const convergence = soak?.checks?.finite_convergence;
   requireValue(convergence?.passed === true, errors, `${owner}.checks.finite_convergence.passed must be true.`);
   requireValue(
-    Number.isInteger(convergence?.commands_executed) && convergence.commands_executed >= 0,
+    Number.isSafeInteger(convergence?.commands_executed) && convergence.commands_executed > 0,
     errors,
-    `${owner}.checks.finite_convergence.commands_executed must be a non-negative integer.`
+    `${owner}.checks.finite_convergence.commands_executed must be a positive safe integer.`
   );
   requireValue(
-    Number.isInteger(convergence?.maximum_commands) && convergence.maximum_commands > 0,
+    Number.isSafeInteger(convergence?.maximum_commands) && convergence.maximum_commands > 0,
     errors,
-    `${owner}.checks.finite_convergence.maximum_commands must be a positive integer.`
+    `${owner}.checks.finite_convergence.maximum_commands must be a positive safe integer.`
   );
   if (Number.isInteger(convergence?.commands_executed) && Number.isInteger(convergence?.maximum_commands)) {
     requireValue(
@@ -310,13 +325,13 @@ function validateReleaseEvidenceBinding(evidence, errors, options) {
   requireValue(binding.satisfied_target_count === bindings.length, errors, `${owner}.satisfied_target_count must match bindings.`);
   requireValue(Array.isArray(binding.missing) && binding.missing.length === 0, errors, `${owner}.missing must be empty.`);
 
-  const lifecycleTargets = new Set(
-    (Array.isArray(evidence.sections?.artifact_lifecycle?.lifecycle_results)
-      ? evidence.sections.artifact_lifecycle.lifecycle_results
-      : [])
-      .map((result) => result?.target)
-      .filter(isNonEmptyString)
-  );
+  const lifecycle = evidence.sections?.artifact_lifecycle;
+  const lifecycleEntries = Array.isArray(lifecycle?.lifecycle_results) ? lifecycle.lifecycle_results : [];
+  const lifecycleTargets = new Set(lifecycleEntries.map(result => result?.target).filter(isNonEmptyString));
+  requireValue(lifecycleEntries.length > 0 && lifecycleTargets.size === lifecycleEntries.length,
+    errors, 'declared artifact lifecycle targets must be non-empty and unique.');
+  const expectedWorkflow = options.workflowRunId ?? (options.validateBoundEvidence === true ? process.env.GITHUB_RUN_ID : undefined);
+  const expectedCommit = options.testedCommit ?? (options.validateBoundEvidence === true ? process.env.GITHUB_SHA : undefined);
   const seenTargets = new Set();
   for (const [index, entry] of bindings.entries()) {
     const entryOwner = `${owner}.bindings[${index}]`;
@@ -334,7 +349,14 @@ function validateReleaseEvidenceBinding(evidence, errors, options) {
       errors,
       `${entryOwner}.implementation_commit must match tested_commit.`
     );
-    requireValue(isNonEmptyString(entry.workflow_run_id), errors, `${entryOwner}.workflow_run_id must be present.`);
+    requireValue(typeof entry.workflow_run_id === 'string' && /^[1-9][0-9]*$/u.test(entry.workflow_run_id),
+      errors, `${entryOwner}.workflow_run_id must be a canonical positive decimal string.`);
+    if (expectedWorkflow !== undefined) {
+      requireValue(entry.workflow_run_id === expectedWorkflow, errors, `${entryOwner}.workflow_run_id must match the current workflow.`);
+    }
+    if (expectedCommit !== undefined) {
+      requireValue(entry.tested_commit === expectedCommit, errors, `${entryOwner}.tested_commit must match the current workflow.`);
+    }
     requireValue(sha256Pattern.test(entry.package_sha256), errors, `${entryOwner}.package_sha256 must be sha256:<64 lowercase hex>.`);
     requireValue(sha256Pattern.test(entry.binary_sha256), errors, `${entryOwner}.binary_sha256 must be sha256:<64 lowercase hex>.`);
     requireValue(sha256Pattern.test(entry.runtime_sha256), errors, `${entryOwner}.runtime_sha256 must be sha256:<64 lowercase hex>.`);
@@ -346,6 +368,10 @@ function validateReleaseEvidenceBinding(evidence, errors, options) {
     }
     requireValue(isSafeRelativePath(entry.journey_evidence_path), errors, `${entryOwner}.journey_evidence_path must be repository-relative and bounded.`);
     requireValue(isSafeRelativePath(entry.soak_evidence_path), errors, `${entryOwner}.soak_evidence_path must be repository-relative and bounded.`);
+    const directory = `.brownie/release-evidence/artifacts/${entry.target}`;
+    requireValue(entry.journey_evidence_path === `${directory}/runtime-journey-evidence.json` &&
+      entry.soak_evidence_path === `${directory}/runtime-stateful-soak-evidence.json`,
+    errors, `${entryOwner} receipt paths must identify the downloaded target directory.`);
     if (options.validateBoundEvidence === true) {
       validateDownloadedRuntimeEvidence(options.repoRoot, entry, errors, entryOwner);
     }
@@ -370,6 +396,16 @@ function validateReleaseEvidenceBinding(evidence, errors, options) {
     }))
     .sort((left, right) => String(left.target).localeCompare(String(right.target)));
   requireValue(binding.binding_digest === sha256Text(JSON.stringify(witnesses)), errors, `${owner}.binding_digest must match bindings.`);
+
+  for (const sectionId of ['artifact_lifecycle', 'golden_journey_fixture', 'soak_test']) {
+    const section = evidence.sections?.[sectionId];
+    if (section?.status === 'satisfied' && usesDownloadedArtifactBinding(section)) {
+      for (const field of ['schema_version', 'evidence_id', 'status', 'release_blocking', 'target_count', 'satisfied_target_count', 'binding_digest']) {
+        requireValue(section.evidence_binding?.[field] === binding[field], errors,
+          `sections.${sectionId}.evidence_binding.${field} must match ${owner}.`);
+      }
+    }
+  }
 
   const summary = evidence.sections?.executable_evidence_validation?.release_evidence_binding;
   requireValue(summary && typeof summary === 'object', errors, 'sections.executable_evidence_validation.release_evidence_binding must be present when runtime evidence is satisfied.');
@@ -498,6 +534,8 @@ export function validateRuntimeOperationalEvidence(evidence, options = {}) {
     requireValue(Number.isInteger(soak.failure_count), errors, 'sections.soak_test.failure_count must be an integer.');
     requireValue(typeof soak.failure_rate === 'number', errors, 'sections.soak_test.failure_rate must be a number.');
     if (soak.status === 'satisfied') {
+      requireValue(Number.isSafeInteger(soak.iterations_requested) && soak.iterations_requested > 0,
+        errors, 'satisfied soak_test must request a positive safe integer of iterations.');
       requireValue(soak.iterations_completed === soak.iterations_requested, errors, 'satisfied soak_test must complete all requested iterations.');
       requireValue(soak.failure_count === 0, errors, 'satisfied soak_test must have zero failures.');
       requireValue(soak.failure_rate === 0, errors, 'satisfied soak_test must have a zero failure rate.');
@@ -511,7 +549,7 @@ export function validateRuntimeOperationalEvidence(evidence, options = {}) {
       validateSatisfiedStatefulSoakSteps(soak.stateful_steps, errors);
     }
   }
-  if (requiredSections.every((sectionId) => evidence.sections?.[sectionId]?.status === 'satisfied')) {
+  if (requiredSections.some((sectionId) => evidence.sections?.[sectionId]?.status === 'satisfied')) {
     validateReleaseEvidenceBinding(evidence, errors, options);
   }
   return errors;
@@ -546,9 +584,12 @@ export function validateRuntimeOperationalEvidenceContract(contract, options = {
 
 export function runRuntimeOperationalEvidenceGuard(options = {}) {
   if (options?.schema_version === 1 && options?.evidence_id === 'brownie-runtime-operational-evidence-v1') {
-    const errors = validateRuntimeOperationalEvidence(options, {
-      repoRoot: options.repoRoot,
-      validateBoundEvidence: options.validateBoundEvidence === true
+    const { repoRoot, validateBoundEvidence: _ignored, workflowRunId, testedCommit, ...evidence } = options;
+    const errors = validateRuntimeOperationalEvidence(evidence, {
+      repoRoot: repoRoot ?? defaultRepoRoot,
+      validateBoundEvidence: true,
+      workflowRunId,
+      testedCommit
     });
     return {
       errors,
