@@ -124,7 +124,7 @@ function validateCommitTrace(trace, errors, contractPath) {
   }
 }
 
-function requireArtifactBindingTrace(trace, errors, contractPath, evidenceField) {
+function requireArtifactBindingTrace(trace, errors, contractPath, evidenceClaim) {
   const shapes = {
     implementation_commit: /^[a-f0-9]{40}$/,
     tested_commit: /^[a-f0-9]{40}$/,
@@ -135,7 +135,7 @@ function requireArtifactBindingTrace(trace, errors, contractPath, evidenceField)
     requireValue(
       isVerifiedTraceValue(trace?.[field]),
       errors,
-      `${contractPath} commit_trace.${field} must be a verified evidence value, not a pending/blocker placeholder, when release_artifact_evidence.${evidenceField} claims implemented artifact evidence.`
+      `${contractPath} commit_trace.${field} must be a verified evidence value, not a pending/blocker placeholder, when ${evidenceClaim} claims implemented artifact evidence.`
     );
     requireValue(typeof trace?.[field] === 'string' && shapes[field].test(trace[field]), errors,
       `${contractPath} commit_trace.${field} must have its exact evidence identifier shape when artifact evidence is implemented.`);
@@ -145,8 +145,18 @@ function requireArtifactBindingTrace(trace, errors, contractPath, evidenceField)
 function validateExecutableTraceBinding(repoRoot, contract, errors, contractPath) {
   const claimed = Object.entries(contract.release_artifact_evidence ?? {}).filter(([, value]) =>
     ['implemented_sufficient', 'satisfied'].includes(value?.status));
-  if (claimed.length === 0) return;
+  const runtimeClaims = (Array.isArray(contract.release_ready_conditions) ? contract.release_ready_conditions : []).some((entry) =>
+    ['artifact_smoke_tests', 'tested_commit_matches_artifact_commit', 'audit_trace_matches_tested_commit'].includes(entry?.id)
+    && ['implemented_sufficient', 'satisfied'].includes(entry?.status));
+  const runtimeSatisfied = (Array.isArray(contract.release_ready_conditions) ? contract.release_ready_conditions : []).some((entry) =>
+    ['artifact_smoke_tests', 'tested_commit_matches_artifact_commit', 'audit_trace_matches_tested_commit'].includes(entry?.id)
+    && entry?.status === 'satisfied');
+  // The checked-in pending contract uses implemented_sufficient for tooling
+  // while explicitly blocking release on missing trace evidence. A satisfied
+  // Runtime condition claims actual evidence even without an artifact claim.
+  if (claimed.length === 0 && !runtimeSatisfied) return;
   const trace = contract.commit_trace ?? {};
+  if (runtimeClaims) requireArtifactBindingTrace(trace, errors, contractPath, 'release_ready_conditions Runtime evidence');
   const readEvidence = (relativePath, maximumBytes = 16 * 1024 * 1024) => {
     if (typeof relativePath !== 'string' || !relativePath || path.isAbsolute(relativePath)) {
       errors.push(`${contractPath} executable evidence requires a repository-relative path.`);
@@ -287,9 +297,6 @@ function validateExecutableTraceBinding(repoRoot, contract, errors, contractPath
       }
     }
   }
-  const runtimeClaims = (Array.isArray(contract.release_ready_conditions) ? contract.release_ready_conditions : []).some((entry) =>
-    ['artifact_smoke_tests', 'tested_commit_matches_artifact_commit', 'audit_trace_matches_tested_commit'].includes(entry?.id)
-    && ['implemented_sufficient', 'satisfied'].includes(entry?.status));
   if (runtimeClaims) {
     const runtime = readObject(contract.runtime_operational_evidence?.default_path);
     const binding = supply.sections?.artifacts?.release_evidence_binding;
@@ -436,7 +443,7 @@ function validateRuntimeReleaseContract(contract, options = {}) {
       requireValue(entry.status !== 'satisfied', errors, `${contractPath} release_artifact_evidence.${field} must not be satisfied before real artifacts exist.`);
       requireValue(entry.path === null || isNonEmptyString(entry.path), errors, `${contractPath} release_artifact_evidence.${field}.path must be null or non-empty.`);
       if (implementedArtifactEvidenceStatuses.has(entry.status)) {
-        requireArtifactBindingTrace(contract.commit_trace, errors, contractPath, field);
+        requireArtifactBindingTrace(contract.commit_trace, errors, contractPath, `release_artifact_evidence.${field}`);
       }
     }
   }
