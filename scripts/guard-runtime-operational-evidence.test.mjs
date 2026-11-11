@@ -341,12 +341,16 @@ test('generated runtime operational evidence uses the guard-required section set
 });
 
 test('runtime operational evidence models release operation as executable fail-closed evidence', () => {
-  const evidence = validEvidence();
-  const guardResult = runRuntimeOperationalEvidenceGuard(evidence);
-  assert.ok(guardResult.valid, 'guard should pass for valid executable evidence');
-  assert.ok(guardResult.fail_closed === true, 'executable evidence must be fail-closed');
-  const redacted = redactDelegatedResult(evidence);
-  assert.ok(!generatedEvidenceForbiddenMatches(redacted).length, 'no forbidden patterns in redacted evidence');
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-runtime-direct-valid-'));
+  try {
+    const evidence = validEvidence();
+    writeDownloadedRuntimeEvidence(repoRoot, evidence.release_evidence_binding);
+    const guardResult = runRuntimeOperationalEvidenceGuard({ ...evidence, ...boundRuntimeOptions(repoRoot) });
+    assert.ok(guardResult.valid, 'guard should pass for valid executable evidence');
+    assert.ok(guardResult.fail_closed === true, 'executable evidence must be fail-closed');
+    const redacted = redactDelegatedResult(evidence);
+    assert.ok(!generatedEvidenceForbiddenMatches(redacted).length, 'no forbidden patterns in redacted evidence');
+  } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
 });
 
 test('fail-closed evidence requires explicit fail_closed_reasons when artifact lifecycle is not executable', () => {
@@ -554,6 +558,7 @@ function writeDownloadedRuntimeEvidence(repoRoot, binding, overrides = {}) {
   const journeyPath = path.join(repoRoot, entry.journey_evidence_path);
   const soakPath = path.join(repoRoot, entry.soak_evidence_path);
   fs.mkdirSync(path.dirname(journeyPath), { recursive: true });
+  fs.mkdirSync(path.dirname(soakPath), { recursive: true });
   const journeyChecks = Object.fromEntries([
     'mode_pack_load', 'workspace_mutation', 'ledger_generation', 'forced_interruption', 'resume', 'stale_replay_rejection'
   ].map((id) => [id, { passed: true }]));
@@ -593,6 +598,112 @@ function writeDownloadedRuntimeEvidence(repoRoot, binding, overrides = {}) {
   }));
 }
 
+function refreshBindingWitness(evidence) {
+  const binding = evidence.release_evidence_binding;
+  const fields = ['target', 'status', 'implementation_commit', 'tested_commit', 'workflow_run_id',
+    'platform', 'architecture', 'package_sha256', 'binary_sha256', 'runtime_sha256', 'errors'];
+  const witnesses = binding.bindings.map(entry => Object.fromEntries(fields.map(field => [field, entry[field]])))
+    .sort((left, right) => left.target.localeCompare(right.target));
+  binding.binding_digest = `sha256:${crypto.createHash('sha256').update(JSON.stringify(witnesses)).digest('hex')}`;
+  evidence.sections.executable_evidence_validation.release_evidence_binding = releaseEvidenceBindingSummary(binding);
+}
+
+function boundRuntimeOptions(repoRoot) {
+  return { repoRoot, validateBoundEvidence: true, workflowRunId: '123456', testedCommit: 'd'.repeat(40) };
+}
+
+for (const satisfiedSection of ['artifact_lifecycle', 'golden_journey_fixture', 'soak_test']) {
+  for (const corruption of ['missing binding', 'missing journey', 'failed journey']) {
+    test(`Runtime guard rejects ${corruption} when only ${satisfiedSection} claims satisfaction`, () => {
+      const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-partial-runtime-'));
+      try {
+        const evidence = validEvidence();
+        writeDownloadedRuntimeEvidence(repoRoot, evidence.release_evidence_binding);
+        for (const id of requiredSections.filter(id => id !== satisfiedSection)) {
+          evidence.sections[id].status = 'not_executed';
+          evidence.fail_closed_reasons.push(`${id}:not_executed`);
+        }
+        const entry = evidence.release_evidence_binding.bindings[0];
+        if (corruption === 'missing binding') delete evidence.release_evidence_binding;
+        else if (corruption === 'missing journey') fs.unlinkSync(path.join(repoRoot, entry.journey_evidence_path));
+        else writeDownloadedRuntimeEvidence(repoRoot, evidence.release_evidence_binding,
+          { journey_checks: { workspace_mutation: { passed: false } } });
+        assert(validateRuntimeOperationalEvidence(evidence, boundRuntimeOptions(repoRoot)).length > 0);
+      } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    });
+  }
+}
+
+for (const id of ['artifact_lifecycle', 'golden_journey_fixture', 'soak_test']) {
+  test(`Runtime guard rejects a stale downloaded binding summary for ${id}`, () => {
+    const evidence = validEvidence();
+    evidence.sections[id].evidence_source = 'downloaded_artifact_binding';
+    evidence.sections[id].evidence_binding = { ...releaseEvidenceBindingSummary(evidence.release_evidence_binding),
+      binding_digest: `sha256:${'f'.repeat(64)}` };
+    assert(validateRuntimeOperationalEvidence(evidence).some(error => error.includes('evidence_binding.binding_digest')));
+  });
+}
+
+for (const [label, mutate, expected] of [
+  ['duplicate lifecycle target', e => e.sections.artifact_lifecycle.lifecycle_results.push(
+    { ...e.sections.artifact_lifecycle.lifecycle_results[0] }), 'unique'],
+  ['zero soak iterations', e => { e.sections.soak_test.iterations_requested = 0; e.sections.soak_test.iterations_completed = 0; }, 'positive'],
+  ['noncanonical run identity', e => { e.release_evidence_binding.bindings[0].workflow_run_id = '00123456'; refreshBindingWitness(e); }, 'workflow_run_id']
+]) test(`Runtime guard rejects ${label}`, () => {
+  const errors = validateRuntimeOperationalEvidence((() => { const e = validEvidence(); mutate(e); return e; })());
+  assert(errors.some(error => error.includes(expected)), errors.join('\n'));
+});
+
+for (const [label, overrides, options, expected] of [
+  ['zero executed commands', { soak_checks: { finite_convergence: { passed: true, commands_executed: 0, maximum_commands: 3 } } }, {}, 'positive'],
+  ['unsafe command limit', { soak_checks: { finite_convergence: { passed: true, commands_executed: 3, maximum_commands: 1e20 } } }, {}, 'safe integer'],
+  ['stale workflow run', {}, { workflowRunId: '654321' }, 'workflow_run_id'],
+  ['stale tested commit', {}, { testedCommit: 'e'.repeat(40) }, 'tested_commit']
+]) test(`Runtime guard rejects ${label} in bound downloaded evidence`, () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-runtime-bound-'));
+  try {
+    const evidence = validEvidence();
+    writeDownloadedRuntimeEvidence(repoRoot, evidence.release_evidence_binding, overrides);
+    const errors = validateRuntimeOperationalEvidence(evidence, { ...boundRuntimeOptions(repoRoot), ...options });
+    assert(errors.some(error => error.includes(expected)), errors.join('\n'));
+  } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+});
+
+test('Runtime guard rejects a linked evidence directory even when the referenced JSON matches', () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-runtime-linked-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-runtime-outside-'));
+  try {
+    const evidence = validEvidence();
+    writeDownloadedRuntimeEvidence(repoRoot, evidence.release_evidence_binding);
+    const directory = path.dirname(path.join(repoRoot, evidence.release_evidence_binding.bindings[0].journey_evidence_path));
+    fs.cpSync(directory, outside, { recursive: true });
+    fs.rmSync(directory, { recursive: true });
+    fs.symlinkSync(outside, directory, process.platform === 'win32' ? 'junction' : 'dir');
+    const errors = validateRuntimeOperationalEvidence(evidence, boundRuntimeOptions(repoRoot));
+    assert(errors.some(error => error.includes('regular file within the repository')), errors.join('\n'));
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('Runtime guard rejects JSON redirected to a build directory despite matching hashes', () => {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-runtime-build-tree-'));
+  try {
+    const evidence = validEvidence();
+    evidence.release_evidence_binding.bindings[0].journey_evidence_path = 'target/debug/runtime-journey-evidence.json';
+    writeDownloadedRuntimeEvidence(repoRoot, evidence.release_evidence_binding);
+    const errors = validateRuntimeOperationalEvidence(evidence, boundRuntimeOptions(repoRoot));
+    assert(errors.some(error => error.includes('downloaded target directory')), errors.join('\n'));
+  } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+});
+
+test('Runtime guard direct entry point cannot bypass referenced receipt checks', () => {
+  const result = runRuntimeOperationalEvidenceGuard({ ...validEvidence(), validateBoundEvidence: false });
+  assert.equal(result.valid, false);
+  assert(result.errors.some(error => error.includes('regular file within the repository')));
+});
+
 test('accepts satisfied runtime operational evidence', () => {
   const evidence = validEvidence();
   const errors = validateRuntimeOperationalEvidence(evidence);
@@ -622,7 +733,7 @@ test('rejects missing, inconsistent, and unbounded downloaded-artifact results',
   const evidence = validEvidence();
   writeDownloadedRuntimeEvidence(repoRoot, evidence.release_evidence_binding);
   assert.deepEqual(
-    validateRuntimeOperationalEvidence(evidence, { repoRoot, validateBoundEvidence: true }),
+    validateRuntimeOperationalEvidence(evidence, boundRuntimeOptions(repoRoot)),
     [],
     'complete downloaded journey and soak evidence should validate'
   );
@@ -632,23 +743,23 @@ test('rejects missing, inconsistent, and unbounded downloaded-artifact results',
   const journey = JSON.parse(fs.readFileSync(journeyPath, 'utf8'));
   journey.artifact.artifact_sha256 = `sha256:${'f'.repeat(64)}`;
   fs.writeFileSync(journeyPath, JSON.stringify(journey));
-  let errors = validateRuntimeOperationalEvidence(evidence, { repoRoot, validateBoundEvidence: true });
+  let errors = validateRuntimeOperationalEvidence(evidence, boundRuntimeOptions(repoRoot));
   assert(errors.some((error) => error.includes('journey.artifact.artifact_sha256 must match')), errors.join('\n'));
 
   writeDownloadedRuntimeEvidence(repoRoot, evidence.release_evidence_binding, {
     soak_checks: { finite_convergence: { passed: true, commands_executed: 4, maximum_commands: 3 } }
   });
-  errors = validateRuntimeOperationalEvidence(evidence, { repoRoot, validateBoundEvidence: true });
+  errors = validateRuntimeOperationalEvidence(evidence, boundRuntimeOptions(repoRoot));
   assert(errors.some((error) => error.includes('must remain within maximum_commands')), errors.join('\n'));
 
   writeDownloadedRuntimeEvidence(repoRoot, evidence.release_evidence_binding);
   fs.writeFileSync(journeyPath, 'null');
-  errors = validateRuntimeOperationalEvidence(evidence, { repoRoot, validateBoundEvidence: true });
+  errors = validateRuntimeOperationalEvidence(evidence, boundRuntimeOptions(repoRoot));
   assert(errors.some((error) => error.includes('journey_evidence_path must contain a JSON object')), errors.join('\n'));
 
   fs.rmSync(path.join(repoRoot, entry.soak_evidence_path));
-  errors = validateRuntimeOperationalEvidence(evidence, { repoRoot, validateBoundEvidence: true });
-  assert(errors.some((error) => error.includes('must be readable JSON')), errors.join('\n'));
+  errors = validateRuntimeOperationalEvidence(evidence, boundRuntimeOptions(repoRoot));
+  assert(errors.some((error) => error.includes('regular file within the repository')), errors.join('\n'));
 });
 
 test('accepts contract-only mode when generated runtime operational evidence is absent', () => {
