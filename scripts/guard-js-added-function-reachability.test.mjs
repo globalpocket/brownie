@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 import { validateAddedFunctionReachability } from './guard-js-added-function-reachability.mjs';
 
 function run(repoRoot, args) {
@@ -150,7 +151,7 @@ test('PR base refresh preserves complete history needed by later ancestry guards
   const remote = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-reachability-origin-'));
   const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-reachability-checkout-'));
   run(repoRoot, ['clone', '--bare', repoRoot, remote]);
-  run(repoRoot, ['clone', `file://${remote}`, checkout]);
+  run(repoRoot, ['clone', pathToFileURL(remote).href, checkout]);
   run(checkout, ['checkout', '--detach', feature]);
   const names = ['GITHUB_BASE_REF', 'GITHUB_EVENT_NAME', 'BROWNIE_JS_REACHABILITY_BASE'];
   const previous = Object.fromEntries(names.map(name => [name, process.env[name]]));
