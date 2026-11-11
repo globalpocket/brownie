@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { findCleanMergedDeliveryCandidate } from './phase-loop-delivery-integrity.mjs';
 
 function sha256(value) {
-  return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');
+  return crypto.createHash('sha256')
+    .update(Buffer.isBuffer(value) ? value : String(value), 'utf8').digest('hex');
 }
 
 function readJson(file) {

@@ -297,6 +297,35 @@ test('recovers an evidenced interrupted post-isolation store without discarding 
   assert.equal(fs.existsSync(result.interrupted_active_store_audit_path), true);
 });
 
+test('interrupted Runtime store fingerprints distinguish non-UTF8 physical bytes', () => {
+  const observations = [];
+  for (const byte of [0x80, 0x81]) {
+    const f = fixture();
+    try {
+      const first = isolateReviewReworkFreshDispatchRuntimeStore({ ...f, now: '2026-10-31T00:00:00.000Z' });
+      const claim = JSON.parse(fs.readFileSync(f.claimPath, 'utf8'));
+      delete claim.review_rework_fresh_dispatch_store_isolation;
+      writeJson(f.claimPath, claim);
+      fs.mkdirSync(f.activeStore, { recursive: true });
+      const bytes = Buffer.from([byte]);
+      fs.writeFileSync(path.join(f.activeStore, 'binary-state'), bytes);
+      const result = isolateReviewReworkFreshDispatchRuntimeStore({ ...f, now: '2026-10-31T00:01:00.000Z' });
+      const audit = JSON.parse(fs.readFileSync(result.interrupted_active_store_audit_path, 'utf8'));
+      assert.deepEqual(fs.readFileSync(path.join(result.interrupted_active_store_archive, 'binary-state')), bytes);
+      assert.equal(fs.readFileSync(path.join(first.archived_store, 'stale-continuation.json'), 'utf8'), '{"continuation":"rejected"}\n');
+      const exactFileDigest = crypto.createHash('sha256').update(bytes).digest('hex');
+      const expectedStoreDigest = crypto.createHash('sha256')
+        .update('brownie-review-rework-runtime-store-v1\0')
+        .update('file\0binary-state\0').update(exactFileDigest).update('\0').digest('hex');
+      assert.equal(audit.store_sha256, `sha256:${expectedStoreDigest}`);
+      observations.push(audit.store_sha256);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  }
+  assert.notEqual(observations[0], observations[1]);
+});
+
 test('fails closed for coexisting stores when the primary isolation audit does not prove their lineage', () => {
   const f = fixture();
   const first = isolateReviewReworkFreshDispatchRuntimeStore({ ...f, now: '2026-10-31T00:00:00.000Z' });
