@@ -22,7 +22,6 @@ function fetchBaseRefIfNeeded(repoRoot, baseName) {
   const result = runGit(repoRoot, [
     'fetch',
     '--no-tags',
-    '--depth=100',
     'origin',
     `+refs/heads/${baseName}:refs/remotes/origin/${baseName}`
   ]);

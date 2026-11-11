@@ -3,8 +3,22 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import test from 'node:test';
+import test, { afterEach, beforeEach } from 'node:test';
+import { pathToFileURL } from 'node:url';
 import { validateAddedFunctionReachability } from './guard-js-added-function-reachability.mjs';
+
+const fixtureEnvironmentKeys = ['CI', 'GITHUB_EVENT_NAME', 'GITHUB_BASE_REF', 'BROWNIE_JS_REACHABILITY_BASE'];
+let fixtureEnvironment;
+beforeEach(() => {
+  fixtureEnvironment = Object.fromEntries(fixtureEnvironmentKeys.map((name) => [name, process.env[name]]));
+  for (const name of fixtureEnvironmentKeys) delete process.env[name];
+});
+afterEach(() => {
+  for (const name of fixtureEnvironmentKeys) {
+    if (fixtureEnvironment[name] === undefined) delete process.env[name];
+    else process.env[name] = fixtureEnvironment[name];
+  }
+});
 
 function run(repoRoot, args) {
   const result = spawnSync('git', args, {
@@ -133,5 +147,45 @@ test('skips outside pull request CI when diff base is unavailable', () => {
     } else {
       process.env.GITHUB_BASE_REF = previousGithubBaseRef;
     }
+  }
+});
+
+
+test('PR base refresh preserves complete history needed by later ancestry guards', () => {
+  const { repoRoot, baseRef } = tempRepo();
+  const tree = run(repoRoot, ['rev-parse', 'HEAD^{tree}']);
+  let parent = baseRef;
+  for (let index = 0; index < 120; index += 1) {
+    parent = run(repoRoot, ['commit-tree', tree, '-p', parent, '-m', `history ${index}`]);
+  }
+  run(repoRoot, ['update-ref', 'refs/heads/main', parent]);
+  const feature = run(repoRoot, ['commit-tree', tree, '-p', parent, '-m', 'implementation']);
+  run(repoRoot, ['update-ref', 'refs/heads/implementation', feature]);
+  const remote = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-reachability-origin-'));
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-reachability-checkout-'));
+  run(repoRoot, ['clone', '--bare', repoRoot, remote]);
+  run(repoRoot, ['clone', pathToFileURL(remote).href, checkout]);
+  run(checkout, ['checkout', '--detach', feature]);
+  const names = ['GITHUB_BASE_REF', 'GITHUB_EVENT_NAME', 'BROWNIE_JS_REACHABILITY_BASE'];
+  const previous = Object.fromEntries(names.map(name => [name, process.env[name]]));
+  try {
+    process.env.GITHUB_BASE_REF = 'main';
+    process.env.GITHUB_EVENT_NAME = 'pull_request';
+    delete process.env.BROWNIE_JS_REACHABILITY_BASE;
+    assert.equal(run(checkout, ['rev-parse', '--is-shallow-repository']), 'false');
+    assert.equal(run(checkout, ['merge-base', baseRef, 'HEAD']), baseRef);
+    const result = validateAddedFunctionReachability({ repoRoot: checkout });
+    assert.equal(result.valid, true, JSON.stringify(result.errors));
+    assert.equal(result.skipped, false);
+    assert.equal(run(checkout, ['rev-parse', '--is-shallow-repository']), 'false');
+    assert.equal(run(checkout, ['merge-base', baseRef, 'HEAD']), baseRef);
+  } finally {
+    for (const name of names) {
+      if (previous[name] === undefined) delete process.env[name];
+      else process.env[name] = previous[name];
+    }
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+    fs.rmSync(remote, { recursive: true, force: true });
+    fs.rmSync(checkout, { recursive: true, force: true });
   }
 });

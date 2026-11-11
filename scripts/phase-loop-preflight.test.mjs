@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
@@ -33,6 +33,10 @@ function makeRepo() {
   execFileSync('git', ['config', 'user.email', 'test@example.invalid'], { cwd: repo });
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-m', 'init'], { cwd: repo, stdio: 'ignore' });
+  const auditedCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  writeAuditedCommit(repo, auditedCommit);
+  execFileSync('git', ['add', 'docs/architecture/runtime-release-readiness-audit.json', 'docs/architecture/runtime-release-contract.json'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'bind actual audited fixture ancestor'], { cwd: repo, stdio: 'ignore' });
   return repo;
 }
 
@@ -691,7 +695,7 @@ test('allows claim-smoke recovery to deliver dirty workspace progress for a pend
   const repo = makeRepo();
   fs.writeFileSync(path.join(repo, '.brownie/todo.md'), '- [ ] E-owner: Owner must provide release credentials:\n  Route: owner.\n  Verification: external owner handoff.\n');
   fs.writeFileSync(path.join(repo, 'README.md'), 'dirty\n');
-  const claim = path.join(os.tmpdir(), `brownie-pending-completion-claim-${Date.now()}.json`);
+  const claim = path.join(os.tmpdir(), `brownie-pending-completion-claim-${randomUUID()}.json`);
   fs.writeFileSync(claim, JSON.stringify({
     status: 'completed',
     completion_cleanup_pending: true,
@@ -732,7 +736,7 @@ test('accepts an absolute TODO path inside the repository', () => {
 
 test('rejects a TODO path outside the repository', () => {
   const repo = makeRepo();
-  const outsideTodo = path.join(os.tmpdir(), `brownie-outside-${Date.now()}.md`);
+  const outsideTodo = path.join(os.tmpdir(), `brownie-outside-${randomUUID()}.md`);
   fs.writeFileSync(outsideTodo, '- [ ] E-outside: Patch only `README.md`\n');
   const result = validatePhaseLoopPreflight({ repo, todo: outsideTodo, skipCommands: true });
   assert.equal(result.valid, false);
@@ -742,7 +746,7 @@ test('rejects a TODO path outside the repository', () => {
 
 test('rejects an in-repository TODO symlink that resolves outside the repository', () => {
   const repo = makeRepo();
-  const outsideTodo = path.join(os.tmpdir(), `brownie-outside-link-${Date.now()}.md`);
+  const outsideTodo = path.join(os.tmpdir(), `brownie-outside-link-${randomUUID()}.md`);
   const linkedTodo = path.join(repo, '.brownie/todo-link.md');
   fs.writeFileSync(outsideTodo, '- [ ] E-outside: Patch only `README.md`\n');
   fs.symlinkSync(outsideTodo, linkedTodo);
@@ -754,7 +758,7 @@ test('rejects an in-repository TODO symlink that resolves outside the repository
 
 test('accepts a workspace TODO snapshot and records source, fingerprint, and queue CAS evidence', () => {
   const repo = makeRepo();
-  const sourceTodo = path.join(os.tmpdir(), `brownie-snapshot-source-${Date.now()}.md`);
+  const sourceTodo = path.join(os.tmpdir(), `brownie-snapshot-source-${randomUUID()}.md`);
   const snapshotTodo = path.join(repo, '.brownie', 'todo-snapshot.md');
   const breakdown = path.join(repo, '.brownie', 'todo-breakdown.md');
   const todoText = fs.readFileSync(path.join(repo, '.brownie/todo.md'), 'utf8');
@@ -801,7 +805,7 @@ test('runs the TODO guard against the configured snapshot path and rejects malfo
 
 test('snapshot audit rejection preserves claim, ledger, status, and runtime state', () => {
   const repo = makeRepo();
-  const sourceTodo = path.join(os.tmpdir(), `brownie-snapshot-protected-${Date.now()}.md`);
+  const sourceTodo = path.join(os.tmpdir(), `brownie-snapshot-protected-${randomUUID()}.md`);
   const snapshotTodo = path.join(repo, '.brownie', 'todo-snapshot.md');
   const breakdown = path.join(repo, '.brownie', 'todo-breakdown.md');
   const stateDir = path.join(repo, '.brownie', 'private', 'phase-loop');
@@ -891,7 +895,7 @@ test('rejects the fixture marker outside the claim-smoke fixture profile', () =>
 
 test('allows an external temporary queue only under the explicit claim-smoke fixture profile', () => {
   const repo = makeRepo();
-  const outsideTodo = path.join(os.tmpdir(), `brownie-claim-smoke-todo-${Date.now()}.md`);
+  const outsideTodo = path.join(os.tmpdir(), `brownie-claim-smoke-todo-${randomUUID()}.md`);
   fs.writeFileSync(outsideTodo, '- [ ] B-01: durable claim task\n');
   const previous = process.env.PHASE_LOOP_CLAIM_SMOKE_TEST_ONLY;
   process.env.PHASE_LOOP_CLAIM_SMOKE_TEST_ONLY = '1';
@@ -928,7 +932,7 @@ test('keeps production preflight strict when a controller root is supplied', () 
 
 test('accepts sequential controller-owned completion mutations for multiple TODOs', () => {
   const repo = makeRepo();
-  const sourceTodo = path.join(os.tmpdir(), `brownie-snapshot-multi-${Date.now()}.md`);
+  const sourceTodo = path.join(os.tmpdir(), `brownie-snapshot-multi-${randomUUID()}.md`);
   const snapshotTodo = path.join(repo, '.brownie', 'todo-snapshot.md');
   const breakdown = path.join(repo, '.brownie', 'todo-breakdown.md');
   const first = '- [ ] E-first: Patch only `README.md`:\n  Route: documentation.\n  Verification: run `pnpm --workspace-root guard:release-contract`.\n';
@@ -1001,7 +1005,7 @@ test('accepts sequential controller-owned completion mutations for multiple TODO
 
 test('rejects a workspace TODO snapshot whose source fingerprint changed', () => {
   const repo = makeRepo();
-  const sourceTodo = path.join(os.tmpdir(), `brownie-snapshot-mismatch-${Date.now()}.md`);
+  const sourceTodo = path.join(os.tmpdir(), `brownie-snapshot-mismatch-${randomUUID()}.md`);
   const snapshotTodo = path.join(repo, '.brownie', 'todo-snapshot.md');
   const breakdown = path.join(repo, '.brownie', 'todo-breakdown.md');
   fs.writeFileSync(sourceTodo, '- [ ] E-source: Patch only `README.md`\n');
@@ -1260,4 +1264,102 @@ test('ordinary leaf repair keeps the direct-write path when target context is av
   const controller = fs.readFileSync(path.join(repositoryRoot, 'phase-loop.sh'), 'utf8');
   assert.match(controller, /or not leaf_has_oversized_repair/);
   assert.match(controller, /leaf_required_next_tool_policy: the next tool must be `workspace\.write`/);
+});
+
+function writeAuditedCommit(repo, auditedCommit) {
+  const auditPath = path.join(repo, 'docs/architecture/runtime-release-readiness-audit.json');
+  const audit = JSON.parse(fs.readFileSync(auditPath, 'utf8'));
+  audit.audited_main_commit = auditedCommit;
+  writeJson(auditPath, audit);
+  const contractPath = path.join(repo, 'docs/architecture/runtime-release-contract.json');
+  const contract = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
+  contract.commit_trace.readiness_audit_content_sha256 = `sha256:${createHash('sha256').update(fs.readFileSync(auditPath)).digest('hex')}`;
+  writeJson(contractPath, contract);
+}
+
+function validateAuditedFixture(repo) {
+  return validatePhaseLoopPreflight({ repo, expectedActor: 'fixture-implementation', skipCommands: true });
+}
+
+test('audit ancestry accepts an actual audited ancestor after a two-parent merge advances main', () => {
+  const repo = makeRepo();
+  const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(repo, 'source.txt'), 'new source\n');
+  execFileSync('git', ['add', 'source.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'fixture implementation'], { cwd: repo, stdio: 'ignore' });
+  const feature = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: repo, encoding: 'utf8' }).trim();
+  const merge = execFileSync('git', ['commit-tree', tree, '-p', base, '-p', feature, '-m', 'fixture merge'], { cwd: repo, encoding: 'utf8' }).trim();
+  execFileSync('git', ['reset', '--hard', merge], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['update-ref', 'refs/remotes/origin/main', merge], { cwd: repo });
+  assert.equal(validateAuditedFixture(repo).valid, true);
+});
+
+test('audit ancestry normalizes an existing uppercase audited object before checking it', () => {
+  const repo = makeRepo();
+  const audit = JSON.parse(fs.readFileSync(path.join(repo, 'docs/architecture/runtime-release-readiness-audit.json')));
+  writeAuditedCommit(repo, audit.audited_main_commit.toUpperCase());
+  const result = validateAuditedFixture(repo);
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+});
+
+for (const value of ['f'.repeat(40), 'F'.repeat(40)]) test(`audit ancestry rejects an absent audited commit ${value.slice(0, 2)}`, () => {
+  const repo = makeRepo(); writeAuditedCommit(repo, value);
+  const result = validateAuditedFixture(repo);
+  assert.equal(result.valid, false);
+  assert(result.errors.some(error => error.code === 'readiness_audit_main_commit_unresolved'), JSON.stringify(result.errors));
+});
+
+test('audit ancestry rejects a real tree object used as the audited commit', () => {
+  const repo = makeRepo();
+  const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: repo, encoding: 'utf8' }).trim();
+  writeAuditedCommit(repo, tree);
+  const result = validateAuditedFixture(repo);
+  assert.equal(result.valid, false);
+  assert(result.errors.some(error => error.code === 'readiness_audit_main_commit_unresolved'), JSON.stringify(result.errors));
+});
+
+test('audit ancestry rejects a present but unrelated root commit', () => {
+  const repo = makeRepo();
+  const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: repo, encoding: 'utf8' }).trim();
+  const unrelated = execFileSync('git', ['commit-tree', tree, '-m', 'unrelated audited history'], { cwd: repo, encoding: 'utf8' }).trim();
+  writeAuditedCommit(repo, unrelated);
+  const result = validateAuditedFixture(repo);
+  assert.equal(result.valid, false);
+  assert(result.errors.some(error => error.code === 'readiness_audit_main_commit_unreachable'), JSON.stringify(result.errors));
+});
+
+for (const value of [undefined, null, 123]) test(`audit ancestry rejects missing or nonstring audited identity ${String(value)}`, () => {
+  const repo = makeRepo(); writeAuditedCommit(repo, value);
+  const result = validateAuditedFixture(repo);
+  assert.equal(result.valid, false);
+  assert(result.errors.some(error => error.code === 'readiness_audit_main_commit_not_bound'), JSON.stringify(result.errors));
+});
+
+test('audit ancestry rejects unavailable Git metadata at the exported boundary', () => {
+  const repo = makeRepo();
+  fs.renameSync(path.join(repo, '.git'), path.join(repo, '.git-unavailable-fixture'));
+  assert.throws(() => validateAuditedFixture(repo));
+});
+
+test('audit ancestry pre-claim CLI fails once with an actionable error before creating a claim', () => {
+  const repo = makeRepo();
+  writeAuditedCommit(repo, 'f'.repeat(40));
+  execFileSync('git', ['add', 'docs/architecture/runtime-release-contract.json', 'docs/architecture/runtime-release-readiness-audit.json'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'unresolvable audit in clean fixture'], { cwd: repo, stdio: 'ignore' });
+  assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }).trim(), '');
+  const todo = fs.readFileSync(path.join(repo, '.brownie/todo.md'));
+  const command = [path.join(repositoryRoot, 'scripts/phase-loop-preflight.mjs'), '--repo', repo, '--stage', 'pre-claim-boundary', '--expected-actor', 'fixture-implementation', '--skip-commands'];
+  const first = spawnSync(process.execPath, command, { encoding: 'utf8', timeout: 10000 });
+  const second = spawnSync(process.execPath, command, { encoding: 'utf8', timeout: 10000 });
+  for (const result of [first, second]) {
+    assert.equal(result.status, 1, result.stderr);
+    const failure = JSON.parse(result.stderr);
+    assert.equal(failure.valid, false);
+    assert.equal(failure.stage, 'pre-claim-boundary');
+    assert.deepEqual(failure.errors.map(error => error.code), ['readiness_audit_main_commit_unresolved']);
+    assert.match(failure.errors[0].message, /existing commit object/);
+  }
+  assert.deepEqual(fs.readFileSync(path.join(repo, '.brownie/todo.md')), todo);
+  assert.equal(fs.existsSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/current.json')), false);
 });
