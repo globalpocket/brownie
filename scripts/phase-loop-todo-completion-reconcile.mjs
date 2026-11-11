@@ -27,8 +27,12 @@ function parseArgs(argv) {
 
 function uncheckedBlocks(text) {
   const source = String(text ?? '');
-  const starts = [...source.matchAll(/^(?:[-*]|\d+[.)])\s+\[ \]\s+/gmu)].map((match) => match.index);
-  return starts.map((start, index) => source.slice(start, starts[index + 1] ?? source.length).trimEnd());
+  const starts = [...source.matchAll(/^(?:[-*]|\d+[.)])\s+\[([ xX])\]\s+/gmu)];
+  return starts.flatMap((match, index) => {
+    if (match[1] !== ' ') return [];
+    const block = source.slice(match.index, starts[index + 1]?.index ?? source.length).trimEnd();
+    return [{ text: block, start: match.index, end: match.index + block.length }];
+  });
 }
 
 function atomicWrite(filePath, content) {
@@ -53,7 +57,7 @@ export function reconcileCompletedTodoProjection({ repoRoot, todoPath = '.browni
   });
   if (state.errors.length > 0) return { applied: false, reason: 'todo_state_invalid', errors: state.errors };
   const completedLiveIds = uncheckedBlocks(beforeTodo)
-    .map(todoIdFromBlock)
+    .map(({ text }) => todoIdFromBlock(text))
     // A checked queue entry or an unverified historical record must not erase
     // a live TODO.  This projection is destructive, so require the narrower
     // independently verified completion set even if another caller later
@@ -63,9 +67,10 @@ export function reconcileCompletedTodoProjection({ repoRoot, todoPath = '.browni
 
   let afterTodo = beforeTodo;
   for (const id of completedLiveIds) {
-    const block = uncheckedBlocks(afterTodo).find((candidate) => todoIdFromBlock(candidate) === id);
+    const block = uncheckedBlocks(afterTodo).find(({ text }) => todoIdFromBlock(text) === id);
     if (!block) throw new Error(`live completed TODO disappeared during reconciliation: ${id}`);
-    afterTodo = afterTodo.replace(`${block}\n`, '').replace(block, '');
+    const newline = /^\r?\n/u.exec(afterTodo.slice(block.end))?.[0].length ?? 0;
+    afterTodo = afterTodo.slice(0, block.start) + afterTodo.slice(block.end + newline);
   }
   const key = eventKey ?? sha256(`${sha256(beforeTodo)}\n${completedLiveIds.join('\n')}`);
   const recoveryDir = path.join(repoRoot, '.brownie/private/phase-loop/todo-claims/completion-projections', key);
