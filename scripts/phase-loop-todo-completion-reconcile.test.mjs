@@ -79,3 +79,50 @@ test('does not project a live TODO from an invalid completion receipt', () => {
   assert.equal(result.reason, 'no_completed_todo_projection_drift');
   assert.match(fs.readFileSync(path.join(repo, '.brownie/todo.md'), 'utf8'), /- \[ \] E-completed-projection/);
 });
+
+for (const [completedMarker, checkedMarker] of [
+  ['- [ ]', '- [x]'], ['- [ ]', '- [X]'], ['- [ ]', '* [x]'],
+  ['- [ ]', '* [X]'], ['- [ ]', '1. [x]'], ['- [ ]', '2) [X]'],
+  ['* [ ]', '- [x]'], ['1. [ ]', '- [x]']
+]) {
+  test(`completion projection preserves an adjacent checked block: ${completedMarker}, ${checkedMarker}`, (t) => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-completion-boundary-'));
+    t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+    const receipts = path.join(repo, '.brownie/private/phase-loop/todo-completions');
+    fs.mkdirSync(receipts, { recursive: true });
+    const completed = todo.replace('- [ ]', completedMarker);
+    const checked = `${checkedMarker} E-preserve-B: retain this complete contract\n  - Depends on: <none>.\n  Retained evidence: original bytes.\n`;
+    const pending = '- [ ] E-preserve-C: retain this active contract\n  - Depends on: <none>.\n';
+    const before = `${completed}\n${checked}\n${pending}`;
+    const todoFile = path.join(repo, '.brownie/todo.md');
+    fs.writeFileSync(todoFile, before);
+    fs.writeFileSync(path.join(receipts, 'receipt.json'), JSON.stringify(durableCompletion()));
+
+    const result = reconcileCompletedTodoProjection({ repoRoot: repo, runStamp: 'boundary-fixture' });
+
+    assert.equal(result.applied, true, JSON.stringify(result));
+    assert.deepEqual(result.completed_todo_ids, [todoId]);
+    assert.equal(fs.readFileSync(todoFile, 'utf8'), `\n${checked}\n${pending}`);
+    assert.equal(fs.readFileSync(path.join(repo, result.recovery_path, 'todo.before.md'), 'utf8'), before);
+    const replay = reconcileCompletedTodoProjection({ repoRoot: repo });
+    assert.equal(replay.applied, false);
+    assert.equal(fs.readFileSync(todoFile, 'utf8'), `\n${checked}\n${pending}`);
+  });
+}
+
+test('completion projection removes the selected span without replacing an earlier text occurrence', (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-completion-span-'));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const receipts = path.join(repo, '.brownie/private/phase-loop/todo-completions');
+  fs.mkdirSync(receipts, { recursive: true });
+  const retained = `- [x] E-preserve-history: retain the original text\n  Original first line was indented:\n    ${todo}\n`;
+  const todoFile = path.join(repo, '.brownie/todo.md');
+  fs.writeFileSync(todoFile, retained + todo);
+  fs.writeFileSync(path.join(receipts, 'receipt.json'), JSON.stringify(durableCompletion()));
+
+  const result = reconcileCompletedTodoProjection({ repoRoot: repo });
+
+  assert.equal(result.applied, true, JSON.stringify(result));
+  assert.deepEqual(result.completed_todo_ids, [todoId]);
+  assert.equal(fs.readFileSync(todoFile, 'utf8'), retained);
+});
