@@ -1053,3 +1053,18 @@ test('rejects satisfied artifacts whose commit bindings are not anchored to arti
   assert(errors.some((error) => error.includes('implementationCommit must match artifact source_commit')));
   assert(errors.some((error) => error.includes('testedCommit must match artifact source_commit')));
 });
+
+for (const kind of ['package', 'Runtime']) test(`guard rejects declared build-tree ${kind} path despite matching bytes`, () => {
+  const fixture = downloadedGuardFixture();
+  try {
+    const metadataPath = path.join(fixture.repoRoot, fixture.artifact.artifact_evidence_path);
+    const metadata = JSON.parse(fs.readFileSync(metadataPath));
+    const file = kind === 'package' ? 'brownie-darwin-arm64.tar.gz' : 'brownie-runtime';
+    const relative = `target/release/${file}`;
+    fs.copyFileSync(path.join(fixture.repoRoot, '.brownie/release-evidence/artifacts/darwin-arm64', file), path.join(fixture.repoRoot, relative));
+    if (kind === 'package') metadata.archive = { path: relative, sha256: fixture.binding.package_sha256 };
+    else metadata.runtime_companion.path = relative;
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata));
+    assert(validate(fixture).some(error => error.includes('downloaded target directory')));
+  } finally { fs.rmSync(fixture.repoRoot, { recursive: true, force: true }); }
+});

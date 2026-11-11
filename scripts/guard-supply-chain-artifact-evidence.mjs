@@ -264,10 +264,14 @@ function validateDownloadedPhysicalEvidence(repoRoot, artifact, binding, errors,
     path: `${directory}/brownie-${binding.target}.${binding.target === 'win32-x64' ? 'zip' : 'tar.gz'}`,
     sha256: binding.package_sha256
   };
+  requireValue(typeof archive?.path === 'string' && archive.path.startsWith(`${directory}/`), errors,
+    `${owner}.package path must remain in the downloaded target directory.`);
   requireValue(archive?.sha256 === binding.package_sha256, errors, `${owner}.package sha256 must match declared archive metadata.`);
   validateReferencedFile(repoRoot, archive, errors, `${owner}.package`);
   requireValue(metadata.runtime_companion?.sha256 === binding.runtime_sha256, errors,
     `${owner}.runtime_companion sha256 must match downloaded binding.`);
+  requireValue(typeof metadata.runtime_companion?.path === 'string' && metadata.runtime_companion.path.startsWith(`${directory}/`), errors,
+    `${owner}.runtime_companion path must remain in the downloaded target directory.`);
   validateReferencedFile(repoRoot, metadata.runtime_companion, errors, `${owner}.runtime_companion`);
 }
 
