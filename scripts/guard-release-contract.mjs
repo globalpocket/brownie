@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { requiredReleaseGateCommands } from './release-gate.mjs';
@@ -123,13 +124,187 @@ function validateCommitTrace(trace, errors, contractPath) {
   }
 }
 
-function requireArtifactBindingTrace(trace, errors, contractPath, evidenceField) {
+function requireArtifactBindingTrace(trace, errors, contractPath, evidenceClaim) {
+  const shapes = {
+    implementation_commit: /^[a-f0-9]{40}$/,
+    tested_commit: /^[a-f0-9]{40}$/,
+    workflow_run_id: /^[1-9][0-9]*$/,
+    artifact_sha256: /^sha256:[a-f0-9]{64}$/
+  };
   for (const field of ['implementation_commit', 'tested_commit', 'workflow_run_id', 'artifact_sha256']) {
     requireValue(
       isVerifiedTraceValue(trace?.[field]),
       errors,
-      `${contractPath} commit_trace.${field} must be a verified evidence value, not a pending/blocker placeholder, when release_artifact_evidence.${evidenceField} claims implemented artifact evidence.`
+      `${contractPath} commit_trace.${field} must be a verified evidence value, not a pending/blocker placeholder, when ${evidenceClaim} claims implemented artifact evidence.`
     );
+    requireValue(typeof trace?.[field] === 'string' && shapes[field].test(trace[field]), errors,
+      `${contractPath} commit_trace.${field} must have its exact evidence identifier shape when artifact evidence is implemented.`);
+  }
+}
+
+function validateExecutableTraceBinding(repoRoot, contract, errors, contractPath) {
+  const claimed = Object.entries(contract.release_artifact_evidence ?? {}).filter(([, value]) =>
+    ['implemented_sufficient', 'satisfied'].includes(value?.status));
+  const runtimeClaims = (Array.isArray(contract.release_ready_conditions) ? contract.release_ready_conditions : []).some((entry) =>
+    ['artifact_smoke_tests', 'tested_commit_matches_artifact_commit', 'audit_trace_matches_tested_commit'].includes(entry?.id)
+    && ['implemented_sufficient', 'satisfied'].includes(entry?.status));
+  const runtimeSatisfied = (Array.isArray(contract.release_ready_conditions) ? contract.release_ready_conditions : []).some((entry) =>
+    ['artifact_smoke_tests', 'tested_commit_matches_artifact_commit', 'audit_trace_matches_tested_commit'].includes(entry?.id)
+    && entry?.status === 'satisfied');
+  // The checked-in pending contract uses implemented_sufficient for tooling
+  // while explicitly blocking release on missing trace evidence. A satisfied
+  // Runtime condition claims actual evidence even without an artifact claim.
+  if (claimed.length === 0 && !runtimeSatisfied) return;
+  const trace = contract.commit_trace ?? {};
+  if (runtimeClaims) requireArtifactBindingTrace(trace, errors, contractPath, 'release_ready_conditions Runtime evidence');
+  const readEvidence = (relativePath, maximumBytes = 16 * 1024 * 1024) => {
+    if (typeof relativePath !== 'string' || !relativePath || path.isAbsolute(relativePath)) {
+      errors.push(`${contractPath} executable evidence requires a repository-relative path.`);
+      return null;
+    }
+    const absolute = path.resolve(repoRoot, relativePath);
+    const prefix = path.resolve(repoRoot) + path.sep;
+    try {
+      if (!absolute.startsWith(prefix) || !fs.realpathSync(absolute).startsWith(fs.realpathSync(repoRoot) + path.sep)
+        || fs.lstatSync(absolute).isSymbolicLink() || !fs.statSync(absolute).isFile() || fs.statSync(absolute).size > maximumBytes) {
+        throw new Error('not a bounded ordinary repository file');
+      }
+      return { absolute, bytes: fs.readFileSync(absolute) };
+    } catch {
+      errors.push(`${contractPath} executable evidence ${relativePath} must be a bounded ordinary repository file.`);
+      return null;
+    }
+  };
+  const readObject = (relativePath) => {
+    const file = readEvidence(relativePath);
+    try {
+      const value = file && JSON.parse(file.bytes.toString('utf8'));
+      if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    } catch { /* Invalid evidence remains a structured rejection below. */ }
+    errors.push(`${contractPath} executable evidence ${relativePath} must contain a JSON object.`);
+    return null;
+  };
+  const supply = readObject(contract.supply_chain_artifact_evidence?.default_path);
+  if (!supply) return;
+  requireValue(supply.schema_version === 1 && supply.evidence_id === 'brownie-supply-chain-artifact-evidence-v1',
+    errors, `${contractPath} executable supply-chain evidence must identify its supported schema.`);
+  requireValue(supply.source_tree_dirty === false && supply.sourceCheckoutState === 'clean'
+    && supply.source_checkout?.state === 'clean' && supply.source_checkout?.validation?.valid === true,
+  errors, `${contractPath} executable evidence must prove clean source identity.`);
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024 });
+    return result.status === 0 ? result.stdout.trim() : null;
+  };
+  const testedTree = /^[a-f0-9]{40}$/.test(trace.tested_commit ?? '') ? git('rev-parse', '--verify', `${trace.tested_commit}^{tree}`) : null;
+  // The persisted trace contains the tested SHA and cannot be part of its own
+  // source identity. Exclude that exact metadata file and generated evidence;
+  // changes to any other tracked source must still invalidate the evidence.
+  const auditedSourcePaths = ['.', ':(exclude).brownie/release-evidence/', `:(exclude,literal)${defaultContractPath}`];
+  requireValue(testedTree !== null && git('diff', '--quiet', trace.tested_commit, 'HEAD', '--', ...auditedSourcePaths) !== null, errors,
+    `${contractPath} tested_commit must identify the current audited source tree; stale evidence cannot satisfy the contract.`);
+  if (/^[a-f0-9]{40}$/.test(trace.implementation_commit ?? '') && /^[a-f0-9]{40}$/.test(trace.tested_commit ?? '')) {
+    requireValue(git('merge-base', '--is-ancestor', trace.implementation_commit, trace.tested_commit) !== null,
+      errors, `${contractPath} implementation_commit must belong to the independently identified tested commit.`);
+  }
+  requireValue(git('status', '--porcelain=v1', '--untracked-files=all', '--', ...auditedSourcePaths) === '', errors,
+    `${contractPath} implemented evidence cannot describe a dirty source checkout, including untracked build inputs.`);
+  const artifacts = supply.sections?.artifacts?.artifacts;
+  requireValue(supply.sections?.artifacts?.status === 'satisfied', errors,
+    `${contractPath} implemented artifact evidence requires a validated satisfied artifact section.`);
+  const matching = Array.isArray(artifacts) ? artifacts.filter((artifact) =>
+    artifact?.provenance_binding?.implementationCommit === trace.implementation_commit
+    && artifact?.provenance_binding?.testedCommit === trace.tested_commit
+    && artifact?.provenance_binding?.workflowRunId === trace.workflow_run_id
+    && artifact?.sha256 === trace.artifact_sha256) : [];
+  requireValue(matching.length === 1, errors, `${contractPath} commit_trace must identify exactly one validated executable artifact, including its workflow and both commit identities.`);
+  for (const artifact of matching) {
+    const provenance = artifact.provenance_binding;
+    requireValue(provenance.artifactSha256 === trace.artifact_sha256, errors,
+      `${contractPath} artifact provenance digest must match the trace and actual artifact bytes.`);
+    const sourceCommit = 'sha256:' + trace.tested_commit;
+    const sourceIdentity = 'sha256:' + crypto.createHash('sha256').update(sourceCommit + ':clean').digest('hex');
+    requireValue(artifact.source_commit === sourceCommit && artifact.source_clean_tree === 'clean'
+      && artifact.source_identity === sourceIdentity && provenance.buildSourceCommit === sourceCommit
+      && provenance.buildSourceCleanTree === 'clean' && provenance.buildSourceIdentity === sourceIdentity
+      && provenance.sourceCheckoutState === 'clean', errors,
+    `${contractPath} artifact source identity must bind the actual tested commit and clean source tree.`);
+    requireValue(typeof provenance.platform === 'string' && /^[a-z][a-z0-9]*$/.test(provenance.platform)
+      && typeof provenance.architecture === 'string' && /^[a-z][a-z0-9_]*$/.test(provenance.architecture)
+      && artifact.target === provenance.platform + '-' + provenance.architecture, errors,
+    `${contractPath} executable artifact target must match its platform and architecture.`);
+    const provenanceIdentity = 'sha256:' + crypto.createHash('sha256').update([
+      trace.implementation_commit, trace.tested_commit, trace.workflow_run_id, artifact.path,
+      trace.artifact_sha256, provenance.platform, provenance.architecture
+    ].join('\n')).digest('hex');
+    requireValue(artifact.provenance_identity === provenanceIdentity, errors,
+      `${contractPath} artifact provenance identity must bind the exact trace and target.`);
+    const actual = readEvidence(artifact.path, 128 * 1024 * 1024);
+    requireValue(actual && 'sha256:' + crypto.createHash('sha256').update(actual.bytes).digest('hex') === trace.artifact_sha256,
+      errors, `${contractPath} commit_trace.artifact_sha256 must match the actual referenced artifact bytes.`);
+    const roundtrip = supply.sections?.artifacts?.release_evidence_binding;
+    const bindings = Array.isArray(roundtrip?.bindings) ? roundtrip.bindings : [];
+    const bound = bindings.filter((item) => item?.target === artifact.target);
+    requireValue(roundtrip?.evidence_id === 'brownie-release-evidence-roundtrip-binding-v1'
+      && roundtrip.status === 'satisfied' && bound.length === 1, errors,
+    `${contractPath} trace-bound artifact requires one executable roundtrip binding.`);
+    for (const item of bound) {
+      requireValue(item.implementation_commit === 'sha256:' + trace.implementation_commit
+        && item.tested_commit === trace.tested_commit && item.workflow_run_id === trace.workflow_run_id
+        && item.binary_sha256 === trace.artifact_sha256 && item.platform === provenance.platform
+        && item.architecture === provenance.architecture && item.status === 'satisfied'
+        && /^sha256:[a-f0-9]{64}$/.test(item.package_sha256 ?? '')
+        && /^sha256:[a-f0-9]{64}$/.test(item.runtime_sha256 ?? ''), errors,
+      `${contractPath} executable roundtrip binding must match the exact commit, workflow, digest and target.`);
+      for (const [kind, evidenceId, checkIds] of [
+        ['journey', 'brownie-release-artifact-runtime-journey-v1', ['mode_pack_load', 'workspace_mutation', 'ledger_generation', 'forced_interruption', 'resume', 'stale_replay_rejection']],
+        ['soak', 'brownie-release-artifact-stateful-soak-v1', ['artifact_execution_boundary', 'process_loss_recovery', 'duplicate_side_effect_rejection', 'ledger_workspace_consistency', 'resume_replay_behavior', 'finite_convergence', 'evidence_chain_integrity']]
+      ]) {
+        const observed = readObject(item[kind + '_evidence_path']);
+        requireValue(observed?.evidence_id === evidenceId && observed.target === artifact.target
+          && observed.workflow_run_id === trace.workflow_run_id && observed.artifact?.artifact_sha256 === trace.artifact_sha256
+          && observed.artifact?.archive_sha256 === item.package_sha256 && observed.artifact?.runtime_sha256 === item.runtime_sha256
+          && checkIds.every((id) => observed.checks?.[id]?.passed === true), errors,
+        `${contractPath} executable ${kind} reference must match the actual artifact trace and passed checks.`);
+      }
+    }
+  }
+  for (const [field, entry] of claimed) {
+    const actual = readEvidence(entry.path, field === 'artifacts' ? 128 * 1024 * 1024 : 16 * 1024 * 1024);
+    if (actual && field === 'artifacts') {
+      requireValue(matching.some((artifact) => typeof artifact.path === 'string' && path.resolve(repoRoot, artifact.path) === actual.absolute), errors,
+        `${contractPath} implemented artifact path must identify the trace-bound executable artifact.`);
+    } else if (actual) {
+      const section = supply.sections?.[{ sha256sums: 'checksums', signature: 'signature_or_integrity_proof', sbom: 'sbom', provenance: 'provenance' }[field]];
+      requireValue(section?.status === 'satisfied' && typeof section.path === 'string'
+        && path.resolve(repoRoot, section.path) === actual.absolute, errors,
+      `${contractPath} implemented ${field} reference must match its satisfied executable evidence path.`);
+      if (field === 'signature' && section?.proof_kind === 'owner_approved_integrity_authority_with_sha256sums') {
+        const decision = readObject(entry.path);
+        const checksums = supply.sections?.checksums;
+        const checksumFile = readEvidence(checksums?.path);
+        requireValue(section.path === 'docs/architecture/owner-integrity-authority-decision.json'
+          && decision?.schema_version === 1 && decision.decision_id === 'brownie-owner-integrity-authority-decision-v1'
+          && decision.decision_status === 'approved' && decision.owner_approved === true
+          && decision.approved_mechanism === 'protected-git-ref-ci-provenance-sha256sums-integrity-verification'
+          && checksums?.status === 'satisfied' && checksumFile
+          && checksums.sha256 === 'sha256:' + crypto.createHash('sha256').update(checksumFile.bytes).digest('hex')
+          && matching.every((artifact) => checksumFile.bytes.toString('utf8').split(/\r?\n/).some((line) =>
+            line === `${artifact.sha256.slice('sha256:'.length)}  ${artifact.path}`)), errors,
+        `${contractPath} integrity proof must use the approved physical decision and SHA256SUMS binding to the actual artifact.`);
+      } else {
+        requireValue(section?.sha256 === 'sha256:' + crypto.createHash('sha256').update(actual.bytes).digest('hex'), errors,
+          `${contractPath} implemented ${field} reference must match its physical digest.`);
+      }
+    }
+  }
+  if (runtimeClaims) {
+    const runtime = readObject(contract.runtime_operational_evidence?.default_path);
+    const binding = supply.sections?.artifacts?.release_evidence_binding;
+    requireValue(runtime?.evidence_id === 'brownie-runtime-operational-evidence-v1'
+      && runtime.release_evidence_binding?.binding_digest === binding?.binding_digest
+      && typeof binding?.binding_digest === 'string'
+      && JSON.stringify(runtime.release_evidence_binding?.bindings) === JSON.stringify(binding.bindings), errors,
+    `${contractPath} Runtime and supply-chain executable evidence must share the same exact roundtrip binding.`);
   }
 }
 
@@ -268,7 +443,7 @@ function validateRuntimeReleaseContract(contract, options = {}) {
       requireValue(entry.status !== 'satisfied', errors, `${contractPath} release_artifact_evidence.${field} must not be satisfied before real artifacts exist.`);
       requireValue(entry.path === null || isNonEmptyString(entry.path), errors, `${contractPath} release_artifact_evidence.${field}.path must be null or non-empty.`);
       if (implementedArtifactEvidenceStatuses.has(entry.status)) {
-        requireArtifactBindingTrace(contract.commit_trace, errors, contractPath, field);
+        requireArtifactBindingTrace(contract.commit_trace, errors, contractPath, `release_artifact_evidence.${field}`);
       }
     }
   }
@@ -398,6 +573,7 @@ export function runReleaseContractGuard(options = {}) {
     audit,
     readinessAuditContentSha256
   }));
+  validateExecutableTraceBinding(repoRoot, contract, errors, contractPath);
   return { errors, contractPath };
 }
 
