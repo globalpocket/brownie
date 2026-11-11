@@ -30,7 +30,7 @@
         "artifact_sha256"
       ],
       "policy": "Runtime Release Ready remains false until current tested commit, workflow run id, and artifact SHA bindings are generated from executable evidence. Pending values must not be replaced with invented placeholders.",
-      "next_evidence_step": "Execute pnpm release:gate to generate workflow_run_id and artifact_sha256 from current tested commit."
+      "next_evidence_step": "Run the existing Release artifact-roundtrip matrix to download, extract and exercise the package; collect both evidence families for the selected target from the same current workflow identity, then validate all release gates. Documentation does not generate run IDs or hashes."
     },
     "trace_binding_schema": {
       "schema_version": 1,
@@ -61,7 +61,82 @@
     "existing_ci_release_gate_binding_status": "release_gate_dry_run_required_by_existing_vsix_check_path_direct_workflow_scope_blocked",
     "owner_governance_evidence_status": "machine_checked_owner_controlled_residuals_satisfied_cross_platform_artifacts_held",
     "metadata_resynchronization_status": "current_authority_resynchronized_to_origin_main_after_r20",
-    "trace_binding_fingerprint": "sha256:c2a79ea781ccbb2b3653428047cd8fbbd7813ce361dab5f3a9004a4f9bf41fe7"
+    "trace_binding_fingerprint": "sha256:c2a79ea781ccbb2b3653428047cd8fbbd7813ce361dab5f3a9004a4f9bf41fe7",
+    "downloaded_artifact_evidence_contract": {
+      "schema_version": 1,
+      "status": "implemented_fail_closed",
+      "source_commit": "b374f2bc656182a348e8901e16480b02e78c2d3d",
+      "binding_evidence_id": "brownie-release-evidence-roundtrip-binding-v1",
+      "workflow": {
+        "path": ".github/workflows/release.yml",
+        "job": "artifact-roundtrip",
+        "target_selection_environment": "BROWNIE_RELEASE_EVIDENCE_TARGET",
+        "collector_scope": "one explicitly selected downloaded matrix target per invocation"
+      },
+      "collectors": [
+        "scripts/release-runtime-operational-evidence.mjs",
+        "scripts/release-supply-chain-artifact-evidence.mjs"
+      ],
+      "guards": [
+        "scripts/guard-runtime-operational-evidence.mjs",
+        "scripts/guard-supply-chain-artifact-evidence.mjs",
+        "scripts/guard-release-contract.mjs"
+      ],
+      "input_receipts": {
+        "artifact": ".brownie/release-evidence/artifacts/<target>/artifact-evidence.json",
+        "journey": ".brownie/release-evidence/artifacts/<target>/runtime-journey-evidence.json",
+        "soak": ".brownie/release-evidence/artifacts/<target>/runtime-stateful-soak-evidence.json"
+      },
+      "required_identity_fields": [
+        "implementation_commit",
+        "tested_commit",
+        "workflow_run_id",
+        "platform",
+        "architecture",
+        "package_sha256",
+        "binary_sha256",
+        "runtime_sha256"
+      ],
+      "identity_policy": [
+        "The artifact source commit, tested commit and workflow run must be present and consistent with the current downloaded-artifact collector invocation.",
+        "Artifact source metadata must identify a clean checkout and its source identity; package, CLI and Runtime companion files are reopened and checked against their respective SHA-256 digests.",
+        "Journey and soak receipts must match the selected target, workflow run, archive SHA, packaged CLI SHA and Runtime companion SHA. In receipt artifact objects, artifact_sha256 identifies the CLI binary and archive_sha256 identifies the package.",
+        "Runtime and supply-chain collector binding summaries and digests must agree. The runtime guard reopens the referenced journey and soak receipts; copied success flags or a digest alone are insufficient."
+      ],
+      "required_journey_checks": [
+        "mode_pack_load",
+        "workspace_mutation",
+        "ledger_generation",
+        "forced_interruption",
+        "resume",
+        "stale_replay_rejection"
+      ],
+      "required_soak_checks": [
+        "artifact_execution_boundary",
+        "process_loss_recovery",
+        "duplicate_side_effect_rejection",
+        "ledger_workspace_consistency",
+        "resume_replay_behavior",
+        "finite_convergence",
+        "evidence_chain_integrity"
+      ],
+      "consumption_policy": [
+        "Bound artifact_lifecycle, golden_journey_fixture and soak_test sections use evidence_source=downloaded_artifact_binding and retain references to executed receipts without inventing local command records.",
+        "A satisfied soak iteration represents one bounded downloaded-artifact soak receipt for the selected target; version-only repetition is diagnostic and does not prove stateful soak.",
+        "Each matrix target is collected separately. A successful target does not mark absent or failed platforms satisfied or establish repository-wide Runtime Release Ready.",
+        "Missing, stale, altered, mismatched or incomplete inputs remain failed or not_executed. Generated release evidence and every required gate must independently agree before readiness can change."
+      ],
+      "readiness_claimed": false,
+      "trace_values_policy": "This documentation describes executable bindings; it supplies no workflow run ID, artifact digest, successful platform result or publication authority. Existing unbound release trace identity values remain null."
+    },
+    "roundtrip_documentation_sync": {
+      "status": "implemented_fail_closed",
+      "source_commit": "b374f2bc656182a348e8901e16480b02e78c2d3d",
+      "contract_path": "docs/architecture/runtime-release-contract.json",
+      "contract_field": "runtime_operational_evidence.downloaded_artifact_evidence_contract",
+      "scope": "Current collector and guard contracts; historical audited_main_commit and audited_base_commit retain their original audit scope.",
+      "runtime_release_ready_after_sync": false
+    }
   },
   "trace_binding_schema": {
     "schema_version": 1,
@@ -486,11 +561,12 @@
       "debt_classification": "required_before_release",
       "release_blocking": true,
       "evidence": [
-        ".brownie/release-evidence/supply-chain-artifact-evidence.json still records fail_closed_reasons including source_tree_dirty:true and artifact_smoke:not_executed.",
-        ".brownie/release-evidence/runtime-operational-evidence.json still records fail_closed_reasons including artifact_lifecycle:failed and soak_test:not_executed.",
-        "Owner-governance independent reviews are now satisfied, so remaining release blockers are executable release evidence bindings."
+        "The implemented artifact-roundtrip workflow consumes a downloaded package and emits runtime-journey-evidence.json plus runtime-stateful-soak-evidence.json before the two collectors run.",
+        "Both collectors share brownie-release-evidence-roundtrip-binding-v1; identity checks bind source/tested commits, workflow run, target coordinates, package SHA, packaged CLI SHA and Runtime companion SHA to physical files and referenced journey/soak receipts.",
+        "The runtime guard reopens downloaded receipts and rejects unbound satisfied Golden Journey evidence. Missing or failed inputs remain fail-closed and do not become Product Ready through this documentation update.",
+        "Existing local release evidence and historical audit metadata are not refreshed or declared successful by this documentation-only change."
       ],
-      "next_action": "Regenerate supply-chain and runtime operational evidence from a clean tested source commit with artifact smoke, artifact lifecycle, and stateful soak evidence, then rerun the release guards."
+      "next_action": "Generate and validate current evidence with the existing downloaded-artifact Release matrix and both collectors; retain missing-platform, scan, integrity, provenance and publication requirements until independently evidenced."
     }
   ],
   "updated_at": "2026-09-12T00:00:00Z",
