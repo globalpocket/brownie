@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
@@ -33,6 +33,10 @@ function makeRepo() {
   execFileSync('git', ['config', 'user.email', 'test@example.invalid'], { cwd: repo });
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-m', 'init'], { cwd: repo, stdio: 'ignore' });
+  const auditedCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  writeAuditedCommit(repo, auditedCommit);
+  execFileSync('git', ['add', 'docs/architecture/runtime-release-readiness-audit.json', 'docs/architecture/runtime-release-contract.json'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'bind actual audited fixture ancestor'], { cwd: repo, stdio: 'ignore' });
   return repo;
 }
 
@@ -1260,4 +1264,102 @@ test('ordinary leaf repair keeps the direct-write path when target context is av
   const controller = fs.readFileSync(path.join(repositoryRoot, 'phase-loop.sh'), 'utf8');
   assert.match(controller, /or not leaf_has_oversized_repair/);
   assert.match(controller, /leaf_required_next_tool_policy: the next tool must be `workspace\.write`/);
+});
+
+function writeAuditedCommit(repo, auditedCommit) {
+  const auditPath = path.join(repo, 'docs/architecture/runtime-release-readiness-audit.json');
+  const audit = JSON.parse(fs.readFileSync(auditPath, 'utf8'));
+  audit.audited_main_commit = auditedCommit;
+  writeJson(auditPath, audit);
+  const contractPath = path.join(repo, 'docs/architecture/runtime-release-contract.json');
+  const contract = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
+  contract.commit_trace.readiness_audit_content_sha256 = `sha256:${createHash('sha256').update(fs.readFileSync(auditPath)).digest('hex')}`;
+  writeJson(contractPath, contract);
+}
+
+function validateAuditedFixture(repo) {
+  return validatePhaseLoopPreflight({ repo, expectedActor: 'fixture-implementation', skipCommands: true });
+}
+
+test('audit ancestry accepts an actual audited ancestor after a two-parent merge advances main', () => {
+  const repo = makeRepo();
+  const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(repo, 'source.txt'), 'new source\n');
+  execFileSync('git', ['add', 'source.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'fixture implementation'], { cwd: repo, stdio: 'ignore' });
+  const feature = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: repo, encoding: 'utf8' }).trim();
+  const merge = execFileSync('git', ['commit-tree', tree, '-p', base, '-p', feature, '-m', 'fixture merge'], { cwd: repo, encoding: 'utf8' }).trim();
+  execFileSync('git', ['reset', '--hard', merge], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['update-ref', 'refs/remotes/origin/main', merge], { cwd: repo });
+  assert.equal(validateAuditedFixture(repo).valid, true);
+});
+
+test('audit ancestry normalizes an existing uppercase audited object before checking it', () => {
+  const repo = makeRepo();
+  const audit = JSON.parse(fs.readFileSync(path.join(repo, 'docs/architecture/runtime-release-readiness-audit.json')));
+  writeAuditedCommit(repo, audit.audited_main_commit.toUpperCase());
+  const result = validateAuditedFixture(repo);
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+});
+
+for (const value of ['f'.repeat(40), 'F'.repeat(40)]) test(`audit ancestry rejects an absent audited commit ${value.slice(0, 2)}`, () => {
+  const repo = makeRepo(); writeAuditedCommit(repo, value);
+  const result = validateAuditedFixture(repo);
+  assert.equal(result.valid, false);
+  assert(result.errors.some(error => error.code === 'readiness_audit_main_commit_unresolved'), JSON.stringify(result.errors));
+});
+
+test('audit ancestry rejects a real tree object used as the audited commit', () => {
+  const repo = makeRepo();
+  const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: repo, encoding: 'utf8' }).trim();
+  writeAuditedCommit(repo, tree);
+  const result = validateAuditedFixture(repo);
+  assert.equal(result.valid, false);
+  assert(result.errors.some(error => error.code === 'readiness_audit_main_commit_unresolved'), JSON.stringify(result.errors));
+});
+
+test('audit ancestry rejects a present but unrelated root commit', () => {
+  const repo = makeRepo();
+  const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: repo, encoding: 'utf8' }).trim();
+  const unrelated = execFileSync('git', ['commit-tree', tree, '-m', 'unrelated audited history'], { cwd: repo, encoding: 'utf8' }).trim();
+  writeAuditedCommit(repo, unrelated);
+  const result = validateAuditedFixture(repo);
+  assert.equal(result.valid, false);
+  assert(result.errors.some(error => error.code === 'readiness_audit_main_commit_unreachable'), JSON.stringify(result.errors));
+});
+
+for (const value of [undefined, null, 123]) test(`audit ancestry rejects missing or nonstring audited identity ${String(value)}`, () => {
+  const repo = makeRepo(); writeAuditedCommit(repo, value);
+  const result = validateAuditedFixture(repo);
+  assert.equal(result.valid, false);
+  assert(result.errors.some(error => error.code === 'readiness_audit_main_commit_not_bound'), JSON.stringify(result.errors));
+});
+
+test('audit ancestry rejects unavailable Git metadata at the exported boundary', () => {
+  const repo = makeRepo();
+  fs.renameSync(path.join(repo, '.git'), path.join(repo, '.git-unavailable-fixture'));
+  assert.throws(() => validateAuditedFixture(repo));
+});
+
+test('audit ancestry pre-claim CLI fails once with an actionable error before creating a claim', () => {
+  const repo = makeRepo();
+  writeAuditedCommit(repo, 'f'.repeat(40));
+  execFileSync('git', ['add', 'docs/architecture/runtime-release-contract.json', 'docs/architecture/runtime-release-readiness-audit.json'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'unresolvable audit in clean fixture'], { cwd: repo, stdio: 'ignore' });
+  assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }).trim(), '');
+  const todo = fs.readFileSync(path.join(repo, '.brownie/todo.md'));
+  const command = [path.join(repositoryRoot, 'scripts/phase-loop-preflight.mjs'), '--repo', repo, '--stage', 'pre-claim-boundary', '--expected-actor', 'fixture-implementation', '--skip-commands'];
+  const first = spawnSync(process.execPath, command, { encoding: 'utf8', timeout: 10000 });
+  const second = spawnSync(process.execPath, command, { encoding: 'utf8', timeout: 10000 });
+  for (const result of [first, second]) {
+    assert.equal(result.status, 1, result.stderr);
+    const failure = JSON.parse(result.stderr);
+    assert.equal(failure.valid, false);
+    assert.equal(failure.stage, 'pre-claim-boundary');
+    assert.deepEqual(failure.errors.map(error => error.code), ['readiness_audit_main_commit_unresolved']);
+    assert.match(failure.errors[0].message, /existing commit object/);
+  }
+  assert.deepEqual(fs.readFileSync(path.join(repo, '.brownie/todo.md')), todo);
+  assert.equal(fs.existsSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/current.json')), false);
 });

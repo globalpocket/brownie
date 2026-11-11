@@ -461,36 +461,50 @@ function validateReleaseEvidence(repoRoot, errors) {
     });
   }
 
-  if (typeof audit?.audited_main_commit === 'string') {
-    const normalized = audit.audited_main_commit.trim().toLowerCase();
-    if (!/^[a-f0-9]{40}$/u.test(normalized)) {
-      errors.push({
-        code: 'readiness_audit_main_commit_not_bound',
-        path: 'docs/architecture/runtime-release-readiness-audit.json',
-        actual: audit.audited_main_commit,
-        message: 'Readiness Audit audited_main_commit must be a concrete 40-character commit SHA, not a placeholder.'
-      });
-    }
+  const auditedCommit = typeof audit?.audited_main_commit === 'string'
+    ? audit.audited_main_commit.trim().toLowerCase()
+    : '';
+  if (!/^[a-f0-9]{40}$/u.test(auditedCommit)) {
+    errors.push({
+      code: 'readiness_audit_main_commit_not_bound',
+      path: 'docs/architecture/runtime-release-readiness-audit.json',
+      actual: audit?.audited_main_commit ?? null,
+      message: 'Readiness Audit audited_main_commit must be a concrete 40-character commit SHA, not a placeholder.'
+    });
+    return;
+  }
+
+  let objectType = null;
+  try {
+    objectType = git(repoRoot, ['cat-file', '-t', auditedCommit]);
+  } catch {
+    // Missing history and Git lookup failures cannot establish source authority.
+  }
+  if (objectType !== 'commit') {
+    errors.push({
+      code: 'readiness_audit_main_commit_unresolved',
+      path: 'docs/architecture/runtime-release-readiness-audit.json',
+      actual: audit.audited_main_commit,
+      git_object_type: objectType,
+      message: 'Readiness Audit audited_main_commit must resolve to an existing commit object in the selected repository.'
+    });
+    return;
   }
 
   try {
-    const auditedCommit = typeof audit?.audited_main_commit === 'string' ? audit.audited_main_commit.trim() : '';
-    if (/^[a-f0-9]{40}$/u.test(auditedCommit)) {
-      const mergeBase = git(repoRoot, ['merge-base', auditedCommit, 'HEAD']);
-      if (mergeBase !== auditedCommit) {
-        errors.push({
-          code: 'readiness_audit_main_commit_unreachable',
-          path: 'docs/architecture/runtime-release-readiness-audit.json',
-          actual: auditedCommit,
-          message: 'Readiness Audit audited_main_commit must be a reachable ancestor of HEAD. Exact HEAD matching is intentionally not required because PR merge commits advance main after the audited evidence is generated.'
-        });
-      }
+    const mergeBase = git(repoRoot, ['merge-base', auditedCommit, 'HEAD']);
+    if (mergeBase === auditedCommit) {
+      return;
     }
   } catch {
-    // Fixture repos may not contain the audited commit. The concrete SHA check
-    // above still prevents placeholders such as "current-main"; real phase-loop
-    // workspaces with full history get the ancestry check.
+    // A present commit with unknown or unrelated ancestry is also fail-closed.
   }
+  errors.push({
+    code: 'readiness_audit_main_commit_unreachable',
+    path: 'docs/architecture/runtime-release-readiness-audit.json',
+    actual: audit.audited_main_commit,
+    message: 'Readiness Audit audited_main_commit must be proved to be a reachable ancestor of HEAD. Exact HEAD matching is not required because PR merges advance main.'
+  });
 }
 
 function hasPendingCompletionClaim(claimPath) {
