@@ -4043,8 +4043,8 @@ describe('RuntimeClient', () => {
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);
 
-    await expect(client.llmHealth({ allow_network: false })).resolves.toEqual(result);
-    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'llm.health', params: { allow_network: false } }]);
+    await expect(client.llmHealth({ allow_network: false, timeout_ms: 1000 })).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'llm.health', params: { allow_network: false, timeout_ms: 1000 } }]);
   });
 
   it('rejects invalid llm.status results', async () => {

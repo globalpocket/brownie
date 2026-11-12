@@ -76,7 +76,14 @@ export class RuntimeClient {
   }
 
   async llmHealth(params: { allow_network: boolean; timeout_ms?: number }): Promise<LlmHealthResult> {
-    const result = await this.call<LlmHealthResult>('llm.health', params);
+    const probeTimeoutMs = params.timeout_ms ?? (await this.llmStatus()).budget.request_timeout_ms;
+    if (!Number.isInteger(probeTimeoutMs) || probeTimeoutMs < 1000 || probeTimeoutMs > 300_000) {
+      throw new RuntimeProtocolError("llm.health timeout_ms must be an integer between 1000 and 300000");
+    }
+    const transportTimeoutMs = this.timeoutMs + probeTimeoutMs;
+    const result = await this.call<LlmHealthResult>(
+      'llm.health', { ...params, timeout_ms: probeTimeoutMs }, transportTimeoutMs,
+    );
 
     if (!isLlmHealthResult(result)) {
       throw new RuntimeProtocolError('llm.health returned an invalid result');
@@ -1140,8 +1147,8 @@ export class RuntimeClient {
     return result;
   }
 
-  private async call<T>(method: string, params?: unknown): Promise<T> {
-    const response = await this.send<T>(method, params);
+  private async call<T>(method: string, params?: unknown, timeoutMs = this.timeoutMs): Promise<T> {
+    const response = await this.send<T>(method, params, timeoutMs);
 
     if (response.error !== undefined) {
       throw new RuntimeJsonRpcError(response.error);
@@ -1150,7 +1157,7 @@ export class RuntimeClient {
     return response.result as T;
   }
 
-  private send<T>(method: string, params?: unknown) {
+  private send<T>(method: string, params?: unknown, timeoutMs = this.timeoutMs) {
     const request: JsonRpcRequest = {
       jsonrpc: '2.0',
       id: this.nextId,
@@ -1162,6 +1169,6 @@ export class RuntimeClient {
       request.params = params;
     }
 
-    return this.transport.request<T>(request, this.timeoutMs);
+    return this.transport.request<T>(request, timeoutMs);
   }
 }

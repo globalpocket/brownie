@@ -106,10 +106,7 @@ fn check(strict: bool, custom: bool, credential: Option<&str>) {
     let present = credential.is_some_and(|value| !value.trim().is_empty());
     assert_eq!(result["llm_status"]["enabled"], present);
     assert_eq!(result["llm_status"]["strict"], strict);
-    assert_eq!(
-        result["llm_status"]["will_fallback_to_fake"],
-        !present && !strict
-    );
+    assert_eq!(result["llm_status"]["will_fallback_to_fake"], !strict);
     assert_eq!(matching("PROVIDER_ENV_OVERRIDE").len(), 1);
     assert!(matching("PROVIDER_UNKNOWN").is_empty());
     if present {

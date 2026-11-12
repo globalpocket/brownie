@@ -341,7 +341,7 @@ test('does not accept a sibling dependency backed only by an invalidated complet
 
     const result = runRepair(root);
     assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
-    assert.match(result.stdout, /source_sibling_contract_repair_failed_guard/);
+    assert.match(result.stdout, /unresolved_dependency_without_completion/);
     assert.ok(fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8').includes(`${leafId}: Create only \`package.json\``));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -872,7 +872,7 @@ test('falls back to explicit blocker leaf when broad TODO has no bounded target 
   }
 });
 
-test('repairs selected leaf with missing Patch only peer target and breakdown-only dependency', () => {
+test('repairs selected leaf peer target while preserving its completed prerequisite', () => {
   const root = makeTempRepo();
   try {
     const selected = `- [ ] E-20g-final-judgment-sync-target-01: Patch only \`docs/architecture/final-product-ready-judgment.json\` to complete one bounded slice of E-20g-final-judgment-sync:
@@ -916,6 +916,8 @@ test('repairs selected leaf with missing Patch only peer target and breakdown-on
       selected_todo: selected
     }, null, 2));
 
+    fs.mkdirSync(path.join(root, '.brownie/private/phase-loop/todo-completions'), {recursive:true});
+    fs.writeFileSync(path.join(root, '.brownie/private/phase-loop/todo-completions/prerequisite.json'), JSON.stringify(durableCompletionRecord('E-20f-release-generation-sync')));
     const result = runRepair(root);
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     const todoText = fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8');
@@ -926,8 +928,8 @@ test('repairs selected leaf with missing Patch only peer target and breakdown-on
     );
     assert(!repairedSelected.includes('docs/architecture/final-product-ready-judgment.json'), repairedSelected);
     assert(repairedSelected.includes('docs/architecture/final-product-ready-judgment.md'), repairedSelected);
-    assert(repairedSelected.includes('Depends on: <none>.'), repairedSelected);
-    assert(breakdownText.includes('- E-20g-final-judgment-sync-target-01: <none>'), breakdownText);
+    assert(repairedSelected.includes('Depends on: E-20f-release-generation-sync.'), repairedSelected);
+    assert(breakdownText.includes('- E-20g-final-judgment-sync-target-01: E-20f-release-generation-sync'), breakdownText);
     assert.deepEqual(validateTodoDecompositionText(todoText, {
       path: '.brownie/todo.md',
       repoRoot: root,
@@ -942,6 +944,7 @@ test('repairs selected leaf with missing Patch only peer target and breakdown-on
       ]),
       breakdownPath: '.brownie/todo-breakdown.md',
       breakdownText,
+      completedTodoIds: new Set(['E-20f-release-generation-sync']),
       productReady: false,
       releaseBlockersRemaining: true
     }), []);
@@ -950,7 +953,7 @@ test('repairs selected leaf with missing Patch only peer target and breakdown-on
   }
 });
 
-test('repairs dangling dependency when active claim was already removed from live queue', () => {
+test('rejects dangling dependency when active claim disappeared without completion', () => {
   const root = makeTempRepo();
   try {
     const selected = `- [ ] E-15e-todo-queue-decomposition: Patch only \`.brownie/todo.md\` to replace the selected decomposition TODO with bounded leaves.
@@ -993,29 +996,15 @@ test('repairs dangling dependency when active claim was already removed from liv
       selected_todo: selected
     }, null, 2));
 
+    const beforeTodo = fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8');
+    const beforeBreakdown = fs.readFileSync(path.join(root, '.brownie/todo-breakdown.md'), 'utf8');
     const result = runRepair(root);
-    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
     const parsed = JSON.parse(result.stdout);
-    assert.equal(parsed.operation, 'deterministic_dangling_dependency_repair');
-    const todoText = fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8');
-    const breakdownText = fs.readFileSync(path.join(root, '.brownie/todo-breakdown.md'), 'utf8');
-    assert(todoText.includes('Depends on: <none>.'), todoText);
-    assert(breakdownText.includes('- E-15f-todo-breakdown-update: <none>'), breakdownText);
-    assert.deepEqual(validateTodoDecompositionText(todoText, {
-      path: '.brownie/todo.md',
-      repoRoot: root,
-      packageScripts: new Set([
-        'guard:release-contract',
-        'guard:release-contract:test',
-        'guard:runtime-release-readiness',
-        'guard:phase-value',
-        'guard:todo-decomposition'
-      ]),
-      breakdownPath: '.brownie/todo-breakdown.md',
-      breakdownText,
-      productReady: false,
-      releaseBlockersRemaining: true
-    }), []);
+    assert.equal(parsed.applied, false);
+    assert.equal(parsed.reason, 'unresolved_dependency_without_completion');
+    assert.equal(fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8'), beforeTodo);
+    assert.equal(fs.readFileSync(path.join(root, '.brownie/todo-breakdown.md'), 'utf8'), beforeBreakdown);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -1202,11 +1191,13 @@ test('atomically repairs a derived leaf dependency and missing breakdown entries
       selected_todo: staleSelected
     }, null, 2));
 
+    fs.mkdirSync(path.join(root, '.brownie/private/phase-loop/todo-completions'), {recursive:true});
+    fs.writeFileSync(path.join(root, '.brownie/private/phase-loop/todo-completions/prerequisite.json'), JSON.stringify(durableCompletionRecord('E-23a-stale-decomposition')));
     const result = runRepair(root);
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     const todoText = fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8');
     const breakdownText = fs.readFileSync(path.join(root, '.brownie/todo-breakdown.md'), 'utf8');
-    assert(todoText.includes('Depends on: E-23a-child-impl.'), todoText);
+    assert(todoText.includes('Depends on: E-23a-child-impl, E-23a-stale-decomposition.'), todoText);
     assert(breakdownText.includes('## TODO-repair-derived-E-23a-parent'), breakdownText);
     assert(breakdownText.includes('- E-23a-child-test: E-23a-child-impl'), breakdownText);
     assert.deepEqual(validateTodoDecompositionText(todoText, {
@@ -1215,6 +1206,7 @@ test('atomically repairs a derived leaf dependency and missing breakdown entries
       packageScripts: new Set(['guard:todo-decomposition']),
       breakdownPath: '.brownie/todo-breakdown.md',
       breakdownText,
+      completedTodoIds: new Set(['E-23a-stale-decomposition']),
       productReady: false,
       releaseBlockersRemaining: true
     }), []);
@@ -1641,7 +1633,7 @@ test('expands residual Release Ops blocker decomposition into fail-closed eviden
   }
 });
 
-test('does not prune completion-backed dependency while repairing another dangling dependency', () => {
+test('preserves completed and unproved dependencies together when repair is refused', () => {
   const root = makeTempRepo();
   try {
     const selected = `- [ ] E-22d-runtime-stateful-soak-evidence: Patch only \`scripts/release-runtime-operational-evidence.mjs\` and \`scripts/guard-runtime-operational-evidence.test.mjs\`:
@@ -1679,14 +1671,15 @@ test('does not prune completion-backed dependency while repairing another dangli
       selected_todo: selected
     }, null, 2));
 
+    const beforeTodo = fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8');
+    const beforeBreakdown = fs.readFileSync(path.join(root, '.brownie/todo-breakdown.md'), 'utf8');
     const result = runRepair(root);
-    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-    const todoText = fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8');
-    const breakdownText = fs.readFileSync(path.join(root, '.brownie/todo-breakdown.md'), 'utf8');
-    assert.match(todoText, /Depends on: E-22c-runtime-artifact-e2e-evidence\./u);
-    assert.doesNotMatch(todoText, /E-22-old-breakdown-only/u);
-    assert.match(breakdownText, /E-22d-runtime-stateful-soak-evidence: E-22c-runtime-artifact-e2e-evidence/u);
-    assert.doesNotMatch(breakdownText, /E-22d-runtime-stateful-soak-evidence: .*E-22-old-breakdown-only/u);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.applied, false);
+    assert.equal(parsed.reason, 'unresolved_dependency_without_completion');
+    assert.equal(fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8'), beforeTodo);
+    assert.equal(fs.readFileSync(path.join(root, '.brownie/todo-breakdown.md'), 'utf8'), beforeBreakdown);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -1741,3 +1734,35 @@ test('fails closed with an auditable result when workspace package.json is inval
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+for (const mode of ['stale_claim', 'live_selected', 'mixed_live_and_missing', 'missing_outside_breakdown']) {
+  test(`preserves unproved prerequisite atomically: ${mode}`, () => {
+    const root = makeTempRepo();
+    try {
+      const fixture = {"remaining": "- [ ] E-15f-todo-breakdown-update: Patch only `.brownie/todo-breakdown.md` to document the required implementation leaves.\n  Route: todo-decomposition.\n  Source TODO: TODO-decompose-release-ops-blockers-abc123.\n  Depends on: E-15e-todo-queue-decomposition.\n  Completion condition: actual prerequisite implementation leaves are documented.\n  Forbidden changes: do not invent completion evidence.\n  Verification: run `pnpm --workspace-root guard:todo-decomposition`.\n", "breakdown": "# TODO breakdown\n\nParent TODO: TODO-decompose-release-ops-blockers-abc123\n\nDependency graph:\n- E-15e-todo-queue-decomposition: <none>\n- E-15f-todo-breakdown-update: E-15e-todo-queue-decomposition\n\nVerification ledger:\n- E-15f-todo-breakdown-update: run `pnpm --workspace-root guard:todo-decomposition`\n\nQuality rubric:\n- E-15f-todo-breakdown-update: bounded TODO maintenance.\n\nHistory:\n", "selected": "- [ ] E-15e-todo-queue-decomposition: Patch only `.brownie/todo.md`:\n  Route: todo-decomposition.\n  Source TODO: TODO-decompose-release-ops-blockers-abc123.\n  Depends on: <none>.\n  Completion condition: actual leaves created.\n  Forbidden changes: do not invent completion.\n  Verification: run `pnpm --workspace-root guard:todo-decomposition`.\n"};
+      let todo = fixture.remaining;
+      let breakdown = fixture.breakdown;
+      let selected = fixture.selected;
+      if (mode === 'live_selected') {
+        todo = todo.replace('Route: todo-decomposition.', 'Route: implementation.');
+        selected = todo;
+      }
+      if (mode === 'mixed_live_and_missing') {
+        todo = todo.replace('Depends on: E-15e-todo-queue-decomposition.', 'Depends on: E-15e-todo-queue-decomposition, E-live.');
+        todo += '\n- [ ] E-live: Patch only `scripts/guard-release-contract.mjs`:\n  Route: implementation.\n  Source TODO: E-parent.\n  Depends on: <none>.\n  Completion condition: independent live work.\n  Forbidden changes: do not invent completion.\n  Verification: run `pnpm --workspace-root guard:release-contract`.\n';
+      }
+      if (mode === 'missing_outside_breakdown') breakdown = '# no prerequisite record\n';
+      fs.writeFileSync(path.join(root, '.brownie/todo.md'), todo);
+      fs.writeFileSync(path.join(root, '.brownie/todo-breakdown.md'), breakdown);
+      fs.writeFileSync(path.join(root, '.brownie/private/phase-loop/todo-claims/current.json'), JSON.stringify({claim_id:'audit-prerequisite',selected_todo:selected}));
+      const result = runRepair(root);
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      assert.equal(parsed.applied, false);
+      assert.equal(parsed.reason, 'unresolved_dependency_without_completion');
+      assert(parsed.unresolved_dependencies.some(row => row.dependencies.includes('E-15e-todo-queue-decomposition')));
+      assert.equal(fs.readFileSync(path.join(root, '.brownie/todo.md'), 'utf8'), todo);
+      assert.equal(fs.readFileSync(path.join(root, '.brownie/todo-breakdown.md'), 'utf8'), breakdown);
+    } finally { fs.rmSync(root, {recursive:true,force:true}); }
+  });
+}

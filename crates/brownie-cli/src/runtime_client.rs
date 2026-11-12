@@ -779,11 +779,22 @@ impl RuntimeClient {
             Some(inspect_params),
             RuntimeRequestClass::ObjectiveExecution,
         )?;
-        let patch_material = if inspected_proposal_operation(&proposal)? == "patch_file" {
+        let operation = inspected_proposal_operation(&proposal)?;
+        let needs_material = operation == "patch_file"
+            || (matches!(operation.as_str(), "create_file" | "replace_file")
+                && object_field(&proposal, "proposal")?
+                    .get("truncated")
+                    .and_then(Value::as_bool)
+                    == Some(true));
+        let patch_material = if needs_material {
             let run_id = objective_proposal_apply_run_id(&result)?;
             Some(self.call_runtime_value(
                 RUN_EVENTS_METHOD,
-                Some(json!({ "run_id": run_id, "include_patch_material": true })),
+                Some(if operation == "patch_file" {
+                    json!({ "run_id": run_id, "include_patch_material": true })
+                } else {
+                    json!({ "run_id": run_id })
+                }),
                 RuntimeRequestClass::ObjectiveExecution,
             )?)
         } else {
@@ -3723,14 +3734,25 @@ fn objective_proposal_apply_params_with_patch_material(
         );
         return Err(RuntimeClientError::InvalidResponse);
     }
-    if json_bool(
+    let truncated = json_bool(
         proposal
             .get("truncated")
             .ok_or(RuntimeClientError::InvalidResponse)?,
-    )? {
+    )?;
+    let recovered_content =
+        if truncated && matches!(operation.as_str(), "create_file" | "replace_file") {
+            extract_exact_full_file_apply_material(
+                patch_material_events,
+                proposal,
+                &required_display_string(authorization, "run_id")?,
+            )?
+        } else {
+            None
+        };
+    if truncated && recovered_content.is_none() {
         debug_invalid_response_note(
             "objective_proposal_apply_params",
-            "proposal content is truncated; skipping automatic apply",
+            "truncated proposal has no original tool input matching its exact byte fingerprint",
         );
         return Ok(ObjectiveProposalApplyPreparation::Skip);
     }
@@ -3764,13 +3786,17 @@ fn objective_proposal_apply_params_with_patch_material(
         })));
     }
     let apply_material = if matches!(operation.as_str(), "replace_file" | "create_file") {
-        let replacement_content = required_workspace_write_content(proposal, "content_preview")
-            .inspect_err(|_| {
-                debug_invalid_response_note(
-                    "objective_proposal_apply_params",
-                    "proposal content_preview invalid",
-                );
-            })?;
+        let replacement_content = match recovered_content {
+            Some(content) => content,
+            None => {
+                required_workspace_write_content(proposal, "content_preview").inspect_err(|_| {
+                    debug_invalid_response_note(
+                        "objective_proposal_apply_params",
+                        "proposal content_preview invalid",
+                    )
+                })?
+            }
+        };
         if display_usize(proposal, "content_chars")? != replacement_content.chars().count() {
             debug_invalid_response_note(
                 "objective_proposal_apply_params",
@@ -3868,9 +3894,107 @@ fn objective_proposal_apply_params_with_patch_material(
     )))
 }
 
+// Recover bounded original tool input, never interpret a partial preview as content.
+// Runtime still independently verifies the approval, byte digest and target on apply.
+fn extract_exact_full_file_apply_material(
+    run_events: Option<&Value>,
+    proposal: &serde_json::Map<String, Value>,
+    expected_run_id: &str,
+) -> Result<Option<String>, RuntimeClientError> {
+    let Some(run_events) = run_events else {
+        return Ok(None);
+    };
+    if run_events.get("run_id").and_then(Value::as_str) != Some(expected_run_id) {
+        return Ok(None);
+    }
+    let Some(diff) = proposal.get("diff_preview").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let Some(fingerprint) = diff
+        .strip_prefix("# proposed_content_sha256: ")
+        .and_then(|rest| rest.split_once('\n').map(|(value, _)| value))
+    else {
+        return Ok(None);
+    };
+    if validate_sha256_fingerprint(fingerprint).is_err() {
+        return Ok(None);
+    }
+    let expected_path = required_display_string(proposal, "path")?;
+    let expected_operation = required_display_string(proposal, "operation")?;
+    let expected_chars = display_usize(proposal, "content_chars")?;
+    let Some(events) = run_events.get("events").and_then(Value::as_array) else {
+        return Ok(None);
+    };
+    for event in events.iter().rev() {
+        if !matches!(
+            event.get("kind").and_then(Value::as_str),
+            Some("LlmResponseReceived" | "SecondPassLlmResponseReceived")
+        ) {
+            continue;
+        }
+        let Some(preview) = event
+            .get("payload")
+            .and_then(|payload| payload.get("content_preview"))
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        for block in brownie_tool_intent_blocks(preview) {
+            let Ok(intent) = serde_json::from_str::<Value>(&block) else {
+                continue;
+            };
+            let Some(requests) = intent.get("tool_requests").and_then(Value::as_array) else {
+                continue;
+            };
+            for request in requests {
+                if request.get("tool_id").and_then(Value::as_str) != Some("workspace.write") {
+                    continue;
+                }
+                let Some(input) = request.get("input").and_then(Value::as_object) else {
+                    continue;
+                };
+                if input.get("path").and_then(Value::as_str) != Some(expected_path.as_str())
+                    || input.get("operation").and_then(Value::as_str)
+                        != Some(expected_operation.as_str())
+                {
+                    continue;
+                }
+                let content = match (input.get("new_text"), input.get("content")) {
+                    (Some(Value::String(value)), None) | (None, Some(Value::String(value))) => {
+                        value
+                    }
+                    (Some(Value::String(left)), Some(Value::String(right))) if left == right => {
+                        left
+                    }
+                    _ => continue,
+                };
+                if is_safe_workspace_write_material(content)
+                    && content.chars().count() == expected_chars
+                    && format!("sha256:{:x}", Sha256::digest(content.as_bytes())) == fingerprint
+                {
+                    return Ok(Some(content.clone()));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
 fn workspace_path_is_clean_for_automatic_apply(path: &str) -> bool {
+    workspace_path_is_clean_for_automatic_apply_in(std::path::Path::new("."), path)
+}
+
+fn workspace_path_is_clean_for_automatic_apply_in(workspace: &std::path::Path, path: &str) -> bool {
     let output = match Command::new("git")
-        .args(["status", "--porcelain=v1", "--", path])
+        .current_dir(workspace)
+        .args([
+            "status",
+            "--porcelain=v1",
+            "--ignored=matching",
+            "--untracked-files=all",
+            "--",
+            path,
+        ])
         .output()
     {
         Ok(output) if output.status.success() => output,
@@ -5970,6 +6094,59 @@ mod tests {
         assert_eq!(params["replacement_content"], "created content\n");
         assert!(params.get("expected_target_sha256").is_none());
 
+        // Exercise the actual apply preparation with the new private short preview.
+        let mut shortened = proposal.clone();
+        shortened["proposal"]["content_preview"] = json!("created content");
+        shortened["proposal"]["truncated"] = json!(true);
+        shortened["proposal"]["diff_preview"] = json!(format!(
+            "# proposed_content_sha256: sha256:{:x}\n--- a/notes/new.md\n+++ b/notes/new.md",
+            Sha256::digest(b"created content\n")
+        ));
+        let events = json!({"run_id":"run_1","events":[{"kind":"LlmResponseReceived",
+            "payload":{"content_preview":format!("```brownie-tool-intent\n{}\n```",
+                json!({"tool_requests":[{"tool_id":"workspace.write","input":{
+                    "path":"notes/new.md","operation":"create_file","content":"created content\n"}}]}))}}]});
+        let recovered = objective_proposal_apply_params_with_patch_material(
+            &authorized,
+            &shortened,
+            Some(&events),
+            None,
+        )
+        .unwrap()
+        .into_apply_params()
+        .unwrap();
+        assert_eq!(recovered["replacement_content"], "created content\n");
+        assert_eq!(recovered["expected_target_absent"], true);
+        assert!(objective_proposal_apply_params_with_patch_material(
+            &authorized,
+            &shortened,
+            None,
+            None
+        )
+        .unwrap()
+        .into_apply_params()
+        .is_none());
+        let mut wrong_run = events.clone();
+        wrong_run["run_id"] = json!("other_run");
+        assert!(objective_proposal_apply_params_with_patch_material(
+            &authorized,
+            &shortened,
+            Some(&wrong_run),
+            None
+        )
+        .unwrap()
+        .into_apply_params()
+        .is_none());
+        assert!(objective_proposal_apply_params_with_patch_material(
+            &authorized,
+            &shortened,
+            Some(&events),
+            Some("Create only `other.txt`.")
+        )
+        .unwrap()
+        .into_apply_params()
+        .is_none());
+
         let scoped_params = objective_proposal_apply_params_with_patch_material(
             &authorized,
             &proposal,
@@ -7074,5 +7251,130 @@ mod tests {
         assert!(git_status_porcelain_is_clean(b"\n\t"));
         assert!(!git_status_porcelain_is_clean(b" M scripts/target.rs\n"));
         assert!(!git_status_porcelain_is_clean(b"?? scripts/target.rs\n"));
+        assert!(!git_status_porcelain_is_clean(b"!! ignored-target.txt\n"));
+    }
+
+    #[test]
+    fn recovered_full_file_material_is_bound_to_exact_bytes_operation_path_and_run() {
+        for operation in ["create_file", "replace_file"] {
+            let approved = "abc\r\n\n";
+            let proposal = json!({"path":"new.txt","operation":operation,"content_chars":approved.chars().count(),
+                "diff_preview":format!("# proposed_content_sha256: sha256:{:x}\n--- a/new.txt",Sha256::digest(approved.as_bytes()))});
+            let event = |path: &str, op: &str, material: &str| {
+                json!({"run_id":"run_1","events":[{
+                "kind":"LlmResponseReceived","payload":{"content_preview":format!(
+                    "```brownie-tool-intent\n{}\n```",json!({"tool_requests":[{"tool_id":"workspace.write",
+                    "input":{"path":path,"operation":op,"new_text":material}}]}))}}]})
+            };
+            let recover = |events: &Value| {
+                extract_exact_full_file_apply_material(
+                    Some(events),
+                    proposal.as_object().unwrap(),
+                    "run_1",
+                )
+                .unwrap()
+            };
+            assert_eq!(
+                recover(&event("new.txt", operation, approved)),
+                Some(approved.to_owned())
+            );
+            assert_eq!(recover(&event("new.txt", operation, "abc\n\r\n")), None);
+            assert_eq!(recover(&event("other.txt", operation, approved)), None);
+            assert_eq!(recover(&event("new.txt", "patch_file", approved)), None);
+            let mut wrong_run = event("new.txt", operation, approved);
+            wrong_run["run_id"] = json!("other_run");
+            assert_eq!(recover(&wrong_run), None);
+            let mut truncated_input = event("new.txt", operation, approved);
+            truncated_input["events"][0]["payload"]["content_preview"] =
+                json!("```brownie-tool-intent\n{\"tool_requests\":[");
+            assert_eq!(recover(&truncated_input), None);
+        }
+    }
+
+    #[test]
+    fn automatic_apply_rejects_real_ignored_untracked_targets_without_rejecting_absent_create_targets(
+    ) {
+        struct Fixture(PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let fixture =
+            Fixture(std::env::temp_dir().join(format!("brownie-ignored-apply-{}", Uuid::new_v4())));
+        std::fs::create_dir(&fixture.0).unwrap();
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(&fixture.0)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "--quiet"]);
+        std::fs::write(
+            fixture.0.join(".gitignore"),
+            "ignored-target.txt\nignored-directory/\n",
+        )
+        .unwrap();
+        std::fs::write(fixture.0.join("tracked.txt"), "original\n").unwrap();
+        git(&["add", "--", ".gitignore", "tracked.txt"]);
+        git(&[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "-m",
+            "isolated fixture baseline",
+        ]);
+        assert!(workspace_path_is_clean_for_automatic_apply_in(
+            &fixture.0,
+            "tracked.txt"
+        ));
+        assert!(workspace_path_is_clean_for_automatic_apply_in(
+            &fixture.0,
+            "absent-new.txt"
+        ));
+        assert!(workspace_path_is_clean_for_automatic_apply_in(
+            &fixture.0,
+            "ignored-target.txt"
+        ));
+        for file in [
+            "ordinary-untracked.txt",
+            "ignored-target.txt",
+            "ignored-directory/nested.txt",
+        ] {
+            let path = fixture.0.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "user-owned existing bytes\n").unwrap();
+            assert!(
+                !workspace_path_is_clean_for_automatic_apply_in(&fixture.0, file),
+                "{file}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(path).unwrap(),
+                "user-owned existing bytes\n"
+            );
+        }
+        std::fs::write(fixture.0.join("tracked.txt"), "modified\n").unwrap();
+        assert!(!workspace_path_is_clean_for_automatic_apply_in(
+            &fixture.0,
+            "tracked.txt"
+        ));
+        let non_repository = fixture.0.join("outside");
+        std::fs::create_dir(&non_repository).unwrap();
+        // A missing work directory is an actual Git execution failure.
+        assert!(!workspace_path_is_clean_for_automatic_apply_in(
+            &non_repository.join("missing"),
+            "anything.txt"
+        ));
     }
 }

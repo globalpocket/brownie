@@ -1471,6 +1471,8 @@ function repairDanglingLiveDependencies({ todoText, breakdownText, todoPath, bre
     packageScripts: packageScripts(),
     breakdownPath,
     breakdownText: updatedBreakdown,
+    completedTodoIds: completedIds,
+    invalidCheckedTodoIds: new Set([...todoState.supersededIds].filter((id) => !completedIds.has(id))),
     productReady: false,
     releaseBlockersRemaining: true
   });
@@ -1548,6 +1550,27 @@ export function repairTodoDecomposition({
   const unresolvedSupersededIds = new Set(
     [...todoState.supersededIds].filter((id) => !todoState.resolvedIds.has(id))
   );
+
+  // Queue disappearance and a breakdown mention cannot prove prerequisite
+  // completion. Reject the entire transaction before any sibling/leaf repair
+  // can remove an unresolved edge or write a replacement queue.
+  const unresolvedDependencies = uncheckedTodoBlocks(todoText)
+    .map((block) => ({
+      todo_id: todoId(block),
+      dependencies: parseDependsOn(block).filter((dependency) =>
+        !todoState.liveIds.has(dependency)
+        && !todoState.resolvedIds.has(dependency)
+        && !todoState.supersededIds.has(dependency))
+    }))
+    .filter((entry) => entry.dependencies.length > 0);
+  if (unresolvedDependencies.length > 0) {
+    return {
+      applied: false,
+      eligible: true,
+      reason: 'unresolved_dependency_without_completion',
+      unresolved_dependencies: unresolvedDependencies
+    };
+  }
 
   // A live leaf can still depend on a checked/superseded parent while sibling
   // leaves in that same source group contain independently repairable cycle or
