@@ -1124,7 +1124,7 @@ fn apply_create_file_proposal(
     ));
 
     let create_diff = synthetic_unified_diff(&proposal.path, "", replacement_content);
-    if proposal.diff_preview.as_deref() != Some(create_diff.as_str()) {
+    if !approved_diff_preview_matches(proposal, &create_diff, replacement_content) {
         apply_result.checklist.push(apply_result_check(
             "approved_diff_matches_absent_target",
             "Fail",
@@ -1652,7 +1652,7 @@ fn apply_delete_file_proposal(
     ));
 
     let current_diff = synthetic_unified_diff(&proposal.path, current_content, "");
-    if proposal.diff_preview.as_deref() != Some(current_diff.as_str()) {
+    if !approved_diff_preview_matches(proposal, &current_diff, "") {
         apply_result.checklist.push(apply_result_check(
             "approved_diff_matches_current_target",
             "Fail",
@@ -2928,10 +2928,7 @@ fn apply_replace_file_transaction_recovery(
             );
         }
         if item.replacement_content.chars().count() != proposal.content_chars
-            || !proposal_content_preview_matches(
-                &item.replacement_content,
-                &proposal.content_preview,
-            )
+            || !proposal_content_preview_matches(&item.replacement_content, &proposal)
             || proposal.diff_redacted
             || proposal.content_preview == "[redacted]"
             || proposal.diff_truncated
@@ -3054,7 +3051,7 @@ fn apply_replace_file_transaction_recovery(
         }
         let current_diff =
             synthetic_unified_diff(&proposal.path, current_content, &item.replacement_content);
-        if proposal.diff_preview.as_deref() != Some(current_diff.as_str()) {
+        if !approved_diff_preview_matches(&proposal, &current_diff, &item.replacement_content) {
             return deny(
                 apply_result,
                 "transaction_recovery_approved_diffs_match_current_targets",
@@ -3614,10 +3611,7 @@ fn apply_create_file_transaction_recovery(
             );
         }
         if item.replacement_content.chars().count() != proposal.content_chars
-            || !proposal_content_preview_matches(
-                &item.replacement_content,
-                &proposal.content_preview,
-            )
+            || !proposal_content_preview_matches(&item.replacement_content, &proposal)
             || proposal.diff_redacted
             || proposal.content_preview == "[redacted]"
             || proposal.diff_truncated
@@ -3702,7 +3696,7 @@ fn apply_create_file_transaction_recovery(
         }
         seen_paths.insert(proposal.path.clone());
         let create_diff = synthetic_unified_diff(&proposal.path, "", &item.replacement_content);
-        if proposal.diff_preview.as_deref() != Some(create_diff.as_str()) {
+        if !approved_diff_preview_matches(&proposal, &create_diff, &item.replacement_content) {
             return deny(
                 apply_result,
                 "transaction_recovery_approved_diffs_match_absent_targets",
@@ -4403,7 +4397,7 @@ fn apply_delete_file_transaction_recovery(
             );
         }
         let current_diff = synthetic_unified_diff(&proposal.path, current_content, "");
-        if proposal.diff_preview.as_deref() != Some(current_diff.as_str()) {
+        if !approved_diff_preview_matches(&proposal, &current_diff, "") {
             return deny(
                 apply_result,
                 "transaction_recovery_approved_diffs_match_current_targets",
@@ -4720,10 +4714,7 @@ fn apply_replace_file_transaction(
             );
         }
         if item.replacement_content.chars().count() != proposal.content_chars
-            || !proposal_content_preview_matches(
-                &item.replacement_content,
-                &proposal.content_preview,
-            )
+            || !proposal_content_preview_matches(&item.replacement_content, &proposal)
         {
             return deny_item(
                 apply_result,
@@ -4845,7 +4836,7 @@ fn apply_replace_file_transaction(
         }
         let current_diff =
             synthetic_unified_diff(&proposal.path, current_content, &item.replacement_content);
-        if proposal.diff_preview.as_deref() != Some(current_diff.as_str()) {
+        if !approved_diff_preview_matches(&proposal, &current_diff, &item.replacement_content) {
             return deny_item(
                 apply_result,
                 "transaction_approved_diffs_match_current_targets",
@@ -5230,10 +5221,7 @@ fn apply_create_file_transaction(
             );
         }
         if item.replacement_content.chars().count() != proposal.content_chars
-            || !proposal_content_preview_matches(
-                &item.replacement_content,
-                &proposal.content_preview,
-            )
+            || !proposal_content_preview_matches(&item.replacement_content, &proposal)
         {
             return deny(
                 apply_result,
@@ -5319,7 +5307,7 @@ fn apply_create_file_transaction(
         }
         seen_paths.insert(proposal.path.clone());
         let create_diff = synthetic_unified_diff(&proposal.path, "", &item.replacement_content);
-        if proposal.diff_preview.as_deref() != Some(create_diff.as_str()) {
+        if !approved_diff_preview_matches(&proposal, &create_diff, &item.replacement_content) {
             return deny(
                 apply_result,
                 "transaction_approved_diffs_match_absent_targets",
@@ -5841,7 +5829,7 @@ fn apply_delete_file_transaction(
             );
         }
         let current_diff = synthetic_unified_diff(&proposal.path, current_content, "");
-        if proposal.diff_preview.as_deref() != Some(current_diff.as_str()) {
+        if !approved_diff_preview_matches(&proposal, &current_diff, "") {
             return deny(
                 apply_result,
                 "transaction_approved_diffs_match_current_targets",
@@ -6295,7 +6283,7 @@ pub(super) fn apply_proposal(
     ));
 
     if replacement_content.chars().count() != proposal.content_chars
-        || !proposal_content_preview_matches(replacement_content, &proposal.content_preview)
+        || !proposal_content_preview_matches(replacement_content, &proposal)
     {
         apply_result.checklist.push(apply_result_check(
             "replacement_content_matches_proposal",
@@ -6596,7 +6584,7 @@ pub(super) fn apply_proposal(
     ));
 
     let current_diff = synthetic_unified_diff(&proposal.path, current_content, replacement_content);
-    if proposal.diff_preview.as_deref() != Some(current_diff.as_str()) {
+    if !approved_diff_preview_matches(&proposal, &current_diff, replacement_content) {
         apply_result.checklist.push(apply_result_check(
             "approved_diff_matches_current_target",
             "Fail",
@@ -6898,11 +6886,51 @@ pub(super) fn preview_proposal_content(content: &str) -> String {
     preview_with_limit(content, limit)
 }
 
-fn proposal_content_preview_matches(content: &str, preview: &str) -> bool {
-    // Retained pre-upgrade proposals can contain the exact short content.
-    // Matching still also requires the unchanged count, diff, target and approval gates.
-    preview_proposal_content(content) == preview
-        || (content.chars().count() <= DEFAULT_PROPOSAL_PREVIEW_CHARS && content == preview)
+fn proposal_content_preview_matches(
+    content: &str,
+    proposal: &WorkspacePatchProposalSummary,
+) -> bool {
+    let legacy_exact = content.chars().count() <= DEFAULT_PROPOSAL_PREVIEW_CHARS
+        && content == proposal.content_preview;
+    match proposal
+        .diff_preview
+        .as_deref()
+        .and_then(|diff| diff.strip_prefix(CONTENT_FINGERPRINT_HEADER))
+    {
+        Some(fingerprint_and_diff) => {
+            fingerprint_and_diff
+                .split_once('\n')
+                .map(|(value, _)| value)
+                == Some(format!("sha256:{}", hex_sha256(content.as_bytes())).as_str())
+                && (preview_proposal_content(content) == proposal.content_preview || legacy_exact)
+        }
+        // A partial preview without an exact byte fingerprint cannot identify approved content.
+        None => legacy_exact,
+    }
+}
+
+const CONTENT_FINGERPRINT_HEADER: &str = "# proposed_content_sha256: ";
+
+fn approved_diff_preview_matches(
+    proposal: &WorkspacePatchProposalSummary,
+    expected: &str,
+    content: &str,
+) -> bool {
+    let Some(actual) = proposal.diff_preview.as_deref() else {
+        return false;
+    };
+    if actual == expected {
+        return true;
+    }
+    // Only exact full legacy content may use an old diff without the fingerprint header.
+    !actual.starts_with(CONTENT_FINGERPRINT_HEADER)
+        && content.chars().count() <= DEFAULT_PROPOSAL_PREVIEW_CHARS
+        && content == proposal.content_preview
+        && !proposal.truncated
+        && expected
+            .strip_prefix(CONTENT_FINGERPRINT_HEADER)
+            .and_then(|value| value.split_once('\n').map(|(_, diff)| diff))
+            == Some(actual)
 }
 
 #[cfg(test)]
@@ -6919,8 +6947,10 @@ pub(super) mod preview_privacy_tests {
             for (approved, changed, legacy_full_preview) in [
                 ("x", "y", false),
                 ("abc\n", "abd\n", false),
+                ("abc\r\n\n", "abc\n\r\n", false),
                 ("x", "y", true),
                 ("abc\n", "abd\n", true),
+                ("abc\r\n\n", "abc\n\r\n", true),
             ] {
                 assert_eq!(
                     preview_proposal_content(approved),
@@ -6972,13 +7002,7 @@ pub(super) mod preview_privacy_tests {
                 let result = request("proposal.apply", params.clone());
                 assert_eq!(result["apply_result"]["apply_status"], "Denied", "{result}");
                 assert_eq!(result["apply_result"]["authorization_consumed"], false);
-                let expected = if legacy_full_preview {
-                    "replacement_content_matches_proposal"
-                } else if operation == "create_file" {
-                    "approved_diff_matches_absent_target"
-                } else {
-                    "approved_diff_matches_current_target"
-                };
+                let expected = "replacement_content_matches_proposal";
                 assert!(
                     result["apply_result"]["failed_checks"]
                         .as_array()
@@ -7042,7 +7066,7 @@ pub(super) mod preview_privacy_tests {
             "truncated": if legacy_full_preview { false } else { proposal.truncated },
             "validation_status": proposal.validation_status,
             "validation_reason": proposal.validation_reason,
-            "diff_preview": proposal.diff_preview,
+            "diff_preview": if legacy_full_preview { proposal.diff_preview.as_deref().and_then(|value| value.split_once('\n').map(|(_, diff)| diff)) } else { proposal.diff_preview.as_deref() },
             "diff_truncated": proposal.diff_truncated,
             "diff_redacted": proposal.diff_redacted,
         });

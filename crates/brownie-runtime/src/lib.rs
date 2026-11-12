@@ -15473,7 +15473,8 @@ fn synthetic_unified_diff(path: &str, old: &str, new: &str) -> String {
     let old_lines: Vec<&str> = old.lines().collect();
     let new_lines: Vec<&str> = new.lines().collect();
     let mut diff = format!(
-        "--- a/{path}\n+++ b/{path}\n@@ -1,{} +1,{} @@\n",
+        "# proposed_content_sha256: sha256:{}\n--- a/{path}\n+++ b/{path}\n@@ -1,{} +1,{} @@\n",
+        hex_sha256(new.as_bytes()),
         old_lines.len(),
         new_lines.len()
     );

@@ -3,6 +3,7 @@ mod json_privacy_assertions;
 
 use json_privacy_assertions::JsonForbiddenLiteral;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 #[test]
 fn actual_public_proposal_events_and_inspection_exclude_raw_fields() {
@@ -88,6 +89,13 @@ fn actual_public_proposal_events_and_inspection_exclude_raw_fields() {
     assert_eq!(payload["validation_status"], "Valid");
     assert_eq!(payload["operation"], "create_file");
     assert_eq!(payload["content_chars"], proposed.chars().count());
+    assert!(payload["diff_preview"]
+        .as_str()
+        .unwrap()
+        .starts_with(&format!(
+            "# proposed_content_sha256: sha256:{:x}\n",
+            Sha256::digest(proposed.as_bytes())
+        )));
     assert_eq!(payload["truncated"], true);
     let preview = payload["content_preview"].as_str().unwrap();
     assert!(proposed.starts_with(preview));
