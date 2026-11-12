@@ -2133,12 +2133,24 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     }
     let provider_selection = match llm_provider_status_from_workspace(store.workspace_root()) {
         Ok(s) => s,
-        Err(error) => {
-            return error_response(
+        Err(_) => {
+            // The task is already Running. Configuration resolution failures
+            // must use the same durable terminal-failure path as provider
+            // failures, without persisting configuration values, inventing a
+            // resolved provider, or issuing a call.
+            let mut unresolved = default_fake_status();
+            unresolved.status.provider = LlmProviderKind::Unknown;
+            unresolved.status.enabled = false;
+            unresolved.status.model.clear();
+            unresolved.will_fallback_to_fake = false;
+            return fail_llm_request(
+                &store,
+                &running,
                 id,
-                -32603,
-                &format!("internal error: {}", redact_secret(&error)),
-            )
+                unresolved,
+                "invalid runtime configuration",
+                LedgerEventKind::LlmRequestFailed,
+            );
         }
     };
     let context_budget_requested = params.context_budget.is_some();
