@@ -416,6 +416,31 @@ pub fn llm_provider_status_from_env() -> RuntimeLlmProviderStatus {
     }
 }
 
+/// Resolve configuration after task start, terminalizing failures before any provider call.
+pub(super) fn resolve_running_task_llm_provider(
+    store: &BrownieStore,
+    running: &brownie_protocol::TaskRecord,
+    id: &Value,
+) -> Result<RuntimeLlmProviderStatus, JsonRpcResponse<Value>> {
+    llm_provider_status_from_workspace(store.workspace_root()).map_err(|_| {
+        // No provider was resolved. Persist only a constant configuration failure,
+        // never a configuration value or an invented real/Fake provider identity.
+        let mut unresolved = default_fake_status();
+        unresolved.status.provider = LlmProviderKind::Unknown;
+        unresolved.status.enabled = false;
+        unresolved.status.model.clear();
+        unresolved.will_fallback_to_fake = false;
+        fail_llm_request(
+            store,
+            running,
+            id.clone(),
+            unresolved,
+            "invalid runtime configuration",
+            LedgerEventKind::LlmRequestFailed,
+        )
+    })
+}
+
 pub(super) fn default_fake_status() -> RuntimeLlmProviderStatus {
     RuntimeLlmProviderStatus {
         config_source: RuntimeConfigSource::Default,
