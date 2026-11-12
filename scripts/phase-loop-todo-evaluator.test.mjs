@@ -16,8 +16,8 @@ import {
 
 const controllerRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-function durableCompletionRecord(todoId, claimId = `claim-${todoId}`) {
-  const selectedHash = createHash('sha256').update(`fixture:${todoId}`).digest('hex');
+function durableCompletionRecord(todoId, claimId = `claim-${todoId}`, selectedTodo = `fixture:${todoId}`) {
+  const selectedHash = createHash('sha256').update(selectedTodo).digest('hex');
   return {
     schema_version: 2,
     claim_id: claimId,
@@ -871,10 +871,19 @@ test('keeps a superseded parent unresolved until every generated child completes
   assert.equal(first.todo_state.invalidated_completion_record_count, 1);
   assert(!first.todo_state.resolved_todo_ids.includes('E-23a-parent'), first.todo_state);
 
+  const firstChild = queue.slice(queue.indexOf('- [ ] E-23a-child-1:'), queue.indexOf('- [ ] E-23a-child-2:')).trimEnd();
+  const secondChild = queue.slice(queue.indexOf('- [ ] E-23a-child-2:'), queue.indexOf('- [ ] E-23b-dependent:')).trimEnd();
+  const stale = evaluateTodoQueue(queue, {
+    todoReplanRecords: [replan],
+    todoCompletionRecords: [durableCompletionRecord('E-23a-child-1')]
+  });
+  assert.equal(stale.selected_todo_id, 'E-23a-child-1');
+  assert(!stale.todo_state.resolved_todo_ids.includes('E-23a-parent'), stale.todo_state);
+
   const second = evaluateTodoQueue(queue, {
     todoReplanRecords: [replan],
     todoCompletionRecords: [
-      durableCompletionRecord('E-23a-child-1')
+      durableCompletionRecord('E-23a-child-1', undefined, firstChild)
     ]
   });
   assert.equal(second.selected_todo_id, 'E-23a-child-2');
@@ -883,8 +892,8 @@ test('keeps a superseded parent unresolved until every generated child completes
   const downstream = evaluateTodoQueue(queue, {
     todoReplanRecords: [replan],
     todoCompletionRecords: [
-      durableCompletionRecord('E-23a-child-1'),
-      durableCompletionRecord('E-23a-child-2')
+      durableCompletionRecord('E-23a-child-1', undefined, firstChild),
+      durableCompletionRecord('E-23a-child-2', undefined, secondChild)
     ]
   });
   assert.equal(downstream.selected_todo_id, 'E-23b-dependent');

@@ -35,8 +35,8 @@ function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
-function durableCompletion(todoId, claimId = `claim-${todoId}`) {
-  const selectedHash = sha256(`fixture:${todoId}`);
+function durableCompletion(todoId, claimId = `claim-${todoId}`, selectedTodo = ({ 'E-child-1': childOne, 'E-child-2': childTwo })[todoId]) {
+  const selectedHash = sha256(selectedTodo ?? `fixture:${todoId}`);
   return {
     schema_version: 2,
     claim_id: claimId,
@@ -404,4 +404,59 @@ Targets:
   fs.writeFileSync(queueBreakdownPath, '# Queue-specific breakdown\n');
 
   assert.deepEqual(readTrackedBreakdownReplanRecords(repoRoot, queueBreakdownPath), []);
+});
+
+for (const change of ['target', 'condition', 'dependency', 'verification']) {
+  test(`an old valid receipt cannot complete a changed live ${change} contract`, () => {
+    const original = '- [ ] E-live-spec: Patch only `old.mjs`.\n  Completion condition: old behavior verified.\n  Depends on: <none>.\n  Verification: run `node old.test.mjs`.';
+    const replacement = {
+      target: original.replace('old.mjs', 'new.mjs'),
+      condition: original.replace('old behavior verified', 'new behavior verified'),
+      dependency: original.replace('<none>', 'E-another-dependency'),
+      verification: original.replace('node old.test.mjs', 'node new.test.mjs')
+    }[change];
+    const completion = durableCompletion('E-live-spec', 'claim-old-spec', original);
+    assert.equal(durableCompletionRecordReceipt(completion).valid, true);
+    const oldBytes = JSON.stringify(completion);
+    for (const text of [replacement, `${replacement}\n\n- [x] E-live-spec: old checked anchor`]) {
+      const state = resolveTodoState({ todoText: text, completionRecords: [completion] });
+      assert.equal(state.durableCompletionIds.has('E-live-spec'), false);
+      assert.equal(state.completedIds.has('E-live-spec'), false);
+      assert.equal(state.resolvedIds.has('E-live-spec'), false);
+      assert.equal(state.unverifiedCompletionRecords[0].reason, 'completion_receipt_live_todo_specification_mismatch');
+      assert.equal(JSON.stringify(completion), oldBytes);
+    }
+    const paddedRecord = { ...completion, selected_todo_id: ' E-live-spec ' };
+    const padded = resolveTodoState({ todoText: replacement, completionRecords: [paddedRecord] });
+    assert.equal(padded.completedIds.has('E-live-spec'), false);
+    assert.equal(padded.durableCompletionIds.has('E-live-spec'), false);
+    const exact = resolveTodoState({ todoText: original, completionRecords: [completion] });
+    assert.equal(exact.durableCompletionIds.has('E-live-spec'), true);
+    const archived = resolveTodoState({ todoText: '- [ ] E-dependent: retained\n  Depends on: E-live-spec.', completionRecords: [completion] });
+    assert.equal(archived.resolvedIds.has('E-live-spec'), true);
+  });
+}
+
+test('duplicate live contracts do not grant an ambiguous completion or unlock their split parent', () => {
+  const original = '- [ ] E-live-spec: first exact contract';
+  const completion = durableCompletion('E-live-spec', 'claim-old-spec', original);
+  for (const second of [original, original.replace('first', 'second')]) {
+    const state = resolveTodoState({ todoText: `${original}\n\n${second}`, completionRecords: [completion],
+      replanRecords: [{ ...replan, parent_todo_id: 'E-spec-parent', generated_child_ids: ['E-live-spec'] }] });
+    assert.equal(state.durableCompletionIds.has('E-live-spec'), false);
+    assert.equal(state.resolvedIds.has('E-spec-parent'), false);
+  }
+});
+
+test('an orphaned-parent resolution for an old specification cannot resolve the changed live parent', () => {
+  const fixture = orphanedParentResolutionFixture();
+  assert.equal(durableCompletionRecordReceipt(fixture.completion).valid, true);
+  const state = resolveTodoState({
+    todoText: fixture.todoText.replace('scripts/orphaned.mjs', 'scripts/replacement.mjs'),
+    replanRecords: [fixture.replanRecord], completionRecords: [fixture.completion],
+    supersessionResolutionRecords: [fixture.resolution]
+  });
+  assert.equal(state.completedIds.has(fixture.parentId), false);
+  assert.equal(state.resolvedIds.has(fixture.parentId), false);
+  assert.equal(state.supersessionResolvedIds.has(fixture.parentId), false);
 });

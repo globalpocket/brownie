@@ -60,6 +60,10 @@ function setup({ invalidProof = false, unsafeChild = false } = {}) {
   const merge = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
   const firstParent = execFileSync('git', ['rev-parse', 'HEAD^1'], { cwd: repo, encoding: 'utf8' }).trim();
   const head = execFileSync('git', ['rev-parse', 'HEAD^2'], { cwd: repo, encoding: 'utf8' }).trim();
+  // This fixture models a split before the later delivery, as required by
+  // the existing recovery gate. Missing chronology cannot authorize recovery.
+  const mergeTime = Number(execFileSync('git', ['show', '-s', '--format=%ct', merge], { cwd: repo, encoding: 'utf8' }).trim());
+  const splitWrittenAt = new Date((mergeTime - 1) * 1000).toISOString();
   const claimId = 'claim-resolution-parent';
   const proof = {
     schema_version: 1,
@@ -87,7 +91,7 @@ function setup({ invalidProof = false, unsafeChild = false } = {}) {
   };
   fs.writeFileSync(path.join(claimDir, 'current.json'), `${JSON.stringify(claim)}\n`);
   fs.writeFileSync(path.join(claimDir, 'stale-parent.json'), `${JSON.stringify({ claim_id: 'stale-parent', selected_todo: parent, status: 'failed', archive_reason: 'terminal_failure' })}\n`);
-  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/todo-replans/split.json'), `${JSON.stringify({ schema_version: 1, record_type: 'todo_replan', operation: 'split_parent_into_children', parent_status: 'superseded_by_children', parent_todo_id: parentId, generated_child_ids: childIds })}\n`);
+  fs.writeFileSync(path.join(repo, '.brownie/private/phase-loop/todo-replans/split.json'), `${JSON.stringify({ schema_version: 1, record_type: 'todo_replan', operation: 'split_parent_into_children', parent_status: 'superseded_by_children', parent_todo_id: parentId, generated_child_ids: childIds, written_at: splitWrittenAt })}\n`);
   const childHash = sha256(child);
   const archivedChild = { claim_id: 'stale-child', selected_todo: child, selected_todo_id: childIds[0], selected_todo_sha256: childHash, status: 'failed', archive_reason: 'terminal_failure', claim_admission: { claim_id: 'stale-child', selected_todo_id: childIds[0], selected_todo_sha256: childHash }, failure_history: [{ status: 'failed', selected_todo_sha256: childHash }], status_history: [{ status: 'claimed' }, { status: 'in_progress' }, { status: 'failed' }] };
   fs.writeFileSync(path.join(claimDir, 'stale-child.json'), `${JSON.stringify(archivedChild)}\n`);
