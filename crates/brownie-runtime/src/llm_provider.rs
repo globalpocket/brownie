@@ -873,6 +873,39 @@ pub fn runtime_diagnostics_from_workspace(
                     Some("BROWNIE_LLM_PROVIDER"),
                 ));
             }
+        } else if provider == "openai-compatible" {
+            let key_env = std::env::var("BROWNIE_LLM_API_KEY_ENV")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "BROWNIE_LLM_API_KEY".to_string());
+            let key_present = std::env::var(&key_env)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .is_some();
+            if !key_present {
+                let key_label = redact_secret(&key_env);
+                diagnostics.push(diagnostic(
+                    DiagnosticSeverity::Warning,
+                    "API_KEY_ENV_MISSING",
+                    format!("API key environment variable is not set: {key_label}."),
+                    Some(&key_label),
+                ));
+                if strict_env {
+                    diagnostics.push(diagnostic(
+                        DiagnosticSeverity::Error,
+                        "PROVIDER_STRICT_FAILURE",
+                        "Strict mode will fail task.run for this provider configuration.",
+                        Some("BROWNIE_LLM_STRICT"),
+                    ));
+                } else {
+                    diagnostics.push(diagnostic(
+                        DiagnosticSeverity::Warning,
+                        "PROVIDER_FALLBACK_TO_FAKE",
+                        "OpenAI-compatible provider will fall back to Fake because strict mode is disabled.",
+                        Some("BROWNIE_LLM_PROVIDER"),
+                    ));
+                }
+            }
         }
     } else {
         let path = workspace_root.join(CONFIG_RELATIVE_PATH);
