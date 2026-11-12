@@ -3,13 +3,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import { reconcileCompletedTodoProjection } from './phase-loop-todo-completion-reconcile.mjs';
 
 const todoId = 'E-completed-projection';
 const todo = `- [ ] ${todoId}: preserve the contract\n  - Route: implement\n  - Depends on: <none>.\n`;
 
-function durableCompletion(claimId = 'claim-1') {
-  const selectedHash = 'a'.repeat(64);
+function durableCompletion(claimId = 'claim-1', selectedTodo = todo) {
+  const selectedHash = createHash('sha256').update(selectedTodo.trimEnd()).digest('hex');
   return {
     schema_version: 2,
     claim_id: claimId,
@@ -96,7 +97,7 @@ for (const [completedMarker, checkedMarker] of [
     const before = `${completed}\n${checked}\n${pending}`;
     const todoFile = path.join(repo, '.brownie/todo.md');
     fs.writeFileSync(todoFile, before);
-    fs.writeFileSync(path.join(receipts, 'receipt.json'), JSON.stringify(durableCompletion()));
+    fs.writeFileSync(path.join(receipts, 'receipt.json'), JSON.stringify(durableCompletion('claim-1', completed)));
 
     const result = reconcileCompletedTodoProjection({ repoRoot: repo, runStamp: 'boundary-fixture' });
 
@@ -126,3 +127,25 @@ test('completion projection removes the selected span without replacing an earli
   assert.deepEqual(result.completed_todo_ids, [todoId]);
   assert.equal(fs.readFileSync(todoFile, 'utf8'), retained);
 });
+
+for (const eol of ['\n', '\r\n']) {
+  test(`stale same-ID completion preserves the changed physical queue and receipt with ${JSON.stringify(eol)}`, (t) => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-stale-specification-'));
+    t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+    const directory = path.join(repo, '.brownie/private/phase-loop/todo-completions');
+    fs.mkdirSync(directory, { recursive: true });
+    const receipt = path.join(directory, 'receipt.json');
+    const record = durableCompletion();
+    const rawReceipt = JSON.stringify(record);
+    fs.writeFileSync(receipt, rawReceipt);
+    const replacement = todo.replace('preserve the contract', 'implement different behavior').replaceAll('\n', eol);
+    const queue = path.join(repo, '.brownie/todo.md');
+    const before = `${replacement}${eol}- [ ] E-dependent: must stay pending${eol}  Depends on: ${todoId}.${eol}`;
+    fs.writeFileSync(queue, before);
+    const result = reconcileCompletedTodoProjection({ repoRoot: repo });
+    assert.equal(result.applied, false);
+    assert.equal(fs.readFileSync(queue, 'utf8'), before);
+    assert.equal(fs.readFileSync(receipt, 'utf8'), rawReceipt);
+    assert.equal(fs.existsSync(path.join(repo, '.brownie/private/phase-loop/todo-claims/completion-projections')), false);
+  });
+}

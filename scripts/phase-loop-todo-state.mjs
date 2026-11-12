@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { validateHistoricalDerivedDeliveryReceipt } from './phase-loop-historical-derived-delivery-integrity.mjs';
-import { validateMergedDeliveryReverification } from './phase-loop-delivery-integrity.mjs';
+import { selectedTodoSha256, validateMergedDeliveryReverification } from './phase-loop-delivery-integrity.mjs';
 
 function checkboxBlocks(text) {
   const starts = [...String(text ?? '').matchAll(/^(?:[-*]|\d+[.)])\s+\[[ xX]\]\s+/gmu)].map((match) => match.index);
@@ -348,6 +348,7 @@ export function resolveTodoState({
   const knownIds = new Set();
   const liveIds = new Set();
   const checkedIds = new Set();
+  const liveTodoFingerprints = new Map();
   for (const block of blocks) {
     const id = todoIdFromBlock(block);
     if (!id) {
@@ -357,6 +358,10 @@ export function resolveTodoState({
     liveIds.add(id);
     if (isCheckedBlock(block)) {
       checkedIds.add(id);
+    } else {
+      const fingerprints = liveTodoFingerprints.get(id) ?? [];
+      fingerprints.push(selectedTodoSha256({ selected_todo: block }));
+      liveTodoFingerprints.set(id, fingerprints);
     }
   }
 
@@ -396,7 +401,12 @@ export function resolveTodoState({
     normalizedReplans.push({ ...record, parent_todo_id: parentId, generated_child_ids: childIds });
   }
 
-  const completedIds = new Set([...checkedIds].filter((id) => !supersededIds.has(id)));
+  const completedIds = new Set([...checkedIds].filter((id) => !supersededIds.has(id) && !liveTodoFingerprints.has(id)));
+  function matchesLiveSpecification(record) {
+    const id = typeof record?.selected_todo_id === 'string' ? record.selected_todo_id.trim() : '';
+    const fingerprints = liveTodoFingerprints.get(id);
+    return !fingerprints || (fingerprints.length === 1 && fingerprints[0] === record.selected_todo_sha256);
+  }
   const invalidatedCompletionRecords = [];
   const durableCompletionIds = new Set();
   const unverifiedCompletionRecords = [];
@@ -414,7 +424,7 @@ export function resolveTodoState({
       record?.selected_todo_id === resolution.parent_todo_id
       && record?.claim_id === resolution.claim_id
     ));
-    if (replanRecord && completionRecord && validSupersessionResolution({
+    if (replanRecord && completionRecord && matchesLiveSpecification(completionRecord) && validSupersessionResolution({
       resolution,
       completionRecord,
       replanRecord,
@@ -437,7 +447,13 @@ export function resolveTodoState({
       invalidatedCompletionRecords.push(record);
       continue;
     }
-    const receipt = durableCompletionRecordReceipt(record);
+    let receipt = durableCompletionRecordReceipt(record);
+    // A valid receipt is immutable history for its own specification. A live
+    // unchecked contract is authoritative for current scheduling and removal.
+    // Duplicate live IDs cannot provide an unambiguous destructive subject.
+    if (receipt.valid && !matchesLiveSpecification(record)) {
+      receipt = { valid: false, reason: 'completion_receipt_live_todo_specification_mismatch' };
+    }
     if (receipt.valid) {
       durableCompletionIds.add(id);
       completedIds.add(id);
