@@ -891,17 +891,17 @@ pub fn runtime_diagnostics_from_workspace(
             ));
         } else {
             match std::fs::read_to_string(&path) {
-                Err(e) => diagnostics.push(diagnostic(
+                Err(_) => diagnostics.push(diagnostic(
                     DiagnosticSeverity::Error,
                     "CONFIG_MALFORMED",
-                    format!("Failed to read .brownie/config.json: {e}"),
+                    "Failed to read .brownie/config.json.",
                     Some(CONFIG_RELATIVE_PATH),
                 )),
                 Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
-                    Err(e) => diagnostics.push(diagnostic(
+                    Err(_) => diagnostics.push(diagnostic(
                         DiagnosticSeverity::Error,
                         "CONFIG_MALFORMED",
-                        format!("Failed to parse .brownie/config.json: {e}"),
+                        "Failed to parse .brownie/config.json.",
                         Some(CONFIG_RELATIVE_PATH),
                     )),
                     Ok(value) => {
@@ -914,10 +914,10 @@ pub fn runtime_diagnostics_from_workspace(
                             ));
                         }
                         match serde_json::from_value::<BrownieConfig>(value) {
-                            Err(e) => diagnostics.push(diagnostic(
+                            Err(_) => diagnostics.push(diagnostic(
                                 DiagnosticSeverity::Error,
                                 "CONFIG_MALFORMED",
-                                format!("Failed to validate .brownie/config.json: {e}"),
+                                "Failed to validate .brownie/config.json.",
                                 Some(CONFIG_RELATIVE_PATH),
                             )),
                             Ok(config) => {
