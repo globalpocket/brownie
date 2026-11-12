@@ -5,7 +5,37 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { completionConditionSha256, createCompletionCertificate, selectedTodoSha256, terminalCompletionEvidenceSha256 } from './phase-loop-delivery-integrity.mjs';
 import { appendTaskTransition, mergedDeliveryCompletionRecoveryAttemptId, readTaskLedger, recordTerminalFailureRecovery, recordTerminalReplanWithChildren, recordTrajectory, replanTaskWithChildren, resolveClaimLedgerAttempt, reviewReworkLedgerAttemptId, taskAttemptId, taskIsExecutable, taskProjection, validateTaskLedger } from './phase-loop-task-ledger.mjs';
+
+function completedRecoveryClaim(selectedTodo, claimId) {
+  const claim = { claim_id: claimId, root_claim_id: claimId, selected_todo: selectedTodo, status: 'completed' };
+  const terminal = { final_state: 'Succeeded', completion_result_fingerprint: 'unit-test-recovery' };
+  claim.delivery_review = {
+    pr_url: 'https://github.com/example/recovery-fixture/pull/1',
+    pr_number: 1,
+    head_oid: 'b'.repeat(40),
+    author: 'fixture-implementation', reviewer: 'fixture-review', merge_actor: 'fixture-review',
+    approved: true, ci_passed: true, merged: true,
+    merged_at: '2026-10-31T00:00:00Z', observed_at: '2026-10-31T00:01:00Z',
+    semantic_completion_evidence: {
+      schema_version: 1, root_claim_id: claimId,
+      selected_todo_sha256: selectedTodoSha256(claim),
+      completion_condition_sha256: completionConditionSha256(claim),
+      verification_results: [{ command: 'node --test fixture.test.mjs', exit_code: 0 }],
+      observables: [{ kind: 'unit_test_fixture', sha256: 'a'.repeat(64) }],
+      terminal: {
+        completed: true, continuation_required: false, trajectory_failed: false,
+        terminal_completion_evidence: terminal,
+        terminal_completion_evidence_sha256: terminalCompletionEvidenceSha256(terminal)
+      }
+    }
+  };
+  const issuance = createCompletionCertificate({ claim, issuedAt: '2026-10-31T00:02:00Z' });
+  assert.equal(issuance.valid, true, JSON.stringify(issuance.errors));
+  claim.completion_certificate = issuance.certificate;
+  return claim;
+}
 
 function terminalEvidence(selectedTodo, claimId) {
   return {
@@ -101,20 +131,10 @@ test('records merged delivery after a blocked attempt in a certificate-bound rec
     assert.equal(result.ok, true, JSON.stringify(result));
     if (to_state === 'blocked') terminalEvent = result.event;
   }
-  const certificate = {
-    schema_version: 1,
-    root_claim_id: claimId,
-    selected_todo_sha256: specHash,
-    semantic_completion_evidence_sha256: 'a'.repeat(64)
-  };
+  const claim = completedRecoveryClaim(selectedTodo, claimId);
+  const certificate = claim.completion_certificate;
   const claimPath = path.join(repo, 'claim.json');
-  fs.writeFileSync(claimPath, JSON.stringify({
-    claim_id: claimId,
-    root_claim_id: claimId,
-    status: 'completed',
-    selected_todo: selectedTodo,
-    completion_certificate: certificate
-  }));
+  fs.writeFileSync(claimPath, JSON.stringify(claim));
 
   const completion = recordTrajectory(repo, { claimPath, type: 'todo.completed', runId: 'merged-run' });
   assert.equal(completion.ok, true, JSON.stringify(completion));
@@ -128,6 +148,62 @@ test('records merged delivery after a blocked attempt in a certificate-bound rec
   const projection = taskProjection(readTaskLedger(repo));
   assert.equal(projection.get(sourceTaskId).to_state, 'blocked');
   assert.equal(projection.get(recoveryTaskId).to_state, 'completed');
+  const ledger = path.join(repo, '.brownie/private/phase-loop/task-ledger.jsonl');
+  const beforeRetry = fs.readFileSync(ledger);
+  assert.equal(recordTrajectory(repo, { claimPath, type: 'todo.completed', runId: 'retry-run' }).ok, true);
+  assert.deepEqual(fs.readFileSync(ledger), beforeRetry);
+});
+
+test('invalid completion certificates cannot create recovery attempts or change ledger bytes', () => {
+  const mutations = [
+    ['four-field certificate', (claim) => {
+      claim.completion_certificate = {
+        schema_version: 1, root_claim_id: claim.root_claim_id,
+        selected_todo_sha256: selectedTodoSha256(claim),
+        semantic_completion_evidence_sha256: 'a'.repeat(64)
+      };
+      delete claim.delivery_review;
+    }],
+    ['missing certificate', (claim) => { delete claim.completion_certificate; }],
+    ['missing delivery receipt', (claim) => { delete claim.delivery_review; }],
+    ['altered semantic proof', (claim) => { claim.delivery_review.semantic_completion_evidence.observables[0].sha256 = 'c'.repeat(64); }],
+    ['altered review head', (claim) => { claim.delivery_review.head_oid = 'c'.repeat(40); }],
+    ['wrong completion condition', (claim) => { claim.completion_certificate.completion_condition_sha256 = 'c'.repeat(64); }],
+    ['failed verification', (claim) => { claim.delivery_review.semantic_completion_evidence.verification_results[0].exit_code = 1; }],
+    ['self approval', (claim) => { claim.delivery_review.reviewer = claim.delivery_review.author; }],
+    ['invalidated review', (claim) => { claim.review_rework = { required: true, state: 'CHANGES_REQUESTED' }; }],
+    ['changed selected specification', (claim) => { claim.selected_todo += '\n  Completion condition: changed after certification.'; }]
+  ];
+  for (const sourceState of ['blocked', 'failed']) {
+    for (const [label, mutate] of mutations) {
+      const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-task-ledger-invalid-certificate-'));
+      try {
+        const selected = '- [ ] T-proof-recovery: bounded implementation\n  Completion condition: verify the exact delivery.';
+        const claimId = 'claim-proof-recovery';
+        const sourceTaskId = taskAttemptId('T-proof-recovery', claimId);
+        for (const to_state of ['queued', 'claimed', 'running', sourceState]) {
+          assert.equal(appendTaskTransition(repo, {
+            task_id: sourceTaskId, to_state, claim_id: claimId,
+            task_spec_sha256: crypto.createHash('sha256').update(selected).digest('hex'),
+            reason: to_state === 'blocked' ? 'fixture_block' : undefined
+          }).ok, true);
+        }
+        const claim = completedRecoveryClaim(selected, claimId);
+        mutate(claim);
+        const claimPath = path.join(repo, 'claim.json');
+        fs.writeFileSync(claimPath, JSON.stringify(claim));
+        const ledger = path.join(repo, '.brownie/private/phase-loop/task-ledger.jsonl');
+        const before = fs.readFileSync(ledger);
+        const result = recordTrajectory(repo, { claimPath, type: 'todo.completed', runId: 'unverified-run' });
+        assert.equal(result.ok, false, `${sourceState}: ${label}: ${JSON.stringify(result)}`);
+        assert.deepEqual(fs.readFileSync(ledger), before, `${sourceState}: ${label}`);
+        assert.equal(taskProjection(readTaskLedger(repo)).size, 1);
+        assert.equal(taskProjection(readTaskLedger(repo)).get(sourceTaskId).to_state, sourceState);
+      } finally {
+        fs.rmSync(repo, { recursive: true, force: true });
+      }
+    }
+  }
 });
 
 test('replans require a cause and replacement children', () => {

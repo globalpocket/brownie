@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { readClaimSnapshot } from './phase-loop-claim-lifecycle.mjs';
+import { validateCompletionCertificate } from './phase-loop-delivery-integrity.mjs';
 
 export const TASK_STATES = new Set(['queued', 'claimed', 'running', 'completed', 'blocked', 'replanned', 'failed']);
 const TERMINAL_STATES = new Set(['completed', 'blocked', 'replanned', 'failed']);
@@ -1047,6 +1048,7 @@ function mergedDeliveryCompletionRecoveryAttemptIdentity({ claim, sourceTaskId, 
     certificate?.root_claim_id === claim?.root_claim_id,
     certificate?.selected_todo_sha256 === selectedTodoSha256,
     typeof certificate?.semantic_completion_evidence_sha256 === 'string' && /^[a-f0-9]{64}$/u.test(certificate.semantic_completion_evidence_sha256),
+    validateCompletionCertificate({ claim }).valid,
     sourceEvent != null,
     source?.claim_id === claim.claim_id,
     source?.task_spec_sha256 === selectedTodoSha256
