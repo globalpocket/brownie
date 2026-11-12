@@ -129,6 +129,25 @@ test('completion projection removes the selected span without replacing an earli
 });
 
 for (const eol of ['\n', '\r\n']) {
+  test(`an exact same-ID completion consumes only its matching physical contract with ${JSON.stringify(eol)}`, (t) => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-exact-specification-'));
+    t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+    const directory = path.join(repo, '.brownie/private/phase-loop/todo-completions');
+    fs.mkdirSync(directory, { recursive: true });
+    const selected = todo.replaceAll('\n', eol);
+    const receipt = path.join(directory, 'receipt.json');
+    const originalReceipt = JSON.stringify(durableCompletion('claim-exact-eol', selected));
+    fs.writeFileSync(receipt, originalReceipt);
+    const retained = `- [ ] E-dependent: remains in the queue${eol}  Depends on: ${todoId}.${eol}`;
+    const queue = path.join(repo, '.brownie/todo.md');
+    fs.writeFileSync(queue, selected + retained);
+    const result = reconcileCompletedTodoProjection({ repoRoot: repo });
+    assert.equal(result.applied, true);
+    assert.deepEqual(result.completed_todo_ids, [todoId]);
+    assert.equal(fs.readFileSync(queue, 'utf8'), retained);
+    assert.equal(fs.readFileSync(receipt, 'utf8'), originalReceipt);
+  });
+
   test(`stale same-ID completion preserves the changed physical queue and receipt with ${JSON.stringify(eol)}`, (t) => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-stale-specification-'));
     t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
