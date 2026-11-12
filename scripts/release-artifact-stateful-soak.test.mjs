@@ -37,6 +37,7 @@ for (const line of fs.readFileSync(0, 'utf8').trim().split('\n')) {
   writeExecutable(cliPath, String.raw`#!/usr/bin/env node
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const root = process.env.BROWNIE_WORKSPACE_ROOT;
 const args = process.argv.slice(2).filter((value) => value !== '--json');
 const write = (value) => process.stdout.write(JSON.stringify(value));
@@ -51,6 +52,9 @@ if(args[0]==='run') {
  fs.mkdirSync(path.dirname(ledgerPath),{recursive:true});
  fs.writeFileSync(ledgerPath,JSON.stringify({kind:${options.missingDurableBoundary === true ? "'Other'" : "'HeadlessJourneyStarted'"},run_id:runId,task_id:taskId})+'\n');
  fs.writeFileSync(path.join(root,'user-source.txt'),'durable user workspace input\n');
+ if(${options.snapshotRowCollision === true}) {
+  for(const name of ['a','b']) {fs.writeFileSync(path.join(root,name),'same-output');fs.chmodSync(path.join(root,name),0o600);}
+ }
  process.exit(${options.processLossExitCode ?? 75});
 }
 if(args[0]==='resume') {
@@ -73,6 +77,18 @@ if(args[0]==='resume') {
  if(${options.userWorkspaceReplayMutation === true || options.symlinkTargetReplayMutation === true})fs.appendFileSync(path.join(root,'user-source.txt'),'duplicate user workspace side effect\n');
  if(${options.createUserDirectory === true})fs.mkdirSync(path.join(root,'replayed-directory'));
  if(${options.changeUserMode === true})fs.chmodSync(path.join(root,'user-source.txt'),0o600);
+ if(${options.snapshotRowCollision === true}) {
+  const content=fs.readFileSync(path.join(root,'a'));
+  const mode=fs.statSync(path.join(root,'a')).mode & 0o777;
+  const digest='sha256:'+crypto.createHash('sha256').update(content).digest('hex');
+  fs.unlinkSync(path.join(root,'a'));fs.unlinkSync(path.join(root,'b'));
+  const replacement=path.join(root,'a:file:'+mode+':'+digest+'\nb');
+  fs.writeFileSync(replacement,content);fs.chmodSync(replacement,mode);
+ }
+ if(${JSON.stringify(options.retargetSnapshotLink ?? null)} !== null) {
+  fs.unlinkSync(path.join(root,'delimiter-link'));
+  fs.symlinkSync(${JSON.stringify(options.retargetSnapshotLink ?? null)},path.join(root,'delimiter-link'),'file');
+ }
  write({resume:{status:'no_eligible_task',controller_action:'stop',continuation_required:false}});process.exit(0);
 }
 process.exit(64);
@@ -120,6 +136,59 @@ test('stateful soak uses only the packaged artifact and records bounded recovery
   assert.equal(evidence.checks.evidence_chain_integrity.passed, true);
   assert.deepEqual(JSON.parse(fs.readFileSync(evidencePath, 'utf8')), evidence);
 });
+
+test('stateful soak rejects a replay whose replacement filename contains complete old snapshot rows', async (t) => {
+  if (process.platform === 'win32') return t.skip('newline filenames require a POSIX filesystem');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-soak-row-collision-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const evidencePath = path.join(root, 'evidence.json');
+  await assert.rejects(() => runReleaseArtifactStatefulSoak({
+    targetId: 'linux-x64', archivePath: createFixtureArchive(root, { snapshotRowCollision: true }),
+    workspaceRoot: path.join(root, 'workspace'), evidencePath
+  }), /duplicate side effect/u);
+  assert.equal(fs.existsSync(evidencePath), false);
+});
+
+test('stateful soak accepts unchanged filenames containing snapshot delimiters', async (t) => {
+  if (process.platform === 'win32') return t.skip('newline filenames require a POSIX filesystem');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-soak-delimiter-name-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const workspaceRoot = path.join(root, 'workspace');
+  fs.mkdirSync(workspaceRoot);
+  const file = path.join(workspaceRoot, 'line:one\n"two\\three');
+  fs.writeFileSync(file, 'unchanged user content');
+  const evidence = await runReleaseArtifactStatefulSoak({
+    targetId: 'linux-x64', archivePath: createFixtureArchive(root), workspaceRoot
+  });
+  assert.equal(evidence.checks.duplicate_side_effect_rejection.workspace_unchanged, true);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'unchanged user content');
+});
+
+for (const retarget of [false, true]) {
+  test(`stateful soak ${retarget ? 'rejects a changed' : 'accepts an unchanged'} symlink target containing snapshot delimiters`, async (t) => {
+    if (process.platform === 'win32') return t.skip('newline symlink targets require a POSIX filesystem');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-soak-delimiter-link-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const workspaceRoot = path.join(root, 'workspace');
+    fs.mkdirSync(workspaceRoot);
+    const targets = [path.join(root, 'first:\nname'), path.join(root, 'second:\nname')];
+    for (const target of targets) fs.writeFileSync(target, 'same target content');
+    fs.symlinkSync(targets[0], path.join(workspaceRoot, 'delimiter-link'), 'file');
+    const evidencePath = path.join(root, 'evidence.json');
+    const options = retarget ? { retargetSnapshotLink: targets[1] } : {};
+    const run = () => runReleaseArtifactStatefulSoak({
+      targetId: 'linux-x64', archivePath: createFixtureArchive(root, options), workspaceRoot, evidencePath
+    });
+    if (retarget) {
+      await assert.rejects(run, /duplicate side effect/u);
+      assert.equal(fs.existsSync(evidencePath), false);
+    } else {
+      const evidence = await run();
+      assert.equal(evidence.checks.duplicate_side_effect_rejection.workspace_unchanged, true);
+      assert.equal(fs.readlinkSync(path.join(workspaceRoot, 'delimiter-link')), targets[0]);
+    }
+  });
+}
 
 test('stateful soak rejects a non-process-loss run failure even after a durable journey boundary', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-artifact-soak-wrong-exit-'));

@@ -141,11 +141,11 @@ function stableWorkspaceSnapshot(workspaceRoot) {
   const visitDirectory = (current, relative, activeDirectories, depth = 0) => {
     if (depth > snapshotBudget.maximumDepth) throw new Error('workspace snapshot depth budget exceeded');
     const canonicalDirectory = fs.realpathSync(current);
-    rows.push(`${relative}:directory:${fs.statSync(current).mode & 0o777}`);
+    rows.push([relative, 'directory', fs.statSync(current).mode & 0o777]);
     if (activeDirectories.has(canonicalDirectory)) {
       // A symlink can point back to an ancestor.  Keep this stable marker so
       // cycles cannot recurse forever, while the ancestor remains snapshotted.
-      rows.push(`${relative}:directory-cycle`);
+      rows.push([relative, 'directory-cycle']);
       return;
     }
     const nextActiveDirectories = new Set(activeDirectories);
@@ -176,7 +176,7 @@ function stableWorkspaceSnapshot(workspaceRoot) {
       return;
     }
     if (metadata.isFile()) {
-      rows.push(`${relative}:file:${metadata.mode & 0o777}:${snapshotFile(current, metadata.size)}`);
+      rows.push([relative, 'file', metadata.mode & 0o777, snapshotFile(current, metadata.size)]);
       return;
     }
     if (!metadata.isSymbolicLink()) throw new Error(`workspace snapshot does not support ${relative}`);
@@ -184,7 +184,7 @@ function stableWorkspaceSnapshot(workspaceRoot) {
     // The link text alone is insufficient: a replay can mutate a target that
     // lies outside the workspace without altering the link itself. Snapshot
     // all reachable target contents under the link's logical workspace path.
-    rows.push(`${relative}:symlink:${fs.readlinkSync(current)}`);
+    rows.push([relative, 'symlink', fs.readlinkSync(current)]);
     let targetMetadata;
     try {
       targetMetadata = fs.statSync(current);
@@ -194,13 +194,15 @@ function stableWorkspaceSnapshot(workspaceRoot) {
     if (targetMetadata.isDirectory()) {
       visitDirectory(current, `${relative}:target`, activeDirectories, depth);
     } else if (targetMetadata.isFile()) {
-      rows.push(`${relative}:target:file:${targetMetadata.mode & 0o777}:${snapshotFile(current, targetMetadata.size)}`);
+      rows.push([relative, 'target-file', targetMetadata.mode & 0o777, snapshotFile(current, targetMetadata.size)]);
     } else {
       throw new Error(`workspace snapshot does not support symbolic link target ${relative}`);
     }
   };
   if (fs.existsSync(workspaceRoot)) visitDirectory(workspaceRoot, '', new Set());
-  return sha256Value(rows.join('\n'));
+  // Filenames and link text can contain both colons and newlines. Preserve
+  // field and row boundaries so different workspaces cannot alias the input.
+  return sha256Value(JSON.stringify(rows));
 }
 
 function readDurableLedger(ledgerPath) {
