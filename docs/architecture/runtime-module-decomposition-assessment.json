@@ -103,7 +103,7 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/llm_provider.rs": {
-        "line_count": 1202,
+        "line_count": 1235,
         "public_items": 14,
         "private_items": 27,
         "state_mutation_mentions": 0,
@@ -114,7 +114,7 @@
         "approval_mentions": 0,
         "mcp_mentions": 0,
         "product_dod_mentions": 0,
-        "diagnostics_mentions": 99
+        "diagnostics_mentions": 108
       },
       "crates/brownie-runtime/src/mcp_client.rs": {
         "line_count": 1900,
