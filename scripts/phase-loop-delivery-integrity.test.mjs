@@ -127,6 +127,175 @@ test('a clean exact merged task is a pre-claim candidate but an uncommitted targ
   assert.deepEqual(rejected, { valid: false, reason: 'merged_delivery_candidate_target_not_clean' });
 });
 
+function reviewedTargetFixture(t, scopes = ['scripts/target.mjs'], verificationSource = null) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-reviewed-target-tree-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const selected = `- [ ] E-reviewed-target: Patch only ${scopes.map(scope => `\`${scope}\``).join(', ')}:
+  Route: implementation.
+  Completion condition: every current target retains its latest reviewed Git entry.
+  Verification: run \`${verificationSource ? 'node --test scripts/verification.test.mjs' : `node --check ${scopes[0]}`}\`.`;
+  const git = (args, env = {}) => execFileSync('git', args, {
+    cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env }
+  }).trim();
+  const target = scope => path.join(root, scope);
+  for (const scope of scopes) {
+    fs.mkdirSync(path.dirname(target(scope)), { recursive: true });
+    fs.writeFileSync(target(scope), 'export const value = "before";\n');
+  }
+  if (verificationSource) fs.writeFileSync(target('scripts/verification.test.mjs'), verificationSource);
+  git(['init', '--quiet', '-b', 'main']);
+  git(['config', 'user.name', 'fixture']);
+  git(['config', 'user.email', 'fixture@example.invalid']);
+  git(['add', '.']);
+  git(['commit', '--quiet', '-m', 'baseline']);
+  let sequence = 0;
+  const merge = (changed, date) => {
+    const branch = `reviewed-${++sequence}`;
+    const env = date ? { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date } : {};
+    git(['switch', '--quiet', '-c', branch]);
+    for (const [scope, content] of Object.entries(changed)) fs.writeFileSync(target(scope), content);
+    git(['add', '.']);
+    git(['commit', '--quiet', '-m', `reviewed source\n\nBrownie-Task-Todo: E-reviewed-target\nBrownie-Task-Spec-SHA256: ${selectedTodoSha256({ selected_todo: selected })}`], env);
+    git(['switch', '--quiet', 'main']);
+    git(['merge', '--no-ff', '--no-edit', branch], env);
+    return git(['rev-parse', 'HEAD']);
+  };
+  const candidate = () => findCleanMergedDeliveryCandidate({ repoRoot: root, selectedTodo: selected });
+  const claim = { claim_id: 'tree-fixture', root_claim_id: 'tree-fixture', selected_todo: selected,
+    selected_todo_id: 'E-reviewed-target', selected_todo_sha256: selectedTodoSha256({ selected_todo: selected }),
+    queue_fingerprint: 'f'.repeat(64), queue_generation: 42 };
+  const reviews = value => value.candidate.merge_lineage.map(entry => ({
+    pr_url: 'https://example.invalid/pull/1', pr_number: 1, state: 'MERGED',
+    merge_commit_oid: entry.merge_commit_oid, head_oid: entry.head_oid,
+    author: 'implementation', reviewer: 'review', merge_actor: 'review',
+    merged_at: '2026-11-06T04:00:00Z', observed_at: '2026-11-06T04:01:00Z', approved: true, ci_passed: true,
+    latest_reviewer_review_state: 'APPROVED', latest_reviewer_review_commit_oid: entry.head_oid
+  }));
+  const verify = review => verifyMergedDeliveryReverification({ repoRoot: root, claim,
+    stdoutPayload: { run: { runtime_claim_id: claim.claim_id, payload_status: 'task_executed', reported_executed_count: 1 } },
+    review, reviewer: 'review', implementation: 'implementation' });
+  return { root, selected, git, target, merge, candidate, claim, reviews, verify };
+}
+
+for (const mutation of ['content', 'executable mode', 'symbolic link']) {
+  test(`a committed later ${mutation} change cannot inherit a reviewed target's completion`, t => {
+    if (mutation !== 'content' && process.platform === 'win32') return t.skip('POSIX Git entry semantics required');
+    const f = reviewedTargetFixture(t);
+    f.merge({ 'scripts/target.mjs': 'export const value = "reviewed";\n' });
+    const before = f.candidate();
+    assert.equal(before.valid, true, JSON.stringify(before));
+    const reviews = f.reviews(before);
+    assert.equal(f.verify(reviews).valid, true);
+    if (mutation === 'content') fs.writeFileSync(f.target('scripts/target.mjs'), 'export const value = "unreviewed";\n');
+    if (mutation === 'executable mode') {
+      f.git(['config', 'core.filemode', 'true']);
+      fs.chmodSync(f.target('scripts/target.mjs'), 0o755);
+    }
+    if (mutation === 'symbolic link') {
+      fs.writeFileSync(f.target('replacement.mjs'), fs.readFileSync(f.target('scripts/target.mjs')));
+      fs.unlinkSync(f.target('scripts/target.mjs'));
+      fs.symlinkSync('../replacement.mjs', f.target('scripts/target.mjs'));
+    }
+    f.git(['add', '.']);
+    f.git(['commit', '--quiet', '-m', 'unreviewed target change']);
+    assert.equal(f.candidate().valid, true, 'a pre-claim candidate alone is never completion evidence');
+    const rejected = f.verify(reviews);
+    assert.equal(rejected.valid, false);
+    assert.deepEqual(rejected.errors, ['merged_delivery_target_not_clean_at_reviewed_merge']);
+    assert.equal(rejected.evidence, undefined, 'no completion evidence may be minted for an unreviewed target');
+  });
+}
+
+test('an unrelated later commit preserves the reviewed bounded target candidate', t => {
+  const f = reviewedTargetFixture(t);
+  f.merge({ 'scripts/target.mjs': 'export const value = "reviewed";\n' });
+  const before = f.candidate();
+  fs.writeFileSync(f.target('unrelated.md'), 'unrelated later state\n');
+  f.git(['add', '.']);
+  f.git(['commit', '--quiet', '-m', 'unrelated change']);
+  assert.equal(f.candidate().valid, true);
+  assert.equal(f.verify(f.reviews(before)).valid, true);
+});
+
+for (const commit of [false, true]) {
+  test(`successful verification cannot mint completion after ${commit ? 'committing' : 'writing'} an unreviewed target change`, t => {
+    const verificationSource = `import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
+fs.writeFileSync('scripts/target.mjs', 'export const value = "changed during verification";\\n');
+${commit ? "execFileSync('git', ['add', '.']); execFileSync('git', ['commit', '--quiet', '-m', 'verification changed target']);" : ''}
+`;
+    const f = reviewedTargetFixture(t, ['scripts/target.mjs'], verificationSource);
+    f.merge({ 'scripts/target.mjs': 'export const value = "reviewed";\n' });
+    const before = f.candidate();
+    const result = f.verify(f.reviews(before));
+    assert.equal(result.valid, false);
+    assert.deepEqual(result.errors, ['merged_delivery_target_not_clean_at_reviewed_merge']);
+    assert.equal(result.verification_results[0].exit_code, 0, 'the successful command is insufficient');
+    assert.equal(result.evidence, undefined);
+  });
+}
+
+test('re-verification executes the requested Node test instead of inheriting a recursive runner skip', t => {
+  const f = reviewedTargetFixture(t, ['scripts/target.mjs'], `import fs from 'node:fs';
+fs.writeFileSync('verification-executed.json', JSON.stringify({ actual_node: process.version }));
+`);
+  f.merge({ 'scripts/target.mjs': 'export const value = "reviewed";\n' });
+  const result = f.verify(f.reviews(f.candidate()));
+  assert.equal(result.valid, true, JSON.stringify(result));
+  assert.equal(fs.existsSync(f.target('verification-executed.json')), true, 'an exit0 without actual test execution is insufficient');
+  assert.equal(JSON.parse(fs.readFileSync(f.target('verification-executed.json'), 'utf8')).actual_node, process.version,
+    'the parent and verification subprocess must use the selected Node toolchain');
+});
+
+test('restoring the exact reviewed target entry permits re-verification', t => {
+  const f = reviewedTargetFixture(t);
+  f.merge({ 'scripts/target.mjs': 'export const value = "reviewed";\n' });
+  const before = f.candidate();
+  fs.writeFileSync(f.target('scripts/target.mjs'), 'export const value = "temporary";\n');
+  f.git(['add', '.']); f.git(['commit', '--quiet', '-m', 'temporary change']);
+  f.git(['revert', '--no-edit', 'HEAD']);
+  const result = f.verify(f.reviews(before));
+  assert.equal(result.valid, true, JSON.stringify(result));
+  assert.equal(validateMergedDeliveryReverification({ claim: f.claim, evidence: result.evidence }).valid, true);
+});
+
+test('split delivery binds each target to its own latest contributing merge', t => {
+  const scopes = ['scripts/target.mjs', 'scripts/second.mjs'];
+  const f = reviewedTargetFixture(t, scopes);
+  f.merge({ [scopes[0]]: 'export const value = "first reviewed";\n' });
+  f.merge({ [scopes[1]]: 'export const value = "second reviewed";\n' });
+  const before = f.candidate();
+  assert.equal(before.valid, true, JSON.stringify(before));
+  assert.equal(before.candidate.merge_lineage.length, 2);
+  assert.equal(f.verify(f.reviews(before)).valid, true);
+  fs.writeFileSync(f.target(scopes[0]), 'export const value = "unreviewed first target";\n');
+  f.git(['add', '.']); f.git(['commit', '--quiet', '-m', 'unreviewed older target mutation']);
+  assert.equal(f.candidate().valid, true, 'source lineage may be inspected but must not complete this target');
+  assert.equal(f.verify(f.reviews(before)).valid, false);
+});
+
+test('a newer reviewed target requires its own review instead of inheriting older approval', t => {
+  const f = reviewedTargetFixture(t);
+  f.merge({ 'scripts/target.mjs': 'export const value = "first reviewed";\n' });
+  const olderReviews = f.reviews(f.candidate());
+  const newest = f.merge({ 'scripts/target.mjs': 'export const value = "second reviewed";\n' });
+  const current = f.candidate();
+  assert.equal(current.valid, true);
+  assert.equal(current.candidate.merge_commit_oid, newest);
+  assert.equal(f.verify(olderReviews).valid, false);
+  assert.equal(f.verify(f.reviews(current)).valid, true);
+});
+
+test('merge topology determines the latest contribution despite skewed commit timestamps', t => {
+  const f = reviewedTargetFixture(t);
+  f.merge({ 'scripts/target.mjs': 'export const value = "ancestor";\n' }, '2030-01-01T00:00:00Z');
+  const newest = f.merge({ 'scripts/target.mjs': 'export const value = "descendant";\n' }, '2029-01-01T00:00:00Z');
+  const current = f.candidate();
+  assert.equal(current.valid, true, JSON.stringify(current));
+  assert.equal(current.candidate.merge_commit_oid, newest);
+  assert.equal(f.verify(f.reviews(current)).valid, true);
+});
+
 test('a merge-time TODO snapshot cannot admit an implementation merge with an out-of-scope path', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-merged-delivery-scope-'));
   const selected = `- [ ] E-42b-snapshot-scope: Patch only \`scripts/soak.mjs\`:
@@ -312,6 +481,28 @@ test('a selected TODO may be recovered from split reviewed merges with only boun
   const missingScope = structuredClone(reverified.evidence);
   missingScope.task_attestation.changed_files = ['scripts/not-a-target.mjs'];
   assert.equal(validateMergedDeliveryReverification({ claim: fixtureClaim, evidence: missingScope }).valid, false);
+
+  const reviewEnvelope = { lineage: reviews, task_attestation: taskAttestation };
+  const reverify = (envelope, selectedClaim = fixtureClaim) => verifyMergedDeliveryReverification({
+    repoRoot: root, claim: selectedClaim,
+    stdoutPayload: { run: { runtime_claim_id: fixtureClaim.claim_id, payload_status: 'task_executed', reported_executed_count: 1 } },
+    review: envelope, reviewer: 'review-agent', implementation: 'implementation-agent'
+  });
+  const inventedHead = structuredClone(reviewEnvelope);
+  inventedHead.task_attestation.head_oid = 'a'.repeat(40);
+  inventedHead.task_attestation.latest_reviewer_review_commit_oid = 'a'.repeat(40);
+  const inventedClaim = structuredClone(fixtureClaim);
+  inventedClaim.delivery_review.head_oid = 'a'.repeat(40);
+  assert.equal(reverify(inventedHead, inventedClaim).valid, false, 'handoff head must be the actual merge parent');
+  const inventedTargetChange = structuredClone(reviewEnvelope);
+  inventedTargetChange.task_attestation.changed_files.push('scripts/supply.mjs');
+  assert.equal(reverify(inventedTargetChange).valid, false, 'handoff target claims must match its actual Git diff');
+  fs.writeFileSync(path.join(root, 'scripts/runtime.mjs'), 'export const runtime = "unreviewed after handoff";\n');
+  run(['add', '.']); run(['commit', '--quiet', '-m', 'unreviewed target after task handoff']);
+  const staleHandoff = reverify(reviewEnvelope);
+  assert.equal(staleHandoff.valid, false);
+  assert.deepEqual(staleHandoff.errors, ['merged_delivery_target_not_clean_at_reviewed_merge']);
+  assert.equal(staleHandoff.evidence, undefined);
 });
 
 test('a process-success envelope cannot promote continuation_required to delivery success', () => {

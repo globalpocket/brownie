@@ -297,7 +297,7 @@ export function findCleanMergedDeliveryCandidate({ repoRoot, selectedTodo, revis
   let merges;
   try {
     verifiedRevision = git(repoRoot, ['rev-parse', '--verify', `${revision}^{commit}`]);
-    merges = git(repoRoot, ['rev-list', '--merges', verifiedRevision]).split('\n').filter(Boolean);
+    merges = git(repoRoot, ['rev-list', '--topo-order', '--merges', verifiedRevision]).split('\n').filter(Boolean);
   } catch {
     return { valid: false, reason: 'merged_delivery_candidate_history_unavailable' };
   }
@@ -531,7 +531,15 @@ export function verifyMergedDeliveryReverification({ repoRoot, claim, stdoutPayl
   }
   if (errors.length > 0) return { valid: false, reason: 'merged_delivery_reverification_refused', errors };
 
-  const candidateResult = findCleanMergedDeliveryCandidate({ repoRoot, selectedTodo: deliveryClaim.selected_todo, revision });
+  let verifiedRevision;
+  let verificationHead;
+  try {
+    verifiedRevision = git(repoRoot, ['rev-parse', '--verify', `${revision}^{commit}`]);
+    verificationHead = git(repoRoot, ['rev-parse', 'HEAD']);
+  } catch {
+    return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_target_not_clean_at_reviewed_merge'] };
+  }
+  const candidateResult = findCleanMergedDeliveryCandidate({ repoRoot, selectedTodo: deliveryClaim.selected_todo, revision: verifiedRevision });
   if (!candidateResult.valid) {
     const error = candidateResult.reason === 'merged_delivery_candidate_target_not_clean'
       ? 'merged_delivery_target_not_clean_at_reviewed_merge'
@@ -593,6 +601,37 @@ export function verifyMergedDeliveryReverification({ repoRoot, claim, stdoutPayl
     }
   }
   if (reviewErrors.length > 0) return { valid: false, reason: 'merged_delivery_reverification_refused', errors: [...new Set(reviewErrors)] };
+  // Candidate admission permits a fresh attempt, not completion. Only now
+  // have all source reviews and any distinct task handoff been validated.
+  // A clean later commit must retain each target's reviewed blob AND mode;
+  // otherwise an unreviewed commit could inherit an older approval.
+  const requireReviewedTargets = () => {
+    if (git(repoRoot, ['rev-parse', 'HEAD']) !== verificationHead) throw new Error('verification changed the source head');
+    for (const scope of scopes) {
+      const contribution = lineage.find(entry => entry.merge_paths.includes(scope));
+      let reviewedMerge = contribution.merge_commit_oid;
+      if (taskAttestation && taskAttestation.changed_files.includes(scope)) {
+        const parents = git(repoRoot, ['rev-list', '--parents', '-n', '1', taskAttestation.merge_commit_oid]).split(/\s+/u);
+        if (parents.length !== 3 || parents[2] !== taskAttestation.head_oid) throw new Error('handoff Git identity mismatch');
+        git(repoRoot, ['merge-base', '--is-ancestor', reviewedMerge, taskAttestation.merge_commit_oid]);
+        const changed = git(repoRoot, ['diff', '--name-only', '--no-renames', parents[1], parents[0], '--', scope]);
+        if (changed !== scope) throw new Error('handoff did not change its claimed target');
+        reviewedMerge = taskAttestation.merge_commit_oid;
+      }
+      const currentEntry = git(repoRoot, ['ls-tree', '-z', verifiedRevision, '--', scope]);
+      const reviewedEntry = git(repoRoot, ['ls-tree', '-z', reviewedMerge, '--', scope]);
+      if (!currentEntry || currentEntry !== reviewedEntry) throw new Error('target differs from its reviewed contribution');
+      childProcess.execFileSync('git', ['diff', '--quiet', verifiedRevision, '--', scope], { cwd: repoRoot });
+      if (sha256(fs.readFileSync(path.join(repoRoot, scope))) !== candidate.targets.find(target => target.path === scope).sha256) {
+        throw new Error('verification changed target contents');
+      }
+    }
+  };
+  try {
+    requireReviewedTargets();
+  } catch {
+    return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_target_not_clean_at_reviewed_merge'] };
+  }
   const primary = reviewedLineage[0];
   const normalizedReview = primary.review;
   const taskSpecBinding = primary.entry.task_spec_binding;
@@ -607,12 +646,22 @@ export function verifyMergedDeliveryReverification({ repoRoot, claim, stdoutPayl
   for (const command of commands) {
     const args = safeVerificationArgs(command);
     try {
-      childProcess.execFileSync(args[0], args.slice(1), { cwd: repoRoot, stdio: 'pipe', timeout: 180000 });
+      // Node's internal parent-test marker makes a nested --test invocation
+      // skip every requested file while returning zero. This verifier must
+      // execute the selected commands even when called by a test harness.
+      const verificationEnv = { ...process.env };
+      delete verificationEnv.NODE_TEST_CONTEXT;
+      childProcess.execFileSync(args[0], args.slice(1), { cwd: repoRoot, env: verificationEnv, stdio: 'pipe', timeout: 180000 });
       verification_results.push({ command, exit_code: 0 });
     } catch (error) {
       verification_results.push({ command, exit_code: Number.isInteger(error.status) ? error.status : 1 });
       return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_verification_failed'], verification_results };
     }
+  }
+  try {
+    requireReviewedTargets();
+  } catch {
+    return { valid: false, reason: 'merged_delivery_reverification_refused', errors: ['merged_delivery_target_not_clean_at_reviewed_merge'], verification_results };
   }
   const evidenceReview = {
     ...normalizedReview,
