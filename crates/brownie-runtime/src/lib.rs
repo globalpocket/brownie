@@ -353,7 +353,9 @@ use product_completion::{
 use product_continuation::*;
 #[cfg(test)]
 use proposal_apply::transaction_source_fingerprint;
-use proposal_apply::{apply_proposal, handle_proposal_apply, resolve_apply_target_path};
+use proposal_apply::{
+    apply_proposal, handle_proposal_apply, preview_proposal_content, resolve_apply_target_path,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -15136,13 +15138,12 @@ fn build_workspace_patch_proposal_from_input(
     input: &Value,
 ) -> ProposalBuildResult {
     let content_chars = content.chars().count();
+    let content_preview = preview_proposal_content(content);
+    let truncated = content_chars > content_preview.chars().count();
     let mut result = ProposalBuildResult {
-        content_preview: preview_with_limit(content, DEFAULT_PROPOSAL_PREVIEW_CHARS),
+        content_preview,
         content_chars,
-        truncated: content_chars
-            > preview_with_limit(content, DEFAULT_PROPOSAL_PREVIEW_CHARS)
-                .chars()
-                .count(),
+        truncated,
         validation_status: "Valid",
         validation_reason: None,
         diff_preview: None,
@@ -15472,7 +15473,8 @@ fn synthetic_unified_diff(path: &str, old: &str, new: &str) -> String {
     let old_lines: Vec<&str> = old.lines().collect();
     let new_lines: Vec<&str> = new.lines().collect();
     let mut diff = format!(
-        "--- a/{path}\n+++ b/{path}\n@@ -1,{} +1,{} @@\n",
+        "# proposed_content_sha256: sha256:{}\n--- a/{path}\n+++ b/{path}\n@@ -1,{} +1,{} @@\n",
+        hex_sha256(new.as_bytes()),
         old_lines.len(),
         new_lines.len()
     );
@@ -16183,6 +16185,8 @@ fn error_response(id: Value, code: i64, message: &str) -> JsonRpcResponse<Value>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::json_privacy_assertions::JsonForbiddenLiteral;
+    use crate::proposal_apply::preview_privacy_tests::append_generated_patch_proposal;
     use brownie_context::MAX_LEDGER_CONTEXT_EVENTS;
     use brownie_protocol::{TaskRecord, TaskStatus};
     use std::sync::{Mutex, MutexGuard};
@@ -19279,45 +19283,6 @@ modes:
                     "diff_truncated": false,
                     "diff_redacted": diff_redacted,
                 })),
-            )
-            .expect("append proposal");
-    }
-
-    fn append_generated_patch_proposal(
-        store: &BrownieStore,
-        record: &TaskRecord,
-        proposal_id: &str,
-        path: &str,
-        operation: &str,
-        content: &str,
-    ) {
-        let proposal = build_workspace_patch_proposal(store, path, operation, content);
-        let mut payload = json!({
-            "proposal_id": proposal_id,
-            "tool_id": WORKSPACE_WRITE_TOOL_ID,
-            "path": path,
-            "operation": operation,
-            "content_preview": proposal.content_preview,
-            "content_chars": proposal.content_chars,
-            "truncated": proposal.truncated,
-            "validation_status": proposal.validation_status,
-            "validation_reason": proposal.validation_reason,
-            "diff_preview": proposal.diff_preview,
-            "diff_truncated": proposal.diff_truncated,
-            "diff_redacted": proposal.diff_redacted,
-        });
-        if let Some(hunk_count) = proposal.hunk_count {
-            payload["hunk_count"] = json!(hunk_count);
-        }
-        if let Some(hunk_fingerprint) = proposal.hunk_fingerprint {
-            payload["hunk_fingerprint"] = json!(hunk_fingerprint);
-        }
-        store
-            .tasks()
-            .append_task_event_with_payload(
-                record,
-                LedgerEventKind::WorkspacePatchProposed,
-                Some(payload),
             )
             .expect("append proposal");
     }
@@ -44629,7 +44594,7 @@ modes:
             "file_content",
             "original README",
         ] {
-            assert!(!serialized_capability.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_capability.contains_forbidden_json_literal(forbidden));
         }
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
@@ -44709,7 +44674,7 @@ modes:
             "file_content",
             "original README",
         ] {
-            assert!(!serialized_dry_run.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_dry_run.contains_forbidden_json_literal(forbidden));
         }
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
@@ -44780,7 +44745,7 @@ modes:
             "file_content",
             "original README",
         ] {
-            assert!(!serialized_history.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_history.contains_forbidden_json_literal(forbidden));
         }
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
@@ -44855,7 +44820,7 @@ modes:
             "file_content",
             "original README",
         ] {
-            assert!(!serialized_audit.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_audit.contains_forbidden_json_literal(forbidden));
         }
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
@@ -44921,7 +44886,7 @@ modes:
             "file_content",
             "original README",
         ] {
-            assert!(!serialized_review_bundle.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_review_bundle.contains_forbidden_json_literal(forbidden));
         }
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
@@ -44983,7 +44948,7 @@ modes:
             "file_content",
             "original README",
         ] {
-            assert!(!serialized_review_verdict.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_review_verdict.contains_forbidden_json_literal(forbidden));
         }
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
@@ -45058,7 +45023,7 @@ modes:
             "file_content",
             "original README",
         ] {
-            assert!(!serialized_review_report.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_review_report.contains_forbidden_json_literal(forbidden));
         }
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
@@ -45130,7 +45095,7 @@ modes:
             "original README",
             "changed manually",
         ] {
-            assert!(!serialized_readiness.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_readiness.contains_forbidden_json_literal(forbidden));
         }
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
@@ -45290,7 +45255,7 @@ modes:
             "file_content",
             "original README",
         ] {
-            assert!(!serialized_readiness_payload.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_readiness_payload.contains_forbidden_json_literal(forbidden));
         }
         for event in events_after_approval.iter().filter(|event| {
             event["kind"] == "WorkspacePatchApproved"
@@ -45309,7 +45274,7 @@ modes:
                 "absolute_path",
                 "original README",
             ] {
-                assert!(!serialized.contains(&format!(r#"\"{forbidden}\""#)));
+                assert!(!serialized.contains_forbidden_json_literal(forbidden));
             }
         }
         let capability_event = events_after_approval
@@ -45349,7 +45314,7 @@ modes:
             "original README",
             "changed manually",
         ] {
-            assert!(!serialized_capability_payload.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_capability_payload.contains_forbidden_json_literal(forbidden));
         }
         let dry_run_event = events_after_approval
             .iter()
@@ -45388,7 +45353,7 @@ modes:
             "original README",
             "changed manually",
         ] {
-            assert!(!serialized_dry_run_payload.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_dry_run_payload.contains_forbidden_json_literal(forbidden));
         }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
@@ -45501,7 +45466,7 @@ modes:
             "original README",
             "new README content",
         ] {
-            assert!(!serialized_events.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_events.contains_forbidden_json_literal(forbidden));
         }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
@@ -47871,7 +47836,7 @@ modes:
             "original README",
             "updated README",
         ] {
-            assert!(!serialized_events.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_events.contains_forbidden_json_literal(forbidden));
         }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
@@ -47967,7 +47932,7 @@ modes:
             "original README",
             "updated README",
         ] {
-            assert!(!serialized_events.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_events.contains_forbidden_json_literal(forbidden));
         }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
@@ -48090,7 +48055,7 @@ modes:
             "original notes",
             "updated notes",
         ] {
-            assert!(!serialized_apply_payload.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_apply_payload.contains_forbidden_json_literal(forbidden));
         }
         let replay_apply = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":7,"method":"proposal.apply","params":{{"run_id":"{run_id}","proposal_id":"proposal_tx_readme","authorize":true,"transaction_items":[{{"proposal_id":"proposal_tx_readme","expected_target_sha256":"{readme_hash}","replacement_content":"updated README"}},{{"proposal_id":"proposal_tx_notes","expected_target_sha256":"{notes_hash}","replacement_content":"updated notes"}}]}}}}"#
@@ -48217,7 +48182,7 @@ modes:
             "original readme",
             "updated readme",
         ] {
-            assert!(!serialized_events.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_events.contains_forbidden_json_literal(forbidden));
         }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
@@ -48565,7 +48530,7 @@ modes:
             "obsolete a",
             "obsolete b",
         ] {
-            assert!(!serialized_events.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_events.contains_forbidden_json_literal(forbidden));
         }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
@@ -48934,7 +48899,7 @@ modes:
             "original notes",
             "updated notes",
         ] {
-            assert!(!serialized_events.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_events.contains_forbidden_json_literal(forbidden));
         }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
@@ -49397,7 +49362,7 @@ modes:
             "file_content",
             "obsolete content",
         ] {
-            assert!(!serialized_events.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_events.contains_forbidden_json_literal(forbidden));
         }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
@@ -49799,7 +49764,7 @@ modes:
             "obsolete a",
             "obsolete b",
         ] {
-            assert!(!serialized_events.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_events.contains_forbidden_json_literal(forbidden));
         }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
@@ -50198,7 +50163,7 @@ modes:
             "file_content",
             "created content",
         ] {
-            assert!(!serialized_events.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_events.contains_forbidden_json_literal(forbidden));
         }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
@@ -50517,7 +50482,7 @@ modes:
             "created a",
             "created b",
         ] {
-            assert!(!serialized_events.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_events.contains_forbidden_json_literal(forbidden));
         }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
@@ -52917,7 +52882,7 @@ modes:
             "file_content",
             "original README",
         ] {
-            assert!(!serialized_queue.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_queue.contains_forbidden_json_literal(forbidden));
         }
         let serialized_diagnostics = serde_json::to_string(&blocked_diagnostics).unwrap();
         let serialized_diagnostics_history =
@@ -53066,113 +53031,117 @@ modes:
             "file_content",
             "original README",
         ] {
-            assert!(!serialized_diagnostics.contains(&format!(r#"\"{forbidden}\""#)));
-            assert!(!serialized_diagnostics_history.contains(&format!(r#"\"{forbidden}\""#)));
-            assert!(!serialized_diagnostics_report.contains(&format!(r#"\"{forbidden}\""#)));
-            assert!(!serialized_diagnostics_digest.contains(&format!(r#"\"{forbidden}\""#)));
-            assert!(!serialized_diagnostics_digest_history.contains(&format!(r#"\"{forbidden}\""#)));
-            assert!(!serialized_diagnostics_digest_report.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_diagnostics.contains_forbidden_json_literal(forbidden));
+            assert!(!serialized_diagnostics_history.contains_forbidden_json_literal(forbidden));
+            assert!(!serialized_diagnostics_report.contains_forbidden_json_literal(forbidden));
+            assert!(!serialized_diagnostics_digest.contains_forbidden_json_literal(forbidden));
+            assert!(
+                !serialized_diagnostics_digest_history.contains_forbidden_json_literal(forbidden)
+            );
+            assert!(
+                !serialized_diagnostics_digest_report.contains_forbidden_json_literal(forbidden)
+            );
             assert!(!serialized_diagnostics_digest_report_history
-                .contains(&format!(r#"\"{forbidden}\""#)));
+                .contains_forbidden_json_literal(forbidden));
             assert!(!serialized_diagnostics_digest_report_verdict
-                .contains(&format!(r#"\"{forbidden}\""#)));
+                .contains_forbidden_json_literal(forbidden));
             assert!(!serialized_diagnostics_digest_report_verdict_history
-                .contains(&format!(r#"\"{forbidden}\""#)));
+                .contains_forbidden_json_literal(forbidden));
             assert!(!serialized_diagnostics_digest_report_verdict_report
-                .contains(&format!(r#"\"{forbidden}\""#)));
+                .contains_forbidden_json_literal(forbidden));
             assert!(!serialized_diagnostics_digest_report_verdict_report_history
-                .contains(&format!(r#"\"{forbidden}\""#)));
+                .contains_forbidden_json_literal(forbidden));
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
             assert!(
                 !serialized_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history_report
-                    .contains(&format!(r#"\"{forbidden}\""#))
+                    .contains_forbidden_json_literal(forbidden)
             );
         }
         let mut tampered_queue = blocked_queue.clone();
@@ -53673,8 +53642,8 @@ modes:
             "canonical_path",
             "diagnostics",
         ] {
-            assert!(!serialized_acceptance.contains(&format!(r#"\"{forbidden}\""#)));
-            assert!(!serialized_result.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_acceptance.contains_forbidden_json_literal(forbidden));
+            assert!(!serialized_result.contains_forbidden_json_literal(forbidden));
         }
 
         let replayed = parse_line(&acceptance_request.to_string());
@@ -53848,7 +53817,7 @@ modes:
             "canonical_path",
             "diagnostics",
         ] {
-            assert!(!serialized.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized.contains_forbidden_json_literal(forbidden));
         }
 
         let replay = parse_line(drive_request);
@@ -54085,7 +54054,7 @@ modes:
             "canonical_path",
             "diagnostics",
         ] {
-            assert!(!serialized.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized.contains_forbidden_json_literal(forbidden));
         }
 
         let replay = parse_line(&decision_request.to_string());
@@ -54640,7 +54609,7 @@ modes:
             "diagnostics",
         ] {
             assert!(
-                !serialized.contains(&format!(r#"\"{forbidden}\""#)),
+                !serialized.contains_forbidden_json_literal(forbidden),
                 "leaked {forbidden}"
             );
         }
@@ -56006,8 +55975,8 @@ modes:
             "canonical_path",
             "secret",
         ] {
-            assert!(!serialized.contains(&format!(r#"\"{forbidden}\""#)));
-            assert!(!task_started_payload.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized.contains_forbidden_json_literal(forbidden));
+            assert!(!task_started_payload.contains_forbidden_json_literal(forbidden));
         }
 
         let replay = parse_line(&request.to_string());
@@ -56578,7 +56547,7 @@ modes:
             "canonical_path",
             "secret",
         ] {
-            assert!(!serialized.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized.contains_forbidden_json_literal(forbidden));
         }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
@@ -70323,3 +70292,6 @@ mod proposal_apply_structured_content_tests;
 
 #[cfg(test)]
 mod agentmodes_test_support;
+
+#[cfg(test)]
+mod json_privacy_assertions;

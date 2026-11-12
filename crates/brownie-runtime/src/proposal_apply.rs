@@ -1124,7 +1124,7 @@ fn apply_create_file_proposal(
     ));
 
     let create_diff = synthetic_unified_diff(&proposal.path, "", replacement_content);
-    if proposal.diff_preview.as_deref() != Some(create_diff.as_str()) {
+    if !approved_diff_preview_matches(proposal, &create_diff, replacement_content) {
         apply_result.checklist.push(apply_result_check(
             "approved_diff_matches_absent_target",
             "Fail",
@@ -1652,7 +1652,7 @@ fn apply_delete_file_proposal(
     ));
 
     let current_diff = synthetic_unified_diff(&proposal.path, current_content, "");
-    if proposal.diff_preview.as_deref() != Some(current_diff.as_str()) {
+    if !approved_diff_preview_matches(proposal, &current_diff, "") {
         apply_result.checklist.push(apply_result_check(
             "approved_diff_matches_current_target",
             "Fail",
@@ -2928,8 +2928,7 @@ fn apply_replace_file_transaction_recovery(
             );
         }
         if item.replacement_content.chars().count() != proposal.content_chars
-            || preview_with_limit(&item.replacement_content, DEFAULT_PROPOSAL_PREVIEW_CHARS)
-                != proposal.content_preview
+            || !proposal_content_preview_matches(&item.replacement_content, &proposal)
             || proposal.diff_redacted
             || proposal.content_preview == "[redacted]"
             || proposal.diff_truncated
@@ -3052,7 +3051,7 @@ fn apply_replace_file_transaction_recovery(
         }
         let current_diff =
             synthetic_unified_diff(&proposal.path, current_content, &item.replacement_content);
-        if proposal.diff_preview.as_deref() != Some(current_diff.as_str()) {
+        if !approved_diff_preview_matches(&proposal, &current_diff, &item.replacement_content) {
             return deny(
                 apply_result,
                 "transaction_recovery_approved_diffs_match_current_targets",
@@ -3612,8 +3611,7 @@ fn apply_create_file_transaction_recovery(
             );
         }
         if item.replacement_content.chars().count() != proposal.content_chars
-            || preview_with_limit(&item.replacement_content, DEFAULT_PROPOSAL_PREVIEW_CHARS)
-                != proposal.content_preview
+            || !proposal_content_preview_matches(&item.replacement_content, &proposal)
             || proposal.diff_redacted
             || proposal.content_preview == "[redacted]"
             || proposal.diff_truncated
@@ -3698,7 +3696,7 @@ fn apply_create_file_transaction_recovery(
         }
         seen_paths.insert(proposal.path.clone());
         let create_diff = synthetic_unified_diff(&proposal.path, "", &item.replacement_content);
-        if proposal.diff_preview.as_deref() != Some(create_diff.as_str()) {
+        if !approved_diff_preview_matches(&proposal, &create_diff, &item.replacement_content) {
             return deny(
                 apply_result,
                 "transaction_recovery_approved_diffs_match_absent_targets",
@@ -4399,7 +4397,7 @@ fn apply_delete_file_transaction_recovery(
             );
         }
         let current_diff = synthetic_unified_diff(&proposal.path, current_content, "");
-        if proposal.diff_preview.as_deref() != Some(current_diff.as_str()) {
+        if !approved_diff_preview_matches(&proposal, &current_diff, "") {
             return deny(
                 apply_result,
                 "transaction_recovery_approved_diffs_match_current_targets",
@@ -4716,8 +4714,7 @@ fn apply_replace_file_transaction(
             );
         }
         if item.replacement_content.chars().count() != proposal.content_chars
-            || preview_with_limit(&item.replacement_content, DEFAULT_PROPOSAL_PREVIEW_CHARS)
-                != proposal.content_preview
+            || !proposal_content_preview_matches(&item.replacement_content, &proposal)
         {
             return deny_item(
                 apply_result,
@@ -4839,7 +4836,7 @@ fn apply_replace_file_transaction(
         }
         let current_diff =
             synthetic_unified_diff(&proposal.path, current_content, &item.replacement_content);
-        if proposal.diff_preview.as_deref() != Some(current_diff.as_str()) {
+        if !approved_diff_preview_matches(&proposal, &current_diff, &item.replacement_content) {
             return deny_item(
                 apply_result,
                 "transaction_approved_diffs_match_current_targets",
@@ -5224,8 +5221,7 @@ fn apply_create_file_transaction(
             );
         }
         if item.replacement_content.chars().count() != proposal.content_chars
-            || preview_with_limit(&item.replacement_content, DEFAULT_PROPOSAL_PREVIEW_CHARS)
-                != proposal.content_preview
+            || !proposal_content_preview_matches(&item.replacement_content, &proposal)
         {
             return deny(
                 apply_result,
@@ -5311,7 +5307,7 @@ fn apply_create_file_transaction(
         }
         seen_paths.insert(proposal.path.clone());
         let create_diff = synthetic_unified_diff(&proposal.path, "", &item.replacement_content);
-        if proposal.diff_preview.as_deref() != Some(create_diff.as_str()) {
+        if !approved_diff_preview_matches(&proposal, &create_diff, &item.replacement_content) {
             return deny(
                 apply_result,
                 "transaction_approved_diffs_match_absent_targets",
@@ -5833,7 +5829,7 @@ fn apply_delete_file_transaction(
             );
         }
         let current_diff = synthetic_unified_diff(&proposal.path, current_content, "");
-        if proposal.diff_preview.as_deref() != Some(current_diff.as_str()) {
+        if !approved_diff_preview_matches(&proposal, &current_diff, "") {
             return deny(
                 apply_result,
                 "transaction_approved_diffs_match_current_targets",
@@ -6287,8 +6283,7 @@ pub(super) fn apply_proposal(
     ));
 
     if replacement_content.chars().count() != proposal.content_chars
-        || preview_with_limit(replacement_content, DEFAULT_PROPOSAL_PREVIEW_CHARS)
-            != proposal.content_preview
+        || !proposal_content_preview_matches(replacement_content, &proposal)
     {
         apply_result.checklist.push(apply_result_check(
             "replacement_content_matches_proposal",
@@ -6589,7 +6584,7 @@ pub(super) fn apply_proposal(
     ));
 
     let current_diff = synthetic_unified_diff(&proposal.path, current_content, replacement_content);
-    if proposal.diff_preview.as_deref() != Some(current_diff.as_str()) {
+    if !approved_diff_preview_matches(&proposal, &current_diff, replacement_content) {
         apply_result.checklist.push(apply_result_check(
             "approved_diff_matches_current_target",
             "Fail",
@@ -6881,5 +6876,249 @@ mod structured_content_post_apply_tests {
         )
         .is_none());
         assert!(structured_content_post_apply_rejection_reason("README.md", "not json").is_none());
+    }
+}
+
+pub(super) fn preview_proposal_content(content: &str) -> String {
+    // Producers and apply verifiers must agree without persisting complete short content.
+    let limit =
+        DEFAULT_PROPOSAL_PREVIEW_CHARS.min(content.trim_end().chars().count().saturating_sub(1));
+    preview_with_limit(content, limit)
+}
+
+fn proposal_content_preview_matches(
+    content: &str,
+    proposal: &WorkspacePatchProposalSummary,
+) -> bool {
+    let legacy_exact = content.chars().count() <= DEFAULT_PROPOSAL_PREVIEW_CHARS
+        && content == proposal.content_preview;
+    match proposal
+        .diff_preview
+        .as_deref()
+        .and_then(|diff| diff.strip_prefix(CONTENT_FINGERPRINT_HEADER))
+    {
+        Some(fingerprint_and_diff) => {
+            fingerprint_and_diff
+                .split_once('\n')
+                .map(|(value, _)| value)
+                == Some(format!("sha256:{}", hex_sha256(content.as_bytes())).as_str())
+                && (preview_proposal_content(content) == proposal.content_preview || legacy_exact)
+        }
+        // A partial preview without an exact byte fingerprint cannot identify approved content.
+        None => legacy_exact,
+    }
+}
+
+const CONTENT_FINGERPRINT_HEADER: &str = "# proposed_content_sha256: ";
+
+fn approved_diff_preview_matches(
+    proposal: &WorkspacePatchProposalSummary,
+    expected: &str,
+    content: &str,
+) -> bool {
+    let Some(actual) = proposal.diff_preview.as_deref() else {
+        return false;
+    };
+    if actual == expected {
+        return true;
+    }
+    // Only exact full legacy content may use an old diff without the fingerprint header.
+    !actual.starts_with(CONTENT_FINGERPRINT_HEADER)
+        && content.chars().count() <= DEFAULT_PROPOSAL_PREVIEW_CHARS
+        && content == proposal.content_preview
+        && !proposal.truncated
+        && expected
+            .strip_prefix(CONTENT_FINGERPRINT_HEADER)
+            .and_then(|value| value.split_once('\n').map(|(_, diff)| diff))
+            == Some(actual)
+}
+
+#[cfg(test)]
+pub(super) mod preview_privacy_tests {
+    use super::*;
+
+    #[test]
+    fn colliding_previews_do_not_authorize_different_create_or_replace_content() {
+        let _guard = crate::tests::lock_env();
+        for key in ["BROWNIE_LLM_PROVIDER", "BROWNIE_LLM_STRICT"] {
+            std::env::remove_var(key);
+        }
+        for operation in ["create_file", "replace_file"] {
+            for (approved, changed, legacy_full_preview) in [
+                ("x", "y", false),
+                ("abc\n", "abd\n", false),
+                ("abc\r\n\n", "abc\n\r\n", false),
+                ("x", "y", true),
+                ("abc\n", "abd\n", true),
+                ("abc\r\n\n", "abc\n\r\n", true),
+            ] {
+                assert_eq!(
+                    preview_proposal_content(approved),
+                    preview_proposal_content(changed)
+                );
+                let workspace = tempfile::tempdir().unwrap();
+                std::env::set_var("BROWNIE_WORKSPACE_ROOT", workspace.path());
+                let target = workspace.path().join("target.txt");
+                if operation == "replace_file" {
+                    std::fs::write(&target, "before").unwrap();
+                }
+                let start = crate::tests::parse_line(
+                    r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Check approved proposal content","mode_id":"implementer"}}"#,
+                ).result.unwrap();
+                let run_id = start["run_id"].as_str().unwrap();
+                let store = BrownieStore::from_env_or_cwd().unwrap();
+                let task = store.tasks().get_task_by_run_id(run_id).unwrap().unwrap();
+                append_patch_proposal_with_preview(
+                    &store,
+                    &task,
+                    "preview-binding",
+                    "target.txt",
+                    operation,
+                    approved,
+                    legacy_full_preview,
+                );
+                let request = |method: &str, params: Value| {
+                    crate::tests::parse_line(
+                        &json!({"jsonrpc":"2.0", "id":1, "method":method, "params":params})
+                            .to_string(),
+                    )
+                    .result
+                    .unwrap()
+                };
+                request(
+                    "proposal.approve",
+                    json!({"run_id":run_id,"proposal_id":"preview-binding","reason":"approve the original content"}),
+                );
+                let preflight = request(
+                    "proposal.preflight",
+                    json!({"run_id":run_id,"proposal_id":"preview-binding"}),
+                );
+                let mut params = json!({"run_id":run_id,"proposal_id":"preview-binding","authorize":true,"replacement_content":changed});
+                if operation == "create_file" {
+                    params["expected_target_absent"] = json!(true);
+                } else {
+                    params["expected_target_sha256"] = preflight["snapshot"]["file_sha256"].clone();
+                }
+                let result = request("proposal.apply", params.clone());
+                assert_eq!(result["apply_result"]["apply_status"], "Denied", "{result}");
+                assert_eq!(result["apply_result"]["authorization_consumed"], false);
+                let expected = "replacement_content_matches_proposal";
+                assert!(
+                    result["apply_result"]["failed_checks"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|value| value == expected),
+                    "{result}"
+                );
+                if operation == "create_file" {
+                    assert!(!target.exists());
+                } else {
+                    assert_eq!(std::fs::read_to_string(&target).unwrap(), "before");
+                }
+                params["replacement_content"] = json!(approved);
+                let result = request("proposal.apply", params);
+                assert_eq!(
+                    result["apply_result"]["apply_status"], "Applied",
+                    "{result}"
+                );
+                assert_eq!(std::fs::read_to_string(target).unwrap(), approved);
+            }
+        }
+    }
+
+    pub(crate) fn append_generated_patch_proposal(
+        store: &BrownieStore,
+        record: &TaskRecord,
+        proposal_id: &str,
+        path: &str,
+        operation: &str,
+        content: &str,
+    ) {
+        append_patch_proposal_with_preview(
+            store,
+            record,
+            proposal_id,
+            path,
+            operation,
+            content,
+            false,
+        );
+    }
+
+    fn append_patch_proposal_with_preview(
+        store: &BrownieStore,
+        record: &TaskRecord,
+        proposal_id: &str,
+        path: &str,
+        operation: &str,
+        content: &str,
+        legacy_full_preview: bool,
+    ) {
+        let proposal = build_workspace_patch_proposal(store, path, operation, content);
+        let mut payload = json!({
+            "proposal_id": proposal_id,
+            "tool_id": WORKSPACE_WRITE_TOOL_ID,
+            "path": path,
+            "operation": operation,
+            "content_preview": if legacy_full_preview { content } else { &proposal.content_preview },
+            "content_chars": proposal.content_chars,
+            "truncated": if legacy_full_preview { false } else { proposal.truncated },
+            "validation_status": proposal.validation_status,
+            "validation_reason": proposal.validation_reason,
+            "diff_preview": if legacy_full_preview { proposal.diff_preview.as_deref().and_then(|value| value.split_once('\n').map(|(_, diff)| diff)) } else { proposal.diff_preview.as_deref() },
+            "diff_truncated": proposal.diff_truncated,
+            "diff_redacted": proposal.diff_redacted,
+        });
+        if let Some(hunk_count) = proposal.hunk_count {
+            payload["hunk_count"] = json!(hunk_count);
+        }
+        if let Some(hunk_fingerprint) = proposal.hunk_fingerprint {
+            payload["hunk_fingerprint"] = json!(hunk_fingerprint);
+        }
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                record,
+                LedgerEventKind::WorkspacePatchProposed,
+                Some(payload),
+            )
+            .expect("append proposal");
+    }
+
+    #[test]
+    fn generated_proposal_preview_never_returns_complete_nonempty_content() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = BrownieStore::new(temp.path());
+        let long = "é".repeat(DEFAULT_PROPOSAL_PREVIEW_CHARS + 1);
+        for (content, expected_status) in [
+            ("", "Valid"),
+            ("x", "Valid"),
+            ("é🦀", "Valid"),
+            ("updated README", "Valid"),
+            ("created b\n", "Valid"),
+            ("é🦀 \n", "Invalid"),
+            (long.as_str(), "Valid"),
+        ] {
+            let proposal =
+                build_workspace_patch_proposal(&store, "new.txt", "create_file", content);
+            assert_eq!(proposal.validation_status, expected_status, "{content:?}");
+            if expected_status == "Invalid" {
+                assert_eq!(
+                    proposal.validation_reason,
+                    Some("proposal content contains trailing whitespace")
+                );
+            }
+            assert!(content.starts_with(&proposal.content_preview));
+            assert!(proposal.content_preview.chars().count() <= DEFAULT_PROPOSAL_PREVIEW_CHARS);
+            assert_eq!(proposal.content_chars, content.chars().count());
+            assert_eq!(proposal.truncated, !content.is_empty());
+            if !content.is_empty() {
+                assert_ne!(proposal.content_preview, content);
+            }
+            if !content.trim_end().is_empty() {
+                assert_ne!(proposal.content_preview, content.trim_end());
+            }
+        }
     }
 }
