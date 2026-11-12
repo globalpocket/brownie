@@ -3988,6 +3988,7 @@ fn workspace_path_is_clean_for_automatic_apply_in(workspace: &std::path::Path, p
     let output = match Command::new("git")
         .current_dir(workspace)
         .args([
+            "--literal-pathspecs",
             "status",
             "--porcelain=v1",
             "--ignored=matching",
@@ -7318,7 +7319,7 @@ mod tests {
         git(&["init", "--quiet"]);
         std::fs::write(
             fixture.0.join(".gitignore"),
-            "ignored-target.txt\nignored-directory/\n",
+            "ignored-target.txt\nignored-directory/\n:(exclude)\\*\n:(literal)pathspec-only.txt\n",
         )
         .unwrap();
         std::fs::write(fixture.0.join("tracked.txt"), "original\n").unwrap();
@@ -7362,6 +7363,19 @@ mod tests {
             assert_eq!(
                 std::fs::read_to_string(path).unwrap(),
                 "user-owned existing bytes\n"
+            );
+        }
+        #[cfg(not(windows))]
+        for file in [":(exclude)*", ":(literal)pathspec-only.txt"] {
+            let path = fixture.0.join(file);
+            std::fs::write(&path, "user-owned ignored bytes\n").unwrap();
+            assert!(
+                !workspace_path_is_clean_for_automatic_apply_in(&fixture.0, file),
+                "Git pathspec syntax must be treated as a literal filename: {file}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(path).unwrap(),
+                "user-owned ignored bytes\n"
             );
         }
         std::fs::write(fixture.0.join("tracked.txt"), "modified\n").unwrap();
