@@ -241,39 +241,104 @@ impl WorkspaceReadExecutor {
             bail!("directory reads are not supported in Phase 1.7");
         }
 
-        let bytes = fs::read(&canonical_target)
+        let mut file = fs::File::open(&canonical_target)
             .with_context(|| format!("failed to read {}", relative_path))?;
-        let text =
-            std::str::from_utf8(&bytes).context("workspace.read supports UTF-8 text files only")?;
-        if offset_bytes > bytes.len() {
-            bail!("workspace.read offset_bytes must not exceed the file length");
-        }
-        let mut start = offset_bytes;
-        while start < bytes.len() && !text.is_char_boundary(start) {
-            start += 1;
-        }
-        let mut end = start.saturating_add(max_bytes).min(bytes.len());
-        while end > start && !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        let content = text[start..end].to_string();
-        let truncated = end < bytes.len();
+        let window = read_workspace_text_window(&mut file, offset_bytes, max_bytes)?;
+        let end = window.offset_bytes + window.content.len();
 
         Ok(ToolExecutionResult {
             tool_id: WORKSPACE_READ_TOOL_ID.to_string(),
             status: ToolExecutionStatus::Completed,
             output: json!({
                 "path": relative_path,
-                "content": content,
-                "content_sha256": sha256_fingerprint(&bytes),
-                "truncated": truncated,
-                "offset_bytes": start,
-                "bytes_read": end.saturating_sub(start),
+                "content": window.content,
+                "content_sha256": window.content_sha256,
+                "truncated": end < window.bytes_total,
+                "offset_bytes": window.offset_bytes,
+                "bytes_read": end.saturating_sub(window.offset_bytes),
                 "bytes_end": end,
-                "bytes_total": bytes.len(),
+                "bytes_total": window.bytes_total,
             }),
         })
     }
+}
+
+struct WorkspaceTextWindow {
+    content: String,
+    content_sha256: String,
+    offset_bytes: usize,
+    bytes_total: usize,
+}
+
+fn read_workspace_text_window(
+    reader: &mut impl Read,
+    requested_offset: usize,
+    max_bytes: usize,
+) -> anyhow::Result<WorkspaceTextWindow> {
+    // Validate and hash the entire file while retaining only the requested
+    // range. At most three bytes carry an incomplete UTF-8 scalar between reads.
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut pending = 0;
+    let mut bytes_total = 0_usize;
+    let mut start = None;
+    let mut content = String::new();
+    let mut hasher = Sha256::new();
+    loop {
+        let count = match reader.read(&mut buffer[pending..]) {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            result => result.context("failed to read workspace text")?,
+        };
+        if count == 0 {
+            if pending != 0 {
+                bail!("workspace.read supports UTF-8 text files only");
+            }
+            break;
+        }
+        hasher.update(&buffer[pending..pending + count]);
+        let available = pending + count;
+        let valid = match std::str::from_utf8(&buffer[..available]) {
+            Ok(_) => available,
+            Err(error) if error.error_len().is_none() => error.valid_up_to(),
+            Err(_) => bail!("workspace.read supports UTF-8 text files only"),
+        };
+        let text = std::str::from_utf8(&buffer[..valid])
+            .context("workspace.read supports UTF-8 text files only")?;
+        let segment_start = bytes_total;
+        bytes_total = bytes_total
+            .checked_add(valid)
+            .context("workspace.read file length exceeds the supported range")?;
+        if start.is_none() && requested_offset <= bytes_total {
+            let mut local_start = requested_offset.saturating_sub(segment_start);
+            while !text.is_char_boundary(local_start) {
+                local_start += 1;
+            }
+            start = Some(segment_start + local_start);
+        }
+        if let Some(start) = start {
+            let local_start = start.saturating_sub(segment_start);
+            let mut local_end = start
+                .saturating_add(max_bytes)
+                .min(bytes_total)
+                .saturating_sub(segment_start);
+            if local_end > local_start {
+                while !text.is_char_boundary(local_end) {
+                    local_end -= 1;
+                }
+                content.push_str(&text[local_start..local_end]);
+            }
+        }
+        pending = available - valid;
+        buffer.copy_within(valid..available, 0);
+    }
+    if requested_offset > bytes_total {
+        bail!("workspace.read offset_bytes must not exceed the file length");
+    }
+    Ok(WorkspaceTextWindow {
+        content,
+        content_sha256: format!("sha256:{:x}", hasher.finalize()),
+        offset_bytes: start.unwrap_or(bytes_total),
+        bytes_total,
+    })
 }
 
 fn is_blocked_component(component: &str) -> bool {
