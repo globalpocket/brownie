@@ -2124,7 +2124,7 @@ fn scoped_matching_journey_start_checkpoints(
     tasks: &[TaskRecord],
     scope: &HeadlessContinueScope,
 ) -> Result<Vec<HeadlessJourneyStartCheckpoint>, String> {
-    let mut checkpoints: Vec<_> = store
+    let checkpoints: Vec<_> = store
         .tasks()
         .list_headless_journey_start_checkpoints()
         .map_err(|error| error.to_string())?
@@ -2135,10 +2135,19 @@ fn scoped_matching_journey_start_checkpoints(
         return Ok(Vec::new());
     }
     if scope.latest_matching_session {
-        checkpoints.sort_by(|a, b| {
-            scoped_journey_start_sort_key(a, tasks).cmp(&scoped_journey_start_sort_key(b, tasks))
-        });
-        return Ok(checkpoints.into_iter().rev().take(1).collect());
+        let mut chronological = checkpoints
+            .into_iter()
+            .map(|checkpoint| {
+                scoped_journey_start_sort_key(&checkpoint, tasks).map(|key| (key, checkpoint))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        chronological.sort_by(|(left, _), (right, _)| left.cmp(right));
+        return Ok(chronological
+            .into_iter()
+            .rev()
+            .take(1)
+            .map(|(_, checkpoint)| checkpoint)
+            .collect());
     }
     if checkpoints.len() > 1 {
         return Err(
@@ -2183,16 +2192,27 @@ fn headless_journey_start_matches_scope(
 fn scoped_journey_start_sort_key(
     checkpoint: &HeadlessJourneyStartCheckpoint,
     tasks: &[TaskRecord],
-) -> (String, String, String, String) {
+) -> Result<(time::OffsetDateTime, time::OffsetDateTime, String, String), String> {
     let task = tasks
         .iter()
-        .find(|task| task.task_id == checkpoint.task_id || task.run_id == checkpoint.run_id);
-    (
-        task.map(|task| task.created_at.clone()).unwrap_or_default(),
-        task.map(|task| task.updated_at.clone()).unwrap_or_default(),
+        .find(|task| task.task_id == checkpoint.task_id || task.run_id == checkpoint.run_id)
+        .ok_or_else(|| {
+            "invalid params: continuation_scope checkpoint has no matching task".to_string()
+        })?;
+    let parse = |value: &str| {
+        time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).map_err(
+            |_| {
+                "invalid params: continuation_scope task has an invalid RFC3339 timestamp"
+                    .to_string()
+            },
+        )
+    };
+    Ok((
+        parse(&task.created_at)?,
+        parse(&task.updated_at)?,
         checkpoint.session_id.clone(),
         checkpoint.journey_id.clone(),
-    )
+    ))
 }
 
 fn scoped_allowed_task_ids(
@@ -6762,4 +6782,112 @@ pub(super) fn append_headless_run_session_drive_completed_events(
         append_headless_product_completion_decision_event_if_missing(store, decision)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod chronological_scope_tests {
+    use super::*;
+
+    fn select(older: &str, newer: &str, created_equal: bool) -> Result<String, String> {
+        let workspace = tempfile::tempdir().unwrap();
+        let store = BrownieStore::new(workspace.path());
+        let mut tasks = Vec::new();
+        for (session, timestamp) in [("cli.run.old", older), ("cli.run.new", newer)] {
+            let mut task = store
+                .tasks()
+                .start_task(TaskStartParams {
+                    goal: session.to_string(),
+                    mode_id: Some("orchestrator".to_string()),
+                    verification_recovery_source: None,
+                    patch_apply_recovery_source: None,
+                    verification_recovery_retry_source: None,
+                    llm_provider_failure_retry_source: None,
+                    product_continuation_source: None,
+                })
+                .unwrap();
+            task.created_at = if created_equal {
+                "2026-11-13T00:00:00Z"
+            } else {
+                timestamp
+            }
+            .to_string();
+            task.updated_at = timestamp.to_string();
+            store
+                .tasks()
+                .write_headless_journey_start_checkpoint(&HeadlessJourneyStartCheckpoint {
+                    journey_id: format!("{session}.journey"),
+                    session_id: session.to_string(),
+                    drive_id: format!("{session}.drive"),
+                    task_id: task.task_id.clone(),
+                    run_id: task.run_id.clone(),
+                    task_start_fingerprint: format!("sha256:{}", "1".repeat(64)),
+                    start_progress: HeadlessRunProgressCheckpoint {
+                        progress_fingerprint: format!("sha256:{}", "2".repeat(64)),
+                        aggregate_sequence: 0,
+                    },
+                    journey_fingerprint: format!("sha256:{}", "3".repeat(64)),
+                    objective_context: None,
+                    product_objective_continuation_provenance: None,
+                })
+                .unwrap();
+            tasks.push(task);
+        }
+        let scope: HeadlessContinueScope = serde_json::from_value(
+            json!({"session_id_prefix":"cli.run.","latest_matching_session":true}),
+        )
+        .unwrap();
+        let matching = scoped_matching_journey_start_checkpoints(&store, &tasks, &scope)?;
+        assert_eq!(matching.len(), 1);
+        Ok(matching[0].session_id.clone())
+    }
+
+    #[test]
+    fn latest_scope_orders_fractional_seconds_chronologically() {
+        for (older, newer) in [
+            ("2026-11-13T00:00:00.1Z", "2026-11-13T00:00:00.100001Z"),
+            ("2026-11-13T00:00:00Z", "2026-11-13T00:00:00.000001Z"),
+        ] {
+            assert_eq!(select(older, newer, false).unwrap(), "cli.run.new");
+        }
+    }
+
+    #[test]
+    fn latest_scope_normalizes_offsets_before_comparing_instants() {
+        assert_eq!(
+            select("2026-11-13T09:00:00+09:00", "2026-11-13T00:00:01Z", false).unwrap(),
+            "cli.run.new"
+        );
+    }
+
+    #[test]
+    fn latest_scope_compares_update_instants_when_creation_is_equal() {
+        assert_eq!(
+            select(
+                "2026-11-13T00:00:00.1Z",
+                "2026-11-13T00:00:00.100001Z",
+                true
+            )
+            .unwrap(),
+            "cli.run.new"
+        );
+    }
+
+    #[test]
+    fn latest_scope_retains_session_tie_break_for_equal_instants() {
+        assert_eq!(
+            select(
+                "2026-11-13T00:00:00.1Z",
+                "2026-11-13T00:00:00.100000Z",
+                false
+            )
+            .unwrap(),
+            "cli.run.old"
+        );
+    }
+
+    #[test]
+    fn latest_scope_rejects_malformed_required_timestamps() {
+        assert!(select("not-a-timestamp", "2026-11-13T00:00:01Z", false).is_err());
+        assert!(select("not-a-timestamp", "2026-11-13T00:00:01Z", true).is_err());
+    }
 }
