@@ -1,6 +1,7 @@
 //! Brownie persistence crate.
 
 mod inspection;
+mod task_run_admission;
 
 use std::fs::{self, File, OpenOptions};
 #[cfg(unix)]

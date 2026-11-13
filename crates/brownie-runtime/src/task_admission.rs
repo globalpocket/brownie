@@ -94,6 +94,32 @@ pub(super) struct ParentJoinContinuationMaterialization {
     pub(super) child_recovery_cycle_depth: usize,
 }
 
+pub(super) fn admit_standard_task_run(
+    store: &BrownieStore,
+    expected: &TaskRecord,
+    runtime_deadline: Option<RuntimeDeadline>,
+) -> Result<TaskRecord, TaskRunAdmissionRejection> {
+    store
+        .tasks()
+        .admit_standard_task_run(expected, runtime_deadline)
+        .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?
+        .ok_or(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: task state changed before standard task.run admission",
+        ))
+}
+
+pub(super) fn task_run_admission_error_response(
+    id: Value,
+    rejection: TaskRunAdmissionRejection,
+) -> JsonRpcResponse<Value> {
+    match rejection {
+        TaskRunAdmissionRejection::InvalidParams(message) => error_response(id, -32602, message),
+        TaskRunAdmissionRejection::Internal(message) => {
+            error_response(id, -32603, &format!("internal error: {message}"))
+        }
+    }
+}
+
 pub(super) fn validate_task_run_admission(
     record: &TaskRecord,
     store: &BrownieStore,

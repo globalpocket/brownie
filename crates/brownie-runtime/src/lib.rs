@@ -370,11 +370,12 @@ use std::{
 #[cfg(test)]
 use task_admission::validate_controlled_queued_child_task_provenance;
 use task_admission::{
-    child_failure_result_fingerprint, child_has_terminal_parent_join_outcome,
-    parent_join_child_completion_evidence, parent_join_child_completion_fingerprint,
-    parent_join_child_completion_fingerprint_consumed, payload_usize_eq,
-    recovery_cycle_child_provenance_is_internally_valid, recovery_cycle_depth_exceeds_budget,
-    recovery_cycle_provenance_matches_parent_join, task_run_admission_rejection_message,
+    admit_standard_task_run, child_failure_result_fingerprint,
+    child_has_terminal_parent_join_outcome, parent_join_child_completion_evidence,
+    parent_join_child_completion_fingerprint, parent_join_child_completion_fingerprint_consumed,
+    payload_usize_eq, recovery_cycle_child_provenance_is_internally_valid,
+    recovery_cycle_depth_exceeds_budget, recovery_cycle_provenance_matches_parent_join,
+    task_run_admission_error_response, task_run_admission_rejection_message,
     validate_completed_parent_join_continuation_admission,
     validate_recovery_cycle_child_run_provenance, validate_task_run_admission,
     ParentJoinChildCompletionEvidence, ParentJoinContinuationMaterialization, TaskRunAdmission,
@@ -2111,14 +2112,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
         },
         None if resume_interrupted_mcp_second_pass => record.clone(),
-        None => match store.tasks().update_task_status_with_runtime_deadline(
-            &record.task_id,
-            TaskStatus::Running,
-            LedgerEventKind::TaskRunning,
-            runtime_deadline.clone(),
-        ) {
+        None => match admit_standard_task_run(&store, &record, runtime_deadline.clone()) {
             Ok(record) => record,
-            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+            Err(rejection) => return task_run_admission_error_response(id, rejection),
         },
     };
 
@@ -2338,6 +2334,23 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
+    if let Err(error) = store.tasks().append_task_event_with_payload(
+        &running,
+        LedgerEventKind::LlmResponseReceived,
+        Some(agent_loop_measurements_payload(
+            llm_response_received_payload(
+                &provider_status,
+                &result.llm_response.content,
+                provider_selection.budget.response_preview_chars,
+                privileged_prompt_context_present,
+            ),
+            result.prompt_build_duration_ms,
+            result.llm_request_duration_ms,
+            result.prompt_chars,
+        )),
+    ) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
     let first_pass_tool_intent =
         ToolIntentParser::parse_assistant_content(&result.llm_response.content);
     let mut rejected_tool_intent_requests = first_pass_tool_intent.summary.rejected_requests;
@@ -2477,24 +2490,6 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         Ok(outcome) => outcome,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
-
-    if let Err(error) = store.tasks().append_task_event_with_payload(
-        &running,
-        LedgerEventKind::LlmResponseReceived,
-        Some(agent_loop_measurements_payload(
-            llm_response_received_payload(
-                &provider_status,
-                &result.llm_response.content,
-                provider_selection.budget.response_preview_chars,
-                privileged_prompt_context_present,
-            ),
-            result.prompt_build_duration_ms,
-            result.llm_request_duration_ms,
-            result.prompt_chars,
-        )),
-    ) {
-        return error_response(id, -32603, &format!("internal error: {error}"));
-    }
 
     let second_pass_events = match store.tasks().read_ledger_events(&running.run_id) {
         Ok(events) => events,
@@ -20548,7 +20543,7 @@ modes:
         );
         assert_eq!(
             second_prompt_payload["context_last_included_event"],
-            "LlmResponseReceived"
+            "SubtaskDispatchHandoffEnvelopeRecorded"
         );
         let second_prompt_preview = second_prompt_payload["prompt_preview"]
             .as_str()
@@ -35907,6 +35902,7 @@ modes:
                 LedgerEventKind::AgentLoopStarted,
                 LedgerEventKind::PromptBuilt,
                 LedgerEventKind::LlmRequestCreated,
+                LedgerEventKind::LlmResponseReceived,
                 LedgerEventKind::ToolIntentParsed,
                 LedgerEventKind::ToolIntentPermissionChecked,
                 LedgerEventKind::ToolIntentApproved,
@@ -35926,7 +35922,6 @@ modes:
                 LedgerEventKind::SubtaskDispatchDecisionRecorded,
                 LedgerEventKind::SubtaskDispatchCandidateManifestRecorded,
                 LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
-                LedgerEventKind::LlmResponseReceived,
                 LedgerEventKind::AgentLoopCompleted,
                 LedgerEventKind::TaskCompleted,
             ]
