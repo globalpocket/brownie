@@ -133,6 +133,11 @@ jobs:
       - name: Install pnpm dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install declared minimum Rust
+        run: |
+          version="$(node scripts/check-minimum-rust.mjs --print-version)"
+          rustup toolchain install "$version" --profile minimal --no-self-update
+
       - name: Root workspace check
         timeout-minutes: 15
         run: pnpm --workspace-root check
