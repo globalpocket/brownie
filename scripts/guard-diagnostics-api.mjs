@@ -192,12 +192,59 @@ function validateDiagnosticsApi(metadata) {
   }
 }
 
+function validateExactInventory() {
+  const runtime = fs.readFileSync(path.join(repoRoot, 'crates/brownie-runtime/src/lib.rs'), 'utf8');
+  const protocol = fs.readFileSync(path.join(repoRoot, 'crates/brownie-protocol/src/lib.rs'), 'utf8');
+  const document = fs.readFileSync(path.join(repoRoot, 'docs/architecture/diagnostics-api-consolidation.md'), 'utf8');
+  const registered = new Set();
+  const declarations = /const\s+(METHOD_[A-Z_]+):\s*&str\s*=\s*"(proposal\.reviewQueue[A-Za-z]*)";/g;
+  for (const [, symbol, method] of runtime.matchAll(declarations)) {
+    if (new RegExp(`\\b${symbol}\\s*=>`).test(runtime)) registered.add(method);
+  }
+  if (registered.size === 0) errors.push('Exact diagnostics inventory: no registered Runtime methods found.');
+  const heading = '\n## Exact Current Method And Type Inventory\n';
+  const sections = document.split(heading);
+  if (sections.length !== 2) {
+    errors.push('Exact diagnostics inventory section must occur exactly once.');
+    return;
+  }
+  const section = sections[1].split('\n## ', 1)[0];
+  const documented = new Set();
+  for (const line of section.split('\n')) {
+    if (!/^\|\s*`proposal\./.test(line)) continue;
+    const tokens = [...line.matchAll(/`([^`]+)`/g)].map(match => match[1]);
+    if (tokens.length !== 3) {
+      errors.push('Exact diagnostics inventory contains a malformed method/type row.');
+      continue;
+    }
+    const [method, params, result] = tokens;
+    if (documented.has(method)) errors.push(`Duplicate exact diagnostics inventory method: ${method}`);
+    documented.add(method);
+    if (!registered.has(method)) errors.push(`Unregistered exact diagnostics inventory method: ${method}`);
+    const suffix = method.slice('proposal.'.length);
+    const stem = 'Proposal' + suffix[0].toUpperCase() + suffix.slice(1);
+    if (params !== stem + 'Params' || result !== stem + 'Result') {
+      errors.push(`Mismatched exact diagnostics inventory type pair: ${method}`);
+    }
+    for (const type of [params, result]) {
+      const escaped = type.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (!new RegExp(`\\bpub\\s+struct\\s+${escaped}\\b`).test(protocol)) {
+        errors.push(`Exact diagnostics inventory type is absent from Rust protocol: ${type}`);
+      }
+    }
+  }
+  for (const method of registered) {
+    if (!documented.has(method)) errors.push(`Missing exact diagnostics inventory method: ${method}`);
+  }
+}
+
 const manifest = readJson(manifestPath);
 const metadata = readJson(metadataPath);
 
 validateManifest(manifest);
 validateMetadata(metadata);
 validateDiagnosticsApi(metadata);
+validateExactInventory();
 
 if (errors.length > 0) {
   console.error('Diagnostics API guard failed:');
