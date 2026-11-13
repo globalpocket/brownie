@@ -80,3 +80,16 @@ test('does not require an unregistered Rust constant to have an inventory row', 
   const result = fixture(files => { files.runtime += `const METHOD_UNUSED: &str = "${extra}";\n`; });
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
+
+test('registers the actual diagnostics guard for strict independent review', async () => {
+  const { runPhaseValueGuard } = await import('./guard-phase-value.mjs');
+  const manifest = JSON.parse(fs.readFileSync(path.join(source, 'docs/architecture/phase-value-manifest.json'), 'utf8'));
+  const changedFiles = ['scripts/guard-diagnostics-api.mjs'];
+  const valid = runPhaseValueGuard({ repoRoot: source, manifest, changedFiles });
+  assert.deepEqual(valid.errors, []);
+  const omitted = structuredClone(manifest);
+  omitted.guard_engine_change_review.changed_files = omitted.guard_engine_change_review.changed_files.filter(name => name !== changedFiles[0]);
+  const invalid = runPhaseValueGuard({ repoRoot: source, manifest: omitted, changedFiles });
+  assert.equal(invalid.errors.length, 1);
+  assert.match(invalid.errors[0], /must include changed guard file scripts\/guard-diagnostics-api.mjs/);
+});
