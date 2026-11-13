@@ -60,7 +60,21 @@ test('accepts the complete registered method and existing protocol type inventor
   }
 });
 test('rejects a registered method omitted from the exact table', () => {
-  rejected(files => { files.document = files.document.replace(row(methods[1]) + '\n', ''); }, /Missing exact diagnostics inventory method/);
+  for (const symbol of ['METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS', 'METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS2', 'METHOD_lower2', 'METHOD_検査2', 'r#METHOD_alias2']) {
+    const rename = files => { files.runtime = files.runtime.replaceAll('METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS', symbol); };
+    const valid = fixture(rename);
+    assert.equal(valid.status, 0, valid.stdout + valid.stderr);
+    rejected(files => {
+      rename(files);
+      files.document = files.document.replace(row(methods[1]) + '\n', '');
+    }, /Missing exact diagnostics inventory method/);
+  }
+  rejected(files => {
+    files.runtime = files.runtime.replace('"proposal.reviewQueueDiagnostics";', 'concat!("proposal.reviewQueueDiagnostics");');
+    files.document = files.document.replace(row(methods[1]) + '\n', '');
+  }, /Unresolved actual Runtime dispatch method constant/);
+  const typed = fixture(files => { files.runtime = files.runtime.replaceAll(': &str', ": &'static str"); });
+  assert.equal(typed.status, 0, typed.stdout + typed.stderr);
 });
 test('rejects an allowlisted but unregistered method in the exact table', () => {
   rejected(files => { files.document = files.document.replace('\n## After', '\n' + row(extra) + '\n## After'); }, /Unregistered exact diagnostics inventory method/);

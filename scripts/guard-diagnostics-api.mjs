@@ -256,7 +256,7 @@ function runtimeDispatchArms(code) {
   const arms = bracedRustBody(body, matches[0].index + matches[0][0].length - 1);
   const registered = new Set();
   let depth = 0;
-  for (const [token] of arms.matchAll(/[{}]|\bMETHOD_[A-Z_]+(?=\s*=>)/g)) {
+  for (const [token] of arms.matchAll(/[{}]|\bMETHOD_[\p{ID_Continue}]+(?=\s*=>)/gu)) {
     if (token === '{') depth++;
     else if (token === '}') depth--;
     else if (depth === 0) registered.add(token);
@@ -272,10 +272,21 @@ function validateExactInventory() {
   const protocolCode = maskRustNonCode(protocol);
   const dispatch = runtimeDispatchArms(runtimeCode);
   const registered = new Set();
-  const declarations = /\bconst\s+(METHOD_[A-Z_]+):\s*&str\s*=\s*"(proposal\.reviewQueue[A-Za-z]*)";/g;
+  const declared = new Map();
+  const declarations = /\bconst\s+(?:r#)?(METHOD_[\p{ID_Continue}]+)\s*:[^=;]+\s*=\s*"([^"\\\r\n]*)"\s*;/gu;
   for (const match of runtime.matchAll(declarations)) {
     const [, symbol, method] = match;
-    if (runtimeCode.slice(match.index, match.index + 5) === 'const' && dispatch.has(symbol)) registered.add(method);
+    if (runtimeCode.slice(match.index, match.index + 5) !== 'const') continue;
+    if (declared.has(symbol)) errors.push(`Ambiguous actual Runtime dispatch method constant: ${symbol}`);
+    declared.set(symbol, method);
+  }
+  for (const symbol of dispatch) {
+    const method = declared.get(symbol);
+    if (method === undefined) {
+      errors.push(`Unresolved actual Runtime dispatch method constant: ${symbol}`);
+      continue;
+    }
+    if (method.startsWith('proposal.reviewQueue')) registered.add(method);
   }
   if (registered.size === 0) errors.push('Exact diagnostics inventory: no registered Runtime methods found.');
   const heading = '\n## Exact Current Method And Type Inventory\n';
