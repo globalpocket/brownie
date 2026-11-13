@@ -253,13 +253,47 @@ function runtimeDispatchArms(code) {
     errors.push('Exact diagnostics inventory requires one canonical request.method.as_str dispatch match.');
     return new Set();
   }
+  const prelude = body.slice(0, matches[0].index);
+  const nesting = [...prelude.matchAll(/[{}()[\]]/g)].reduce((depth, [token]) =>
+    depth + ('{(['.includes(token) ? 1 : -1), 0);
+  if (nesting !== 0) {
+    errors.push('Exact diagnostics inventory requires a direct top-level Runtime dispatch match.');
+    return new Set();
+  }
   const arms = bracedRustBody(body, matches[0].index + matches[0][0].length - 1);
   const registered = new Set();
-  let depth = 0;
-  for (const [token] of arms.matchAll(/[{}]|\bMETHOD_[\p{ID_Continue}]+(?=\s*=>)/gu)) {
-    if (token === '{') depth++;
-    else if (token === '}') depth--;
-    else if (depth === 0) registered.add(token);
+  const stack = [];
+  const closing = { ')': '(', ']': '[', '}': '{' };
+  let boundary = 0, inBody = false, blockBody = false;
+  for (const match of arms.matchAll(/=>|[{}()[\],]/g)) {
+    const [token] = match;
+    if (token === '=>' && stack.length === 0) {
+      if (inBody) errors.push('Unsupported actual Runtime dispatch pattern: missing arm separator.');
+      const pattern = arms.slice(boundary, match.index).trim();
+      const symbol = pattern.match(/^(?:r#)?(METHOD_[\p{ID_Continue}]+)$/u);
+      // Every complete arm must use the current canonical style. Unknown
+      // syntax is a failure, never a silently omitted registration.
+      if (symbol) registered.add(symbol[1]);
+      else if (pattern !== '_') errors.push(`Unsupported actual Runtime dispatch pattern: ${pattern}`);
+      inBody = true;
+      blockBody = arms.slice(match.index + 2).trimStart().startsWith('{');
+    } else if ('{(['.includes(token)) stack.push(token);
+    else if (closing[token]) {
+      if (stack.pop() !== closing[token]) errors.push('Exact diagnostics inventory: unbalanced dispatch delimiters.');
+      if (inBody && blockBody && stack.length === 0) {
+        inBody = false;
+        boundary = match.index + 1;
+      }
+    } else if (token === ',' && stack.length === 0) {
+      if (!inBody && arms.slice(boundary, match.index).trim()) {
+        errors.push('Unsupported actual Runtime dispatch pattern: unexpected arm fragment.');
+      }
+      boundary = match.index + 1;
+      inBody = false;
+    }
+  }
+  if (stack.length || (!inBody && arms.slice(boundary).trim())) {
+    errors.push('Unsupported actual Runtime dispatch pattern: incomplete arm.');
   }
   return registered;
 }

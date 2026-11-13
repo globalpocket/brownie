@@ -75,6 +75,32 @@ test('rejects a registered method omitted from the exact table', () => {
   }, /Unresolved actual Runtime dispatch method constant/);
   const typed = fixture(files => { files.runtime = files.runtime.replaceAll(': &str', ": &'static str"); });
   assert.equal(typed.status, 0, typed.stdout + typed.stderr);
+  rejected(files => {
+    files.runtime = files.runtime.replace(
+      'METHOD_PROPOSAL_REVIEW_QUEUE => {}, METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS => {}',
+      'METHOD_PROPOSAL_REVIEW_QUEUE | METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS => {}');
+    files.document = files.document.replace(row(methods[0]) + '\n', '');
+  }, /Unsupported actual Runtime dispatch pattern/);
+  for (const pattern of ['"proposal.reviewQueueDiagnostics"', 'METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS if true',
+    'crate::METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS', '#[cfg(any())] METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS']) {
+    rejected(files => {
+      files.runtime = files.runtime.replace('METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS =>', pattern + ' =>');
+      files.document = files.document.replace(row(methods[1]) + '\n', '');
+    }, /Unsupported actual Runtime dispatch pattern/);
+  }
+  rejected(files => {
+    files.runtime = files.runtime.replaceAll('METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS', 'RPC_DIAGNOSTICS');
+    files.document = files.document.replace(row(methods[1]) + '\n', '');
+  }, /Unsupported actual Runtime dispatch pattern/);
+  rejected(files => {
+    files.runtime = files.runtime.replace('match request', 'if false { match request') + '}';
+  }, /direct top-level Runtime dispatch match/);
+  for (const body of ['{ let pair = (1, 2); let list = [1, 2]; }', 'handler((1, 2), [1, 2])']) {
+    const valid = fixture(files => {
+      files.runtime = files.runtime.replace('METHOD_PROPOSAL_REVIEW_QUEUE => {}', 'METHOD_PROPOSAL_REVIEW_QUEUE => ' + body);
+    });
+    assert.equal(valid.status, 0, valid.stdout + valid.stderr);
+  }
 });
 test('rejects an allowlisted but unregistered method in the exact table', () => {
   rejected(files => { files.document = files.document.replace('\n## After', '\n' + row(extra) + '\n## After'); }, /Unregistered exact diagnostics inventory method/);
