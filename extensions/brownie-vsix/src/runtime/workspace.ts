@@ -2,15 +2,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { RuntimeClient } from './runtimeClient';
-import { RuntimeProcess } from './runtimeProcess';
+import { CargoRuntimeTransport } from './cargoRuntimeTransport';
 
 export function createRuntimeClient(_context: vscode.ExtensionContext): RuntimeClient {
   return new RuntimeClient(
-    new RuntimeProcess({
-      command: 'cargo',
-      args: ['run', '-q', '-p', 'brownie-runtime'],
-      cwd: getWorkspaceRoot,
-    }),
+    new CargoRuntimeTransport(getWorkspaceRoot),
   );
 }
 
