@@ -192,12 +192,180 @@ function validateDiagnosticsApi(metadata) {
   }
 }
 
+function maskRustNonCode(source) {
+  const code = source.split('');
+  function hide(start, end) {
+    for (let i = start; i < end; i++) if (code[i] !== '\n' && code[i] !== '\r') code[i] = ' ';
+    return end;
+  }
+  for (let i = 0; i < source.length;) {
+    if (source.startsWith('//', i)) {
+      const end = source.indexOf('\n', i + 2);
+      i = hide(i, end < 0 ? source.length : end);
+    } else if (source.startsWith('/*', i)) {
+      let depth = 1, end = i + 2;
+      while (end < source.length && depth > 0) {
+        if (source.startsWith('/*', end)) { depth++; end += 2; }
+        else if (source.startsWith('*/', end)) { depth--; end += 2; }
+        else end++;
+      }
+      i = hide(i, end);
+    } else if (source[i] === 'r' && /^r#{0,255}"/.test(source.slice(i, i + 258))) {
+      const prefix = source.slice(i, i + 258).match(/^r(#{0,255})"/);
+      const end = source.indexOf('"' + prefix[1], i + prefix[0].length);
+      i = hide(i, end < 0 ? source.length : end + prefix[1].length + 1);
+    } else if (source[i] === '"') {
+      let end = i + 1;
+      while (end < source.length && source[end] !== '"') end += source[end] === '\\' ? 2 : 1;
+      i = hide(i, Math.min(source.length, end + 1));
+    } else if (source[i] === "'") {
+      const character = source.slice(i, i + 258).match(/^'(?:\\(?:u\{[0-9a-fA-F]+\}|x[0-9a-fA-F]{2}|.)|[^'\\\r\n])'/u);
+      i = character ? hide(i, i + character[0].length) : i + 1;
+    } else i++;
+  }
+  return code.join('');
+}
+
+function bracedRustBody(code, start) {
+  let depth = 1, end = start + 1;
+  if (start >= 0) {
+    for (; end < code.length && depth > 0; end++) {
+      if (code[end] === '{') depth++;
+      else if (code[end] === '}') depth--;
+    }
+  }
+  if (start < 0 || depth !== 0) {
+    errors.push('Exact diagnostics inventory: actual Runtime dispatch body is incomplete.');
+    return '';
+  }
+  return code.slice(start + 1, end - 1);
+}
+
+function runtimeDispatchArms(code) {
+  const functions = [...code.matchAll(/\bpub\s+fn\s+handle_jsonrpc_request\s*\(/g)];
+  if (functions.length !== 1) {
+    errors.push('Exact diagnostics inventory requires one actual Runtime dispatch function.');
+    return new Set();
+  }
+  const body = bracedRustBody(code, code.indexOf('{', functions[0].index + functions[0][0].length));
+  const matches = [...body.matchAll(/\bmatch\s+request\s*\.\s*method\s*\.\s*as_str\s*\(\s*\)\s*\{/g)];
+  if (matches.length !== 1) {
+    errors.push('Exact diagnostics inventory requires one canonical request.method.as_str dispatch match.');
+    return new Set();
+  }
+  const prelude = body.slice(0, matches[0].index);
+  const nesting = [...prelude.matchAll(/[{}()[\]]/g)].reduce((depth, [token]) =>
+    depth + ('{(['.includes(token) ? 1 : -1), 0);
+  if (nesting !== 0) {
+    errors.push('Exact diagnostics inventory requires a direct top-level Runtime dispatch match.');
+    return new Set();
+  }
+  const arms = bracedRustBody(body, matches[0].index + matches[0][0].length - 1);
+  const registered = new Set();
+  const stack = [];
+  const closing = { ')': '(', ']': '[', '}': '{' };
+  let boundary = 0, inBody = false, blockBody = false;
+  for (const match of arms.matchAll(/=>|[{}()[\],]/g)) {
+    const [token] = match;
+    if (token === '=>' && stack.length === 0) {
+      if (inBody) errors.push('Unsupported actual Runtime dispatch pattern: missing arm separator.');
+      const pattern = arms.slice(boundary, match.index).trim();
+      const symbol = pattern.match(/^(?:r#)?(METHOD_[\p{ID_Continue}]+)$/u);
+      // Every complete arm must use the current canonical style. Unknown
+      // syntax is a failure, never a silently omitted registration.
+      if (symbol) registered.add(symbol[1]);
+      else if (pattern !== '_') errors.push(`Unsupported actual Runtime dispatch pattern: ${pattern}`);
+      inBody = true;
+      blockBody = arms.slice(match.index + 2).trimStart().startsWith('{');
+    } else if ('{(['.includes(token)) stack.push(token);
+    else if (closing[token]) {
+      if (stack.pop() !== closing[token]) errors.push('Exact diagnostics inventory: unbalanced dispatch delimiters.');
+      if (inBody && blockBody && stack.length === 0) {
+        inBody = false;
+        boundary = match.index + 1;
+      }
+    } else if (token === ',' && stack.length === 0) {
+      if (!inBody && arms.slice(boundary, match.index).trim()) {
+        errors.push('Unsupported actual Runtime dispatch pattern: unexpected arm fragment.');
+      }
+      boundary = match.index + 1;
+      inBody = false;
+    }
+  }
+  if (stack.length || (!inBody && arms.slice(boundary).trim())) {
+    errors.push('Unsupported actual Runtime dispatch pattern: incomplete arm.');
+  }
+  return registered;
+}
+
+function validateExactInventory() {
+  const runtime = fs.readFileSync(path.join(repoRoot, 'crates/brownie-runtime/src/lib.rs'), 'utf8');
+  const protocol = fs.readFileSync(path.join(repoRoot, 'crates/brownie-protocol/src/lib.rs'), 'utf8');
+  const document = fs.readFileSync(path.join(repoRoot, 'docs/architecture/diagnostics-api-consolidation.md'), 'utf8');
+  const runtimeCode = maskRustNonCode(runtime);
+  const protocolCode = maskRustNonCode(protocol);
+  const dispatch = runtimeDispatchArms(runtimeCode);
+  const registered = new Set();
+  const declared = new Map();
+  const declarations = /\bconst\s+(?:r#)?(METHOD_[\p{ID_Continue}]+)\s*:[^=;]+\s*=\s*"([^"\\\r\n]*)"\s*;/gu;
+  for (const match of runtime.matchAll(declarations)) {
+    const [, symbol, method] = match;
+    if (runtimeCode.slice(match.index, match.index + 5) !== 'const') continue;
+    if (declared.has(symbol)) errors.push(`Ambiguous actual Runtime dispatch method constant: ${symbol}`);
+    declared.set(symbol, method);
+  }
+  for (const symbol of dispatch) {
+    const method = declared.get(symbol);
+    if (method === undefined) {
+      errors.push(`Unresolved actual Runtime dispatch method constant: ${symbol}`);
+      continue;
+    }
+    if (method.startsWith('proposal.reviewQueue')) registered.add(method);
+  }
+  if (registered.size === 0) errors.push('Exact diagnostics inventory: no registered Runtime methods found.');
+  const heading = '\n## Exact Current Method And Type Inventory\n';
+  const sections = document.split(heading);
+  if (sections.length !== 2) {
+    errors.push('Exact diagnostics inventory section must occur exactly once.');
+    return;
+  }
+  const section = sections[1].split('\n## ', 1)[0];
+  const documented = new Set();
+  for (const line of section.split('\n')) {
+    if (!/^\|\s*`proposal\./.test(line)) continue;
+    const tokens = [...line.matchAll(/`([^`]+)`/g)].map(match => match[1]);
+    if (tokens.length !== 3) {
+      errors.push('Exact diagnostics inventory contains a malformed method/type row.');
+      continue;
+    }
+    const [method, params, result] = tokens;
+    if (documented.has(method)) errors.push(`Duplicate exact diagnostics inventory method: ${method}`);
+    documented.add(method);
+    if (!registered.has(method)) errors.push(`Unregistered exact diagnostics inventory method: ${method}`);
+    const suffix = method.slice('proposal.'.length);
+    const stem = 'Proposal' + suffix[0].toUpperCase() + suffix.slice(1);
+    if (params !== stem + 'Params' || result !== stem + 'Result') {
+      errors.push(`Mismatched exact diagnostics inventory type pair: ${method}`);
+    }
+    for (const type of [params, result]) {
+      const escaped = type.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (!new RegExp(`\\bpub\\s+struct\\s+${escaped}\\b`).test(protocolCode)) {
+        errors.push(`Exact diagnostics inventory type is absent from Rust protocol: ${type}`);
+      }
+    }
+  }
+  for (const method of registered) {
+    if (!documented.has(method)) errors.push(`Missing exact diagnostics inventory method: ${method}`);
+  }
+}
+
 const manifest = readJson(manifestPath);
 const metadata = readJson(metadataPath);
 
 validateManifest(manifest);
 validateMetadata(metadata);
 validateDiagnosticsApi(metadata);
+validateExactInventory();
 
 if (errors.length > 0) {
   console.error('Diagnostics API guard failed:');

@@ -200,7 +200,7 @@
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "RRP-8.7 and the deployment-injection hardening change release/readiness guard engines and package scripts. The scoped-preflight repair also makes runtime module-assessment freshness fail closed on a breached measured ceiling. Review must confirm owner-governance evidence remains bounded, deployment values remain external and explicit, owner-controlled settings are not self-approved, fail-closed statuses remain release-blocking, and runtime_release_ready remains false.",
+    "review_intent": "RRP-8.7 and the deployment-injection hardening change release/readiness guard engines and package scripts. The scoped-preflight repair also makes runtime module-assessment freshness fail closed on a breached measured ceiling. Review must confirm owner-governance evidence remains bounded, deployment values remain external and explicit, owner-controlled settings are not self-approved, fail-closed statuses remain release-blocking, and runtime_release_ready remains false. The diagnostics exact-inventory repair must be reviewed against the actual Runtime dispatch: reject missing, duplicate, unregistered or incorrectly typed rows, keep the existing dispatch and release-blocking boundaries, and run the ten source-bound inventory controls before publication.",
     "changed_files": [
       ".github/workflows/ci.yml",
       ".github/workflows/release.yml",
@@ -226,7 +226,9 @@
       "scripts/release-owner-governance-evidence.mjs",
       "scripts/release-supply-chain-artifact-evidence.mjs",
       "extensions/brownie-vsix/package.json",
-      "docs/architecture/runtime-release-evidence.json"
+      "docs/architecture/runtime-release-evidence.json",
+      "scripts/guard-diagnostics-api.mjs",
+      "scripts/guard-diagnostics-api.test.mjs"
     ]
   },
   "runtime_release_ready": false,
