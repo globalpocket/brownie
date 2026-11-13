@@ -203,7 +203,7 @@
       "scripts/guard-runtime-release-readiness.mjs",
       "scripts/rrp3-process-loss-recovery-e2e.mjs"
     ],
-    "tracked_file_count": 60,
+    "tracked_file_count": 61,
     "tracked_paths": [
       "crates/brownie-agent-loop/src/lib.rs",
       "crates/brownie-agentmodes/src/lib.rs",
@@ -237,6 +237,7 @@
       "crates/brownie-runtime/src/task_admission.rs",
       "crates/brownie-runtime/src/task_progress.rs",
       "crates/brownie-runtime/src/verification_recovery.rs",
+      "crates/brownie-store/src/inspection.rs",
       "crates/brownie-store/src/lib.rs",
       "crates/brownie-tools/src/lib.rs",
       "docs/architecture/modepack-distribution-trust-contract.json",
@@ -266,7 +267,7 @@
       "scripts/guard-runtime-release-readiness.mjs",
       "scripts/rrp3-process-loss-recovery-e2e.mjs"
     ],
-    "tracked_fingerprint": "sha256:c2c05424b4cd9e4039baa8f71cd78e526f72b634d3bcef93b1a9d6b7913b580b",
+    "tracked_fingerprint": "sha256:6d34e2cdee937cfaa083dfc33dd85bf8aa5880cbb2e5c9dd6b8b36815334fd20",
     "status": "implemented_sufficient"
   },
   "owner_decisions": [

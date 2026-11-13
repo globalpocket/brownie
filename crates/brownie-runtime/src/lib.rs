@@ -5024,7 +5024,7 @@ fn handle_proposal_review_queue(id: Value, params: Option<Value>) -> JsonRpcResp
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5045,7 +5045,7 @@ fn handle_proposal_review_queue_diagnostics(
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5071,7 +5071,7 @@ fn handle_proposal_review_queue_diagnostics_history(
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5097,7 +5097,7 @@ fn handle_proposal_review_queue_diagnostics_report(
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5123,7 +5123,7 @@ fn handle_proposal_review_queue_diagnostics_digest(
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5149,7 +5149,7 @@ fn handle_proposal_review_queue_diagnostics_digest_history(
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5175,7 +5175,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report(
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5202,7 +5202,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_history(
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5229,7 +5229,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict(
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5256,7 +5256,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_history(
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5288,7 +5288,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report(
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5320,7 +5320,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5352,7 +5352,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5386,7 +5386,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5420,7 +5420,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5454,7 +5454,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5488,7 +5488,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5522,7 +5522,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5556,7 +5556,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5590,7 +5590,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5624,7 +5624,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5658,7 +5658,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5692,7 +5692,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5726,7 +5726,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5760,7 +5760,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5794,7 +5794,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5828,7 +5828,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5862,7 +5862,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5896,7 +5896,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5930,7 +5930,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5964,7 +5964,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -5998,7 +5998,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -6032,7 +6032,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -6066,7 +6066,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -6100,7 +6100,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -6134,7 +6134,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -6168,7 +6168,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -6202,7 +6202,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -6236,7 +6236,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
@@ -6270,7 +6270,7 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report_history
     if params.run_id.trim().is_empty() {
         return error_response(id, -32602, "invalid params: run_id is required");
     }
-    let store = match BrownieStore::from_env_or_cwd() {
+    let store = match BrownieStore::for_read_only_inspection_from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
