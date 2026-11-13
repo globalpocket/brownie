@@ -78,7 +78,7 @@ test('executes all locked workspace targets/features with the exact compiler and
   assert.equal(last.options.env.RUSTC, '/fixture/toolchain/bin/rustc');
   assert.equal(last.options.env.RUSTUP_TOOLCHAIN, '1.88.0');
   assert.equal(last.options.env.RUSTUP_AUTO_INSTALL, '0');
-  assert.equal(last.options.env.CARGO_TARGET_DIR, '/fixture/target/minimum-rust-1.88.0');
+  assert.equal(last.options.env.CARGO_TARGET_DIR, path.resolve('/fixture/target', 'minimum-rust-1.88.0'));
   assert.equal(last.options.env.RUSTC_WRAPPER, undefined);
   assert.equal(last.options.env.RUSTC_WORKSPACE_WRAPPER, undefined);
   assert.deepEqual(env, before);
