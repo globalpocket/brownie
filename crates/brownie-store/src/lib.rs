@@ -1,5 +1,7 @@
 //! Brownie persistence crate.
 
+mod inspection;
+
 use std::fs::{self, File, OpenOptions};
 #[cfg(unix)]
 use std::io::Read;
@@ -2572,6 +2574,7 @@ struct ModePackCandidateLedgerEvent {
 pub struct TaskStore {
     workspace_root: PathBuf,
     state_root: PathBuf,
+    inspection_only: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -3566,10 +3569,14 @@ impl TaskStore {
         Self {
             workspace_root,
             state_root,
+            inspection_only: false,
         }
     }
 
     pub fn ensure_durable_schema(&self) -> Result<DurableStoreSchemaManifest> {
+        if self.inspection_only {
+            bail!("read-only inspection cannot initialize, adopt or migrate the durable store");
+        }
         match self.read_durable_schema_manifest() {
             Ok(Some(manifest)) => {
                 if durable_schema_manifest_is_current(&manifest)? {
@@ -4744,7 +4751,7 @@ impl TaskStore {
     }
 
     pub fn list_tasks(&self) -> Result<Vec<TaskRecord>> {
-        self.ensure_durable_schema()?;
+        self.ensure_schema_for_read()?;
         let runs_dir = self.runs_dir();
         if !runs_dir.exists() {
             return Ok(Vec::new());
@@ -4857,7 +4864,7 @@ impl TaskStore {
     }
 
     pub fn read_ledger_events(&self, run_id: &str) -> Result<Vec<LedgerEvent>> {
-        self.ensure_durable_schema()?;
+        self.ensure_schema_for_read()?;
         self.recover_terminal_transition_marker_for_run(run_id)?;
         RunLedger::new(self.run_dir(run_id)).read_events()
     }
@@ -5353,6 +5360,9 @@ impl TaskStore {
         let marker_path = self.terminal_transition_marker_path(run_id);
         if !marker_path.exists() {
             return Ok(());
+        }
+        if self.inspection_only {
+            bail!("terminal transition recovery is required before read-only inspection");
         }
         let _lock = self.acquire_run_terminal_mutation_lock(run_id)?;
         self.recover_terminal_transition_marker_for_run_locked(run_id)
@@ -11538,9 +11548,14 @@ fn validate_current_durable_schema_manifest(
         .read_durable_store_layout_manifest()?
         .ok_or_else(|| anyhow::anyhow!("durable store layout marker is missing"))?;
     validate_durable_store_layout_manifest(&layout)?;
-    let _ = store.reclaim_stale_durable_schema_migration_lock(
-        &store.workspace_state_dir().join("store-schema.lock"),
-    )?;
+    let lock = store.workspace_state_dir().join("store-schema.lock");
+    if store.inspection_only {
+        if lock.exists() {
+            bail!("schema migration lock requires explicit recovery before read-only inspection");
+        }
+    } else {
+        let _ = store.reclaim_stale_durable_schema_migration_lock(&lock)?;
+    }
     Ok(())
 }
 
