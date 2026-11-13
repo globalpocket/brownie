@@ -24,7 +24,7 @@ function fixture(change = () => {}) {
   const protocol = methods.flatMap(method => [`pub struct ${stem(method)}Params {}`, `pub struct ${stem(method)}Result {}`]).join('\n');
   const runtime = 'const METHOD_PROPOSAL_REVIEW_QUEUE: &str = "proposal.reviewQueue";\n' +
     'const METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS: &str = "proposal.reviewQueueDiagnostics";\n' +
-    'fn dispatch() { match request { METHOD_PROPOSAL_REVIEW_QUEUE => {}, METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS => {} } }\n';
+    'pub fn handle_jsonrpc_request() { match request.method.as_str() { METHOD_PROPOSAL_REVIEW_QUEUE => {}, METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS => {} } }\n';
   write('scripts/guard-diagnostics-api.mjs', fs.readFileSync(path.join(source, 'scripts/guard-diagnostics-api.mjs')));
   for (const name of ['phase-value-manifest.json', 'diagnostics-legacy-api-metadata.json']) {
     write('docs/architecture/' + name, fs.readFileSync(path.join(source, 'docs/architecture', name)));
@@ -50,6 +50,14 @@ function rejected(change, diagnostic) {
 test('accepts the complete registered method and existing protocol type inventory', () => {
   const result = fixture();
   assert.equal(result.status, 0, result.stdout + result.stderr);
+  for (const declaration of [
+    'let text = r##"pub fn handle_jsonrpc_request() { }"##;',
+    "let brace = '}'; let borrowed: &'static str = \"text\";",
+    '/* outer { /* nested } */ } */'
+  ]) {
+    const result = fixture(files => { files.runtime = files.runtime.replace('match request', declaration + ' match request'); });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+  }
 });
 test('rejects a registered method omitted from the exact table', () => {
   rejected(files => { files.document = files.document.replace(row(methods[1]) + '\n', ''); }, /Missing exact diagnostics inventory method/);
@@ -65,6 +73,13 @@ test('rejects the wrong protocol type pair even if all methods are present', () 
 });
 test('rejects a documented type that does not exist in Rust', () => {
   rejected(files => { files.protocol = files.protocol.replace(`pub struct ${stem(methods[1])}Result {}`, ''); }, /type is absent from Rust protocol/);
+  for (const marker of ['// ', '/* ', 'const TEXT: &str = r##"']) {
+    rejected(files => {
+      const declaration = `pub struct ${stem(methods[1])}Result {}`;
+      const suffix = marker === '// ' ? '\n' : marker === '/* ' ? ' */' : '"##;';
+      files.protocol = files.protocol.replace(declaration, '') + '\n' + marker + declaration + suffix;
+    }, /type is absent from Rust protocol/);
+  }
 });
 test('rejects a missing exact inventory section', () => {
   rejected(files => { files.document = files.document.replace(heading, '\n## Different section\n'); }, /section must occur exactly once/);
@@ -79,6 +94,36 @@ test('does not treat method mentions outside the exact inventory as table rows',
 test('does not require an unregistered Rust constant to have an inventory row', () => {
   const result = fixture(files => { files.runtime += `const METHOD_UNUSED: &str = "${extra}";\n`; });
   assert.equal(result.status, 0, result.stdout + result.stderr);
+  for (const reference of [
+    '// METHOD_UNUSED => {}\n',
+    '/* outer /* nested */ METHOD_UNUSED => {} */\n',
+    'fn unrelated() { match value { METHOD_UNUSED => {} } }\n',
+    'const TEXT: &str = r###"METHOD_UNUSED => {}"###;\n'
+  ]) {
+    rejected(files => {
+      files.runtime += `const METHOD_UNUSED: &str = "${extra}";\n` + reference;
+      files.protocol += `\npub struct ${stem(extra)}Params {}\npub struct ${stem(extra)}Result {}\n`;
+      files.document = files.document.replace('\n## After', '\n' + row(extra) + '\n## After');
+    }, /Unregistered exact diagnostics inventory method/);
+  }
+  for (const reference of ['/* METHOD_UNUSED => {} */', 'let text = "METHOD_UNUSED => {}";', 'let text = r##"METHOD_UNUSED => {}"##;']) {
+    rejected(files => {
+      files.runtime = files.runtime.replace('match request', reference + ' match request') + `const METHOD_UNUSED: &str = "${extra}";\n`;
+      files.protocol += `\npub struct ${stem(extra)}Params {}\npub struct ${stem(extra)}Result {}\n`;
+      files.document = files.document.replace('\n## After', '\n' + row(extra) + '\n## After');
+    }, /Unregistered exact diagnostics inventory method/);
+  }
+  for (const nested of [false, true]) {
+    rejected(files => {
+      const lookup = 'match unrelated { METHOD_UNUSED => {}, _ => {} }';
+      files.runtime = nested
+        ? files.runtime.replace('METHOD_PROPOSAL_REVIEW_QUEUE => {}', 'METHOD_PROPOSAL_REVIEW_QUEUE => { ' + lookup + ' }')
+        : files.runtime.replace('match request', 'let value = ' + lookup + '; match request');
+      files.runtime += `const METHOD_UNUSED: &str = "${extra}";\n`;
+      files.protocol += `\npub struct ${stem(extra)}Params {}\npub struct ${stem(extra)}Result {}\n`;
+      files.document = files.document.replace('\n## After', '\n' + row(extra) + '\n## After');
+    }, /Unregistered exact diagnostics inventory method/);
+  }
 });
 
 test('registers the actual diagnostics guard for strict independent review', async () => {

@@ -192,14 +192,90 @@ function validateDiagnosticsApi(metadata) {
   }
 }
 
+function maskRustNonCode(source) {
+  const code = source.split('');
+  function hide(start, end) {
+    for (let i = start; i < end; i++) if (code[i] !== '\n' && code[i] !== '\r') code[i] = ' ';
+    return end;
+  }
+  for (let i = 0; i < source.length;) {
+    if (source.startsWith('//', i)) {
+      const end = source.indexOf('\n', i + 2);
+      i = hide(i, end < 0 ? source.length : end);
+    } else if (source.startsWith('/*', i)) {
+      let depth = 1, end = i + 2;
+      while (end < source.length && depth > 0) {
+        if (source.startsWith('/*', end)) { depth++; end += 2; }
+        else if (source.startsWith('*/', end)) { depth--; end += 2; }
+        else end++;
+      }
+      i = hide(i, end);
+    } else if (source[i] === 'r' && /^r#{0,255}"/.test(source.slice(i, i + 258))) {
+      const prefix = source.slice(i, i + 258).match(/^r(#{0,255})"/);
+      const end = source.indexOf('"' + prefix[1], i + prefix[0].length);
+      i = hide(i, end < 0 ? source.length : end + prefix[1].length + 1);
+    } else if (source[i] === '"') {
+      let end = i + 1;
+      while (end < source.length && source[end] !== '"') end += source[end] === '\\' ? 2 : 1;
+      i = hide(i, Math.min(source.length, end + 1));
+    } else if (source[i] === "'") {
+      const character = source.slice(i, i + 258).match(/^'(?:\\(?:u\{[0-9a-fA-F]+\}|x[0-9a-fA-F]{2}|.)|[^'\\\r\n])'/u);
+      i = character ? hide(i, i + character[0].length) : i + 1;
+    } else i++;
+  }
+  return code.join('');
+}
+
+function bracedRustBody(code, start) {
+  let depth = 1, end = start + 1;
+  if (start >= 0) {
+    for (; end < code.length && depth > 0; end++) {
+      if (code[end] === '{') depth++;
+      else if (code[end] === '}') depth--;
+    }
+  }
+  if (start < 0 || depth !== 0) {
+    errors.push('Exact diagnostics inventory: actual Runtime dispatch body is incomplete.');
+    return '';
+  }
+  return code.slice(start + 1, end - 1);
+}
+
+function runtimeDispatchArms(code) {
+  const functions = [...code.matchAll(/\bpub\s+fn\s+handle_jsonrpc_request\s*\(/g)];
+  if (functions.length !== 1) {
+    errors.push('Exact diagnostics inventory requires one actual Runtime dispatch function.');
+    return new Set();
+  }
+  const body = bracedRustBody(code, code.indexOf('{', functions[0].index + functions[0][0].length));
+  const matches = [...body.matchAll(/\bmatch\s+request\s*\.\s*method\s*\.\s*as_str\s*\(\s*\)\s*\{/g)];
+  if (matches.length !== 1) {
+    errors.push('Exact diagnostics inventory requires one canonical request.method.as_str dispatch match.');
+    return new Set();
+  }
+  const arms = bracedRustBody(body, matches[0].index + matches[0][0].length - 1);
+  const registered = new Set();
+  let depth = 0;
+  for (const [token] of arms.matchAll(/[{}]|\bMETHOD_[A-Z_]+(?=\s*=>)/g)) {
+    if (token === '{') depth++;
+    else if (token === '}') depth--;
+    else if (depth === 0) registered.add(token);
+  }
+  return registered;
+}
+
 function validateExactInventory() {
   const runtime = fs.readFileSync(path.join(repoRoot, 'crates/brownie-runtime/src/lib.rs'), 'utf8');
   const protocol = fs.readFileSync(path.join(repoRoot, 'crates/brownie-protocol/src/lib.rs'), 'utf8');
   const document = fs.readFileSync(path.join(repoRoot, 'docs/architecture/diagnostics-api-consolidation.md'), 'utf8');
+  const runtimeCode = maskRustNonCode(runtime);
+  const protocolCode = maskRustNonCode(protocol);
+  const dispatch = runtimeDispatchArms(runtimeCode);
   const registered = new Set();
-  const declarations = /const\s+(METHOD_[A-Z_]+):\s*&str\s*=\s*"(proposal\.reviewQueue[A-Za-z]*)";/g;
-  for (const [, symbol, method] of runtime.matchAll(declarations)) {
-    if (new RegExp(`\\b${symbol}\\s*=>`).test(runtime)) registered.add(method);
+  const declarations = /\bconst\s+(METHOD_[A-Z_]+):\s*&str\s*=\s*"(proposal\.reviewQueue[A-Za-z]*)";/g;
+  for (const match of runtime.matchAll(declarations)) {
+    const [, symbol, method] = match;
+    if (runtimeCode.slice(match.index, match.index + 5) === 'const' && dispatch.has(symbol)) registered.add(method);
   }
   if (registered.size === 0) errors.push('Exact diagnostics inventory: no registered Runtime methods found.');
   const heading = '\n## Exact Current Method And Type Inventory\n';
@@ -228,7 +304,7 @@ function validateExactInventory() {
     }
     for (const type of [params, result]) {
       const escaped = type.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      if (!new RegExp(`\\bpub\\s+struct\\s+${escaped}\\b`).test(protocol)) {
+      if (!new RegExp(`\\bpub\\s+struct\\s+${escaped}\\b`).test(protocolCode)) {
         errors.push(`Exact diagnostics inventory type is absent from Rust protocol: ${type}`);
       }
     }
