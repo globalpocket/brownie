@@ -128,3 +128,10 @@ test('the same mandatory guard is wired into local root checks and CI installs i
   assert.ok(ci.includes('rustup toolchain install "$version" --profile minimal --no-self-update'));
   assert.ok(ci.indexOf('Install declared minimum Rust') < ci.indexOf('Root workspace check'));
 });
+
+test('executes the actual locked workspace check with its declared compiler', () => {
+  const result = checkMinimumRust({ env: { ...process.env, CARGO_BUILD_JOBS: '2' } });
+  assert.equal(result.locked_workspace_check_passed, true);
+  assert.ok(result.compiler.startsWith(`rustc ${result.version} `));
+  console.log(JSON.stringify({ actual_minimum_compiler_check: result }));
+});
