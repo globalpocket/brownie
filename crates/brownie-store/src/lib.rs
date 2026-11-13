@@ -131,12 +131,15 @@ impl BrownieStore {
         }
     }
 
+    pub fn workspace_root_from_env_or_cwd() -> Result<PathBuf> {
+        match std::env::var_os("BROWNIE_WORKSPACE_ROOT") {
+            Some(root) => Ok(PathBuf::from(root)),
+            None => std::env::current_dir().context("failed to read current working directory"),
+        }
+    }
+
     pub fn from_env_or_cwd() -> Result<Self> {
-        let workspace_root = match std::env::var_os("BROWNIE_WORKSPACE_ROOT") {
-            Some(root) => PathBuf::from(root),
-            None => std::env::current_dir().context("failed to read current working directory")?,
-        };
-        let store = Self::new(workspace_root);
+        let store = Self::new(Self::workspace_root_from_env_or_cwd()?);
         store.ensure_durable_schema()?;
         Ok(store)
     }

@@ -960,13 +960,13 @@ fn handle_llm_status(id: Value) -> JsonRpcResponse<Value> {
 }
 
 fn handle_runtime_diagnostics_get(id: Value) -> JsonRpcResponse<Value> {
-    let store = match BrownieStore::from_env_or_cwd() {
-        Ok(store) => store,
+    let workspace_root = match BrownieStore::workspace_root_from_env_or_cwd() {
+        Ok(workspace_root) => workspace_root,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
     result_response(
         id,
-        json!(runtime_diagnostics_from_workspace(store.workspace_root())),
+        json!(runtime_diagnostics_from_workspace(&workspace_root)),
     )
 }
 

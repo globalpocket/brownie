@@ -10,7 +10,9 @@ Phase 2.5 adds `llm.health`, an explicit JSON-RPC readiness probe for the select
 {"allow_network": true, "timeout_ms": 5000}
 ```
 
-`allow_network` is mandatory. `timeout_ms` defaults to 5000 and must be between 1000 and 30000 inclusive; values outside that range return JSON-RPC `-32602`.
+`allow_network` is mandatory. When `timeout_ms` is omitted, Runtime uses the resolved `request_timeout_ms` budget (default 30000). An explicit timeout must be an integer between 1000 and 300000 inclusive; Runtime rejects values outside that range with JSON-RPC `-32602`.
+
+The VSIX client resolves the omitted timeout through `llm.status` and forwards that budget explicitly. Its health transport deadline includes the health timeout plus the ordinary RPC allowance, so a valid probe longer than the ordinary RPC deadline can return. Explicit invalid timeouts are rejected by the client before dispatch; deadlines for other RPC methods are unchanged.
 
 ## No-network behavior
 
