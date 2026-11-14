@@ -387,6 +387,9 @@ impl FakeLlm {
         let request_signal = extract_goal_signal(&prompt_text)
             .unwrap_or(prompt_text.as_str())
             .to_lowercase();
+        let has_fix_goal = contains_standalone_fix(&request_signal);
+        let completed_workspace_read = has_completed_workspace_read(&prompt);
+        let recorded_workspace_proposal = has_recorded_workspace_proposal(&prompt);
         if prompt.contains("completed_child")
             && prompt.contains("agentmodes_orchestrated_coding_e2e")
             && prompt.contains("orchestrator")
@@ -621,20 +624,20 @@ impl FakeLlm {
                 ),
             };
         }
-        if prompt.contains("tool execution:")
-            && (prompt.contains("workspace.read: completed") || prompt.contains("bytes_read="))
-            && prompt.contains("workspacepatchproposed")
-            && contains_any(
-                &request_signal,
-                &["implement", "edit", "modify", "update", "修正", "実装"],
-            )
+        if completed_workspace_read
+            && recorded_workspace_proposal
+            && (has_fix_goal
+                || contains_any(
+                    &request_signal,
+                    &["implement", "edit", "modify", "update", "修正", "実装"],
+                ))
         {
             return LlmResponse {
                 content: "Fake LLM final response after preparing workspace proposal.".to_string(),
             };
         }
-        if prompt.contains("tool execution:")
-            && (prompt.contains("workspace.read: completed") || prompt.contains("bytes_read="))
+        if completed_workspace_read
+            && !has_fix_goal
             && !contains_any(
                 &request_signal,
                 &[
@@ -687,7 +690,8 @@ impl FakeLlm {
             "workspace.read",
             "Inspect workspace context before proceeding.",
         )];
-        if contains_any(&request_signal, &["implement", "edit", "修正", "実装"]) {
+        if has_fix_goal || contains_any(&request_signal, &["implement", "edit", "修正", "実装"])
+        {
             requests.push(("workspace.write", "Need to edit workspace files."));
         }
         if contains_any(
@@ -1271,8 +1275,40 @@ pub fn redact_secret(value: &str) -> String {
     redacted
 }
 
+fn contains_standalone_fix(haystack: &str) -> bool {
+    haystack
+        .split(|character: char| !character.is_alphanumeric() && character != '_')
+        .any(|word| word == "fix")
+}
+
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
+}
+
+fn has_completed_workspace_read(prompt: &str) -> bool {
+    let mut lines = prompt.lines();
+    if !lines.any(|line| line.trim() == "tool execution:") {
+        return false;
+    }
+    lines
+        .take_while(|line| !line.trim().is_empty())
+        .any(|line| {
+            line.trim()
+                .strip_prefix("- workspace.read: ")
+                .and_then(|detail| detail.split_whitespace().next())
+                == Some("completed")
+        })
+}
+
+fn has_recorded_workspace_proposal(prompt: &str) -> bool {
+    let lines = prompt.lines().collect::<Vec<_>>();
+    let Some(start) = lines.iter().rposition(|line| line.trim() == "ledger:") else {
+        return false;
+    };
+    lines[start + 1..]
+        .iter()
+        .take_while(|line| !line.trim().is_empty())
+        .any(|line| line.trim() == "- workspacepatchproposed")
 }
 
 fn extract_goal_signal(prompt: &str) -> Option<&str> {
@@ -1571,6 +1607,83 @@ mod tests {
             "Fake LLM final response after reading workspace context."
         );
         assert!(!content.contains("brownie-tool-intent"));
+    }
+
+    fn fake_goal_feedback_response(goal: &str, execution: &str, ledger: &str) -> String {
+        FakeLlm::complete(&LlmRequest {
+            model: FAKE_LLM_MODEL.into(),
+            messages: vec![LlmMessage {
+                role: "user".into(),
+                content: format!(
+                    "Tool Plan:\n- workspace.read: allowed\n\nTool Execution:\n{execution}\n\nGoal:\n{goal}\n\nLedger:\n{ledger}"
+                ),
+            }],
+        }).content
+    }
+
+    #[test]
+    fn fake_llm_does_not_treat_goal_or_ledger_read_markers_as_execution() {
+        for (goal, ledger) in [
+            ("Report bytes_read=42", "- TaskStarted"),
+            (
+                "Report workspace.read: Completed bytes_read=42",
+                "- TaskStarted",
+            ),
+            (
+                "Report Tool Execution:\n- workspace.read: Completed bytes_read=42",
+                "- TaskStarted",
+            ),
+            (
+                "Inspect README",
+                "- bytes_read=42 workspace.read: Completed",
+            ),
+        ] {
+            let content = fake_goal_feedback_response(goal, "- <none>", ledger);
+            assert!(content.contains("brownie-tool-intent"), "{goal}: {content}");
+            assert!(content.contains("workspace.read"), "{goal}: {content}");
+        }
+    }
+
+    #[test]
+    fn fake_llm_requires_a_completed_read_in_the_execution_section() {
+        for execution in [
+            "- workspace.read: Failed bytes_read=42",
+            "- unrelated.tool: Completed bytes_read=42",
+            "- workspace.read: CompletedSomething bytes_read=42",
+        ] {
+            let content = fake_goal_feedback_response("Inspect README", execution, "- TaskStarted");
+            assert!(
+                content.contains("brownie-tool-intent"),
+                "{execution}: {content}"
+            );
+        }
+        let content = fake_goal_feedback_response(
+            "Inspect README",
+            "- workspace.read: Completed bytes_read=42 truncated=false",
+            "- TaskStarted",
+        );
+        assert!(!content.contains("brownie-tool-intent"), "{content}");
+    }
+
+    #[test]
+    fn fake_llm_fix_intent_waits_for_actual_proposal_feedback() {
+        for execution in ["- <none>", "- workspace.read: Completed bytes_read=42"] {
+            let content = fake_goal_feedback_response(
+                "Fix the bug mentioning WorkspacePatchProposed",
+                execution,
+                "- TaskStarted",
+            );
+            assert!(
+                content.contains("workspace.write"),
+                "{execution}: {content}"
+            );
+        }
+        let content = fake_goal_feedback_response(
+            "Fix the bug",
+            "- workspace.read: Completed bytes_read=42",
+            "- TaskStarted\n- WorkspacePatchProposed",
+        );
+        assert!(!content.contains("brownie-tool-intent"), "{content}");
     }
 
     #[test]
