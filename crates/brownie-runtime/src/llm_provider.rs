@@ -1233,3 +1233,158 @@ fn openai_provider_from_workspace_for_health(
         api_key,
     ))
 }
+
+pub(super) fn fail_llm_request(
+    store: &BrownieStore,
+    running: &brownie_protocol::TaskRecord,
+    id: Value,
+    selection: RuntimeLlmProviderStatus,
+    reason: &str,
+    kind: LedgerEventKind,
+) -> JsonRpcResponse<Value> {
+    let redacted_reason = redact_secret(reason);
+    let reason_preview = preview_with_limit(&redacted_reason, LLM_FAILURE_REASON_PREVIEW_CHARS);
+    let reason_chars = redacted_reason.chars().count();
+    let reason_sha256 = format!("sha256:{}", hex_sha256(redacted_reason.as_bytes()));
+    let outcome = llm_provider_failure_outcome(
+        &selection,
+        &kind,
+        &reason_preview,
+        reason_chars,
+        reason_chars > LLM_FAILURE_REASON_PREVIEW_CHARS,
+    );
+    let mut persistence_failures = Vec::new();
+    if redacted_reason.contains("Prompt sensitive-content guard failed") {
+        if let Err(error) = store.tasks().append_task_event_with_payload(
+            running,
+            LedgerEventKind::PromptSensitiveScanFailed,
+            Some(json!({
+                "mode": selection.sensitive_guard_mode.as_config_str(),
+                "sensitive_guard": selection.sensitive_guard_mode.as_config_str(),
+                "finding_count": 1,
+                "categories": [],
+                "message_indexes": [],
+            })),
+        ) {
+            persistence_failures.push(llm_failure_persistence_stage(
+                "sensitive_scan_event",
+                &error,
+            ));
+        }
+    }
+    if let Err(error) = store.tasks().append_task_event_with_payload(
+        running,
+        kind,
+        Some(json!({
+            "provider": provider_kind_name(&selection.status.provider),
+            "model": selection.status.model,
+            "reason": reason_preview.clone(),
+            "reason_chars": reason_chars,
+            "reason_sha256": reason_sha256,
+            "reason_truncated": reason_chars > LLM_FAILURE_REASON_PREVIEW_CHARS,
+            "base_url": selection.status.base_url.as_deref().map(redact_secret),
+            "strict": selection.strict,
+            "sensitive_guard": selection.sensitive_guard_mode.as_config_str(),
+            "llm_provider_failure": outcome.clone(),
+        })),
+    ) {
+        persistence_failures.push(llm_failure_persistence_stage("llm_failure_event", &error));
+    }
+    let updated_record = store.tasks().update_task_status(
+        &running.task_id,
+        TaskStatus::Failed,
+        LedgerEventKind::TaskFailed,
+    );
+    match updated_record {
+        Ok(record) => {
+            if !persistence_failures.is_empty() {
+                return llm_failure_persistence_response(
+                    id,
+                    &reason_preview,
+                    &persistence_failures,
+                );
+            }
+            match parent_join_readiness_outcome_for_terminal_child(store, &record) {
+                Ok(Some(parent_join_readiness_outcome)) => {
+                    return result_response(
+                        id,
+                        json!(TaskRunResult {
+                            task_id: record.task_id,
+                            run_id: record.run_id,
+                            status: record.status,
+                            agent_loop: llm_provider_failed_agent_loop_summary(),
+                            completion_evidence: None,
+                            completion_acceptance: None,
+                            llm_provider_failure: Some(outcome),
+                            selected_index_prompt_context: None,
+                            verification_recovery_context_read: None,
+                            context_budget: None,
+                            verification_completion_gate: None,
+                            verification_recovery_repair: None,
+                            patch_apply_recovery_repair: None,
+                            verification_recovery_retry: None,
+                            recovery_cycle_budget_outcome: None,
+                            child_orchestration_outcome: None,
+                            parent_join_readiness_outcome: Some(parent_join_readiness_outcome),
+                        }),
+                    );
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    return error_response(id, -32603, &format!("internal error: {error}"))
+                }
+            }
+            result_response(
+                id,
+                json!(TaskRunResult {
+                    task_id: record.task_id,
+                    run_id: record.run_id,
+                    status: record.status,
+                    agent_loop: llm_provider_failed_agent_loop_summary(),
+                    completion_evidence: None,
+                    completion_acceptance: None,
+                    llm_provider_failure: Some(outcome),
+                    selected_index_prompt_context: None,
+                    verification_recovery_context_read: None,
+                    context_budget: None,
+                    verification_completion_gate: None,
+                    verification_recovery_repair: None,
+                    patch_apply_recovery_repair: None,
+                    verification_recovery_retry: None,
+                    recovery_cycle_budget_outcome: None,
+                    child_orchestration_outcome: None,
+                    parent_join_readiness_outcome: None,
+                }),
+            )
+        }
+        Err(error) => {
+            persistence_failures.push(llm_failure_persistence_stage("terminal_transition", &error));
+            llm_failure_persistence_response(id, &reason_preview, &persistence_failures)
+        }
+    }
+}
+
+fn llm_failure_persistence_stage(stage: &'static str, error: &anyhow::Error) -> String {
+    let kind = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+        .map(|error| format!("{:?}", error.kind()))
+        .unwrap_or_else(|| "StorageError".to_string());
+    format!("{stage}:{kind}")
+}
+
+fn llm_failure_persistence_response(
+    id: Value,
+    reason_preview: &str,
+    stages: &[String],
+) -> JsonRpcResponse<Value> {
+    error_response(
+        id,
+        -32603,
+        &format!(
+            "internal error: LLM failure persistence failed at [{}]; provider failure: {}",
+            stages.join(", "),
+            reason_preview
+        ),
+    )
+}
