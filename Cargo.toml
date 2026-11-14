@@ -24,7 +24,7 @@ edition = "2021"
 license = "Apache-2.0"
 publish = false
 repository = "https://github.com/globalpocket/brownie"
-rust-version = "1.82"
+rust-version = "1.88"
 version = "0.1.0"
 
 [workspace.dependencies]
