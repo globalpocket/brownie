@@ -5060,7 +5060,8 @@ impl ToolPlanner {
                 "加算",
                 "増や",
             ],
-        ) {
+        ) || contains_standalone_fix(&goal)
+        {
             items.push(plan_item(
                 "workspace.write",
                 "Goal suggests implementation or editing work.",
@@ -5236,6 +5237,12 @@ impl ToolPlanner {
     }
 }
 
+fn contains_standalone_fix(haystack: &str) -> bool {
+    haystack
+        .split(|character: char| !character.is_alphanumeric() && character != '_')
+        .any(|word| word == "fix")
+}
+
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
 }
@@ -5340,6 +5347,47 @@ mod tests {
         assert!(!ids.contains(&"workspace.append_line"));
         assert!(ids.contains(&TIME_NOW_TOOL_ID));
         assert!(!ids.contains(&"runtime.sleep"));
+    }
+
+    #[test]
+    fn planner_recognizes_standalone_english_fix_without_prefix_collisions() {
+        for (goal, writes) in [
+            ("Fix the failing assertion", true),
+            ("Please FIX this bug", true),
+            ("fix-the-bug", true),
+            ("Inspect the prefix and suffix", false),
+            ("List fixture results", false),
+            ("Describe fixed-width fields", false),
+            ("Read fix_count", false),
+        ] {
+            let plan = ToolPlanner::plan(ToolPlanningInput {
+                task_id: "task_fix_boundary".into(),
+                goal: goal.into(),
+                mode_id: "implementer".into(),
+            });
+            assert_eq!(
+                plan.items
+                    .iter()
+                    .any(|item| item.tool_id == WORKSPACE_WRITE_TOOL_ID),
+                writes,
+                "{goal}"
+            );
+        }
+    }
+
+    #[test]
+    fn english_fix_planning_does_not_grant_write_permission() {
+        let policy = BuiltinModeRegistry::get("orchestrator").expect("policy");
+        let plan = ToolPlanner::plan(ToolPlanningInput {
+            task_id: "task_fix_permission".into(),
+            goal: "Fix the failing assertion".into(),
+            mode_id: "orchestrator".into(),
+        });
+        let evaluation = ToolPlanEvaluator::evaluate(&policy, plan);
+        assert!(evaluation
+            .items
+            .iter()
+            .any(|item| item.tool_id == WORKSPACE_WRITE_TOOL_ID && !item.allowed));
     }
 
     #[test]
