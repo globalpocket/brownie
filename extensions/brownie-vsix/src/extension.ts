@@ -556,7 +556,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  context.subscriptions.push(output, statusCommand, llmStatusCommand, llmHealthCommand, runtimeConfigCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand, taskInspectCommand, runInspectCommand, proposalListCommand, proposalInspectCommand, proposalApproveCommand, proposalRejectCommand, proposalPreflightCommand, proposalReadinessCommand, proposalApplyCapabilityCommand, proposalApplyDryRunCommand, proposalApplyDryRunHistoryCommand, proposalAuditTrailCommand);
+  context.subscriptions.push(output, statusCommand, llmStatusCommand, llmHealthCommand, runtimeConfigCommand, runtimeDiagnosticsCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand, taskInspectCommand, runInspectCommand, proposalListCommand, proposalInspectCommand, proposalApproveCommand, proposalRejectCommand, proposalPreflightCommand, proposalReadinessCommand, proposalApplyCapabilityCommand, proposalApplyDryRunCommand, proposalApplyDryRunHistoryCommand, proposalAuditTrailCommand);
 }
 
 export function deactivate(): void {
