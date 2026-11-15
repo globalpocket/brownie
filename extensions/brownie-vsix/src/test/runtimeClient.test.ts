@@ -30,6 +30,21 @@ class FakeTransport implements RuntimeTransport {
   }
 }
 
+class TaskRunTransport extends FakeTransport {
+  override async request<T>(request: JsonRpcRequest): Promise<JsonRpcResponse<T>> {
+    if (request.method === 'llm.status') {
+      this.requests.push(request);
+      return { jsonrpc: '2.0', id: request.id, result: {
+        provider: 'Fake', enabled: true, model: 'brownie-fake-llm', strict: false,
+        will_fallback_to_fake: false, llm_provider_access_allowed: false,
+        task_run_network_allowed: false, config_source: 'Default', sensitive_guard: 'warn',
+        budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 },
+      } } as JsonRpcResponse<T>;
+    }
+    return super.request<T>(request);
+  }
+}
+
 
 const modeSummary = {
   mode_id: 'orchestrator',
@@ -5195,11 +5210,11 @@ describe('RuntimeClient', () => {
 
   it('creates a task.run request', async () => {
     const result = { task_id: 'task_1', run_id: 'run_1', status: 'Completed', agent_loop: { final_state: 'Completed', completion_summary: 'LLM agent loop completed for task_1' } };
-    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const transport = new TaskRunTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);
 
     await expect(client.runTask('task_1')).resolves.toEqual(result);
-    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'task.run', params: { task_id: 'task_1' } }]);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'llm.status' }, { jsonrpc: '2.0', id: 2, method: 'task.run', params: { task_id: 'task_1' } }]);
   });
 
   it('creates a task.cancel request with bounded runtime-owned freshness evidence', async () => {
@@ -5630,27 +5645,27 @@ describe('RuntimeClient', () => {
         next_action: 'continue_task_execution_with_materialized_context',
       },
     } as const;
-    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const transport = new TaskRunTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);
 
     await expect(client.runTask('task_1', selectedIndexContext)).resolves.toEqual(result);
-    expect(transport.requests).toEqual([{
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'llm.status' }, {
       jsonrpc: '2.0',
-      id: 1,
+      id: 2,
       method: 'task.run',
       params: { task_id: 'task_1', selected_index_context: selectedIndexContext },
     }]);
   });
 
   it('rejects invalid task.run results', async () => {
-    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { task_id: 'task_1', run_id: 'run_1', status: 'Unknown' } });
+    const transport = new TaskRunTransport({ jsonrpc: '2.0', id: 1, result: { task_id: 'task_1', run_id: 'run_1', status: 'Unknown' } });
     const client = new RuntimeClient(transport);
 
     await expect(client.runTask('task_1')).rejects.toThrow('task.run returned an invalid result');
   });
 
   it('converts task.run JSON-RPC errors into exceptions', async () => {
-    const transport = new FakeTransport({
+    const transport = new TaskRunTransport({
       jsonrpc: '2.0',
       id: 1,
       error: { code: -32602, message: 'invalid params: task not found' },
