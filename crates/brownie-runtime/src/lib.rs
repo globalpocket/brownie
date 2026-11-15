@@ -4,6 +4,8 @@ mod codebase_index;
 mod controlled_tool_execution;
 mod headless_continue;
 mod headless_journey;
+#[cfg(test)]
+mod http_test_support;
 mod llm_provider;
 mod mcp_client;
 mod modepack;
@@ -64094,6 +64096,7 @@ mod phase_2_5_tests {
 
 #[cfg(test)]
 mod phase_2_3_tests {
+    use super::http_test_support::spawn_mock;
     use super::*;
     use std::{
         fs,
@@ -64201,36 +64204,6 @@ mod phase_2_3_tests {
             .tasks()
             .append_task_event_with_payload(&record, LedgerEventKind::ModeResolved, Some(payload))
             .expect("append legacy mode resolved");
-    }
-
-    fn spawn_mock(
-        status: &str,
-        body: &'static str,
-    ) -> (String, thread::JoinHandle<serde_json::Value>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let status = status.to_string();
-        let handle = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut buf = [0_u8; 8192];
-            let n = stream.read(&mut buf).unwrap();
-            let req = String::from_utf8_lossy(&buf[..n]).to_string();
-            let header_end = req.find("\r\n\r\n").unwrap();
-            let (headers, request_body) = req.split_at(header_end + 4);
-            assert!(headers.starts_with("POST /v1/chat/completions HTTP/1.1"));
-            assert!(headers.lines().any(|line| line
-                .to_ascii_lowercase()
-                .starts_with("authorization: bearer ")));
-            let json: serde_json::Value = serde_json::from_str(request_body).unwrap();
-            assert_eq!(json["model"], "mock-model");
-            let messages = json["messages"].as_array().expect("messages");
-            assert!(messages.iter().any(|m| m["role"] == "system"));
-            assert!(messages.iter().any(|m| m["role"] == "user"));
-            let response = format!("HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}", body.len(), body);
-            stream.write_all(response.as_bytes()).unwrap();
-            json
-        });
-        (format!("http://{addr}/v1"), handle)
     }
 
     fn spawn_mock_two(
