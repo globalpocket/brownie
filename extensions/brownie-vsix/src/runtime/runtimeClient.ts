@@ -410,11 +410,22 @@ export class RuntimeClient {
   }
 
   async runTask(taskId: string, selectedIndexContext?: CodebaseIndexSelectionReadResult | null): Promise<TaskRunResult> {
+    const providerTimeoutMs = (await this.llmStatus()).budget.request_timeout_ms;
+    if (!Number.isInteger(providerTimeoutMs) || providerTimeoutMs < 1000 || providerTimeoutMs > 300_000) {
+      throw new RuntimeProtocolError('task.run provider timeout must be an integer between 1000 and 300000');
+    }
+    // Runtime task.run can execute a first and second LLM pass. Its transport
+    // must cover both provider budgets plus the ordinary RPC allowance.
+    // This is a finite client deadline, not a guarantee on all tool execution.
+    const transportTimeoutMs = this.timeoutMs + 2 * providerTimeoutMs;
+    if (!Number.isSafeInteger(transportTimeoutMs) || transportTimeoutMs <= 0 || transportTimeoutMs > 2_147_483_647) {
+      throw new RuntimeProtocolError('task.run transport timeout exceeds the supported finite timer range');
+    }
     const requestParams: TaskRunParams = { task_id: taskId };
     if (selectedIndexContext !== undefined && selectedIndexContext !== null) {
       requestParams.selected_index_context = selectedIndexContext;
     }
-    const result = await this.call<TaskRunResult>('task.run', requestParams);
+    const result = await this.call<TaskRunResult>('task.run', requestParams, transportTimeoutMs);
 
     if (!isTaskRunResult(result)) {
       throw new RuntimeProtocolError('task.run returned an invalid result');
