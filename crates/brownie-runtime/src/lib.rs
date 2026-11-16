@@ -15,6 +15,7 @@ mod objective_verification;
 mod product_completion;
 mod product_continuation;
 mod proposal_apply;
+mod proposal_material;
 mod task_admission;
 mod task_progress;
 mod verification_recovery;
@@ -642,6 +643,14 @@ pub fn handle_jsonrpc_input_line(line: &str) -> Option<String> {
 }
 
 pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value> {
+    let mut response = dispatch_jsonrpc_request(request);
+    if let Some(result) = response.result.as_mut() {
+        proposal_material::elide_public_metadata(result);
+    }
+    response
+}
+
+fn dispatch_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value> {
     if request.jsonrpc != JSONRPC_VERSION {
         return error_response(request.id, -32600, "invalid JSON-RPC version");
     }
@@ -4023,13 +4032,29 @@ fn handle_run_events(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
     result_response(
         id,
         json!(RunEventsResult {
-            run_id: params.run_id,
+            run_id: params.run_id.clone(),
             events: events
                 .into_iter()
-                .map(|event| ledger_event_summary_with_options(
-                    event,
-                    params.include_patch_material
-                ))
+                .map(|event| {
+                    let mut summary = ledger_event_summary_with_options(event, false);
+                    if params.include_patch_material && summary.kind == "WorkspacePatchProposed" {
+                        if let Some(payload) =
+                            summary.payload.as_mut().and_then(Value::as_object_mut)
+                        {
+                            if let Some(id) = payload.get("proposal_id").and_then(Value::as_str) {
+                                if let Some(Value::Object(material)) =
+                                    proposal_material::for_request(
+                                        &store.tasks().run_dir(&params.run_id),
+                                        id,
+                                    )
+                                {
+                                    payload.extend(material);
+                                }
+                            }
+                        }
+                    }
+                    summary
+                })
                 .collect(),
         }),
     )
@@ -13286,8 +13311,6 @@ fn sanitize_ledger_payload_with_options(
         "diff_redacted",
         "hunk_count",
         "hunk_fingerprint",
-        "patch_old_text",
-        "patch_new_text",
         "approval_status",
         "approval_reason",
         "approval_reason_redacted",
@@ -14215,16 +14238,17 @@ fn append_workspace_patch_proposal(
     if let Some(hunk_fingerprint) = proposal.hunk_fingerprint.as_ref() {
         payload["hunk_fingerprint"] = json!(hunk_fingerprint);
     }
+    let mut material = json!({});
     if operation == WorkspacePatchOperation::PatchFile.as_str()
         && proposal.validation_status == "Valid"
         && !proposal.diff_redacted
     {
         if let Ok(hunks) = patch_hunks_from_input(&proposal_input) {
             if hunks.len() == 1 && hunks[0].occurrence.is_none() {
-                payload["patch_old_text"] = json!(hunks[0].old_text.as_str());
-                payload["patch_new_text"] = json!(hunks[0].new_text.as_str());
+                material["patch_old_text"] = json!(hunks[0].old_text.as_str());
+                material["patch_new_text"] = json!(hunks[0].new_text.as_str());
             } else {
-                payload["patch_hunks"] = json!(hunks
+                material["patch_hunks"] = json!(hunks
                     .iter()
                     .map(|hunk| json!({
                         "old_text": hunk.old_text,
@@ -14234,6 +14258,17 @@ fn append_workspace_patch_proposal(
                     .collect::<Vec<_>>());
             }
         }
+    }
+    if matches!(operation.as_str(), "create_file" | "replace_file")
+        && proposal.validation_status == "Valid"
+        && !proposal.diff_redacted
+    {
+        material["replacement_content"] = json!(proposal_content);
+        payload["content_preview"] = json!(format!(
+            "[proposal content elided; chars={}]",
+            proposal.content_chars
+        ));
+        payload["truncated"] = json!(true);
     }
     if let Some(provenance) = record.verification_recovery_provenance.as_ref() {
         payload["verification_recovery_repair"] = json!(true);
@@ -14271,6 +14306,16 @@ fn append_workspace_patch_proposal(
         LedgerEventKind::WorkspacePatchProposed,
         Some(payload),
     )?;
+    if material
+        .as_object()
+        .is_some_and(|fields| !fields.is_empty())
+    {
+        proposal_material::remember(
+            &store.tasks().run_dir(&record.run_id),
+            &proposal_id,
+            material,
+        );
+    }
     Ok(())
 }
 
@@ -15252,12 +15297,8 @@ fn build_workspace_patch_proposal_from_input(
             }
         }
         let diff = synthetic_unified_diff(path, "", content);
-        result.diff_truncated =
-            diff.chars().count() > DEFAULT_DIFF_PREVIEW_CHARS.min(MAX_DIFF_PREVIEW_CHARS);
-        result.diff_preview = Some(preview_with_limit(
-            &diff,
-            DEFAULT_DIFF_PREVIEW_CHARS.min(MAX_DIFF_PREVIEW_CHARS),
-        ));
+        result.diff_truncated = false;
+        result.diff_preview = Some(proposal_diff_metadata(&diff));
         return result;
     }
     if operation == WorkspacePatchOperation::DeleteFile.as_str() {
@@ -15304,12 +15345,8 @@ fn build_workspace_patch_proposal_from_input(
             return result;
         }
         let diff = synthetic_unified_diff(path, &existing, "");
-        result.diff_truncated =
-            diff.chars().count() > DEFAULT_DIFF_PREVIEW_CHARS.min(MAX_DIFF_PREVIEW_CHARS);
-        result.diff_preview = Some(preview_with_limit(
-            &diff,
-            DEFAULT_DIFF_PREVIEW_CHARS.min(MAX_DIFF_PREVIEW_CHARS),
-        ));
+        result.diff_truncated = false;
+        result.diff_preview = Some(proposal_diff_metadata(&diff));
         return result;
     }
     if text_contains_trailing_whitespace(content) {
@@ -15350,12 +15387,8 @@ fn build_workspace_patch_proposal_from_input(
         return result;
     }
     let diff = synthetic_unified_diff(path, &existing, content);
-    result.diff_truncated =
-        diff.chars().count() > DEFAULT_DIFF_PREVIEW_CHARS.min(MAX_DIFF_PREVIEW_CHARS);
-    result.diff_preview = Some(preview_with_limit(
-        &diff,
-        DEFAULT_DIFF_PREVIEW_CHARS.min(MAX_DIFF_PREVIEW_CHARS),
-    ));
+    result.diff_truncated = false;
+    result.diff_preview = Some(proposal_diff_metadata(&diff));
     result
 }
 
@@ -15363,6 +15396,14 @@ fn scan_text_for_sensitive_content(content: &str) -> bool {
     !scan_non_prompt_text_for_sensitive_content(content)
         .findings
         .is_empty()
+}
+
+fn proposal_diff_metadata(full_diff: &str) -> String {
+    let content_header = full_diff.lines().next().unwrap_or_default();
+    format!(
+        "{content_header}\n# approved_diff_sha256: sha256:{}\n[diff content elided]\n",
+        hex_sha256(full_diff.as_bytes())
+    )
 }
 
 fn synthetic_unified_diff(path: &str, old: &str, new: &str) -> String {
@@ -15580,7 +15621,18 @@ fn llm_response_received_payload(
         "response_preview_chars".to_string(),
         json!(response_preview_chars),
     );
-    if selected_index_context_present {
+    let parsed = ToolIntentParser::parse_assistant_content(response_content);
+    let contains_write_material = parsed
+        .requests
+        .iter()
+        .any(|request| request.tool_id == WORKSPACE_WRITE_TOOL_ID);
+    if contains_write_material {
+        payload.insert("content_preview_redacted".to_string(), json!(true));
+        payload.insert(
+            "content_preview_redaction_reason".to_string(),
+            json!("request_only_workspace_write_material"),
+        );
+    } else if selected_index_context_present {
         payload.insert("content_preview_redacted".to_string(), json!(true));
         payload.insert(
             "content_preview_redaction_reason".to_string(),
@@ -15591,7 +15643,13 @@ fn llm_response_received_payload(
             "content_preview".to_string(),
             json!(preview_with_limit(
                 &metadata_privacy::redact_text(response_content),
-                response_preview_chars
+                response_preview_chars.min(
+                    response_content
+                        .trim_end()
+                        .chars()
+                        .count()
+                        .saturating_sub(1)
+                )
             )),
         );
     }
@@ -16083,6 +16141,19 @@ fn error_response(id: Value, code: i64, message: &str) -> JsonRpcResponse<Value>
 
 #[cfg(test)]
 mod tests {
+    pub(crate) fn request_only_proposal_payload(run_id: &str, proposal_id: &str) -> Value {
+        let request = json!({"jsonrpc":"2.0","id":91,"method":"run.events","params":{"run_id":run_id,"include_patch_material":true}});
+        let response = parse_line(&request.to_string())
+            .result
+            .expect("explicit material response");
+        response["events"]
+            .as_array()
+            .expect("events")
+            .iter()
+            .find(|event| event["payload"]["proposal_id"].as_str() == Some(proposal_id))
+            .expect("matching proposal")["payload"]
+            .clone()
+    }
     use super::*;
     use crate::json_privacy_assertions::JsonForbiddenLiteral;
     use crate::proposal_apply::preview_privacy_tests::append_generated_patch_proposal;
@@ -21925,6 +21996,9 @@ modes:
             .and_then(|event| event.payload)
             .expect("proposal payload");
         assert_eq!(proposal_payload["operation"], "patch_file");
+        assert!(proposal_payload.get("patch_old_text").is_none());
+        assert!(proposal_payload.get("patch_new_text").is_none());
+        let request_payload = request_only_proposal_payload(&recovery_run_id, proposal_id);
         let apply_request = json!({
             "jsonrpc": "2.0",
             "id": 7,
@@ -21933,8 +22007,8 @@ modes:
                 "run_id": recovery_run_id,
                 "proposal_id": proposal_id,
                 "expected_target_sha256": expected_hash,
-                "patch_old_text": proposal_payload["patch_old_text"],
-                "patch_new_text": proposal_payload["patch_new_text"],
+                "patch_old_text": request_payload["patch_old_text"],
+                "patch_new_text": request_payload["patch_new_text"],
                 "authorize": true,
             }
         });
@@ -39803,10 +39877,12 @@ modes:
             .as_str()
             .expect("completion summary preview")
             .contains(&child.task_id));
-        assert!(child_summary["final_response_preview"]
+        let preview = child_summary["final_response_preview"]
             .as_str()
-            .expect("final response preview")
-            .contains("Fake LLM"));
+            .expect("final response preview");
+        assert!(!preview.is_empty());
+        assert!(!preview.contains("tool_requests"));
+        assert!(!preview.contains("```"));
 
         let child_inspect = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":5,"method":"task.inspect","params":{{"task_id":"{}"}}}}"#,
@@ -44201,10 +44277,10 @@ modes:
         assert!(payload.get("content_preview").is_some());
         assert!(payload.get("content_chars").is_some());
         assert_eq!(payload["validation_status"], "Valid");
-        assert!(payload["diff_preview"]
-            .as_str()
-            .unwrap()
-            .contains("--- a/README.md"));
+        let public_diff = payload["diff_preview"].as_str().unwrap();
+        assert!(public_diff.contains("# retained_diff_preview_sha256: sha256:"));
+        assert!(public_diff.ends_with("[diff preview elided]\n"));
+        assert!(!public_diff.contains("original README"));
         assert_eq!(payload["diff_truncated"], false);
         assert_eq!(payload["diff_redacted"], false);
         assert!(payload.get("content").is_none());
@@ -47069,9 +47145,9 @@ modes:
         let material_serialized =
             serde_json::to_string(&material_events.result.expect("material events")["events"])
                 .unwrap();
-        assert!(material_serialized.contains("patch_hunks"));
-        assert!(material_serialized.contains("duplicate: task"));
-        assert!(material_serialized.contains("\"occurrence\":2"));
+        assert!(!material_serialized.contains("patch_hunks"));
+        assert!(!material_serialized.contains("duplicate: task"));
+        assert!(!material_serialized.contains("\"occurrence\":2"));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
@@ -53154,11 +53230,10 @@ modes:
 ",
         );
         assert_eq!(create_file.validation_status, "Valid");
-        assert!(create_file
-            .diff_preview
-            .as_deref()
-            .unwrap()
-            .contains("+++ b/docs/new.md"));
+        let metadata_diff = create_file.diff_preview.as_deref().unwrap();
+        assert!(metadata_diff.contains("# approved_diff_sha256: sha256:"));
+        assert!(metadata_diff.ends_with("[diff content elided]\n"));
+        assert!(!metadata_diff.contains("+new\n"));
 
         let create_existing = build_workspace_patch_proposal(
             &store,
@@ -53195,16 +53270,11 @@ modes:
         assert_eq!(delete_file.validation_status, "Valid");
         assert_eq!(delete_file.content_preview, "");
         assert_eq!(delete_file.content_chars, 0);
-        assert!(delete_file
-            .diff_preview
-            .as_deref()
-            .unwrap()
-            .contains("--- a/README.md"));
-        assert!(delete_file
-            .diff_preview
-            .as_deref()
-            .unwrap()
-            .contains("-old"));
+        let deletion_metadata = delete_file.diff_preview.as_deref().unwrap();
+        assert!(deletion_metadata.contains("# approved_diff_sha256: sha256:"));
+        assert!(deletion_metadata.ends_with("[diff content elided]\n"));
+        assert!(!deletion_metadata.contains("-original README"));
+        assert!(!deletion_metadata.contains("-old"));
 
         let delete_with_content = build_workspace_patch_proposal(
             &store,
@@ -53359,7 +53429,12 @@ modes:
             .repeat(1000),
         );
         assert_eq!(large.validation_status, "Valid");
-        assert!(large.diff_truncated);
+        assert!(!large.diff_truncated);
+        assert!(large
+            .diff_preview
+            .as_deref()
+            .unwrap()
+            .ends_with("[diff content elided]\n"));
         assert!(large.diff_preview.unwrap().chars().count() <= DEFAULT_DIFF_PREVIEW_CHARS);
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
@@ -64499,7 +64574,8 @@ content-length: {}
                 && e["payload"]["llm_request_duration_ms"].is_number()
                 && e["payload"]["llm_request_prompt_chars"].is_number()
         }));
-        assert!(serialized.contains("Mock LLM final response after tool feedback"));
+        assert!(serialized.contains("Mock LLM final response"));
+        assert!(!serialized.contains("Mock LLM final response after tool feedback"));
     }
 
     #[test]
@@ -64746,7 +64822,11 @@ content-length: {}
         assert_eq!(proposal["payload"]["path"], ".brownie/todo.md");
         assert_eq!(proposal["payload"]["operation"], "patch_file");
         assert_eq!(proposal["payload"]["validation_status"], "Valid");
-        let patch_new_text = proposal["payload"]["patch_new_text"]
+        let request_payload = crate::tests::request_only_proposal_payload(
+            run_id,
+            proposal["payload"]["proposal_id"].as_str().unwrap(),
+        );
+        let patch_new_text = request_payload["patch_new_text"]
             .as_str()
             .expect("patch new text");
         assert!(
@@ -65306,7 +65386,11 @@ content-length: {}
         assert_eq!(proposal["payload"]["path"], ".brownie/todo.md");
         assert_eq!(proposal["payload"]["operation"], "patch_file");
         assert_eq!(proposal["payload"]["validation_status"], "Valid");
-        let patch_new_text = proposal["payload"]["patch_new_text"]
+        let request_payload = crate::tests::request_only_proposal_payload(
+            run_id,
+            proposal["payload"]["proposal_id"].as_str().unwrap(),
+        );
+        let patch_new_text = request_payload["patch_new_text"]
             .as_str()
             .expect("patch new text");
         assert!(patch_new_text.contains("E-08a: Fail closed on missing supply-chain tooling"));

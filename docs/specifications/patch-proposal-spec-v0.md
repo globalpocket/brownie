@@ -150,11 +150,11 @@ For `delete_file`, validation requires a safe workspace-relative path, no protec
 
 For `patch_file`, validation requires a safe workspace-relative path, no protected path components, an existing regular non-symlink UTF-8 target file inside the workspace, no proposed `content`, request-only non-empty old hunk text, bounded combined hunk size, no sensitive-like findings in the hunks or target, and exactly one current target match for every old hunk text. Multi-hunk proposals require two to five hunks and reject overlapping hunk ranges. Proposal evidence records `hunk_count`, a SHA-256 `hunk_fingerprint`, a bounded metadata preview, and an elided synthetic diff preview; it must not persist raw hunk text or raw target content.
 
-Valid replacements get a deterministic synthetic unified diff preview generated from existing file text and proposed text. The preview is capped by the runtime diff preview cap; only the capped preview may be stored in the ledger or returned by inspection. `diff_truncated` reports cap truncation and `diff_redacted` reports sensitive-content suppression. Full proposed content and raw full diffs are never persisted.
+Valid replacements expose a hash-only diff preview. `proposed_content_sha256` binds the exact proposed bytes, and `approved_diff_sha256` binds the complete deterministic synthetic diff and path. The synthetic diff is line-based and normalizes line endings; it is not a substitute for the separate exact-byte current-target snapshot/hash check. The diff text and full proposed content are request-only; neither is persisted or returned by ordinary inspection. Apply recomputes the original diff and verifies its digest in addition to the pinned policy, approval and current-target checks. `diff_truncated` reports truncation of the stored metadata preview, and `diff_redacted` reports sensitive-content suppression.
 
-Valid creates get a deterministic synthetic unified diff preview generated from an empty old file and the proposed text. Full proposed content and raw full diffs are never persisted.
+Valid creates use the same hash-only preview, binding the empty original and exact proposed bytes. Full proposed content and raw full diffs are never persisted.
 
-Valid deletes get a deterministic synthetic unified diff preview generated from existing file text to an empty replacement. Full file content and raw full diffs are never persisted.
+Valid deletes use a hash-only preview binding the exact original-to-empty diff. Full target content and raw full diffs are never persisted.
 
 Valid patch-file proposals get an elided synthetic diff preview that records the path, hunk count, and old/new hunk character counts, not raw hunk text. Raw hunk text is request-only and is never persisted.
 
@@ -446,3 +446,9 @@ apply result recorded by the first continuation and must not apply the proposal
 again. The target must not approve proposals, apply without explicit
 authorization, persist raw hunk text, expose raw file content or diffs, or add a
 readiness/report/history/digest/preview/inspection surface.
+
+## Request material lifetime and retained history
+
+The Runtime may retain bounded proposal material in memory for the current process (at most 64 proposals and 1 MiB of serialized material). An explicit `run.events` request with `include_patch_material: true` can return that process's matching original material. Ordinary events and proposal inspection contain metadata only. Eviction or process termination loses the material; the Runtime must not reconstruct it from retained provider previews or historical raw fields.
+
+An explicit `proposal.apply` request can still supply the original approved material after a process restart. The same content/diff fingerprints, approval, permission and current-target checks remain mandatory; a same-length modification must fail without consuming authorization. Retained raw historical records are elided at the public boundary without rewriting their bytes or granting them new completion authority.

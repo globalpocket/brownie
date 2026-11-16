@@ -6902,7 +6902,14 @@ fn proposal_content_preview_matches(
                 .split_once('\n')
                 .map(|(value, _)| value)
                 == Some(format!("sha256:{}", hex_sha256(content.as_bytes())).as_str())
-                && (preview_proposal_content(content) == proposal.content_preview || legacy_exact)
+                && (preview_proposal_content(content) == proposal.content_preview
+                    || legacy_exact
+                    || (proposal.truncated
+                        && proposal.content_preview
+                            == format!(
+                                "[proposal content elided; chars={}]",
+                                content.chars().count()
+                            )))
         }
         // A partial preview without an exact byte fingerprint cannot identify approved content.
         None => legacy_exact,
@@ -6919,7 +6926,7 @@ fn approved_diff_preview_matches(
     let Some(actual) = proposal.diff_preview.as_deref() else {
         return false;
     };
-    if actual == expected {
+    if actual == expected || actual == proposal_diff_metadata(expected) {
         return true;
     }
     // Only exact full legacy content may use an old diff without the fingerprint header.
@@ -7056,17 +7063,34 @@ pub(super) mod preview_privacy_tests {
         legacy_full_preview: bool,
     ) {
         let proposal = build_workspace_patch_proposal(store, path, operation, content);
+        // Reconstruct the historical raw format explicitly. Removing a header
+        // from the new digest-only format would not be a valid legacy fixture.
+        let existing = if operation == "create_file" {
+            String::new()
+        } else {
+            std::fs::read_to_string(store.workspace_root().join(path)).unwrap()
+        };
+        let old_full_diff = synthetic_unified_diff(path, &existing, content);
+        let old_diff_without_header = old_full_diff.split_once('\n').unwrap().1;
+        let current_preview = if operation == "delete_file" {
+            String::new()
+        } else {
+            format!(
+                "[proposal content elided; chars={}]",
+                content.chars().count()
+            )
+        };
         let mut payload = json!({
             "proposal_id": proposal_id,
             "tool_id": WORKSPACE_WRITE_TOOL_ID,
             "path": path,
             "operation": operation,
-            "content_preview": if legacy_full_preview { content } else { &proposal.content_preview },
+            "content_preview": if legacy_full_preview { content } else { &current_preview },
             "content_chars": proposal.content_chars,
-            "truncated": if legacy_full_preview { false } else { proposal.truncated },
+            "truncated": !legacy_full_preview && operation != "delete_file",
             "validation_status": proposal.validation_status,
             "validation_reason": proposal.validation_reason,
-            "diff_preview": if legacy_full_preview { proposal.diff_preview.as_deref().and_then(|value| value.split_once('\n').map(|(_, diff)| diff)) } else { proposal.diff_preview.as_deref() },
+            "diff_preview": if legacy_full_preview { Some(old_diff_without_header) } else { proposal.diff_preview.as_deref() },
             "diff_truncated": proposal.diff_truncated,
             "diff_redacted": proposal.diff_redacted,
         });

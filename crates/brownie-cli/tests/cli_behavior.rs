@@ -26,7 +26,7 @@ fn fake_runtime(name: &str, body: &str) -> PathBuf {
     fs::write(
         &path,
         format!(
-            "#!/bin/sh\nread line\nif [ -n \"$BROWNIE_FAKE_RUNTIME_CAPTURE\" ]; then printf '%s' \"$line\" > \"$BROWNIE_FAKE_RUNTIME_CAPTURE\"; fi\nprintf '%s\\n' '{}'\n",
+            "#!/bin/sh\nwhile IFS= read -r line; do\nif [ -n \"$BROWNIE_FAKE_RUNTIME_CAPTURE\" ]; then printf '%s' \"$line\" > \"$BROWNIE_FAKE_RUNTIME_CAPTURE\"; fi\nprintf '%s\\n' '{}'\ndone\n",
             body
         ),
     )
@@ -57,7 +57,7 @@ fn fake_runtime_sequence(name: &str, bodies: &[&str]) -> PathBuf {
     fs::write(
         &path,
         r#"#!/bin/sh
-read line
+while IFS= read -r line; do
 count_file="${BROWNIE_FAKE_RUNTIME_COUNT:-$(dirname "$0")/count}"
 count=0
 if [ -f "$count_file" ]; then count=$(cat "$count_file"); fi
@@ -72,6 +72,7 @@ if [ -f "$response" ]; then
 else
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"unexpected fake runtime call with internal detail"}}'
 fi
+done
 "#,
     )
     .unwrap();
@@ -87,7 +88,7 @@ fn fake_runtime_resume_hanging_continue(name: &str) -> PathBuf {
     fs::write(
         &path,
         r#"#!/bin/sh
-read line
+while IFS= read -r line; do
 if [ -n "$BROWNIE_FAKE_RUNTIME_CAPTURE" ]; then printf '%s\n' "$line" >> "$BROWNIE_FAKE_RUNTIME_CAPTURE"; fi
 case "$line" in
   *'"method":"task.list"'*)
@@ -97,6 +98,7 @@ case "$line" in
     sleep 5
     ;;
 esac
+done
 "#,
     )
     .unwrap();

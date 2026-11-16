@@ -255,3 +255,7 @@ Exit code `70` means runtime communication, timeout, invalid response, or
 runtime error. In JSON mode, `retryable=true` distinguishes transport timeout or
 communication failure from non-retryable invalid runtime responses or runtime
 errors.
+
+## Invocation-scoped proposal material
+
+A `run` or `resume` invocation keeps one owned stdio Runtime process for its related requests. The CLI retains per-request deadlines and terminates the child on failure or invocation completion. Proposal content is obtained only through an explicit current-process material request, bound to the same run, proposal, operation, path and exact content fingerprint. The CLI does not reconstruct content from historical LLM response previews. Lost material cannot be treated as a successful apply; the explicit Runtime apply API requires the original verified request material again. This introduces no persistent raw-material cache and does not promise automatic reconstruction after interruption.
