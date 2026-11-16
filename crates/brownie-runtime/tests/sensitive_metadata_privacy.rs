@@ -7,6 +7,83 @@ use std::{ffi::OsString, path::Path, sync::Mutex};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 const TOKEN: &str = "sk-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+#[test]
+fn redacted_mode_instructions_remain_in_materialized_prompt() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = Environment::isolated();
+    let w = workspace("off");
+    let instruction = "Always run verification before completing";
+    let config = w.path().join(".brownie/modepack.json");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &config,
+        json!({"name":"instruction-privacy","schema_version":1,"modes":[{
+        "mode_id":"instruction-privacy","display_name":"Instruction fixture",
+        "role_definition":format!("password=example-password. {instruction}. Use flask-router."),
+        "permissions":{"read_only":true,"workspace_write":false,"process_exec":false,
+            "network_access":false,"service_control":false,"destructive":false,
+            "llm_provider_access":true,"can_spawn_subtasks":false},
+        "completion_rules":["Return a bounded summary."]}]})
+        .to_string(),
+    )
+    .unwrap();
+    let task = start("instruction-privacy");
+    let store = brownie_store::BrownieStore::new(w.path());
+    let task_record = store
+        .tasks()
+        .get_task(task["task_id"].as_str().unwrap())
+        .unwrap()
+        .unwrap();
+    let events = store
+        .tasks()
+        .read_ledger_events(task["run_id"].as_str().unwrap())
+        .unwrap();
+    let prompt = brownie_context::ContextMaterializer::materialize(
+        brownie_context::ContextMaterializerInput {
+            task: task_record,
+            ledger_events: events,
+            child_completion_summaries: vec![],
+            selected_index_context: None,
+            verification_recovery_context: None,
+            context_budget: None,
+        },
+    );
+    let instructions = prompt.mode_instruction_material.unwrap();
+    assert!(
+        instructions.contains(instruction),
+        "unrelated executable instruction was removed"
+    );
+    assert!(instructions.contains("flask-router"));
+    let physical = serde_json::to_string(&ledger(w.path(), &task)).unwrap();
+    assert!(!physical.contains("example-password"));
+    assert!(physical.contains(instruction));
+}
+
+#[test]
+fn assignment_heavy_response_redaction_keeps_task_completion_bounded() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = Environment::isolated();
+    let w = workspace("off");
+    let task = start("verifier");
+    let content = format!(
+        "api_key={TOKEN} {}",
+        "assignment=benign-value ".repeat(3500)
+    );
+    assert!(content.len() > 16_000);
+    let handle = provider(reply(&content));
+    let started = std::time::Instant::now();
+    let result = rpc("task.run", json!({"task_id":task["task_id"]}));
+    let elapsed = started.elapsed();
+    handle.join().unwrap();
+    assert_eq!(result["status"], "Completed");
+    no_secret(&serde_json::to_string(&ledger(w.path(), &task)).unwrap());
+    eprintln!("actual assignment-heavy task elapsed={elapsed:?}");
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "metadata completion exceeded five seconds: {elapsed:?}"
+    );
+}
 struct Environment(Vec<(OsString, OsString)>);
 impl Environment {
     fn isolated() -> Self {
@@ -360,23 +437,68 @@ fn recognized_secret_forms_are_removed_without_erasing_benign_words() {
     let _env = Environment::isolated();
     let _w = workspace("off");
     for (text, value) in [
-        ("Authorization: Bearer synthetic-header-value".to_string(), "synthetic-header-value"),
+        (
+            "Authorization: Bearer synthetic-header-value".to_string(),
+            "synthetic-header-value",
+        ),
         (format!("Bearer {TOKEN}"), TOKEN),
-        ("API_KEY = 'synthetic-assignment-value'".to_string(), "synthetic-assignment-value"),
-        ("access-token: owned-access-value".to_string(), "owned-access-value"),
-        (concat!("-----BEGIN ", "PRIVATE KEY-----\nowned-private-key-body\n-----END ", "PRIVATE KEY-----").to_string(), "owned-private-key-body"),
-        (concat!("-----BEGIN ", "OPENSSH PRIVATE KEY-----\nowned-ssh-key-body\n-----END ", "OPENSSH PRIVATE KEY-----").to_string(), "owned-ssh-key-body"),
-        ("password=owned-password-value".to_string(), "owned-password-value"),
-        (concat!("ghp_", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").to_string(), concat!("ghp_", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")),
+        (
+            "API_KEY = 'synthetic-assignment-value'".to_string(),
+            "synthetic-assignment-value",
+        ),
+        (
+            "access-token: owned-access-value".to_string(),
+            "owned-access-value",
+        ),
+        (
+            concat!(
+                "-----BEGIN ",
+                "PRIVATE KEY-----\nowned-private-key-body\n-----END ",
+                "PRIVATE KEY-----"
+            )
+            .to_string(),
+            "owned-private-key-body",
+        ),
+        (
+            concat!(
+                "-----BEGIN ",
+                "OPENSSH PRIVATE KEY-----\nowned-ssh-key-body\n-----END ",
+                "OPENSSH PRIVATE KEY-----"
+            )
+            .to_string(),
+            "owned-ssh-key-body",
+        ),
+        (
+            "password=owned-password-value".to_string(),
+            "owned-password-value",
+        ),
+        (
+            concat!("ghp_", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").to_string(),
+            concat!("ghp_", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+        ),
         (format!("Use flask-router. api_key={TOKEN}"), TOKEN),
-        (format!("api_key={TOKEN} PASSWORD=other-owned-secret"), "other-owned-secret"),
+        (
+            format!("api_key={TOKEN} PASSWORD=other-owned-secret"),
+            "other-owned-secret",
+        ),
     ] {
-        let intent = format!("```brownie-tool-intent\n{}\n```", json!({"tool_requests":[{"tool_id":"workspace.read","reason":text,"input":{"path":"README.md"}}]}));
-        let parsed = rpc("tool.intent.parse", json!({"mode_id":"orchestrator","assistant_content":intent}));
+        let intent = format!(
+            "```brownie-tool-intent\n{}\n```",
+            json!({"tool_requests":[{"tool_id":"workspace.read","reason":text,"input":{"path":"README.md"}}]})
+        );
+        let parsed = rpc(
+            "tool.intent.parse",
+            json!({"mode_id":"orchestrator","assistant_content":intent}),
+        );
         let output = parsed.to_string();
-        assert!(!output.contains(value), "recognized form survived its public metadata boundary");
+        assert!(
+            !output.contains(value),
+            "recognized form survived its public metadata boundary"
+        );
         no_secret(&output);
-        if text.contains("flask-router") { assert!(output.contains("flask-router")); }
+        if text.contains("flask-router") {
+            assert!(output.contains("flask-router"));
+        }
     }
 }
 

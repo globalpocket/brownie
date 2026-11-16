@@ -11,32 +11,185 @@ pub(super) fn redact_text(text: &str) -> String {
     {
         return text.to_string();
     }
-    // Keep ordinary words (for example "flask-router") outside the provider
-    // diagnostic redactor's deliberately broad token matching.
-    let redacted = text
-        .split_inclusive(char::is_whitespace)
-        .map(|part| {
-            if brownie_llm::scan_text_for_sensitive_content(part)
-                .findings
-                .is_empty()
-            {
-                part.to_string()
-            } else {
-                brownie_llm::redact_secret(part)
-            }
-        })
-        .collect::<String>();
-    // Some recognized forms span words or contain private-key bodies. Elide
-    // the field if the existing value redactor cannot remove them safely.
-    // A fixed redaction placeholder is not an original secret value.
-    if !brownie_llm::scan_text_for_sensitive_content(&redacted.replace("[REDACTED]", "x"))
-        .findings
-        .is_empty()
-    {
-        "[sensitive metadata redacted]".to_string()
-    } else {
-        redacted
+    let mut spans = Vec::new();
+    for kind in ["PRIVATE KEY", "OPENSSH PRIVATE KEY"] {
+        let begin = format!("-----BEGIN {kind}-----");
+        let end = format!("-----END {kind}-----");
+        let mut offset = 0;
+        while let Some(relative) = text[offset..].find(&begin) {
+            let start = offset + relative;
+            let finish = text[start + begin.len()..]
+                .find(&end)
+                .map(|position| start + begin.len() + position + end.len())
+                .unwrap_or(text.len());
+            spans.push((start, finish));
+            offset = finish;
+        }
     }
+    let mut previous = None;
+    let mut line_is_blank = true;
+    let mut boundaries = std::collections::HashMap::new();
+    for (start, character) in text.char_indices() {
+        let candidate = !character.is_ascii()
+            || matches!(character.to_ascii_lowercase(), 'a' | 'c' | 'g' | 'p' | 's');
+        if candidate && metadata_word_boundary(previous, &mut boundaries) {
+            for (prefix, minimum, hyphens) in [
+                ("ghp_", 20, false),
+                ("github_pat_", 20, false),
+                ("sk-", 16, true),
+            ] {
+                if text[start..].starts_with(prefix) {
+                    let value_start = start + prefix.len();
+                    let length = text[value_start..]
+                        .bytes()
+                        .take_while(|c| {
+                            c.is_ascii_alphanumeric() || *c == b'_' || (hyphens && *c == b'-')
+                        })
+                        .count();
+                    if length >= minimum {
+                        spans.push((start, value_start + length));
+                    }
+                }
+            }
+            for name in [
+                "api_key",
+                "apikey",
+                "api-key",
+                "access_token",
+                "access-token",
+                "aws_secret_access_key",
+                "secret_key",
+                "client_secret",
+                "password",
+            ] {
+                if let Some(end) = metadata_ci_prefix(text, start, name) {
+                    let separator = metadata_skip_space(text, end);
+                    if matches!(text.as_bytes().get(separator).copied(), Some(b':' | b'=')) {
+                        if let Some(span) = metadata_assignment_value(text, separator + 1) {
+                            spans.push(span);
+                        }
+                    }
+                }
+            }
+            if line_is_blank {
+                if let Some(end) = metadata_ci_prefix(text, start, "authorization") {
+                    let separator = metadata_skip_space(text, end);
+                    if text.as_bytes().get(separator) == Some(&b':') {
+                        let bearer_start = metadata_skip_space(text, separator + 1);
+                        if let Some(end) = metadata_ci_prefix(text, bearer_start, "bearer") {
+                            let value_start = metadata_skip_space(text, end);
+                            if value_start > end && value_start < text.len() {
+                                let length = text[value_start..]
+                                    .find(char::is_whitespace)
+                                    .unwrap_or(text.len() - value_start);
+                                spans.push((value_start, value_start + length));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        previous = Some(character);
+        line_is_blank = character == '\n' || (line_is_blank && character.is_whitespace());
+    }
+    if spans.is_empty() {
+        return "[sensitive metadata redacted]".to_string();
+    }
+    spans.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in spans {
+        if let Some(last) = merged.last_mut().filter(|last| start <= last.1) {
+            last.1 = last.1.max(end);
+        } else {
+            merged.push((start, end));
+        }
+    }
+    let mut result = String::with_capacity(text.len());
+    let mut cursor = 0;
+    for (start, end) in merged {
+        result.push_str(&text[cursor..start]);
+        result.push_str("[REDACTED]");
+        cursor = end;
+    }
+    result.push_str(&text[cursor..]);
+    result
+}
+
+fn metadata_word_boundary(
+    previous: Option<char>,
+    cache: &mut std::collections::HashMap<char, bool>,
+) -> bool {
+    let Some(previous) = previous else {
+        return true;
+    };
+    if previous.is_ascii() {
+        return !previous.is_ascii_alphanumeric() && previous != '_';
+    }
+    // Ask the existing detector for its Unicode word-boundary behavior once
+    // per preceding scalar. This probe has no assignment, so the existing
+    // assignment-name regexes are not recompiled for response words.
+    *cache.entry(previous).or_insert_with(|| {
+        let probe = format!("{previous}sk-{}", "a".repeat(16));
+        brownie_llm::scan_text_for_sensitive_content(&probe)
+            .findings
+            .iter()
+            .any(|finding| finding.category == "openai_key_like")
+    })
+}
+
+fn metadata_ci_prefix(text: &str, start: usize, prefix: &str) -> Option<usize> {
+    let mut characters = text[start..].char_indices();
+    let mut end = start;
+    for expected in prefix.chars() {
+        let (offset, actual) = characters.next()?;
+        let equal = if actual.is_ascii() {
+            actual.to_ascii_lowercase() == expected
+        } else {
+            let mut lower = actual.to_lowercase();
+            let mut upper = actual.to_uppercase();
+            (lower.next() == Some(expected) && lower.next().is_none())
+                || (upper.next() == Some(expected.to_ascii_uppercase()) && upper.next().is_none())
+        };
+        if !equal {
+            return None;
+        }
+        end = start + offset + actual.len_utf8();
+    }
+    Some(end)
+}
+
+fn metadata_skip_space(text: &str, mut start: usize) -> usize {
+    while let Some(character) = text[start..].chars().next().filter(|c| c.is_whitespace()) {
+        start += character.len_utf8();
+    }
+    start
+}
+
+fn metadata_assignment_value(text: &str, start: usize) -> Option<(usize, usize)> {
+    let start = metadata_skip_space(text, start);
+    let first = text[start..].chars().next()?;
+    let (start, end) = if matches!(first, '"' | '\'') {
+        let start = start + first.len_utf8();
+        let mut escaped = false;
+        let mut end = text.len();
+        for (offset, character) in text[start..].char_indices() {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == first {
+                end = start + offset;
+                break;
+            }
+        }
+        (start, end)
+    } else {
+        let length = text[start..]
+            .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';' | '&'))
+            .unwrap_or(text.len() - start);
+        (start, start + length)
+    };
+    (start < end).then_some((start, end))
 }
 
 pub(super) fn redact_payload(mut value: Value) -> Value {
@@ -93,5 +246,109 @@ fn redact_fields(value: &mut Value) {
         }
         Value::Array(values) => values.iter_mut().for_each(redact_fields),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod span_tests {
+    use super::*;
+    const KEEP: &str = "Always run verification before completing. Use flask-router.";
+
+    #[test]
+    fn recognized_assignment_spellings_keep_adjacent_executable_instructions() {
+        for name in [
+            "api_key",
+            "apikey",
+            "api-key",
+            "access_token",
+            "access-token",
+            "aws_secret_access_key",
+            "secret_key",
+            "client_secret",
+            "password",
+        ] {
+            for value in [
+                "fixture-secret-value",
+                "\"fixture secret value\"",
+                "'fixture secret value'",
+            ] {
+                let input = format!("{} : {value} {KEEP}", name.to_uppercase());
+                assert!(!brownie_llm::scan_text_for_sensitive_content(&input)
+                    .findings
+                    .is_empty());
+                let actual = redact_text(&input);
+                assert!(!actual.contains("fixture"), "{name}: {actual}");
+                assert!(actual.contains(KEEP), "{name}: {actual}");
+            }
+        }
+    }
+
+    #[test]
+    fn token_header_and_private_blocks_preserve_neighboring_instructions() {
+        let tokens = [
+            format!("sk-{}", "a".repeat(24)),
+            format!("ghp_{}", "b".repeat(24)),
+            format!("github_pat_{}", "c".repeat(24)),
+        ];
+        for token in tokens {
+            for input in [
+                format!("{token} {KEEP}"),
+                format!("  aUtHoRiZaTiOn : bEaReR {token}\n{KEEP}"),
+            ] {
+                let actual = redact_text(&input);
+                assert!(!actual.contains(&token));
+                assert!(actual.contains(KEEP));
+            }
+        }
+        for kind in ["PRIVATE KEY", "OPENSSH PRIVATE KEY"] {
+            let input = format!(
+                "-----BEGIN {kind}-----\nfixture-private-body\n-----END {kind}-----\n{KEEP}"
+            );
+            let actual = redact_text(&input);
+            assert!(!actual.contains("fixture-private-body"));
+            assert!(actual.contains(KEEP));
+        }
+        let input = format!("Authorization: Bearer fixture-header-value\n{KEEP}");
+        let actual = redact_text(&input);
+        assert!(!actual.contains("fixture-header-value"));
+        assert!(actual.contains(KEEP));
+    }
+
+    #[test]
+    fn unicode_boundaries_and_case_folding_keep_benign_metadata() {
+        let token = format!("sk-{}", "a".repeat(24));
+        let benign = format!("a\u{0301}{}=benign-value", "password");
+        let input = format!(
+            "other=ordinary-value {benign} {token}。paſſword='unicode-secret-value' {KEEP}"
+        );
+        let actual = redact_text(&input);
+        assert!(actual.contains(&benign), "{actual}");
+        assert!(!actual.contains("unicode-secret-value"), "{actual}");
+        assert!(!actual.contains(&token));
+        assert!(actual.contains(KEEP));
+        let input = format!("API_KEY=unicode-secret-value {KEEP}");
+        let actual = redact_text(&input);
+        assert!(!actual.contains("unicode-secret-value"));
+        assert!(actual.contains(KEEP));
+    }
+
+    #[test]
+    fn escaped_quotes_and_overlapping_spans_do_not_leave_secret_fragments() {
+        let input = format!("{}=\"fixture-prefix\\\"fixture-tail\" {KEEP}", "password");
+        let actual = redact_text(&input);
+        assert!(!actual.contains("fixture"));
+        assert!(actual.contains(KEEP));
+        let token = format!("sk-{}", "a".repeat(24));
+        let input = format!("{}={token}; {KEEP}", "api_key");
+        let actual = redact_text(&input);
+        assert_eq!(actual.matches("[REDACTED]").count(), 1);
+        assert!(actual.contains(KEEP));
+    }
+
+    #[test]
+    fn benign_fields_are_unchanged() {
+        for text in [KEEP, "名前と本文を保持する。", "assignment=benign-value"] {
+            assert_eq!(redact_text(text), text);
+        }
     }
 }
