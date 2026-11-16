@@ -13,31 +13,39 @@ pub(super) fn redact_text(text: &str) -> String {
     }
     let mut spans = Vec::new();
     let mut validation_spans = Vec::new();
-    for kind in ["PRIVATE KEY", "OPENSSH PRIVATE KEY"] {
-        let begin = format!("-----BEGIN {kind}-----");
-        let end = format!("-----END {kind}-----");
-        let mut offset = 0;
-        while let Some(relative) = text[offset..].find(&begin) {
-            let start = offset + relative;
-            let finish = text[start + begin.len()..]
-                .find(&end)
-                .map(|position| start + begin.len() + position + end.len())
-                .unwrap_or(text.len());
-            spans.push((start, finish));
-            validation_spans.push((start, finish));
-            offset = finish;
-        }
-    }
+    let private_delimiters = ["PRIVATE KEY", "OPENSSH PRIVATE KEY"].map(|kind| {
+        (
+            format!("-----BEGIN {kind}-----"),
+            format!("-----END {kind}-----"),
+        )
+    });
+    // The first recognized expression owns its value. Neither a private block
+    // nor a quoted assignment reinterprets nested text beyond that boundary.
+    let mut skip_until = 0;
     let mut previous = None;
     let mut line_is_blank = true;
     let mut boundaries = std::collections::HashMap::new();
     for (start, character) in text.char_indices() {
+        if start >= skip_until && character == '-' {
+            for (begin, end) in &private_delimiters {
+                if text[start..].starts_with(begin) {
+                    let finish = text[start + begin.len()..]
+                        .find(end)
+                        .map(|position| start + begin.len() + position + end.len())
+                        .unwrap_or(text.len());
+                    spans.push((start, finish));
+                    validation_spans.push((start, finish));
+                    skip_until = finish;
+                    break;
+                }
+            }
+        }
         let candidate = !character.is_ascii()
             || matches!(
                 character.to_ascii_lowercase(),
                 'a' | 'b' | 'c' | 'g' | 'p' | 's'
             );
-        if candidate && metadata_word_boundary(previous, &mut boundaries) {
+        if candidate && start >= skip_until && metadata_word_boundary(previous, &mut boundaries) {
             for (prefix, minimum, hyphens) in [
                 ("ghp_", 20, false),
                 ("github_pat_", 20, false),
@@ -54,6 +62,7 @@ pub(super) fn redact_text(text: &str) -> String {
                     if length >= minimum {
                         spans.push((start, value_start + length));
                         validation_spans.push((start, value_start + length));
+                        skip_until = skip_until.max(value_start + length);
                     }
                 }
             }
@@ -74,6 +83,7 @@ pub(super) fn redact_text(text: &str) -> String {
                         if let Some(span) = metadata_assignment_value(text, separator + 1) {
                             spans.push(span);
                             validation_spans.push((start, span.1));
+                            skip_until = skip_until.max(span.1);
                         }
                     }
                 }
@@ -100,6 +110,7 @@ pub(super) fn redact_text(text: &str) -> String {
                             if count >= minimum {
                                 spans.push((value_start, finish));
                                 validation_spans.push((start, finish));
+                                skip_until = skip_until.max(finish);
                             }
                         }
                     }
@@ -118,6 +129,7 @@ pub(super) fn redact_text(text: &str) -> String {
                                     .unwrap_or(text.len() - value_start);
                                 spans.push((value_start, value_start + length));
                                 validation_spans.push((start, value_start + length));
+                                skip_until = skip_until.max(value_start + length);
                             }
                         }
                     }
@@ -414,6 +426,47 @@ mod span_tests {
             assert!(!actual.contains(&token), "{actual}");
             assert!(!actual.contains("fixture-secret-value"), "{actual}");
             assert!(actual.contains(KEEP), "{actual}");
+        }
+    }
+    #[test]
+    fn private_key_body_does_not_extend_redaction_into_neighboring_instructions() {
+        for kind in ["PRIVATE KEY", "OPENSSH PRIVATE KEY"] {
+            for body in [
+                "fixture-private-body".to_owned(),
+                format!("{}=\"fixture-private-body", "api_key"),
+                format!("{}='fixture-private-body", "password"),
+            ] {
+                let text = format!("-----BEGIN {kind}-----\n{body}\n-----END {kind}-----\n{KEEP}");
+                let actual = redact_text(&text);
+                assert!(!actual.contains("fixture-private-body"), "{actual}");
+                assert!(
+                    actual.contains(KEEP),
+                    "opaque private block lost neighboring instructions: {actual}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn quoted_secret_value_owns_its_nested_private_delimiters() {
+        for kind in ["PRIVATE KEY", "OPENSSH PRIVATE KEY"] {
+            for closed in [true, false] {
+                let end = if closed {
+                    format!("\n-----END {kind}-----")
+                } else {
+                    String::new()
+                };
+                let text = format!(
+                    "{}=\"-----BEGIN {kind}-----\nfixture-private-body{end}\" {KEEP}",
+                    "api_key"
+                );
+                let actual = redact_text(&text);
+                assert!(!actual.contains("fixture-private-body"), "{actual}");
+                assert!(
+                    actual.contains(KEEP),
+                    "quoted value lost neighboring instructions: {actual}"
+                );
+            }
         }
     }
 }

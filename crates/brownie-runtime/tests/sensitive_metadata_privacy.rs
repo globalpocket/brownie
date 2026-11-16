@@ -443,6 +443,11 @@ fn recognized_secret_forms_are_removed_without_erasing_benign_words() {
         ),
         (format!("Bearer {TOKEN}"), TOKEN),
         (
+            format!("-----BEGIN {}-----\napi_key=\"fixture-private-body\n-----END {}-----\nUse flask-router.", "PRIVATE KEY", "PRIVATE KEY"),
+            "fixture-private-body",
+        ),
+
+        (
             "API_KEY = 'synthetic-assignment-value'".to_string(),
             "synthetic-assignment-value",
         ),
