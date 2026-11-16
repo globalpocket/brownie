@@ -15614,10 +15614,14 @@ fn llm_response_received_payload(
         json!(response_preview_chars),
     );
     let parsed = ToolIntentParser::parse_assistant_content(response_content);
-    let contains_write_material = parsed
-        .requests
-        .iter()
-        .any(|request| request.tool_id == WORKSPACE_WRITE_TOOL_ID);
+    // A rejected or incomplete tool-intent envelope can still contain full
+    // source material. Its confidentiality cannot depend on parser success.
+    let contains_write_material = response_content.contains("brownie-tool-intent")
+        || response_content.contains("\"tool_requests\"")
+        || parsed
+            .requests
+            .iter()
+            .any(|request| request.tool_id == WORKSPACE_WRITE_TOOL_ID);
     if contains_write_material {
         payload.insert("content_preview_redacted".to_string(), json!(true));
         payload.insert(
