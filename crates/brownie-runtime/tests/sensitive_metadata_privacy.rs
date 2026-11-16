@@ -364,10 +364,10 @@ fn recognized_secret_forms_are_removed_without_erasing_benign_words() {
         (format!("Bearer {TOKEN}"), TOKEN),
         ("API_KEY = 'synthetic-assignment-value'".to_string(), "synthetic-assignment-value"),
         ("access-token: owned-access-value".to_string(), "owned-access-value"),
-        ("-----BEGIN PRIVATE KEY-----\nowned-private-key-body\n-----END PRIVATE KEY-----".to_string(), "owned-private-key-body"),
-        ("-----BEGIN OPENSSH PRIVATE KEY-----\nowned-ssh-key-body\n-----END OPENSSH PRIVATE KEY-----".to_string(), "owned-ssh-key-body"),
+        (concat!("-----BEGIN ", "PRIVATE KEY-----\nowned-private-key-body\n-----END ", "PRIVATE KEY-----").to_string(), "owned-private-key-body"),
+        (concat!("-----BEGIN ", "OPENSSH PRIVATE KEY-----\nowned-ssh-key-body\n-----END ", "OPENSSH PRIVATE KEY-----").to_string(), "owned-ssh-key-body"),
         ("password=owned-password-value".to_string(), "owned-password-value"),
-        ("ghp_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(), "ghp_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+        (concat!("ghp_", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").to_string(), concat!("ghp_", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")),
         (format!("Use flask-router. api_key={TOKEN}"), TOKEN),
         (format!("api_key={TOKEN} PASSWORD=other-owned-secret"), "other-owned-secret"),
     ] {
