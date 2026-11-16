@@ -98,8 +98,28 @@ fn actual_public_proposal_events_and_inspection_exclude_raw_fields() {
         )));
     assert_eq!(payload["truncated"], true);
     let preview = payload["content_preview"].as_str().unwrap();
-    assert!(proposed.starts_with(preview));
+    assert_eq!(
+        preview,
+        format!(
+            "[proposal content elided; chars={}]",
+            proposed.chars().count()
+        )
+    );
     assert_ne!(preview, proposed);
     assert_ne!(preview, proposed.trim_end());
+    let material = rpc(
+        "run.events",
+        json!({"run_id":create["run_id"], "include_patch_material":true}),
+    );
+    let exact = material["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| {
+            event["kind"] == "WorkspacePatchProposed"
+                && event["payload"]["proposal_id"] == payload["proposal_id"]
+        })
+        .expect("explicit material request returns the same current-process proposal");
+    assert_eq!(exact["payload"]["replacement_content"], proposed);
     assert!(!workspace.path().join("new.txt").exists());
 }

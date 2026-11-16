@@ -11,6 +11,9 @@ use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
 
+#[path = "runtime_session.rs"]
+mod runtime_session;
+
 const JSONRPC_VERSION: &str = "2.0";
 const RUNTIME_STATUS_METHOD: &str = "runtime.status";
 const TASK_RUN_METHOD: &str = "task.run";
@@ -64,11 +67,19 @@ const CLI_RUN_MAX_MODE_ID_CHARS: usize = 128;
 const CLI_RESUME_MAX_STEPS: u8 = 1;
 const CLI_RUN_SESSION_PREFIX: &str = "cli.run.";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct RuntimeClient {
     boundary: RuntimeClientBoundary,
     config: RuntimeClientConfig,
+    session: runtime_session::Slot,
 }
+
+impl PartialEq for RuntimeClient {
+    fn eq(&self, other: &Self) -> bool {
+        self.boundary == other.boundary && self.config == other.config
+    }
+}
+impl Eq for RuntimeClient {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeClientConfig {
@@ -143,6 +154,7 @@ impl Default for RuntimeClient {
                 transport: RuntimeTransport::JsonRpcHostProcess,
             },
             config: RuntimeClientConfig::from_env(),
+            session: runtime_session::Slot::default(),
         }
     }
 }
@@ -196,6 +208,7 @@ impl RuntimeClient {
                 transport: RuntimeTransport::JsonRpcHostProcess,
             },
             config,
+            session: runtime_session::Slot::default(),
         }
     }
 
@@ -204,6 +217,12 @@ impl RuntimeClient {
     }
 
     pub fn invoke(&self, command: &CliCommand, json: bool) -> Result<String, RuntimeClientError> {
+        let _session_scope =
+            if matches!(command, CliCommand::Run { .. } | CliCommand::Resume { .. }) {
+                Some(runtime_session::Scope::begin(&self.session)?)
+            } else {
+                None
+            };
         match command {
             CliCommand::Run { objective } => self.runtime_run(objective, json),
             CliCommand::Resume { scope } => self.runtime_resume(scope.as_ref(), json),
@@ -558,6 +577,15 @@ impl RuntimeClient {
         request_class: RuntimeRequestClass,
     ) -> Result<String, RuntimeClientError> {
         let runtime_path = self.resolve_runtime_path();
+        {
+            let mut slot = self
+                .session
+                .lock()
+                .map_err(|_| RuntimeClientError::CommunicationFailed)?;
+            if let Some(session) = slot.as_mut() {
+                return session.send(&runtime_path, request_line, self.timeout_for(request_class));
+            }
+        }
         let mut child = Command::new(runtime_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -790,11 +818,7 @@ impl RuntimeClient {
             let run_id = objective_proposal_apply_run_id(&result)?;
             Some(self.call_runtime_value(
                 RUN_EVENTS_METHOD,
-                Some(if operation == "patch_file" {
-                    json!({ "run_id": run_id, "include_patch_material": true })
-                } else {
-                    json!({ "run_id": run_id })
-                }),
+                Some(json!({ "run_id": run_id, "include_patch_material": true })),
                 RuntimeRequestClass::ObjectiveExecution,
             )?)
         } else {
@@ -3925,56 +3949,28 @@ fn extract_exact_full_file_apply_material(
     let Some(events) = run_events.get("events").and_then(Value::as_array) else {
         return Ok(None);
     };
+    let expected_id = required_display_string(proposal, "proposal_id")?;
     for event in events.iter().rev() {
-        if !matches!(
-            event.get("kind").and_then(Value::as_str),
-            Some("LlmResponseReceived" | "SecondPassLlmResponseReceived")
-        ) {
+        if event.get("kind").and_then(Value::as_str) != Some("WorkspacePatchProposed") {
             continue;
         }
-        let Some(preview) = event
-            .get("payload")
-            .and_then(|payload| payload.get("content_preview"))
-            .and_then(Value::as_str)
-        else {
+        let Some(payload) = event.get("payload") else {
             continue;
         };
-        for block in brownie_tool_intent_blocks(preview) {
-            let Ok(intent) = serde_json::from_str::<Value>(&block) else {
-                continue;
-            };
-            let Some(requests) = intent.get("tool_requests").and_then(Value::as_array) else {
-                continue;
-            };
-            for request in requests {
-                if request.get("tool_id").and_then(Value::as_str) != Some("workspace.write") {
-                    continue;
-                }
-                let Some(input) = request.get("input").and_then(Value::as_object) else {
-                    continue;
-                };
-                if input.get("path").and_then(Value::as_str) != Some(expected_path.as_str())
-                    || input.get("operation").and_then(Value::as_str)
-                        != Some(expected_operation.as_str())
-                {
-                    continue;
-                }
-                let content = match (input.get("new_text"), input.get("content")) {
-                    (Some(Value::String(value)), None) | (None, Some(Value::String(value))) => {
-                        value
-                    }
-                    (Some(Value::String(left)), Some(Value::String(right))) if left == right => {
-                        left
-                    }
-                    _ => continue,
-                };
-                if is_safe_workspace_write_material(content)
-                    && content.chars().count() == expected_chars
-                    && format!("sha256:{:x}", Sha256::digest(content.as_bytes())) == fingerprint
-                {
-                    return Ok(Some(content.clone()));
-                }
-            }
+        if payload.get("proposal_id").and_then(Value::as_str) != Some(expected_id.as_str())
+            || payload.get("path").and_then(Value::as_str) != Some(expected_path.as_str())
+            || payload.get("operation").and_then(Value::as_str) != Some(expected_operation.as_str())
+        {
+            continue;
+        }
+        let Some(content) = payload.get("replacement_content").and_then(Value::as_str) else {
+            continue;
+        };
+        if content.chars().count() == expected_chars
+            && is_safe_workspace_write_material(content)
+            && format!("sha256:{:x}", Sha256::digest(content.as_bytes())) == fingerprint
+        {
+            return Ok(Some(content.to_owned()));
         }
     }
     Ok(None)
@@ -6103,10 +6099,8 @@ mod tests {
             "# proposed_content_sha256: sha256:{:x}\n--- a/notes/new.md\n+++ b/notes/new.md",
             Sha256::digest(b"created content\n")
         ));
-        let events = json!({"run_id":"run_1","events":[{"kind":"LlmResponseReceived",
-            "payload":{"content_preview":format!("```brownie-tool-intent\n{}\n```",
-                json!({"tool_requests":[{"tool_id":"workspace.write","input":{
-                    "path":"notes/new.md","operation":"create_file","content":"created content\n"}}]}))}}]});
+        let events = json!({"run_id":"run_1","events":[{"kind":"WorkspacePatchProposed",
+            "payload":{"proposal_id":"proposal_create","path":"notes/new.md","operation":"create_file","replacement_content":"created content\n"}}]});
         let recovered = objective_proposal_apply_params_with_patch_material(
             &authorized,
             &shortened,
@@ -7259,13 +7253,11 @@ mod tests {
     fn recovered_full_file_material_is_bound_to_exact_bytes_operation_path_and_run() {
         for operation in ["create_file", "replace_file"] {
             let approved = "abc\r\n\n";
-            let proposal = json!({"path":"new.txt","operation":operation,"content_chars":approved.chars().count(),
+            let proposal = json!({"proposal_id":"proposal_1","path":"new.txt","operation":operation,"content_chars":approved.chars().count(),
                 "diff_preview":format!("# proposed_content_sha256: sha256:{:x}\n--- a/new.txt",Sha256::digest(approved.as_bytes()))});
             let event = |path: &str, op: &str, material: &str| {
                 json!({"run_id":"run_1","events":[{
-                "kind":"LlmResponseReceived","payload":{"content_preview":format!(
-                    "```brownie-tool-intent\n{}\n```",json!({"tool_requests":[{"tool_id":"workspace.write",
-                    "input":{"path":path,"operation":op,"new_text":material}}]}))}}]})
+                "kind":"WorkspacePatchProposed","payload":{"proposal_id":"proposal_1","path":path,"operation":op,"replacement_content":material}}]})
             };
             let recover = |events: &Value| {
                 extract_exact_full_file_apply_material(
@@ -7286,9 +7278,18 @@ mod tests {
             wrong_run["run_id"] = json!("other_run");
             assert_eq!(recover(&wrong_run), None);
             let mut truncated_input = event("new.txt", operation, approved);
+            truncated_input["events"][0]["payload"]
+                .as_object_mut()
+                .unwrap()
+                .remove("replacement_content");
             truncated_input["events"][0]["payload"]["content_preview"] =
                 json!("```brownie-tool-intent\n{\"tool_requests\":[");
             assert_eq!(recover(&truncated_input), None);
+            let legacy = json!({"run_id":"run_1","events":[{"kind":"LlmResponseReceived","payload":{"content_preview":format!("```brownie-tool-intent\n{}\n```",json!({"tool_requests":[{"tool_id":"workspace.write","input":{"path":"new.txt","operation":operation,"new_text":approved}}]}))}}]});
+            assert_eq!(recover(&legacy), None);
+            let mut wrong_id = event("new.txt", operation, approved);
+            wrong_id["events"][0]["payload"]["proposal_id"] = json!("another-proposal");
+            assert_eq!(recover(&wrong_id), None);
         }
     }
 

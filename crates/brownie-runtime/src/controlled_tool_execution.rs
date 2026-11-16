@@ -7365,7 +7365,14 @@ mod mcp_approval_lock_tests {
         assert_eq!(payload["path"], ".brownie/todo.md");
         assert_eq!(payload["operation"], "patch_file");
         assert_eq!(payload["validation_status"], "Valid");
-        let patch_new_text = payload["patch_new_text"].as_str().expect("new text");
+        let request_payload = proposal_material::for_request(
+            &store.tasks().run_dir(&record.run_id),
+            payload["proposal_id"].as_str().unwrap(),
+        )
+        .expect("current-process proposal material");
+        let patch_new_text = request_payload["patch_new_text"]
+            .as_str()
+            .expect("new text");
         assert!(patch_new_text.contains("E-14a-contract-section"));
         assert!(patch_new_text.contains("E-14a-final-summary"));
         assert!(!patch_new_text.contains("Implement the next concrete step"));
@@ -7738,7 +7745,12 @@ mod mcp_approval_lock_tests {
         let payload = proposal.payload.as_ref().expect("proposal payload");
         assert_eq!(payload["path"], ".brownie/todo.md");
         assert_eq!(payload["validation_status"], "Valid");
-        assert!(payload["patch_new_text"]
+        let request_payload = proposal_material::for_request(
+            &store.tasks().run_dir(&record.run_id),
+            payload["proposal_id"].as_str().unwrap(),
+        )
+        .expect("current-process proposal material");
+        assert!(request_payload["patch_new_text"]
             .as_str()
             .expect("new text")
             .contains(
