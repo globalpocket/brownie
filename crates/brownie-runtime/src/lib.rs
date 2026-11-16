@@ -643,14 +643,6 @@ pub fn handle_jsonrpc_input_line(line: &str) -> Option<String> {
 }
 
 pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value> {
-    let mut response = dispatch_jsonrpc_request(request);
-    if let Some(result) = response.result.as_mut() {
-        proposal_material::elide_public_metadata(result);
-    }
-    response
-}
-
-fn dispatch_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value> {
     if request.jsonrpc != JSONRPC_VERSION {
         return error_response(request.id, -32600, "invalid JSON-RPC version");
     }
@@ -15775,7 +15767,9 @@ fn parse_error_response(error: serde_json::Error) -> JsonRpcResponse<Value> {
     }
 }
 
-fn result_response(id: Value, result: Value) -> JsonRpcResponse<Value> {
+fn result_response(id: Value, mut result: Value) -> JsonRpcResponse<Value> {
+    // Apply the public metadata projection at the shared success boundary.
+    proposal_material::elide_public_metadata(&mut result);
     JsonRpcResponse {
         jsonrpc: JSONRPC_VERSION.to_string(),
         id,
