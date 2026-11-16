@@ -1664,8 +1664,8 @@ pub(super) fn tool_intent_decision_summary(
         tool_id: decision.tool_id,
         required_action: runtime_action_name(&decision.required_action),
         allowed: decision.allowed,
-        reason: decision.reason,
-        request_reason: decision.request_reason,
+        reason: metadata_privacy::redact_text(&decision.reason),
+        request_reason: metadata_privacy::redact_text(&decision.request_reason),
         input_summary: tool_intent_input_summary(&decision.input),
     }
 }
@@ -1675,7 +1675,7 @@ pub(super) fn tool_intent_rejected_summary(
 ) -> ToolIntentRejectedSummary {
     ToolIntentRejectedSummary {
         tool_id: rejected.tool_id,
-        reason: rejected.reason,
+        reason: metadata_privacy::redact_text(&rejected.reason),
         code: rejected.code,
     }
 }
@@ -2488,7 +2488,7 @@ pub(super) fn append_tool_intent_events(
         store.tasks().append_task_event_with_payload(
             record,
             LedgerEventKind::ToolIntentRejected,
-            Some(json!({ "tool_id": tool_id, "reason": rejected.reason, "code": rejected.code })),
+            Some(json!({ "tool_id": tool_id, "reason": metadata_privacy::redact_text(&rejected.reason), "code": rejected.code })),
         )?;
     }
     for mut decision in evaluation.items {
@@ -2543,8 +2543,8 @@ pub(super) fn append_tool_intent_events(
             "tool_id": decision.tool_id,
             "required_action": runtime_action_name(&decision.required_action),
             "allowed": allowed,
-            "reason": reason,
-            "request_reason": decision.request_reason,
+            "reason": metadata_privacy::redact_text(reason),
+            "request_reason": metadata_privacy::redact_text(&decision.request_reason),
             "input_summary": summarize_intent_input(&decision.input),
         });
         if runtime_plan_rejection_reason.is_some() {
@@ -4580,7 +4580,7 @@ pub(super) fn append_subtask_orchestration_queued(
         "required_action": runtime_action_name(&decision.required_action),
         "status": "Queued",
         "queue_position": queue_position,
-        "request_reason": decision.request_reason,
+        "request_reason": metadata_privacy::redact_text(&decision.request_reason),
         "input_summary": summarize_intent_input(&decision.input),
         "execution_enabled": false,
         "reason": "Subtask orchestration queued for controlled child materialization; no scheduler dispatch is performed."
@@ -4615,7 +4615,7 @@ pub(super) fn append_subtask_spawn_input_denied(
             "allowed": false,
             "mode_id": policy.mode_id,
             "reason": reason,
-            "request_reason": decision.request_reason,
+            "request_reason": metadata_privacy::redact_text(&decision.request_reason),
             "requested_mode_id": requested_mode_id,
             "input_summary": summarize_intent_input(&decision.input),
         })),

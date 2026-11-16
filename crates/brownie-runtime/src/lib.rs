@@ -8,6 +8,7 @@ mod headless_journey;
 mod http_test_support;
 mod llm_provider;
 mod mcp_client;
+mod metadata_privacy;
 mod modepack;
 mod objective_proposal;
 mod objective_verification;
@@ -11791,7 +11792,8 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         .any(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived);
     let final_response_preview =
         latest_content_preview(&events, LedgerEventKind::SecondPassLlmResponseReceived)
-            .or_else(|| latest_content_preview(&events, LedgerEventKind::LlmResponseReceived));
+            .or_else(|| latest_content_preview(&events, LedgerEventKind::LlmResponseReceived))
+            .map(|text| metadata_privacy::redact_text(&text));
     let parent_join_readiness_summary = task
         .as_ref()
         .map(|record| parent_join_readiness_summary_for_parent_inspection(store, record))
@@ -12992,7 +12994,8 @@ fn child_task_inspect_summary(
         child_completion_result_fingerprint(&events, completion_event);
     let final_response_preview =
         latest_content_preview(&events, LedgerEventKind::SecondPassLlmResponseReceived)
-            .or_else(|| latest_content_preview(&events, LedgerEventKind::LlmResponseReceived));
+            .or_else(|| latest_content_preview(&events, LedgerEventKind::LlmResponseReceived))
+            .map(|text| metadata_privacy::redact_text(&text));
 
     Ok(ChildTaskInspectSummary {
         task_id: task.task_id.clone(),
@@ -13078,13 +13081,21 @@ fn ledger_event_summary_with_options(
     include_patch_material: bool,
 ) -> LedgerEventSummary {
     let kind = format!("{:?}", event.kind);
+    let payload = if matches!(
+        event.kind,
+        LedgerEventKind::LlmResponseReceived | LedgerEventKind::SecondPassLlmResponseReceived
+    ) {
+        event.payload.map(metadata_privacy::redact_response_payload)
+    } else {
+        event.payload
+    };
     LedgerEventSummary {
         event_id: event.event_id,
         task_id: event.task_id,
         run_id: event.run_id,
         kind,
         timestamp: event.timestamp,
-        payload: sanitize_ledger_payload_with_options(event.payload, include_patch_material),
+        payload: sanitize_ledger_payload_with_options(payload, include_patch_material),
     }
 }
 
@@ -13360,7 +13371,7 @@ fn sanitize_ledger_payload_with_options(
     if sanitized.is_empty() {
         None
     } else {
-        Some(Value::Object(sanitized))
+        Some(metadata_privacy::redact_payload(Value::Object(sanitized)))
     }
 }
 
@@ -13625,8 +13636,8 @@ fn agent_loop_state_name(state: AgentLoopState) -> &'static str {
 fn mode_summary(policy: CompiledModePolicy) -> ModeSummary {
     ModeSummary {
         mode_id: policy.mode_id,
-        display_name: policy.display_name,
-        role_definition: policy.role_definition,
+        display_name: metadata_privacy::redact_text(&policy.display_name),
+        role_definition: metadata_privacy::redact_text(&policy.role_definition),
         permissions: ModePermissionsSummary {
             read_only: policy.permissions.read_only,
             workspace_write: policy.permissions.workspace_write,
@@ -13645,7 +13656,7 @@ fn mode_summary(policy: CompiledModePolicy) -> ModeSummary {
 }
 
 fn mode_resolved_payload(policy: &CompiledModePolicy) -> Value {
-    json!({
+    metadata_privacy::redact_payload(json!({
         "mode_id": policy.mode_id,
         "display_name": policy.display_name,
         "role_definition": policy.role_definition,
@@ -13672,7 +13683,7 @@ fn mode_resolved_payload(policy: &CompiledModePolicy) -> Value {
             "codebase_index": policy.permissions.codebase_index,
             "mcp_tool_access": policy.permissions.mcp_tool_access,
         }
-    })
+    }))
 }
 
 fn append_mode_resolved_event(
@@ -15578,7 +15589,10 @@ fn llm_response_received_payload(
     } else {
         payload.insert(
             "content_preview".to_string(),
-            json!(preview_with_limit(response_content, response_preview_chars)),
+            json!(preview_with_limit(
+                &metadata_privacy::redact_text(response_content),
+                response_preview_chars
+            )),
         );
     }
     Value::Object(payload)
