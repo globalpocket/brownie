@@ -601,7 +601,9 @@ fn llm_provider_from_workspace_for_task_run_with_model_override(
         message: e,
     })?;
     if selection.status.provider == LlmProviderKind::Fake {
-        return Ok(Box::new(FakeLlmProvider));
+        return Ok(Box::new(WorkspaceFakeLlmProvider {
+            model: selection.status.model,
+        }));
     }
     if !selection.status.enabled {
         if selection.strict {
@@ -1387,4 +1389,25 @@ fn llm_failure_persistence_response(
             reason_preview
         ),
     )
+}
+
+// Carry only the explicitly selected Fake profile model into request metadata.
+// Environment overrides, default Fake and non-Fake fallback retain their existing providers.
+struct WorkspaceFakeLlmProvider {
+    model: String,
+}
+impl LlmProvider for WorkspaceFakeLlmProvider {
+    fn status(&self) -> LlmProviderStatus {
+        LlmProviderStatus {
+            model: self.model.clone(),
+            ..FakeLlmProvider.status()
+        }
+    }
+    fn complete(
+        &self,
+        request: &brownie_llm::LlmRequest,
+        budget: &LlmRequestBudget,
+    ) -> anyhow::Result<brownie_llm::LlmResponse> {
+        FakeLlmProvider.complete(request, budget)
+    }
 }

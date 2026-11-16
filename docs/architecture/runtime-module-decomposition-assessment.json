@@ -103,9 +103,9 @@
         "diagnostics_mentions": 0
       },
       "crates/brownie-runtime/src/llm_provider.rs": {
-        "line_count": 1390,
+        "line_count": 1413,
         "public_items": 15,
-        "private_items": 29,
+        "private_items": 30,
         "state_mutation_mentions": 3,
         "durable_write_mentions": 2,
         "permission_decision_mentions": 0,
