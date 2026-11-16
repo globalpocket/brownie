@@ -428,62 +428,65 @@ fn ordinary_response_previews_are_partial_and_keep_distinct_original_fingerprint
 fn malformed_tool_intent_does_not_leave_raw_write_content_in_physical_store() {
     let _lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _env = Environment::isolated();
-    let workspace = tempfile::tempdir().unwrap();
-    let mut intent = json!({"tool_requests":[{"tool_id":"workspace.write","reason":"Owned malformed response control.","input":{"path":"fixture.txt","operation":"create_file","content":NEW}}]}).to_string();
-    intent = intent.replacen("\"tool_requests\":[", "\"tool_requests\":! [", 1);
-    let content = format!("```brownie-tool-intent\n{intent}\n```");
-    let parsed = brownie_tools::ToolIntentParser::parse_assistant_content(&content);
-    assert!(
-        parsed.requests.is_empty(),
-        "control must exercise rejected malformed JSON"
-    );
-    let body = Box::leak(
-        json!({"choices":[{"message":{"content":content}}]})
-            .to_string()
-            .into_boxed_str(),
-    );
-    let (url, peer) = http_test_support::spawn_mock("200 OK", body);
-    std::env::set_var("BROWNIE_WORKSPACE_ROOT", workspace.path());
-    for (key, value) in [
-        ("BROWNIE_LLM_PROVIDER", "openai-compatible"),
-        ("BROWNIE_LLM_BASE_URL", url.as_str()),
-        ("BROWNIE_LLM_MODEL", "mock-model"),
-        ("BROWNIE_LLM_API_KEY", "fixture-only"),
-        ("BROWNIE_LLM_STRICT", "true"),
-        ("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true"),
-        ("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true"),
-        ("BROWNIE_LLM_SENSITIVE_GUARD", "off"),
-    ] {
-        std::env::set_var(key, value);
+    let malformed = json!({"tool_requests":[{"tool_id":"workspace.write","reason":"Owned malformed response control.","input":{"path":"fixture.txt","operation":"create_file","content":NEW}}]}).to_string().replacen("\"tool_requests\":[", "\"tool_requests\":! [", 1);
+    let partial = json!({"tool_requests":[{"tool_id":"workspace.read","reason":"Read an owned empty control file.","input":{"path":"empty.txt"}},{"tool_id":"workspace.write","reason":"Rejected write lacks a path.","input":{"operation":"create_file","content":NEW}}]}).to_string();
+    for (intent, accepted_reads) in [(malformed, 0), (partial, 1)] {
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::write(workspace.path().join("empty.txt"), "").unwrap();
+        let content = format!("```brownie-tool-intent\n{intent}\n```");
+        let parsed = brownie_tools::ToolIntentParser::parse_assistant_content(&content);
+        assert_eq!(parsed.requests.len(), accepted_reads);
+        assert!(
+            !parsed.rejected.is_empty(),
+            "control must exercise rejected input"
+        );
+        let body = Box::leak(
+            json!({"choices":[{"message":{"content":content}}]})
+                .to_string()
+                .into_boxed_str(),
+        );
+        let (url, peer) = http_test_support::spawn_mock("200 OK", body);
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", workspace.path());
+        for (key, value) in [
+            ("BROWNIE_LLM_PROVIDER", "openai-compatible"),
+            ("BROWNIE_LLM_BASE_URL", url.as_str()),
+            ("BROWNIE_LLM_MODEL", "mock-model"),
+            ("BROWNIE_LLM_API_KEY", "fixture-only"),
+            ("BROWNIE_LLM_STRICT", "true"),
+            ("BROWNIE_LLM_ALLOW_PROVIDER_ACCESS", "true"),
+            ("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true"),
+            ("BROWNIE_LLM_SENSITIVE_GUARD", "off"),
+        ] {
+            std::env::set_var(key, value);
+        }
+        let status = rpc("llm.status", json!({}));
+        assert_eq!(status["provider"], "OpenAiCompatible");
+        assert_eq!(status["strict"], true);
+        assert_eq!(status["llm_provider_access_allowed"], true);
+        let task = rpc(
+            "task.start",
+            json!({"goal":"Exercise an owned malformed response boundary.","mode_id":"implementer"}),
+        );
+        let request = json!({"jsonrpc":"2.0","id":2,"method":"task.run","params":{"task_id":task["task_id"]}});
+        let _actual = brownie_runtime::handle_jsonrpc_input_line(&request.to_string()).unwrap();
+        peer.join().unwrap();
+        let ledger = workspace
+            .path()
+            .join(".brownie/runs")
+            .join(task["run_id"].as_str().unwrap())
+            .join("ledger.jsonl");
+        let bytes = std::fs::read(&ledger).unwrap();
+        let events: Vec<Value> = String::from_utf8(bytes)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(
+            events
+                .iter()
+                .any(|event| event["kind"] == "LlmResponseReceived"),
+            "actual response must have reached the physical ledger"
+        );
+        absent_from_store(&workspace.path().join(".brownie"));
     }
-    let status = rpc("llm.status", json!({}));
-    assert_eq!(status["provider"], "OpenAiCompatible");
-    assert_eq!(status["strict"], true);
-    assert_eq!(status["llm_provider_access_allowed"], true);
-    let task = rpc(
-        "task.start",
-        json!({"goal":"Exercise an owned malformed response boundary.","mode_id":"implementer"}),
-    );
-    let request =
-        json!({"jsonrpc":"2.0","id":2,"method":"task.run","params":{"task_id":task["task_id"]}});
-    let _actual = brownie_runtime::handle_jsonrpc_input_line(&request.to_string()).unwrap();
-    peer.join().unwrap();
-    let ledger = workspace
-        .path()
-        .join(".brownie/runs")
-        .join(task["run_id"].as_str().unwrap())
-        .join("ledger.jsonl");
-    let bytes = std::fs::read(&ledger).unwrap();
-    let events: Vec<Value> = String::from_utf8(bytes)
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    assert!(
-        events
-            .iter()
-            .any(|event| event["kind"] == "LlmResponseReceived"),
-        "actual response must have reached the physical ledger"
-    );
-    absent_from_store(&workspace.path().join(".brownie"));
 }

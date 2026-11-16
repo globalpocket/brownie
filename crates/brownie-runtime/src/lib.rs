@@ -15616,8 +15616,11 @@ fn llm_response_received_payload(
     let parsed = ToolIntentParser::parse_assistant_content(response_content);
     // A rejected or incomplete tool-intent envelope can still contain full
     // source material. Its confidentiality cannot depend on parser success.
-    let contains_write_material = response_content.contains("brownie-tool-intent")
-        || response_content.contains("\"tool_requests\"")
+    let contains_write_material = ((parsed.requests.is_empty()
+        || !parsed.rejected.is_empty()
+        || parsed.summary.found_blocks > parsed.summary.accepted_blocks)
+        && (response_content.contains("brownie-tool-intent")
+            || response_content.contains("\"tool_requests\"")))
         || parsed
             .requests
             .iter()
