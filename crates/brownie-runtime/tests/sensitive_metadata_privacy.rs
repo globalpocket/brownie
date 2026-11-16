@@ -500,6 +500,37 @@ fn recognized_secret_forms_are_removed_without_erasing_benign_words() {
             assert!(output.contains("flask-router"));
         }
     }
+    for prefix in ["SK-", "GHP_", "GITHUB_PAT_", "ſk-"] {
+        for body in [
+            "a".repeat(24),
+            format!("{}K{}", "a".repeat(12), "a".repeat(12)),
+        ] {
+            let token = format!("{prefix}{body}");
+            let text = format!(
+                "{}=fixture-secret-value\nBearer {token}\nUse flask-router.",
+                "api_key"
+            );
+            assert!(brownie_llm::scan_text_for_sensitive_content(&text)
+                .findings
+                .iter()
+                .any(|finding| finding.category == "bearer_token"));
+            let intent = format!(
+                "```brownie-tool-intent\n{}\n```",
+                json!({"tool_requests":[{"tool_id":"workspace.read","reason":text,"input":{"path":"README.md"}}]})
+            );
+            let output = rpc(
+                "tool.intent.parse",
+                json!({"mode_id":"orchestrator","assistant_content":intent}),
+            )
+            .to_string();
+            assert!(
+                !output.contains(&token),
+                "case-folded token survived public metadata: {output}"
+            );
+            assert!(!output.contains("fixture-secret-value"));
+            assert!(output.contains("flask-router"));
+        }
+    }
 }
 
 #[test]

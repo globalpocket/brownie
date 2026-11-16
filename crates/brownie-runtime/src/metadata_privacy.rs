@@ -12,6 +12,7 @@ pub(super) fn redact_text(text: &str) -> String {
         return text.to_string();
     }
     let mut spans = Vec::new();
+    let mut validation_spans = Vec::new();
     for kind in ["PRIVATE KEY", "OPENSSH PRIVATE KEY"] {
         let begin = format!("-----BEGIN {kind}-----");
         let end = format!("-----END {kind}-----");
@@ -23,6 +24,7 @@ pub(super) fn redact_text(text: &str) -> String {
                 .map(|position| start + begin.len() + position + end.len())
                 .unwrap_or(text.len());
             spans.push((start, finish));
+            validation_spans.push((start, finish));
             offset = finish;
         }
     }
@@ -31,7 +33,10 @@ pub(super) fn redact_text(text: &str) -> String {
     let mut boundaries = std::collections::HashMap::new();
     for (start, character) in text.char_indices() {
         let candidate = !character.is_ascii()
-            || matches!(character.to_ascii_lowercase(), 'a' | 'c' | 'g' | 'p' | 's');
+            || matches!(
+                character.to_ascii_lowercase(),
+                'a' | 'b' | 'c' | 'g' | 'p' | 's'
+            );
         if candidate && metadata_word_boundary(previous, &mut boundaries) {
             for (prefix, minimum, hyphens) in [
                 ("ghp_", 20, false),
@@ -48,6 +53,7 @@ pub(super) fn redact_text(text: &str) -> String {
                         .count();
                     if length >= minimum {
                         spans.push((start, value_start + length));
+                        validation_spans.push((start, value_start + length));
                     }
                 }
             }
@@ -67,6 +73,34 @@ pub(super) fn redact_text(text: &str) -> String {
                     if matches!(text.as_bytes().get(separator).copied(), Some(b':' | b'=')) {
                         if let Some(span) = metadata_assignment_value(text, separator + 1) {
                             spans.push(span);
+                            validation_spans.push((start, span.1));
+                        }
+                    }
+                }
+            }
+            if let Some(end) = metadata_ci_prefix(text, start, "bearer") {
+                let value_start = metadata_skip_space(text, end);
+                if value_start > end {
+                    for (prefix, minimum, hyphens) in [
+                        ("ghp_", 20, false),
+                        ("github_pat_", 20, false),
+                        ("sk-", 16, true),
+                    ] {
+                        if let Some(body_start) = metadata_ci_prefix(text, value_start, prefix) {
+                            let mut count = 0;
+                            let mut finish = body_start;
+                            for character in text[body_start..].chars().take_while(|c| {
+                                c.is_ascii_alphanumeric()
+                                    || matches!(c, '_' | 'ſ' | 'K')
+                                    || (hyphens && *c == '-')
+                            }) {
+                                count += 1;
+                                finish += character.len_utf8();
+                            }
+                            if count >= minimum {
+                                spans.push((value_start, finish));
+                                validation_spans.push((start, finish));
+                            }
                         }
                     }
                 }
@@ -83,6 +117,7 @@ pub(super) fn redact_text(text: &str) -> String {
                                     .find(char::is_whitespace)
                                     .unwrap_or(text.len() - value_start);
                                 spans.push((value_start, value_start + length));
+                                validation_spans.push((start, value_start + length));
                             }
                         }
                     }
@@ -95,6 +130,20 @@ pub(super) fn redact_text(text: &str) -> String {
     if spans.is_empty() {
         return "[sensitive metadata redacted]".to_string();
     }
+    // Check the remainder with recognized expressions removed in a separate
+    // validation view. Leaving an Authorization/assignment label beside a
+    // placeholder would classify that placeholder or neighboring words again.
+    let remaining = metadata_replace_spans(text, validation_spans);
+    if !brownie_llm::scan_text_for_sensitive_content(&remaining)
+        .findings
+        .is_empty()
+    {
+        return "[sensitive metadata redacted]".to_string();
+    }
+    metadata_replace_spans(text, spans)
+}
+
+fn metadata_replace_spans(text: &str, mut spans: Vec<(usize, usize)>) -> String {
     spans.sort_unstable();
     let mut merged: Vec<(usize, usize)> = Vec::new();
     for (start, end) in spans {
@@ -349,6 +398,22 @@ mod span_tests {
     fn benign_fields_are_unchanged() {
         for text in [KEEP, "名前と本文を保持する。", "assignment=benign-value"] {
             assert_eq!(redact_text(text), text);
+        }
+    }
+
+    #[test]
+    fn mixed_assignment_and_case_folded_bearer_tokens_are_all_redacted() {
+        for prefix in ["SK-", "GHP_", "GITHUB_PAT_"] {
+            let token = format!("{prefix}{}", "a".repeat(24));
+            let input = format!("{}=fixture-secret-value\nBearer {token}\n{KEEP}", "api_key");
+            assert!(brownie_llm::scan_text_for_sensitive_content(&input)
+                .findings
+                .iter()
+                .any(|finding| finding.category == "bearer_token"));
+            let actual = redact_text(&input);
+            assert!(!actual.contains(&token), "{actual}");
+            assert!(!actual.contains("fixture-secret-value"), "{actual}");
+            assert!(actual.contains(KEEP), "{actual}");
         }
     }
 }
