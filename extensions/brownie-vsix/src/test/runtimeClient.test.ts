@@ -1,3 +1,4 @@
+import { objectiveContinuationFixtures } from "./objectiveContinuationFixtures";
 import { describe, expect, it } from 'vitest';
 import { isHeadlessContinueOnceParams, isHeadlessContinueOnceResult, isHeadlessRunAdvanceParams, isHeadlessRunAdvanceResult, isHeadlessRunDriveParams, isHeadlessRunDriveResult, isProgressSnapshot, isProposalApplyResult, isTaskListResult, isTaskRunVerificationRecoveryRepairOutcome, isTaskRunVerificationRecoveryRetryOutcome } from '../runtime/protocol';
 import { isCodebaseIndexBuildResult, isCodebaseIndexQueryResult, isCodebaseIndexSelectionReadResult, isCodebaseIndexSnapshotManifest } from '../runtime/protocol';
@@ -1629,7 +1630,7 @@ describe('protocol validation', () => {
         next_action: 'accept_objective_completion',
       },
       next_action: 'accept_objective_completion',
-    })).toBe(true);
+    })).toBe(false); // A route alone is not verification evidence.
     const objectiveProposalPreflightSnapshot = {
       proposal_id: objectiveProposalAuthorizationPreflightTarget.expected_proposal_id,
       snapshot_id: 'snapshot_objective_1',
@@ -6318,5 +6319,120 @@ describe('RuntimeClient', () => {
     const client = new RuntimeClient(transport);
 
     await expect(client.status()).rejects.toBeInstanceOf(RuntimeJsonRpcError);
+  });
+});
+
+
+describe('retained actual objective continuation', () => {
+  for (const row of objectiveContinuationFixtures) {
+    it(`accepts actual ${row.request.method} request ${row.request.id}`, () => {
+      const guard = row.request.method === 'headless.run.drive' ? isHeadlessRunDriveParams : isHeadlessContinueOnceParams;
+      expect(guard(row.request.params)).toBe(true);
+    });
+    it(`accepts actual ${row.request.method} response ${row.request.id}`, () => {
+      const guard = row.request.method === 'headless.run.drive' ? isHeadlessRunDriveResult : isHeadlessContinueOnceResult;
+      expect(guard(row.response.result)).toBe(true);
+    });
+  }
+  for (const key of ['objective_apply_verification_result', 'objective_completion_acceptance_result']) {
+    const row = objectiveContinuationFixtures.find(r => r.response.result[key] != null)!;
+    const changes: Record<string, (v: Record<string, unknown>) => void> = {
+      'missing evidence': v => { delete v[key]; },
+      'wrong task': v => { (v[key] as Record<string, unknown>).task_id = 'another-task'; },
+      'wrong route': v => { (v.next_route as Record<string, unknown>).kind = 'inspect_progress_overview'; },
+      'wrong target': v => { (v[key] as Record<string, unknown>).current_target_sha256 = `sha256:${'0'.repeat(64)}`; },
+      'bad fingerprint': v => { (v[key] as Record<string, unknown>).verification_fingerprint = 'invalid'; },
+      'raw evidence': v => { (v[key] as Record<string, unknown>).raw_content = 'forbidden'; },
+      'unknown field': v => { (v[key] as Record<string, unknown>).unknown = true; },
+      'missing journey': v => { delete (v[key] as Record<string, unknown>).journey_id; },
+      'mixed results': v => { v.task_run_result = {}; },
+      'inconsistent replay': v => { (v[key] as Record<string, unknown>).replayed = !v.replayed; },
+      'inconsistent sequence': v => { const route = v.next_route as Record<string, unknown>; route.aggregate_sequence = Number(route.aggregate_sequence) + 32; },
+      'stale envelope': v => { v.stale = true; },
+    };
+    for (const [name, mutate] of Object.entries(changes)) {
+      it(`rejects ${key}: ${name}`, () => {
+        const value = structuredClone(row.response.result);
+        mutate(value);
+        expect(value).not.toEqual(row.response.result);
+        expect(isHeadlessContinueOnceResult(value)).toBe(false);
+      });
+    }
+  }
+  it('rejects a completed outcome on an unfinished drive', () => {
+    const drive = structuredClone(objectiveContinuationFixtures.find(r => r.request.method === 'headless.run.drive')!.response.result);
+    Object.assign(drive.execution_outcome as Record<string, unknown>, {class:'completed',status:'completed',controller_action:'stop',continuation_required:false,completed:true,retryable:false,next_invocation:null});
+    expect(isHeadlessRunDriveResult(drive)).toBe(false);
+  });
+});
+
+describe('bounded recovery outcome schema controls (constructed fixtures)', () => {
+  function recovery() {
+    const v = structuredClone(objectiveContinuationFixtures.find(r => r.request.method === 'headless.run.drive')!.response.result);
+    v.stop_reason = 'budget_exhausted'; v.next_action = 'inspect_progress_overview';
+    v.terminal_completion_evidence = null; v.advances = []; v.advance_count = 0; v.executed_count = 0; v.replayed_count = 0;
+    const closure = v.completion_closure as Record<string, unknown>;
+    closure.status = 'unknown_nonterminal'; closure.stop_reason = 'budget_exhausted'; closure.next_action = 'inspect_progress_overview';
+    v.next_route = null;
+    const progress = (v.post_progress ?? v.start_progress) as Record<string, unknown>;
+    const target = {authorize_product_loop_stop_recovery:true, session_id:v.session_id, drive_id:v.drive_id, expected_drive_fingerprint:v.drive_fingerprint, expected_stop_reason:v.stop_reason, expected_end_session_sequence:v.end_session_sequence, expected_post_progress_fingerprint:progress.progress_fingerprint, recovery_goal:'Recover the finite stop', recovery_mode_id:'implementer'};
+    v.execution_outcome = {schema_version:1,outcome_scope:'objective',class:'recoverable_unknown_nonterminal',status:'recoverable_unknown_nonterminal',controller_action:'resume',continuation_required:true,completed:false,blocked:true,retryable:true,terminal_failure:false,stop_reason:v.stop_reason,product_loop_stop_recovery_target:target,next_invocation:{command:'resume',arguments:[],params:{authorize:true,continuation_id:`${v.drive_id}.product_loop_stop_recovery`,expected_progress_fingerprint:progress.progress_fingerprint,expected_aggregate_sequence:progress.aggregate_sequence,product_loop_stop_recovery_target:structuredClone(target)}}};
+    return v;
+  }
+  it('accepts a bound recovery outcome without claiming completion', () => { expect(isHeadlessRunDriveResult(recovery())).toBe(true); });
+  it('rejects recovery for another drive', () => {
+    const v=recovery(); const o=v.execution_outcome as Record<string,unknown>; (o.product_loop_stop_recovery_target as Record<string,unknown>).drive_id='another-drive';
+    expect(isHeadlessRunDriveResult(v)).toBe(false);
+  });
+  it('rejects a recovery invocation with another progress fingerprint', () => {
+    const v=recovery(); const o=v.execution_outcome as Record<string,unknown>;const n=o.next_invocation as Record<string,unknown>; (n.params as Record<string,unknown>).expected_progress_fingerprint=`sha256:${'0'.repeat(64)}`;
+    expect(isHeadlessRunDriveResult(v)).toBe(false);
+  });
+  it('rejects simultaneous completion and recovery', () => {
+    const v=recovery(); (v.execution_outcome as Record<string,unknown>).completed=true;
+    expect(isHeadlessRunDriveResult(v)).toBe(false);
+  });
+  it('rejects raw or unknown recovery fields', () => {
+    const v=recovery(); const o=v.execution_outcome as Record<string,unknown>; (o.product_loop_stop_recovery_target as Record<string,unknown>).raw_prompt='forbidden';
+    expect(isHeadlessRunDriveResult(v)).toBe(false);
+  });
+});
+
+
+describe('drive authorization checkpoint field', () => {
+  it('validates the authorization evidence rather than treating it as an unknown field', () => {
+    const drive = structuredClone(objectiveContinuationFixtures.find(r => r.request.method === 'headless.run.drive')!.response.result);
+    const authorization = structuredClone(objectiveContinuationFixtures.find(r => r.response.result.objective_proposal_authorization_preflight_result != null)!.response.result.objective_proposal_authorization_preflight_result) as Record<string, unknown>;
+    drive.objective_proposal_authorization_preflight_result = authorization;
+    expect(isHeadlessRunDriveResult(drive)).toBe(true);
+    authorization.authorization_token = 'must not be accepted';
+    expect(isHeadlessRunDriveResult(drive)).toBe(false);
+  });
+});
+
+describe('RuntimeClient with retained actual objective responses', () => {
+  for (const row of objectiveContinuationFixtures) {
+    it(`dispatches ${row.request.method} ${row.request.id} and accepts its recorded result`, async () => {
+      const transport = new FakeTransport({jsonrpc:'2.0',id:1,result:row.response.result});
+      const client = new RuntimeClient(transport);
+      const params = row.request.params;
+      let result: unknown;
+      if (row.request.method === 'headless.run.drive') {
+        if (!isHeadlessRunDriveParams(params)) throw new Error('recorded drive params rejected');
+        result = await client.driveHeadlessRun(params);
+      } else {
+        if (!isHeadlessContinueOnceParams(params)) throw new Error('recorded continuation params rejected');
+        result = await client.continueOnceHeadless(params);
+      }
+      expect(result).toEqual(row.response.result);
+      expect(transport.requests).toEqual([{jsonrpc:'2.0',id:1,method:row.request.method,params}]);
+    });
+  }
+  it('rejects a completion route whose required result is absent', async () => {
+    const row = objectiveContinuationFixtures.find(r => r.response.result.objective_completion_acceptance_result != null)!;
+    const result = structuredClone(row.response.result); delete result.objective_completion_acceptance_result;
+    const client = new RuntimeClient(new FakeTransport({jsonrpc:'2.0',id:1,result}));
+    if (!isHeadlessContinueOnceParams(row.request.params)) throw new Error('recorded params rejected');
+    await expect(client.continueOnceHeadless(row.request.params)).rejects.toThrow('invalid result');
   });
 });
