@@ -62,6 +62,13 @@ pub struct PromptSensitiveGuardError {
     finding_count: usize,
     message_count: usize,
     categories: Vec<String>,
+    scan: PromptSensitiveScanResult,
+}
+
+impl PromptSensitiveGuardError {
+    pub fn scan_result(&self) -> &PromptSensitiveScanResult {
+        &self.scan
+    }
 }
 
 impl std::fmt::Display for PromptSensitiveGuardError {
@@ -171,6 +178,7 @@ pub fn enforce_prompt_sensitive_guard(
             finding_count: result.findings.len(),
             message_count: indexes.len(),
             categories,
+            scan: result,
         });
     }
     Ok(result)

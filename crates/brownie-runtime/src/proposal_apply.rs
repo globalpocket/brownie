@@ -7146,3 +7146,26 @@ pub(super) mod preview_privacy_tests {
         }
     }
 }
+
+pub(super) fn apply_plan_for_snapshot(
+    mut plan: WorkspacePatchApplyPlanSummary,
+    snapshot: Option<&WorkspacePatchPreflightSnapshotSummary>,
+) -> WorkspacePatchApplyPlanSummary {
+    if let Some(snapshot) = snapshot.filter(|snapshot| snapshot.stale) {
+        plan.status = "Blocked".to_string();
+        if let Some(check) = plan
+            .checklist
+            .iter_mut()
+            .find(|check| check.name == "proposal_not_stale")
+        {
+            check.status = "Fail".to_string();
+            check.reason = Some(
+                snapshot
+                    .stale_reason
+                    .clone()
+                    .unwrap_or_else(|| "Latest preflight snapshot is stale.".to_string()),
+            );
+        }
+    }
+    plan
+}

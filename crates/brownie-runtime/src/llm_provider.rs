@@ -760,7 +760,11 @@ pub fn runtime_diagnostics_from_workspace(
             task_run_network_allowed: task_run_network_allowed(),
             budget: budget_from_profile(None).unwrap_or_default(),
             sensitive_guard_mode: resolve_sensitive_guard(&LlmProviderKind::Unknown, None).0,
-            sensitive_guard_invalid: resolve_sensitive_guard(&LlmProviderKind::Unknown, None).1,
+            sensitive_guard_invalid: if error.starts_with("invalid sensitive_guard for profile ") {
+                Some("sensitive_guard".to_string())
+            } else {
+                resolve_sensitive_guard(&LlmProviderKind::Unknown, None).1
+            },
         },
     };
 
@@ -1244,6 +1248,58 @@ pub(super) fn fail_llm_request(
     reason: &str,
     kind: LedgerEventKind,
 ) -> JsonRpcResponse<Value> {
+    fail_llm_request_with_reason(
+        store,
+        running,
+        id,
+        selection,
+        LlmFailureReason {
+            text: reason,
+            scan: None,
+        },
+        kind,
+    )
+}
+
+struct LlmFailureReason<'a> {
+    text: &'a str,
+    scan: Option<&'a PromptSensitiveScanResult>,
+}
+
+pub(super) fn fail_agent_loop_request(
+    store: &BrownieStore,
+    running: &brownie_protocol::TaskRecord,
+    id: Value,
+    selection: RuntimeLlmProviderStatus,
+    error: &anyhow::Error,
+    kind: LedgerEventKind,
+) -> JsonRpcResponse<Value> {
+    let scan = error
+        .downcast_ref::<brownie_llm::PromptSensitiveGuardError>()
+        .map(|error| error.scan_result());
+    fail_llm_request_with_reason(
+        store,
+        running,
+        id,
+        selection,
+        LlmFailureReason {
+            text: &error.to_string(),
+            scan,
+        },
+        kind,
+    )
+}
+
+fn fail_llm_request_with_reason(
+    store: &BrownieStore,
+    running: &brownie_protocol::TaskRecord,
+    id: Value,
+    selection: RuntimeLlmProviderStatus,
+    reason: LlmFailureReason<'_>,
+    kind: LedgerEventKind,
+) -> JsonRpcResponse<Value> {
+    let scan = reason.scan;
+    let reason = reason.text;
     let redacted_reason = redact_secret(reason);
     let reason_preview = preview_with_limit(&redacted_reason, LLM_FAILURE_REASON_PREVIEW_CHARS);
     let reason_chars = redacted_reason.chars().count();
@@ -1256,18 +1312,10 @@ pub(super) fn fail_llm_request(
         reason_chars > LLM_FAILURE_REASON_PREVIEW_CHARS,
     );
     let mut persistence_failures = Vec::new();
-    if redacted_reason.contains("Prompt sensitive-content guard failed") {
-        if let Err(error) = store.tasks().append_task_event_with_payload(
-            running,
-            LedgerEventKind::PromptSensitiveScanFailed,
-            Some(json!({
-                "mode": selection.sensitive_guard_mode.as_config_str(),
-                "sensitive_guard": selection.sensitive_guard_mode.as_config_str(),
-                "finding_count": 1,
-                "categories": [],
-                "message_indexes": [],
-            })),
-        ) {
+    if let Some(scan) = scan {
+        if let Err(error) =
+            append_sensitive_scan_event(store, running, scan, &selection.sensitive_guard_mode, true)
+        {
             persistence_failures.push(llm_failure_persistence_stage(
                 "sensitive_scan_event",
                 &error,

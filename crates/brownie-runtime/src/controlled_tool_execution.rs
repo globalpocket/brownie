@@ -5295,7 +5295,11 @@ pub(super) fn append_subtask_dispatcher_guard_verdict_recorded(
             "snapshot_fingerprint": snapshot_fingerprint,
             "snapshot_fingerprint_count": snapshot_fingerprint_count,
             "fingerprint_input_count": fingerprint_input_count,
-            "guard_reason": "Dispatch readiness snapshot is current, but scheduler handoff remains blocked until dispatcher guard preconditions are satisfied.",
+            "guard_reason": if snapshot_fingerprint_count == 1 {
+                "Dispatch readiness snapshot is current, but scheduler handoff remains blocked until dispatcher guard preconditions are satisfied."
+            } else {
+                "Dispatch readiness snapshot has conflicting fingerprints; scheduler handoff remains blocked."
+            },
             "required_capability": "runtime_subtask_dispatcher",
             "precondition_count": blocked_preconditions.len(),
             "satisfied_precondition_count": 0,
