@@ -193,7 +193,7 @@ fn conflicting_dispatch_snapshot_reason_matches_actual_guard_and_stays_blocked()
         .find(|event| event["kind"] == "SubtaskDispatchReadinessSnapshotRecorded")
         .unwrap()["payload"]
         .clone();
-    for count in [1, 2] {
+    for (count, missing) in [(1, false), (2, false), (1, true)] {
         let w = workspace("off");
         let task = rpc(
             "task.start",
@@ -204,16 +204,19 @@ fn conflicting_dispatch_snapshot_reason_matches_actual_guard_and_stays_blocked()
             .join(".brownie/runs")
             .join(task["run_id"].as_str().unwrap())
             .join("ledger.jsonl");
-        // Explicit owned schema-valid stored-state fixture, never a public
-        // tampering claim or an observed production crash.
+        // Owned stored-state controls include a missing-fingerprint negative;
+        // this is not a public tampering or production-crash claim.
         for i in 0..count {
             let mut payload = template.clone();
             payload["snapshot_id"] = json!(format!("owned_snapshot_{i}"));
             payload["parent_task_id"] = task["task_id"].clone();
             payload["parent_run_id"] = task["run_id"].clone();
             payload["admission_id"] = json!(format!("owned_admission_{i}"));
-            payload["readiness_fingerprint"] =
-                json!(format!("sha256:{}", (i + 1).to_string().repeat(64)));
+            payload["readiness_fingerprint"] = if missing {
+                json!("")
+            } else {
+                json!(format!("sha256:{}", (i + 1).to_string().repeat(64)))
+            };
             let event = json!({"event_id":format!("owned_seed_{i}"),"task_id":task["task_id"],"run_id":task["run_id"],"kind":"SubtaskDispatchReadinessSnapshotRecorded","timestamp":time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),"payload":payload});
             use std::io::Write;
             writeln!(
@@ -232,17 +235,28 @@ fn conflicting_dispatch_snapshot_reason_matches_actual_guard_and_stays_blocked()
             .unwrap()["payload"]
             .clone();
         assert_eq!(guard["dispatch_enabled"], false);
+        if missing {
+            assert!(
+                guard["guard_reason"].as_str().unwrap().contains("missing"),
+                "{guard}"
+            );
+            assert_eq!(guard["snapshot_fingerprint_count"], 0);
+        }
         assert_eq!(guard["execution_enabled"], false);
         assert_eq!(
             guard["snapshot_validity_status"],
-            if count == 1 { "Current" } else { "Blocked" }
+            if count == 1 && !missing {
+                "Current"
+            } else {
+                "Blocked"
+            }
         );
         assert_eq!(
             guard["guard_reason"]
                 .as_str()
                 .unwrap()
                 .contains("is current"),
-            count == 1
+            count == 1 && !missing
         );
     }
 }
