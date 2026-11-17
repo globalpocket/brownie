@@ -136,6 +136,9 @@ fn public_admission_excludes_live_owner_and_recovers_after_process_death() {
     assert!(store
         .admit_parent_join_continuation(&task_id, admission())
         .is_err());
+    // Windows exclusive locks deny reads through other handles. Contents are
+    // checked on every platform after the owned holder is killed and joined.
+    #[cfg(not(windows))]
     assert_eq!(fs::read(&lock).unwrap(), original);
     assert_eq!(store.read_ledger_events(&task.run_id).unwrap(), before);
     child.0.kill().unwrap();
