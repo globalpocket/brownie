@@ -1036,5 +1036,182 @@ export const objectiveContinuationFixtures: Array<{
         "task_run_result": null
       }
     }
+  },
+  {
+    "started_at": "2026-11-17T20:20:37.167371+00:00",
+    "observed_at": "2026-11-17T20:20:37.175696+00:00",
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 12,
+      "method": "headless.continue_once",
+      "params": {
+        "authorize": true,
+        "continuation_id": "certify.replay-progress.verify",
+        "expected_progress_fingerprint": "sha256:f2c59cf45c85a1d41a292d4100f5554afa81a45526aa1ccdb0e2a938377d62eb",
+        "expected_aggregate_sequence": 20261117202036370,
+        "objective_apply_verification_target": {
+          "journey_id": "certify.replay-progress.journey",
+          "session_id": "certify.replay-progress",
+          "source_drive_id": "certify.replay-progress.drive",
+          "expected_task_id": "task_c5e4206e-7c63-43e5-b45c-5dac459c8179",
+          "expected_run_id": "run_91b80107-9437-4806-88d8-c48e8e4b2211",
+          "expected_proposal_id": "proposal_3c365489379a447a890f2287ee3cf858",
+          "expected_operation": "patch_file",
+          "expected_path_fingerprint": "sha256:b335630551682c19a781afebcf4d07bf978fb1f8ac04c6bf87428ed5106870f5",
+          "authorize_objective_apply_verification": true,
+          "objective_apply_continuation_id": "certify.replay-progress.apply",
+          "expected_objective_apply_decision_id": "headless_decision_7f7e785f9d6b4512b3bb34d4670ed0c7",
+          "expected_apply_id": "apply_739e9395fbfb45e797fcfa09077357e9",
+          "expected_apply_status": "Applied",
+          "expected_authorization_consumed": true,
+          "expected_apply_fingerprint": "sha256:22e447f20abc3fc110921338c64c35b0ec81c3cd94a6cfe00c46b12f65da1715",
+          "expected_post_write_sha256": "sha256:77ce4e19e1a057f2077f39117af9605b4d3d634cc4d5800a1c7a4625354e90c2"
+        }
+      }
+    },
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 12,
+      "result": {
+        "candidate_count": 1,
+        "continuation_id": "certify.replay-progress.verify",
+        "current_aggregate_sequence": 20261117202037149,
+        "current_progress_fingerprint": "sha256:ec74ce3ce7550a9b9775bce44661e08cd33dea7a52adc112e658c70859378784",
+        "decision_id": "headless_decision_70343369fca749aeb757d4f75529a193",
+        "expected_aggregate_sequence": 20261117202036370,
+        "expected_progress_fingerprint": "sha256:f2c59cf45c85a1d41a292d4100f5554afa81a45526aa1ccdb0e2a938377d62eb",
+        "next_action": "accept_objective_completion",
+        "next_route": {
+          "aggregate_sequence": 20261117202037149,
+          "apply_fingerprint": "sha256:22e447f20abc3fc110921338c64c35b0ec81c3cd94a6cfe00c46b12f65da1715",
+          "apply_id": "apply_739e9395fbfb45e797fcfa09077357e9",
+          "kind": "accept_objective_completion_explicitly",
+          "next_action": "accept_objective_completion",
+          "progress_fingerprint": "sha256:ec74ce3ce7550a9b9775bce44661e08cd33dea7a52adc112e658c70859378784",
+          "proposal_id": "proposal_3c365489379a447a890f2287ee3cf858",
+          "reason": "Objective apply verification was already completed by this continuation; replaying bounded verification route.",
+          "run_id": "run_91b80107-9437-4806-88d8-c48e8e4b2211",
+          "task_id": "task_c5e4206e-7c63-43e5-b45c-5dac459c8179"
+        },
+        "objective_apply_verification_result": {
+          "apply_fingerprint": "sha256:22e447f20abc3fc110921338c64c35b0ec81c3cd94a6cfe00c46b12f65da1715",
+          "apply_id": "apply_739e9395fbfb45e797fcfa09077357e9",
+          "current_target_sha256": "sha256:77ce4e19e1a057f2077f39117af9605b4d3d634cc4d5800a1c7a4625354e90c2",
+          "expected_post_write_sha256": "sha256:77ce4e19e1a057f2077f39117af9605b4d3d634cc4d5800a1c7a4625354e90c2",
+          "journey_id": "certify.replay-progress.journey",
+          "next_action": "accept_objective_completion",
+          "operation": "replace_file",
+          "path_fingerprint": "sha256:b335630551682c19a781afebcf4d07bf978fb1f8ac04c6bf87428ed5106870f5",
+          "proposal_id": "proposal_3c365489379a447a890f2287ee3cf858",
+          "replayed": true,
+          "route_kind": "accept_objective_completion_explicitly",
+          "run_id": "run_91b80107-9437-4806-88d8-c48e8e4b2211",
+          "session_id": "certify.replay-progress",
+          "source_drive_id": "certify.replay-progress.drive",
+          "task_id": "task_c5e4206e-7c63-43e5-b45c-5dac459c8179",
+          "verification_fingerprint": "sha256:04a00b41455c8b3a992f85667be200639239fe389e91f8e11c3a464e2087dddd",
+          "verification_status": "verified"
+        },
+        "post_aggregate_sequence": 20261117202036370,
+        "post_progress_fingerprint": "sha256:f2c59cf45c85a1d41a292d4100f5554afa81a45526aa1ccdb0e2a938377d62eb",
+        "replayed": true,
+        "selected_run_id": "run_91b80107-9437-4806-88d8-c48e8e4b2211",
+        "selected_task_id": "task_c5e4206e-7c63-43e5-b45c-5dac459c8179",
+        "stale": false,
+        "status": "task_executed",
+        "task_run_result": null
+      }
+    }
+  },
+  {
+    "started_at": "2026-11-17T20:20:37.179043+00:00",
+    "observed_at": "2026-11-17T20:20:37.186446+00:00",
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 13,
+      "method": "headless.continue_once",
+      "params": {
+        "authorize": true,
+        "continuation_id": "certify.replay-progress.complete",
+        "expected_progress_fingerprint": "sha256:f2c59cf45c85a1d41a292d4100f5554afa81a45526aa1ccdb0e2a938377d62eb",
+        "expected_aggregate_sequence": 20261117202036370,
+        "objective_completion_acceptance_target": {
+          "journey_id": "certify.replay-progress.journey",
+          "session_id": "certify.replay-progress",
+          "source_drive_id": "certify.replay-progress.drive",
+          "expected_task_id": "task_c5e4206e-7c63-43e5-b45c-5dac459c8179",
+          "expected_run_id": "run_91b80107-9437-4806-88d8-c48e8e4b2211",
+          "expected_proposal_id": "proposal_3c365489379a447a890f2287ee3cf858",
+          "expected_operation": "patch_file",
+          "expected_path_fingerprint": "sha256:b335630551682c19a781afebcf4d07bf978fb1f8ac04c6bf87428ed5106870f5",
+          "expected_apply_id": "apply_739e9395fbfb45e797fcfa09077357e9",
+          "expected_apply_status": "Applied",
+          "expected_authorization_consumed": true,
+          "expected_apply_fingerprint": "sha256:22e447f20abc3fc110921338c64c35b0ec81c3cd94a6cfe00c46b12f65da1715",
+          "expected_post_write_sha256": "sha256:77ce4e19e1a057f2077f39117af9605b4d3d634cc4d5800a1c7a4625354e90c2",
+          "authorize_objective_completion_acceptance": true,
+          "objective_apply_verification_continuation_id": "certify.replay-progress.verify",
+          "expected_objective_apply_verification_decision_id": "headless_decision_70343369fca749aeb757d4f75529a193",
+          "expected_current_target_sha256": "sha256:77ce4e19e1a057f2077f39117af9605b4d3d634cc4d5800a1c7a4625354e90c2",
+          "expected_verification_status": "verified",
+          "expected_verification_route_kind": "accept_objective_completion_explicitly",
+          "expected_verification_fingerprint": "sha256:04a00b41455c8b3a992f85667be200639239fe389e91f8e11c3a464e2087dddd"
+        }
+      }
+    },
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 13,
+      "result": {
+        "candidate_count": 1,
+        "continuation_id": "certify.replay-progress.complete",
+        "current_aggregate_sequence": 20261117202037149,
+        "current_progress_fingerprint": "sha256:ec74ce3ce7550a9b9775bce44661e08cd33dea7a52adc112e658c70859378784",
+        "decision_id": "headless_decision_4dca655e62b34276b2acd9936d6d3796",
+        "expected_aggregate_sequence": 20261117202036370,
+        "expected_progress_fingerprint": "sha256:f2c59cf45c85a1d41a292d4100f5554afa81a45526aa1ccdb0e2a938377d62eb",
+        "next_action": "close_headless_run",
+        "next_route": {
+          "aggregate_sequence": 20261117202037149,
+          "apply_fingerprint": "sha256:22e447f20abc3fc110921338c64c35b0ec81c3cd94a6cfe00c46b12f65da1715",
+          "apply_id": "apply_739e9395fbfb45e797fcfa09077357e9",
+          "kind": "refresh_progress_overview",
+          "next_action": "close_headless_run",
+          "progress_fingerprint": "sha256:ec74ce3ce7550a9b9775bce44661e08cd33dea7a52adc112e658c70859378784",
+          "proposal_id": "proposal_3c365489379a447a890f2287ee3cf858",
+          "reason": "Objective completion was already accepted by this continuation; replaying bounded acceptance route.",
+          "run_id": "run_91b80107-9437-4806-88d8-c48e8e4b2211",
+          "task_id": "task_c5e4206e-7c63-43e5-b45c-5dac459c8179"
+        },
+        "objective_completion_acceptance_result": {
+          "acceptance_fingerprint": "sha256:22a530404f956d7a3b3ccd192ca37680aa0daff35a5a296fdfcfde9d0c0de50c",
+          "acceptance_status": "accepted",
+          "apply_fingerprint": "sha256:22e447f20abc3fc110921338c64c35b0ec81c3cd94a6cfe00c46b12f65da1715",
+          "apply_id": "apply_739e9395fbfb45e797fcfa09077357e9",
+          "current_target_sha256": "sha256:77ce4e19e1a057f2077f39117af9605b4d3d634cc4d5800a1c7a4625354e90c2",
+          "expected_post_write_sha256": "sha256:77ce4e19e1a057f2077f39117af9605b4d3d634cc4d5800a1c7a4625354e90c2",
+          "journey_id": "certify.replay-progress.journey",
+          "next_action": "close_headless_run",
+          "operation": "replace_file",
+          "path_fingerprint": "sha256:b335630551682c19a781afebcf4d07bf978fb1f8ac04c6bf87428ed5106870f5",
+          "proposal_id": "proposal_3c365489379a447a890f2287ee3cf858",
+          "replayed": true,
+          "run_id": "run_91b80107-9437-4806-88d8-c48e8e4b2211",
+          "session_id": "certify.replay-progress",
+          "source_drive_id": "certify.replay-progress.drive",
+          "task_id": "task_c5e4206e-7c63-43e5-b45c-5dac459c8179",
+          "verification_fingerprint": "sha256:04a00b41455c8b3a992f85667be200639239fe389e91f8e11c3a464e2087dddd",
+          "verification_status": "verified"
+        },
+        "post_aggregate_sequence": 20261117202036370,
+        "post_progress_fingerprint": "sha256:f2c59cf45c85a1d41a292d4100f5554afa81a45526aa1ccdb0e2a938377d62eb",
+        "replayed": true,
+        "selected_run_id": "run_91b80107-9437-4806-88d8-c48e8e4b2211",
+        "selected_task_id": "task_c5e4206e-7c63-43e5-b45c-5dac459c8179",
+        "stale": false,
+        "status": "task_executed",
+        "task_run_result": null
+      }
+    }
   }
 ];

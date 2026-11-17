@@ -6436,3 +6436,17 @@ describe('RuntimeClient with retained actual objective responses', () => {
     await expect(client.continueOnceHeadless(row.request.params)).rejects.toThrow('invalid result');
   });
 });
+
+
+describe('actual objective replay after independent ledger progress', () => {
+  for (const row of objectiveContinuationFixtures.filter(r => r.response.result.replayed === true)) {
+    it(`rejects replay ${row.request.id} with a checkpoint route substituted for current progress`, () => {
+      const value = structuredClone(row.response.result);
+      expect(value.current_progress_fingerprint).not.toEqual(value.post_progress_fingerprint);
+      const route = value.next_route as Record<string, unknown>;
+      route.progress_fingerprint = value.post_progress_fingerprint;
+      route.aggregate_sequence = value.post_aggregate_sequence;
+      expect(isHeadlessContinueOnceResult(value)).toBe(false);
+    });
+  }
+});

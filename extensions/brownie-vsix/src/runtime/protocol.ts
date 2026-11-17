@@ -7725,7 +7725,10 @@ function isObjectiveContinuationBoundary(value: Record<string, unknown>): boolea
   if (value.status !== 'task_executed' || value.stale !== false || value.candidate_count !== 1 || typeof value.decision_id !== 'string' || typeof value.continuation_id !== 'string') return false;
   if (value.selected_task_id !== result.task_id || value.selected_run_id !== result.run_id || value.replayed !== result.replayed) return false;
   if (!['task_id', 'run_id', 'proposal_id', 'apply_id', 'apply_fingerprint'].every(key => route[key] === result[key])) return false;
-  if (route.progress_fingerprint !== value.post_progress_fingerprint || route.aggregate_sequence !== value.post_aggregate_sequence || route.next_action !== result.next_action || value.next_action !== result.next_action) return false;
+  // Replay preserves the original checkpoint, but Runtime routes from current progress.
+  const routeProgress = value.replayed ? value.current_progress_fingerprint : value.post_progress_fingerprint;
+  const routeSequence = value.replayed ? value.current_aggregate_sequence : value.post_aggregate_sequence;
+  if (route.progress_fingerprint !== routeProgress || route.aggregate_sequence !== routeSequence || route.next_action !== result.next_action || value.next_action !== result.next_action) return false;
   if (['task_run_result', 'proposal_apply_result', 'objective_proposal_authorization_preflight_result', 'modepack_select_registry_update_result', 'modepack_fetch_candidate_result', 'modepack_verify_candidate_provenance_result', 'modepack_approve_candidate_result', 'modepack_replace_active_result', 'modepack_rollback_active_result', 'llm_provider_failure_retry_admission', 'product_continuation_admission'].some(key => value[key] != null)) return false;
   const sameTarget = result.current_target_sha256 === result.expected_post_write_sha256;
   if (completion != null) return result.acceptance_status === 'accepted' && result.verification_status === 'verified' && sameTarget && route.kind === 'refresh_progress_overview' && result.next_action === 'close_headless_run';
