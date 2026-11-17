@@ -1,3 +1,32 @@
+export interface ProductLoopStopRecoveryTarget {
+  authorize_product_loop_stop_recovery: true;
+  session_id: string;
+  drive_id: string;
+  expected_drive_fingerprint: string;
+  expected_stop_reason: string;
+  expected_end_session_sequence: number;
+  expected_post_progress_fingerprint?: string | null;
+  expected_next_route_fingerprint?: string | null;
+  recovery_goal: string;
+  recovery_mode_id?: string | null;
+}
+
+export interface HeadlessExecutionOutcome {
+  schema_version: 1;
+  outcome_scope: 'objective';
+  class: 'completed' | 'continuation_required' | 'stale_retry' | 'waiting' | 'no_actionable_work' | 'recoverable_unknown_nonterminal';
+  status: HeadlessExecutionOutcome['class'];
+  controller_action: 'stop' | 'resume' | 'wait';
+  continuation_required: boolean;
+  completed: boolean;
+  blocked: boolean;
+  retryable: boolean;
+  terminal_failure: false;
+  stop_reason: string;
+  next_invocation: { command: 'resume'; arguments: []; params?: HeadlessContinueOnceParams } | null;
+  product_loop_stop_recovery_target?: ProductLoopStopRecoveryTarget;
+}
+
 export interface JsonRpcRequest {
   jsonrpc: '2.0';
   id: number;
@@ -658,7 +687,7 @@ export interface ObjectiveProposalAuthorizationPreflightTarget {
   expected_proposal_id: string;
   expected_source_event_id: string;
   expected_source_event_kind: 'WorkspacePatchProposed';
-  expected_operation: 'replace_file';
+  expected_operation: 'replace_file' | 'create_file' | 'patch_file';
   expected_path_fingerprint: string;
   expected_validation_status: 'Valid';
   expected_approval_status: 'Pending';
@@ -681,7 +710,7 @@ export interface ObjectiveProposalApplyTarget {
   expected_proposal_id: string;
   expected_source_event_id: string;
   expected_source_event_kind: 'WorkspacePatchProposed';
-  expected_operation: 'replace_file';
+  expected_operation: 'replace_file' | 'create_file' | 'patch_file';
   expected_path_fingerprint: string;
   expected_validation_status: 'Valid';
   expected_approval_status: 'Approved';
@@ -689,7 +718,10 @@ export interface ObjectiveProposalApplyTarget {
   expected_preflight_snapshot_id: string;
   expected_apply_plan_id: string;
   expected_target_sha256: string;
-  replacement_content: string;
+  replacement_content?: string | null;
+  patch_old_text?: string | null;
+  patch_new_text?: string | null;
+  patch_hunks?: ProposalPatchHunk[] | null;
 }
 
 export interface ObjectiveApplyVerificationTarget {
@@ -703,7 +735,7 @@ export interface ObjectiveApplyVerificationTarget {
   expected_run_id: string;
   expected_proposal_id: string;
   expected_apply_id: string;
-  expected_operation: 'replace_file';
+  expected_operation: 'replace_file' | 'patch_file';
   expected_apply_status: 'Applied';
   expected_authorization_consumed: true;
   expected_path_fingerprint: string;
@@ -722,7 +754,7 @@ export interface ObjectiveCompletionAcceptanceTarget {
   expected_run_id: string;
   expected_proposal_id: string;
   expected_apply_id: string;
-  expected_operation: 'replace_file';
+  expected_operation: 'replace_file' | 'patch_file';
   expected_apply_status: 'Applied';
   expected_authorization_consumed: true;
   expected_path_fingerprint: string;
@@ -735,6 +767,7 @@ export interface ObjectiveCompletionAcceptanceTarget {
 }
 
 export interface HeadlessContinueOnceParams {
+  product_loop_stop_recovery_target?: ProductLoopStopRecoveryTarget | null;
   authorize: true;
   expected_progress_fingerprint: string;
   expected_aggregate_sequence: number;
@@ -1266,7 +1299,49 @@ export interface HeadlessContinueRoute {
   next_action: string;
 }
 
+export interface HeadlessRunObjectiveApplyVerification {
+  journey_id: string;
+  task_id: string;
+  run_id: string;
+  session_id: string;
+  source_drive_id: string;
+  proposal_id: string;
+  apply_id: string;
+  operation: string;
+  path_fingerprint: string;
+  apply_fingerprint: string;
+  expected_post_write_sha256: string;
+  current_target_sha256: string;
+  verification_fingerprint: string;
+  replayed: boolean;
+  next_action: string;
+  verification_status: string;
+  route_kind: string;
+}
+
+export interface HeadlessRunObjectiveCompletionAcceptance {
+  journey_id: string;
+  task_id: string;
+  run_id: string;
+  session_id: string;
+  source_drive_id: string;
+  proposal_id: string;
+  apply_id: string;
+  operation: string;
+  path_fingerprint: string;
+  apply_fingerprint: string;
+  expected_post_write_sha256: string;
+  current_target_sha256: string;
+  verification_fingerprint: string;
+  replayed: boolean;
+  next_action: string;
+  verification_status: string;
+  acceptance_status: string;
+  acceptance_fingerprint: string;
+}
+
 export interface HeadlessContinueOnceResult {
+  execution_outcome?: HeadlessExecutionOutcome | null;
   status: HeadlessContinueOnceStatus;
   decision_id?: string | null;
   continuation_id?: string | null;
@@ -1284,6 +1359,8 @@ export interface HeadlessContinueOnceResult {
   task_run_result?: TaskRunResult | null;
   proposal_apply_result?: ProposalApplyResult | null;
   objective_proposal_authorization_preflight_result?: HeadlessRunObjectiveProposalAuthorizationPreflight | null;
+  objective_apply_verification_result?: HeadlessRunObjectiveApplyVerification | null;
+  objective_completion_acceptance_result?: HeadlessRunObjectiveCompletionAcceptance | null;
   modepack_select_registry_update_result?: ModePackSelectRegistryUpdateResult | null;
   modepack_fetch_candidate_result?: ModePackFetchCandidateResult | null;
   modepack_verify_candidate_provenance_result?: ModePackVerifyCandidateProvenanceResult | null;
@@ -1425,6 +1502,7 @@ export interface HeadlessRunProgressCheckpoint {
 }
 
 export interface HeadlessRunAdvanceResult {
+  execution_outcome?: HeadlessExecutionOutcome | null;
   status: HeadlessContinueOnceStatus;
   session_id: string;
   advance_id: string;
@@ -1445,6 +1523,8 @@ export interface HeadlessRunAdvanceResult {
 }
 
 export interface HeadlessRunDriveResult {
+  objective_proposal_authorization_preflight_result?: HeadlessRunObjectiveProposalAuthorizationPreflight | null;
+  execution_outcome?: HeadlessExecutionOutcome | null;
   status: HeadlessContinueOnceStatus;
   session_id: string;
   drive_id: string;
@@ -1623,7 +1703,7 @@ export interface HeadlessRunObjectiveProposalAuthorizationPreflight {
   proposal_id: string;
   source_event_id: string;
   source_event_kind: 'WorkspacePatchProposed';
-  operation: 'replace_file';
+  operation: 'replace_file' | 'create_file' | 'patch_file';
   path_fingerprint: string;
   objective_context_fingerprint: string;
   selected_context_fingerprint: string;
@@ -6332,7 +6412,9 @@ export function isTaskRunContextBudget(value: unknown): value is TaskRunContextB
 export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessContinueOnceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'continuation_scope', 'max_steps', 'context_budget', 'selected_index_context', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'product_continuation_admission_target', 'product_continuation_run_target', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target', 'parent_join_run_target', 'objective_proposal_authorization_preflight_target', 'objective_proposal_apply_target', 'objective_apply_verification_target', 'objective_completion_acceptance_target', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'modepack_selected_active_rollback_target']) &&
+    (value.product_loop_stop_recovery_target == null || (isProductLoopStopRecoveryTarget(value.product_loop_stop_recovery_target) && (value.max_steps == null || value.max_steps === 1) && Object.keys(value).every(key => value[key] == null || ['authorize', 'continuation_id', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'scope', 'max_steps', 'product_loop_stop_recovery_target'].includes(key)))) &&
+    hasOnlyFields(value, [
+      'product_loop_stop_recovery_target','authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'continuation_scope', 'max_steps', 'context_budget', 'selected_index_context', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'product_continuation_admission_target', 'product_continuation_run_target', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target', 'parent_join_run_target', 'objective_proposal_authorization_preflight_target', 'objective_proposal_apply_target', 'objective_apply_verification_target', 'objective_completion_acceptance_target', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'modepack_selected_active_rollback_target']) &&
     value.authorize === true &&
     typeof value.expected_progress_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_progress_fingerprint) &&
@@ -6435,7 +6517,7 @@ function isObjectiveProposalAuthorizationPreflightTarget(value: unknown): value 
     isBoundedHandle(value.expected_proposal_id) &&
     isBoundedHandle(value.expected_source_event_id) &&
     value.expected_source_event_kind === 'WorkspacePatchProposed' &&
-    value.expected_operation === 'replace_file' &&
+    (value.expected_operation === 'replace_file' || value.expected_operation === 'create_file' || value.expected_operation === 'patch_file') &&
     typeof value.expected_path_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_path_fingerprint) &&
     value.expected_validation_status === 'Valid' &&
@@ -6477,6 +6559,9 @@ function isObjectiveProposalApplyTarget(value: unknown): value is ObjectivePropo
       'expected_apply_plan_id',
       'expected_target_sha256',
       'replacement_content',
+      'patch_old_text',
+      'patch_new_text',
+      'patch_hunks',
     ]) &&
     hasNoForbiddenRawFields(value) &&
     value.authorize_objective_proposal_apply === true &&
@@ -6498,7 +6583,7 @@ function isObjectiveProposalApplyTarget(value: unknown): value is ObjectivePropo
     isBoundedHandle(value.expected_proposal_id) &&
     isBoundedHandle(value.expected_source_event_id) &&
     value.expected_source_event_kind === 'WorkspacePatchProposed' &&
-    value.expected_operation === 'replace_file' &&
+    (value.expected_operation === 'replace_file' || value.expected_operation === 'create_file' || value.expected_operation === 'patch_file') &&
     typeof value.expected_path_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_path_fingerprint) &&
     value.expected_validation_status === 'Valid' &&
@@ -6509,7 +6594,10 @@ function isObjectiveProposalApplyTarget(value: unknown): value is ObjectivePropo
     isBoundedHandle(value.expected_apply_plan_id) &&
     typeof value.expected_target_sha256 === 'string' &&
     isSha256Fingerprint(value.expected_target_sha256) &&
-    typeof value.replacement_content === 'string' &&
+    (value.replacement_content == null || typeof value.replacement_content === 'string') &&
+    (value.patch_old_text == null || typeof value.patch_old_text === 'string') &&
+    (value.patch_new_text == null || typeof value.patch_new_text === 'string') &&
+    (value.patch_hunks == null || (Array.isArray(value.patch_hunks) && value.patch_hunks.every(isProposalPatchHunk))) &&
     !Object.prototype.hasOwnProperty.call(value, 'authorization_token') &&
     !Object.prototype.hasOwnProperty.call(value, 'authorization_reason') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload') &&
@@ -6549,7 +6637,7 @@ function isObjectiveApplyVerificationTarget(value: unknown): value is ObjectiveA
     isBoundedHandle(value.expected_run_id) &&
     isBoundedHandle(value.expected_proposal_id) &&
     isBoundedHandle(value.expected_apply_id) &&
-    value.expected_operation === 'replace_file' &&
+    (value.expected_operation === 'replace_file' || value.expected_operation === 'patch_file') &&
     value.expected_apply_status === 'Applied' &&
     value.expected_authorization_consumed === true &&
     typeof value.expected_path_fingerprint === 'string' &&
@@ -6602,7 +6690,7 @@ function isObjectiveCompletionAcceptanceTarget(value: unknown): value is Objecti
     isBoundedHandle(value.expected_run_id) &&
     isBoundedHandle(value.expected_proposal_id) &&
     isBoundedHandle(value.expected_apply_id) &&
-    value.expected_operation === 'replace_file' &&
+    (value.expected_operation === 'replace_file' || value.expected_operation === 'patch_file') &&
     value.expected_apply_status === 'Applied' &&
     value.expected_authorization_consumed === true &&
     typeof value.expected_path_fingerprint === 'string' &&
@@ -7622,10 +7710,107 @@ export function isLlmProviderFailureOutcome(value: unknown): value is LlmProvide
   );
 }
 
+function isObjectiveContinuationBoundary(value: Record<string, unknown>): boolean {
+  const verification = value.objective_apply_verification_result;
+  const completion = value.objective_completion_acceptance_result;
+  if ((verification != null) === (completion != null)) return false;
+  const result = verification ?? completion;
+  const route = value.next_route;
+  const common = ['journey_id', 'task_id', 'run_id', 'session_id', 'source_drive_id', 'proposal_id', 'apply_id', 'operation', 'path_fingerprint', 'apply_fingerprint', 'expected_post_write_sha256', 'current_target_sha256', 'verification_fingerprint', 'replayed', 'next_action'];
+  const extra = verification != null ? ['verification_status', 'route_kind'] : ['verification_status', 'acceptance_status', 'acceptance_fingerprint'];
+  if (!isRecord(result) || !isRecord(route) || !hasOnlyFields(result, [...common, ...extra])) return false;
+  if (![...common, ...extra].every(key => key === 'replayed' ? typeof result[key] === 'boolean' : typeof result[key] === 'string' && (result[key] as string).length > 0)) return false;
+  if (!['path_fingerprint', 'apply_fingerprint', 'expected_post_write_sha256', 'current_target_sha256', 'verification_fingerprint', ...(completion != null ? ['acceptance_fingerprint'] : [])].every(key => isSha256Fingerprint(result[key] as string))) return false;
+  if (!['replace_file', 'patch_file'].includes(result.operation as string)) return false;
+  if (value.status !== 'task_executed' || value.stale !== false || value.candidate_count !== 1 || typeof value.decision_id !== 'string' || typeof value.continuation_id !== 'string') return false;
+  if (value.selected_task_id !== result.task_id || value.selected_run_id !== result.run_id || value.replayed !== result.replayed) return false;
+  if (!['task_id', 'run_id', 'proposal_id', 'apply_id', 'apply_fingerprint'].every(key => route[key] === result[key])) return false;
+  // Replay preserves the original checkpoint, but Runtime routes from current progress.
+  const routeProgress = value.replayed ? value.current_progress_fingerprint : value.post_progress_fingerprint;
+  const routeSequence = value.replayed ? value.current_aggregate_sequence : value.post_aggregate_sequence;
+  if (route.progress_fingerprint !== routeProgress || route.aggregate_sequence !== routeSequence || route.next_action !== result.next_action || value.next_action !== result.next_action) return false;
+  if (['task_run_result', 'proposal_apply_result', 'objective_proposal_authorization_preflight_result', 'modepack_select_registry_update_result', 'modepack_fetch_candidate_result', 'modepack_verify_candidate_provenance_result', 'modepack_approve_candidate_result', 'modepack_replace_active_result', 'modepack_rollback_active_result', 'llm_provider_failure_retry_admission', 'product_continuation_admission'].some(key => value[key] != null)) return false;
+  const sameTarget = result.current_target_sha256 === result.expected_post_write_sha256;
+  if (completion != null) return result.acceptance_status === 'accepted' && result.verification_status === 'verified' && sameTarget && route.kind === 'refresh_progress_overview' && result.next_action === 'close_headless_run';
+  if (result.verification_status === 'verified') return sameTarget && result.route_kind === 'accept_objective_completion_explicitly' && route.kind === result.route_kind && result.next_action === 'accept_objective_completion';
+  return result.verification_status === 'mismatch' && !sameTarget && result.route_kind === 'start_verification_recovery_explicitly' && route.kind === result.route_kind && result.next_action === 'start_verification_recovery';
+}
+
+function isProductLoopStopRecoveryTarget(value: unknown): value is ProductLoopStopRecoveryTarget {
+  return isRecord(value) && hasOnlyFields(value, ['authorize_product_loop_stop_recovery', 'session_id', 'drive_id', 'expected_drive_fingerprint', 'expected_stop_reason', 'expected_end_session_sequence', 'expected_post_progress_fingerprint', 'expected_next_route_fingerprint', 'recovery_goal', 'recovery_mode_id']) &&
+    value.authorize_product_loop_stop_recovery === true && isHeadlessContinuationId(value.session_id) && isHeadlessContinuationId(value.drive_id) &&
+    typeof value.expected_drive_fingerprint === 'string' && isSha256Fingerprint(value.expected_drive_fingerprint) &&
+    typeof value.expected_stop_reason === 'string' && /^[A-Za-z0-9_.:-]{1,96}$/.test(value.expected_stop_reason) &&
+    isNonNegativeInteger(value.expected_end_session_sequence) &&
+    (value.expected_post_progress_fingerprint == null || typeof value.expected_post_progress_fingerprint === 'string' && isSha256Fingerprint(value.expected_post_progress_fingerprint)) &&
+    (value.expected_next_route_fingerprint == null || typeof value.expected_next_route_fingerprint === 'string' && isSha256Fingerprint(value.expected_next_route_fingerprint)) &&
+    typeof value.recovery_goal === 'string' && value.recovery_goal.trim().length > 0 && new TextEncoder().encode(value.recovery_goal).length <= 500 &&
+    (value.recovery_mode_id == null || typeof value.recovery_mode_id === 'string' && value.recovery_mode_id.trim().length > 0 && new TextEncoder().encode(value.recovery_mode_id).length <= 96);
+}
+
+function recoveryOutcomeMatchesDrive(value: Record<string, unknown>, outcome: Record<string, unknown>): boolean {
+  const target = outcome.product_loop_stop_recovery_target;
+  const invocation = outcome.next_invocation;
+  if (!isProductLoopStopRecoveryTarget(target) || !isRecord(invocation) || !isRecord(invocation.params)) return false;
+  const progress = value.post_progress ?? value.start_progress;
+  const params = invocation.params;
+  return isRecord(progress) && target.session_id === value.session_id && target.drive_id === value.drive_id &&
+    target.expected_drive_fingerprint === value.drive_fingerprint && target.expected_stop_reason === value.stop_reason &&
+    target.expected_end_session_sequence === value.end_session_sequence && target.expected_post_progress_fingerprint === progress.progress_fingerprint &&
+    params.continuation_id === `${value.drive_id}.product_loop_stop_recovery` && params.expected_progress_fingerprint === progress.progress_fingerprint && params.expected_aggregate_sequence === progress.aggregate_sequence;
+}
+
+function headlessOutcomeMatchesEnvelope(value: Record<string, unknown>, drive: boolean): boolean {
+  const outcome = value.execution_outcome;
+  if (!isRecord(outcome)) return false;
+  let expected: string;
+  if (drive) {
+    const closure = value.completion_closure;
+    if (!isRecord(closure)) return false;
+    const finalized = isRecord(value.completion_finalization) && value.completion_finalization.status === 'finalized';
+    const accepted = closure.status === 'complete' && isRecord(value.accepted_completion) && value.accepted_completion.status === 'AcceptedComplete';
+    const route = value.next_route;
+    const noImplementationRoute = route == null || isRecord(route) && ['inspect_progress_overview', 'refresh_progress_overview', 'no_eligible_task'].includes(String(route.kind));
+    const noTerminalSteps = !Array.isArray(value.advances) || value.advances.every(a => isRecord(a) && a.terminal_completion_evidence == null && (!Array.isArray(a.steps) || a.steps.every(step => isRecord(step) && step.terminal_completion_evidence == null)));
+    const recoverable = ['drive_budget_exhausted', 'budget_exhausted'].includes(String(value.stop_reason)) && closure.status === 'unknown_nonterminal' && value.next_action === 'inspect_progress_overview' && noImplementationRoute && value.completion_finalization == null && value.accepted_completion == null && value.terminal_completion_evidence == null && noTerminalSteps;
+    if (recoverable) return outcome.class === 'recoverable_unknown_nonterminal' && outcome.stop_reason === value.stop_reason && recoveryOutcomeMatchesDrive(value, outcome);
+    expected = finalized || accepted ? 'completed' : closure.status === 'stale_no_progress' ? 'stale_retry' : closure.status === 'task_in_progress' ? 'waiting' : closure.status === 'no_eligible_task' ? 'no_actionable_work' : 'continuation_required';
+  } else {
+    expected = value.status === 'stale_progress' ? 'stale_retry' : value.status === 'task_in_progress' ? 'waiting' : value.status === 'no_eligible_task' ? 'no_actionable_work' : 'continuation_required';
+  }
+  return outcome.class === expected && (value.stop_reason == null || outcome.stop_reason === value.stop_reason);
+}
+
+function isHeadlessExecutionOutcome(value: unknown): value is HeadlessExecutionOutcome {
+  if (!isRecord(value) || !hasOnlyFields(value, ['schema_version', 'outcome_scope', 'class', 'status', 'controller_action', 'continuation_required', 'completed', 'blocked', 'retryable', 'terminal_failure', 'stop_reason', 'next_invocation', 'product_loop_stop_recovery_target']) || value.schema_version !== 1 || value.outcome_scope !== 'objective' || value.status !== value.class || value.terminal_failure !== false || typeof value.stop_reason !== 'string' || !value.stop_reason || value.stop_reason.length > 120) return false;
+  if (value.class === 'recoverable_unknown_nonterminal') {
+    const next = value.next_invocation;
+    const target = value.product_loop_stop_recovery_target;
+    if (value.controller_action !== 'resume' || value.continuation_required !== true || value.completed !== false || value.blocked !== true || value.retryable !== true || !isProductLoopStopRecoveryTarget(target) || !isRecord(next) || !hasOnlyFields(next, ['command', 'arguments', 'params']) || next.command !== 'resume' || !Array.isArray(next.arguments) || next.arguments.length !== 0 || !isHeadlessContinueOnceParams(next.params)) return false;
+    const bound = next.params.product_loop_stop_recovery_target;
+    return isRecord(bound) && Object.keys(bound).length === Object.keys(target).length && Object.entries(target).every(([k, v]) => bound[k] === v);
+  }
+  if (value.blocked !== false || value.product_loop_stop_recovery_target != null) return false;
+  const labels: Record<string, [string, boolean, boolean, boolean]> = {
+    completed: ['stop', false, true, false],
+    continuation_required: ['resume', true, false, true],
+    stale_retry: ['resume', true, false, true],
+    waiting: ['wait', false, false, true],
+    no_actionable_work: ['stop', false, false, false],
+  };
+  if (typeof value.class !== 'string' || !Object.prototype.hasOwnProperty.call(labels, value.class)) return false;
+  const expected = labels[value.class];
+  if (value.controller_action !== expected[0] || value.continuation_required !== expected[1] || value.completed !== expected[2] || value.retryable !== expected[3]) return false;
+  const next = value.next_invocation;
+  return expected[0] === 'resume' ? isRecord(next) && hasOnlyFields(next, ['command', 'arguments']) && next.command === 'resume' && Array.isArray(next.arguments) && next.arguments.length === 0 : next === null;
+}
+
 export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessContinueOnceResult {
   if (
     !isRecord(value) ||
+    !(value.execution_outcome == null || isHeadlessExecutionOutcome(value.execution_outcome) && headlessOutcomeMatchesEnvelope(value, false)) ||
     !hasOnlyFields(value, [
+      'execution_outcome',
       'status',
       'decision_id',
       'continuation_id',
@@ -7643,6 +7828,8 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
       'task_run_result',
       'proposal_apply_result',
       'objective_proposal_authorization_preflight_result',
+      'objective_apply_verification_result',
+      'objective_completion_acceptance_result',
       'modepack_select_registry_update_result',
       'modepack_fetch_candidate_result',
       'modepack_verify_candidate_provenance_result',
@@ -7700,6 +7887,10 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     return false;
   }
 
+  if (value.objective_apply_verification_result != null || value.objective_completion_acceptance_result != null) {
+    return isObjectiveContinuationBoundary(value);
+  }
+
   if (value.max_steps !== undefined && value.max_steps !== null) {
     if (
       value.step_count === undefined ||
@@ -7735,7 +7926,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.objective_proposal_authorization_preflight_result !== undefined &&
     value.objective_proposal_authorization_preflight_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.proposal_apply_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'apply_authorized_objective_proposal_explicitly';
+    return (value.selected_task_id == null || value.selected_task_id === value.next_route?.task_id) && (value.selected_run_id == null || value.selected_run_id === value.next_route?.run_id) && value.task_run_result == null && value.proposal_apply_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'apply_authorized_objective_proposal_explicitly';
   }
   if (
     value.status === 'task_executed' &&
@@ -7745,29 +7936,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.proposal_apply_result !== undefined &&
     value.proposal_apply_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.objective_proposal_authorization_preflight_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'verify_objective_apply_explicitly';
-  }
-  if (
-    value.status === 'task_executed' &&
-    value.stale === false &&
-    value.decision_id !== undefined &&
-    value.decision_id !== null &&
-    (value.selected_task_id == null || typeof value.selected_task_id === 'string') &&
-    (value.selected_run_id == null || typeof value.selected_run_id === 'string') &&
-    value.task_run_result == null &&
-    value.proposal_apply_result == null &&
-    value.objective_proposal_authorization_preflight_result == null &&
-    value.modepack_select_registry_update_result == null &&
-    value.modepack_fetch_candidate_result == null &&
-    value.modepack_verify_candidate_provenance_result == null &&
-    value.modepack_approve_candidate_result == null &&
-    value.modepack_replace_active_result == null &&
-    value.modepack_rollback_active_result == null &&
-    value.next_route !== undefined &&
-    value.next_route !== null &&
-    (value.next_route.kind === 'accept_objective_completion_explicitly' || value.next_route.kind === 'start_verification_recovery_explicitly')
-  ) {
-    return true;
+    return (value.selected_task_id == null || value.selected_task_id === value.next_route?.task_id) && (value.selected_run_id == null || value.selected_run_id === value.next_route?.run_id) && value.task_run_result == null && value.objective_proposal_authorization_preflight_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'verify_objective_apply_explicitly';
   }
   if (
     value.status === 'task_executed' &&
@@ -7903,7 +8072,9 @@ function isHeadlessRunProgressCheckpoint(value: unknown): value is HeadlessRunPr
 export function isHeadlessRunAdvanceResult(value: unknown): value is HeadlessRunAdvanceResult {
   return (
     isRecord(value) &&
+    (value.execution_outcome == null || isHeadlessExecutionOutcome(value.execution_outcome) && headlessOutcomeMatchesEnvelope(value, false)) &&
     hasOnlyFields(value, [
+      'execution_outcome',
       'status',
       'session_id',
       'advance_id',
@@ -7966,7 +8137,9 @@ export function isHeadlessRunJourneyExecution(value: unknown): value is Headless
 export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDriveResult {
   return (
     isRecord(value) &&
+    (value.execution_outcome == null || isHeadlessExecutionOutcome(value.execution_outcome) && headlessOutcomeMatchesEnvelope(value, true)) &&
     hasOnlyFields(value, [
+      'execution_outcome',
       'status',
       'session_id',
       'drive_id',
@@ -7991,6 +8164,7 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
       'post_progress',
       'next_route',
       'objective_proposal_candidate',
+      'objective_proposal_authorization_preflight_result',
       'advances',
       'journey_route_resume',
       'journey_closure',
@@ -7998,6 +8172,7 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
       'journey_execution',
       'next_action',
     ]) &&
+    (value.objective_proposal_authorization_preflight_result == null || isHeadlessRunObjectiveProposalAuthorizationPreflight(value.objective_proposal_authorization_preflight_result)) &&
     isHeadlessContinueOnceStatus(value.status) &&
     isHeadlessRunId(value.session_id) &&
     isHeadlessRunId(value.drive_id) &&
@@ -8119,7 +8294,7 @@ export function isHeadlessRunObjectiveProposalAuthorizationPreflight(value: unkn
     isBoundedHandle(value.proposal_id) &&
     isBoundedHandle(value.source_event_id) &&
     value.source_event_kind === 'WorkspacePatchProposed' &&
-    value.operation === 'replace_file' &&
+    (value.operation === 'replace_file' || value.operation === 'create_file' || value.operation === 'patch_file') &&
     typeof value.path_fingerprint === 'string' &&
     isSha256Fingerprint(value.path_fingerprint) &&
     typeof value.objective_context_fingerprint === 'string' &&
