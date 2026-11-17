@@ -2270,7 +2270,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     ) {
         Ok(result) => result,
         Err(error) => {
-            return fail_llm_request(
+            return fail_agent_loop_request(
                 &store,
                 &running,
                 id,
@@ -2285,7 +2285,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     sensitive_guard_mode: provider_selection.sensitive_guard_mode.clone(),
                     sensitive_guard_invalid: provider_selection.sensitive_guard_invalid.clone(),
                 },
-                &error.to_string(),
+                &error,
                 LedgerEventKind::LlmRequestFailed,
             );
         }
@@ -2565,7 +2565,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         ) {
             Ok(result) => result,
             Err(error) => {
-                return fail_llm_request(
+                return fail_agent_loop_request(
                     &store,
                     &running,
                     id,
@@ -2580,7 +2580,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                         sensitive_guard_mode: provider_selection.sensitive_guard_mode.clone(),
                         sensitive_guard_invalid: provider_selection.sensitive_guard_invalid.clone(),
                     },
-                    &error.to_string(),
+                    &error,
                     LedgerEventKind::SecondPassLlmRequestFailed,
                 );
             }
@@ -2868,7 +2868,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             ) {
                 Ok(result) => result,
                 Err(error) => {
-                    return fail_llm_request(
+                    return fail_agent_loop_request(
                         &store,
                         &running,
                         id,
@@ -2885,7 +2885,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                                 .sensitive_guard_invalid
                                 .clone(),
                         },
-                        &error.to_string(),
+                        &error,
                         LedgerEventKind::SecondPassLlmRequestFailed,
                     );
                 }
@@ -6487,14 +6487,17 @@ fn latest_apply_plan(
         if payload.get("proposal_id").and_then(Value::as_str) != Some(proposal_id) {
             return None;
         }
-        Some(build_apply_plan_summary(
-            proposal_id,
-            payload.get("plan_id")?.as_str()?,
-            payload.get("status")?.as_str()?,
-            payload
-                .get("operation")
-                .and_then(Value::as_str)
-                .unwrap_or(WorkspacePatchOperation::ReplaceFile.as_str()),
+        Some(proposal_apply::apply_plan_for_snapshot(
+            build_apply_plan_summary(
+                proposal_id,
+                payload.get("plan_id")?.as_str()?,
+                payload.get("status")?.as_str()?,
+                payload
+                    .get("operation")
+                    .and_then(Value::as_str)
+                    .unwrap_or(WorkspacePatchOperation::ReplaceFile.as_str()),
+            ),
+            latest_snapshot(events, proposal_id).as_ref(),
         ))
     })
 }
@@ -11401,7 +11404,10 @@ fn preflight_proposal(
     let previous = latest_snapshot(&events, proposal_id);
     let snapshot = capture_preflight_snapshot(store, &proposal, previous.as_ref())?;
     let plan_id = format!("plan_{}", uuid::Uuid::new_v4().simple());
-    let apply_plan = build_apply_plan_summary(proposal_id, &plan_id, "Ready", &proposal.operation);
+    let apply_plan = proposal_apply::apply_plan_for_snapshot(
+        build_apply_plan_summary(proposal_id, &plan_id, "Ready", &proposal.operation),
+        Some(&snapshot),
+    );
     store
         .tasks()
         .append_task_event_with_payload(
@@ -11419,9 +11425,9 @@ fn preflight_proposal(
                 "proposal_id": proposal_id,
                 "plan_id": plan_id,
                 "operation": &proposal.operation,
-                "status": "Ready",
+                "status": apply_plan.status,
                 "check_count": apply_plan.checklist.len(),
-                "failed_checks": [],
+                "failed_checks": apply_plan.checklist.iter().filter(|check| check.status == "Fail").map(|check| check.name.clone()).collect::<Vec<_>>(),
             })),
         )
         .map_err(|e| format!("invalid params: {e}"))?;
