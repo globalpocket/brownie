@@ -797,6 +797,49 @@ fn headless_continue_objective_completion_acceptance(
     })?;
     let request_fingerprint = objective_completion_acceptance_request_fingerprint(params)?;
     let verification_checkpoint = validate_objective_completion_acceptance_route(store, target)?;
+    let applied = store
+        .read_headless_objective_proposal_apply_checkpoint(
+            &verification_checkpoint.objective_apply_continuation_id,
+        )
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            "objective completion acceptance failed: apply checkpoint missing".to_string()
+        })?;
+    // Initial acceptance must revalidate the apply chain and the actual file.
+    // A matching request/checkpoint alone says nothing about a later edit.
+    // Exact acceptance replay takes its separate, already-recorded path.
+    let (_, current_target_sha256) = validate_objective_apply_verification_route(
+        store,
+        &ObjectiveApplyVerificationTarget {
+            authorize_objective_apply_verification: true,
+            objective_apply_continuation_id: verification_checkpoint
+                .objective_apply_continuation_id
+                .clone(),
+            expected_objective_apply_decision_id: verification_checkpoint
+                .expected_objective_apply_decision_id
+                .clone(),
+            journey_id: target.journey_id.clone(),
+            session_id: target.session_id.clone(),
+            source_drive_id: target.source_drive_id.clone(),
+            expected_task_id: target.expected_task_id.clone(),
+            expected_run_id: target.expected_run_id.clone(),
+            expected_proposal_id: target.expected_proposal_id.clone(),
+            expected_apply_id: target.expected_apply_id.clone(),
+            // The completion API historically normalizes the displayed operation
+            // to replace_file. Revalidate the actual applied operation instead.
+            expected_operation: applied.result.apply_result.operation.clone(),
+            expected_apply_status: target.expected_apply_status.clone(),
+            expected_authorization_consumed: target.expected_authorization_consumed,
+            expected_path_fingerprint: target.expected_path_fingerprint.clone(),
+            expected_apply_fingerprint: target.expected_apply_fingerprint.clone(),
+            expected_post_write_sha256: target.expected_post_write_sha256.clone(),
+        },
+    )?;
+    if current_target_sha256 != verification_checkpoint.current_target_sha256
+        || current_target_sha256 != target.expected_post_write_sha256
+    {
+        return Err("objective completion acceptance failed: verified target is stale".to_string());
+    }
     let selected_record = store
         .tasks()
         .get_task(&target.expected_task_id)

@@ -29246,6 +29246,33 @@ modes:
                 "objective_completion_acceptance_target": completion_target
             }
         });
+        let verified_bytes = std::fs::read(temp.path().join("README.md")).expect("verified bytes");
+        let ledger_before = store.tasks().read_ledger_events(&run_id).expect("ledger");
+        for changed_content in [Some("changed after verification"), None] {
+            let path = temp.path().join("README.md");
+            match changed_content {
+                Some(content) => std::fs::write(&path, content).expect("change verified target"),
+                None => std::fs::remove_file(&path).expect("remove verified target"),
+            }
+            let refused = parse_line(&completion_request.to_string())
+                .error
+                .expect("stale target must not be accepted");
+            assert_eq!(refused.code, -32602);
+            assert!(
+                refused.message.to_ascii_lowercase().contains("target"),
+                "{}",
+                refused.message
+            );
+            assert!(store
+                .read_headless_objective_completion_acceptance_checkpoint("m56.apply.complete")
+                .expect("read refused completion")
+                .is_none());
+            assert_eq!(
+                store.tasks().read_ledger_events(&run_id).expect("ledger"),
+                ledger_before
+            );
+            std::fs::write(path, &verified_bytes).expect("restore verified target");
+        }
         let completed = parse_line(&completion_request.to_string())
             .result
             .expect("completion acceptance result");
