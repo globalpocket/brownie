@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
@@ -77,3 +79,49 @@ test('CI check executes both isolated terminal liveness shards for the merged-de
   assert.match(fs.readFileSync(claimSmokeFixture, 'utf8'), /claim_smoke_shards=\(terminal merged-terminal/);
   assert.match(manifest.scripts.check, /pnpm phase-loop:claim-smoke:terminal/);
 });
+
+function executeNoEligibleRefusalSequence(firstResult) {
+  const source = fs.readFileSync(claimSmokeFixture, 'utf8');
+  const anchor = source.indexOf('no_eligible_split_todo_before=');
+  const start = source.indexOf('set +e\n', anchor);
+  const endMarker = 'test "$no_eligible_split_exit" = "76"';
+  const end = source.indexOf(endMarker, start);
+  assert.ok(anchor >= 0 && start > anchor && end > start, 'actual refusal sequence must exist');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-refusal-contract-'));
+  try {
+    const log = path.join(directory, 'invocations');
+    const harness = `first_result="$1"
+contract_log="$2"
+call_count=0
+PHASE_LOOP=fixture-controller
+PHASE_LOOP_COMMAND_TIMEOUT_SECONDS=5
+run_with_timeout() {
+  call_count=$((call_count + 1))
+  printf '%s\\n' "$*" >> "$contract_log"
+  if [ "$call_count" = 1 ]; then return "$first_result"; fi
+  return 76
+}
+` + source.slice(start, end + endMarker.length) + '\n';
+    const result = spawnSync('bash', ['-c', harness, 'fixture', String(firstResult), log], {
+      encoding: 'utf8', timeout: 5000,
+    });
+    assert.equal(result.error, undefined);
+    return { status: result.status, calls: fs.readFileSync(log, 'utf8').trim().split('\n') };
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+test('no-eligible refusal retry records both expected semantic refusals', () => {
+  const result = executeNoEligibleRefusalSequence(76);
+  assert.equal(result.status, 0);
+  assert.equal(result.calls.length, 2);
+  for (const call of result.calls) assert.match(call, /--expected-exit 76/);
+});
+for (const [name, code] of [['timeout', 124], ['unexpected success', 0], ['unexpected failure', 1]]) {
+  test(`no-eligible refusal retry stops at first ${name}`, () => {
+    const result = executeNoEligibleRefusalSequence(code);
+    assert.notEqual(result.status, 0, 'a later refusal must not hide the first wrong result');
+    assert.equal(result.calls.length, 1, 'do not continue after the first wrong result');
+  });
+}

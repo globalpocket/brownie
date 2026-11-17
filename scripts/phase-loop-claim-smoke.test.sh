@@ -6034,7 +6034,9 @@ PHASE_LOOP_WORKSPACE_ROOT="$no_eligible_split_workspace" \
 PHASE_LOOP_SKIP_BINARY_FRESHNESS_CHECK=1 \
 PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP=1 \
 BROWNIE_BIN="$fake_brownie_terminal_no_eligible" \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null || true
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null || no_eligible_split_liveness_exit="$?"
+# Only the recorded semantic refusal is expected; do not hide timeouts or success.
+test "$no_eligible_split_liveness_exit" = "76" || exit 1
 
 PHASE_LOOP_STATE_DIR="$no_eligible_split_state" \
 PHASE_LOOP_PROMPT="$no_eligible_split_prompt" \
