@@ -1,6 +1,7 @@
 //! Brownie persistence crate.
 
 mod inspection;
+mod run_admission_lease;
 mod task_run_admission;
 
 use std::fs::{self, File, OpenOptions};
@@ -5428,36 +5429,8 @@ impl TaskStore {
         Ok(())
     }
 
-    fn acquire_run_admission_lock(&self, run_id: &str) -> Result<RunAdmissionLock> {
-        let run_dir = self.run_dir(run_id);
-        fs::create_dir_all(&run_dir)
-            .with_context(|| format!("failed to create {}", run_dir.display()))?;
-        let lock_path = run_dir.join("parent-join-admission.lock");
-        for _ in 0..RUN_ADMISSION_LOCK_RETRIES {
-            match OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&lock_path)
-            {
-                Ok(mut file) => {
-                    writeln!(file, "{}", timestamp()?)
-                        .context("failed to write run admission lock heartbeat")?;
-                    return Ok(RunAdmissionLock::new(lock_path));
-                }
-                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-                    thread::sleep(RUN_ADMISSION_LOCK_SLEEP);
-                }
-                Err(error) => {
-                    return Err(error)
-                        .with_context(|| format!("failed to acquire {}", lock_path.display()));
-                }
-            }
-        }
-        bail!(
-            "run admission lock remained busy after {} attempts: {}",
-            RUN_ADMISSION_LOCK_RETRIES,
-            lock_path.display()
-        )
+    fn acquire_run_admission_lock(&self, run_id: &str) -> Result<File> {
+        run_admission_lease::acquire(&self.run_dir(run_id))
     }
 
     fn acquire_run_terminal_mutation_lock(&self, run_id: &str) -> Result<RunAdmissionLock> {
