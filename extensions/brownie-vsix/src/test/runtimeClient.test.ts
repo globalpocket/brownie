@@ -3624,6 +3624,26 @@ describe('protocol validation', () => {
     expect(isTaskRunVerificationRecoveryContextReadSummary({ ...recoveryContextReadSummary, prompt_preview_redacted: false })).toBe(false);
   });
 
+  it('rejects unsafe recovery count terms and sums while retaining safe controls', () => {
+    for (const [total, failed, completed, accepted] of [
+      [3, 1, 2, true],
+      [3, 2, 2, false],
+      [Number.MAX_SAFE_INTEGER + 1, Number.MAX_SAFE_INTEGER, 1, false],
+      [Number.MAX_SAFE_INTEGER + 1, Number.MAX_SAFE_INTEGER + 1, 0, false],
+      [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER - 1, 1, true],
+      [3, -1, 4, false],
+      [3, 1.5, 1.5, false],
+      [Infinity, Infinity, 0, false],
+    ] as const) {
+      const provenance = { ...recoveryCycleChildProvenance,
+        parent_join_child_completion_child_count: total,
+        parent_join_terminal_failed_child_count: failed,
+        parent_join_terminal_completed_child_count: completed };
+      expect(isRecoveryCycleChildProvenance(provenance)).toBe(accepted);
+      expect(isTaskRecord({ ...taskRecord, recovery_cycle_provenance: provenance })).toBe(accepted);
+    }
+  });
+
   it('validates recovery-cycle child provenance invariants', () => {
     expect(isRecoveryCycleChildProvenance(recoveryCycleChildProvenance)).toBe(true);
     expect(isTaskRecord({ ...taskRecord, recovery_cycle_provenance: recoveryCycleChildProvenance })).toBe(true);

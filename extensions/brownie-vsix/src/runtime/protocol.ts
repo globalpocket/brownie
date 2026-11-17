@@ -5363,6 +5363,11 @@ function hasOnlyKeys(value: Record<string, unknown>, allowedKeys: Set<string>): 
   return Object.keys(value).every((key) => allowedKeys.has(key));
 }
 
+function isSafeChildCountSum(total: number, failed: number, completed: number): boolean {
+  return [total, failed, completed].every(Number.isSafeInteger)
+    && Number.isSafeInteger(failed + completed) && failed + completed === total;
+}
+
 function isSha256Fingerprint(value: string): boolean {
   return /^sha256:[0-9a-f]{64}$/.test(value);
 }
@@ -5378,7 +5383,7 @@ export function isRecoveryCycleChildProvenance(value: unknown): value is Recover
     isNonNegativeInteger(value.parent_join_child_completion_child_count) &&
     isNonNegativeInteger(value.parent_join_terminal_failed_child_count) &&
     isNonNegativeInteger(value.parent_join_terminal_completed_child_count) &&
-    value.parent_join_terminal_failed_child_count + value.parent_join_terminal_completed_child_count === value.parent_join_child_completion_child_count &&
+    isSafeChildCountSum(value.parent_join_child_completion_child_count, value.parent_join_terminal_failed_child_count, value.parent_join_terminal_completed_child_count) &&
     typeof value.parent_join_recovery_cycle === 'boolean' &&
     isNonNegativeInteger(value.parent_join_recovery_cycle_depth) &&
     ((value.parent_join_recovery_cycle && value.parent_join_recovery_cycle_depth >= 1) || (!value.parent_join_recovery_cycle && value.parent_join_recovery_cycle_depth === 0))
@@ -7138,7 +7143,7 @@ function isParentJoinRunTarget(value: unknown): value is ParentJoinRunTarget {
     value.expected_child_completion_child_count > 0 &&
     isNonNegativeInteger(value.expected_terminal_completed_child_count) &&
     isNonNegativeInteger(value.expected_terminal_failed_child_count) &&
-    value.expected_terminal_completed_child_count + value.expected_terminal_failed_child_count === value.expected_child_completion_child_count
+    isSafeChildCountSum(value.expected_child_completion_child_count, value.expected_terminal_failed_child_count, value.expected_terminal_completed_child_count)
   );
 }
 

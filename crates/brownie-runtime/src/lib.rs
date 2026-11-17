@@ -16,6 +16,7 @@ mod product_completion;
 mod product_continuation;
 mod proposal_apply;
 mod proposal_material;
+mod recovery_provenance;
 mod task_admission;
 mod task_progress;
 mod verification_recovery;
