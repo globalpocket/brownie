@@ -1,5 +1,9 @@
 use super::*;
 
+#[cfg(unix)]
+#[path = "proposal_apply_recovery.rs"]
+mod replacement_recovery;
+
 pub(super) fn handle_proposal_apply(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: ProposalApplyParams = match parse_params(params) {
         Ok(params) => params,
@@ -5940,6 +5944,21 @@ pub(super) fn apply_proposal(
     ),
     String,
 > {
+    store
+        .with_workspace_apply_lock(|| apply_proposal_under_lock(store, params))
+        .map_err(|error| format!("proposal apply admission failed: {error}"))?
+}
+
+fn apply_proposal_under_lock(
+    store: &BrownieStore,
+    params: &ProposalApplyParams,
+) -> Result<
+    (
+        WorkspacePatchProposalSummary,
+        WorkspacePatchApplyResultSummary,
+    ),
+    String,
+> {
     if params.transaction_recovery_source.is_some() {
         if params.transaction_items.is_some() {
             let operations = transaction_proposal_operations(store, params)?;
@@ -6194,6 +6213,11 @@ pub(super) fn apply_proposal(
 
     let events = read_existing_run_events(store, &params.run_id)?;
     if has_consumed_apply_authorization(&events, &params.proposal_id) {
+        #[cfg(unix)]
+        if operation == WorkspacePatchOperation::ReplaceFile.as_str() {
+            replacement_recovery::cleanup_recorded(store, params)?;
+        }
+
         apply_result.checklist.push(apply_result_check(
             "approval_unconsumed",
             "Fail",
@@ -6390,6 +6414,14 @@ pub(super) fn apply_proposal(
         "Pass",
         None,
     ));
+
+    #[cfg(unix)]
+    if let Some(result) = replacement_recovery::recover(store, &task, params, &proposal)? {
+        return Ok((
+            inspect_proposal(store, &params.run_id, &params.proposal_id)?,
+            result,
+        ));
+    }
 
     let Some(previous_snapshot) = proposal.latest_snapshot.as_ref() else {
         apply_result.checklist.push(apply_result_check(
@@ -6655,6 +6687,45 @@ pub(super) fn apply_proposal(
     ));
 
     let expected_post_write_hash = format!("sha256:{}", hex_sha256(replacement_bytes));
+    #[cfg(unix)]
+    let mut recovery_witness = None;
+    #[cfg(unix)]
+    let outcome = {
+        let prepared = prepare_atomic_replace_existing_file(&target_path, replacement_bytes);
+        if let Some(prepared) = prepared.prepared {
+            match replacement_recovery::prepare(
+                store,
+                &task,
+                params,
+                &proposal,
+                &target_path,
+                &prepared,
+                &apply_result,
+            ) {
+                Ok(witness) => recovery_witness = Some(witness),
+                Err(error) => {
+                    cleanup_atomic_replace_temp(&prepared.temp_path);
+                    return Err(error);
+                }
+            }
+            #[cfg(test)]
+            replacement_recovery::crash_boundary("before");
+            let outcome = commit_prepared_atomic_replace(prepared, &target_path);
+            #[cfg(test)]
+            if outcome.atomic_replacement_completed {
+                replacement_recovery::crash_boundary("after");
+            }
+            outcome
+        } else {
+            AtomicReplaceOutcome {
+                post_write_sha256: None,
+                temp_file_cleaned: prepared.temp_file_cleaned,
+                atomic_replacement_completed: false,
+                failure_reason: prepared.failure_reason,
+            }
+        }
+    };
+    #[cfg(not(unix))]
     let outcome = atomic_replace_existing_file(&target_path, replacement_bytes);
     apply_result.temp_file_cleaned = outcome.temp_file_cleaned;
     apply_result.atomic_replacement_completed = outcome.atomic_replacement_completed;
@@ -6756,13 +6827,20 @@ pub(super) fn apply_proposal(
     apply_result.authorization_consumed = true;
     apply_result.applied = true;
     apply_result.applied_at = Some(now_rfc3339());
-    record_apply_result(
+    let recorded = record_apply_result(
         store,
         &task,
         &params.run_id,
         &params.proposal_id,
         apply_result,
-    )
+    )?;
+    #[cfg(unix)]
+    if let Some(witness) = recovery_witness {
+        #[cfg(test)]
+        replacement_recovery::crash_boundary("recorded");
+        replacement_recovery::finish(store, params, &witness)?;
+    }
+    Ok(recorded)
 }
 
 #[cfg(test)]
