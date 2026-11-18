@@ -129,7 +129,7 @@ for (const [name, code] of [['timeout', 124], ['unexpected success', 0], ['unexp
 // Exercise the actual negative assertions and fallback extracted from the shell fixture.
 for (const engine of ['native', 'fallback']) {
   for (const entry of ['helper', 'inline']) {
-    for (const scenario of ['present_file', 'absent_file', 'present_directory', 'absent_directory', 'missing_path']) {
+    for (const scenario of ['present_file', 'absent_file', 'present_directory', 'absent_directory', 'present_hidden_directory', 'missing_path']) {
       test(`negative search ${engine} ${entry} ${scenario}`, () => {
         const source = fs.readFileSync(claimSmokeFixture, 'utf8');
         const fallback = source.match(/cat > "\$fallback_bin_dir\/rg" <<'SH'\n([\s\S]*?)\nSH/);
@@ -154,7 +154,7 @@ for (const engine of ['native', 'fallback']) {
           fs.writeFileSync(empty, '');
           const content = scenario.startsWith('present') ? 'todo.completed\n' : 'ordinary content\n';
           if (scenario.endsWith('directory')) {
-            fs.mkdirSync(target); fs.writeFileSync(path.join(target, 'events'), content);
+            fs.mkdirSync(target); fs.writeFileSync(path.join(target, scenario === 'present_hidden_directory' ? '.events' : 'events'), content);
           } else if (scenario !== 'missing_path') fs.writeFileSync(target, content);
           const invocation = entry === 'helper'
             ? 'assert_not_contains "$1" "TODO-decompose|todo.completed"'

@@ -401,6 +401,10 @@ if [ "${1:-}" = "-q" ]; then
   quiet=1
   shift
 fi
+# Recursive grep already includes hidden and ignored paths.
+if [ "${1:-}" = "--hidden" ] && [ "${2:-}" = "--no-ignore" ]; then
+  shift 2
+fi
 if [ "${1:-}" = "--" ]; then
   shift
 fi
@@ -431,7 +435,7 @@ assert_contains() {
 
 assert_no_matches() {
   local search_status
-  if rg -q -- "$@"; then
+  if rg -q --hidden --no-ignore -- "$@"; then
     echo "unexpected matching content" >&2
     return 1
   else
