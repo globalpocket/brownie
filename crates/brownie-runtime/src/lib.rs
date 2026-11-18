@@ -44832,13 +44832,12 @@ modes:
             let root = fixture.path();
             let invoke = |phase: &str, boundary: Option<&str>| {
                 let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-                for (key, _) in std::env::vars_os() {
-                    if key.to_string_lossy().starts_with("BROWNIE_")
-                        || key.to_string_lossy().starts_with("CODEX_R05_2_")
-                    {
-                        command.env_remove(key);
-                    }
-                }
+                command
+                    .env_clear()
+                    .envs(std::env::vars_os().filter(|(key, _)| {
+                        !key.to_string_lossy().starts_with("BROWNIE_")
+                            && !key.to_string_lossy().starts_with("CODEX_R05_2_")
+                    }));
                 command
                     .args([
                         "--exact",
