@@ -99,6 +99,37 @@ fn cleanup(intent_path: &Path, witness: &Path, staging: &Path) -> Result<(), Str
     Ok(())
 }
 
+// The original target is still intact. Missing temporary files may be the
+// result of an interrupted cleanup, but existing ones must retain their exact
+// prepared identity. Validate both before deleting either; never infer Applied.
+fn cleanup_unwritten(
+    intent_path: &Path,
+    witness: &Path,
+    staging: &Path,
+    intent: &Intent,
+) -> Result<(), String> {
+    let mut remaining = Vec::new();
+    for path in [staging, witness] {
+        match std::fs::symlink_metadata(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(error(e)),
+            Ok(m) => {
+                if !m.file_type().is_file()
+                    || m.dev() != intent.prepared_device
+                    || m.ino() != intent.prepared_inode
+                {
+                    return Err(error("unwritten temporary identity changed"));
+                }
+                remaining.push(path);
+            }
+        }
+    }
+    for path in remaining {
+        std::fs::remove_file(path).map_err(error)?;
+    }
+    std::fs::remove_file(intent_path).map_err(error)
+}
+
 /// Called only after current explicit authorization, policy and approval checks.
 /// A before-write interruption is retried through all ordinary preflight checks.
 /// An after-write interruption reconciles the retained file identity, not a hash alone.
@@ -135,13 +166,20 @@ pub(super) fn recover(
     }
     let witness = witness_path(&target, &intent.witness)?;
     let tm = regular(&target)?;
+    let staging = staging_path(&target, &intent.staging)?;
+    let bytes = std::fs::read(&target).map_err(error)?;
+    let current_hash = format!("sha256:{}", hex_sha256(&bytes));
+    if tm.dev() == intent.old_device
+        && tm.ino() == intent.old_inode
+        && Some(current_hash.as_str()) == params.expected_target_sha256.as_deref()
+    {
+        cleanup_unwritten(&intent_path, &witness, &staging, &intent)?;
+        return Ok(None);
+    }
     let wm = regular(&witness)?;
     if wm.dev() != intent.prepared_device || wm.ino() != intent.prepared_inode {
         return Err(error("witness identity changed"));
     }
-    let staging = staging_path(&target, &intent.staging)?;
-    let bytes = std::fs::read(&target).map_err(error)?;
-    let current_hash = format!("sha256:{}", hex_sha256(&bytes));
     let expected = format!(
         "sha256:{}",
         hex_sha256(
@@ -173,13 +211,6 @@ pub(super) fn recover(
             record_apply_result(store, task, &params.run_id, &params.proposal_id, result)?;
         cleanup(&intent_path, &witness, &staging)?;
         return Ok(Some(result));
-    }
-    if tm.dev() == intent.old_device
-        && tm.ino() == intent.old_inode
-        && Some(current_hash.as_str()) == params.expected_target_sha256.as_deref()
-    {
-        cleanup(&intent_path, &witness, &staging)?;
-        return Ok(None);
     }
     Err(error(
         "target differs from both prepared and original identity",

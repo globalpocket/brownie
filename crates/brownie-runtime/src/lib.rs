@@ -44817,6 +44817,11 @@ modes:
         for case in [
             "normal",
             "before",
+            "before-cleanup-staging",
+            "before-cleanup-witness",
+            "before-cleanup-intent",
+            "before-cleanup-foreign-staging",
+            "before-cleanup-foreign-witness",
             "after",
             "recorded",
             "replaced-target",
@@ -44828,6 +44833,13 @@ modes:
             "changed-authorization",
             "changed-policy",
         ] {
+            let unwritten_cleanup = case.starts_with("before-cleanup-");
+            let restartable_cleanup = matches!(
+                case,
+                "before-cleanup-staging" | "before-cleanup-witness" | "before-cleanup-intent"
+            );
+            let positive =
+                matches!(case, "normal" | "before" | "after" | "recorded") || restartable_cleanup;
             let fixture = tempfile::tempdir().unwrap();
             let root = fixture.path();
             let invoke = |phase: &str, boundary: Option<&str>| {
@@ -44854,6 +44866,7 @@ modes:
             let boundary = match case {
                 "normal" => None,
                 "before" => Some("before"),
+                _ if unwritten_cleanup => Some("before"),
                 "recorded" => Some("recorded"),
                 _ => Some("after"),
             };
@@ -44884,7 +44897,30 @@ modes:
                         .as_bytes()
                 )
             ));
-            if !matches!(case, "normal" | "before" | "after" | "recorded") {
+            if unwritten_cleanup {
+                let intent: Value =
+                    serde_json::from_slice(&std::fs::read(&intent_path).unwrap()).unwrap();
+                let staging = root.join(intent["staging"].as_str().unwrap());
+                let witness = root.join(intent["witness"].as_str().unwrap());
+                if restartable_cleanup {
+                    std::fs::remove_file(&staging).unwrap();
+                    if case != "before-cleanup-staging" {
+                        std::fs::remove_file(&witness).unwrap();
+                    }
+                    if case == "before-cleanup-intent" {
+                        std::fs::remove_file(&intent_path).unwrap();
+                    }
+                } else {
+                    let changed = if case == "before-cleanup-foreign-staging" {
+                        &staging
+                    } else {
+                        &witness
+                    };
+                    let replacement = root.join("foreign-temporary");
+                    std::fs::write(&replacement, std::fs::read(changed).unwrap()).unwrap();
+                    std::fs::rename(&replacement, changed).unwrap();
+                }
+            } else if !positive {
                 let mut intent: Value =
                     serde_json::from_slice(&std::fs::read(&intent_path).unwrap()).unwrap();
                 let witness = root.join(intent["witness"].as_str().unwrap());
@@ -44963,9 +44999,8 @@ modes:
                         && v["payload"]["apply_status"] == "Applied"
                 })
                 .count();
-            let positive = matches!(case, "normal" | "before" | "after" | "recorded");
             assert_eq!(applied, usize::from(positive), "{case}");
-            if case != "before" {
+            if case != "before" && !restartable_cleanup {
                 assert_eq!(
                     std::fs::metadata(&target).unwrap().modified().unwrap(),
                     before_retry,
@@ -44976,7 +45011,18 @@ modes:
                 !ledger.contains("new README content"),
                 "{case}: raw content in ledger"
             );
+            if unwritten_cleanup && !restartable_cleanup {
+                let intent: Value =
+                    serde_json::from_slice(&std::fs::read(&intent_path).unwrap()).unwrap();
+                for key in ["staging", "witness"] {
+                    assert!(root.join(intent[key].as_str().unwrap()).exists(), "{case}");
+                }
+            }
             if positive {
+                assert_eq!(
+                    std::fs::read_to_string(&target).unwrap(),
+                    "new README content"
+                );
                 assert!(!intent_path.exists(), "{case}: intent not cleaned");
                 assert!(
                     !std::fs::read_dir(root).unwrap().any(|entry| entry
