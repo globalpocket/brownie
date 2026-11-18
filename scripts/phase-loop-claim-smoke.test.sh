@@ -406,10 +406,13 @@ if [ "${1:-}" = "--" ]; then
 fi
 pattern="${1:?missing pattern}"
 shift
+if [ "$#" -eq 0 ]; then
+  set -- -
+fi
 if [ "$quiet" = "1" ]; then
-  grep -E -q -- "$pattern" "$@"
+  grep -E -r -q -- "$pattern" "$@"
 else
-  grep -E -- "$pattern" "$@"
+  grep -E -r -- "$pattern" "$@"
 fi
 SH
   chmod +x "$fallback_bin_dir/rg"
@@ -426,13 +429,24 @@ assert_contains() {
   fi
 }
 
+assert_no_matches() {
+  local search_status
+  if rg -q -- "$@"; then
+    echo "unexpected matching content" >&2
+    return 1
+  else
+    search_status="$?"
+  fi
+  if [ "$search_status" -ne 1 ]; then
+    echo "absence assertion failed: search error $search_status" >&2
+    return "$search_status"
+  fi
+}
+
 assert_not_contains() {
   local file="$1"
   local pattern="$2"
-  if rg -q -- "$pattern" "$file"; then
-    echo "expected $file not to contain pattern: $pattern" >&2
-    exit 1
-  fi
+  assert_no_matches "$pattern" "$file"
 }
 
 assert_terminal_failure_claim_archived() {
@@ -7695,7 +7709,7 @@ PY
   test "$(cat "$merged_terminal_state/todo-claims/stale-terminal-child-stale-snapshot.json")" = "$child_snapshot_before"
   test "$(cat "$merged_terminal_state/todo-claims/blocked.jsonl")" = "$child_ledger_before"
   test "$(cat "$merged_terminal_state/todo-claims/contract-rebaselines/orphaned-split.json")" = "$rebaseline_before"
-  ! rg -q 'TODO-decompose|todo.completed' "$merged_terminal_state" "$merged_terminal_todo" "$merged_terminal_breakdown"
+  assert_no_matches 'TODO-decompose|todo.completed' "$merged_terminal_state" "$merged_terminal_todo" "$merged_terminal_breakdown"
 
   # A second, independent run uses the same production-shaped split but now
   # supplies the exact PR/review/CI/merge facts.  This must use the public

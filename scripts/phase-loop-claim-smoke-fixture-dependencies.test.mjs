@@ -125,3 +125,64 @@ for (const [name, code] of [['timeout', 124], ['unexpected success', 0], ['unexp
     assert.equal(result.calls.length, 1, 'do not continue after the first wrong result');
   });
 }
+
+// Exercise the actual negative assertions and fallback extracted from the shell fixture.
+for (const engine of ['native', 'fallback']) {
+  for (const entry of ['helper', 'inline']) {
+    for (const scenario of ['present_file', 'absent_file', 'present_directory', 'absent_directory', 'missing_path']) {
+      test(`negative search ${engine} ${entry} ${scenario}`, () => {
+        const source = fs.readFileSync(claimSmokeFixture, 'utf8');
+        const fallback = source.match(/cat > "\$fallback_bin_dir\/rg" <<'SH'\n([\s\S]*?)\nSH/);
+        assert.ok(fallback, 'actual rg fallback must exist');
+        const functions = [...source.matchAll(/^assert_(?:not_contains|no_matches)\(\) \{\n[\s\S]*?^\}/gm)].map(match => match[0]).join('\n');
+        assert.ok(functions.includes('assert_not_contains()'));
+        const inline = source.split('\n').find(line => line.includes('"$merged_terminal_state" "$merged_terminal_todo" "$merged_terminal_breakdown"') && /! rg|assert_no_matches/.test(line));
+        assert.ok(inline, 'actual merged-terminal negative assertion must exist');
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-negative-search-'));
+        try {
+          const bin = path.join(directory, 'bin');
+          fs.mkdirSync(bin);
+          if (engine === 'fallback') {
+            fs.writeFileSync(path.join(bin, 'rg'), fallback[1] + '\n', { mode: 0o700 });
+          } else {
+            const native = spawnSync('bash', ['-c', 'command -v rg'], { encoding: 'utf8' });
+            assert.equal(native.status, 0, 'native control requires rg; absence is not a pass');
+            fs.symlinkSync(native.stdout.trim(), path.join(bin, 'rg'));
+          }
+          const target = path.join(directory, 'target');
+          const empty = path.join(directory, 'empty');
+          fs.writeFileSync(empty, '');
+          const content = scenario.startsWith('present') ? 'todo.completed\n' : 'ordinary content\n';
+          if (scenario.endsWith('directory')) {
+            fs.mkdirSync(target); fs.writeFileSync(path.join(target, 'events'), content);
+          } else if (scenario !== 'missing_path') fs.writeFileSync(target, content);
+          const invocation = entry === 'helper'
+            ? 'assert_not_contains "$1" "TODO-decompose|todo.completed"'
+            : 'merged_terminal_state="$1"; merged_terminal_todo="$2"; merged_terminal_breakdown="$2"\n' + inline;
+          const result = spawnSync('bash', ['-c', 'set -eu\n' + functions + '\n' + invocation, 'fixture', target, empty], {
+            encoding: 'utf8', timeout: 5000, env: { ...process.env, PATH: bin + path.delimiter + process.env.PATH },
+          });
+          assert.equal(result.error, undefined);
+          assert.equal(result.signal, null);
+          assert.equal(result.status === 0, scenario.startsWith('absent'), result.stderr);
+        } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+      });
+    }
+  }
+}
+
+test('fallback searches piped input when no path is supplied', () => {
+  const source = fs.readFileSync(claimSmokeFixture, 'utf8');
+  const fallback = source.match(/cat > "\$fallback_bin_dir\/rg" <<'SH'\n([\s\S]*?)\nSH/);
+  assert.ok(fallback);
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-piped-search-'));
+  try {
+    fs.writeFileSync(path.join(directory, 'decoy'), 'disk-token\n');
+    for (const [pattern, expected] of [['stream-token', 0], ['disk-token', 1]]) {
+      const result = spawnSync('bash', ['-c', fallback[1], 'rg', '-q', pattern], {
+        cwd: directory, input: 'stream-token\n', encoding: 'utf8', timeout: 5000,
+      });
+      assert.equal(result.status, expected, result.stderr);
+    }
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
