@@ -164,7 +164,9 @@ for (const engine of ['native', 'fallback']) {
           });
           assert.equal(result.error, undefined);
           assert.equal(result.signal, null);
-          assert.equal(result.status === 0, scenario.startsWith('absent'), result.stderr);
+          const expectedStatus = scenario === 'missing_path' ? 2 : scenario.startsWith('absent') ? 0 : 1;
+          assert.equal(result.status, expectedStatus, result.stderr);
+          if (scenario === 'missing_path') assert.match(result.stderr, /absence assertion failed: search error 2/);
         } finally { fs.rmSync(directory, { recursive: true, force: true }); }
       });
     }
