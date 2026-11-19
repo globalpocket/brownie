@@ -4386,10 +4386,13 @@ if PHASE_LOOP_STATE_DIR="$state_stagnation" \
   PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_stagnation" \
   BROWNIE_BIN="$fake_brownie_json" \
   PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null; then
+  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null; then
   echo "expected repeated identical non-progress fingerprint to fail as no_progress" >&2
   exit 1
+else
+  stagnation_exit="$?"
 fi
+test "$stagnation_exit" = "76"
 
 python3 - "$state_stagnation/status.json" "$state_stagnation/progress-state.json" <<'PY'
 import json
