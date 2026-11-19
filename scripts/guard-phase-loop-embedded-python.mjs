@@ -59,22 +59,34 @@ export function extractPythonHeredocs(text) {
   return blocks;
 }
 
-function compilePython(code, filename) {
-  const result = spawnSync(
-    'python3',
-    ['-c', 'import sys; compile(sys.stdin.read(), sys.argv[1], "exec")', filename],
-    {
-      encoding: 'utf8',
-      input: code,
-      maxBuffer: 1024 * 1024
-    }
-  );
-  return {
-    ok: result.status === 0,
-    stderr: result.stderr,
-    stdout: result.stdout,
-    status: result.status
-  };
+function compilePython(code, filename, options) {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-python-compile-'));
+  let input;
+  try {
+    const source = path.join(temporary, 'source.py');
+    fs.writeFileSync(source, code, { mode: 0o600 });
+    input = fs.openSync(source, 'r');
+    const result = (options.spawnSync ?? spawnSync)(
+      'python3',
+      ['-c', 'import sys; compile(sys.stdin.read(), sys.argv[1], "exec")', filename],
+      {
+        encoding: 'utf8',
+        // A regular file reaches EOF without depending on a parent pipe close.
+        stdio: [input, 'pipe', 'pipe'],
+        timeout: options.compileTimeoutMs ?? 10_000,
+        maxBuffer: 1024 * 1024
+      }
+    );
+    return {
+      ok: !result.error && result.status === 0,
+      stderr: [result.error?.message, result.stderr].filter(Boolean).join('\n'),
+      stdout: result.stdout,
+      status: result.status
+    };
+  } finally {
+    if (input !== undefined) fs.closeSync(input);
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
 }
 
 function moduleImported(code, moduleName) {
@@ -101,7 +113,7 @@ export function validateEmbeddedPythonText(text, options = {}) {
       continue;
     }
 
-    const compiled = compilePython(block.code, label);
+    const compiled = compilePython(block.code, label, options);
     if (!compiled.ok) {
       errors.push(`${label}: Python syntax check failed:\n${compiled.stderr || compiled.stdout}`.trimEnd());
     }

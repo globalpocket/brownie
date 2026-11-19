@@ -1,7 +1,28 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 import { extractPythonHeredocs, validateEmbeddedPythonText } from './guard-phase-loop-embedded-python.mjs';
+
+test('compiler timeout rejects a stalled child and closes its regular-file input', () => {
+  let descriptor;
+  let result;
+  const errors = validateEmbeddedPythonText("python3 - <<'PY'\nprint('safe')\nPY\n", {
+    compileTimeoutMs: 100,
+    spawnSync(command, args, options) {
+      assert.equal(command, 'python3');
+      descriptor = options.stdio[0];
+      assert.ok(fs.fstatSync(descriptor).isFile());
+      assert.equal(fs.readFileSync(descriptor, 'utf8'), "print('safe')");
+      result = spawnSync(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], options);
+      return result;
+    }
+  });
+  assert.equal(result.error?.code, 'ETIMEDOUT');
+  assert.ok(errors.some(error => error.includes('ETIMEDOUT')), errors);
+  assert.throws(() => fs.fstatSync(descriptor), { code: 'EBADF' });
+});
 
 test('extracts Python heredocs from phase-loop shell text', () => {
   const text = `#!/usr/bin/env bash

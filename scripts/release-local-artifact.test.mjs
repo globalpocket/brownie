@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
+import { extractReleaseArchive } from './release-artifact-extract.mjs';
 
 import {
   buildPlanForTarget,
@@ -42,11 +43,11 @@ test('portable archive contains relocatable evidence and executable payloads', (
   const archive = createPortableArchive({ outFull, target: 'darwin-arm64', entries });
   assert.ok(fs.existsSync(archive.path));
   const extracted = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-release-extract-test-'));
-  if (process.platform === 'win32') {
-    assert.equal(spawnSync('powershell.exe', ['-NoProfile', '-Command', `Expand-Archive -LiteralPath '${archive.path.replace(/'/g, "''")}' -DestinationPath '${extracted.replace(/'/g, "''")}' -Force`]).status, 0);
-  } else {
-    assert.equal(spawnSync('tar', ['-xzf', archive.path, '-C', extracted]).status, 0);
-  }
+  extractReleaseArchive({
+    archiveType: process.platform === 'win32' ? 'zip' : 'tar',
+    binaryName: 'brownie',
+    runtimeName: 'brownie-runtime'
+  }, archive.path, extracted);
   if (process.platform !== 'win32') {
     assert.equal(fs.statSync(path.join(extracted, 'brownie')).mode & 0o111, 0o111);
     assert.equal(fs.statSync(path.join(extracted, 'brownie-runtime')).mode & 0o111, 0o111);
