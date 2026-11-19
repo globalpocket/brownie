@@ -310,7 +310,24 @@ test('release workflow uploads every target artifact directory required for roun
   }
 });
 
-if (process.env.CI === 'true') {
+test('download verification distinguishes generic CI from the release job and rejects missing release inputs', () => {
+  for (const job of ['check', 'artifact-roundtrip']) {
+    const env = { ...process.env, CI: 'true', GITHUB_JOB: job };
+    delete env.NODE_TEST_CONTEXT;
+    delete env.BROWNIE_RELEASE_ROUNDTRIP_DOWNLOAD_ROOT;
+    delete env.BROWNIE_RELEASE_ROUNDTRIP_TARGET;
+    const result = spawnSync(process.execPath, ['--test', '--test-name-pattern=^CI roundtrip consumes', fileURLToPath(import.meta.url)], {
+      env, encoding: 'utf8', timeout: 30_000
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status, job === 'artifact-roundtrip' ? 1 : 0, result.stdout + result.stderr);
+    if (job === 'artifact-roundtrip') assert.match(result.stdout, /CI download root is required/u);
+  }
+});
+
+// Generic CI preflight does not download release packages. The release job
+// must still fail when either input is absent, including when both are absent.
+if (process.env.GITHUB_JOB === 'artifact-roundtrip' || downloadedArtifactRoot || downloadedTargetId) {
   test('CI roundtrip consumes the artifact downloaded by the release workflow', () => {
     assert.ok(downloadedArtifactRoot, 'CI download root is required for the release roundtrip job');
     assert.ok(downloadedTargetId, 'CI target is required for the release roundtrip job');
