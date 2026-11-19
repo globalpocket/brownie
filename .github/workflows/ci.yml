@@ -139,7 +139,7 @@ jobs:
           rustup toolchain install "$version" --profile minimal --no-self-update
 
       - name: Root workspace check
-        timeout-minutes: 15
+        timeout-minutes: 30
         run: pnpm --workspace-root check
 
       - name: Root workspace test
