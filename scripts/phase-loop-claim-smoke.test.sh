@@ -23,6 +23,8 @@ export PHASE_LOOP_PR_REMOTE="fixture-origin"
 # checkout remains credential-free.
 PHASE_LOOP_TEST_CONTROL_ROOT="$(mktemp -d)"
 mkdir -p "$PHASE_LOOP_TEST_CONTROL_ROOT/.brownie/private/profiles/implementation"
+export PHASE_LOOP_CLAIM_SMOKE_AUDIT_FILE="${PHASE_LOOP_CLAIM_SMOKE_AUDIT_FILE:-$PHASE_LOOP_TEST_CONTROL_ROOT/commands.audit.jsonl}"
+: >> "$PHASE_LOOP_CLAIM_SMOKE_AUDIT_FILE"
 cat > "$PHASE_LOOP_TEST_CONTROL_ROOT/actor-deployment.json" <<'JSON'
 {
   "schema_version": 1,
@@ -48,11 +50,66 @@ cat > "$PHASE_LOOP_TEST_CONTROL_ROOT/.brownie/private/phase-loop-actor-credentia
   }
 }
 JSON
+validate_claim_smoke_command_results() {
+  python3 - "$1" "${2:-commands}" <<'PY'
+import json
+import pathlib
+import sys
+
+try:
+    records = [json.loads(line) for line in pathlib.Path(sys.argv[1]).read_text().splitlines() if line.strip()]
+    pending = {}
+    completed = 0
+    for record in records:
+        event = record.get('event')
+        if event not in ('command_started', 'command_finished'):
+            continue
+        key = (record.get('pid'), record.get('started_monotonic_ns'))
+        expected = record.get('expected_exit_codes')
+        if (not all(type(value) is int and value > 0 for value in key)
+                or not isinstance(expected, list) or not expected
+                or any(type(code) is not int or not 0 <= code <= 255 for code in expected)):
+            raise ValueError('invalid command identity or exit contract')
+        if event == 'command_started':
+            if key in pending:
+                raise ValueError('duplicate unfinished command')
+            pending[key] = record
+            continue
+        started = pending.pop(key, None)
+        if (started is None or started.get('expected_exit_codes') != expected
+                or started.get('detail') != record.get('detail')
+                or started.get('shard') != record.get('shard')
+                or type(record.get('exit_code')) is not int
+                or record['exit_code'] == 124 or record['exit_code'] not in expected
+                or record.get('accepted') is not True or record.get('status') != 'passed'):
+            raise ValueError('command did not satisfy its declared exit contract')
+        completed += 1
+    if pending:
+        raise ValueError('unfinished command execution')
+    if completed == 0 and sys.argv[2] != 'all':
+        raise ValueError('missing command execution evidence')
+except (OSError, ValueError, TypeError, AttributeError) as error:
+    print(f'claim-smoke command contract validation failed: {error}; audit={sys.argv[1]}', file=sys.stderr)
+    raise SystemExit(98)
+PY
+}
+
 cleanup_phase_loop_test_control_root() {
+  local result=$?
+  if [ "$result" -eq 0 ]; then
+    if ! validate_claim_smoke_command_results "$PHASE_LOOP_CLAIM_SMOKE_AUDIT_FILE" "${PHASE_LOOP_CLAIM_SMOKE_SECTION:-all}"; then
+      cat "$PHASE_LOOP_CLAIM_SMOKE_AUDIT_FILE" >&2 || true
+      result=98
+    fi
+  fi
   rm -rf "$PHASE_LOOP_TEST_CONTROL_ROOT" "${PHASE_LOOP_TEST_RUNTIME:-}"
   if [ -n "${CLAIM_SMOKE_BROWNIE_STORE_ROOT:-}" ]; then
     rm -rf "$CLAIM_SMOKE_BROWNIE_STORE_ROOT"
   fi
+  if [ "$result" -eq 0 ] && [ "${PHASE_LOOP_CLAIM_SMOKE_SECTION:-all}" != "all" ]; then
+    echo "phase-loop claim smoke passed"
+  fi
+  exit "$result"
 }
 trap cleanup_phase_loop_test_control_root EXIT
 export PHASE_LOOP_CONTROL_ROOT="$PHASE_LOOP_TEST_CONTROL_ROOT"
@@ -2613,7 +2670,7 @@ PHASE_LOOP_TODO="$completion_pr_publish_failure_todo" \
 BROWNIE_BIN="$fake_brownie_completed_tracked_workspace_change" \
 PHASE_LOOP_WORKSPACE_ROOT="$completion_pr_publish_failure_workspace" \
 PHASE_LOOP_CREATE_PR_AFTER_PROGRESS=1 \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 78 "$PHASE_LOOP" run-once >/dev/null
 completion_pr_publish_failure_first_exit="$?"
 set -e
 test "$completion_pr_publish_failure_first_exit" = "78"
@@ -3114,7 +3171,7 @@ BROWNIE_BIN="$fake_brownie_terminal_no_eligible" \
 PHASE_LOOP_WORKSPACE_ROOT="$terminal_claim_absent_workspace" \
 PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP=1 \
 PHASE_LOOP_TEST_REMOVE_CLAIM=1 \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null
 terminal_claim_absent_exit="$?"
 set -e
 test "$terminal_claim_absent_exit" = "76"
@@ -3172,7 +3229,7 @@ BROWNIE_BIN="$fake_brownie_terminal_no_eligible" \
 PHASE_LOOP_WORKSPACE_ROOT="$terminal_claim_absent_workspace" \
 PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP=1 \
 PHASE_LOOP_TEST_REMOVE_CLAIM=1 \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null || true
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 0,76 "$PHASE_LOOP" run-once >/dev/null || true
 python3 - "$terminal_claim_absent_workspace/.brownie/private/phase-loop/task-ledger.jsonl" <<'PY'
 import json
 import pathlib
@@ -3201,7 +3258,7 @@ PHASE_LOOP_TODO="$todo_terminal_claim_absent" \
 BROWNIE_BIN="$fake_brownie_terminal_no_eligible" \
 PHASE_LOOP_WORKSPACE_ROOT="$terminal_claim_absent_workspace" \
 PHASE_LOOP_TERMINAL_FAILURE_RETRY_CAP=1 \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 0,76 "$PHASE_LOOP" run-once >/dev/null
 terminal_claim_absent_third_exit="$?"
 set -e
 case "$terminal_claim_absent_third_exit" in
@@ -3511,7 +3568,7 @@ if PHASE_LOOP_STATE_DIR="$state_objective_apply_stalled" \
   PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_objective_apply_stalled" \
   BROWNIE_BIN="$fake_brownie_objective_apply_legacy_resume" \
   PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null; then
+  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null; then
   objective_apply_stalled_exit=0
 else
   objective_apply_stalled_exit="$?"
@@ -3798,7 +3855,7 @@ if PHASE_LOOP_STATE_DIR="$state_fresh_authorized_apply" \
   PHASE_LOOP_LIVENESS_ARGV="$fresh_authorized_argv" \
   BROWNIE_BIN="$fake_brownie_fresh_authorized_apply" \
   PHASE_LOOP_WORKSPACE_ROOT="$fresh_authorized_workspace" \
-  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null; then
+  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null; then
   objective_apply_tampered_scope_exit=0
 else
   objective_apply_tampered_scope_exit="$?"
@@ -4386,10 +4443,13 @@ if PHASE_LOOP_STATE_DIR="$state_stagnation" \
   PHASE_LOOP_TODO_BREAKDOWN="$todo_breakdown_stagnation" \
   BROWNIE_BIN="$fake_brownie_json" \
   PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null; then
+  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 76 "$PHASE_LOOP" run-once >/dev/null; then
   echo "expected repeated identical non-progress fingerprint to fail as no_progress" >&2
   exit 1
+else
+  stagnation_exit="$?"
 fi
+test "$stagnation_exit" = "76"
 
 python3 - "$state_stagnation/status.json" "$state_stagnation/progress-state.json" <<'PY'
 import json
@@ -5042,7 +5102,7 @@ if PHASE_LOOP_STATE_DIR="$state_too_large" \
   BROWNIE_BIN="$fake_brownie_json" \
   PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
   PHASE_LOOP_SELECTED_TODO_MAX_BYTES=8 \
-  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null 2>/dev/null; then
+  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 74 "$PHASE_LOOP" run-once >/dev/null 2>/dev/null; then
   echo "expected oversized selected TODO to fail closed before Runtime start" >&2
   exit 1
 fi
@@ -5218,7 +5278,7 @@ if PHASE_LOOP_STATE_DIR="$state_empty" \
   PHASE_LOOP_TODO="$todo_empty" \
   BROWNIE_BIN="$fake_brownie_json" \
   PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null; then
+  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 75 "$PHASE_LOOP" run-once >/dev/null; then
   echo "expected empty queue without an active claim to stop instead of run" >&2
   exit 1
 fi
@@ -5245,7 +5305,7 @@ if PHASE_LOOP_STATE_DIR="$state_empty_dirty" \
   PHASE_LOOP_TODO="$todo_empty_dirty" \
   BROWNIE_BIN="$fake_brownie_json" \
   PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null; then
+  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 78 "$PHASE_LOOP" run-once >/dev/null; then
   echo "expected empty queue with dirty/non-main workspace to fail closed before Runtime start" >&2
   exit 1
 fi
@@ -5273,7 +5333,7 @@ if PHASE_LOOP_STATE_DIR="$state_invalid_json" \
   PHASE_LOOP_TODO="$todo_invalid_json" \
   BROWNIE_BIN="$fake_brownie_invalid_json" \
   PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
-  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null; then
+  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 74 "$PHASE_LOOP" run-once >/dev/null; then
   echo "expected non-JSON CLI output to fail closed" >&2
   exit 1
 fi
@@ -5295,6 +5355,8 @@ todo_interruptible="$(mktemp)"
 printf 'base prompt\n' > "$prompt_interruptible"
 printf -- '- [ ] B-12: interruptible backoff task\n' > "$todo_interruptible"
 
+# stop_loop writes STOP_FILE before signaling the supervisor. Either observing
+# that marker (0) or receiving TERM (143) is an intentional stop; other exits fail.
 PHASE_LOOP_STATE_DIR="$state_interruptible" \
 PHASE_LOOP_PROMPT="$prompt_interruptible" \
 PHASE_LOOP_TODO="$todo_interruptible" \
@@ -5303,7 +5365,7 @@ PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 PHASE_LOOP_FAILURE_BACKOFF_SECONDS=30 \
 PHASE_LOOP_MAX_FAILURE_BACKOFF_SECONDS=30 \
 PHASE_LOOP_SLEEP_POLL_SECONDS=1 \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" supervise >/dev/null 2>/dev/null &
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 0,143 "$PHASE_LOOP" supervise >/dev/null 2>/dev/null &
 interruptible_pid="$!"
 
 for _ in 1 2 3 4 5; do
@@ -5345,7 +5407,7 @@ PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 PHASE_LOOP_TEST_CHILD_PID_FILE="$child_pid_file" \
 PHASE_LOOP_STOP_GRACE_SECONDS=1 \
 PHASE_LOOP_STOP_FORCE_SECONDS=3 \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" supervise >/dev/null 2>/dev/null &
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 0,143 "$PHASE_LOOP" supervise >/dev/null 2>/dev/null &
 child_supervisor_pid="$!"
 
 child_start_deadline=$((SECONDS + PHASE_LOOP_COMMAND_TIMEOUT_SECONDS))
@@ -7061,7 +7123,7 @@ if PHASE_LOOP_STATE_DIR="$ledger_failure_state" \
   PHASE_LOOP_TODO="$ledger_failure_todo" \
   PHASE_LOOP_WORKSPACE_ROOT="$ledger_failure_workspace" \
   BROWNIE_BIN="$fake_brownie_json" \
-  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" run-once >/dev/null 2>/dev/null; then
+  run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 78 "$PHASE_LOOP" run-once >/dev/null 2>/dev/null; then
   echo "expected task-ledger append failure to fail run-once" >&2
   exit 1
 fi
@@ -7790,9 +7852,7 @@ fi
 
 if [ "$PHASE_LOOP_CLAIM_SMOKE_SECTION" = "review-rework" ]; then
   assert_repository_state_unchanged
-  echo "phase-loop claim smoke passed"
   exit 0
 fi
 
 assert_repository_state_unchanged
-echo "phase-loop claim smoke passed"
