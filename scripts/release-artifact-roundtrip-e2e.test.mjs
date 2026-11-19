@@ -1,3 +1,4 @@
+import { extractReleaseArchive } from './release-artifact-extract.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -35,6 +36,60 @@ const releaseTargets = [
 
 const downloadedArtifactRoot = process.env.BROWNIE_RELEASE_ROUNDTRIP_DOWNLOAD_ROOT ?? '';
 const downloadedTargetId = process.env.BROWNIE_RELEASE_ROUNDTRIP_TARGET ?? '';
+
+test('archive extraction rejects zero exit without actual package files and retains diagnostics', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-extract-empty-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  assert.throws(() => extractReleaseArchive(releaseTargets[2], 'fixture.zip', root, {
+    platform: 'win32', spawn: () => ({ status: 0, stdout: 'extractor returned', stderr: 'retained diagnostic' })
+  }), error => {
+    assert.match(error.message, /artifact-evidence\.json/u);
+    assert.match(error.message, /retained diagnostic/u);
+    assert.match(error.message, /"status":0/u);
+    assert.match(error.message, /"entries":\[\]/u);
+    return true;
+  });
+});
+
+test('Windows extraction passes literal archive paths to the native executable and requires every file', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-extract-literal-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const archive = "C:\\a directory\\package's [literal].zip";
+  const target = releaseTargets[2];
+  extractReleaseArchive(target, archive, root, { platform: 'win32', spawn: (command, args, options) => {
+    assert.equal(path.win32.basename(command), 'tar.exe');
+    assert.deepEqual(args, ['-xf', archive, '-C', root]);
+    assert.equal(options.shell, undefined);
+    assert.equal(options.timeout, 60_000);
+    for (const name of [target.binaryName, target.runtimeName, 'SHA256SUMS', 'artifact-evidence.json', 'smoke-evidence.json']) {
+      fs.writeFileSync(path.join(root, name), 'fixture');
+    }
+    return { status: 0, stdout: '', stderr: '' };
+  } });
+});
+
+test('archive extraction preserves existing destination files instead of counting them as new output', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-extract-existing-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const evidence = path.join(root, 'artifact-evidence.json');
+  fs.writeFileSync(evidence, 'preexisting');
+  assert.throws(() => extractReleaseArchive(releaseTargets[2], 'fixture.zip', root, {
+    spawn: () => assert.fail('must not run over existing files')
+  }), /empty destination/u);
+  assert.equal(fs.readFileSync(evidence, 'utf8'), 'preexisting');
+});
+
+test('archive extraction rejects process failure even when all package files appeared', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'brownie-extract-failed-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const target = releaseTargets[2];
+  assert.throws(() => extractReleaseArchive(target, 'fixture.zip', root, { spawn: () => {
+    for (const name of [target.binaryName, target.runtimeName, 'SHA256SUMS', 'artifact-evidence.json', 'smoke-evidence.json']) {
+      fs.writeFileSync(path.join(root, name), 'partial command output');
+    }
+    return { status: 7, stdout: '', stderr: 'actual extractor failure' };
+  } }), /actual extractor failure/u);
+});
 
 function sha256File(filePath) {
   return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')}`;
@@ -138,25 +193,7 @@ function createArchive(target, packageRoot, archivePath) {
   return sha256File(archivePath);
 }
 
-function extractArchive(target, archivePath, extractionRoot) {
-  if (target.archiveType === 'tar') {
-    run('tar', ['-xzf', archivePath, '-C', extractionRoot]);
-    return;
-  }
-
-  if (process.platform === 'win32') {
-    run('powershell.exe', [
-      '-NoLogo',
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      `Expand-Archive -LiteralPath '${archivePath.replaceAll("'", "''")}' -DestinationPath '${extractionRoot.replaceAll("'", "''")}' -Force`
-    ]);
-    return;
-  }
-
-  run('unzip', ['-q', archivePath, '-d', extractionRoot]);
-}
+const extractArchive = extractReleaseArchive;
 
 function copyTree(sourceRoot, destinationRoot) {
   fs.cpSync(sourceRoot, destinationRoot, { recursive: true });
