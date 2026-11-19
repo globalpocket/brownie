@@ -30,6 +30,9 @@ test('claim-smoke finalization rejects swallowed failures and incomplete command
       { expected: '78', actual: 78, accepted: true },
       { expected: '0,76', actual: 0, accepted: true },
       { expected: '0,76', actual: 76, accepted: true },
+      { expected: '0,143', actual: 0, accepted: true },
+      { expected: '0,143', actual: 0, signal: 'TERM', accepted: true },
+      { expected: '0', actual: 0, signal: 'TERM', accepted: false },
       { expected: '0', actual: 78, accepted: false },
       { expected: '78', actual: 0, accepted: false },
       { expected: '78', actual: 124, accepted: false },
@@ -53,7 +56,7 @@ export PHASE_LOOP_TEST_CONTROL_ROOT="$4"
 export PHASE_LOOP_CLAIM_SMOKE_SHARD_NAME=contract-regression
 unset PHASE_LOOP_TEST_RUNTIME CLAIM_SMOKE_BROWNIE_STORE_ROOT PHASE_LOOP_CLAIM_SMOKE_LIVENESS_FILE
 trap cleanup_phase_loop_test_control_root EXIT
-phase_loop_claim_smoke_run_with_timeout 5 --expected-exit "$5" bash -c 'exit "$1"' fixture "$6" >/dev/null 2>/dev/null || true
+phase_loop_claim_smoke_run_with_timeout 5 --expected-exit "$5" bash -c 'if [ "$2" = TERM ]; then kill -TERM "$$"; fi; exit "$1"' fixture "$6" "$9" >/dev/null 2>/dev/null || true
 if [ -n "$7" ]; then
   node - "$3" "$7" <<'NODE' || exit 97
 const fs = require('node:fs');
@@ -68,7 +71,7 @@ NODE
 fi
 exit "$8"
 `, 'fixture', path.join(scriptsDirectory, 'phase-loop-claim-smoke-scheduler.sh'), helper,
-      audit, control, row.expected, String(row.actual), row.mutate ?? '', String(row.priorFailure ?? 0)],
+      audit, control, row.expected, String(row.actual), row.mutate ?? '', String(row.priorFailure ?? 0), row.signal ?? ''],
       { encoding: 'utf8', timeout: 15000 });
       assert.equal(result.error, undefined, JSON.stringify(row));
       assert.equal(result.status, row.priorFailure ?? (row.accepted ? 0 : 98), `${JSON.stringify(row)}\n${result.stderr}`);

@@ -5355,6 +5355,8 @@ todo_interruptible="$(mktemp)"
 printf 'base prompt\n' > "$prompt_interruptible"
 printf -- '- [ ] B-12: interruptible backoff task\n' > "$todo_interruptible"
 
+# stop_loop writes STOP_FILE before signaling the supervisor. Either observing
+# that marker (0) or receiving TERM (143) is an intentional stop; other exits fail.
 PHASE_LOOP_STATE_DIR="$state_interruptible" \
 PHASE_LOOP_PROMPT="$prompt_interruptible" \
 PHASE_LOOP_TODO="$todo_interruptible" \
@@ -5363,7 +5365,7 @@ PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 PHASE_LOOP_FAILURE_BACKOFF_SECONDS=30 \
 PHASE_LOOP_MAX_FAILURE_BACKOFF_SECONDS=30 \
 PHASE_LOOP_SLEEP_POLL_SECONDS=1 \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" supervise >/dev/null 2>/dev/null &
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 0,143 "$PHASE_LOOP" supervise >/dev/null 2>/dev/null &
 interruptible_pid="$!"
 
 for _ in 1 2 3 4 5; do
@@ -5405,7 +5407,7 @@ PHASE_LOOP_WORKSPACE_ROOT="$test_workspace" \
 PHASE_LOOP_TEST_CHILD_PID_FILE="$child_pid_file" \
 PHASE_LOOP_STOP_GRACE_SECONDS=1 \
 PHASE_LOOP_STOP_FORCE_SECONDS=3 \
-run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" "$PHASE_LOOP" supervise >/dev/null 2>/dev/null &
+run_with_timeout "$PHASE_LOOP_COMMAND_TIMEOUT_SECONDS" --expected-exit 0,143 "$PHASE_LOOP" supervise >/dev/null 2>/dev/null &
 child_supervisor_pid="$!"
 
 child_start_deadline=$((SECONDS + PHASE_LOOP_COMMAND_TIMEOUT_SECONDS))
