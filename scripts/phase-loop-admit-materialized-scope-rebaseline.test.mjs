@@ -8,6 +8,39 @@ import test from 'node:test';
 import { admitMaterializedScopeRebaseline, readGitMaterializedScopeRebaselineRecords, readVerifiedActiveClaimDurableApply, validateMaterializedScopeRebaseline } from './phase-loop-admit-materialized-scope-rebaseline.mjs';
 import { validateTodoDecompositionText } from './guard-todo-decomposition.mjs';
 
+for (const variant of ['valid', 'wrong-todo-hash', 'wrong-introduction', 'dirty-record', 'extra-path']) {
+  test(`explicit successor provenance ${variant}`, (t) => {
+    const { root, target, merge } = gitMergedMaterializationFixture();
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+    const helper = 'scripts/new-helper.mjs';
+    const block = `- [ ] successor-fixture: Patch only \`${target}\` and \`${helper}\`:\n  Route: implementation.\n  Verification: run \`node --test\`.`;
+    fs.writeFileSync(path.join(root, target), 'export const journey = "successor";\n');
+    fs.writeFileSync(path.join(root, helper), 'export const helper = true;\n');
+    git('add', target, helper);
+    if (variant === 'extra-path') {
+      fs.writeFileSync(path.join(root, 'outside.txt'), 'outside declared scope\n');
+      git('add', 'outside.txt');
+    }
+    git('commit', '-qm', `implement successor\n\nBrownie-Todo-Id: successor-fixture\nBrownie-Todo-SHA256: ${crypto.createHash('sha256').update(block).digest('hex')}`);
+    const introduction = git('rev-parse', 'HEAD');
+    assert.throws(() => readGitMaterializedScopeRebaselineRecords(root), /receipt target digest mismatch/u);
+    const relative = 'docs/architecture/materialized-scope-successors.json';
+    const file = path.join(root, relative);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ schema_version: 1, patches: [{
+      materialization_merge: merge,
+      introducing_commit: variant === 'wrong-introduction' ? merge : introduction,
+      target, todo: variant === 'wrong-todo-hash' ? block + '\n  Changed contract.' : block
+    }] }));
+    git('add', relative);
+    git('commit', '-qm', 'record exact successor provenance');
+    if (variant === 'dirty-record') fs.appendFileSync(file, '\n');
+    if (variant === 'valid') assert.equal(readGitMaterializedScopeRebaselineRecords(root).length, 1);
+    else assert.throws(() => readGitMaterializedScopeRebaselineRecords(root), /receipt target digest mismatch/u);
+  });
+}
+
 function contract(firstLine) {
   return { id: 'E-fixture', first_line: firstLine, route: 'implementation', depends_on: '<none>', completion_condition: 'complete', forbidden_changes: 'none', verification: 'run `node --test`' };
 }

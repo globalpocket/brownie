@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "patches": [
+    {
+      "materialization_merge": "5de315291e099ab60efb11b7136bcf10396e931f",
+      "introducing_commit": "9de241fcc46f15a68665d31d14dcbb13deb7ff05",
+      "target": "scripts/release-artifact-stateful-soak.mjs",
+      "todo": "- [ ] incident-windows-archive-extraction-boundary: Patch only `scripts/release-artifact-extract.mjs`, `scripts/release-artifact-roundtrip-e2e.test.mjs`, `scripts/release-artifact-runtime-journey.mjs`, and `scripts/release-artifact-stateful-soak.mjs`:\n  Route: implementation.\n  Source TODO: incident-windows-roundtrip-extraction; recurring Windows CI job 135876093855 on PR #924. Preserve the earlier #926 failure and parent #924 source, roles and failure evidence. The actual uploaded inner ZIP contains all five expected files and both binary digests match; the old extractor returned zero but its destination lacked artifact-evidence.json.\n  Depends on: <none>.\n  Completion condition: centralize bounded archive extraction with direct Windows native ZIP extraction and explicit regular-file postconditions. Retain command status and diagnostics on failure, reject a successful process that produced no package, and preserve checksum and companion startup assertions. Demonstrate actual Windows downloaded-package and generated-fixture extraction, journey and soak through normal CI; retain all ordinary independent review, merge, queue consumption and merged-source execution gates before resuming #924. Do not claim the precise legacy PowerShell cause without evidence.\n  Forbidden changes: do not bypass extraction, copy metadata from the outer ZIP, weaken checksum/startup/cleanup checks, modify parent runtime recovery, change roles, or erase failed attempts.\n  Verification: execute `node --test scripts/release-artifact-roundtrip-e2e.test.mjs`, `pnpm --workspace-root release:artifact-roundtrip:test`, and full fresh preflight; require all three actual platform artifact roundtrip jobs and typed merged artifact journey and soak observations."
+    }
+  ]
+}

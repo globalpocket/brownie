@@ -153,6 +153,34 @@ function commitChangesOnlyBoundedScope(repoRoot, commit, parent, target, bounded
   return paths.includes(target) && paths.every((candidate) => boundedTargets.has(candidate));
 }
 
+// A later TODO can have a different scope. Its public record is provenance,
+// not approval: independent review and delivery gates remain separate.
+function committedSuccessorScope(repoRoot, mergeCommit, commit, target) {
+  const relative = 'docs/architecture/materialized-scope-successors.json';
+  const file = path.join(repoRoot, relative);
+  try {
+    if (!fs.lstatSync(file).isFile() || fs.statSync(file).size > 256 * 1024
+      || gitBlob(repoRoot, 'HEAD', relative) !== worktreeBlob(repoRoot, relative)
+      || !gitSucceeds(repoRoot, ['diff', '--cached', '--quiet', '--', relative])) return null;
+    const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (manifest.schema_version !== 1 || !Array.isArray(manifest.patches)) return null;
+    const matches = manifest.patches.filter(record => record.materialization_merge === mergeCommit
+      && record.introducing_commit === commit && record.target === target);
+    if (matches.length !== 1 || typeof matches[0].todo !== 'string') return null;
+    const block = matches[0].todo;
+    if (todoBlocks(block).length !== 1 || block !== block.trimEnd()) return null;
+    const message = gitValue(repoRoot, ['show', '-s', '--format=%B', commit]) ?? '';
+    const ids = [...message.matchAll(/^Brownie-Todo-Id: (\S+)$/gmu)];
+    const hashes = [...message.matchAll(/^Brownie-Todo-SHA256: ([a-f0-9]{64})$/gmu)];
+    if (ids.length !== 1 || hashes.length !== 1 || ids[0][1] !== todoId(block)
+      || hashes[0][1] !== sha256Text(block)) return null;
+    const scope = new Set(boundedScopeEntries(block.split('\n')[0]).map(entry => entry.path));
+    return scope.has(target) ? scope : null;
+  } catch {
+    return null;
+  }
+}
+
 // A public receipt remains immutable evidence of the historical Create step.
 // A subsequent implementation may legitimately Patch its exact bounded scope.
 // Admit that later content only when Git proves it is clean, committed after
@@ -160,8 +188,9 @@ function commitChangesOnlyBoundedScope(repoRoot, commit, parent, target, bounded
 // confined to the current Patch scope. The relevant commit is every actual
 // first introduction of the accepted blob, not a later merge delta: a merge
 // can inherit a bad blob from one parent while its diff against another parent
-// appears harmless. This deliberately does not admit an uncommitted target, a
-// scope-expanding introducing commit, or an unrelated branch.
+// appears harmless. An explicit committed successor record can name a new
+// scope, but its original TODO digest and complete introducing diff must match.
+// Uncommitted targets and unrelated branches remain inadmissible.
 function hasCleanCommittedBoundedPatch({ repoRoot, mergeCommit, target, historicalBlob, currentBlob, boundedTargets }) {
   if (currentBlob === historicalBlob
     || gitBlob(repoRoot, 'HEAD', target) !== currentBlob
@@ -178,9 +207,11 @@ function hasCleanCommittedBoundedPatch({ repoRoot, mergeCommit, target, historic
       firstIntroductions.push({ commit, parents });
     }
   }
-  return firstIntroductions.length > 0 && firstIntroductions.every(({ commit, parents }) => (
-    parents.every((parent) => commitChangesOnlyBoundedScope(repoRoot, commit, parent, target, boundedTargets))
-  ));
+  return firstIntroductions.length > 0 && firstIntroductions.every(({ commit, parents }) => {
+    const successorScope = committedSuccessorScope(repoRoot, mergeCommit, commit, target);
+    return parents.every(parent => commitChangesOnlyBoundedScope(repoRoot, commit, parent, target, boundedTargets)
+      || (successorScope && commitChangesOnlyBoundedScope(repoRoot, commit, parent, target, successorScope)));
+  });
 }
 
 function isPathInside(root, candidate) {
